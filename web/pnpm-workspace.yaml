@@ -1,4 +1,8 @@
-allowBuilds:
-  '@tailwindcss/oxide': true
-  sharp: true
-  unrs-resolver: true
+onlyBuiltDependencies:
+  - "@tailwindcss/oxide"
+  - cpu-features
+  - esbuild
+  - protobufjs
+  - sharp
+  - ssh2
+  - unrs-resolver

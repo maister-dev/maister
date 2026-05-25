@@ -13,8 +13,9 @@ a new Flow runner.
 
 ```bash
 git clone <repo-url> mAIster
-cd mAIster/web
-pnpm install
+cd mAIster
+pre-commit install        # writes .git/hooks/pre-commit
+cd web && pnpm install
 pnpm dev                  # http://localhost:3000
 ```
 
