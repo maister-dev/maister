@@ -1,0 +1,61 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# AI agent context (not needed in image)
+.agents
+.codex
+.claude
+.idea
+.qodo
+.ai-factory
+.ai-factory.json
+CLAUDE.md
+AGENTS.md
+
+# Build outputs and dependencies (rebuilt in the image)
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/build
+**/out
+**/coverage
+
+# Docker artifacts (avoid recursive copy)
+Dockerfile
+compose.yml
+compose.*.yml
+docker-compose.yml
+.dockerignore
+
+# Runtime artifacts (volume-mounted at runtime)
+.maister
+repos
+
+# Local env (must not leak into image)
+.env
+.env.*
+!.env.example
+
+# Editor and OS junk
+.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Tests and tooling outputs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+playwright-report
+test-results
+
+# Docs and meta (the image doesn't need them)
+docs
+LICENSE
+README.md

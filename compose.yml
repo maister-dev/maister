@@ -1,0 +1,46 @@
+name: ${COMPOSE_PROJECT_NAME:-maister}
+
+services:
+  app:
+    build:
+      context: .
+      target: production
+    image: ${MAISTER_IMAGE:-maister/app:dev}
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DB_URL: ${DB_URL:-postgres://maister:maister@postgres:5432/maister}
+      MAISTER_MAX_CONCURRENT_RUNS: ${MAISTER_MAX_CONCURRENT_RUNS:-1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    volumes:
+      - maister_runtime:/app/.maister
+      - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-maister}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maister}
+      POSTGRES_DB: ${POSTGRES_DB:-maister}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-maister} -d ${POSTGRES_DB:-maister}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  maister_runtime:

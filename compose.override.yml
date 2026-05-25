@@ -1,0 +1,20 @@
+services:
+  app:
+    build:
+      target: development
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./web:/app/web
+      - /app/web/node_modules
+      - /app/web/.next
+      - maister_runtime:/app/.maister
+      - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
+    ports:
+      - "3000:3000"
+      - "9229:9229"
+    command: ["pnpm", "dev"]
+
+  postgres:
+    ports:
+      - "5432:5432"

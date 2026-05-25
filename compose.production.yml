@@ -1,0 +1,62 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-security: &default-security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  app:
+    image: ${MAISTER_IMAGE:?MAISTER_IMAGE must be set to a pinned production tag}
+    build: !reset null
+    pull_policy: always
+    read_only: true
+    user: "1001:1001"
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    <<: *default-security
+    cap_add:
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+          pids: 256
+    ports:
+      - "127.0.0.1:3000:3000"
+    logging: *default-logging
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /run/postgresql:noexec,nosuid,size=50m
+    <<: *default-security
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+    logging: *default-logging
+    restart: unless-stopped
+    ports: !reset []
+
+networks:
+  default:
+    driver: bridge
+    internal: false
