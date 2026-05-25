@@ -26,7 +26,6 @@ yarn-error.log*
 
 # local env files
 .env*.local
-.env
 
 # vercel
 .vercel
@@ -35,8 +34,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# idea
-.idea
-*.iml
-.vscode
-.qodo
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+bun.lockb
