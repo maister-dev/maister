@@ -1,9 +1,1 @@
-onlyBuiltDependencies:
-  - "@tailwindcss/oxide"
-  - better-sqlite3
-  - cpu-features
-  - esbuild
-  - protobufjs
-  - sharp
-  - ssh2
-  - unrs-resolver
+dangerouslyAllowAllBuilds: true
