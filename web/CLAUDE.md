@@ -1,15 +1,17 @@
 # CLAUDE.md — `web/` (MAIster Web Control Plane)
 
 > Read `../CLAUDE.md` first. It holds the product spine, locked architectural
-> decisions (block-based HITL, SSE pipe-to-disk, typed `MaisterError`,
-> concurrency cap, single hard-coded executor) and the out-of-POC list.
-> This file is the Web/Next.js slice only.
+> decisions (ACP-driven HITL + checkpoint/resume, SSE pipe-to-disk, typed
+> `MaisterError`, concurrency cap, multi-executor via ACP, Flow Engine v2
+> plugin model) and the out-of-POC list. This file is the Web/Next.js slice
+> only. Agent processes live in `../supervisor/`, NOT here.
 
 ## What lives here
 
-This is **the entire MAIster app** for the POC. Next.js 16 monolith: UI +
-Route Handlers + server actions + (eventually) subprocess runner, Drizzle DB
-access, and SSE log streams. There is no separate backend service.
+This is the **web tier** of MAIster: UI + Route Handlers + server actions +
+Drizzle DB access + SSE bridge to `supervisor/`. Agent processes (`claude`,
+`codex`) and ACP sessions live in the separate `../supervisor/` daemon —
+this slice is the human-facing surface and the registry/board/HITL UX.
 
 Current state: scaffolded from the official HeroUI Next.js template
 (`heroui-inc/next-app-template`). The `app/`, `components/`, `config/` content
@@ -31,7 +33,15 @@ is template demo material to be **replaced** as we implement MAIster routes.
 | Node         | 24 (per root CLAUDE.md container target)    |
 
 Not yet installed (add when we wire backend per `../docs/`):
-`drizzle-orm`, `pg`, `zod`, `vitest`, `@playwright/test`.
+`drizzle-orm`, `pg`, `zod`, `vitest`, `@playwright/test`. The
+`supervisor/` package additionally needs `@agentclientprotocol/sdk@0.22.1`
+(for ACP-client wire types), spawns the
+`@agentclientprotocol/claude-agent-acp@0.37.0` and
+`@agentclientprotocol/codex-acp@0.0.44` adapter binaries (declared as
+deps so the binaries are on path), plus an HTTP server (`hono` or
+`express`). All Apache-2.0. See
+`../docs/kaa-maister-m0-spike-findings-20260525.md` for full M0 spike
+results.
 
 **Do not** add other component libraries (no shadcn/ui, no MUI, no Chakra).
 HeroUI v3 + Tailwind 4 + `tailwind-variants` covers all UI primitives.
@@ -97,33 +107,48 @@ Pages — replace template stubs:
 - `app/projects/new/page.tsx` (or modal) → **Add project**: paste path to a
   directory containing `maister.yaml`; server validates & stores.
 - `app/projects/[slug]/page.tsx` → **Project board**: 2 columns
-  `Backlog | In Flight`. In Flight bucket: `Running | NeedsInput | Review |
-  Crashed`. A task card in Backlog shows a **Launch** button — click runs
-  precondition checks and creates a new Run (no drag-and-drop in POC).
+  `Backlog | In Flight`. In Flight bucket: `Running | NeedsInput |
+  NeedsInputIdle | Review | Crashed`. A task card in Backlog shows a
+  **Launch** button — click runs precondition checks and creates a new Run
+  (no drag-and-drop in POC). HITL form renders inline on the In-Flight
+  card when state is `NeedsInput*`. Dedicated **Inbox** block beside the
+  board lists pending HITL requests across all flows of the project.
   Done/Abandoned in a filter tab beside the board.
 - `app/projects/[slug]/tasks/new/page.tsx` (or modal) → **Task creation**:
-  title + prompt + Flow dropdown (from `maister.yaml` `flows[]`).
+  title + prompt + Flow dropdown (from `maister.yaml` `flows[]`) + optional
+  executor override dropdown (from `executors[]` — defaults to flow's
+  `executor_override` or project's `default_executor`).
 - `app/runs/[id]/page.tsx` → **Run detail**: status, live logs, HITL form
-  panel, diff view, action buttons (mark ready, merge, abandon). Worktree
-  context shown (project + branch + worktree path).
+  panel, diff view, action buttons (mark ready, merge, abandon, recover).
+  Worktree context shown (project + branch + worktree path + executor).
+  Page sends periodic `POST /api/runs/[id]/activity` while visible to
+  extend `keepalive_until` and prevent premature checkpoint.
 
 Route Handlers under `app/api/`:
 
-- `POST /api/projects` (validate `maister.yaml`, persist row)
+- `POST /api/projects` (validate `maister.yaml` v2 + install referenced Flow
+  plugins from git tags, persist row)
 - `DELETE /api/projects/[slug]` (soft-archive — sets `archived_at`)
 - `POST /api/projects/[slug]/tasks` (create task → status `Backlog`)
-- `POST /api/runs` (precondition checks, `git worktree add`, spawn — body
-  carries `taskId` + `flowId`; `projectId` derived from task)
-- `GET /api/runs/[id]/stream` (SSE; `lastEventId` reconnect; tails
-  `.maister/<project-slug>/runs/<run-id>/<block-id>.log`)
-- `POST /api/runs/[id]/hitl-response` (atomic write `input-<block-id>.json`
-  under the project subtree → re-invoke Flow with `--resume`)
+- `POST /api/runs` (precondition checks, executor resolution, `git worktree
+  add`, supervisor `POST /sessions` — body carries `taskId`, `flowId`,
+  optional `executor_id_override`; `projectId` derived from task)
+- `GET /api/runs/[id]/stream` (SSE; `lastEventId` reconnect; tails the
+  per-step log file populated by `supervisor-client`)
+- `POST /api/runs/[id]/hitl-response` (atomic write `input-<step-id>.json`
+  under the project subtree → if worker live, supervisor delivers ACP
+  message; if checkpointed, supervisor respawns with `--resume`)
+- `POST /api/runs/[id]/activity` (extend `keepalive_until` by 30 min while
+  user is actively on the run page)
 - `GET /api/runs/[id]/diff` (`git diff` raw → `<pre>`, no syntax highlighting)
 - `POST /api/runs/[id]/merge` (`git merge --no-ff`; conflict → abort, run
   stays `Review`)
-- `POST /api/runs/[id]/abandon` (SIGTERM if a block is alive; mark worktree
-  stale; task → `Abandoned`)
-- `GET /api/cron/gc` (Abandoned/Done worktrees >7d, all projects)
+- `POST /api/runs/[id]/abandon` (supervisor `DELETE /sessions/:id` if alive;
+  mark worktree stale; task → `Abandoned`)
+- `POST /api/runs/[id]/recover` (Crashed → respawn via `--resume <session-id>`
+  if `acp_session_id` present; otherwise force-discard worktree)
+- `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
+  all projects)
 
 Nav items in `config/site.ts`: **Portfolio** (`/`), **Projects**
 (`/projects`), **Settings** (`/settings`). Project switcher in the navbar
@@ -131,51 +156,90 @@ links to the current project's board.
 
 Server-side modules (add as needed, names suggested — not yet present):
 
-- `lib/errors.ts` — `MaisterError` discriminated union (see root §3).
+- `lib/errors.ts` — `MaisterError` discriminated union (see root §3, expanded
+  taxonomy includes `EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL |
+  CHECKPOINT`).
 - `lib/atomic.ts` — `atomicWriteJson` (tmp + rename).
 - `lib/worktree.ts` — `git worktree add|remove|list` wrapper, project-scoped
   paths.
-- `lib/runner.ts` — `child_process.spawn` of `uv run <flow-cmd>`; pipe stdout
-  to SSE **and** to `.maister/<project-slug>/runs/<run-id>/<block-id>.log`
-  simultaneously.
-- `lib/config.ts` — `maister.yaml` v1 loader (project + flows[]),
-  `schemaVersion` check, zod-validated, slug derivation, dup-flow-id check.
+- `lib/config.ts` — `maister.yaml` v2 loader (project + executors[] +
+  flows[] with version pins), `schemaVersion` check, zod-validated, slug
+  derivation, dup-id check, unknown-executor-reference check. Also loads
+  Flow plugin manifests (`flow.yaml`).
+- `lib/flows.ts` — Flow plugin loader: `git clone --branch <tag>` into
+  `~/.maister/flows/<id>@<tag>/` system cache, symlink into
+  `.maister/<slug>/flows/<id>/`, manifest validation, version-pin enforcement.
+- `lib/executors.ts` — executor registry CRUD, override-resolution logic
+  (run launcher → project override → project default → flow recommended),
+  CCR env construction for `router: ccr`.
+- `lib/supervisor-client.ts` — HTTP+SSE client to `../supervisor/`:
+  `POST /sessions`, `DELETE /sessions/:id`, `GET /sessions/:id/stream`,
+  `POST /sessions/:id/input` (deliver HITL response when worker is live).
+  Reconnect with `lastEventId`.
 - `lib/projects.ts` — registry CRUD, slug derivation, slug + `repo_path`
-  uniqueness enforcement, recursive `MAISTER_PROJECTS_DIR` auto-discovery.
+  uniqueness enforcement, recursive `MAISTER_PROJECTS_DIR` auto-discovery,
+  Flow plugin install on register.
 - `lib/scheduler.ts` — global concurrency cap (`MAISTER_MAX_CONCURRENT_RUNS`),
   Pending queue, auto-promote on slot free.
 - `lib/db/` — Drizzle schema (`projects`, `tasks`, `runs`, `workspaces`,
-  `hitl_requests`) + client.
+  `hitl_requests`, `flows`, `executors`) + client.
 - `lib/reconcile.ts` — startup hook: per-project `runs` vs `git worktree
-  list`; orphaned `Running` → `Crashed`.
+  list` vs supervisor's live session set; orphan `Running` with no live
+  ACP session and no checkpoint → `Crashed`. `NeedsInputIdle` with valid
+  checkpoint stays valid.
+
+There is NO `lib/runner.ts` — agent subprocess lifecycle lives in
+`../supervisor/`, not Next.js. The web tier talks to supervisor via
+`lib/supervisor-client.ts` only.
 
 Drizzle schema sketch (server-only, `lib/db/schema.ts`):
 
 ```ts
 // projects
 { id, slug (unique), name, repo_path (unique), main_branch, branch_prefix,
-  maister_yaml_path, created_at, archived_at? }
+  maister_yaml_path, default_executor_id, created_at, archived_at? }
+
+// executors                              // project-scoped (no cross-project sharing in POC)
+{ id, project_id, agent: 'claude' | 'codex', model, env (jsonb)?,
+  router?: 'ccr', created_at }
+
+// flows                                  // installed Flow plugins per project
+{ id, project_id, flow_id, source_url, version_tag,                 // tag-pinned
+  install_path,                            // resolved symlink target
+  manifest (jsonb),                        // parsed flow.yaml (steps, etc.)
+  executor_override_id?,                   // FK → executors
+  installed_at }
 
 // tasks
 { id, project_id, title, prompt, flow_id, status:
   'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
-  latest_run_id?,                       // FK to runs; null until first Launch
+  latest_run_id?,                          // FK to runs; null until first Launch
+  attempt_number,                          // monotonic per task, starts at 1
+                                           // UNIQUE (task_id, attempt_number) on runs
   created_at, updated_at }
 
-// runs                                  // task : runs is 1 : N (retry / ralph-loop)
-{ id, project_id, task_id, flow_id, workspace_id, status:
-  'Pending' | 'Running' | 'NeedsInput' | 'Review' | 'Done' |
-  'Abandoned' | 'Crashed' | 'Failed',
-  attempt_number,                        // monotonic per task, starts at 1
-  current_block_id?, started_at, finished_at? }
+// runs                                    // task : runs is 1 : N (retry / ralph-loop)
+{ id, project_id, task_id, flow_id, workspace_id, executor_id,
+  acp_session_id?,                         // resume handle for --resume
+  flow_version_tag,                        // snapshot at launch time
+  status:
+    'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle' | 'Review' |
+    'Done' | 'Abandoned' | 'Crashed' | 'Failed',
+  attempt_number,                          // monotonic per task, starts at 1
+  current_step_id?,
+  checkpoint_at?,                          // when graceful checkpoint happened
+  keepalive_until?,                        // 30 min sliding window in NeedsInput
+  started_at, finished_at? }
 
 // workspaces
 { id, project_id, run_id, branch, worktree_path, status, created_at,
   removed_at? }
 
 // hitl_requests
-{ id, run_id, block_id, question, context, response_schema (jsonb),
-  response (jsonb)?, requested_at, responded_at?, expires_at }
+{ id, run_id, step_id, kind: 'permission' | 'structured_form' | 'human_review',
+  question, context, response_schema (jsonb)?,        // null for binary permission
+  response (jsonb)?, on_reject_goto?,                  // for human-review send-back
+  requested_at, responded_at?, expires_at }
 ```
 
 Task status is the **board** axis (Backlog | InFlight | Done | Abandoned).
@@ -184,9 +248,11 @@ Run status is the **execution** axis (richer state machine).
 **Task lifecycle (1:N task→run)**:
 
 - New task → `Backlog`.
-- **Launch** click → precondition checks → spawn run (attempt N) → task →
-  `InFlight`. Task stays `InFlight` while the latest run is in any of
-  `Pending/Running/NeedsInput/Review/Crashed`.
+- **Launch** click → precondition checks (project active, clean repo,
+  branch free, worktree path free, global cap not hit, selected executor
+  registered) → supervisor `POST /sessions` → task → `InFlight`. Task stays
+  `InFlight` while the latest run is in any of `Pending/Running/NeedsInput/
+  NeedsInputIdle/Review/Crashed`.
 - Latest run merged → task → `Done` (terminal).
 - Latest run `Failed | Abandoned` → task auto-returns to `Backlog`; Launch
   button reappears on the card; next click spawns attempt N+1 against the
@@ -195,7 +261,29 @@ Run status is the **execution** axis (richer state machine).
   `Abandoned` (terminal). No automatic transition to `Abandoned` — it always
   takes an explicit user click. (Run-level abandon ≠ task-level abandon.)
 
-This shape supports ralph-loop style retry without recreating tasks.
+**Run lifecycle (ACP keep-alive + checkpoint+resume)**:
+
+- `Pending` → scheduler promotes within concurrency cap → `Running`.
+- ACP session emits `session/request_permission` or agent writes
+  `needs-input.json` → `Running` → `NeedsInput`. `keepalive_until` set to
+  `now + 30 min`.
+- Each web-console activity (run page open/focus/keystroke in form) →
+  bump `keepalive_until` by +30 min.
+- `now > keepalive_until` while still `NeedsInput` → supervisor checkpoints
+  the agent (graceful exit, `acp_session_id` retained), sets
+  `checkpoint_at = now` → `NeedsInput` → `NeedsInputIdle`.
+- User submits response → `lib/atomic.ts` writes `input-<step-id>.json` →
+  - If `Running/NeedsInput` (worker live) → supervisor delivers ACP message
+    → resume in-process.
+  - If `NeedsInputIdle` → supervisor spawns a fresh process with
+    `--resume <acp_session_id>` → reads the input artifact → `Running`.
+- 24h in `NeedsInputIdle` without response → `Abandoned`.
+- Crash mid-`Running` (heartbeat dead, no checkpoint) → `Crashed`. UI
+  surfaces "Recover or discard" — Recover attempts `--resume` with the
+  last `acp_session_id` if present, otherwise discard worktree.
+
+This shape supports ralph-loop style retry without recreating tasks, AND
+keeps long human reviews from being penalized for thinking time.
 
 ## Conventions
 
@@ -245,9 +333,9 @@ Flag these in PRs but do NOT mass-delete in unrelated commits (surgical-changes 
 
 ## House rules (carried over from root, repeated for the slice)
 
-- No `chokidar` / `fs.watch` / polling. SSE + subprocess exit codes drive UI transitions.
-- All writes to `.maister/<project-slug>/runs/<run-id>/` are atomic (`tmp + rename` via `atomicWriteJson`). Flow may read them mid-write otherwise.
-- Throw `MaisterError` with a `code` for known domain failures; UI branches on `code`.
-- Stdout from a block must go to **both** SSE and `.maister/<project-slug>/runs/<run-id>/<block-id>.log` — read-side tails the file.
-- One block = one subprocess. No long-running process held across HITL waits.
+- No `chokidar` / `fs.watch` / polling for state transitions. The live path is supervisor's ACP notifications bridged through SSE; the recovery path is supervisor heartbeat + reconcile-on-startup.
+- All writes to `.maister/<project-slug>/runs/<run-id>/` are atomic (`tmp + rename` via `atomicWriteJson`). Flow / agent may read them mid-write otherwise.
+- Throw `MaisterError` with a `code` for known domain failures; UI branches on `code`. New codes: `EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`.
+- Every ACP `session/update` line must be written to **both** the SSE bridge AND `.maister/<project-slug>/runs/<run-id>/<step-id>.log` — read-side tails the file for reconnect via `lastEventId`.
+- Agent processes live in `../supervisor/`, NOT in Next.js. Web tier talks to them via `lib/supervisor-client.ts` only.
 - Anything in the root CLAUDE.md "Out of POC scope" list does not get implemented here either.

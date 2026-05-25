@@ -1,137 +1,184 @@
-# Architecture: Structured Modules (Technical Layers)
+# Architecture: Structured Modules (Technical Layers) + ACP Supervisor
 
 ## Overview
 
-MAIster's POC is a **Next.js 16 monolith** in `web/`: UI + Route Handlers +
-server actions + (eventually) Drizzle DB access + subprocess runner + SSE log
-streams in one process. The architecture pattern is **Structured Modules with
-technical-layer organization**, adapted to the Next.js App Router shape.
+MAIster is split into **two Node processes** following Structured Modules
+with technical-layer organization:
 
-Two organizational axes coexist:
+- **`web/`** — Next.js 16 monolith: UI + Route Handlers + server actions +
+  Drizzle DB access + SSE bridge to supervisor. No agent processes.
+- **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
+  agent process (`claude`, `codex`) per session, heartbeat watchdog,
+  graceful checkpoint + respawn via `--resume`. HTTP+SSE IPC.
+
+Inside `web/`, two organizational axes coexist:
 
 1. **Feature-folder routes** under `app/` (App Router convention): each
-   user-visible area — `(portfolio)` (home grid), `projects`, `projects/[slug]`
-   (board), `runs`, settings — gets its own folder with pages, server actions,
-   and Route Handlers.
+   user-visible area — `(portfolio)` (home grid), `projects`,
+   `projects/[slug]` (board + Inbox block), `runs`, settings — gets its
+   own folder with pages, server actions, and Route Handlers.
 2. **Technical-layer modules** under `lib/`: cross-cutting infrastructure
-   (`errors`, `atomic`, `worktree`, `runner`, `config`, `projects`,
-   `scheduler`, `db`, `reconcile`) organized by concern, not by feature.
+   (`errors`, `atomic`, `worktree`, `config`, `flows`, `executors`,
+   `supervisor-client`, `projects`, `scheduler`, `db`, `reconcile`)
+   organized by concern, not by feature.
 
-This honors the locked structure in `web/CLAUDE.md` without bolting on
-ceremony the POC doesn't need. Migration to **Explicit Architecture** stays
-trivial later: `lib/db/` becomes Infrastructure, the `MaisterError` taxonomy
-becomes Domain, and use-case services move out of Route Handlers into an
-Application layer.
+Inside `supervisor/`, modules organized by concern: `acp-client`, `spawn`,
+`heartbeat`, `checkpoint`, `http-api`.
+
+This honors the post-ACP-revision structure without bolting on ceremony
+the POC doesn't need. Migration to **Explicit Architecture** stays
+trivial later: `lib/db/` becomes Infrastructure, the `MaisterError`
+taxonomy becomes Domain, and use-case services move out of Route Handlers
+into an Application layer; `supervisor/` already IS its own bounded
+context.
 
 ## Decision Rationale
 
-- **Project type:** Web control plane (Next.js 16 monolith, single host,
-  single user POC).
-- **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI v3
-  · Tailwind 4 · Drizzle ORM · Postgres 16 · Node `child_process.spawn` ·
-  pnpm.
+- **Project type:** Web control plane (Next.js + separate supervisor
+  daemon, two Node processes; single host POC, supervisor can later move
+  to a different host without code change).
+- **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
+  v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
+  separate `supervisor/` daemon · Node `child_process.spawn` for agent
+  processes · CCR for model routing · pnpm.
 - **Team size:** 1 (solo dev).
-- **Domain complexity:** Medium — multi-project registry, workspace lifecycle,
-  block-based HITL state machine, SSE pipe-to-disk, subprocess reconciliation,
-  global concurrency scheduler.
-- **Scale:** POC, single host, `MAISTER_MAX_CONCURRENT_RUNS=3` (global cap).
+- **Domain complexity:** Medium-High — multi-project registry, Flow
+  plugin engine, multi-executor (claude + codex), workspace lifecycle,
+  ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
+  (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
+- **Scale:** POC, single host (multi-host capable), 
+  `MAISTER_MAX_CONCURRENT_RUNS=3` (global cap).
 - **Key factors:**
-  - Fast initial velocity required (T+1.5 weeks to working end-to-end).
-  - Hard "no premature abstraction" rule in `CLAUDE.md` (§5: single
-    executor hard-coded; §"Out of POC scope" forbids adapter interface).
+  - ACP is the executor interface — Stage 2 multi-executor pool is
+    inherent, not bolted on later.
+  - Crash isolation: agent processes belong in `supervisor/`, not
+    Next.js, so HMR / dev-mode hot-reload doesn't kill live runs.
   - Next.js App Router already enforces feature-folder layout for routes,
-    so adding bounded contexts on top would duplicate structure.
-  - Cross-cutting concerns (errors, atomic writes, subprocess, git
-    worktree) are technical, not domain — natural fit for `lib/` modules
-    organized by concern.
+    so adding bounded contexts on top inside `web/` would duplicate
+    structure.
+  - Cross-cutting concerns (errors, atomic writes, supervisor-client,
+    git worktree, Flow plugin loader) are technical, not domain —
+    natural fit for `lib/` modules organized by concern.
 
-Why not Layered? The project has 5 entities (`projects`, `tasks`, `runs`,
-`workspaces`, `hitl_requests`) with non-trivial invariants (multi-project
-registry, HITL state machine, worktree lifecycle, global concurrency
-scheduler). A flat `src/services/`, `src/controllers/` layout would mix
-unrelated logic as soon as the POC grows.
+Why not single-process monolith? Agent processes need to outlive Next.js
+HMR cycles in dev and Next.js restarts in prod; supervisor isolation
+removes the failure mode where editing a UI file kills 3 running agents.
 
-Why not Explicit Architecture? Decision matrix puts it at team size 5-30 and
-"high" domain complexity. Out-of-POC scope rule forbids adapter interfaces.
-Domain logic is small enough that Domain/Application/Infrastructure
-separation would add ceremony without payoff.
+Why not Layered? The project has 7+ entities (`projects`, `tasks`,
+`runs`, `workspaces`, `hitl_requests`, `flows`, `executors`) with
+non-trivial invariants (multi-project registry, Flow plugin install
+lifecycle, ACP session state machine, worktree lifecycle, global
+concurrency scheduler, per-step executor override resolution). A flat
+`src/services/`, `src/controllers/` layout would mix unrelated logic.
 
-Why not Microservices? Explicitly out of POC scope per `CLAUDE.md`. No
-separate backend service.
+Why not Explicit Architecture? Decision matrix puts it at team size 5-30
+and "high" domain complexity. Domain logic on POC is small enough that
+Domain/Application/Infrastructure separation would add ceremony without
+payoff. Refactor path stays open.
+
+Why not Microservices beyond web/supervisor split? Explicitly out of POC
+scope per `CLAUDE.md`. The two-process split is the minimum that gives
+us crash isolation; further fragmentation is Phase 2 or later.
 
 ## Folder Structure
 
 ```
 mAIster/
 ├── .ai-factory/                    # AI Factory context (this doc lives here)
+├── ~/.maister/flows/<id>@<tag>/    # Host-side Flow plugin install cache (system-wide)
 ├── .maister/                       # Runtime artifacts (NOT committed)
 │   └── <project-slug>/             # One subtree per registered project
+│       ├── flows/<id>/             # Symlink to ~/.maister/flows/<id>@<tag>/
 │       └── runs/<run-id>/
-│           ├── <block-id>.log      # SSE pipe-to-disk
-│           ├── needs-input.json    # HITL signal from Flow
-│           └── input-<block-id>.json   # HITL response (atomic write)
+│           ├── <step-id>.log       # SSE pipe-to-disk (per step)
+│           ├── needs-input.json    # HITL signal (structured form)
+│           ├── input-<step-id>.json # HITL response (atomic write)
+│           ├── session.json        # { acp_session_id, executor_id }
+│           └── cost.jsonl          # token-count metrics, append-only
 ├── docs/                           # Product + engineering docs
-└── web/                            # The entire MAIster app (Next.js monolith)
+│
+├── supervisor/                     # ── ACP SUPERVISOR DAEMON ──
+│   ├── package.json                # Separate npm package
+│   ├── tsconfig.json
+│   └── src/
+│       ├── main.ts                 # HTTP+SSE API entry: POST /sessions, etc.
+│       ├── acp-client.ts           # Zed-standard ACP client (one per session)
+│       ├── spawn.ts                # child_process.spawn per session (claude/codex)
+│       ├── heartbeat.ts            # crash detection → mark Crashed
+│       ├── checkpoint.ts           # graceful pause on idle timeout
+│       └── http-api.ts             # Route handlers (Express/Fastify)
+│
+└── web/                            # ── NEXT.JS WEB TIER ──
     ├── app/                        # ── ROUTES & PRESENTATION (feature folders) ──
     │   ├── layout.tsx              # Root layout (Providers + Navbar w/ project switcher)
-    │   ├── page.tsx                # Portfolio home (superset.sh-style grid)
+    │   ├── page.tsx                # Portfolio home (superset.sh-style grid + "Needs you (N)" badge)
     │   ├── projects/
     │   │   ├── page.tsx            # Projects list + "Add project" button
-    │   │   ├── new/page.tsx        # Add-project form (paste maister.yaml dir)
+    │   │   ├── new/page.tsx        # Add-project form (paste maister.yaml dir, installs Flow plugins)
     │   │   └── [slug]/
-    │   │       ├── page.tsx        # Per-project board (Backlog | In Flight)
-    │   │       ├── actions.ts      # Server actions: create-task, launch (button click), discard-task
-    │   │       ├── components/     # Board-local components (columns, cards, Launch button)
+    │   │       ├── page.tsx        # Per-project board (Backlog | In Flight) + Inbox block
+    │   │       ├── actions.ts      # Server actions: create-task, launch, discard-task, hitl-respond
+    │   │       ├── components/     # Board-local components (columns, cards, Launch, HITL form)
     │   │       └── tasks/
-    │   │           └── new/page.tsx # Task creation: title + prompt + Flow dropdown
+    │   │           └── new/page.tsx # Task creation: title + prompt + Flow dropdown + executor override
     │   ├── runs/
     │   │   └── [id]/
-    │   │       ├── page.tsx        # Run detail: status + logs + HITL + diff
-    │   │       ├── actions.ts      # Server actions: mark-ready, merge, abandon
+    │   │       ├── page.tsx        # Run detail: status + logs + HITL + diff + activity-ping
+    │   │       ├── actions.ts      # Server actions: mark-ready, merge, abandon, recover
     │   │       └── components/     # Run-detail-local components
     │   └── api/                    # ── ROUTE HANDLERS (controllers) ──
     │       ├── projects/
-    │       │   ├── route.ts                  # POST /api/projects (register)
+    │       │   ├── route.ts                  # POST /api/projects (register + install flows)
     │       │   └── [slug]/
     │       │       ├── route.ts              # DELETE (soft-archive)
     │       │       └── tasks/route.ts        # POST tasks (per-project)
     │       ├── runs/
-    │       │   ├── route.ts                  # POST /api/runs (preconditions + spawn)
+    │       │   ├── route.ts                  # POST /api/runs (preconditions + supervisor session)
     │       │   └── [id]/
-    │       │       ├── stream/route.ts       # GET SSE
+    │       │       ├── stream/route.ts       # GET SSE (bridges supervisor SSE)
     │       │       ├── hitl-response/route.ts # POST HITL response
+    │       │       ├── activity/route.ts     # POST keepalive bump
     │       │       ├── diff/route.ts         # GET git diff
     │       │       ├── merge/route.ts        # POST git merge --no-ff
-    │       │       └── abandon/route.ts      # POST abandon
+    │       │       ├── abandon/route.ts      # POST abandon
+    │       │       └── recover/route.ts      # POST recover (Crashed → --resume)
     │       └── cron/
-    │           └── gc/route.ts               # GET worktree GC (all projects)
+    │           └── gc/route.ts               # GET worktree + session GC (all projects)
     │
     ├── components/                 # ── SHARED PRESENTATION COMPONENTS ──
-    │   ├── navbar.tsx              # HeroUI Navbar + project switcher
+    │   ├── navbar.tsx              # HeroUI Navbar + project switcher + Needs-you badge
     │   ├── theme-switch.tsx        # next-themes toggle
     │   ├── icons.tsx               # Inline SVG icons
     │   ├── primitives.ts           # tailwind-variants title()/subtitle()
     │   ├── portfolio-card.tsx      # Workspace card on portfolio home
     │   ├── board-column.tsx        # Board column (Backlog / In Flight)
-    │   └── task-card.tsx           # Task card on board (carries Launch button when in Backlog)
+    │   ├── task-card.tsx           # Task card on board (carries Launch button when in Backlog)
+    │   ├── hitl-form.tsx           # Inline form rendered from JSON Schema
+    │   └── inbox-block.tsx         # HITL Inbox panel on board page
     │
     ├── config/                     # ── SITE-LEVEL CONFIG (static) ──
     │   ├── site.ts                 # navItems (Portfolio/Projects/Settings)
     │   └── fonts.ts                # Inter + Fira Code via next/font
     │
     ├── lib/                        # ── TECHNICAL-LAYER MODULES (server-only) ──
-    │   ├── errors.ts               # MaisterError discriminated union
+    │   ├── errors.ts               # MaisterError discriminated union (expanded taxonomy)
     │   ├── atomic.ts               # atomicWriteJson (tmp + rename)
     │   ├── worktree.ts             # git worktree add/remove/list wrapper (project-scoped paths)
-    │   ├── runner.ts               # child_process.spawn + SSE-and-disk pipe (project subtree)
-    │   ├── config.ts               # maister.yaml v1 loader: project + flows[], zod-validated, slug derivation
-    │   ├── projects.ts             # Project registry CRUD, slug derivation, slug + repo_path uniqueness, recursive MAISTER_PROJECTS_DIR scan
+    │   ├── supervisor-client.ts    # HTTP+SSE client to ../supervisor/
+    │   ├── config.ts               # maister.yaml v2 loader + flow.yaml manifest parser, zod-validated
+    │   ├── flows.ts                # Flow plugin install: git clone --branch <tag>, symlink, manifest validation
+    │   ├── executors.ts            # Executor registry + override-resolution + CCR env construction
+    │   ├── projects.ts             # Project registry CRUD, recursive MAISTER_PROJECTS_DIR scan, Flow install on register
     │   ├── scheduler.ts            # Global concurrency cap + Pending queue
-    │   ├── reconcile.ts            # Startup: per-project runs vs git worktree list
+    │   ├── reconcile.ts            # Startup: runs vs git worktree list vs supervisor sessions
     │   └── db/                     # ── PERSISTENCE LAYER ──
     │       ├── client.ts           # Drizzle client (PG or SQLite via dialect)
-    │       ├── schema.ts           # Tables: projects, tasks, runs, workspaces, hitl_requests
+    │       ├── schema.ts           # projects, tasks, runs, workspaces, hitl_requests, flows, executors
     │       └── migrations/         # drizzle-kit output
+    │
+    ├── i18n/                       # ── INTERNATIONALIZATION ──
+    │   ├── en/                     # English source-of-truth
+    │   └── ru/                     # Russian translations (required from day one)
     │
     ├── styles/
     │   └── globals.css             # @tailwindcss + @heroui/styles
@@ -148,19 +195,27 @@ mAIster/
 app/<route>/page.tsx     ─┐
                           ├──► lib/* (server-only modules)  ──► lib/db/* (persistence)
 app/api/*/route.ts       ─┘                                 ──► .maister/<project-slug>/runs/<run-id>/* (FS)
-                                                            ──► child_process.spawn
+                                                            ──► lib/supervisor-client (HTTP+SSE to ../supervisor/)
 app/<route>/actions.ts   ──► lib/* (via server-only import)
 components/*             ──► (browser-safe utilities only)
+
+# Cross-process boundary (HTTP+SSE)
+web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──► supervisor/src/spawn ──► child_process.spawn (claude/codex)
+                          ◄──SSE── supervisor/src/acp-client (Zed-standard ACP)
 ```
 
 - ✅ Route Handler (`app/api/.../route.ts`) imports from `lib/*`.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
-- ✅ `lib/runner.ts` imports `lib/errors.ts`, `lib/atomic.ts`,
-  `lib/worktree.ts`, `lib/projects.ts`, `lib/scheduler.ts`.
-- ✅ `lib/projects.ts` imports `lib/config.ts` (to parse `maister.yaml`),
-  `lib/db/*` (registry persistence), `lib/errors.ts`.
+- ✅ `lib/supervisor-client.ts` imports `lib/errors.ts` only (HTTP wire format).
+- ✅ `lib/flows.ts` imports `lib/errors.ts`, `lib/atomic.ts`,
+  `lib/config.ts`, `lib/db/*`.
+- ✅ `lib/executors.ts` imports `lib/errors.ts`, `lib/db/*`.
+- ✅ `lib/projects.ts` imports `lib/config.ts`, `lib/flows.ts`,
+  `lib/executors.ts`, `lib/db/*`, `lib/errors.ts`.
 - ✅ `lib/scheduler.ts` imports `lib/db/*` (to count `Running` rows) and
   `lib/errors.ts`.
+- ✅ `lib/reconcile.ts` imports `lib/db/*`, `lib/worktree.ts`,
+  `lib/supervisor-client.ts`, `lib/errors.ts`.
 - ✅ `lib/db/schema.ts` and `lib/db/client.ts` are server-only and may use
   `node:*` modules.
 - ❌ A Client Component (file with `"use client"`) imports anything from
@@ -170,10 +225,15 @@ components/*             ──► (browser-safe utilities only)
   innermost — pure types).
 - ❌ Any `lib/*` module imports from `app/*` (the controller direction is
   one-way).
+- ❌ Any `lib/*` module **directly spawns `claude` or `codex`** —
+  agent processes are owned by `supervisor/`; web tier goes through
+  `lib/supervisor-client.ts` only.
+- ❌ Any `lib/*` module **imports from `supervisor/*`** — supervisor is
+  a separate process; the only contract is the HTTP+SSE API.
 - ❌ `app/api/*/route.ts` calls another `app/api/*/route.ts` directly. If
   two routes share logic, extract it into `lib/`.
-- ❌ `lib/worktree.ts` / `lib/runner.ts` constructs FS paths from raw user
-  input. Project slugs come from `lib/projects.ts` (validated, kebab-case).
+- ❌ `lib/worktree.ts` constructs FS paths from raw user input. Project
+  slugs come from `lib/projects.ts` (validated, kebab-case).
 
 **Server-only enforcement:** prefer `"server-only"` import (Next.js
 runtime guard) at the top of any `lib/` module that must never reach the
@@ -184,48 +244,71 @@ client bundle.
 - **UI → Server work:** prefer **Server Actions** (`app/.../actions.ts`)
   for mutations triggered from forms. Use **Route Handlers** (`app/api/`)
   when you need a stable HTTP surface (SSE stream, cron, HITL response
-  endpoint).
-- **Live updates:** SSE only via `app/api/runs/[id]/stream/route.ts`. Read
-  side tails `.maister/<project-slug>/runs/<run-id>/<block-id>.log`. No client-side polling,
-  no WebSockets.
-- **State transitions:** driven by **subprocess exit code + presence of
-  `needs-input.json`**. Never by `fs.watch`, `chokidar`, or polling. The
-  state machine is owned by `lib/runner.ts` and reflected in the `runs`
-  table via Drizzle.
-- **HITL handoff:** Flow writes
-  `.maister/<project-slug>/runs/<run-id>/needs-input.json` on graceful exit →
-  UI renders form from `response_schema` (zod-validated) → server action
-  writes `input-<block-id>.json` via `atomicWriteJson` (same subtree) → Flow
-  re-invoked with `--resume <block-id>`. No live process across the wait.
+  endpoint, activity ping).
+- **Web ↔ supervisor:** HTTP + SSE only. `lib/supervisor-client.ts` is the
+  single boundary; no other `lib/*` module talks to supervisor directly.
+  The supervisor URL is `MAISTER_SUPERVISOR_URL` (env), defaults to
+  `http://localhost:7777`. Supervisor may run on a different host.
+- **Live updates:** supervisor emits SSE per ACP `session/update`; Next.js
+  Route Handler (`app/api/runs/[id]/stream/route.ts`) bridges to the
+  browser, tailing `.maister/<project-slug>/runs/<run-id>/<step-id>.log`
+  on reconnect via `lastEventId`. No client-side polling, no WebSockets.
+- **State transitions:** driven by **ACP notifications** (live path) and
+  **artifact presence** (durable path, e.g. `needs-input.json`). Never by
+  `fs.watch`, `chokidar`, or polling on the web tier. The state machine
+  is split: supervisor owns process-level state (live / checkpointed /
+  crashed); web tier owns run-level state (`Running | NeedsInput |
+  NeedsInputIdle | Review | Crashed | …`) reflected in the `runs` table.
+- **HITL handoff:** agent emits `session/request_permission` (binary) OR
+  writes `.maister/<project-slug>/runs/<run-id>/needs-input.json`
+  (structured) → web tier records `hitl_requests` row → UI renders form
+  from JSON Schema (zod-validated) → server action writes
+  `input-<step-id>.json` via `atomicWriteJson` → if worker live,
+  supervisor delivers ACP message; if checkpointed, supervisor respawns
+  with `--resume <session-id>` and the agent reads the input artifact.
 - **Cross-`lib` calls:** allowed but unidirectional. Suggested layering
-  inside `lib/` (lowest first): `errors` → `atomic` → `config` → `db` →
-  `projects` → `worktree` → `scheduler` → `runner` → `reconcile`. A lower
-  module never imports a higher one.
+  inside `web/lib/` (lowest first): `errors` → `atomic` → `config` →
+  `db` → `executors` → `flows` → `projects` → `worktree` →
+  `supervisor-client` → `scheduler` → `reconcile`. A lower module never
+  imports a higher one.
 - **Error surfacing:** all known domain failures bubble up as
   `MaisterError` instances with a discriminated `code`. UI branches on
   `code`, never on string matching.
 
 ## Key Principles
 
-1. **Resist premature abstraction.** Single executor (Claude Code),
-   hard-coded. No adapter interface. No Flow designer. No multi-executor
-   pool. Refactor only when a real second executor appears.
-2. **Subprocess exit codes are the source of truth.** State transitions
-   driven by process exit + artifact presence, not by file watchers or
-   polling. One block = one subprocess that runs to natural completion.
-3. **Atomic writes to `.maister/`.** Every JSON the Flow may read is
-   written via `atomicWriteJson` (tmp + rename). Never partial-write.
-4. **Server-only modules stay in `lib/`.** Anything that touches `node:*`,
-   `child_process`, `fs`, or secrets must live under `lib/` and never be
-   imported by a Client Component.
-5. **Surgical changes.** Every changed line traces to the user's request.
+1. **ACP is the executor interface.** No bespoke adapter interface.
+   claude + codex on POC. New executors land by adding to the
+   `executors[]` registry — no code change in the call sites.
+2. **Agent processes live in `supervisor/`, not Next.js.** Crash
+   isolation matters: HMR / dev-mode hot reload must not kill live
+   agents.
+3. **ACP notifications + artifact presence are the source of truth.**
+   State transitions driven by ACP events on the live path and artifact
+   presence on the recovery path. Never `fs.watch`, `chokidar`, or
+   polling. The web tier reflects state in the `runs` table; supervisor
+   owns process-level state.
+4. **Atomic writes to `.maister/`.** Every JSON the Flow / agent may
+   read is written via `atomicWriteJson` (tmp + rename). Never
+   partial-write.
+5. **Server-only modules stay in `lib/`.** Anything that touches
+   `node:*`, `child_process`, `fs`, or secrets must live under `lib/`
+   and never be imported by a Client Component.
+6. **Surgical changes.** Every changed line traces to the user's request.
    Do not refactor adjacent code while you're there.
-6. **Typed errors only.** `MaisterError` with discriminated `code` for
-   known domain failures. Never plain `Error` for domain errors.
-7. **Migration path is intentional.** Today's `lib/` modules map cleanly
-   to tomorrow's Domain (errors, types), Application (runner, reconcile),
-   and Infrastructure (db, worktree, atomic, config) layers if Explicit
-   Architecture becomes warranted.
+7. **Typed errors only.** `MaisterError` with discriminated `code` for
+   known domain failures (expanded taxonomy: `EXECUTOR_UNAVAILABLE`,
+   `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). Never plain `Error`
+   for domain errors.
+8. **No POC scope creep.** Out-of-POC list in root `CLAUDE.md` is
+   binding (custom ACP extensions, guard enforcement, plugin sandboxing,
+   Cursor/opencode/Aider executors — all explicitly Phase 2).
+9. **Migration path is intentional.** Today's `web/lib/` modules map
+   cleanly to tomorrow's Domain (errors, types), Application
+   (supervisor-client, reconcile, scheduler), and Infrastructure (db,
+   worktree, atomic, config, flows, executors) layers if Explicit
+   Architecture becomes warranted. The web/supervisor split is the
+   first bounded-context boundary; further fragmentation is Phase 2+.
 
 ## Code Examples
 
@@ -296,60 +379,99 @@ export async function atomicWriteJson(path: string, data: unknown): Promise<void
 }
 ```
 
-### Subprocess → SSE + disk (parallel pipe)
+### Web tier → supervisor (HTTP+SSE boundary)
 
 ```typescript
-// lib/runner.ts (excerpt)
+// web/lib/supervisor-client.ts (excerpt)
+import { MaisterError } from '@/lib/errors';
+
+const BASE = process.env.MAISTER_SUPERVISOR_URL ?? 'http://localhost:7777';
+
+export async function createSession(opts: {
+  runId: string;
+  projectSlug: string;
+  worktreePath: string;
+  executor: { agent: 'claude' | 'codex'; model: string; env?: Record<string, string>; router?: 'ccr' };
+  flowManifest: unknown;
+  prompt: string;
+}): Promise<{ acpSessionId: string }> {
+  const res = await fetch(`${BASE}/sessions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(opts),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+
+    throw new MaisterError(
+      body?.code ?? 'SPAWN',
+      body?.message ?? `supervisor POST /sessions ${res.status}`,
+    );
+  }
+
+  return res.json();
+}
+
+export async function deliverInput(runId: string, stepId: string, value: unknown): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${runId}/input`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ stepId, value }),
+  });
+
+  if (!res.ok) {
+    throw new MaisterError('ACP_PROTOCOL', `deliverInput ${res.status}`);
+  }
+}
+```
+
+### Supervisor → ACP session + disk pipe (separate process)
+
+```typescript
+// supervisor/src/spawn.ts (excerpt)
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { join } from 'node:path';
-import { MaisterError } from '@/lib/errors';
-import { ensureWorktree } from '@/lib/worktree';
 
-export function runBlock(opts: {
+export function spawnAgent(opts: {
+  agent: 'claude' | 'codex';
+  resumeSessionId?: string;
   projectSlug: string;
   runId: string;
-  blockId: string;
-  cmd: string;
-  args: string[];
+  stepId: string;
   cwd: string;
-  onLine: (line: string, monotonicId: number) => void;
-}): Promise<{ exitCode: number; hasNeedsInput: boolean }> {
-  return new Promise((resolve, reject) => {
-    const logPath = join(
-      '.maister',
-      opts.projectSlug,
-      'runs',
-      opts.runId,
-      `${opts.blockId}.log`,
-    );
-    const fileStream = createWriteStream(logPath, { flags: 'a' });
-    let buffer = '';
-    let monotonicId = 0;
+  env: NodeJS.ProcessEnv;
+  onAcpEvent: (line: string, monotonicId: number) => void;
+}): { kill: () => void } {
+  const logPath = join('.maister', opts.projectSlug, 'runs', opts.runId, `${opts.stepId}.log`);
+  const fileStream = createWriteStream(logPath, { flags: 'a' });
 
-    const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd });
+  const args = ['--acp'];                          // pseudocode — exact CLI verified in M0 spike
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      fileStream.write(chunk);
-      buffer += chunk.toString('utf8');
-      let newlineIndex;
-      while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-        opts.onLine(line, ++monotonicId);
-      }
-    });
+  if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
 
-    child.on('error', (err) =>
-      reject(new MaisterError('SPAWN', `spawn failed: ${err.message}`, { cause: err })),
-    );
+  const child = spawn(opts.agent, args, { cwd: opts.cwd, env: opts.env });
 
-    child.on('exit', async (code) => {
-      fileStream.end();
-      const hasNeedsInput = await needsInputExists(opts.runId);
-      resolve({ exitCode: code ?? -1, hasNeedsInput });
-    });
+  let buffer = '';
+  let monotonicId = 0;
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    fileStream.write(chunk);
+    buffer += chunk.toString('utf8');
+    let nl;
+
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl);
+
+      buffer = buffer.slice(nl + 1);
+      opts.onAcpEvent(line, ++monotonicId);
+    }
   });
+
+  child.on('exit', () => fileStream.end());
+
+  return { kill: () => child.kill() };
 }
 ```
 
@@ -408,29 +530,40 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
 
 ## Anti-Patterns
 
-- ❌ **`fs.watch` / `chokidar` / polling for state transitions.** Subprocess
-  exit codes drive transitions. Adding a watcher introduces races and
-  zombie processes.
-- ❌ **Long-running subprocess across a HITL wait.** A block runs to natural
-  exit. Re-invoke with `--resume <block-id>` after input.
+- ❌ **`fs.watch` / `chokidar` / polling for state transitions.** ACP
+  notifications on the live path + artifact presence on the recovery
+  path drive transitions. Adding a watcher introduces races.
+- ❌ **Spawning `claude` / `codex` from `web/lib/*`.** Agent processes
+  are owned by `supervisor/`. Web tier goes through
+  `lib/supervisor-client.ts` only.
+- ❌ **Importing from `supervisor/*` inside `web/*`.** Supervisor is a
+  separate process. The only contract is the HTTP+SSE API.
 - ❌ **String-matched errors.** `if (err.message.includes('conflict'))` is
   forbidden. Use `MaisterError.code`.
 - ❌ **Partial-writing artifacts.** Direct `writeFile` into
   `.maister/<project-slug>/runs/<run-id>/` instead of `atomicWriteJson` will
-  be read mid-write by the Flow.
+  be read mid-write by the agent.
 - ❌ **`lib/` import from a Client Component.** Server-only modules leak
   into the browser bundle. Use Route Handlers or Server Actions as the
   boundary.
 - ❌ **Layer skipping.** Route Handler running raw `execSync` instead of
-  going through `lib/worktree.ts` or `lib/runner.ts`. Keep `app/api/` thin.
-- ❌ **Premature adapter interfaces.** No `ExecutorAdapter`, no
-  `FlowAdapter`. Claude Code is hard-coded until a real second executor
-  appears.
+  going through `lib/worktree.ts` or `lib/supervisor-client.ts`. Keep
+  `app/api/` thin.
+- ❌ **Bespoke executor adapter interfaces.** No `ExecutorAdapter`, no
+  `FlowAdapter` beyond what `lib/executors.ts` and ACP provide. Adding
+  Cursor / opencode / Aider is configuration, not a new interface.
+- ❌ **Custom ACP extensions on POC.** Stage 1 uses Zed-standard ACP
+  only. Structured-form HITL goes via artifact, not custom notification.
+- ❌ **Enforcing cost/time/regex guards in POC.** Parse-and-persist as
+  metrics on disk only. Enforcement is Phase 2.
+- ❌ **Trusting Flow plugins from arbitrary sources.** POC = internal
+  sources only. Sandboxing + trust UI is Phase 2.
 - ❌ **Anemic `MaisterError`.** Constructing `new Error('something failed')`
   for a known domain failure. If the error has a meaningful UI branch,
   it belongs in the `code` taxonomy.
 - ❌ **Streaming or logging secrets.** API keys must never appear in SSE
-  output, subprocess argv visible to the frontend, or committed code.
-- ❌ **Refactoring out-of-POC scope.** Multi-executor pool, AI-Judge, Flow
-  designer, background agents, Telegram, A/B runs — all explicitly out.
-  Push back with "out of POC scope".
+  output, ACP `session/update` payloads visible to the browser, agent
+  argv visible to the frontend, or committed code.
+- ❌ **Refactoring out-of-POC scope.** AI-Judge implementation, Flow
+  designer, background agents, Telegram, A/B runs, HITL as separate
+  swimlane cards — all explicitly out. Push back with "out of POC scope".

@@ -4,58 +4,79 @@
 
 **MAIster is the control plane for AI-powered software delivery.** It turns
 backlog tasks into supervised agentic delivery Flows: workspace creation,
-headless agent execution, HITL, AI-Judge, diff review, merge, and project
+ACP-driven agent execution, structured HITL, diff review, merge, and project
 learning.
 
-The POC wedge is intentionally narrow: a **thin Web shell over a CLI-Flow
-runner with multi-project portfolio + multi-workspace + HITL + per-project
-task board**. MAIster orchestrates and wraps existing Flow frameworks (e.g.
-`aif`, `spec-kit`, `open-spec`). It does **not** build a new Flow runner,
-Flow designer, or skill engine.
+The POC wedge: a **Web shell + ACP supervisor daemon + Flow plugin engine**
+spanning multi-project portfolio + multi-executor (claude + codex) +
+multi-workspace + hybrid HITL + per-project task board. MAIster orchestrates
+agents through the Zed-standard Agent Client Protocol (ACP); Flow plugins
+shipped as git-tagged bundles compose CLI tools, agent skills, and YAML-DSL
+steps. It does **not** build a new agent runtime — claude and codex are the
+runtimes; MAIster is the control plane around them.
 
 Audience: solo-technical CEO / CIO / staff-eng running multiple repos and AI
 coding agents in parallel and tired of babysitting consoles.
 
 For the full vision, principles, and roadmap see `docs/VISION.md`,
 `docs/PRODUCT_VIEW.md`, and the locked design at
-`docs/kaa-maister-design-20260522-174429.md`.
+`docs/kaa-maister-design-20260522-174429.md`. The current ROADMAP is at
+`.ai-factory/ROADMAP.md`.
 
 ## Core Features (POC scope)
 
 - **Multi-project registry**: N projects per host, each configured by its own
-  `maister.yaml` v1 (`project` block + `flows[]`). Registration via UI form
-  (path to dir containing `maister.yaml`) or `MAISTER_PROJECTS_DIR` env
-  **recursive** auto-discovery on startup. Slug derived from `project.name`
-  (kebab-case); both `slug` and `repo_path` are unique across projects (one
-  repo = one project). Collisions reject the registration.
+  `maister.yaml` v2 (`project` + `executors[]` + `flows[]` with version
+  pins). Registration via UI form (path to dir containing `maister.yaml`) or
+  `MAISTER_PROJECTS_DIR` env **recursive** auto-discovery on startup. Slug
+  derived from `project.name` (kebab-case); both `slug` and `repo_path` are
+  unique across projects (one repo = one project). Collisions reject the
+  registration.
+- **Flow plugin engine**: Flows are git-repo plugins pinned by tag, installed
+  to `~/.maister/flows/<id>@<tag>/` system cache and symlinked per project.
+  Each plugin carries a `flow.yaml` manifest with step DSL (`cli | agent |
+  guard | human`), optional `setup.sh`, shipped CLIs, skills, and agents.
+- **Multi-executor via ACP**: `claude` and `codex` both required on POC.
+  Executor identity = `{agent, model, env?, router?}` defined per project in
+  `executors[]`. CCR (Claude Code Router) bundled for `router: ccr` to route
+  z.ai GLM / MiniMax through `claude`. Per-step override resolution: run
+  launcher → project override → project default → flow recommended.
 - **Portfolio home (superset.sh-style)**: single grid of every active
   workspace across all projects. Card = project · branch · status · last
-  activity · quick actions (View / Resume / Abandon). Filters by project +
-  status.
+  activity · executor · quick actions. Filters by project + status.
+  "Needs you (N)" badge counts pending HITL across all projects.
 - **Per-project task board**: 2 columns `Backlog | In Flight`. In Flight
-  holds `Running | NeedsInput | Review | Crashed`. A Backlog card has a
-  **Launch** button (no drag-and-drop in POC); click runs preconditions and
-  spawns a Run. Done/Abandoned in a filter tab.
+  holds `Running | NeedsInput | NeedsInputIdle | Review | Crashed`. A
+  Backlog card has a **Launch** button (no drag-and-drop in POC); click runs
+  preconditions and creates a Run via supervisor `POST /sessions`. A
+  dedicated **Inbox** block beside the board lists pending HITL requests
+  with in-card form + send-back-with-comments for `human` step type.
+  Done/Abandoned in a filter tab.
 - **Backlog → Flow launch**: task created on the board with title + prompt +
-  Flow dropdown (from project's `flows[]`); launched on Launch click. **task
-  ↔ run is 1:N** — a failed/abandoned run returns the task to `Backlog`,
-  Launch reappears, next click = attempt N+1 (ralph-loop friendly).
+  Flow dropdown (from project's `flows[]`) + optional executor override.
+  **task ↔ run is 1:N** — a failed/abandoned run returns the task to
+  `Backlog`, Launch reappears, next click = attempt N+1 (ralph-loop
+  friendly).
 - **Workspace lifecycle**: `git worktree add` per run under
   `.maister/<project-slug>/runs/<run-id>/`, precondition checks (clean parent
-  repo, branch free, worktree path free, global cap not hit), per-project
-  reconciliation on Next.js startup, GC of `Abandoned/Done` worktrees older
-  than 7d across all projects.
-- **Headless agent execution**: Claude Code only in POC, spawned via
-  `child_process.spawn` of `uv run <flow-cmd>`.
-- **Block-based HITL**: each Flow block is one subprocess invocation that runs
-  to natural completion. `needs-input.json` artifact triggers a UI form
-  rendered from `response_schema`; submission writes
-  `input-<block-id>.json` atomically and re-invokes the Flow with
-  `--resume <block-id>`. No live process held across a user-input wait.
-- **Live log streaming**: SSE via Route Handler
-  (`/api/runs/[id]/stream`), one message per stdout line,
-  `lastEventId` reconnect. Stdout is piped to disk
-  (`.maister/<project-slug>/runs/<run-id>/<block-id>.log`) in parallel.
+  repo, branch free, worktree path free, global cap not hit, executor
+  registered), per-project + supervisor-aware reconciliation on Next.js
+  startup, GC of `Abandoned/Done` worktrees + checkpointed sessions older
+  than 7d.
+- **ACP-driven agent execution**: `supervisor/` daemon (separate Node
+  process, HTTP+SSE IPC, may run on a different host) owns ACP sessions.
+  One agent process per session. Spawned on Launch; lives across
+  `NeedsInput` keep-alive (≤30 min, sliding window extended by web-console
+  activity); checkpoints on idle timeout, respawned via `--resume
+  <session-id>` on user response.
+- **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
+  + artifact `needs-input.json` for structured forms (JSON Schema) +
+  `human` step type with review / send-back-with-comments + `goto_step`
+  loop. Run states `NeedsInput` and `NeedsInputIdle` distinguish live-worker
+  and checkpointed waits.
+- **Live log streaming**: supervisor publishes ACP `session/update` →
+  per-step log file on disk + SSE stream → Next.js Route Handler bridge
+  (`/api/runs/[id]/stream`) with `lastEventId` reconnect.
 - **Diff view + merge**: raw `git diff` rendered as `<pre>` (no syntax
   highlighting in POC), `git merge --no-ff` on the parent's `main_branch`.
   Conflicts abort and surface "Conflict — resolve manually" in UI.
@@ -64,9 +85,11 @@ For the full vision, principles, and roadmap see `docs/VISION.md`,
   `Pending`; UI shows queue position; auto-promote on slot free.
 - **Typed error taxonomy**: `MaisterError` with discriminated `code`
   (`PRECONDITION | SPAWN | NEEDS_INPUT | HITL_TIMEOUT | CRASH | CONFLICT |
-  CONFIG`). UI branches on `code`, never on string matching.
+  CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL |
+  CHECKPOINT`). UI branches on `code`, never on string matching.
+- **i18n**: EN + RU from day one.
 
-## Tech Stack (locked — "Approach B")
+## Tech Stack (locked — "Approach B", post-ACP revision)
 
 | Layer            | Choice                                                            |
 | ---------------- | ----------------------------------------------------------------- |
@@ -75,17 +98,27 @@ For the full vision, principles, and roadmap see `docs/VISION.md`,
 | UI library       | HeroUI v3 (`@heroui/react`), no other component lib               |
 | Styling          | Tailwind CSS 4 via `@tailwindcss/postcss`, `tailwind-variants`    |
 | Theming          | `next-themes` (default `dark`)                                    |
+| i18n             | EN + RU from day one (REQUIRED)                                   |
 | Database         | Postgres 16 primary (docker, named volume); SQLite via Drizzle    |
 |                  | dialect switch (`DB_URL=file:./dev.db`) for ultra-light dev only  |
 | ORM              | Drizzle (SQL-flavored, JOOQ-like). Not Prisma.                    |
-| Subprocess       | Node `child_process.spawn`. One spawn per block, runs to natural  |
-|                  | exit. No long-running process across HITL waits.                  |
+| Agent runtime    | ACP (Zed-standard) hosted by `supervisor/`, via the               |
+|                  | `@zed-industries/claude-code-acp` library (or its current         |
+|                  | successor — exact package + version pinned during M0 spike).      |
+|                  | One agent process (`claude`, `codex`) per active session via      |
+|                  | Node `child_process.spawn`. Live across `NeedsInput` keep-alive   |
+|                  | ≤30 min, checkpoint+respawn via `--resume <session-id>`.          |
+| Model routing    | CCR (Claude Code Router) bundled for `router: ccr` — z.ai GLM,    |
+|                  | MiniMax via Anthropic-API-compatible providers.                   |
+| Web ↔ supervisor | HTTP + SSE (supervisor may run on a different host)               |
+| Flow plugins     | git repos pinned by tag; installed to                             |
+|                  | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
 | Git workspaces   | Thin wrapper around `git worktree add/remove/list`                |
-| Live updates     | SSE via Route Handlers, one message per stdout line               |
-| Python bridge    | `uv run <flow-cmd>` in the same container image (Node 24 +        |
-|                  | Python 3.12 + uv). Single image, ~1-2GB, accepted.                |
-| Tests            | vitest (unit/integration), Playwright (E2E); aif determinism eval |
-|                  | before dogfood                                                    |
+| Live updates     | SSE — supervisor publishes ACP `session/update`; Next.js Route    |
+|                  | Handler bridges to browser                                        |
+| Python           | Optional — only when a specific Flow plugin ships Python CLIs     |
+|                  | (no longer required in the base container image).                 |
+| Tests            | vitest (unit/integration), Playwright (E2E)                       |
 | Lint             | ESLint 9 flat config + Prettier                                   |
 | Package manager  | pnpm                                                              |
 
@@ -100,49 +133,73 @@ under `lib/`.
 
 ## Architecture Notes
 
-The entire MAIster app for the POC is a **Next.js 16 monolith** living in
-`web/`: UI + Route Handlers + server actions + (eventually) subprocess runner +
-Drizzle DB access + SSE log streams. There is no separate backend service.
+MAIster is split into two Node processes:
 
-Hard architectural commitments (do not quietly walk back — earned in two
-review passes):
+- **`web/`** — Next.js 16 app: UI + Route Handlers + server actions +
+  Drizzle DB access + SSE bridge to supervisor. No agent processes here.
+- **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
+  agent process (`claude`, `codex`) per active session, heartbeat
+  watchdog, graceful checkpoint + respawn via `--resume`, token-count →
+  cost-on-disk. HTTP+SSE interface; can run on a different host than `web/`.
 
-1. **Block-based HITL**: subprocess exit codes drive state transitions. No
-   `fs.watch`, no `chokidar`, no polling. `Needs input` is a server-side
-   state with no live process attached.
-2. **SSE pipe-to-disk**: stdout streamed to file via
-   `fs.createWriteStream` *in parallel* with SSE emission, so the server
-   never OOMs on >10MB block output. SSE read-side tails the file.
-3. **Typed error taxonomy**: `MaisterError extends Error` with discriminated
-   `code`. UI branches on `code`.
-4. **Single executor, hard-coded**: Claude Code only in POC. No adapter
-   interface (resist premature abstraction). Refactor in dogfood week if a
-   real second executor appears.
-5. **Minimal `maister.yaml` v1**: `project` block + `flows[]`. Refuse to
-   register on `schemaVersion` mismatch, duplicate `flows[].id`, a Flow
-   command missing `{prompt}` / `{workspace_path}` placeholders, slug
+Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
+§1-8 for the canonical statement):
+
+1. **ACP-driven execution with hybrid HITL**: ACP notifications drive the
+   live path; artifact presence (`needs-input.json`) drives the durable
+   path. `NeedsInput` keep-alive ≤30 min, extended by web-console
+   activity, then checkpoint → `NeedsInputIdle` → respawn via `--resume`.
+   No `fs.watch`, no `chokidar`, no polling for state transitions.
+2. **SSE pipe-to-disk**: every ACP `session/update` line streamed to per-
+   step log file via `fs.createWriteStream` *in parallel* with SSE
+   emission, so neither tier OOMs on >10MB output. SSE read-side tails
+   the file for `lastEventId` reconnect.
+3. **Typed error taxonomy**: `MaisterError extends Error` with
+   discriminated `code` (including new codes `EXECUTOR_UNAVAILABLE`,
+   `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). UI branches on `code`.
+4. **Multi-executor via ACP**: claude + codex both required on POC. ACP
+   IS the adapter interface. Per-step override resolution: run launcher →
+   project override → project default → flow recommended. CCR bundled.
+5. **Flow Engine v2 plugin model**: Flows are git-tag-pinned plugin
+   bundles with `flow.yaml` manifest, `cli | agent | guard | human` step
+   DSL, optional `setup.sh`, shipped skills/CLIs. Installed to
+   `~/.maister/flows/<id>@<tag>/`, symlinked per project. `maister.yaml`
+   v2 carries `project` + `executors[]` + `flows[]`. Refuse to register
+   on `schemaVersion` mismatch (project or any flow manifest), duplicate
+   IDs, unknown executor reference, unknown `goto_step` target, slug
    collision, or `repo_path` collision (one repo = one project).
 6. **Atomic writes** to `.maister/`: tmp + rename via `atomicWriteJson`.
-   Never partial-write a JSON the Flow will read.
+   Never partial-write a JSON the Flow / agent will read.
 
 Out-of-POC items (do not build, do not propose): Flow designer UI ·
-multi-executor pool · adapter interface · background agents · Telegram · A/B
-parallel runs · durable orchestration · auth / multi-user / RBAC · AI-Judge ·
-full Kanban (Done as drag-target / WIP limits / swim-lanes) · event log
-table · test-run UI button · GitHub Actions CI/CD · syntax highlighting in
-diff view · skills invocation (read-only enumeration only) · project archival
-UI (DB has `archived_at`, no button) · cross-project task moves · GitHub
-issue / Linear / YouGile sync · project lesson capture.
+background agents · Telegram · A/B parallel runs · durable orchestration ·
+auth / multi-user / RBAC · AI-Judge (design in DSL OK, implementation
+Phase 2) · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
+event log table · test-run UI button · GitHub Actions CI/CD · syntax
+highlighting in diff view · project archival UI (DB has `archived_at`, no
+button) · cross-project task moves · GitHub issue / Linear / YouGile sync ·
+project lesson capture · custom ACP extensions (Stage 1 = Zed standard) ·
+cost / time / regex guard **enforcement** (parse-and-persist as metrics
+only on POC) · Plugin trust UI / sandboxing (trust internal sources) ·
+HITL as separate swimlane cards (POC = badge + Inbox block on existing
+board) · Cursor / opencode / Aider executors (POC = claude + codex).
 
 ## Non-Functional Requirements
 
-- **Crash recovery**: on Next.js startup, reconcile `runs` table vs
-  `git worktree list`. `Running` rows with no live PID become `Crashed` and
-  the UI surfaces "Recover or discard".
-- **TTL**: runs sitting in `Needs input` for 24h transition to `Abandoned`.
-- **GC**: cron route removes `Abandoned/Done` worktrees older than 7d.
-- **Server-only secrets**: API keys read from `.env` server-side. Never
-  logged, never streamed, never sent to client.
+- **Crash recovery**: on startup, reconcile `runs` table vs `git worktree
+  list` vs supervisor's live session set. `Running` rows with no live ACP
+  session AND no checkpoint → `Crashed`; UI surfaces "Recover or discard"
+  (Recover attempts `--resume <session-id>` if `acp_session_id` present).
+  `NeedsInputIdle` rows with a valid checkpoint stay valid.
+- **TTL**: runs sitting in `NeedsInputIdle` for 24h without user response
+  transition to `Abandoned`.
+- **Keep-alive window**: ACP session lives ≤30 min in `NeedsInput`;
+  web-console activity extends by +30 min each event.
+- **GC**: cron route removes `Abandoned/Done` worktrees + checkpointed
+  sessions older than 7d.
+- **Server-only secrets**: API keys read from `.env` server-side (Next.js)
+  or supervisor-side. Never logged, never streamed, never sent to client.
+  Never embedded in ACP `session/update` payloads visible to the browser.
 - **Error handling**: throw `MaisterError` with `code` for known domain
   failures, never plain `Error`. UI never string-matches errors.
 - **Surgical changes**: every changed line traces directly to the user's
@@ -152,23 +209,29 @@ issue / Linear / YouGile sync · project lesson capture.
 
 ## Success Criteria
 
-**POC (T+1 to T+1.5 weeks):** ≥2 projects registered via `maister.yaml` v1
-(each with ≥2 Flows) → portfolio home shows active workspaces from both →
-task created on a project board → Launch click → worktree created with
-precondition checks → headless Claude Code runs, logs streamed from the
-project-scoped log file → at least one HITL round-trip → diff visible →
-merge-to-main works on clean-merge case → run survives restart with
-`Crashed` reconciliation (per-project) → 3 concurrent runs scheduled across
-projects, 4th queues with position badge → retry loop works: abandon a run
-→ task returns to Backlog → Launch again → attempt N+1 spawns against the
-same task with a fresh worktree.
+**POC (T+4 to T+5 weeks, post-scope-expansion):** ≥2 projects registered
+via `maister.yaml` v2 (each pulling ≥2 Flow plugins from git URLs by tag)
+→ portfolio home shows active workspaces from both → task created on a
+project board with executor selected from `executors[]` → Launch click →
+worktree created with precondition checks → supervisor spawns Claude Code
+**OR** Codex as an ACP session, `session/update` events stream to UI →
+at least one HITL round-trip works for both flavors (binary approve/deny
+via `session/request_permission` AND structured form via artifact) →
+NeedsInput keep-alive extends on web-console activity → on idle timeout
+run checkpoints to `NeedsInputIdle`; user response respawns via `--resume`
+→ diff visible → merge-to-main works on clean-merge case → run survives
+Next.js restart AND supervisor restart with `Crashed` reconciliation →
+3 concurrent runs scheduled across projects, 4th queues with position
+badge → retry loop works (Failed/Abandoned run → task back to Backlog →
+Launch again → attempt N+1) → per-step executor override verified on at
+least one Flow.
 
-**Dogfood (T+1.5 – 2w):** run aif against the maister repo itself, produce a
-non-trivial PR-sized diff, manually merge.
+**Dogfood (T+5 to T+6w):** register MAIster repo in itself, run a Flow
+against its own backlog, ship ≥1 non-trivial PR.
 
-**External validation (T+3w):** ≥1 of 2 friends ships ≥1 PR end-to-end
-through maister on their own repo. 0/2 → thesis not validated, reassess
-wedge.
+**External validation (T+8w):** 3 installations on external repos, ≥1 PR
+shipped end-to-end through maister on each. 0/3 → thesis not validated,
+reassess wedge.
 
 ## Authoritative Sources
 
