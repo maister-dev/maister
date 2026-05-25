@@ -35,6 +35,7 @@ Not yet installed (add when we wire backend per `../docs/`):
 
 **Do not** add other component libraries (no shadcn/ui, no MUI, no Chakra).
 HeroUI v3 + Tailwind 4 + `tailwind-variants` covers all UI primitives.
+Main/default UI language - EN, project should be i18n-ized. RU interface support is **REQUIRED**
 
 ## Scripts
 
@@ -88,30 +89,113 @@ web/
 
 Pages — replace template stubs:
 
-- `app/page.tsx` → **flat run list** (`docs/...test-plan....md` §"Affected Pages/Routes"). Status badge column, filter by status.
-- `app/runs/[id]/page.tsx` → **run detail**: status, live logs, HITL form panel, diff view, action buttons (mark ready, merge, abandon).
-- `app/tasks/new/page.tsx` (or modal) → task creation: title + prompt + target Flow (preselected from `maister.yaml`).
+- `app/page.tsx` → **Portfolio home** (superset.sh-style): grid of active
+  workspaces across all projects. Card = project · branch · status · last
+  activity · quick actions. Filters by project + status.
+- `app/projects/page.tsx` → **Projects list**: registered projects + "Add
+  project" button. Each row links to its board.
+- `app/projects/new/page.tsx` (or modal) → **Add project**: paste path to a
+  directory containing `maister.yaml`; server validates & stores.
+- `app/projects/[slug]/page.tsx` → **Project board**: 2 columns
+  `Backlog | In Flight`. In Flight bucket: `Running | NeedsInput | Review |
+  Crashed`. A task card in Backlog shows a **Launch** button — click runs
+  precondition checks and creates a new Run (no drag-and-drop in POC).
+  Done/Abandoned in a filter tab beside the board.
+- `app/projects/[slug]/tasks/new/page.tsx` (or modal) → **Task creation**:
+  title + prompt + Flow dropdown (from `maister.yaml` `flows[]`).
+- `app/runs/[id]/page.tsx` → **Run detail**: status, live logs, HITL form
+  panel, diff view, action buttons (mark ready, merge, abandon). Worktree
+  context shown (project + branch + worktree path).
 
 Route Handlers under `app/api/`:
 
-- `POST /api/tasks`
-- `POST /api/runs` (precondition checks, `git worktree add`, spawn)
-- `GET /api/runs/[id]/stream` (SSE; `lastEventId` reconnect; tails `.maister/runs/<id>/<block-id>.log`)
-- `POST /api/runs/[id]/hitl-response` (atomic write `input-<block-id>.json` → re-invoke Flow with `--resume`)
+- `POST /api/projects` (validate `maister.yaml`, persist row)
+- `DELETE /api/projects/[slug]` (soft-archive — sets `archived_at`)
+- `POST /api/projects/[slug]/tasks` (create task → status `Backlog`)
+- `POST /api/runs` (precondition checks, `git worktree add`, spawn — body
+  carries `taskId` + `flowId`; `projectId` derived from task)
+- `GET /api/runs/[id]/stream` (SSE; `lastEventId` reconnect; tails
+  `.maister/<project-slug>/runs/<run-id>/<block-id>.log`)
+- `POST /api/runs/[id]/hitl-response` (atomic write `input-<block-id>.json`
+  under the project subtree → re-invoke Flow with `--resume`)
 - `GET /api/runs/[id]/diff` (`git diff` raw → `<pre>`, no syntax highlighting)
-- `POST /api/runs/[id]/merge` (`git merge --no-ff`; conflict → abort)
-- `POST /api/runs/[id]/abandon` (SIGTERM if a block is alive; mark worktree stale)
-- `GET /api/cron/gc` (Abandoned/Done worktrees older than 7d)
+- `POST /api/runs/[id]/merge` (`git merge --no-ff`; conflict → abort, run
+  stays `Review`)
+- `POST /api/runs/[id]/abandon` (SIGTERM if a block is alive; mark worktree
+  stale; task → `Abandoned`)
+- `GET /api/cron/gc` (Abandoned/Done worktrees >7d, all projects)
+
+Nav items in `config/site.ts`: **Portfolio** (`/`), **Projects**
+(`/projects`), **Settings** (`/settings`). Project switcher in the navbar
+links to the current project's board.
 
 Server-side modules (add as needed, names suggested — not yet present):
 
 - `lib/errors.ts` — `MaisterError` discriminated union (see root §3).
 - `lib/atomic.ts` — `atomicWriteJson` (tmp + rename).
-- `lib/worktree.ts` — `git worktree add|remove|list` wrapper.
-- `lib/runner.ts` — `child_process.spawn` of `uv run <flow-cmd>`; pipe stdout to SSE **and** to disk simultaneously.
-- `lib/config.ts` — `maister.yaml` loader, `schemaVersion` check, zod-validated.
-- `lib/db/` — Drizzle schema (`runs`, `tasks`, `workspaces`, `hitl_requests`) + client.
-- `lib/reconcile.ts` — startup hook: `runs` vs `git worktree list`; orphaned `Running` → `Crashed`.
+- `lib/worktree.ts` — `git worktree add|remove|list` wrapper, project-scoped
+  paths.
+- `lib/runner.ts` — `child_process.spawn` of `uv run <flow-cmd>`; pipe stdout
+  to SSE **and** to `.maister/<project-slug>/runs/<run-id>/<block-id>.log`
+  simultaneously.
+- `lib/config.ts` — `maister.yaml` v1 loader (project + flows[]),
+  `schemaVersion` check, zod-validated, slug derivation, dup-flow-id check.
+- `lib/projects.ts` — registry CRUD, slug derivation, slug + `repo_path`
+  uniqueness enforcement, recursive `MAISTER_PROJECTS_DIR` auto-discovery.
+- `lib/scheduler.ts` — global concurrency cap (`MAISTER_MAX_CONCURRENT_RUNS`),
+  Pending queue, auto-promote on slot free.
+- `lib/db/` — Drizzle schema (`projects`, `tasks`, `runs`, `workspaces`,
+  `hitl_requests`) + client.
+- `lib/reconcile.ts` — startup hook: per-project `runs` vs `git worktree
+  list`; orphaned `Running` → `Crashed`.
+
+Drizzle schema sketch (server-only, `lib/db/schema.ts`):
+
+```ts
+// projects
+{ id, slug (unique), name, repo_path (unique), main_branch, branch_prefix,
+  maister_yaml_path, created_at, archived_at? }
+
+// tasks
+{ id, project_id, title, prompt, flow_id, status:
+  'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
+  latest_run_id?,                       // FK to runs; null until first Launch
+  created_at, updated_at }
+
+// runs                                  // task : runs is 1 : N (retry / ralph-loop)
+{ id, project_id, task_id, flow_id, workspace_id, status:
+  'Pending' | 'Running' | 'NeedsInput' | 'Review' | 'Done' |
+  'Abandoned' | 'Crashed' | 'Failed',
+  attempt_number,                        // monotonic per task, starts at 1
+  current_block_id?, started_at, finished_at? }
+
+// workspaces
+{ id, project_id, run_id, branch, worktree_path, status, created_at,
+  removed_at? }
+
+// hitl_requests
+{ id, run_id, block_id, question, context, response_schema (jsonb),
+  response (jsonb)?, requested_at, responded_at?, expires_at }
+```
+
+Task status is the **board** axis (Backlog | InFlight | Done | Abandoned).
+Run status is the **execution** axis (richer state machine).
+
+**Task lifecycle (1:N task→run)**:
+
+- New task → `Backlog`.
+- **Launch** click → precondition checks → spawn run (attempt N) → task →
+  `InFlight`. Task stays `InFlight` while the latest run is in any of
+  `Pending/Running/NeedsInput/Review/Crashed`.
+- Latest run merged → task → `Done` (terminal).
+- Latest run `Failed | Abandoned` → task auto-returns to `Backlog`; Launch
+  button reappears on the card; next click spawns attempt N+1 against the
+  **same** task with a fresh worktree. New `attempt_number = max + 1`.
+- "Discard task" (single explicit user action on the card) → task →
+  `Abandoned` (terminal). No automatic transition to `Abandoned` — it always
+  takes an explicit user click. (Run-level abandon ≠ task-level abandon.)
+
+This shape supports ralph-loop style retry without recreating tasks.
 
 ## Conventions
 
@@ -155,15 +239,15 @@ Server-side modules (add as needed, names suggested — not yet present):
 - `LICENSE` inside `web/` duplicates the root MIT — keep root only, drop this one when convenient.
 - `README.md`: HeroUI template README; replace when we have something to say.
 - Stub routes (`app/about`, `app/blog`, `app/docs`, `app/pricing`) and `components/counter.tsx`: delete as MAIster routes land.
-- `app/page.tsx` and `config/site.ts` still reference HeroUI demo content (`navItems: Docs/Pricing/Blog/About`). Replace `navItems` with MAIster nav (`Runs`, `Tasks`, `Settings`) when wiring real pages.
+- `app/page.tsx` and `config/site.ts` still reference HeroUI demo content (`navItems: Docs/Pricing/Blog/About`). Replace `navItems` with MAIster nav (`Portfolio`, `Projects`, `Settings`) when wiring real pages.
 
 Flag these in PRs but do NOT mass-delete in unrelated commits (surgical-changes rule from root `CLAUDE.md`).
 
 ## House rules (carried over from root, repeated for the slice)
 
 - No `chokidar` / `fs.watch` / polling. SSE + subprocess exit codes drive UI transitions.
-- All writes to `.maister/<run>/` are atomic (`tmp + rename` via `atomicWriteJson`). Flow may read them mid-write otherwise.
+- All writes to `.maister/<project-slug>/runs/<run-id>/` are atomic (`tmp + rename` via `atomicWriteJson`). Flow may read them mid-write otherwise.
 - Throw `MaisterError` with a `code` for known domain failures; UI branches on `code`.
-- Stdout from a block must go to **both** SSE and `.maister/runs/<id>/<block-id>.log` — read-side tails the file.
+- Stdout from a block must go to **both** SSE and `.maister/<project-slug>/runs/<run-id>/<block-id>.log` — read-side tails the file.
 - One block = one subprocess. No long-running process held across HITL waits.
 - Anything in the root CLAUDE.md "Out of POC scope" list does not get implemented here either.

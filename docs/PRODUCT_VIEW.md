@@ -347,23 +347,40 @@ Suggested MVP success:
 
 ## 11. MVP / Phase 2 / Later
 
-### MVP — prove the spine
+### MVP — prove the spine across multiple projects
 
-Goal: make one real project task go through the full product loop.
+Goal: run several real project tasks through the full product loop in
+parallel, on one host, from one Web UI.
 
 Include:
 
-1. Project onboarding for one repo.
-2. Common backlog with manual task creation.
-3. Flow template: bugfix or small feature.
-4. Workspace lifecycle via git worktree.
-5. Headless harness with Claude Code as first executor.
-6. Web UI run monitor: progress/logs/status.
-7. Human input queue for questions/approval.
-8. Basic AI-Judge review artifact.
-9. Basic diff viewer or embedded Git diff fallback.
-10. Manual merge/PR path.
-11. Project lesson capture.
+1. **Multi-project registry** — N projects per host, each configured by its
+   own `maister.yaml` v1 (`project` block + `flows[]`). Registration via UI
+   form (path to dir) or `MAISTER_PROJECTS_DIR` env **recursive**
+   auto-discovery. `slug` and `repo_path` are unique across projects (one
+   repo = one project); collisions reject the new registration.
+2. **Portfolio home (superset.sh-style)** — single grid of every active
+   workspace across all projects: project · branch · status · last activity ·
+   quick actions (View / Resume / Abandon). Filter by project + status.
+3. **Per-project task board** — 2 columns `Backlog | In Flight`. In Flight
+   holds `Running | NeedsInput | Review | Crashed`. A Backlog card has a
+   **Launch** button (no drag-and-drop in POC); click runs preconditions and
+   creates a Run. Done/Abandoned in a filter tab.
+4. **Task creation** — title + prompt + Flow dropdown (from project
+   `flows[]`). A task ↔ Run is **1:N** — a failed/abandoned run sends the
+   task back to Backlog so the user can click Launch again (ralph-loop /
+   retry).
+5. **Workspace lifecycle via git worktree** — per-run isolated subtree under
+   `.maister/<project-slug>/runs/<run-id>/`.
+6. **Headless harness with Claude Code** as first executor (hard-coded).
+7. **Web UI run monitor** — live SSE log stream, status, HITL surface.
+8. **Block-based HITL** — `needs-input.json` artifact → form from
+   `response_schema` → atomic write of `input-<block-id>.json` → resume.
+9. **Basic diff viewer** — raw `git diff` in `<pre>` (no syntax highlighting).
+10. **Manual merge path** — `git merge --no-ff` on parent's `main_branch`;
+    conflict aborts and surfaces in UI.
+11. **Concurrency** — global cap = 3 runs (env-configurable); 4th queues with
+    position badge.
 
 Do not include in MVP:
 
@@ -374,7 +391,13 @@ Do not include in MVP:
 - Telegram;
 - heavy analytics;
 - platform-level memory sharing;
-- advanced durable orchestration.
+- advanced durable orchestration;
+- AI-Judge artifact (Phase 2);
+- project lesson capture (Phase 2);
+- full Kanban (Done as drag-target / WIP limits / swim-lanes);
+- project archival UI (DB has `archived_at`, no button);
+- cross-project task moves;
+- GitHub issue / Linear / YouGile sync.
 
 ### Phase 2 — scale within personal/team usage
 
@@ -479,12 +502,14 @@ Only after product journeys and component map.
 Focus on:
 
 - single host;
-- one repo;
-- git worktree;
+- N projects registered via per-project `maister.yaml`;
+- portfolio home + per-project board (Backlog | In Flight);
+- git worktree (project-scoped subtree);
 - Claude Code executor;
-- simple Flow definition;
+- simple Flow definition (list per project);
 - Web UI;
-- artifact persistence.
+- artifact persistence;
+- global concurrency cap = 3.
 
 ### Step 6. Build the platform as its own first project
 

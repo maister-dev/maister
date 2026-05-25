@@ -43,18 +43,24 @@ Backlog → Flow → Workspace → Headless Agents → HITL → AI-Judge → Dif
 
 ## MVP goal
 
-Prove the spine on one real project:
+Prove the spine on **several real projects in parallel**:
 
-1. Create backlog task manually.
-2. Launch it through one Flow: bugfix or small feature.
-3. Automatically create git worktree workspace.
-4. Run Claude Code/Codex/Pi/OpenCode headlessly.
-5. Show run progress/logs/artifacts in Web UI.
-6. Let human answer questions/approve.
-7. Produce AI-Judge review artifact.
-8. Show diff and tests.
-9. Allow manual PR/merge path.
-10. Capture one useful project lesson.
+1. Register multiple projects via per-project `maister.yaml` (each with its own
+   list of Flows).
+2. See all active workspaces across projects on one **Portfolio home**
+   (superset.sh-style grid).
+3. For each project, manage a **task board** with two columns:
+   `Backlog | In Flight`.
+4. Create backlog tasks (title + prompt + Flow from project's `flows[]`).
+5. Click **Launch** on a Backlog task → workspace auto-created via git
+   worktree → Flow launched. Task moves to In Flight. Retry-friendly: a task
+   may spawn many runs over its lifetime (1:N) — if a run fails or is
+   abandoned, the task returns to Backlog with the Launch button re-enabled.
+6. Run Claude Code headlessly inside the worktree.
+7. Show run progress/logs/artifacts in Web UI (live SSE).
+8. Let human answer block-based HITL questions / approve.
+9. Show diff and merge-to-main on clean-merge case.
+10. Run up to 3 sessions concurrently across projects (global cap, queue the rest).
 
 ## Not MVP
 
@@ -66,4 +72,9 @@ Prove the spine on one real project:
 - heavy analytics;
 - platform-level cross-project skills;
 - enterprise RBAC/compliance;
-- Temporal-class durable orchestration.
+- Temporal-class durable orchestration;
+- AI-Judge review artifact (Phase 2);
+- project lesson capture (Phase 2);
+- full Kanban (Done as drag-target / WIP limits / swim-lanes);
+- cross-project task moves;
+- GitHub issue / Linear / YouGile sync.
