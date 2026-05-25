@@ -66,25 +66,32 @@ yet scaffolded — only the web slice exists. Build server-side pieces inside
 ```bash
 # Configure a project (one maister.yaml per repo)
 cat > /repos/myapp/maister.yaml <<EOF
-schemaVersion: 1
+schemaVersion: 2
 project:
   name: myapp
   repo_path: /repos/myapp
   main_branch: main
   branch_prefix: maister/
+executors:
+  - id: claude-sonnet
+    agent: claude
+    model: claude-sonnet-4-6
+  - id: codex-default
+    agent: codex
+    model: gpt-5-codex
+default_executor: claude-sonnet
 flows:
   - id: bugfix
-    name: Bugfix
-    command: uv run aif run --task '{prompt}' --flow bugfix --workspace '{workspace_path}'
-  - id: feature
-    name: Small feature
-    command: uv run aif run --task '{prompt}' --flow feature --workspace '{workspace_path}'
+    source: github.com/org/maister-flow-bugfix
+    version: v1.2.3
 EOF
 
 # Launch the Web UI, register the project, create a task on the board
 cd web && pnpm dev
 open http://localhost:3000
 ```
+
+Full manifest reference: [Configuration](docs/configuration.md).
 
 ---
 
@@ -93,10 +100,15 @@ open http://localhost:3000
 | Guide | Description |
 | ----- | ----------- |
 | [Getting Started](docs/getting-started.md) | Install, dev workflow, first run |
+| [Database Schema](docs/database-schema.md) | Drizzle/Postgres tables, FK cascade chain, indexes |
+| [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
+| [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | [Vision](docs/VISION.md) | One-liner, product spine, principles, MVP goal |
 | [Product View](docs/PRODUCT_VIEW.md) | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | [Design (Locked)](docs/kaa-maister-design-20260522-174429.md) | Stack rationale, HITL protocol, success criteria, reviewer concerns |
+| [ACP Pivot Revision](docs/kaa-maister-design-20260525-acp-revision.md) | Multi-executor ACP pivot — what changed and why |
 | [Eng Review Test Plan](docs/kaa-maister-eng-review-test-plan-20260522-180855.md) | Routes, key interactions, edge cases, critical paths |
+| [M0 Spike Findings](docs/kaa-maister-m0-spike-findings-20260525.md) | ACP library validation + cross-process resume cost |
 | [Architecture](.ai-factory/ARCHITECTURE.md) | Architecture pattern, folder structure, dependency rules |
 | [Project Spec](.ai-factory/DESCRIPTION.md) | Full project specification |
 | [Agent Map](AGENTS.md) | Structural map for AI agents and new contributors |

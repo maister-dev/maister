@@ -1,18 +1,22 @@
-[Back to README](../README.md) · [Vision →](VISION.md)
+[Back to README](../README.md) · [Database Schema →](database-schema.md)
 
 # Getting Started
 
-Set up MAIster for local development. This guide assumes the Web slice
-(Next.js 16 monolith in `web/`) — the backend runner, DB, and subprocess
-Flow integration are not yet scaffolded.
+Set up MAIster for local development. The Web slice (Next.js 16 monolith
+in `web/`) is scaffolded with the foundation layer (Drizzle schema, error
+taxonomy, config v2 loader, vitest + Playwright). The `supervisor/`
+daemon (ACP sessions, agent spawn) is not yet scaffolded.
 
 ## Prerequisites
 
 - **Node 24** (per the locked container target — `nvm use 24` if you use nvm)
-- **pnpm** (package manager — `npm install -g pnpm` if missing)
+- **pnpm 11** (package manager — `npm install -g pnpm` if missing)
 - **git** with `git worktree` support (any modern version)
-- **Postgres 16** (later — when the DB layer lands; not required to run
-  `pnpm dev` today)
+- **pre-commit** (one-time `pre-commit install` writes the git hook)
+- **Postgres 16** (required for `pnpm db:migrate` + `pnpm db:seed` and
+  integration tests; not required to run `pnpm dev` against a stubbed DB)
+- **Docker** (only for `compose up postgres` and the `testcontainers`
+  integration test suite)
 - **uv** + **Python 3.12** (later — when the Flow subprocess lands; not
   required today)
 
@@ -28,12 +32,14 @@ git --version
 
 ```bash
 git clone <repo-url> mAIster
-cd mAIster/web
-pnpm install
+cd mAIster
+pre-commit install                # one-time: writes .git/hooks/pre-commit
+cd web && pnpm install
 ```
 
-The lockfile (`pnpm-lock.yaml`) is committed — `pnpm install` reproduces the
-exact dependency tree.
+The lockfile (`web/pnpm-lock.yaml`) is committed — `pnpm install
+--frozen-lockfile` reproduces the exact dependency tree. CI uses the
+frozen lockfile.
 
 ## Run the dev server
 
@@ -52,14 +58,32 @@ real MAIster routes land: portfolio home (`/`), projects list
 ## Other scripts
 
 ```bash
-pnpm build        # production build
-pnpm start        # serve the production build
-pnpm lint         # eslint --fix
+pnpm build              # production build
+pnpm start              # serve the production build
+pnpm lint               # eslint --fix
+pnpm typecheck          # tsc --noEmit
+pnpm test               # vitest unit + integration
+pnpm test:unit          # unit only (fast)
+pnpm test:integration   # spins up Postgres via testcontainers (slower)
+pnpm test:e2e           # Playwright (scaffolded, no specs yet)
+pnpm db:generate        # generate a Drizzle migration from lib/db/schema.ts
+pnpm db:migrate         # apply migrations against $DB_URL
+pnpm db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
+pnpm db:studio          # drizzle-kit studio
 ```
 
-There is no `typecheck` script yet — `npx tsc --noEmit` works because
-`noEmit: true` is set in `web/tsconfig.json`. Add a `typecheck` script the
-first time CI or a pre-commit hook needs it.
+## Database
+
+```bash
+docker compose up postgres -d
+cd web
+DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate
+DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:seed
+```
+
+Full reference: [Database Schema](database-schema.md). For the full env-var
+list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,
+`MAISTER_KEEPALIVE_MINUTES`): [Configuration](configuration.md).
 
 ## Project layout
 
@@ -106,6 +130,12 @@ mAIster/
 
 ## See Also
 
+- [Database Schema](database-schema.md) — 7 tables, FK cascade chain,
+  Drizzle workflow
+- [Error Taxonomy](error-taxonomy.md) — `MaisterError` codes and when
+  each one fires
+- [Configuration](configuration.md) — `maister.yaml` v2 + `flow.yaml`
+  v1 + every env var
 - [Vision](VISION.md) — product spine and MVP goal
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — folder structure,
   dependency rules, code examples

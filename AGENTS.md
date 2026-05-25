@@ -91,10 +91,15 @@ scaffolded** — only the web slice exists. Build server-side pieces inside
 | -------- | ---- | ----------- |
 | README | `README.md` | Landing page: quick start, key features, docs table |
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
+| Database Schema | `docs/database-schema.md` | 7 tables, FK cascade chain, indexes, Drizzle workflow |
+| Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
+| Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Vision | `docs/VISION.md` | One-liner, product spine, principles, MVP goal |
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Locked Design | `docs/kaa-maister-design-20260522-174429.md` | Stack rationale, HITL protocol, success criteria, reviewer concerns |
+| ACP Pivot Revision | `docs/kaa-maister-design-20260525-acp-revision.md` | Multi-executor ACP pivot — what changed and why |
 | Eng Review Test Plan | `docs/kaa-maister-eng-review-test-plan-20260522-180855.md` | Routes, key interactions, edge cases, critical paths |
+| M0 Spike Findings | `docs/kaa-maister-m0-spike-findings-20260525.md` | ACP library validation + cross-process resume cost |
 | README (web) | `web/README.md` | HeroUI template README — replace when something to say |
 
 ## AI Context Files
