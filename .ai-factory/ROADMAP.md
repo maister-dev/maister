@@ -6,9 +6,9 @@
 
 - [x] **M0. Spike: ACP library + cross-process resume + codex parity** — completed 2026-05-25. Full findings in `docs/kaa-maister-m0-spike-findings-20260525.md`. Verdicts: (a) `@agentclientprotocol/claude-agent-acp@0.37.0` + `@agentclientprotocol/codex-acp@0.0.44` + `@agentclientprotocol/sdk@0.22.1` (Apache-2.0) — pin in `supervisor/package.json`; (b) cross-process `claude --resume <uuid>` ✅ verified live ("ALBATROSS-42" round-trip), sessions at `~/.claude/projects/<cwd-encoded>/<uuid>.jsonl`; (c) codex via `codex-acp` adapter binary (bundles `@openai/codex` 0.128+), supervisor spawn dispatches on `executor.agent`; (d) z.ai works as plain env-router (`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` + `ANTHROPIC_AUTH_TOKEN`) — CCR is multi-provider intelligent routing, optional. **NEW finding**: each respawn rebuilds ~$0.28 of cache_creation tokens → 30-min keep-alive design saves real money, not just UX.
 
-- [ ] **M1. Drizzle schema + Postgres** — tables `projects | tasks | runs | workspaces | hitl_requests | flows | executors`. New fields: `runs.executor_id`, `runs.acp_session_id`, `runs.flow_version`, `runs.checkpoint_at`, `tasks.attempt_number` UNIQUE per task. Docker compose for Postgres 16, migrations, seed.
+- [x] **M1. Drizzle schema + Postgres** — tables `projects | tasks | runs | workspaces | hitl_requests | flows | executors`. New fields: `runs.executor_id`, `runs.acp_session_id`, `runs.flow_version`, `runs.checkpoint_at`, `tasks.attempt_number` UNIQUE per task. Docker compose for Postgres 16, migrations, seed. Shipped 2026-05-26 via `feature/poc-foundation`.
 
-- [ ] **M2. Core libs (errors, atomic, config v2)** — `MaisterError` taxonomy with new codes (`EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). `atomicWriteJson`. `maister.yaml` v2 loader (`project` + `executors[]` + `flows[]` with version pins). Flow manifest (`flow.yaml`) schema validator.
+- [x] **M2. Core libs (errors, atomic, config v2)** — `MaisterError` taxonomy with new codes (`EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). `atomicWriteJson`. `maister.yaml` v2 loader (`project` + `executors[]` + `flows[]` with version pins). Flow manifest (`flow.yaml`) schema validator. Shipped 2026-05-26 via `feature/poc-foundation`.
 
 - [ ] **M3. Supervisor daemon (`supervisor/`)** — separate Node process. HTTP+SSE API: `POST /sessions`, `DELETE /sessions/:id`, `GET /sessions/:id/stream`. Process-per-session spawn (claude/codex), heartbeat watcher → `Crashed`, token-count → cost metric persisted to `.maister/<slug>/runs/<id>/cost.jsonl`. Designed to run on a different host than Next.js (HTTP IPC).
 
@@ -37,3 +37,5 @@
 | Milestone | Date |
 |-----------|------|
 | M0. Spike: ACP library + cross-process resume + codex parity | 2026-05-25 |
+| M1. Drizzle schema + Postgres | 2026-05-26 |
+| M2. Core libs (errors, atomic, config v2) | 2026-05-26 |

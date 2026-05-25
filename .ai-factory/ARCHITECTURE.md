@@ -46,7 +46,7 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** POC, single host (multi-host capable), 
+- **Scale:** POC, single host (multi-host capable),
   `MAISTER_MAX_CONCURRENT_RUNS=3` (global cap).
 - **Key factors:**
   - ACP is the executor interface — Stage 2 multi-executor pool is

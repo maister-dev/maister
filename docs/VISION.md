@@ -20,25 +20,25 @@ Backlog → Flow → Workspace → Headless Agents → HITL → AI-Judge → Dif
 
 ## Product principles
 
-1. **Flow over prompt**  
+1. **Flow over prompt**
    Work should be launched through reusable Flows, not ad-hoc agent prompts.
 
-2. **Workspace as first-class object**  
+2. **Workspace as first-class object**
    A Flow launch creates an isolated workspace: branch/worktree/config/progress/cleanup/merge.
 
-3. **Web UI first**  
+3. **Web UI first**
    Review, intervention, dialogue and validation require a rich surface. Telegram is useful later for notifications and quick decisions.
 
-4. **Human participates where Flow says**  
+4. **Human participates where Flow says**
    HITL is not global. Each Flow step defines whether human input is must/can/autonomous.
 
-5. **Artifacts over chat sludge**  
+5. **Artifacts over chat sludge**
    Specs, plans, diffs, tests, Judge reports, reviews and lessons must be stored as structured artifacts.
 
-6. **Project learns from work**  
+6. **Project learns from work**
    Bugs, incidents and reviews should produce lessons and evolve project rules/playbooks - this is the basic platform ability requirement.
 
-7. **Start personal, not enterprise**  
+7. **Start personal, not enterprise**
    Optimize for one owner and small teams first: low ops, fast iteration, single host. Enterprise governance later if needed.
 
 ## MVP goal

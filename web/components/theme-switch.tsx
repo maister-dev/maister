@@ -22,7 +22,6 @@ export const ThemeSwitch: FC<ThemeSwitchProps> = ({ className }) => {
     setIsMounted(true);
   }, []);
 
-
   if (!isMounted) return <div aria-hidden className="w-6 h-6" />;
 
   return (

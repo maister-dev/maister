@@ -1,7 +1,7 @@
 # Agentic Delivery Platform — Product View Synthesis
 
-> Date: 2026-05-22  
-> Source: RUBRIC.md + independent Opus/GPT-5.5 product review  
+> Date: 2026-05-22
+> Source: RUBRIC.md + independent Opus/GPT-5.5 product review
 > Scope: personal/internal platform, not bank enterprise.
 
 ## 1. Product framing

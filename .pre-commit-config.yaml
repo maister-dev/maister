@@ -1,0 +1,31 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (web)
+        entry: bash -c 'cd web && pnpm exec eslint --fix'
+        language: system
+        files: ^web/.*\.(ts|tsx)$
+        pass_filenames: false
+
+      - id: tsc
+        name: tsc --noEmit (web)
+        entry: bash -c 'cd web && pnpm exec tsc --noEmit'
+        language: system
+        files: ^web/.*\.(ts|tsx)$
+        pass_filenames: false
+
+      - id: prettier
+        name: prettier --write (web)
+        entry: bash -c 'cd web && pnpm exec prettier --write .'
+        language: system
+        files: ^web/
+        pass_filenames: false
