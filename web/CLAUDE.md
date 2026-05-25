@@ -19,18 +19,18 @@ is template demo material to be **replaced** as we implement MAIster routes.
 
 ## Stack (concrete versions in `package.json`)
 
-| Layer        | Choice                                      |
-| ------------ | ------------------------------------------- |
-| Framework    | Next.js `16.2.6` (App Router)               |
-| React        | `19.2.6`                                    |
-| Language     | TypeScript `5.6.3`, strict, `@/*` → `./*`   |
-| UI library   | `@heroui/react` `3.0.4` + `@heroui/styles`  |
-| Styling      | Tailwind CSS `4.1.11` via `@tailwindcss/postcss` |
-| Variants     | `tailwind-variants` `3.2.2`                 |
-| Theming      | `next-themes` `0.4.6` (default `dark`)      |
-| Lint         | ESLint `9` flat config + Prettier           |
-| Pkg manager  | pnpm                                        |
-| Node         | 24 (per root CLAUDE.md container target)    |
+| Layer       | Choice                                           |
+| ----------- | ------------------------------------------------ |
+| Framework   | Next.js `16.2.6` (App Router)                    |
+| React       | `19.2.6`                                         |
+| Language    | TypeScript `5.6.3`, strict, `@/*` → `./*`        |
+| UI library  | `@heroui/react` `3.0.4` + `@heroui/styles`       |
+| Styling     | Tailwind CSS `4.1.11` via `@tailwindcss/postcss` |
+| Variants    | `tailwind-variants` `3.2.2`                      |
+| Theming     | `next-themes` `0.4.6` (default `dark`)           |
+| Lint        | ESLint `9` flat config + Prettier                |
+| Pkg manager | pnpm                                             |
+| Node        | 24 (per root CLAUDE.md container target)         |
 
 Not yet installed (add when we wire backend per `../docs/`):
 `drizzle-orm`, `pg`, `zod`, `vitest`, `@playwright/test`. The
@@ -108,7 +108,7 @@ Pages — replace template stubs:
   directory containing `maister.yaml`; server validates & stores.
 - `app/projects/[slug]/page.tsx` → **Project board**: 2 columns
   `Backlog | In Flight`. In Flight bucket: `Running | NeedsInput |
-  NeedsInputIdle | Review | Crashed`. A task card in Backlog shows a
+NeedsInputIdle | Review | Crashed`. A task card in Backlog shows a
   **Launch** button — click runs precondition checks and creates a new Run
   (no drag-and-drop in POC). HITL form renders inline on the In-Flight
   card when state is `NeedsInput*`. Dedicated **Inbox** block beside the
@@ -131,7 +131,7 @@ Route Handlers under `app/api/`:
 - `DELETE /api/projects/[slug]` (soft-archive — sets `archived_at`)
 - `POST /api/projects/[slug]/tasks` (create task → status `Backlog`)
 - `POST /api/runs` (precondition checks, executor resolution, `git worktree
-  add`, supervisor `POST /sessions` — body carries `taskId`, `flowId`,
+add`, supervisor `POST /sessions` — body carries `taskId`, `flowId`,
   optional `executor_id_override`; `projectId` derived from task)
 - `GET /api/runs/[id]/stream` (SSE; `lastEventId` reconnect; tails the
   per-step log file populated by `supervisor-client`)
@@ -158,7 +158,7 @@ Server-side modules (add as needed, names suggested — not yet present):
 
 - `lib/errors.ts` — `MaisterError` discriminated union (see root §3, expanded
   taxonomy includes `EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL |
-  CHECKPOINT`).
+CHECKPOINT`).
 - `lib/atomic.ts` — `atomicWriteJson` (tmp + rename).
 - `lib/worktree.ts` — `git worktree add|remove|list` wrapper, project-scoped
   paths.
@@ -184,7 +184,7 @@ Server-side modules (add as needed, names suggested — not yet present):
 - `lib/db/` — Drizzle schema (`projects`, `tasks`, `runs`, `workspaces`,
   `hitl_requests`, `flows`, `executors`) + client.
 - `lib/reconcile.ts` — startup hook: per-project `runs` vs `git worktree
-  list` vs supervisor's live session set; orphan `Running` with no live
+list` vs supervisor's live session set; orphan `Running` with no live
   ACP session and no checkpoint → `Crashed`. `NeedsInputIdle` with valid
   checkpoint stays valid.
 
@@ -252,7 +252,7 @@ Run status is the **execution** axis (richer state machine).
   branch free, worktree path free, global cap not hit, selected executor
   registered) → supervisor `POST /sessions` → task → `InFlight`. Task stays
   `InFlight` while the latest run is in any of `Pending/Running/NeedsInput/
-  NeedsInputIdle/Review/Crashed`.
+NeedsInputIdle/Review/Crashed`.
 - Latest run merged → task → `Done` (terminal).
 - Latest run `Failed | Abandoned` → task auto-returns to `Backlog`; Launch
   button reappears on the card; next click spawns attempt N+1 against the
@@ -288,22 +288,26 @@ keeps long human reviews from being penalized for thinking time.
 ## Conventions
 
 ### TypeScript
+
 - `strict: true` is on. Honor it. No `any` unless flagged with `// FIXME(any):`.
 - Use the `@/...` alias for imports rooted at `web/` — never deep relative `../../..`.
 - `target: "es5"` is the template default; do not narrow further. Modern syntax compiles fine.
 
 ### React / Next.js
+
 - Default to **Server Components**. Add `"use client"` only when a component uses state, effects, browser APIs, or HeroUI components that require client context (most do — `<Button>`, themed inputs, modals). Match the template: `providers.tsx`, `counter.tsx`, `theme-switch.tsx` are explicit `"use client"`.
 - Route handlers and server actions live in `app/`. Keep secret-touching logic server-side; **never** ship API keys to client.
 - Default theme is `dark` (`<Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>` in `app/layout.tsx`). Use `next-themes` `useTheme()` to toggle.
 
 ### Styling
+
 - Tailwind 4 utility classes. Use HeroUI `Button`, `Card`, `Modal`, `Input`, `Navbar` etc. instead of hand-rolling.
 - For variant-based class composition use `tailwind-variants` (`tv(...)`), mirroring `components/primitives.ts`.
 - Dark variant is declared in `styles/globals.css` as `@custom-variant dark (&:is(.dark *))`. Use `dark:` prefix as usual.
 - Class merging: `clsx` is fine for ad-hoc combos (already in the layout); for variant APIs use `tailwind-variants`.
 
 ### Linting (auto-enforced by `pnpm lint`)
+
 - `no-console`: warn. Use a logger boundary, not `console.log` in committed code.
 - `react/jsx-sort-props`: callbacks last, shorthand first, reserved first. Auto-fixable.
 - `import/order`: type → builtin → object → external → internal → parent → sibling → index, with blank lines between. Auto-fixable.
@@ -312,6 +316,7 @@ keeps long human reviews from being penalized for thinking time.
 - `react/self-closing-comp`: warn.
 
 ### Files & naming
+
 - React components: `kebab-case.tsx` file, named exports preferred (template uses both — pick named for new components).
 - Route handlers: `app/api/<segment>/route.ts`, exporting `GET`/`POST` etc.
 - Server-only modules importing `node:*`/secrets: keep in `lib/` and never import from a Client Component.

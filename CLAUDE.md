@@ -16,7 +16,7 @@ multi-workspace + HITL + per-project task board.** We orchestrate and wrap
 existing Flow frameworks (e.g. aif). We do NOT build a new Flow runner, Flow
 designer, or skill engine.
 
-Audience: solo-technical CEO/CIO/staff-eng 
+Audience: solo-technical CEO/CIO/staff-eng
 
 ## Repo state right now
 

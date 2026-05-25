@@ -124,16 +124,16 @@ src/
 │   │   │   │       └── Update[EntityA].{ext}
 │   │   │   │
 │   │   │   └── [EntityB]/                      # Slice for EntityB (e.g., Role)
-│   │   │       └── ...                         
+│   │   │       └── ...
 │   │   │
 │   │   ├── models/                             # Rich Domain Models stay shared within the module
-│   │   │   ├── [EntityA].{ext}                 
-│   │   │   └── [EntityB].{ext}                 
+│   │   │   ├── [EntityA].{ext}
+│   │   │   └── [EntityB].{ext}
 │   │   │
 │   │   └── shared/                             # Shared utilities strictly within this module
 │   │
 │   └── [AnotherModule]/
-│       └── ...                                
+│       └── ...
 │
 └── shared/                                    # ── SHARED (cross-cutting globally) ──
     └── ...
@@ -191,8 +191,8 @@ src/
 src/
 ├── [BoundedContext]/                           # ── BOUNDED CONTEXT ──
 │   ├── Domain/                                 # PURE DOMAIN (zero external deps)
-│   │   ├── Enum/                               
-│   │   ├── Exception/                          
+│   │   ├── Enum/
+│   │   ├── Exception/
 │   │   └── Port/                               # Interfaces only
 │   │
 │   ├── Application/                            # APPLICATION SERVICES (use cases)
@@ -207,13 +207,13 @@ src/
 │       └── [Interface]/                        # Web / API / CLI
 │           └── [Feature]Controller.{ext}
 │
-├── [AnotherBoundedContext]/                     
-│   └── ...                                     
+├── [AnotherBoundedContext]/
+│   └── ...
 │
 └── Shared/                                     # ── SHARED (cross-cutting) ──
-    ├── Domain/                                 
-    ├── Application/                            
-    └── Infrastructure/                         
+    ├── Domain/
+    ├── Application/
+    └── Infrastructure/
 ```
 
 ### Folder Structure — Vertical Slice + Explicit Architecture (by feature)
@@ -222,9 +222,9 @@ src/
 src/
 ├── [BoundedContext]/                           # ── BOUNDED CONTEXT ──
 │   ├── Domain/                                 # PURE DOMAIN (shared across slices)
-│   │   ├── Enum/                               
-│   │   ├── Exception/                          
-│   │   └── Port/                               
+│   │   ├── Enum/
+│   │   ├── Exception/
+│   │   └── Port/
 │   │
 │   ├── Slices/
 │   │   └── [Feature]/                          # Feature slice — self-contained
@@ -234,13 +234,13 @@ src/
 │   │
 │   └── Infrastructure/                         # Cross-feature adapters
 │
-├── [AnotherBoundedContext]/                     
-│   └── ...                                     
+├── [AnotherBoundedContext]/
+│   └── ...
 │
-└── Shared/                                     
-    ├── Domain/                                 
-    ├── Application/                            
-    └── Infrastructure/                         
+└── Shared/
+    ├── Domain/
+    ├── Application/
+    └── Infrastructure/
 ```
 
 ### Core Principles
