@@ -23,10 +23,7 @@ export async function atomicWriteJson(
     await rename(tmpPath, path);
     log.debug({ path }, "atomicWriteJson done");
   } catch (err) {
-    log.error(
-      { err, path },
-      "atomicWriteJson failed; attempting tmp cleanup",
-    );
+    log.error({ err, path }, "atomicWriteJson failed; attempting tmp cleanup");
     await unlink(tmpPath).catch(() => undefined);
     throw err;
   }

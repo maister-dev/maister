@@ -36,9 +36,13 @@ const guardConfigSchema = z
     time: z.number().optional(),
     regex: z.string().optional(),
   })
-  .refine((v) => v.cost !== undefined || v.time !== undefined || v.regex !== undefined, {
-    message: "guard step must declare at least one of cost/time/regex",
-  });
+  .refine(
+    (v) =>
+      v.cost !== undefined || v.time !== undefined || v.regex !== undefined,
+    {
+      message: "guard step must declare at least one of cost/time/regex",
+    },
+  );
 
 const cliStepSchema = z.object({
   id: z.string().min(1),

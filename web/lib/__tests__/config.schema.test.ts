@@ -87,9 +87,7 @@ describe("maisterYamlV2Schema", () => {
   it("rejects unknown router value", () => {
     const bad = {
       ...goldenMaisterYaml,
-      executors: [
-        { id: "x", agent: "claude", model: "x", router: "noop" },
-      ],
+      executors: [{ id: "x", agent: "claude", model: "x", router: "noop" }],
     };
 
     expect(() => maisterYamlV2Schema.parse(bad)).toThrow();

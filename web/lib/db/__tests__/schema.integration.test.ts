@@ -118,7 +118,11 @@ async function seedChain() {
   return { projectId, executorId, flowId, taskId, runId, workspaceId, hitlId };
 }
 
-async function countWhere(table: string, idCol: string, id: string): Promise<number> {
+async function countWhere(
+  table: string,
+  idCol: string,
+  id: string,
+): Promise<number> {
   const result = await db.execute(
     sql.raw(`select count(*)::int as c from ${table} where ${idCol} = '${id}'`),
   );

@@ -16,11 +16,7 @@ export type MaisterErrorCode =
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;
 
-  constructor(
-    code: MaisterErrorCode,
-    message: string,
-    options?: ErrorOptions,
-  ) {
+  constructor(code: MaisterErrorCode, message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "MaisterError";
     this.code = code;

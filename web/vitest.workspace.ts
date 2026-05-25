@@ -7,10 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const alias = {
   "@": resolve(__dirname, "."),
-  "server-only": resolve(
-    __dirname,
-    "node_modules/server-only/empty.js",
-  ),
+  "server-only": resolve(__dirname, "node_modules/server-only/empty.js"),
 };
 
 export default defineWorkspace([

@@ -49,9 +49,7 @@ describe("db client factory", () => {
     }
 
     expect(isMaisterError(caught)).toBe(true);
-    expect(
-      isMaisterError(caught) ? caught.code : undefined,
-    ).toBe("CONFIG");
+    expect(isMaisterError(caught) ? caught.code : undefined).toBe("CONFIG");
   });
 
   it("throws CONFIG MaisterError on unsupported prefix (mysql://)", async () => {
@@ -67,12 +65,10 @@ describe("db client factory", () => {
     }
 
     expect(isMaisterError(caught)).toBe(true);
-    expect(
-      isMaisterError(caught) ? caught.code : undefined,
-    ).toBe("CONFIG");
-    expect(
-      caught instanceof Error ? caught.message : "",
-    ).not.toContain("supersecret");
+    expect(isMaisterError(caught) ? caught.code : undefined).toBe("CONFIG");
+    expect(caught instanceof Error ? caught.message : "").not.toContain(
+      "supersecret",
+    );
   });
 
   it("returns a SQLite-backed Drizzle client for DB_URL=file::memory:", async () => {

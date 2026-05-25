@@ -101,7 +101,10 @@ describe("loadProjectConfig", () => {
   it("rejects unknown default_executor", async () => {
     const path = await writeFixture(
       "bad-default.yaml",
-      goldenYaml.replace("default_executor: claude-sonnet", "default_executor: nonexistent"),
+      goldenYaml.replace(
+        "default_executor: claude-sonnet",
+        "default_executor: nonexistent",
+      ),
     );
 
     let caught: unknown;
@@ -113,15 +116,18 @@ describe("loadProjectConfig", () => {
     }
 
     expect(isMaisterError(caught)).toBe(true);
-    expect(
-      caught instanceof Error ? caught.message : "",
-    ).toContain("default_executor");
+    expect(caught instanceof Error ? caught.message : "").toContain(
+      "default_executor",
+    );
   });
 
   it("rejects unknown executor_override on a flow", async () => {
     const path = await writeFixture(
       "bad-override.yaml",
-      goldenYaml.replace("executor_override: claude-ccr", "executor_override: missing"),
+      goldenYaml.replace(
+        "executor_override: claude-ccr",
+        "executor_override: missing",
+      ),
     );
 
     await expect(loadProjectConfig(path)).rejects.toMatchObject({

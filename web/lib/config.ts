@@ -54,7 +54,10 @@ export async function loadProjectConfig(
       .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
       .join("; ");
 
-    log.warn({ path: maisterYamlPath, issues }, "maister.yaml validation failed");
+    log.warn(
+      { path: maisterYamlPath, issues },
+      "maister.yaml validation failed",
+    );
     throw new MaisterError(
       "CONFIG",
       `maister.yaml schema errors in ${maisterYamlPath}: ${issues}`,

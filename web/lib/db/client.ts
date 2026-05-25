@@ -6,9 +6,9 @@ import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import pino from "pino";
 
-import { MaisterError } from "@/lib/errors";
-
 import * as schema from "./schema";
+
+import { MaisterError } from "@/lib/errors";
 
 const log = pino({ name: "db" });
 

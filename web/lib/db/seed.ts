@@ -57,7 +57,10 @@ async function main() {
       repoPath: "/repos/maister-dev",
       maisterYamlPath: "/repos/maister-dev/maister.yaml",
     });
-    log.info({ table: "projects", id: projectId, slug: DEV_PROJECT_SLUG }, "inserted");
+    log.info(
+      { table: "projects", id: projectId, slug: DEV_PROJECT_SLUG },
+      "inserted",
+    );
 
     await db.insert(executors).values([
       {
