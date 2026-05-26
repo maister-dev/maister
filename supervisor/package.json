@@ -1,0 +1,43 @@
+{
+  "name": "@maister/supervisor",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "lint": "eslint --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run --project unit --passWithNoTests",
+    "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:watch": "vitest --project unit"
+  },
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.37.0",
+    "@agentclientprotocol/codex-acp": "0.0.44",
+    "@agentclientprotocol/sdk": "0.22.1",
+    "fastify": "^5.2.1",
+    "pino": "^9.14.0",
+    "pino-pretty": "^11.3.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/compat": "1.2.8",
+    "@eslint/eslintrc": "3.3.1",
+    "@eslint/js": "9.25.1",
+    "@types/node": "20.9.0",
+    "@typescript-eslint/eslint-plugin": "8.34.1",
+    "@typescript-eslint/parser": "8.34.1",
+    "eslint": "9.25.1",
+    "eslint-config-prettier": "10.1.5",
+    "eslint-plugin-import": "2.32.0",
+    "eslint-plugin-prettier": "5.5.0",
+    "eslint-plugin-unused-imports": "4.1.4",
+    "globals": "16.0.0",
+    "prettier": "3.5.3",
+    "tsx": "^4.22.3",
+    "typescript": "5.6.3",
+    "vitest": "^2.1.9"
+  }
+}
