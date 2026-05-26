@@ -2,10 +2,16 @@
 
 # Getting Started
 
-Set up MAIster for local development. The Web slice (Next.js 16 monolith
-in `web/`) is scaffolded with the foundation layer (Drizzle schema, error
-taxonomy, config v2 loader, vitest + Playwright). The `supervisor/`
-daemon (ACP sessions, agent spawn) is not yet scaffolded.
+Set up MAIster for local development. The repo is a pnpm monorepo with
+two long-running Node processes:
+
+- **`web/`** — Next.js 16 (Drizzle schema, error taxonomy, `maister.yaml`
+  v2 loader, vitest + Playwright). The user-facing surface plus the
+  Route Handlers that bridge SSE to the browser.
+- **`supervisor/`** — a separate Node daemon (Fastify + pino) that owns
+  ACP sessions and spawns the per-session agent processes
+  (`claude-agent-acp`, `codex-acp`). See [Supervisor](supervisor.md)
+  for the wire contract and limitations on POC.
 
 ## Prerequisites
 
@@ -34,18 +40,31 @@ git --version
 git clone <repo-url> mAIster
 cd mAIster
 pre-commit install                # one-time: writes .git/hooks/pre-commit
-cd web && pnpm install
+pnpm install --frozen-lockfile    # from repo root — installs both workspaces
 ```
 
-The lockfile (`web/pnpm-lock.yaml`) is committed — `pnpm install
---frozen-lockfile` reproduces the exact dependency tree. CI uses the
-frozen lockfile.
+The lockfile (`pnpm-lock.yaml` at the repo root) is committed —
+`pnpm install --frozen-lockfile` reproduces the exact dependency tree
+for both `web/` and `supervisor/`. CI uses the frozen lockfile.
 
-## Run the dev server
+## Run the dev servers
+
+The web tier defaults to `MAISTER_SUPERVISOR_URL=http://localhost:7777`,
+so start the supervisor first when running both locally.
 
 ```bash
-cd web
-pnpm dev          # http://localhost:3000
+# Terminal 1: supervisor (Fastify + tsx watch on src/main.ts)
+pnpm --filter @maister/supervisor dev    # http://localhost:7777
+
+# Terminal 2: web (Next.js dev server)
+pnpm --filter maister-web dev            # http://localhost:3000
+```
+
+Or use Docker Compose for both plus Postgres in one command:
+
+```bash
+docker compose up -d
+docker compose logs -f                   # follow web + supervisor + postgres
 ```
 
 What you should see: the HeroUI Next.js template home page in dark mode.
@@ -57,19 +76,35 @@ real MAIster routes land: portfolio home (`/`), projects list
 
 ## Other scripts
 
+All commands work from the repo root via `pnpm --filter <pkg> <script>`.
+
+**Web (`pnpm --filter maister-web …`):**
+
 ```bash
-pnpm build              # production build
-pnpm start              # serve the production build
-pnpm lint               # eslint --fix
-pnpm typecheck          # tsc --noEmit
-pnpm test               # vitest unit + integration
-pnpm test:unit          # unit only (fast)
-pnpm test:integration   # spins up Postgres via testcontainers (slower)
-pnpm test:e2e           # Playwright (scaffolded, no specs yet)
-pnpm db:generate        # generate a Drizzle migration from lib/db/schema.ts
-pnpm db:migrate         # apply migrations against $DB_URL
-pnpm db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
-pnpm db:studio          # drizzle-kit studio
+build              # production build
+start              # serve the production build
+lint               # eslint --fix
+typecheck          # tsc --noEmit
+test               # vitest unit + integration
+test:unit          # unit only (fast)
+test:integration   # spins up Postgres via testcontainers (slower)
+test:e2e           # Playwright (scaffolded, no specs yet)
+db:generate        # generate a Drizzle migration from lib/db/schema.ts
+db:migrate         # apply migrations against $DB_URL
+db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
+db:studio          # drizzle-kit studio
+```
+
+**Supervisor (`pnpm --filter @maister/supervisor …`):**
+
+```bash
+dev                # tsx watch src/main.ts (auto-restart on changes)
+start              # tsx src/main.ts (one-shot)
+lint               # eslint --fix
+typecheck          # tsc --noEmit
+test               # vitest unit + integration
+test:unit          # 30 tests (registry, types, cost, spawn)
+test:integration   # 9 lifecycle scenarios via the fake-acp.mjs fixture
 ```
 
 ## Database

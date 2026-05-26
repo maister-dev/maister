@@ -29,3 +29,24 @@ repos:
         language: system
         files: ^web/
         pass_filenames: false
+
+      - id: eslint-supervisor
+        name: eslint (supervisor)
+        entry: bash -c 'cd supervisor && pnpm exec eslint --fix'
+        language: system
+        files: ^supervisor/.*\.ts$
+        pass_filenames: false
+
+      - id: tsc-supervisor
+        name: tsc --noEmit (supervisor)
+        entry: bash -c 'cd supervisor && pnpm exec tsc --noEmit'
+        language: system
+        files: ^supervisor/.*\.ts$
+        pass_filenames: false
+
+      - id: prettier-supervisor
+        name: prettier --write (supervisor)
+        entry: bash -c 'cd supervisor && pnpm exec prettier --write .'
+        language: system
+        files: ^supervisor/
+        pass_filenames: false

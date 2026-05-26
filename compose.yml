@@ -10,12 +10,15 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       DB_URL: ${DB_URL:-postgres://maister:maister@postgres:5432/maister}
       MAISTER_MAX_CONCURRENT_RUNS: ${MAISTER_MAX_CONCURRENT_RUNS:-1}
+      MAISTER_SUPERVISOR_URL: ${MAISTER_SUPERVISOR_URL:-http://supervisor:7777}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - maister_runtime:/app/.maister
       - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
     depends_on:
       postgres:
+        condition: service_healthy
+      supervisor:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -24,6 +27,35 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  supervisor:
+    build:
+      context: .
+      target: production
+    image: ${MAISTER_IMAGE:-maister/app:dev}
+    command: ["pnpm", "--filter", "@maister/supervisor", "start"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      MAISTER_SUPERVISOR_PORT: ${MAISTER_SUPERVISOR_PORT:-7777}
+      MAISTER_RUNTIME_ROOT: /app
+      MAISTER_HEARTBEAT_INTERVAL_MS: ${MAISTER_HEARTBEAT_INTERVAL_MS:-5000}
+      MAISTER_KILL_GRACE_MS: ${MAISTER_KILL_GRACE_MS:-5000}
+      MAISTER_SHUTDOWN_GRACE_MS: ${MAISTER_SHUTDOWN_GRACE_MS:-15000}
+      MAISTER_KEEPALIVE_MINUTES: ${MAISTER_KEEPALIVE_MINUTES:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    volumes:
+      - maister_runtime:/app/.maister
+      - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:7777/sessions').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   postgres:
     image: postgres:16-alpine

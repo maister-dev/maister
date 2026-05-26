@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # MAIster — single-image Node 24 + Python 3.12 + uv per the locked container target.
-# Build stages: deps → builder → development → production.
+# Workspace: monorepo (pnpm) with `web/` (Next.js) and `supervisor/` (ACP daemon).
+# Build stages: builder → development → production.
 
 ARG NODE_VERSION=24-bookworm-slim
 ARG PNPM_VERSION=11.3.0
@@ -33,31 +34,30 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# ---------- deps: production-only node_modules ----------
-FROM base AS deps
-COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./web/
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    cd web && pnpm install --frozen-lockfile --prod
-
-# ---------- builder: full deps + production build ----------
+# ---------- builder: full monorepo deps + web production build ----------
 FROM base AS builder
-COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./web/
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json ./web/
+COPY supervisor/package.json ./supervisor/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    cd web && pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile
 COPY web/ ./web/
-RUN cd web && pnpm build
+COPY supervisor/ ./supervisor/
+RUN pnpm --filter maister-web build
 
-# ---------- development: hot reload via pnpm dev ----------
+# ---------- development: hot reload via pnpm dev / supervisor dev ----------
 FROM base AS development
-COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./web/
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json ./web/
+COPY supervisor/package.json ./supervisor/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    cd web && pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
-WORKDIR /app/web
-EXPOSE 3000 9229
+WORKDIR /app
+EXPOSE 3000 7777 9229
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["pnpm", "dev"]
+CMD ["pnpm", "--filter", "maister-web", "dev"]
 
 # ---------- production: minimal runtime, non-root ----------
 FROM base AS production
@@ -67,16 +67,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN groupadd --system --gid 1001 app \
  && useradd  --system --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app \
- && mkdir -p /app/web /app/.maister \
+ && mkdir -p /app/.maister \
  && chown -R app:app /app
 
-COPY --from=deps    --chown=app:app /app/web/node_modules ./web/node_modules
-COPY --from=builder --chown=app:app /app/web/.next        ./web/.next
-COPY --from=builder --chown=app:app /app/web/public       ./web/public
-COPY --from=builder --chown=app:app /app/web/package.json /app/web/pnpm-lock.yaml /app/web/next.config.mjs ./web/
+COPY --from=builder --chown=app:app /app /app
 
 USER app
-WORKDIR /app/web
-EXPOSE 3000
+WORKDIR /app
+EXPOSE 3000 7777
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["pnpm", "start"]
+CMD ["pnpm", "--filter", "maister-web", "start"]

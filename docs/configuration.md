@@ -202,6 +202,13 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global concurrency cap (across all projects) |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (extended by web-console activity) |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
+| `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
+| `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
+| `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
+| `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |
+| `MAISTER_KILL_GRACE_MS` | no | `5000` | SIGTERM → SIGKILL grace per session |
+| `MAISTER_SHUTDOWN_GRACE_MS` | no | `15000` | Total budget for graceful supervisor shutdown |
+| `LOG_LEVEL` | no | `debug` (dev) / `info` (prod) | pino level for both web and supervisor |
 | `ANTHROPIC_API_KEY` | yes for default | — | Claude executor (unless overridden by per-executor `env`) |
 | `ANTHROPIC_BASE_URL` | no | api.anthropic.com | Per-executor `env` overrides the global default |
 | `ANTHROPIC_AUTH_TOKEN` | no | uses `ANTHROPIC_API_KEY` | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …) |
@@ -242,6 +249,9 @@ hand-rolling DTOs — the zod schema is the single source of truth.
 
 ## See Also
 
+- [Supervisor](supervisor.md) — the ACP daemon that consumes
+  `executors[].env` + `executors[].router` and the supervisor-specific
+  env vars listed above
 - [Error Taxonomy](error-taxonomy.md) — `CONFIG` semantics; what the UI
   shows on each rejection
 - [Database Schema](database-schema.md) — how `maister.yaml` registration
