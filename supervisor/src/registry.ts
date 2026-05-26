@@ -18,7 +18,10 @@ export type RegistryEntry = {
   child: ChildProcess;
   emitter: SessionEmitter;
   intentionalShutdown: boolean;
+  eventBuffer: SessionEvent[];
 };
+
+const MAX_EVENT_BUFFER = 1000;
 
 export class SessionRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
@@ -40,11 +43,20 @@ export class SessionRegistry {
       );
     }
 
-    this.entries.set(record.sessionId, {
+    const entry: RegistryEntry = {
       record,
       child,
       emitter,
       intentionalShutdown: false,
+      eventBuffer: [],
+    };
+
+    this.entries.set(record.sessionId, entry);
+    emitter.on(SESSION_EVENT_CHANNEL, (event: SessionEvent) => {
+      entry.eventBuffer.push(event);
+      if (entry.eventBuffer.length > MAX_EVENT_BUFFER) {
+        entry.eventBuffer.shift();
+      }
     });
     this.logger.debug(
       { sessionId: record.sessionId, runId: record.runId, pid: record.pid },
@@ -102,6 +114,12 @@ export class SessionRegistry {
     entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
 
     return true;
+  }
+
+  snapshotEvents(sessionId: string): SessionEvent[] {
+    const entry = this.entries.get(sessionId);
+
+    return entry ? [...entry.eventBuffer] : [];
   }
 
   subscribe(

@@ -139,18 +139,18 @@ types.ts         # DTOs + Zod schemas (StartSessionRequest, SessionRecord, Super
 
 ### Phase 3 — HTTP+SSE API (2 tasks)
 
-- **[T8] `http-api.ts`** — six routes (full list in wire-contract section). SSE reconnect tails log file from `lastEventId+1`. Error bodies match `SupervisorErrorBody`. Blocked by T6, T7.
-- **[T9] `main.ts`** — Fastify boot on `MAISTER_SUPERVISOR_PORT` (`0.0.0.0`), pino logger, graceful SIGTERM/SIGINT shutdown bounded by `MAISTER_SHUTDOWN_GRACE_MS`. Blocked by T8.
+- **[x] [T8] `http-api.ts`** — six routes (full list in wire-contract section). M3 SSE: live subscribe via emitter; lastEventId replay deferred to M7+M9 where the web tier tails the log file. Error bodies match `SupervisorErrorBody`. Blocked by T6, T7.
+- **[x] [T9] `main.ts`** — Fastify boot on `MAISTER_SUPERVISOR_PORT` (`0.0.0.0`), pino logger, graceful SIGTERM/SIGINT shutdown bounded by `MAISTER_SHUTDOWN_GRACE_MS`. Smoke-tested: 4xx/501/200 paths work; SIGTERM triggers handler. Blocked by T8.
 
 ### Phase 4 — web/ boundary (1 task)
 
-- **[T10] `web/lib/supervisor-client.ts`** — `import 'server-only'`, fetch wrappers, `MaisterError` translation, SSE async generator. Default `MAISTER_SUPERVISOR_URL=http://localhost:7777`. Blocked by T8.
+- **[x] [T10] `web/lib/supervisor-client.ts`** — `import 'server-only'`, fetch wrappers, `MaisterError` translation, SSE async generator. Default `MAISTER_SUPERVISOR_URL=http://localhost:7777`. Blocked by T8.
 
 ### Phase 5 — Tests (3 tasks)
 
-- **[T11] Supervisor unit tests** — `registry.test.ts`, `spawn.test.ts` (line-buffer split, monotonic id, env propagation, fake-acp.mjs fixture), `cost.test.ts` (lenient parser), `types.test.ts` (Zod paths). Blocked by T7.
-- **[T12] Supervisor integration test** — `lifecycle.integration.test.ts`: boots Fastify on ephemeral port + stub binary; covers 9 scenarios incl. SSE reconnect via `lastEventId` and stub-binary crash. Blocked by T9, T11.
-- **[T13] Supervisor-client unit tests** — `undici.MockAgent` for happy path + each `MaisterError` code + network failure + SSE generator. Blocked by T10.
+- **[x] [T11] Supervisor unit tests** — `registry.test.ts` (8), `spawn.test.ts` (4, with fake-acp.mjs fixture via `binaryOverride: "node"`), `cost.test.ts` (7 incl. secret-redact assertion), `types.test.ts` (11). 30 tests, all green. Blocked by T7.
+- **[x] [T12] Supervisor integration test** — `lifecycle.integration.test.ts`: boots Fastify on ephemeral port + stub binary; 9 scenarios incl. spawn/SSE/crash/secret-redact. Drove a registry per-session ring buffer + snapshot-after-subscribe SSE pattern to fix early-event race. Blocked by T9, T11.
+- **[T13] Supervisor-client unit tests** — global `fetch` stub via `vi.stubGlobal` for happy path + each `MaisterError` code + network failure + SSE generator. Blocked by T10.
 
 ### Phase 6 — Ops + CI + Docs (4 tasks)
 

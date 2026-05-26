@@ -25,6 +25,8 @@ export type SpawnSessionOptions = {
   request: StartSessionRequest;
   runtimeRoot: string;
   logger: Logger;
+  binaryOverride?: string;
+  preArgs?: string[];
 };
 
 export type SpawnSessionResult = {
@@ -39,7 +41,7 @@ export async function spawnSession(
   opts: SpawnSessionOptions,
 ): Promise<SpawnSessionResult> {
   const { sessionId, request, runtimeRoot, logger } = opts;
-  const binary = BINARY_BY_AGENT[request.executor.agent];
+  const binary = opts.binaryOverride ?? BINARY_BY_AGENT[request.executor.agent];
 
   const logPath = resolve(
     runtimeRoot,
@@ -53,7 +55,7 @@ export async function spawnSession(
   await mkdir(dirname(logPath), { recursive: true });
   const logStream = createWriteStream(logPath, { flags: "a" });
 
-  const args: string[] = [];
+  const args: string[] = opts.preArgs ? [...opts.preArgs] : [];
 
   if (request.resumeSessionId) {
     args.push("--resume", request.resumeSessionId);
@@ -132,6 +134,16 @@ export async function spawnSession(
   };
 
   const emitter = new EventEmitter();
+  const lineEmitter = (monotonicId: number, line: string) => {
+    const event: SessionEvent = {
+      type: "session.line",
+      sessionId,
+      monotonicId,
+      line,
+    };
+
+    emitter.emit(SESSION_EVENT_CHANNEL, event);
+  };
 
   let buffer = "";
 
@@ -146,14 +158,7 @@ export async function spawnSession(
 
       buffer = buffer.slice(nl + 1);
       record.monotonicId += 1;
-      const event: SessionEvent = {
-        type: "session.line",
-        sessionId,
-        monotonicId: record.monotonicId,
-        line,
-      };
-
-      emitter.emit(SESSION_EVENT_CHANNEL, event);
+      lineEmitter(record.monotonicId, line);
       logger.debug(
         { sessionId, monotonicId: record.monotonicId, len: line.length },
         "stdout-line",
@@ -165,14 +170,7 @@ export async function spawnSession(
   child.stdout?.on("end", () => {
     if (buffer.length > 0) {
       record.monotonicId += 1;
-      const event: SessionEvent = {
-        type: "session.line",
-        sessionId,
-        monotonicId: record.monotonicId,
-        line: buffer,
-      };
-
-      emitter.emit(SESSION_EVENT_CHANNEL, event);
+      lineEmitter(record.monotonicId, buffer);
       buffer = "";
     }
     logStream.end();
