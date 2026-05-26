@@ -13,7 +13,22 @@ services:
     ports:
       - "3000:3000"
       - "9229:9229"
-    command: ["pnpm", "dev"]
+    command: ["pnpm", "--filter", "maister-web", "dev"]
+
+  supervisor:
+    build:
+      target: development
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ./supervisor:/app/supervisor
+      - /app/supervisor/node_modules
+      - maister_runtime:/app/.maister
+      - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
+    ports:
+      - "7777:7777"
+    command: ["pnpm", "--filter", "@maister/supervisor", "dev"]
 
   postgres:
     ports:

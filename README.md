@@ -14,14 +14,24 @@ a new Flow runner.
 ```bash
 git clone <repo-url> mAIster
 cd mAIster
-pre-commit install        # writes .git/hooks/pre-commit
-cd web && pnpm install
-pnpm dev                  # http://localhost:3000
+pre-commit install                                # writes .git/hooks/pre-commit
+pnpm install --frozen-lockfile                    # monorepo root install
+
+# Run web + supervisor + postgres via compose (recommended):
+docker compose up -d
+docker compose logs -f                            # http://localhost:3000
+
+# Or run the pieces standalone (two terminals):
+pnpm --filter maister-web dev                     # http://localhost:3000
+pnpm --filter @maister/supervisor dev             # http://localhost:7777
 ```
 
-Backend (Drizzle/Postgres, subprocess runner, `.maister/` artifacts) is not
-yet scaffolded — only the web slice exists. Build server-side pieces inside
-`web/` (Route Handlers + Server Actions), not as a separate process.
+The repo is a pnpm monorepo (`web/` + `supervisor/`). The web tier is
+Next.js 16 (Drizzle schema, error taxonomy, `maister.yaml` v2 loader);
+the supervisor is the separate Node daemon that owns ACP sessions and
+agent processes. See [Supervisor](docs/supervisor.md) for the wire
+contract and [Architecture](.ai-factory/ARCHITECTURE.md) for the
+boundary rules.
 
 ## Key Features (POC scope)
 
@@ -100,6 +110,7 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | Guide | Description |
 | ----- | ----------- |
 | [Getting Started](docs/getting-started.md) | Install, dev workflow, first run |
+| [Supervisor](docs/supervisor.md) | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
 | [Database Schema](docs/database-schema.md) | Drizzle/Postgres tables, FK cascade chain, indexes |
 | [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
 | [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |

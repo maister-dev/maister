@@ -150,18 +150,18 @@ types.ts         # DTOs + Zod schemas (StartSessionRequest, SessionRecord, Super
 
 - **[x] [T11] Supervisor unit tests** — `registry.test.ts` (8), `spawn.test.ts` (4, with fake-acp.mjs fixture via `binaryOverride: "node"`), `cost.test.ts` (7 incl. secret-redact assertion), `types.test.ts` (11). 30 tests, all green. Blocked by T7.
 - **[x] [T12] Supervisor integration test** — `lifecycle.integration.test.ts`: boots Fastify on ephemeral port + stub binary; 9 scenarios incl. spawn/SSE/crash/secret-redact. Drove a registry per-session ring buffer + snapshot-after-subscribe SSE pattern to fix early-event race. Blocked by T9, T11.
-- **[T13] Supervisor-client unit tests** — global `fetch` stub via `vi.stubGlobal` for happy path + each `MaisterError` code + network failure + SSE generator. Blocked by T10.
+- **[x] [T13] Supervisor-client unit tests** — 14 tests via `vi.spyOn(globalThis, "fetch")`: happy path, PRECONDITION/EXECUTOR_UNAVAILABLE/SPAWN/CHECKPOINT translation, unknown-code → ACP_PROTOCOL fallback, network failure → EXECUTOR_UNAVAILABLE, SSE generator with Last-Event-ID header. Blocked by T10.
 
 ### Phase 6 — Ops + CI + Docs (4 tasks)
 
-- **[T14] `.env.example`** — add `MAISTER_SUPERVISOR_URL`, `MAISTER_SUPERVISOR_PORT`, `MAISTER_KEEPALIVE_MINUTES` (placeholder), heartbeat / grace tunables, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (blank), `LOG_LEVEL=debug`.
-- **[T15] Compose** — add `supervisor` service in `compose.yml` / overrides; shared `.maister/` volume; `depends_on: { supervisor: { condition: service_healthy } }` on `app`. Blocked by T9.
-- **[T16] CI** — extend `.github/workflows/ci.yml` to lint/typecheck/unit-test supervisor on every push; integration job runs supervisor's integration test when `integration` label is applied. Root `pnpm install --frozen-lockfile`. Blocked by T12, T13.
-- **[T17] Docs (mandatory `/aif-docs` checkpoint)** — `docs/supervisor.md` reference page, README run-locally note, cross-link from `docs/configuration.md`, update architecture doc status. Blocked by T8, T14.
+- **[x] [T14] `.env.example`** — added supervisor section: URL, PORT, runtime root, heartbeat, kill/shutdown grace, keepalive (placeholder for M8), ANTHROPIC_BASE_URL/AUTH_TOKEN, LOG_LEVEL.
+- **[x] [T15] Compose + Dockerfile** — single image `target: production` runs either web or supervisor via `command:` override. compose.yml: `supervisor` service with healthcheck on `GET /sessions`. compose.override.yml: hot-reload mount + port 7777. compose.production.yml: read-only + cap-drop hardening. **Dockerfile rewritten** for root pnpm workspace (was broken after T1). Both compose configs lint clean. Blocked by T9.
+- **[x] [T16] CI** — supervisor lint + typecheck + unit + **integration** added to base CI (every push). Web's testcontainers-backed integration stays behind the `integration` label. Cache path moved to root `pnpm-lock.yaml`. Blocked by T12, T13.
+- **[x] [T17] Docs** — wrote `docs/supervisor.md` (HTTP API, module layout, errors, cost.jsonl, env vars, run-locally, testing, POC limitations); updated README Quick Start to monorepo+supervisor + Documentation table row; refreshed `docs/getting-started.md` (root install, two-tier dev, separated web/supervisor scripts); added supervisor env vars + cross-link in `docs/configuration.md`. Blocked by T8, T14.
 
 ### Phase 7 — Verification (1 task)
 
-- **[T18] `/aif-verify` + mark M3 done in `ROADMAP.md`.** Blocked by T15, T16, T17.
+- **[x] [T18] Verify + mark M3 done in `ROADMAP.md`.** Full sweep: web lint/typecheck/unit + supervisor lint/typecheck/unit+integration — 105 tests green. ROADMAP M3 entry expanded with the shipped surface and added to Completed table. Blocked by T15, T16, T17.
 
 ## Commit plan
 

@@ -9,7 +9,10 @@ describe("extractCost", () => {
 
   it("returns null for JSON without usage", () => {
     expect(
-      extractCost(JSON.stringify({ type: "agent_message_chunk", text: "x" }), "s1"),
+      extractCost(
+        JSON.stringify({ type: "agent_message_chunk", text: "x" }),
+        "s1",
+      ),
     ).toBeNull();
   });
 

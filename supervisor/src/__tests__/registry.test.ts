@@ -1,13 +1,11 @@
-import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
+
+import { EventEmitter } from "node:events";
 
 import { describe, expect, it } from "vitest";
 import pino from "pino";
 
-import {
-  SESSION_EVENT_CHANNEL,
-  SessionRegistry,
-} from "../registry";
+import { SESSION_EVENT_CHANNEL, SessionRegistry } from "../registry";
 import { SupervisorError, type SessionRecord } from "../types";
 
 const silentLogger = pino({ level: "silent" });

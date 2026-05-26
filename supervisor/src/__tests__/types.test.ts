@@ -18,7 +18,9 @@ const validRequest = {
 
 describe("StartSessionRequestSchema", () => {
   it("accepts a canonical request", () => {
-    expect(StartSessionRequestSchema.safeParse(validRequest).success).toBe(true);
+    expect(StartSessionRequestSchema.safeParse(validRequest).success).toBe(
+      true,
+    );
   });
 
   it("accepts executor.env and router=ccr", () => {

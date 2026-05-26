@@ -29,7 +29,9 @@ function mockReject(err: unknown): void {
 }
 
 beforeEach(() => {
-  fetchSpy = vi.spyOn(globalThis, "fetch") as unknown as MockInstance<typeof fetch>;
+  fetchSpy = vi.spyOn(globalThis, "fetch") as unknown as MockInstance<
+    typeof fetch
+  >;
   process.env.MAISTER_SUPERVISOR_URL = "http://supervisor:7777";
 });
 
@@ -80,7 +82,10 @@ describe("createSession", () => {
   it("translates 503 EXECUTOR_UNAVAILABLE to MaisterError", async () => {
     mockOnce(
       new Response(
-        JSON.stringify({ code: "EXECUTOR_UNAVAILABLE", message: "no executor" }),
+        JSON.stringify({
+          code: "EXECUTOR_UNAVAILABLE",
+          message: "no executor",
+        }),
         { status: 503 },
       ),
     );

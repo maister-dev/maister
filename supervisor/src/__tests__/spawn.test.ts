@@ -1,3 +1,5 @@
+import type { SessionEvent, StartSessionRequest } from "../types";
+
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +11,6 @@ import pino from "pino";
 
 import { spawnSession } from "../spawn";
 import { SESSION_EVENT_CHANNEL } from "../registry";
-import type { SessionEvent, StartSessionRequest } from "../types";
 
 const FIXTURE_PATH = resolve(
   fileURLToPath(import.meta.url),
@@ -17,7 +18,9 @@ const FIXTURE_PATH = resolve(
 );
 const silentLogger = pino({ level: "silent" });
 
-function makeRequest(over: Partial<StartSessionRequest> = {}): StartSessionRequest {
+function makeRequest(
+  over: Partial<StartSessionRequest> = {},
+): StartSessionRequest {
   return {
     runId: "run-1",
     projectSlug: "demo",
@@ -31,6 +34,7 @@ function makeRequest(over: Partial<StartSessionRequest> = {}): StartSessionReque
 
 function collectEvents(emitter: EventEmitter): Promise<SessionEvent[]> {
   const events: SessionEvent[] = [];
+
   return new Promise<SessionEvent[]>((resolveP) => {
     emitter.on(SESSION_EVENT_CHANNEL, (e: SessionEvent) => events.push(e));
     setTimeout(() => resolveP(events), 1000);
@@ -76,9 +80,9 @@ describe("spawnSession", () => {
     expect(lineEvents[1].monotonicId).toBe(2);
     expect(lineEvents[2].monotonicId).toBe(3);
 
-    const lastLine = JSON.parse(
-      (lineEvents[2] as { line: string }).line,
-    ) as { usage?: { input_tokens?: number } };
+    const lastLine = JSON.parse((lineEvents[2] as { line: string }).line) as {
+      usage?: { input_tokens?: number };
+    };
 
     expect(lastLine.usage?.input_tokens).toBe(100);
   });
