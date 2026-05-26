@@ -16,6 +16,7 @@ const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const worktreePathSchema = z
   .string()
   .min(1)
+  .max(4096)
   .refine(
     (p) => p.startsWith("/") && !p.split("/").includes(".."),
     "worktreePath must be an absolute path with no '..' segments",
@@ -30,6 +31,7 @@ export const StartSessionRequestSchema = z.object({
   projectSlug: z
     .string()
     .min(1)
+    .max(64)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
   worktreePath: worktreePathSchema,
   stepId: z
@@ -37,9 +39,14 @@ export const StartSessionRequestSchema = z.object({
     .min(1)
     .max(128)
     .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
-  prompt: z.string(),
+  prompt: z.string().max(1_000_000),
   executor: ExecutorSchema,
-  resumeSessionId: z.string().min(1).optional(),
+  resumeSessionId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(SAFE_PATH_SEGMENT, "resumeSessionId must match /^[A-Za-z0-9._-]+$/")
+    .optional(),
 });
 
 export type ExecutorAgent = z.infer<typeof ExecutorAgentSchema>;
