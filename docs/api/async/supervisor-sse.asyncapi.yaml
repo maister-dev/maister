@@ -1,0 +1,180 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster Supervisor — SSE event stream
+  version: "0.3.0"
+  description: |
+    Server-Sent Events delivered by the supervisor's
+    `GET /sessions/{id}/stream` endpoint (described in
+    `../supervisor.openapi.yaml`).
+
+    Each child stdout line yields exactly one `session.line` event. The
+    stream terminates with either `session.exited` (clean / intentional)
+    or `session.crashed` (non-zero exit, killing signal, orphan-detected),
+    after which the connection closes.
+
+    Clients reconnect with `Last-Event-ID: <monotonicId>` to replay any
+    events with a higher id from the per-session in-memory ring buffer
+    (1000 entries). Older events are gone — the file at
+    `.maister/<projectSlug>/runs/<runId>/<stepId>.log` is the durable
+    record.
+  contact:
+    name: MAIster maintainers
+    url: https://github.com/your-org/mAIster
+  license:
+    name: MIT
+defaultContentType: application/json
+servers:
+  local:
+    url: http://localhost:7777
+    protocol: http
+    description: Local supervisor (default port).
+channels:
+  /sessions/{id}/stream:
+    parameters:
+      id:
+        description: ACP session id (UUID v4 generated at spawn).
+        schema:
+          type: string
+          format: uuid
+          minLength: 1
+          maxLength: 128
+    bindings:
+      http:
+        type: response
+        method: GET
+        headers:
+          Content-Type:
+            type: string
+            const: text/event-stream
+    subscribe:
+      operationId: subscribeSessionEvents
+      summary: Stream of session lifecycle events
+      description: |
+        Client connects via `GET /sessions/{id}/stream`. Supervisor pushes
+        events as they happen and closes the connection on the terminal
+        event.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/SessionLine"
+          - $ref: "#/components/messages/SessionExited"
+          - $ref: "#/components/messages/SessionCrashed"
+components:
+  messages:
+    SessionLine:
+      name: session.line
+      title: Child stdout line
+      summary: One JSONL line emitted by the spawned adapter binary.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionLineEvent" }
+      examples:
+        - name: first-line
+          summary: First stdout line of a run.
+          payload:
+            type: session.line
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 1
+            line: '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"5f3a..."}}'
+    SessionExited:
+      name: session.exited
+      title: Session terminated cleanly
+      summary: |
+        Emitted on clean exit (code 0, no signal) OR on intentional
+        shutdown via `DELETE /sessions/{id}`. The stream closes
+        immediately after this event.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionExitedEvent" }
+      examples:
+        - name: clean-exit
+          payload:
+            type: session.exited
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 42
+            exitCode: 0
+    SessionCrashed:
+      name: session.crashed
+      title: Session terminated abnormally
+      summary: |
+        Emitted on non-zero exit, killing signal, or
+        heartbeat-detected orphan (PID gone from the OS process table).
+        The stream closes immediately after this event.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionCrashedEvent" }
+      examples:
+        - name: sigsegv
+          payload:
+            type: session.crashed
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 42
+            exitCode: null
+            signal: SIGSEGV
+        - name: orphan-detected
+          payload:
+            type: session.crashed
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 7
+            exitCode: null
+            signal: null
+  schemas:
+    EventBase:
+      type: object
+      required: [type, sessionId, monotonicId]
+      properties:
+        type:
+          type: string
+          enum: [session.line, session.exited, session.crashed]
+        sessionId:
+          type: string
+          format: uuid
+        monotonicId:
+          type: integer
+          minimum: 1
+          description: |
+            Monotonically increasing per session. Used as the SSE event
+            `id:` and as the `Last-Event-ID` reconnect cursor.
+    SessionLineEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, line]
+          properties:
+            type:
+              type: string
+              const: session.line
+            line:
+              type: string
+              description: |
+                Raw stdout line from the adapter. M3 treats this as opaque.
+                M7 will decompose it into a typed ACP `session/update`
+                event union.
+    SessionExitedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, exitCode]
+          properties:
+            type:
+              type: string
+              const: session.exited
+            exitCode:
+              type: integer
+              description: |
+                Adapter's OS exit code. Always present on this event.
+                Non-zero codes still arrive here when the shutdown was
+                intentional (operator issued `DELETE /sessions/{id}`).
+    SessionCrashedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, exitCode, signal]
+          properties:
+            type:
+              type: string
+              const: session.crashed
+            exitCode:
+              type: integer
+              nullable: true
+              description: Null when the supervisor only saw a signal (or an orphan).
+            signal:
+              type: string
+              nullable: true
+              description: NodeJS.Signals string (e.g. SIGSEGV, SIGTERM). Null on orphan-detected.

@@ -1,0 +1,38 @@
+# Database — Mermaid ERDs
+
+Domain-grouped Entity-Relationship Diagrams for the MAIster schema.
+Source of truth for column shape and constraints is the Drizzle
+schema in `web/lib/db/schema.ts`; the prose reference is
+[`../database-schema.md`](../database-schema.md).
+
+The diagrams in this folder are the **visual** view. If they disagree
+with the Drizzle schema, the Drizzle schema wins — open a PR to fix
+the ERD.
+
+## Files
+
+| File | Scope |
+| ---- | ----- |
+| [`erd.md`](erd.md) | Full ERD across all 7 tables — one diagram. |
+| [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
+| [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces. |
+| [`hitl-domain.md`](hitl-domain.md) | HITL Requests + form-schema shape. |
+
+## Cardinality notation
+
+Mermaid `erDiagram` cardinality symbols used throughout:
+
+| Symbol | Meaning |
+| ------ | ------- |
+| `||--||` | One-to-one (mandatory both sides). |
+| `||--o{` | One-to-many (mandatory parent, zero-or-more children). |
+| `||--|{` | One-to-many (mandatory parent, one-or-more children). |
+| `o|--o{` | Optional one to zero-or-more children. |
+
+All FK relationships in MAIster are `||--o{` unless explicitly noted —
+the parent is mandatory (NOT NULL FK), the children are zero-or-more.
+
+## Cascade chain
+
+Every FK is `ON DELETE CASCADE`. Deleting a project drops the entire
+descendant tree in one statement. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).

@@ -1,0 +1,112 @@
+# Runs domain ERD
+
+Tables for the execution lifecycle: tasks (board), runs (attempts),
+workspaces (worktrees). See [`../system-analytics/tasks.md`](../system-analytics/tasks.md),
+[`../system-analytics/runs.md`](../system-analytics/runs.md), and
+[`../system-analytics/workspaces.md`](../system-analytics/workspaces.md)
+for behavior.
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ TASKS : "owns"
+    PROJECTS ||--o{ RUNS : "owns"
+    PROJECTS ||--o{ WORKSPACES : "owns"
+    FLOWS ||--o{ TASKS : "selected at create"
+    FLOWS ||--o{ RUNS : "selected at launch"
+    EXECUTORS ||--o{ TASKS : "optional override"
+    EXECUTORS ||--o{ RUNS : "spawned with"
+    TASKS ||--o{ RUNS : "1:N retry loop"
+    RUNS ||--|| WORKSPACES : "one worktree per run"
+
+    TASKS {
+        text id PK
+        text project_id FK
+        text title
+        text prompt
+        text flow_id FK
+        text executor_override_id FK
+        text status "Backlog|InFlight|Done|Abandoned"
+        integer attempt_number "starts at 1"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    RUNS {
+        text id PK
+        text task_id FK
+        text project_id FK
+        text flow_id FK
+        text executor_id FK
+        text status "Pending|Running|NeedsInput|NeedsInputIdle|Review|Crashed|Done|Abandoned|Failed"
+        text acp_session_id "resume handle (--resume)"
+        text flow_version "tag snapshot at launch"
+        timestamp checkpoint_at "when graceful checkpoint happened"
+        timestamp keepalive_until "30min sliding window in NeedsInput"
+        timestamp started_at
+        timestamp ended_at
+    }
+
+    WORKSPACES {
+        text id PK
+        text run_id FK
+        text project_id FK
+        text branch
+        text worktree_path UK "globally unique"
+        text parent_repo_path
+        timestamp created_at
+        timestamp removed_at
+    }
+```
+
+## Constraints
+
+- `tasks_id_attempt_uq` on `(id, attempt_number)` — guards against
+  duplicate attempts for the same task.
+- `tasks_project_status_idx` on `(project_id, status)` — board queries.
+- `runs_project_status_idx` on `(project_id, status)` — portfolio
+  queries and per-project In-Flight filters.
+- `runs_task_idx` on `(task_id)` — latest-attempt lookups (`ORDER BY
+attempt_number DESC LIMIT 1`).
+- `workspaces.worktree_path` UNIQUE — globally unique across the host.
+
+## Status enum reference
+
+**Tasks** (board axis):
+
+```
+Backlog -> InFlight -> Done
+       \-> Abandoned
+```
+
+Auto-return: a terminal `Failed | Crashed | Abandoned` *run* sends the
+task back to `Backlog`. Only explicit user `Discard` sends a task to
+`Abandoned`.
+
+**Runs** (execution axis):
+
+```
+Pending -> Running -> Review -> Done
+                  \-> NeedsInput <-> NeedsInputIdle -> Abandoned
+                  \-> Crashed -> Running (Recover)
+                              \-> Abandoned (Discard)
+                  \-> Failed
+```
+
+See [`../system-analytics/runs.md`](../system-analytics/runs.md) for the
+full state diagram.
+
+## Notes on cardinality
+
+- `RUNS ||--|| WORKSPACES` is one-to-one *at most* — the workspace
+  row may be missing while the run is still `Pending` (worktree not
+  yet created) or after GC (`workspaces.removed_at IS NOT NULL` and
+  the row is purged). Drawn as `||--||` because every active run has
+  exactly one workspace.
+- `TASKS ||--o{ RUNS` — 1:N attempts. The "latest" run on a card is
+  `MAX(attempt_number)`.
+
+## Linked artifacts
+
+- Process flows: [`../system-analytics/tasks.md`](../system-analytics/tasks.md),
+  [`../system-analytics/runs.md`](../system-analytics/runs.md).
+- Source: `web/lib/db/schema.ts`.

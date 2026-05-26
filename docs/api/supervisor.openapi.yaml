@@ -1,0 +1,373 @@
+openapi: 3.0.3
+info:
+  title: MAIster Supervisor HTTP API
+  version: "0.3.0"
+  description: |
+    HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
+    sessions and spawns adapter binaries `claude-agent-acp` / `codex-acp`).
+    Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
+
+    **Milestone status: M3.** The lifecycle (POST/DELETE /sessions, GET /sessions,
+    GET /sessions/:id/stream) is implemented end-to-end. `POST /sessions/:id/checkpoint`
+    and `POST /sessions/:id/input` are stubs reserved for M7 / M8.
+
+    The SSE stream emitted by `GET /sessions/:id/stream` is described separately
+    in `api/async/supervisor-sse.asyncapi.yaml`.
+
+    See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
+    and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
+  contact:
+    name: MAIster maintainers
+    url: https://github.com/your-org/mAIster
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:{port}
+    description: |
+      Local supervisor on the operator's workstation. POC ships single-host
+      docker compose; production deployments substitute their own host.
+    variables:
+      port:
+        default: "7777"
+security: []
+tags:
+  - name: sessions
+    description: ACP session lifecycle.
+  - name: stream
+    description: Per-session event stream (SSE).
+  - name: hitl
+    description: Human-in-the-loop input delivery (stubbed in M3).
+paths:
+  /sessions:
+    post:
+      tags: [sessions]
+      summary: Start a new agent session
+      description: |
+        Spawns the adapter binary determined by `executor.agent`
+        (`claude-agent-acp` for `claude`, `codex-acp` for `codex`), with
+        `cwd = worktreePath`. Returns after the OS `spawn` event fires;
+        everything after that is observable via the SSE stream.
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartSessionRequest" }
+      responses:
+        "201":
+          description: Spawn succeeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StartSessionResponse" }
+        "409":
+          description: Zod validation rejected the request body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                missingField:
+                  value: { code: "PRECONDITION", message: "executor: Required" }
+        "500":
+          description: Spawn failed (binary missing, EACCES, OOM at fork).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                enoent:
+                  value: { code: "SPAWN", message: "spawn claude-agent-acp failed: ENOENT" }
+        "503":
+          description: Reserved for executor pool exhaustion (M6).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+    get:
+      tags: [sessions]
+      summary: List all currently registered sessions
+      description: |
+        Returns the in-memory `SessionRecord[]` for every session the
+        supervisor knows about (live, exited, crashed — kept for the
+        post-terminal grace window before GC).
+      operationId: listSessions
+      responses:
+        "200":
+          description: Current registry contents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SessionRecord" }
+        default:
+          description: Unhandled supervisor error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sessions/{id}:
+    delete:
+      tags: [sessions]
+      summary: Stop a running session
+      description: |
+        Marks the session as an intentional shutdown then sends `SIGTERM`.
+        After `MAISTER_KILL_GRACE_MS` (default 5000 ms) without exit, escalates
+        to `SIGKILL`. The terminal event arrives on the SSE stream as
+        `session.exited` (because the shutdown was intentional), not
+        `session.crashed`, even on non-zero exit code.
+      operationId: deleteSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "204":
+          description: Termination initiated. SSE will deliver the terminal event.
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                unknown:
+                  value: { code: "PRECONDITION", message: "unknown session" }
+  /sessions/{id}/stream:
+    get:
+      tags: [stream]
+      summary: SSE event stream for a session
+      description: |
+        Server-Sent Events. Each child stdout line yields one `session.line`
+        event; the lifecycle terminates with either `session.exited` or
+        `session.crashed`. The stream closes automatically after the
+        terminal event.
+
+        Supports `Last-Event-ID` for reconnect replay from a per-session
+        in-memory ring buffer (1000 entries). Older events that have
+        already been GC'd are not replayable from this endpoint — the
+        web tier's eventual log-file tail bridge (M7+M9) fills that gap.
+
+        Full event schemas live in `api/async/supervisor-sse.asyncapi.yaml`.
+      operationId: streamSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Highest `monotonicId` already received by the client.
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: |
+            text/event-stream. Each event has `id`, `event`, and `data` fields.
+            See AsyncAPI for the payload union.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  id: 1
+                  event: session.line
+                  data: {"type":"session.line","sessionId":"<uuid>","monotonicId":1,"line":"<JSONL>"}
+
+                  id: 2
+                  event: session.exited
+                  data: {"type":"session.exited","sessionId":"<uuid>","monotonicId":2,"exitCode":0}
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sessions/{id}/checkpoint:
+    post:
+      tags: [sessions]
+      summary: (M8 stub) Graceful checkpoint of the session
+      description: |
+        **Stubbed in M3.** Returns 202 with `{ "status": "deferred", "milestone": "M8" }`.
+        The implementation will gracefully pause the agent so the JSONL session
+        store (`~/.claude/projects/<cwd-encoded>/<uuid>.jsonl`) can be reused
+        by `--resume <session-id>` from a fresh process.
+      operationId: checkpointSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "202":
+          description: Stub accepted; deferred to M8.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, milestone]
+                properties:
+                  status: { type: string, enum: [deferred] }
+                  milestone: { type: string, example: "M8" }
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sessions/{id}/input:
+    post:
+      tags: [hitl]
+      summary: (M7 stub) Deliver HITL response to a live session
+      description: |
+        **Stubbed in M3.** Returns 501 with `ACP_PROTOCOL`. M7 will accept
+        either an ACP `session/request_permission` reply (binary approve/deny)
+        or a pointer to a structured-form payload written under
+        `.maister/<slug>/runs/<runId>/input-<stepId>.json`.
+      operationId: deliverInput
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Shape locked in M7 — see the AsyncAPI doc once it ships.
+      responses:
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "501":
+          description: Not implemented in M3.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                stub:
+                  value:
+                    code: "ACP_PROTOCOL"
+                    message: "Not implemented in M3 — see M7"
+components:
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      description: ACP session id (UUID v4 generated by the supervisor at spawn time).
+      schema:
+        type: string
+        format: uuid
+        minLength: 1
+        maxLength: 128
+  schemas:
+    ExecutorAgent:
+      type: string
+      enum: [claude, codex]
+      description: Identity dispatch — picks the adapter binary.
+    ExecutorRouter:
+      type: string
+      enum: [ccr]
+      description: Optional in-session multi-provider router. See ADR-005.
+    Executor:
+      type: object
+      required: [agent, model]
+      properties:
+        agent: { $ref: "#/components/schemas/ExecutorAgent" }
+        model:
+          type: string
+          minLength: 1
+          description: |
+            Free-form. The adapter validates against its own provider.
+            Examples: `claude-sonnet-4-6`, `gpt-5-codex`, `glm-4.6`.
+          example: "claude-sonnet-4-6"
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Env vars overlaid on the supervisor's process env when spawning
+            the child. Per-executor env wins over the supervisor's env. Used
+            for env-router routing (e.g. `ANTHROPIC_BASE_URL`,
+            `ANTHROPIC_AUTH_TOKEN`).
+        router: { $ref: "#/components/schemas/ExecutorRouter" }
+    StartSessionRequest:
+      type: object
+      required: [runId, projectSlug, worktreePath, stepId, prompt, executor]
+      properties:
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: |
+            Application-generated run id. Doubles as a path segment under
+            `.maister/<slug>/runs/<runId>/`. Constrained to safe filesystem
+            characters.
+        projectSlug:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+          description: Kebab-case slug. Path segment under `.maister/<slug>/`.
+        worktreePath:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: |
+            Absolute filesystem path. Becomes `cwd` for the spawned child.
+            MUST start with `/` and MUST NOT contain `..` segments.
+        stepId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: |
+            Flow step id. Step log lands at `<runId>/<stepId>.log`. Constrained
+            to safe filesystem characters.
+        prompt:
+          type: string
+          maxLength: 1000000
+          description: |
+            Initial prompt for the agent. **M3:** not yet plumbed into the
+            child — the adapter binary is invoked without an explicit prompt
+            arg; this field is reserved and validated.
+        executor: { $ref: "#/components/schemas/Executor" }
+        resumeSessionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: |
+            Optional. When set, the supervisor adds `--resume <id>` to the
+            adapter's argv. M8 path; M3 wires it through verbatim.
+    StartSessionResponse:
+      type: object
+      required: [sessionId, pid]
+      properties:
+        sessionId: { type: string, format: uuid, description: ACP session id assigned by the supervisor. }
+        pid: { type: integer, minimum: 1, description: OS pid of the spawned adapter. }
+    SessionStatus:
+      type: string
+      enum: [live, exited, crashed]
+    SessionRecord:
+      type: object
+      required: [sessionId, runId, projectSlug, stepId, status, pid, startedAt, logPath, monotonicId]
+      properties:
+        sessionId: { type: string, format: uuid }
+        runId: { type: string }
+        projectSlug: { type: string }
+        stepId: { type: string }
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        pid: { type: integer, minimum: 1 }
+        startedAt: { type: string, format: date-time }
+        exitedAt: { type: string, format: date-time, nullable: true }
+        exitCode: { type: integer, nullable: true }
+        signal: { type: string, nullable: true, example: "SIGTERM" }
+        logPath: { type: string, description: Absolute path to the step .log file. }
+        monotonicId: { type: integer, minimum: 0, description: Highest event id emitted so far for this session. }
+    SupervisorErrorCode:
+      type: string
+      enum:
+        - PRECONDITION
+        - SPAWN
+        - EXECUTOR_UNAVAILABLE
+        - ACP_PROTOCOL
+        - CHECKPOINT
+        - CRASH
+      description: |
+        Subset of the web-tier `MaisterErrorCode`. The web client translates
+        this body into `MaisterError({ code })` at the boundary.
+    SupervisorErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code: { $ref: "#/components/schemas/SupervisorErrorCode" }
+        message: { type: string }

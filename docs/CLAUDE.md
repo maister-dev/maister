@@ -1,0 +1,250 @@
+# CLAUDE.md — `docs/` (MAIster Documentation)
+
+> Read `../CLAUDE.md` first for the product spine, locked decisions, and
+> out-of-POC list. This file is the contract for **how** to maintain the
+> `docs/` folder — what lives where, in what format, and which rules apply
+> when editing.
+
+## Purpose of this folder
+
+`docs/` is the canonical knowledge base for MAIster. It answers four
+questions a human or agent should never have to dig through code for:
+
+1. **What is the product?** — Vision, product view, JTBD.
+2. **Why does it look like that?** — Architectural decisions and trade-offs.
+3. **How is it built?** — C4 architecture, components, contracts.
+4. **What are the contracts?** — OpenAPI, AsyncAPI, ERDs, error taxonomy.
+
+When code and docs disagree, the **source code wins** (code is executable
+truth). The fix is to update docs in the same PR.
+
+## Artifact glossary
+
+### Product layer
+
+| File | What it answers |
+| ---- | ---------------- |
+| [`VISION.md`](VISION.md) | Product one-liner, principles, MVP goal. |
+| [`PRODUCT_VIEW.md`](PRODUCT_VIEW.md) | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later. |
+| [`getting-started.md`](getting-started.md) | Local setup, scripts, prerequisites. |
+
+### Architecture layer
+
+| File | What it answers |
+| ---- | ---------------- |
+| [`architecture.md`](architecture.md) | C4 Context + Container + Component diagrams, component table, dependency rules. |
+| [`decisions.md`](decisions.md) | ADR log. Every locked architectural decision lives here. |
+
+### Contract layer (`api/`)
+
+| Path | Content | Format |
+| ---- | ------- | ------ |
+| [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml) | Supervisor HTTP API (REST). | OpenAPI 3.0.3 |
+| [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml) | Supervisor SSE event stream. | AsyncAPI 2.6.0 |
+| [`api/external/`](api/external/) | Third-party APIs MAIster consumes. | OpenAPI / AsyncAPI |
+
+### Data layer (`db/`)
+
+| File | What it answers |
+| ---- | ---------------- |
+| [`db/erd.md`](db/erd.md) | Full Mermaid ERD across all tables. |
+| [`db/projects-domain.md`](db/projects-domain.md) | Projects + Executors + Flows ERD. |
+| [`db/runs-domain.md`](db/runs-domain.md) | Tasks + Runs + Workspaces ERD. |
+| [`db/hitl-domain.md`](db/hitl-domain.md) | HITL Requests ERD + form-schema shape. |
+| [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
+
+### System analysis (`system-analytics/`)
+
+Domain-grouped analyst artifacts: state machines, sequence diagrams, use
+cases, process flows. One file per domain.
+
+| File | Domain |
+| ---- | ------ |
+| [`system-analytics/projects.md`](system-analytics/projects.md) | Project registration, Flow plugin install. |
+| [`system-analytics/flows.md`](system-analytics/flows.md) | Flow plugin packaging, step DSL, executor override. |
+| [`system-analytics/tasks.md`](system-analytics/tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
+| [`system-analytics/runs.md`](system-analytics/runs.md) | Run state machine, ACP keep-alive + checkpoint. |
+| [`system-analytics/executors.md`](system-analytics/executors.md) | Executor identity, model routing (env-router vs CCR). |
+| [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, merge policy, reconciliation. |
+| [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
+
+### Cross-cutting reference
+
+| File | What it answers |
+| ---- | ---------------- |
+| [`configuration.md`](configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + env vars. |
+| [`error-taxonomy.md`](error-taxonomy.md) | `MaisterError` codes + UI actions. |
+| [`supervisor.md`](supervisor.md) | Supervisor daemon prose reference. |
+
+### Historical (decision archive)
+
+These are frozen records of prior planning rounds. They MUST NOT be edited
+in place — refer back to them from `decisions.md` when an ADR cites them.
+
+| File | What it records |
+| ---- | --------------- |
+| [`kaa-maister-design-20260522-174429.md`](kaa-maister-design-20260522-174429.md) | First locked design pass. |
+| [`kaa-maister-design-20260525-acp-revision.md`](kaa-maister-design-20260525-acp-revision.md) | ACP pivot from single-executor to multi-executor. |
+| [`kaa-maister-eng-review-test-plan-20260522-180855.md`](kaa-maister-eng-review-test-plan-20260522-180855.md) | Eng review test plan from the same pass. |
+| [`kaa-maister-m0-spike-findings-20260525.md`](kaa-maister-m0-spike-findings-20260525.md) | M0 spike: ACP packages, cross-process resume cost. |
+
+## Rules
+
+### R1. Format whitelist
+
+Allowed in `docs/`:
+
+- **Markdown** (CommonMark + GitHub-flavored tables and code fences).
+- **Mermaid** diagrams, fenced as ` ```mermaid `.
+- **YAML** for OpenAPI 3.0.3, AsyncAPI 2.6.0, JSON Schema, and `*.yaml`
+  config examples inside Markdown fences.
+
+Anything else (PlantUML, draw.io XML, PNG screenshots, PDF) needs an ADR
+in `decisions.md` first.
+
+### R2. Mermaid is the only diagramming language
+
+Every architectural, sequence, state, ERD, or flow diagram MUST be a
+Mermaid block. The reasons are version control, AI-readability, and
+zero-tool review. Hand-drawn images are rejected.
+
+Mermaid usage requirements:
+
+- First line declares the type: `C4Context`, `C4Container`, `C4Component`,
+  `flowchart TD|LR`, `sequenceDiagram`, `stateDiagram-v2`, `erDiagram`,
+  `classDiagram`.
+- Every diagram must render in the [Mermaid Live Editor](https://mermaid.live)
+  without errors. Validate before committing — see §Validation.
+- Use C4 notation (`C4Context`, `C4Container`, `C4Component`) for the
+  three top architectural views in `architecture.md`. Use plain
+  `flowchart` / `sequenceDiagram` / `stateDiagram-v2` everywhere else.
+- One diagram per concept. If a diagram exceeds ~25 nodes, split it.
+- Add a sentence of prose above each diagram naming the purpose. Never
+  leave a diagram unannotated — readers should know what to look for
+  before they scan it.
+
+### R3. API contracts are OpenAPI 3.0.3 (REST) or AsyncAPI 2.6.0 (events)
+
+- HTTP and HTTPS APIs are described as **OpenAPI 3.0.3** YAML files under
+  `docs/api/`. One file per logical service.
+- Event-based interactions (SSE, WebSocket, MQ, Kafka, intra-process event
+  buses with cross-boundary semantics) are described as **AsyncAPI 2.6.0**
+  YAML files under `docs/api/async/`. One file per channel set.
+- Third-party APIs MAIster consumes are described in `docs/api/external/`.
+  Use the upstream spec verbatim if it is published; otherwise write a
+  narrow OpenAPI/AsyncAPI excerpt covering only the surface MAIster uses.
+- Every spec MUST be valid against its meta-schema (Swagger/OpenAPI
+  validator, AsyncAPI validator). See §Validation.
+- API specs are the source of truth for the surface they describe.
+  Implementation drift is a bug — fix code OR fix the spec, never both
+  silently. Code-first generation is allowed; hand-edits must round-trip
+  through the validator.
+
+### R4. The ADR template is the only way to record decisions
+
+New decisions go in [`decisions.md`](decisions.md) using the template
+at the bottom of that file. Numbering is sequential and immutable
+(superseded ADRs stay; do not renumber). One decision per ADR.
+
+Outside `decisions.md`, prose may *cite* an ADR (`see ADR-005`) but MUST
+NOT restate its rationale at length. Single source of truth.
+
+### R5. Process and domain description structure
+
+Every `system-analytics/*.md` file MUST contain, in this order:
+
+1. **Purpose** — one paragraph, name the domain and its boundary.
+2. **Domain entities** — bulleted list of nouns (link to ERD if persisted).
+3. **State machine** (where applicable) — `stateDiagram-v2`.
+4. **Process flows** — `flowchart` or `sequenceDiagram` for each
+   end-to-end scenario.
+5. **Edge cases** — bulleted list of known failure / boundary modes,
+   each linked to the relevant `MaisterError` code.
+6. **Linked artifacts** — pointers to API spec, ERD, ADR, source files.
+
+The diagrams and bullets are the artifact. Prose between them is glue,
+not commentary.
+
+### R6. Implementation status is explicit
+
+Every architecture or system-analytics file MUST mark each described
+piece as one of:
+
+- **Implemented (Mx)** — present in `main` at milestone Mx.
+- **Designed (Mx)** — locked in CLAUDE.md / ADR, not yet coded.
+- **Phase 2** — explicitly out of POC scope.
+
+Use a parenthetical tag: `(Implemented M3)`, `(Designed, Phase M7)`,
+`(Phase 2 — see PRODUCT_VIEW §Phase 2)`. This keeps the docs honest
+about what is real today.
+
+### R7. Cross-reference, do not duplicate
+
+Configuration, error taxonomy, DB schema, supervisor wire contract,
+ADRs — each has exactly one canonical file. Other docs link to it.
+If two files describe the same thing, one of them is wrong; collapse
+them.
+
+### R8. Russian and English
+
+The product UI is bilingual (EN + RU). Documentation in `docs/` is
+**English only** — it is a contract for code and AI agents, both of
+which read English. Russian-language artifacts go in i18n message
+catalogs under `web/`, not here.
+
+### R9. Surgical edits
+
+Apply the root CLAUDE.md surgical-changes rule to docs too:
+
+- Touch only what the request requires.
+- Don't reformat adjacent prose, don't reflow tables, don't "improve"
+  unrelated diagrams while passing through.
+- If you spot a real bug in an unrelated section, file it as a TODO at
+  the bottom of `decisions.md` — do not fix it silently.
+
+## Validation
+
+Before any docs PR merges, the diff MUST pass:
+
+| Artifact | Validator | How |
+| -------- | --------- | --- |
+| Mermaid blocks | Mermaid CLI or [Mermaid Live](https://mermaid.live) | Paste, ensure it renders without `Syntax error`. |
+| OpenAPI 3.0.3 | `npx @redocly/cli lint <file>` or [editor.swagger.io](https://editor.swagger.io) | Zero errors; warnings reviewed. |
+| AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |
+| Markdown | `pnpm lint:md` (when present) | No broken intra-doc links. |
+
+CI gates land in Phase 2. For the POC, the author runs the checks
+locally. The `Validate all artifacts` task in the implementation plan
+covers this for the initial bulk migration.
+
+## Adding a new artifact
+
+1. **New domain doc** → add a file under `system-analytics/` following §R5.
+   Link from this file's glossary.
+2. **New API** → create the OpenAPI/AsyncAPI YAML under `api/` (or
+   `api/external/` if upstream). Link from `architecture.md` Component
+   table. Reference it from the spec that *invokes* it.
+3. **New decision** → append an ADR to `decisions.md` (next sequential
+   number). Do not rewrite history; supersede if needed.
+4. **New ERD** → add a Mermaid `erDiagram` to the relevant `db/*.md`.
+   Update the consolidated `db/erd.md`.
+
+## Anti-patterns
+
+- ❌ Writing an architecture decision in `architecture.md` instead of
+  `decisions.md`.
+- ❌ Embedding a screenshot of a diagram instead of the Mermaid source.
+- ❌ Restating the `maister.yaml` schema in a system-analytics file —
+  link to `configuration.md` instead.
+- ❌ Editing a `kaa-maister-*` historical doc to "update" it. Those are
+  frozen records.
+- ❌ Adding a "see also" section that duplicates the glossary above.
+- ❌ Letting an OpenAPI/AsyncAPI file diverge from code without filing
+  the diff as a defect.
+
+## See also
+
+- [`../CLAUDE.md`](../CLAUDE.md) — root contract for the whole repo.
+- [`../web/CLAUDE.md`](../web/CLAUDE.md) — web slice contract.
+- [`decisions.md`](decisions.md) — every locked decision behind the docs
+  themselves.

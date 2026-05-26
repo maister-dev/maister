@@ -1,0 +1,180 @@
+asyncapi: 2.6.0
+info:
+  title: Agent Client Protocol — surface consumed by MAIster
+  version: "0.22.1"
+  description: |
+    **Narrow excerpt** of the [Agent Client Protocol](https://github.com/agentclientprotocol/protocol)
+    surface that MAIster's supervisor consumes from spawned adapter binaries
+    (`claude-agent-acp`, `codex-acp`). Full spec lives upstream — this file
+    documents only the messages MAIster reads or writes at M3 and the ones
+    designed for M7 / M8 / M10.
+
+    Wire: JSON-RPC 2.0 over the child's stdin/stdout, one message per
+    newline-terminated line.
+
+    See [ADR-003](../../decisions.md#adr-003-acp-as-the-agent-runtime-protocol),
+    [`../../architecture.md`](../../architecture.md), and
+    [`../../supervisor.md`](../../supervisor.md).
+  contact:
+    name: ACP working group
+    url: https://github.com/agentclientprotocol
+  license:
+    name: Apache-2.0
+defaultContentType: application/jsonl
+servers:
+  child_stdio:
+    url: stdio://child
+    protocol: stdio
+    description: |
+      The adapter binary (`claude-agent-acp` / `codex-acp`) spawned by the
+      supervisor with `stdio: ["pipe", "pipe", "inherit"]`. Stdin carries
+      JSON-RPC requests **to** the agent; stdout carries notifications and
+      responses **from** the agent.
+channels:
+  child.stdout:
+    description: |
+      Newline-delimited JSON-RPC 2.0 frames from the agent process. The
+      supervisor at M3 treats each frame as opaque (`SessionLine` SSE
+      event); M7 will dispatch on `method`.
+    subscribe:
+      operationId: receiveAgentMessage
+      summary: Messages emitted by the agent
+      message:
+        oneOf:
+          - $ref: "#/components/messages/SessionUpdate"
+          - $ref: "#/components/messages/SessionRequestPermission"
+  child.stdin:
+    description: |
+      Requests the supervisor writes to the agent's stdin. M3 writes
+      nothing here (spawn-only). M7 will deliver HITL responses.
+    publish:
+      operationId: sendInputToAgent
+      summary: HITL responses delivered to the agent (M7+)
+      message:
+        oneOf:
+          - $ref: "#/components/messages/SessionPermissionResponse"
+          - $ref: "#/components/messages/SessionInputResponse"
+components:
+  messages:
+    SessionUpdate:
+      name: session.update
+      title: Streaming update from the agent
+      summary: |
+        Notifications with method `session/update`. M3 forwards verbatim;
+        M7 parses into a typed event union (thinking, tool_use, text_delta,
+        artifact_write, etc.).
+      payload: { $ref: "#/components/schemas/SessionUpdateNotification" }
+    SessionRequestPermission:
+      name: session.request_permission
+      title: Binary approve/deny request
+      summary: |
+        Request from the agent for a binary human decision (read file,
+        execute tool, network access). Drives transition to `NeedsInput`
+        on the run-side state machine. M7 will route the response back
+        via `child.stdin`.
+      payload: { $ref: "#/components/schemas/RequestPermissionRequest" }
+    SessionPermissionResponse:
+      name: session.request_permission.response
+      title: Response to a permission request
+      payload: { $ref: "#/components/schemas/RequestPermissionResponse" }
+    SessionInputResponse:
+      name: session.input
+      title: Structured-form HITL response (M10)
+      summary: |
+        Wraps a pointer to the artifact written under
+        `.maister/<slug>/runs/<runId>/input-<stepId>.json`. The agent reads
+        the artifact and resumes.
+      payload: { $ref: "#/components/schemas/InputResponse" }
+  schemas:
+    JsonRpcEnvelope:
+      type: object
+      required: [jsonrpc]
+      properties:
+        jsonrpc:
+          type: string
+          const: "2.0"
+        id:
+          oneOf:
+            - { type: integer }
+            - { type: string }
+        method: { type: string }
+        params: { type: object, additionalProperties: true }
+        result: { type: object, additionalProperties: true }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: integer }
+            message: { type: string }
+            data: { type: object, additionalProperties: true }
+    SessionUpdateNotification:
+      allOf:
+        - $ref: "#/components/schemas/JsonRpcEnvelope"
+        - type: object
+          required: [method, params]
+          properties:
+            method:
+              type: string
+              const: session/update
+            params:
+              type: object
+              required: [sessionId]
+              additionalProperties: true
+              properties:
+                sessionId:
+                  type: string
+                  format: uuid
+    RequestPermissionRequest:
+      allOf:
+        - $ref: "#/components/schemas/JsonRpcEnvelope"
+        - type: object
+          required: [id, method, params]
+          properties:
+            method:
+              type: string
+              const: session/request_permission
+            params:
+              type: object
+              required: [sessionId, reason]
+              additionalProperties: true
+              properties:
+                sessionId: { type: string, format: uuid }
+                reason: { type: string, description: Human-readable rationale shown in the UI. }
+                kind:
+                  type: string
+                  description: |
+                    Permission category (e.g. `tool_use`, `read_file`,
+                    `network`). Upstream-defined; treated opaquely by MAIster.
+    RequestPermissionResponse:
+      allOf:
+        - $ref: "#/components/schemas/JsonRpcEnvelope"
+        - type: object
+          required: [id, result]
+          properties:
+            result:
+              type: object
+              required: [granted]
+              properties:
+                granted: { type: boolean }
+                comment:
+                  type: string
+                  description: Optional human comment included with denial / approval.
+    InputResponse:
+      allOf:
+        - $ref: "#/components/schemas/JsonRpcEnvelope"
+        - type: object
+          properties:
+            method:
+              type: string
+              const: session/input
+            params:
+              type: object
+              required: [sessionId, artifactPath]
+              properties:
+                sessionId: { type: string, format: uuid }
+                artifactPath:
+                  type: string
+                  description: |
+                    Path (relative to the project's `.maister/<slug>/runs/<runId>/`
+                    subtree) of the JSON file the agent should read for the
+                    structured form payload.
