@@ -120,6 +120,29 @@ Full reference: [Database Schema](database-schema.md). For the full env-var
 list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,
 `MAISTER_KEEPALIVE_MINUTES`): [Configuration](configuration.md).
 
+## Install a Flow plugin
+
+Once a project row exists (the seed creates `maister-dev`), install a
+Flow plugin against it with the ops CLI:
+
+```bash
+DB_URL=postgres://maister:maister@localhost:5432/maister \
+  pnpm --filter maister-web install-flow \
+    --project maister-dev \
+    --source <git-url-or-local-path> \
+    --version v0.1.0 \
+    --flow-id bugfix
+```
+
+The installer clones the git repo at `<version>` into
+`~/.maister/flows/<flowId>@<version>/`, validates `flow.yaml`,
+creates the per-project symlink at
+`<project repo>/.maister/<slug>/flows/<flowId>/`, and upserts the
+row into the `flows` table. The Add-Project UI in M9 will replace
+this CLI for end users — it is a manual smoke-test surface only.
+
+Full pipeline reference: [Flow Installer](flow-installer.md).
+
 ## Project layout
 
 For the full structural map see [Agent Map](../AGENTS.md). The short version:

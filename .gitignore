@@ -35,6 +35,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# maister runtime artifacts (per-project Flow symlinks, run logs, HITL artifacts, cost.jsonl, etc.)
+.maister/
+
 # idea
 .idea
 *.iml
