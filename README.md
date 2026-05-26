@@ -114,6 +114,7 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | [Database Schema](docs/database-schema.md) | Drizzle/Postgres tables, FK cascade chain, indexes |
 | [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
 | [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
+| [Flow Installer](docs/flow-installer.md) | `installFlowPlugin()` pipeline, system cache, symlink, DB upsert, ops CLI |
 | [Vision](docs/VISION.md) | One-liner, product spine, principles, MVP goal |
 | [Product View](docs/PRODUCT_VIEW.md) | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | [Design (Locked)](docs/kaa-maister-design-20260522-174429.md) | Stack rationale, HITL protocol, success criteria, reviewer concerns |
