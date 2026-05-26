@@ -20,6 +20,8 @@ const BINARY_BY_AGENT: Record<ExecutorAgent, string> = {
   codex: "codex-acp",
 };
 
+const MAX_LINE_BYTES = 1024 * 1024;
+
 export type SpawnSessionOptions = {
   sessionId: string;
   request: StartSessionRequest;
@@ -134,6 +136,8 @@ export async function spawnSession(
   };
 
   const emitter = new EventEmitter();
+
+  emitter.setMaxListeners(0);
   const lineEmitter = (monotonicId: number, line: string) => {
     const event: SessionEvent = {
       type: "session.line",
@@ -151,6 +155,19 @@ export async function spawnSession(
   child.stdout?.on("data", (chunk: string) => {
     logStream.write(chunk);
     buffer += chunk;
+
+    if (buffer.length > MAX_LINE_BYTES) {
+      logger.warn(
+        { sessionId, len: buffer.length, cap: MAX_LINE_BYTES },
+        "line-buffer-overflow",
+      );
+      record.monotonicId += 1;
+      lineEmitter(record.monotonicId, buffer.slice(0, MAX_LINE_BYTES));
+      buffer = "";
+
+      return;
+    }
+
     let nl = buffer.indexOf("\n");
 
     while (nl !== -1) {

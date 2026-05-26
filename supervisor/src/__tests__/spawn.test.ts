@@ -152,4 +152,32 @@ describe("spawnSession", () => {
       }),
     ).rejects.toMatchObject({ code: "SPAWN" });
   });
+
+  it("caps single line at MAX_LINE_BYTES and emits a truncated event", async () => {
+    const request = makeRequest({ runId: "run-giant", stepId: "giant" });
+    const giantBytes = 1024 * 1024 + 1024;
+    const { child, emitter, record } = await spawnSession({
+      sessionId: "session-giant",
+      request,
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [FIXTURE_PATH, "--giant-bytes", String(giantBytes)],
+    });
+
+    const eventsPromise = collectEvents(emitter);
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+
+    const events = await eventsPromise;
+    const lineEvents = events.filter((e) => e.type === "session.line");
+
+    expect(lineEvents.length).toBeGreaterThanOrEqual(1);
+    for (const ev of lineEvents) {
+      expect((ev as { line: string }).line.length).toBeLessThanOrEqual(
+        1024 * 1024,
+      );
+    }
+    expect(record.monotonicId).toBeGreaterThanOrEqual(1);
+  });
 });

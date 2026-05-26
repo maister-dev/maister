@@ -246,6 +246,24 @@ Secrets MUST NEVER appear in:
 - the step `.log` file (sentinel-test enforced)
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
+**Env merge semantics for the spawned child:** `supervisor/src/spawn.ts`
+builds the child's env as `{ ...process.env, ...executor.env }` — the
+supervisor's process env is the base, and the per-executor env from
+`maister.yaml` overlays on top. This means:
+
+- `executor.env.ANTHROPIC_AUTH_TOKEN` always wins over the supervisor's
+  own `ANTHROPIC_AUTH_TOKEN`, which is what you want when routing one
+  particular executor through z.ai GLM, OpenRouter, etc.
+- The supervisor's `ANTHROPIC_API_KEY` is also inherited by the child
+  even when not overridden — the adapter binary picks the right
+  credential based on its own logic (`ANTHROPIC_AUTH_TOKEN` if the
+  third-party base URL is set; `ANTHROPIC_API_KEY` otherwise). If you
+  want to **deny** the supervisor's process env from reaching an
+  executor (e.g., a CCR-routed executor that must NOT see the raw
+  Anthropic key), unset the relevant variable in the supervisor's
+  process env at startup; do not rely on `executor.env` to "shadow"
+  values it doesn't list. Phase 2 may add an explicit allow-list mode.
+
 ## Running locally
 
 ```bash

@@ -200,7 +200,7 @@ export async function checkpointSession(sessionId: string): Promise<void> {
 
 export async function* streamSession(
   sessionId: string,
-  opts: { lastEventId?: number } = {},
+  opts: { lastEventId?: number; signal?: AbortSignal } = {},
 ): AsyncGenerator<SupervisorEvent, void, void> {
   const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/stream`;
   const headers: Record<string, string> = {};
@@ -215,7 +215,7 @@ export async function* streamSession(
   let res: Response;
 
   try {
-    res = await fetch(url, { headers });
+    res = await fetch(url, { headers, signal: opts.signal });
   } catch (err) {
     throw networkErrorToMaister(err, "streamSession");
   }

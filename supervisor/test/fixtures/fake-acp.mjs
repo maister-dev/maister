@@ -6,12 +6,14 @@
 //   --hang              keep stdin open and never exit (use SIGTERM to stop)
 //   --resume <id>       echo the resume marker as the first line
 //   --emit-usage        include a `usage` block in the last line
+//   --giant-bytes <N>   emit a single line of N raw bytes with NO trailing newline (overflow test)
 const args = process.argv.slice(2);
 let lines = 3;
 let exitCode = 0;
 let hang = false;
 let resume = null;
 let emitUsage = false;
+let giantBytes = 0;
 
 for (let i = 0; i < args.length; i += 1) {
   const a = args[i];
@@ -25,7 +27,14 @@ for (let i = 0; i < args.length; i += 1) {
     resume = args[++i];
   } else if (a === "--emit-usage") {
     emitUsage = true;
+  } else if (a === "--giant-bytes") {
+    giantBytes = Number.parseInt(args[++i], 10);
   }
+}
+
+if (giantBytes > 0) {
+  process.stdout.write("x".repeat(giantBytes));
+  process.exit(exitCode);
 }
 
 function emit(obj) {

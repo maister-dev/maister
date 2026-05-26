@@ -13,6 +13,14 @@ export const ExecutorSchema = z.object({
 
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
+const worktreePathSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (p) => p.startsWith("/") && !p.split("/").includes(".."),
+    "worktreePath must be an absolute path with no '..' segments",
+  );
+
 export const StartSessionRequestSchema = z.object({
   runId: z
     .string()
@@ -23,7 +31,7 @@ export const StartSessionRequestSchema = z.object({
     .string()
     .min(1)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
-  worktreePath: z.string().min(1),
+  worktreePath: worktreePathSchema,
   stepId: z
     .string()
     .min(1)

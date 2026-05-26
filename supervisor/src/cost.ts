@@ -81,6 +81,8 @@ export function extractCost(
   line: string,
   sessionId: string,
 ): CostRecord | null {
+  if (!line.includes('"usage"')) return null;
+
   let parsed: unknown;
 
   try {

@@ -243,4 +243,18 @@ describe("streamSession", () => {
 
     await expect(iter.next()).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
   });
+
+  it("forwards AbortSignal to fetch", async () => {
+    mockOnce(new Response("", { status: 200 }));
+
+    const controller = new AbortController();
+    const iter = streamSession("s1", { signal: controller.signal });
+
+    await iter.next();
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/sessions/s1/stream"),
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
 });

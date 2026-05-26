@@ -95,6 +95,7 @@ export async function start(): Promise<void> {
 
     await app.close();
     logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
+    await new Promise<void>((r) => logger.flush(() => r()));
     process.exit(0);
   };
 
