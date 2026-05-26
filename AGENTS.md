@@ -21,12 +21,13 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 - **Language:** TypeScript 5.6 (strict)
 - **UI library:** HeroUI v3 (`@heroui/react` 3.0.4)
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`
-- **Database (planned):** Postgres 16 via Drizzle ORM (SQLite for ultra-light
-  dev via Drizzle dialect switch)
-- **Subprocess runner (planned):** Node `child_process.spawn` of
-  `uv run <flow-cmd>`
-- **Tests (planned):** vitest + Playwright
-- **Package manager:** pnpm
+- **Database:** Postgres 16 via Drizzle ORM (SQLite for ultra-light dev via
+  Drizzle dialect switch)
+- **Supervisor daemon (`supervisor/`):** Fastify 5 + pino + zod; ACP via
+  `@agentclientprotocol/sdk@0.22.1` spawning `claude-agent-acp@0.37.0` and
+  `codex-acp@0.0.44` adapter binaries
+- **Tests:** vitest (unit + integration), Playwright (E2E)
+- **Package manager:** pnpm (monorepo workspace: `web` + `supervisor`)
 - **Node:** 24
 
 ## Project Structure
@@ -36,23 +37,61 @@ mAIster/
 ├── .ai-factory/                # AI Factory project context
 │   ├── config.yaml             # AI Factory configuration (language, paths, git)
 │   ├── DESCRIPTION.md          # Project specification
-│   └── rules/
-│       └── base.md             # Project-wide conventions for AI agents
+│   ├── ARCHITECTURE.md         # Architecture pattern, folder structure, deps
+│   ├── ROADMAP.md              # Milestones (M0..M13), Completed table
+│   ├── plans/                  # Full-mode /aif-plan output, branch-keyed
+│   └── rules/                  # Project conventions for AI agents
+│       ├── base.md             # Project-wide rules
+│       ├── frontend.md         # Web-tier rules (HeroUI, RSC, lint)
+│       ├── backend.md          # Server-tier rules (subprocess, SSE, errors)
+│       └── database.md         # Drizzle / Postgres rules
 ├── .agents/                    # Codex agent bundles (do not hand-edit)
 ├── .claude/                    # Claude skills + agents (managed via /aif)
 ├── .codex/                     # Codex skills + config.toml
 ├── .mcp.json                   # MCP servers: github, filesystem, postgres,
 │                               #              chromeDevtools, playwright
 ├── .ai-factory.json            # AI Factory installed-skills registry
+├── .pre-commit-config.yaml     # Pre-commit hooks: lint/typecheck/prettier (web + supervisor)
+├── pnpm-workspace.yaml         # Monorepo workspace: web + supervisor
+├── pnpm-lock.yaml              # Frozen lockfile (root)
+├── Dockerfile                  # Single image; web/supervisor selected via command:
+├── compose.yml                 # Base: app + supervisor + postgres
+├── compose.override.yml        # Dev: hot reload, ports 3000 / 7777 / 5432
+├── compose.production.yml      # Prod hardening: read_only, cap_drop, tmpfs
 ├── docs/                       # Product & engineering documentation
 │   ├── VISION.md
 │   ├── PRODUCT_VIEW.md
+│   ├── supervisor.md           # M3: HTTP+SSE API, lifecycle, cost.jsonl
+│   ├── configuration.md
+│   ├── database-schema.md
+│   ├── error-taxonomy.md
+│   ├── getting-started.md
 │   ├── kaa-maister-design-20260522-174429.md           # Locked design
-│   └── kaa-maister-eng-review-test-plan-20260522-180855.md
-├── web/                        # The entire MAIster app (Next.js 16 monolith)
+│   ├── kaa-maister-design-20260525-acp-revision.md     # ACP pivot
+│   ├── kaa-maister-eng-review-test-plan-20260522-180855.md
+│   └── kaa-maister-m0-spike-findings-20260525.md
+├── supervisor/                 # ── ACP SUPERVISOR DAEMON ── (M3)
+│   ├── src/
+│   │   ├── main.ts             # Fastify boot + graceful shutdown
+│   │   ├── http-api.ts         # 6 routes (POST/DELETE/GET /sessions, SSE, checkpoint/input stubs)
+│   │   ├── spawn.ts            # child_process dispatch (claude-agent-acp | codex-acp)
+│   │   ├── heartbeat.ts        # exit/error → session.exited/crashed + orphan watcher
+│   │   ├── cost.ts             # cache_creation/input/output tokens → cost.jsonl
+│   │   ├── registry.ts         # In-memory SessionRecord map + per-session event ring buffer
+│   │   ├── types.ts            # Zod schemas + SessionEvent union + SupervisorError
+│   │   └── __tests__/          # 30 unit + 9 integration tests
+│   ├── test/fixtures/
+│   │   └── fake-acp.mjs        # Stand-in for the real ACP binary in tests
+│   ├── package.json            # @maister/supervisor; tsx runtime
+│   ├── tsconfig.json
+│   ├── vitest.workspace.ts     # unit | integration split
+│   └── eslint.config.mjs
+├── web/                        # ── NEXT.JS WEB TIER ──
 │   ├── app/                    # App Router (layout, pages, api/, server actions)
 │   ├── components/             # HeroUI-based React components
 │   ├── config/                 # Site config (navItems), fonts
+│   ├── lib/                    # Server-only modules (errors, atomic, config, db, supervisor-client)
+│   ├── i18n/                   # EN + RU translations (required from day one)
 │   ├── styles/                 # globals.css (Tailwind 4 + HeroUI styles)
 │   ├── types/                  # Shared TS types
 │   ├── public/                 # Static assets
@@ -63,26 +102,37 @@ mAIster/
 │   ├── eslint.config.mjs       # ESLint 9 flat config
 │   └── postcss.config.mjs      # @tailwindcss/postcss
 ├── CLAUDE.md                   # Root project instructions for AI agents
+├── AGENTS.md                   # This file
+├── README.md                   # Landing page: quick start, docs index
+├── .env.example                # Server env vars (web + supervisor)
+├── .dockerignore
 ├── LICENSE                     # MIT
-└── .gitignore                  # Next.js-configured (.next/, node_modules/, .env*.local)
+└── .gitignore
 ```
 
-Backend (Drizzle, subprocess runner, `.maister/` artifacts) is **not yet
-scaffolded** — only the web slice exists. Build server-side pieces inside
-`web/` (Route Handlers + server actions), not as a separate process.
+Two Node processes: `web/` (Next.js — UI + Route Handlers + server actions
++ Drizzle DB access + SSE bridge) and `supervisor/` (Fastify daemon —
+owns ACP sessions and spawns agent processes). They communicate over
+HTTP+SSE through `web/lib/supervisor-client.ts`; the supervisor can run
+on a different host than the web tier.
 
 ## Key Entry Points
 
 | File | Purpose |
 | ---- | ------- |
 | `web/app/layout.tsx` | Root layout: Providers + Navbar + container |
-| `web/app/page.tsx` | Home page (template stub — to replace with run list) |
+| `web/app/page.tsx` | Home page (template stub — to replace with portfolio grid) |
 | `web/app/providers.tsx` | next-themes ThemeProvider wrapper |
 | `web/app/error.tsx` | Root error boundary |
-| `web/config/site.ts` | Nav items, external links (template content) |
-| `web/styles/globals.css` | Tailwind 4 + HeroUI styles import; dark variant |
-| `web/package.json` | Scripts: `dev`, `build`, `start`, `lint`; pinned deps |
-| `web/tsconfig.json` | strict; `@/*` → `./*` |
+| `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
+| `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
+| `web/lib/db/schema.ts` | Drizzle schema: 7 tables (projects, executors, flows, tasks, runs, workspaces, hitl_requests) |
+| `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
+| `supervisor/src/main.ts` | Supervisor daemon entrypoint (Fastify on `:7777`) |
+| `supervisor/src/http-api.ts` | Six HTTP routes + SSE bridge |
+| `supervisor/src/spawn.ts` | `child_process.spawn` dispatcher (claude-agent-acp / codex-acp) |
+| `supervisor/package.json` | `@maister/supervisor`; scripts: `dev`, `start`, `test:unit`, `test:integration` |
+| `pnpm-workspace.yaml` | Monorepo: `web` + `supervisor` |
 | `.mcp.json` | MCP server configuration |
 
 ## Documentation
@@ -91,6 +141,7 @@ scaffolded** — only the web slice exists. Build server-side pieces inside
 | -------- | ---- | ----------- |
 | README | `README.md` | Landing page: quick start, key features, docs table |
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
+| Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
 | Database Schema | `docs/database-schema.md` | 7 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
@@ -112,7 +163,11 @@ scaffolded** — only the web slice exists. Build server-side pieces inside
 | `.ai-factory/DESCRIPTION.md` | Project specification synthesized from product docs |
 | `.ai-factory/ARCHITECTURE.md` | Architecture pattern, folder structure, dependency rules, code examples |
 | `.ai-factory/config.yaml` | AI Factory configuration (language, paths, git settings) |
+| `.ai-factory/ROADMAP.md` | Milestones (M0..M13) + Completed table |
 | `.ai-factory/rules/base.md` | Project-wide conventions extracted from CLAUDE.md files |
+| `.ai-factory/rules/frontend.md` | Web-tier rules (HeroUI, RSC, lint) |
+| `.ai-factory/rules/backend.md` | Server-tier rules (supervisor, SSE, errors, concurrency) |
+| `.ai-factory/rules/database.md` | Drizzle / Postgres rules |
 
 When this file disagrees with `CLAUDE.md` or `docs/`, those win — update
 this file.
@@ -134,9 +189,13 @@ this file.
   matching.
 - **Atomic writes to `.maister/`** — always tmp + rename via
   `atomicWriteJson`. The Flow may read mid-write otherwise.
-- **No `chokidar` / `fs.watch` / polling.** Subprocess exit codes drive
-  state transitions.
-- **One block = one subprocess.** No long-running process held across a
-  HITL wait.
+- **No `chokidar` / `fs.watch` / polling.** State transitions are driven
+  by ACP notifications (live path) plus artifact presence (recovery path);
+  process exit codes feed the heartbeat-promoted crash event.
+- **Agent processes live in `supervisor/`, not `web/`.** The web tier
+  reaches the supervisor through `web/lib/supervisor-client.ts` only.
+  ACP sessions are held live across `NeedsInput` (with a 30-min
+  keep-alive window planned for M8); they are not killed between HITL
+  turns.
 - **Out-of-POC push-back** — if a task adds anything from the
   `CLAUDE.md` "Out of POC scope" list, push back and link the design doc.
