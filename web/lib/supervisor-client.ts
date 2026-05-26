@@ -159,7 +159,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   } catch (err) {
     throw networkErrorToMaister(err, "deleteSession");
   }
-  if (!res.ok && res.status !== 204) {
+  if (!res.ok) {
     throw await asMaisterError(res, "ACP_PROTOCOL");
   }
 }
@@ -225,7 +225,6 @@ export async function* streamSession(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let currentEvent = "";
   let currentData = "";
 
   try {
@@ -253,10 +252,7 @@ export async function* streamSession(
               );
             }
             currentData = "";
-            currentEvent = "";
           }
-        } else if (line.startsWith("event:")) {
-          currentEvent = line.slice(6).trimStart();
         } else if (line.startsWith("data:")) {
           const chunk = line.slice(5).trimStart();
 
@@ -266,7 +262,6 @@ export async function* streamSession(
       }
     }
   } finally {
-    void currentEvent;
     reader.releaseLock();
   }
 }

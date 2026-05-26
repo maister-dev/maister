@@ -11,14 +11,24 @@ export const ExecutorSchema = z.object({
   router: ExecutorRouterSchema.optional(),
 });
 
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
 export const StartSessionRequestSchema = z.object({
-  runId: z.string().min(1),
+  runId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(SAFE_PATH_SEGMENT, "runId must match /^[A-Za-z0-9._-]+$/"),
   projectSlug: z
     .string()
     .min(1)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
   worktreePath: z.string().min(1),
-  stepId: z.string().min(1),
+  stepId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
   prompt: z.string(),
   executor: ExecutorSchema,
   resumeSessionId: z.string().min(1).optional(),
