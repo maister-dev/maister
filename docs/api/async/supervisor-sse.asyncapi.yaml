@@ -1,22 +1,30 @@
 asyncapi: 2.6.0
 info:
   title: MAIster Supervisor — SSE event stream
-  version: "0.3.0"
+  version: "0.5.0"
   description: |
     Server-Sent Events delivered by the supervisor's
     `GET /sessions/{id}/stream` endpoint (described in
     `../supervisor.openapi.yaml`).
 
-    Each child stdout line yields exactly one `session.line` event. The
-    stream terminates with either `session.exited` (clean / intentional)
-    or `session.crashed` (non-zero exit, killing signal, orphan-detected),
-    after which the connection closes.
+    M3 events: every child stdout line yields one `session.line` event;
+    the stream terminates with `session.exited` (clean / intentional) or
+    `session.crashed` (non-zero exit, killing signal, orphan-detected).
+    M5 adds two ACP-aware events emitted by the supervisor's
+    `ClientSideConnection`:
 
-    Clients reconnect with `Last-Event-ID: <monotonicId>` to replay any
-    events with a higher id from the per-session in-memory ring buffer
-    (1000 entries). Older events are gone — the file at
-    `.maister/<projectSlug>/runs/<runId>/<stepId>.log` is the durable
-    record.
+    - `session.update` — structured ACP `session/update` parameter
+      (delta payload from the adapter). One per ACP update received.
+    - `session.permission_auto` — supervisor auto-approved an ACP
+      `session/request_permission` mid-turn (M5 placeholder; M7
+      replaces this with real HITL routing).
+
+    Terminal events (`session.exited` / `session.crashed`) close the
+    connection. Clients reconnect with `Last-Event-ID: <monotonicId>`
+    to replay any events with a higher id from the per-session
+    in-memory ring buffer (1000 entries). Older events are gone — the
+    file at `.maister/<projectSlug>/runs/<runId>/<stepId>.log` is the
+    durable record.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -56,6 +64,8 @@ channels:
       message:
         oneOf:
           - $ref: "#/components/messages/SessionLine"
+          - $ref: "#/components/messages/SessionUpdate"
+          - $ref: "#/components/messages/SessionPermissionAuto"
           - $ref: "#/components/messages/SessionExited"
           - $ref: "#/components/messages/SessionCrashed"
 components:
@@ -74,6 +84,46 @@ components:
             sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
             monotonicId: 1
             line: '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"5f3a..."}}'
+    SessionUpdate:
+      name: session.update
+      title: ACP session/update parameter
+      summary: |
+        Structured payload from the supervisor's `ClientSideConnection`
+        for an ACP `session/update` notification. Emitted in parallel
+        with `session.line` for the same wire data, but pre-parsed.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionUpdateEvent" }
+      examples:
+        - name: agent-message-chunk
+          summary: Incremental assistant message chunk from the adapter.
+          payload:
+            type: session.update
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 4
+            update:
+              sessionUpdate: "agent_message_chunk"
+              content: { type: "text", text: "Working on it..." }
+    SessionPermissionAuto:
+      name: session.permission_auto
+      title: M5 auto-approved permission request
+      summary: |
+        Supervisor received an ACP `session/request_permission` from the
+        adapter and auto-allowed it with the first available option.
+        Emitted alongside a `warn` log; M7 replaces this with structured
+        HITL and removes the auto-allow behaviour.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionPermissionAutoEvent" }
+      examples:
+        - name: write-file-auto-allow
+          payload:
+            type: session.permission_auto
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 7
+            toolCall:
+              toolCallId: "tc_01"
+              kind: "edit"
+              title: "Write README.md"
+            optionId: "allow"
     SessionExited:
       name: session.exited
       title: Session terminated cleanly
@@ -121,7 +171,12 @@ components:
       properties:
         type:
           type: string
-          enum: [session.line, session.exited, session.crashed]
+          enum:
+            - session.line
+            - session.update
+            - session.permission_auto
+            - session.exited
+            - session.crashed
         sessionId:
           type: string
           format: uuid
@@ -143,9 +198,50 @@ components:
             line:
               type: string
               description: |
-                Raw stdout line from the adapter. M3 treats this as opaque.
-                M7 will decompose it into a typed ACP `session/update`
-                event union.
+                Raw stdout line from the adapter. M5 still emits this
+                alongside the parsed `session.update` event so that
+                downstream cost / log consumers keep working unchanged.
+    SessionUpdateEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, update]
+          properties:
+            type:
+              type: string
+              const: session.update
+            update:
+              type: object
+              additionalProperties: true
+              description: |
+                Parsed ACP `session/update` parameter. Shape is the
+                ACP `SessionNotification.update` union (e.g.
+                `agent_message_chunk`, `tool_call`, `tool_call_update`,
+                `plan`). Treated as opaque on the wire here — typed
+                clients should refer to `@agentclientprotocol/sdk` for
+                the discriminated union.
+    SessionPermissionAutoEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, toolCall, optionId]
+          properties:
+            type:
+              type: string
+              const: session.permission_auto
+            toolCall:
+              type: object
+              additionalProperties: true
+              description: |
+                The ACP `toolCall` payload that triggered the permission
+                request (opaque JSON object).
+            optionId:
+              type: string
+              description: |
+                The id of the permission option the supervisor
+                auto-selected (M5 always picks the first available
+                option, typically `allow`). Echoed back to the adapter
+                via the ACP `session/request_permission` response.
     SessionExitedEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

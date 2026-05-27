@@ -91,6 +91,27 @@ sequenceDiagram
 Source of truth: `supervisor/src/spawn.ts` line ~66:
 `const childEnv = { ...process.env, ...(request.executor.env ?? {}) };`.
 
+## Expectations
+
+- Executor identity tuple is `{agent, model, env?, router?}`; `agent`
+  enum is exactly `claude | codex` on POC.
+- Executors are project-scoped; `executors.id` is unique within a
+  project, NEVER shared across projects on POC.
+- Adapter binary dispatch is deterministic from `executor.agent` via
+  `BINARY_BY_AGENT` in `supervisor/src/spawn.ts` — no ambient lookup.
+- Child env is `{ ...process.env, ...executor.env }`; `executor.env`
+  always wins over the supervisor's own env on key collision.
+- Override resolution is total: every `agent` step resolves to exactly
+  one registered executor or fails with `EXECUTOR_UNAVAILABLE` (503).
+- Override priority is exactly: launcher → project per-flow → project
+  default → flow `recommended_executor`; higher tier always wins.
+- env-router is the default mode and requires zero extra dependencies;
+  CCR is opt-in only when `router: ccr` is set on the executor.
+- Supervisor logs MUST record `hasEnv: boolean` for spawn telemetry;
+  env values, API keys, and tokens are NEVER logged or streamed.
+- Adding a new `agent` enum value requires a coordinated change to
+  `ExecutorAgentSchema` AND `BINARY_BY_AGENT` (Phase 2).
+
 ## Edge cases
 
 - **Executor not registered** → `MaisterError("EXECUTOR_UNAVAILABLE")`

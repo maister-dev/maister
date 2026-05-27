@@ -113,6 +113,29 @@ flowchart LR
     Update --> Done([next row])
 ```
 
+## Expectations
+
+- Exactly one worktree per run, rooted at
+  `.maister/<slug>/runs/<runId>/`; no cross-project bleed.
+- `workspaces.worktree_path` is globally UNIQUE across all projects;
+  enforced at the DB layer.
+- Branch name pattern is exactly `<branch_prefix><task-slug>-<attempt>`
+  and is created with `git worktree add ... -b`.
+- Worktree creation runs preconditions (clean parent, branch free,
+  path free) BEFORE the `git worktree add` call; failure throws
+  `PRECONDITION` with no filesystem side effect.
+- Worktree shares `.git` with the parent repo at
+  `projects.repo_path`; the parent is the single source of truth.
+- Merge policy is `git merge --no-ff` ONLY; conflict always invokes
+  `git merge --abort` and leaves the run in `Review`.
+- Reconciliation runs on every Next.js boot AND every supervisor boot,
+  comparing `runs`, `git worktree list`, and supervisor's live
+  sessions.
+- GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
+  GC failures log and continue without setting `removed_at`.
+- Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
+  `removed_at` is set instead.
+
 ## Edge cases
 
 - **`PRECONDITION`** — dirty parent repo (uncommitted changes), branch

@@ -6,13 +6,16 @@ import { randomUUID } from "node:crypto";
 
 import { ZodError } from "zod";
 
+import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
 import { spawnSession } from "./spawn";
 import {
   httpStatusForCode,
   isSupervisorError,
+  SendPromptRequestSchema,
   StartSessionRequestSchema,
+  SupervisorError,
   type SessionEvent,
 } from "./types";
 
@@ -66,7 +69,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   app.post("/sessions", async (req, reply) => {
     const parsed = StartSessionRequestSchema.parse(req.body);
     const sessionId = randomUUID();
-    const { child, emitter, record } = await spawnSession({
+    const { child, emitter, record, acpStdoutTap } = await spawnSession({
       sessionId,
       request: parsed,
       runtimeRoot,
@@ -86,11 +89,84 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       logger,
     });
 
+    if (!child.stdin) {
+      throw new SupervisorError("SPAWN", "child has no stdin for ACP");
+    }
+
+    const { connection, acpSessionId } = await createAcpConnection({
+      stdin: child.stdin,
+      stdoutSource: acpStdoutTap,
+      sessionId,
+      worktreePath: parsed.worktreePath,
+      record,
+      emitter,
+      logger,
+    });
+
+    registry.attachAcp(sessionId, connection, acpSessionId);
+
     logger.info(
-      { sessionId, runId: parsed.runId, pid: record.pid, status: 201 },
+      {
+        sessionId,
+        runId: parsed.runId,
+        pid: record.pid,
+        acpSessionId,
+        status: 201,
+      },
       "http POST /sessions",
     );
-    reply.status(201).send({ sessionId, pid: record.pid });
+    reply.status(201).send({ sessionId, pid: record.pid, acpSessionId });
+  });
+
+  app.post<SessionIdParams>("/sessions/:id/prompt", async (req, reply) => {
+    const entry = registry.get(req.params.id);
+
+    if (!entry) {
+      reply
+        .status(404)
+        .send({ code: "PRECONDITION", message: "unknown session" });
+
+      return;
+    }
+    if (entry.record.status !== "live") {
+      reply
+        .status(409)
+        .send({ code: "PRECONDITION", message: "session not live" });
+
+      return;
+    }
+    if (!entry.connection || !entry.acpSessionId) {
+      reply
+        .status(409)
+        .send({
+          code: "PRECONDITION",
+          message: "session has no ACP connection",
+        });
+
+      return;
+    }
+
+    const body = SendPromptRequestSchema.parse(req.body);
+    const resp = await sendPromptOnConnection(
+      entry.connection,
+      {
+        acpSessionId: entry.acpSessionId,
+        stepId: body.stepId,
+        prompt: body.prompt,
+      },
+      logger,
+    );
+
+    logger.info(
+      {
+        sessionId: req.params.id,
+        stepId: body.stepId,
+        stopReason: resp.stopReason,
+        status: 200,
+      },
+      "http POST /sessions/:id/prompt",
+    );
+    reply.status(200).send({ stopReason: resp.stopReason, meta: resp._meta });
   });
 
   app.delete<SessionIdParams>("/sessions/:id", async (req, reply) => {

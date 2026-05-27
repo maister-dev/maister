@@ -10,8 +10,10 @@ Every file in this folder follows the structure defined in
 2. **Domain entities** — bulleted list of nouns (link to ERD if persisted).
 3. **State machine** (where applicable) — `stateDiagram-v2`.
 4. **Process flows** — `flowchart` or `sequenceDiagram` per scenario.
-5. **Edge cases** — bulleted list with `MaisterError` code links.
-6. **Linked artifacts** — pointers to API spec, ERD, ADR, source.
+5. **Expectations** — acceptance contract per
+   [`../CLAUDE.md#r5a`](../CLAUDE.md#r5a-expectations-section-fill-in-rules).
+6. **Edge cases** — bulleted list with `MaisterError` code links.
+7. **Linked artifacts** — pointers to API spec, ERD, ADR, source.
 
 ## Domains
 

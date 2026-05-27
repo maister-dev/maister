@@ -1,0 +1,14 @@
+{
+  "name": "maister",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "validate:docs": "node scripts/validate-docs-mermaid.mjs",
+    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "mermaid": "^11.4.1"
+  }
+}

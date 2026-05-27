@@ -105,6 +105,28 @@ flowchart TD
     Each -- done --> End
 ```
 
+## Expectations
+
+- `projects.slug` and `projects.repo_path` are globally UNIQUE; uniqueness is
+  enforced at the DB layer and survives soft archival.
+- Archived projects (`archived_at IS NOT NULL`) keep their `repo_path`
+  reserved against new registrations per ADR-019.
+- Project registration is atomic: `projects` + all `executors[]` + all
+  `flows[]` insert in one transaction, or nothing does.
+- Every `default_executor` and every `flows[].executor_override` resolves
+  to an entry in `executors[].id` at validation time; refuse with `CONFIG`
+  otherwise.
+- `executors[].id` and `flows[].id` are unique within their parent
+  `maister.yaml`; duplicates refused with `CONFIG`.
+- Flow plugin install is idempotent on `{id}@{tag}` — cache hit at
+  `~/.maister/flows/<id>@<tag>/` short-circuits the clone.
+- Editing `maister.yaml` MUST re-validate before any row delta; a valid
+  edit that changes nothing structurally produces no row change.
+- Auto-discovery from `MAISTER_PROJECTS_DIR` is recursive and rejects
+  collisions with a logged warning — existing row wins, no overwrite.
+- Archival is soft only: `archived_at` is set, no row is deleted, no Flow
+  plugin cache is GC'd.
+
 ## Edge cases
 
 - **`maister.yaml` schema mismatch** → `MaisterError("CONFIG", ...)`.

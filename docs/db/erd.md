@@ -1,6 +1,6 @@
 # Full database ERD
 
-All 7 tables in one diagram. For partial views by domain, see
+All 8 tables in one diagram. For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md).
 
@@ -19,6 +19,7 @@ erDiagram
     FLOWS ||--o{ TASKS : "selected at create"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
+    RUNS ||--o{ STEP_RUNS : "per-step record (M5)"
     RUNS ||--o{ HITL_REQUESTS : raises
 
     PROJECTS {
@@ -79,6 +80,7 @@ erDiagram
         text executor_id FK
         text status "Pending..Done"
         text acp_session_id "resume handle"
+        text current_step_id "M5 runner cursor"
         text flow_version "snapshot at launch"
         timestamp checkpoint_at
         timestamp keepalive_until "30min sliding"
@@ -95,6 +97,23 @@ erDiagram
         text parent_repo_path
         timestamp created_at
         timestamp removed_at
+    }
+
+    STEP_RUNS {
+        text id PK
+        text run_id FK
+        text step_id "matches flow.yaml steps[].id"
+        text step_type "cli|agent|guard|human"
+        text mode "new-session|slash-in-existing (agent)"
+        integer attempt "DEFAULT 1"
+        text status "Pending..NeedsInput"
+        text acp_session_id
+        text stdout "truncated to 1 MiB"
+        jsonb vars "DEFAULT {}"
+        integer exit_code
+        text error_code "MaisterErrorCode literal"
+        timestamp started_at
+        timestamp ended_at
     }
 
     HITL_REQUESTS {
@@ -115,7 +134,7 @@ erDiagram
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
-| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Guard against duplicate attempts. |
+| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous in M5 (PK already covers `id`); real per-attempt guard ships at Designed M8 as `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
 | `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |

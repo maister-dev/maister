@@ -2,6 +2,7 @@ import "server-only";
 
 import { readFile } from "node:fs/promises";
 
+import Mustache from "mustache";
 import pino from "pino";
 import { parse as parseYaml } from "yaml";
 
@@ -184,6 +185,29 @@ export async function loadFlowManifest(
           `Step "${s.id}" on_reject.goto_step "${s.on_reject.goto_step}" not found in steps[] of ${flowYamlPath}`,
         );
       }
+    }
+  }
+
+  for (const s of manifest.steps) {
+    let template: string | undefined;
+
+    if (s.type === "agent") template = s.prompt;
+    else if (s.type === "cli") template = s.command;
+
+    if (template === undefined) continue;
+
+    try {
+      Mustache.parse(template);
+      log.debug(
+        { path: flowYamlPath, stepId: s.id, type: s.type },
+        "template parse-ok",
+      );
+    } catch (err) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow.yaml step ${s.id}: invalid mustache template — ${asError(err).message}`,
+        { cause: asError(err) },
+      );
     }
   }
 

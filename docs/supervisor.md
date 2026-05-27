@@ -298,10 +298,67 @@ The integration test boots Fastify on an ephemeral port and spawns
 needs the real adapter binaries on PATH. Same fixture is used by the
 unit spawn test.
 
+## M5 wire change
+
+M5 (2026-05-27) lands the request-side ACP wire. The supervisor now
+speaks JSON-RPC via `@agentclientprotocol/sdk@0.22.1`'s
+`ClientSideConnection` for every session.
+
+**Breaking change vs M3:**
+`POST /sessions` no longer accepts a `prompt` field. The body is now:
+
+```json
+{
+  "runId":         "run-1",
+  "projectSlug":   "demo-app",
+  "worktreePath":  "/abs/path",
+  "stepId":        "plan",
+  "executor":      { "agent": "claude", "model": "claude-sonnet-4-6" },
+  "resumeSessionId": "uuid-abc"        // optional
+}
+```
+
+The response now also includes the negotiated ACP session id:
+
+```json
+{ "sessionId": "...", "pid": 1234, "acpSessionId": "..." }
+```
+
+**New endpoint:** `POST /sessions/:id/prompt`
+```json
+{ "stepId": "plan", "prompt": "..." }
+```
+Body validated by `SendPromptRequestSchema` (`stepId` must match
+`^[A-Za-z0-9._-]+$`, `prompt ≤ 1 MB`). Response:
+```json
+{ "stopReason": "end_turn", "meta": null }
+```
+`stopReason` ∈ `end_turn | max_tokens | max_turn_requests | refusal`.
+`cancelled` is mapped to a 500 `ACP_PROTOCOL` error.
+
+`POST /sessions/:id/input` remains a 501 stub for M7 (HITL response
+delivery — different semantics).
+
+**New SSE event types** (in addition to `session.line`,
+`session.exited`, `session.crashed`):
+
+- `session.update` — carries the structured `acp.SessionNotification.update`
+  payload (`agent_message_chunk`, `tool_call`, `plan`, etc.). Web tier
+  bridges these as-is and decomposes them downstream (M7+).
+- `session.permission_auto` — emitted whenever the supervisor
+  auto-allows a `requestPermission` (M5 policy). Payload:
+  `{toolCall, optionId}`. M7 replaces with a blocking
+  `session.permission_request` + artifact-driven response.
+
+The legacy `session.line` event type stays — `cost.ts` and any other
+raw-line consumer keep working unchanged. The supervisor tees stdout
+through a `PassThrough` so both consumers see every chunk.
+
 ## Limitations on POC
 
-- **No structured ACP parsing** — M3 ships opaque JSONL passthrough; M7
-  decomposes `session/update` into the typed event union.
+- **No structured HITL** — `requestPermission` is auto-allowed in M5
+  with WARN log + `session.permission_auto` SSE event. M7 wires the
+  blocking variant.
 - **No HITL input** — `POST /sessions/:id/input` returns 501; M7 wires
   binary `session/request_permission`, M10 adds the structured-form path.
 - **No keep-alive or `--resume` plumbing** — `POST /sessions/:id/checkpoint`

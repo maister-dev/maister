@@ -5,6 +5,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  cp,
   lstat,
   mkdir,
   readlink,
@@ -13,8 +14,9 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import path, { dirname, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
@@ -315,6 +317,46 @@ async function upsertFlowRow(opts: {
   }
 }
 
+export type LocalDirectorySourceResult =
+  | { kind: "local"; absPath: string }
+  | { kind: "git" };
+
+export async function isLocalDirectorySource(
+  source: string,
+): Promise<LocalDirectorySourceResult> {
+  let candidate: string | null = null;
+
+  if (source.startsWith("file://")) {
+    try {
+      candidate = fileURLToPath(source);
+    } catch {
+      candidate = null;
+    }
+  } else if (path.isAbsolute(source)) {
+    candidate = source;
+  }
+
+  if (!candidate) return { kind: "git" };
+
+  try {
+    const st = await stat(candidate);
+
+    if (!st.isDirectory()) return { kind: "git" };
+    if (!(await pathExists(join(candidate, "flow.yaml")))) {
+      return { kind: "git" };
+    }
+    if (await pathExists(join(candidate, ".git"))) {
+      // Source is a git repo — let gitClone honor the version tag instead
+      // of fs.cp-ing the working tree (which would ignore the tag).
+      return { kind: "git" };
+    }
+
+    return { kind: "local", absPath: candidate };
+  } catch {
+    return { kind: "git" };
+  }
+}
+
 async function installFlowPluginImpl(
   args: InstallFlowPluginArgs,
 ): Promise<InstallResult> {
@@ -331,8 +373,21 @@ async function installFlowPluginImpl(
   if (alreadyInstalled) {
     log.info({ target }, "skip clone (already installed)");
   } else {
+    const sourceKind = await isLocalDirectorySource(source);
+
     await mkdir(dirname(target), { recursive: true });
-    await gitClone({ source, version, target, signal });
+
+    if (sourceKind.kind === "local") {
+      log.info({ absPath: sourceKind.absPath, target }, "local-source-detected");
+      await cp(sourceKind.absPath, target, {
+        recursive: true,
+        errorOnExist: false,
+        force: false,
+      });
+      log.info({ target }, "local-copy-done");
+    } else {
+      await gitClone({ source, version, target, signal });
+    }
   }
 
   let manifest: FlowYamlV1;

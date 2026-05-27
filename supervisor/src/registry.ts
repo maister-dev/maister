@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import type { Logger } from "pino";
+import type * as acp from "@agentclientprotocol/sdk";
 
 import { EventEmitter } from "node:events";
 
@@ -19,6 +20,13 @@ export type RegistryEntry = {
   emitter: SessionEmitter;
   intentionalShutdown: boolean;
   eventBuffer: SessionEvent[];
+  connection?: acp.ClientSideConnection;
+  acpSessionId?: string;
+};
+
+export type RegisterOptions = {
+  connection?: acp.ClientSideConnection;
+  acpSessionId?: string;
 };
 
 const MAX_EVENT_BUFFER = 1000;
@@ -35,6 +43,7 @@ export class SessionRegistry {
     record: SessionRecord,
     child: ChildProcess,
     emitter: SessionEmitter,
+    options: RegisterOptions = {},
   ): void {
     if (this.entries.has(record.sessionId)) {
       throw new SupervisorError(
@@ -49,6 +58,8 @@ export class SessionRegistry {
       emitter,
       intentionalShutdown: false,
       eventBuffer: [],
+      connection: options.connection,
+      acpSessionId: options.acpSessionId,
     };
 
     this.entries.set(record.sessionId, entry);
@@ -62,6 +73,24 @@ export class SessionRegistry {
       { sessionId: record.sessionId, runId: record.runId, pid: record.pid },
       "register",
     );
+  }
+
+  attachAcp(
+    sessionId: string,
+    connection: acp.ClientSideConnection,
+    acpSessionId: string,
+  ): void {
+    const entry = this.entries.get(sessionId);
+
+    if (!entry) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `unknown sessionId: ${sessionId}`,
+      );
+    }
+
+    entry.connection = connection;
+    entry.acpSessionId = acpSessionId;
   }
 
   markIntentionalShutdown(sessionId: string): boolean {

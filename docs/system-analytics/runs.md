@@ -149,6 +149,50 @@ flowchart TD
     User -- Discard --> Drop[remove worktree, status=Abandoned]
 ```
 
+## Expectations
+
+- `runs.status` values exactly match the enum in `web/lib/db/schema.ts`;
+  no string-typed status outside the enum is permitted.
+- Every run owns exactly one workspace and at most one live ACP session
+  at any time.
+- Global concurrency cap = `MAISTER_MAX_CONCURRENT_RUNS` (default 3,
+  hard cap); excess runs wait as `Pending` and auto-promote when a slot
+  frees.
+- **(Designed M8)** `NeedsInput` keep-alive window is
+  `MAISTER_KEEPALIVE_MINUTES` (default 30 min); every web-activity
+  event extends `keepalive_until` by that amount. M5 ships the
+  `runs.keepalive_until` column but never writes to it and exposes no
+  activity route.
+- **(Designed M8)** Idle past `keepalive_until` triggers graceful
+  checkpoint → run becomes `NeedsInputIdle` with
+  `runs.acp_session_id` retained as the resume handle. Supervisor
+  `POST /sessions/:id/checkpoint` still returns the deferred stub on
+  M5.
+- **(Designed M8)** `NeedsInputIdle` resume respawns the adapter with
+  `--resume <acp_session_id>` and incurs ~$0.28 cache-creation cost
+  per respawn (operator-visible if surfaced).
+- **(Designed M8)** 24 h elapsed in `NeedsInputIdle` without operator
+  response → `Abandoned` with `HITL_TIMEOUT`. Depends on the
+  checkpoint path above; no timeout watcher exists in M5.
+- **(Designed M12)** Run state survives Next.js restart AND
+  supervisor restart; on boot, reconciliation classifies orphans as
+  `Crashed` and offers Recover or Discard.
+- **(Designed M12)** Recover is offered ONLY when
+  `runs.acp_session_id IS NOT NULL`; otherwise Discard is the sole
+  option.
+- Every state transition is persisted to `runs` BEFORE the UI reflects
+  it; UI never derives status from supervisor in-memory state.
+- **(Designed M7)** SSE stream from web tier
+  (`GET /api/runs/[id]/stream`) supports `lastEventId` reconnect and
+  tails per-step output from
+  `.maister/<slug>/runs/<runId>/<stepId>.log`, never replays from
+  memory. The supervisor's per-session `GET /sessions/:id/stream`
+  already supports `Last-Event-ID`; the web-tier bridge route is
+  M7 work.
+- **(Designed M11)** Merge is `git merge --no-ff` only; conflicts
+  always abort the merge and leave the run in `Review`. No merge
+  route exists in M5.
+
 ## Edge cases
 
 - **`PRECONDITION`** — dirty repo, branch taken, worktree path
@@ -182,6 +226,10 @@ flowchart TD
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md).
+- Config reference: [`../configuration.md`](../configuration.md)
+  §`Environment variables (server tier)` —
+  `MAISTER_MAX_CONCURRENT_RUNS`, `MAISTER_KEEPALIVE_MINUTES`,
+  `MAISTER_HEARTBEAT_INTERVAL_MS`, `MAISTER_KILL_GRACE_MS`.
 - API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml).
 - Related: [`hitl.md`](hitl.md), [`workspaces.md`](workspaces.md),
