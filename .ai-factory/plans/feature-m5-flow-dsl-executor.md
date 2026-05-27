@@ -267,7 +267,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
 
 ### Phase 4: Supervisor ACP wire + agent executor
 
-- [ ] **Task 14: `supervisor/src/acp-client.ts` — structured ACP per-session connection**
+- [x] **Task 14: `supervisor/src/acp-client.ts` — structured ACP per-session connection**
   - Files: `supervisor/src/acp-client.ts` (new), `supervisor/src/types.ts` (extend with `SendPromptRequestSchema` + extended `SessionEvent` union)
   - Imports: `import * as acp from "@agentclientprotocol/sdk"` (the dep is already in `supervisor/package.json` per M3 — pinned to `@agentclientprotocol/sdk@0.22.1`).
   - Exports:
@@ -300,7 +300,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "acp-client" })`. INFO `connection-init`/`new-session`/`prompt-sent`/`prompt-end {stopReason}`. DEBUG per notification (`update.sessionUpdate` type only — content size only, no content).
   - Acceptance: unit-tested in `supervisor/src/__tests__/acp-client.test.ts` with the `examples/agent.js` from the SDK as the counterparty (or a tiny in-process Agent stub that returns canned `PromptResponse`).
 
-- [ ] **Task 15: Supervisor — `spawnSession` integrates `createAcpConnection`**
+- [x] **Task 15: Supervisor — `spawnSession` integrates `createAcpConnection`**
   - Files: `supervisor/src/spawn.ts` (rewrite the post-spawn body), `supervisor/src/registry.ts` (extend `RegistryEntry` to hold `connection: acp.ClientSideConnection` + `acpSessionId: string`)
   - After `await new Promise spawn` (today's spawn.ts:117) succeeds:
     1. Call `const { connection, acpSessionId } = await createAcpConnection({ child, ... });`.
@@ -313,7 +313,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: INFO `acp-session-ready` with `{supervisorSessionId, acpSessionId, pid}`.
   - Acceptance: unit-tested via the same agent stub as Task 14.
 
-- [ ] **Task 16: Supervisor — new endpoint `POST /sessions/:id/prompt`**
+- [x] **Task 16: Supervisor — new endpoint `POST /sessions/:id/prompt`**
   - Files: `supervisor/src/http-api.ts` (extend)
   - Body: validated by `SendPromptRequestSchema` (`{ stepId, prompt }`).
   - Logic:
@@ -325,7 +325,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: INFO `http POST /sessions/:id/prompt` with `{sessionId, stepId, len, stopReason, status: 200}`.
   - Acceptance: unit-tested (in-process agent stub) + integration-tested via the runner-agent path in Task 26.
 
-- [ ] **Task 17: web `lib/supervisor-client.ts` — `sendPrompt` wrapper + `PromptResult` type**
+- [x] **Task 17: web `lib/supervisor-client.ts` — `sendPrompt` wrapper + `PromptResult` type**
   - Files: `web/lib/supervisor-client.ts` (extend), reuse M7-shape types where it fits
   - Add types:
     - `export type PromptStopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled"`.
@@ -336,7 +336,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: DEBUG with `{sessionId, stepId, len}` (no prompt content).
   - Acceptance: unit-tested in `web/lib/__tests__/supervisor-client.test.ts` (extend the existing file).
 
-- [ ] **Task 18: `web/lib/flows/runner-agent.ts` — agent step executor (both modes)**
+- [x] **Task 18: `web/lib/flows/runner-agent.ts` — agent step executor (both modes)**
   - Files: `web/lib/flows/runner-agent.ts` (new)
   - Signature: `async runAgentStep(step: AgentStepConfig, ctx: { runtimeRoot, projectSlug, runId, stepId, worktreePath, executor, context: FlowContext, sessionState: { currentSessionId: string | null }, db? }): Promise<StepResult>`.
   - Resolve `prompt` via `renderStrict`.

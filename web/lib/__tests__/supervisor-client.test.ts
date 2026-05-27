@@ -13,6 +13,7 @@ import {
   createSession,
   deleteSession,
   listSessions,
+  sendPrompt,
   streamSession,
   type SupervisorEvent,
 } from "@/lib/supervisor-client";
@@ -45,21 +46,29 @@ const validInput = {
   projectSlug: "demo",
   worktreePath: "/repos/x",
   stepId: "plan",
-  prompt: "go",
   executor: { agent: "claude" as const, model: "claude-sonnet-4-6" },
 };
 
 describe("createSession", () => {
-  it("returns sessionId+pid on 201", async () => {
+  it("returns sessionId+pid+acpSessionId on 201", async () => {
     mockOnce(
-      new Response(JSON.stringify({ sessionId: "s1", pid: 4242 }), {
-        status: 201,
-      }),
+      new Response(
+        JSON.stringify({
+          sessionId: "s1",
+          pid: 4242,
+          acpSessionId: "acp-1",
+        }),
+        { status: 201 },
+      ),
     );
 
     const result = await createSession(validInput);
 
-    expect(result).toEqual({ sessionId: "s1", pid: 4242 });
+    expect(result).toEqual({
+      sessionId: "s1",
+      pid: 4242,
+      acpSessionId: "acp-1",
+    });
     expect(fetchSpy).toHaveBeenCalledWith(
       "http://supervisor:7777/sessions",
       expect.objectContaining({ method: "POST" }),
@@ -256,5 +265,58 @@ describe("streamSession", () => {
       expect.stringContaining("/sessions/s1/stream"),
       expect.objectContaining({ signal: controller.signal }),
     );
+  });
+});
+
+describe("sendPrompt", () => {
+  it("returns the PromptResult on 200", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ stopReason: "end_turn", meta: { foo: "bar" } }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await sendPrompt("s1", { stepId: "plan", prompt: "go" });
+
+    expect(result).toEqual({ stopReason: "end_turn", meta: { foo: "bar" } });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/sessions/s1/prompt",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ stepId: "plan", prompt: "go" }),
+      }),
+    );
+  });
+
+  it("translates 404 PRECONDITION to MaisterError", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "PRECONDITION", message: "unknown session" }),
+        { status: 404 },
+      ),
+    );
+
+    await expect(
+      sendPrompt("s-missing", { stepId: "plan", prompt: "go" }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: "unknown session",
+    });
+  });
+
+  it("translates network failure to EXECUTOR_UNAVAILABLE", async () => {
+    mockReject(new TypeError("fetch failed"));
+
+    let caught: unknown;
+
+    try {
+      await sendPrompt("s1", { stepId: "plan", prompt: "go" });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(MaisterError);
+    expect((caught as MaisterError).code).toBe("EXECUTOR_UNAVAILABLE");
   });
 });

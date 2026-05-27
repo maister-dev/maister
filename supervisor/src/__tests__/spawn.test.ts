@@ -26,7 +26,6 @@ function makeRequest(
     projectSlug: "demo",
     worktreePath: process.cwd(),
     stepId: "step-1",
-    prompt: "",
     executor: { agent: "claude", model: "claude-sonnet-4-6" },
     ...over,
   };

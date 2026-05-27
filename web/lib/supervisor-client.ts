@@ -23,7 +23,6 @@ export type CreateSessionInput = {
   projectSlug: string;
   worktreePath: string;
   stepId: string;
-  prompt: string;
   executor: SupervisorExecutorInput;
   resumeSessionId?: string;
 };
@@ -31,6 +30,24 @@ export type CreateSessionInput = {
 export type CreateSessionResult = {
   sessionId: string;
   pid: number;
+  acpSessionId: string;
+};
+
+export type PromptStopReason =
+  | "end_turn"
+  | "max_tokens"
+  | "max_turn_requests"
+  | "refusal"
+  | "cancelled";
+
+export type PromptResult = {
+  stopReason: PromptStopReason;
+  meta?: unknown;
+};
+
+export type SendPromptInput = {
+  stepId: string;
+  prompt: string;
 };
 
 export type SupervisorSessionRecord = {
@@ -54,6 +71,19 @@ export type SupervisorEvent =
       sessionId: string;
       monotonicId: number;
       line: string;
+    }
+  | {
+      type: "session.update";
+      sessionId: string;
+      monotonicId: number;
+      update: unknown;
+    }
+  | {
+      type: "session.permission_auto";
+      sessionId: string;
+      monotonicId: number;
+      toolCall: unknown;
+      optionId: string;
     }
   | {
       type: "session.exited";
@@ -180,6 +210,35 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   }
 
   return (await res.json()) as SupervisorSessionRecord[];
+}
+
+export async function sendPrompt(
+  sessionId: string,
+  input: SendPromptInput,
+): Promise<PromptResult> {
+  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/prompt`;
+
+  logger.debug(
+    { url, sessionId, stepId: input.stepId, len: input.prompt.length },
+    "sendPrompt",
+  );
+
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "sendPrompt");
+  }
+  if (!res.ok) {
+    throw await asMaisterError(res, "ACP_PROTOCOL");
+  }
+
+  return (await res.json()) as PromptResult;
 }
 
 export async function checkpointSession(sessionId: string): Promise<void> {

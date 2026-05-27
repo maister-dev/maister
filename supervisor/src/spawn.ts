@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
@@ -37,6 +38,7 @@ export type SpawnSessionResult = {
   record: SessionRecord;
   logPath: string;
   logStream: WriteStream;
+  acpStdoutTap: PassThrough;
 };
 
 export async function spawnSession(
@@ -151,9 +153,14 @@ export async function spawnSession(
 
   let buffer = "";
 
+  const acpStdoutTap = new PassThrough();
+
+  acpStdoutTap.setMaxListeners(0);
+
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     logStream.write(chunk);
+    acpStdoutTap.write(chunk);
     buffer += chunk;
 
     if (buffer.length > MAX_LINE_BYTES) {
@@ -190,6 +197,7 @@ export async function spawnSession(
       lineEmitter(record.monotonicId, buffer);
       buffer = "";
     }
+    acpStdoutTap.end();
     logStream.end();
   });
 
@@ -197,5 +205,5 @@ export async function spawnSession(
     logger.warn({ sessionId, err: err.message }, "stdout-error");
   });
 
-  return { child, emitter, record, logPath, logStream };
+  return { child, emitter, record, logPath, logStream, acpStdoutTap };
 }
