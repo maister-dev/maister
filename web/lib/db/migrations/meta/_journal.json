@@ -8,6 +8,13 @@
       "when": 1779744438692,
       "tag": "0000_clumsy_nightshade",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779872831502,
+      "tag": "0001_wandering_goliath",
+      "breakpoints": true
     }
   ]
 }

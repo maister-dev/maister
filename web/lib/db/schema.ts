@@ -142,6 +142,7 @@ export const runs = pgTable(
       .notNull()
       .default("Pending"),
     acpSessionId: text("acp_session_id"),
+    currentStepId: text("current_step_id"),
     flowVersion: text("flow_version").notNull(),
     checkpointAt: timestamp("checkpoint_at", {
       withTimezone: true,
@@ -182,6 +183,54 @@ export const workspaces = pgTable("workspaces", {
   removedAt: timestamp("removed_at", { withTimezone: true, mode: "date" }),
 });
 
+export const stepRuns = pgTable(
+  "step_runs",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    stepId: text("step_id").notNull(),
+    stepType: text("step_type", {
+      enum: ["cli", "agent", "guard", "human"],
+    }).notNull(),
+    mode: text("mode", { enum: ["new-session", "slash-in-existing"] }),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status", {
+      enum: [
+        "Pending",
+        "Running",
+        "Succeeded",
+        "Failed",
+        "Skipped",
+        "NeedsInput",
+      ],
+    })
+      .notNull()
+      .default("Pending"),
+    acpSessionId: text("acp_session_id"),
+    stdout: text("stdout"),
+    vars: jsonb("vars")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    exitCode: integer("exit_code"),
+    errorCode: text("error_code"),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    uniqRunStepAttempt: unique("step_runs_run_step_attempt_uq").on(
+      t.runId,
+      t.stepId,
+      t.attempt,
+    ),
+    idxRun: index("step_runs_run_idx").on(t.runId),
+  }),
+);
+
 export const hitlRequests = pgTable(
   "hitl_requests",
   {
@@ -214,3 +263,4 @@ export type Task = typeof tasks.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type HitlRequest = typeof hitlRequests.$inferSelect;
+export type StepRun = typeof stepRuns.$inferSelect;
