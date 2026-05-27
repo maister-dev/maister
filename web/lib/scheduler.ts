@@ -16,6 +16,34 @@ const log = pino({
 
 const DEFAULT_CAP = 3;
 
+// Fixed pg_advisory_xact_lock key for the global scheduler. Both
+// tryStartRun and promoteNextPending take this lock at the start of
+// their transactions so the count-then-update pattern is serialized
+// across concurrent launches. Postgres releases it automatically when
+// the transaction ends (commit or rollback). On sqlite the lock call
+// is silently skipped — sqlite already serializes writes via a single
+// writer lock so the count+update is safe there too.
+const SCHEDULER_LOCK_KEY = 0x6d61_6973;
+
+function isPostgresDb(): boolean {
+  const url = process.env.DB_URL ?? "";
+
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
+}
+
+async function takeSchedulerLock(tx: Db): Promise<void> {
+  if (!isPostgresDb()) return;
+
+  try {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SCHEDULER_LOCK_KEY})`);
+  } catch (err) {
+    log.warn(
+      { err: (err as Error).message },
+      "advisory-lock-failed (continuing without serialization)",
+    );
+  }
+}
+
 function capFromEnv(): number {
   const raw = process.env.MAISTER_MAX_CONCURRENT_RUNS;
 
@@ -42,6 +70,8 @@ export async function tryStartRun(
   const cap = capFromEnv();
 
   return db.transaction(async (tx: Db) => {
+    await takeSchedulerLock(tx);
+
     const liveRows: Array<{ count: number }> = await tx
       .select({ count: count() })
       .from(runs)
@@ -97,7 +127,31 @@ export async function promoteNextPending(
 ): Promise<{ promotedRunId: string | null }> {
   const db = opts.db ?? getDb();
 
+  const cap = capFromEnv();
+
   const promotedRunId = await db.transaction(async (tx: Db) => {
+    await takeSchedulerLock(tx);
+
+    // Recheck cap under the lock — a Running/NeedsInput run could
+    // have started between this terminal transition and the
+    // promote call (e.g. another tryStartRun acquired the lock
+    // ahead of us), and we must respect the cap globally.
+    const liveRows: Array<{ count: number }> = await tx
+      .select({ count: count() })
+      .from(runs)
+      .where(inArray(runs.status, ["Running", "NeedsInput"]));
+
+    const liveCount = Number(liveRows[0]?.count ?? 0);
+
+    if (liveCount >= cap) {
+      log.debug(
+        { liveCount, cap },
+        "promoteNextPending → cap reached, leaving Pending in place",
+      );
+
+      return null;
+    }
+
     const oldest: Array<{ id: string }> = await tx
       .select({ id: runs.id })
       .from(runs)

@@ -9,7 +9,7 @@ ultra-light dev only — never as a production target.
 
 ## Tables
 
-Seven tables. App-generated `text` IDs (UUID v4 or cuid2 — pick at insert
+Eight tables. App-generated `text` IDs (UUID v4 or cuid2 — pick at insert
 time). All timestamps stored as `timestamp with timezone` in UTC.
 
 | Table | Purpose | Cascades from |
@@ -20,6 +20,7 @@ time). All timestamps stored as `timestamp with timezone` in UTC.
 | `tasks` | Board cards. Status `Backlog | InFlight | Done | Abandoned`. | `projects.id` |
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
+| `step_runs` | Per-step execution records for the M5 flow runner. | `runs.id` |
 | `hitl_requests` | HITL prompts emitted during a run. | `runs.id` |
 
 ## `projects`
@@ -96,12 +97,17 @@ Indexed on `(projectId, status)` for board queries.
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
+  currentStepId?,                // (M5) id of the step the runner is on
   flowVersion,                   // snapshot at launch time
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
   startedAt, endedAt?
 }
 ```
+
+`currentStepId` is set by the M5 runner before each step starts and
+cleared on terminal transitions (`Review` / `Failed`). It is the cheap
+signal for "where is this run right now" without joining `step_runs`.
 
 Indexed on `(projectId, status)` for portfolio/board queries and on
 `taskId` for latest-attempt lookups.
@@ -117,6 +123,39 @@ Indexed on `(projectId, status)` for portfolio/board queries and on
 ```
 
 One workspace per run. `worktreePath` is globally unique across the host.
+
+## `step_runs`
+
+(Introduced in M5 — migration `0001_wandering_goliath.sql`.)
+
+```ts
+{
+  id, runId,
+  stepId,                                  // matches flow.yaml steps[].id
+  stepType: 'cli' | 'agent' | 'guard' | 'human',
+  mode: 'new-session' | 'slash-in-existing' | null,
+                                            // populated only for agent steps
+  attempt (DEFAULT 1),                      // increments on per-step retry
+                                            // (column shipped; runner does
+                                            // not yet retry — future work)
+  status: 'Pending' | 'Running' | 'Succeeded'
+        | 'Failed' | 'Skipped' | 'NeedsInput',
+  acpSessionId?,                            // ACP session id at the time
+                                            // the step succeeded (agent only)
+  stdout?,                                  // truncated to 1 MiB by the writer
+  vars (jsonb, DEFAULT '{}'),               // step output bag for templating
+  exitCode?,                                // for cli steps and observers
+  errorCode?,                               // one of MaisterErrorCode literals
+  startedAt, endedAt?
+}
+```
+
+UNIQUE constraint `(runId, stepId, attempt)` — one row per (run, step,
+attempt). Indexed on `(runId)` for the runner's getStepRunsForRun
+helper (used to build `FlowContext.steps.<id>.{output,vars,exitCode}`
+for Mustache templating across steps).
+
+Cascade: `ON DELETE CASCADE` from `runs.id`.
 
 ## `hitl_requests`
 
@@ -147,6 +186,7 @@ projects
   ├── tasks              (FK projectId, cascade)
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
+  │           ├── step_runs       (FK runId,        cascade)
   │           └── hitl_requests   (FK runId,        cascade)
   ├── runs               (FK projectId, cascade)  ← also direct
   └── workspaces         (FK projectId, cascade)  ← also direct
@@ -167,11 +207,13 @@ Created via Drizzle:
 | `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
 | `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
 | `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |
+| `step_runs` | `step_runs_run_idx` | `(runId)` | Per-run step lookups (templating) |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
-executor_ref_id)`, `(project_id, flow_ref_id)`, `(id, attempt_number)`)
-implicitly create their own indexes in Postgres.
+executor_ref_id)`, `(project_id, flow_ref_id)`, `(id, attempt_number)`,
+`(run_id, step_id, attempt)`) implicitly create their own indexes in
+Postgres.
 
 ## Workflow
 

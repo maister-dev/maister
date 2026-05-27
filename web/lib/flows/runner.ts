@@ -10,13 +10,17 @@ import type {
   Flow as FlowRow,
   Run as RunRow,
   Task as TaskRow,
+  Workspace as WorkspaceRow,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
+import {
+  deleteSession as defaultDeleteSession,
+} from "@/lib/supervisor-client";
 
 import { buildContext } from "./context";
 import { appendGuardMetric, evaluateGuards } from "./guards";
-import { runAgentStep } from "./runner-agent";
+import { runAgentStep, type SupervisorApi } from "./runner-agent";
 import { runCliStep } from "./runner-cli";
 import { runHumanStep } from "./runner-human";
 import {
@@ -32,10 +36,8 @@ import type { FlowYamlV1, Step } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, flows, projects, runs, tasks } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { executors, flows, projects, runs, tasks, workspaces } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner",
@@ -48,7 +50,7 @@ type Db = any;
 export type RunFlowOptions = {
   db?: Db;
   runtimeRoot?: string;
-  worktreePath?: string;
+  supervisorApi?: SupervisorApi;
 };
 
 type LoadedRun = {
@@ -57,6 +59,7 @@ type LoadedRun = {
   flow: FlowRow;
   manifest: FlowYamlV1;
   executor: ExecutorRow;
+  workspace: WorkspaceRow;
   projectSlug: string;
   flowInstallPath: string;
 };
@@ -119,12 +122,32 @@ async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     throw new MaisterError("PRECONDITION", `project not found for run ${runId}`);
   }
 
+  const workspaceRows: WorkspaceRow[] = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId));
+  const workspace = workspaceRows[0];
+
+  if (!workspace) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `workspace not found for run ${runId}`,
+    );
+  }
+  if (workspace.removedAt) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `workspace already removed for run ${runId}`,
+    );
+  }
+
   return {
     run,
     task,
     flow,
     manifest: flow.manifest as FlowYamlV1,
     executor,
+    workspace,
     projectSlug,
     flowInstallPath: flow.installedPath,
   };
@@ -138,6 +161,7 @@ async function executeStep(
     runtimeRoot: string;
     worktreePath: string;
     sessionState: AcpSessionState;
+    supervisorApi?: SupervisorApi;
   },
 ): Promise<StepResult & { needsInput?: boolean; acpSessionId?: string }> {
   const common = {
@@ -168,6 +192,7 @@ async function executeStep(
           },
           sessionState: ctx.sessionState,
         },
+        ctx.supervisorApi,
       );
     case "guard": {
       const startedAt = Date.now();
@@ -241,9 +266,9 @@ export async function runFlow(
     );
   }
 
-  const worktreePath = opts.worktreePath ?? "";
+  const worktreePath = loaded.workspace.worktreePath;
   const sessionState: AcpSessionState = {
-    currentSessionId: loaded.run.acpSessionId,
+    currentSessionId: null,
     lastSeenMonotonicId: 0,
   };
 
@@ -284,6 +309,7 @@ export async function runFlow(
           runtimeRoot,
           worktreePath,
           sessionState,
+          supervisorApi: opts.supervisorApi,
         });
       } catch (err) {
         const e = isMaisterError(err)
@@ -371,6 +397,11 @@ export async function runFlow(
 
   if (needsInput) {
     log2.info({}, "runFlow paused on NeedsInput");
+    await cleanupSlashSession(
+      sessionState,
+      opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
+      log2,
+    );
 
     return;
   }
@@ -391,12 +422,52 @@ export async function runFlow(
     log2.info({}, "runFlow ended Review");
   }
 
+  await cleanupSlashSession(
+    sessionState,
+    opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
+    log2,
+  );
+
   try {
-    await promoteNextPending({ db, runFlow: (next) => void runFlow(next, opts) });
+    // Pass only run-agnostic options to the promoted run — each run loads
+    // its own workspace + executor from the DB. Critically NOT propagating
+    // any per-run state (worktreePath, sessionState, etc.) so the next
+    // queued run cannot inherit this run's worktree.
+    const nextOpts: RunFlowOptions = {
+      db: opts.db,
+      runtimeRoot: opts.runtimeRoot,
+      supervisorApi: opts.supervisorApi,
+    };
+
+    await promoteNextPending({
+      db,
+      runFlow: (next) => void runFlow(next, nextOpts),
+    });
   } catch (err) {
     log2.error(
       { err: (err as Error).message },
       "promoteNextPending failed (non-fatal)",
+    );
+  }
+}
+
+async function cleanupSlashSession(
+  sessionState: AcpSessionState,
+  deleteSession: (sessionId: string) => Promise<void>,
+  logger: typeof log,
+): Promise<void> {
+  if (sessionState.currentSessionId === null) return;
+
+  const sessionId = sessionState.currentSessionId;
+
+  sessionState.currentSessionId = null;
+  try {
+    await deleteSession(sessionId);
+    logger.info({ sessionId }, "slash-in-existing session deleted on terminal");
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message, sessionId },
+      "deleteSession failed during cleanup (non-fatal)",
     );
   }
 }

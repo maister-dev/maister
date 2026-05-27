@@ -20,7 +20,6 @@ const log = pino({
 type CliArgs = {
   taskId: string;
   executorOverrideId?: string;
-  worktreePath?: string;
 };
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -37,7 +36,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
     ) {
       throw new MaisterError(
         "CONFIG",
-        `Bad argv near "${flag}". Usage: --task <id> [--executor-override <id>] [--worktree-path <path>]`,
+        `Bad argv near "${flag}". Usage: --task <id> [--executor-override <id>]`,
       );
     }
     out[flag.slice(2)] = value;
@@ -50,7 +49,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
   return {
     taskId: out.task,
     executorOverrideId: out["executor-override"],
-    worktreePath: out["worktree-path"],
   };
 }
 
@@ -107,7 +105,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  await runFlow(targetRun.id, { worktreePath: args.worktreePath });
+  await runFlow(targetRun.id);
 
   const after: Array<{ status: string }> = await (
     db as unknown as { select: any }

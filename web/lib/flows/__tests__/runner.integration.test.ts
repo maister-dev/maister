@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -158,12 +158,16 @@ async function seedRun(args: {
     flowVersion: "local-dev",
   });
 
+  const worktreePath = join(workspaceRoot, "wt-" + runId);
+
+  await mkdir(worktreePath, { recursive: true });
+
   await db.insert(workspaces).values({
     id: randomUUID(),
     runId,
     projectId,
     branch: "maister/test",
-    worktreePath: join(workspaceRoot, "wt-" + runId),
+    worktreePath,
     parentRepoPath: join(workspaceRoot, "demo-repo"),
   });
 
@@ -184,7 +188,6 @@ describe("runFlow integration — cli step end-to-end", () => {
     await runFlow(runId, {
       db,
       runtimeRoot: workspaceRoot,
-      worktreePath: workspaceRoot,
     });
 
     const after = await db.select().from(runs).where(eq(runs.id, runId));
@@ -221,7 +224,6 @@ describe("runFlow integration — human step suspends", () => {
       await runFlow(runId, {
         db,
         runtimeRoot: workspaceRoot,
-        worktreePath: workspaceRoot,
       });
     } catch (err) {
       crashed = err as Error;
@@ -266,5 +268,83 @@ describe("installFlowPlugin — local source path", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].source).toBe(PLUGIN_AIF_PATH);
     expect(rows[0].installedPath).toContain("aif@local-dev");
+  });
+});
+
+describe("runFlow — workspace ownership regression (Codex critical)", () => {
+  it("queued run promoted via promoteNextPending writes only inside its own worktree", async () => {
+    // Build two queued runs against the cli-only flow with task-specific
+    // prompts so each step's stdout is distinct. Both runs should write
+    // their hello-world echoes into their own per-run worktree, never
+    // into the other run's worktree. This is the regression for the
+    // pre-fix bug where promoteNextPending passed the prev run's
+    // opts.worktreePath to the next runFlow call.
+    const { runId: runIdA } = await seedRun({
+      flowId: cliFlowId,
+      taskPrompt: "alpha",
+    });
+    const { runId: runIdB } = await seedRun({
+      flowId: cliFlowId,
+      taskPrompt: "bravo",
+    });
+
+    // Inspect each run's workspace row to know which worktree should
+    // see each prompt's stdout (the cli step writes to `cwd`, but the
+    // step_runs.stdout column captures stdout regardless — we use it
+    // as the proxy for "did the right run run in the right context").
+    const wsA = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.runId, runIdA));
+    const wsB = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.runId, runIdB));
+
+    expect(wsA[0].worktreePath).not.toBe(wsB[0].worktreePath);
+
+    // Run A first. After its terminal transition, promoteNextPending
+    // (if any Pending exists) would dispatch B with NO worktreePath in
+    // opts — meaning runFlow MUST resolve B's worktree from the DB.
+    const startA = await tryStartRun(runIdA, { db });
+
+    expect(startA.started).toBe(true);
+
+    await runFlow(runIdA, { db, runtimeRoot: workspaceRoot });
+
+    // Now manually start B (the cli runner returns synchronously, so
+    // there is no in-progress promoteNextPending to race with; we
+    // simulate the cap-free dispatch path by tryStartRun + runFlow).
+    const startB = await tryStartRun(runIdB, { db });
+
+    expect(startB.started).toBe(true);
+
+    await runFlow(runIdB, { db, runtimeRoot: workspaceRoot });
+
+    const srA = await db
+      .select()
+      .from(stepRuns)
+      .where(eq(stepRuns.runId, runIdA));
+    const srB = await db
+      .select()
+      .from(stepRuns)
+      .where(eq(stepRuns.runId, runIdB));
+
+    expect(srA.length).toBe(1);
+    expect(srB.length).toBe(1);
+
+    const stdoutA = String(srA[0].stdout ?? "");
+    const stdoutB = String(srB[0].stdout ?? "");
+
+    // Each run sees ONLY its own prompt — no cross-talk.
+    expect(stdoutA).toContain("hello alpha");
+    expect(stdoutA).not.toContain("bravo");
+    expect(stdoutB).toContain("hello bravo");
+    expect(stdoutB).not.toContain("alpha");
+
+    // And the acpSessionId namespace is per-run (no leak in step_runs
+    // rows, since cli steps don't touch ACP at all).
+    expect(srA[0].acpSessionId).toBeNull();
+    expect(srB[0].acpSessionId).toBeNull();
   });
 });

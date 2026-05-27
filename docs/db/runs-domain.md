@@ -17,6 +17,7 @@ erDiagram
     EXECUTORS ||--o{ RUNS : "spawned with"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS ||--|| WORKSPACES : "one worktree per run"
+    RUNS ||--o{ STEP_RUNS : "per-step record"
 
     TASKS {
         text id PK
@@ -39,6 +40,7 @@ erDiagram
         text executor_id FK
         text status "Pending|Running|NeedsInput|NeedsInputIdle|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (--resume)"
+        text current_step_id "M5 — runner's cursor"
         text flow_version "tag snapshot at launch"
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
@@ -56,6 +58,23 @@ erDiagram
         timestamp created_at
         timestamp removed_at
     }
+
+    STEP_RUNS {
+        text id PK
+        text run_id FK
+        text step_id "matches flow.yaml steps[].id"
+        text step_type "cli|agent|guard|human"
+        text mode "new-session|slash-in-existing (agent only)"
+        integer attempt "DEFAULT 1"
+        text status "Pending|Running|Succeeded|Failed|Skipped|NeedsInput"
+        text acp_session_id "set on agent step success"
+        text stdout "truncated to 1 MiB"
+        jsonb vars "DEFAULT {}"
+        integer exit_code
+        text error_code "MaisterErrorCode literal"
+        timestamp started_at
+        timestamp ended_at
+    }
 ```
 
 ## Constraints
@@ -68,6 +87,11 @@ erDiagram
 - `runs_task_idx` on `(task_id)` — latest-attempt lookups (`ORDER BY
 attempt_number DESC LIMIT 1`).
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.
+- `step_runs_run_step_attempt_uq` on `(run_id, step_id, attempt)` —
+  one row per (run, step, attempt); guards future per-step retry.
+- `step_runs_run_idx` on `(run_id)` — runner's getStepRunsForRun lookups
+  to build `FlowContext.steps.<id>.*` for Mustache templating across
+  steps.
 
 ## Status enum reference
 

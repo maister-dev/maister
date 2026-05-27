@@ -14,7 +14,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
-import { addWorktree } from "@/lib/worktree";
+import { addWorktree, removeWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executors, flows, projects, runs, tasks, workspaces } =
@@ -180,56 +180,69 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       "POST /api/runs preconditions ok",
     );
 
-    await db.transaction(async (tx: any) => {
-      await tx.insert(workspaces).values({
-        id: randomUUID(),
-        runId,
-        projectId: project.id,
-        branch,
-        worktreePath,
-        parentRepoPath: project.repoPath,
-      });
-      await tx.insert(runs).values({
-        id: runId,
-        taskId: task.id,
-        projectId: project.id,
-        flowId: flow.id,
-        executorId: executor.id,
-        status: "Pending",
-        flowVersion: flow.version,
-      });
-      await tx
-        .update(tasks)
-        .set({
-          status: "InFlight",
-          attemptNumber: newAttempt,
-          updatedAt: new Date(),
-        })
-        .where(eq(tasks.id, task.id));
+    // Create the worktree BEFORE the DB transaction so a git failure
+    // (branch already exists, dirty parent repo, missing path) does
+    // NOT leave the task stuck in InFlight with an orphan run/workspace
+    // row. The task stays in Backlog and is launchable again.
+    await addWorktree({
+      projectRepoPath: project.repoPath,
+      branch,
+      worktreePath,
     });
 
     try {
-      await addWorktree({
-        projectRepoPath: project.repoPath,
-        branch,
-        worktreePath,
+      await db.transaction(async (tx: any) => {
+        await tx.insert(workspaces).values({
+          id: randomUUID(),
+          runId,
+          projectId: project.id,
+          branch,
+          worktreePath,
+          parentRepoPath: project.repoPath,
+        });
+        await tx.insert(runs).values({
+          id: runId,
+          taskId: task.id,
+          projectId: project.id,
+          flowId: flow.id,
+          executorId: executor.id,
+          status: "Pending",
+          flowVersion: flow.version,
+        });
+        await tx
+          .update(tasks)
+          .set({
+            status: "InFlight",
+            attemptNumber: newAttempt,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasks.id, task.id));
       });
     } catch (err) {
-      await db
-        .update(workspaces)
-        .set({ removedAt: new Date() })
-        .where(eq(workspaces.runId, runId));
-      await db
-        .update(runs)
-        .set({ status: "Failed", endedAt: new Date() })
-        .where(eq(runs.id, runId));
+      // DB transaction rolled back. Compensate: remove the orphan worktree
+      // so the next launch can recreate the same branch+path without a
+      // PRECONDITION "already exists" failure.
+      log.warn(
+        { runId, err: (err as Error).message },
+        "DB transaction failed after addWorktree — removing worktree",
+      );
+      await removeWorktree({
+        projectRepoPath: project.repoPath,
+        worktreePath,
+        force: true,
+      }).catch((rmErr) =>
+        log.error(
+          { rmErr: (rmErr as Error).message, worktreePath },
+          "compensating removeWorktree failed (manual cleanup may be required)",
+        ),
+      );
       throw err;
     }
 
     const startResult = await tryStartRun(runId, { db });
 
     if (startResult.started) {
-      void runFlow(runId, { worktreePath }).catch((err: unknown) =>
+      void runFlow(runId).catch((err: unknown) =>
         log.error(
           { err: (err as Error).message, runId },
           "background runFlow failed",
