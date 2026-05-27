@@ -197,7 +197,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
 
 ### Phase 3: Guards + step-run store + CLI executor
 
-- [ ] **Task 9: `web/lib/flows/step-runs.ts` — DB helpers**
+- [x] **Task 9: `web/lib/flows/step-runs.ts` — DB helpers**
   - Files: `web/lib/flows/step-runs.ts` (new)
   - Exports:
     - `async createStepRun(args: { runId, stepId, stepType, mode?, attempt?, db? }): Promise<{ id: string }>` — INSERT with `randomUUID()`, status `Pending`.
@@ -211,7 +211,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logging: INFO per transition with `{stepRunId, status}`.
   - Acceptance: covered by integration test in Task 26 + a small unit test asserting INSERT/UPDATE happens through the right table.
 
-- [ ] **Task 10: `web/lib/flows/guards.ts` — guard evaluator + metric writer**
+- [x] **Task 10: `web/lib/flows/guards.ts` — guard evaluator + metric writer**
   - Files: `web/lib/flows/guards.ts` (new)
   - Imports: `MaisterError`, `pino`, `node:fs/promises`, `path`.
   - Exports:
@@ -225,7 +225,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "flow-guards" })`. WARN per cap-exceeded metric with structured payload.
   - Acceptance: unit-tested in Task 13.
 
-- [ ] **Task 11: `web/lib/flows/runner-cli.ts` — CLI step executor**
+- [x] **Task 11: `web/lib/flows/runner-cli.ts` — CLI step executor**
   - Files: `web/lib/flows/runner-cli.ts` (new)
   - Signature: `async runCliStep(step: CliStepConfig, ctx: { runtimeRoot, projectSlug, runId, stepId, worktreePath, context: FlowContext, timeoutMs?: number }): Promise<StepResult>`.
   - Step body:
@@ -239,7 +239,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "flow-runner" })`. INFO start (with resolved command preview, length-capped), INFO end (exit, durationMs), DEBUG per stdout/stderr chunk preview.
   - Acceptance: unit-tested in Task 12.
 
-- [ ] **Task 12: Unit tests — `web/lib/flows/__tests__/runner-cli.test.ts`**
+- [x] **Task 12: Unit tests — `web/lib/flows/__tests__/runner-cli.test.ts`**
   - Files: `web/lib/flows/__tests__/runner-cli.test.ts` (new)
   - Mock `node:child_process` `execFile` via `vi.mock` (mirror M4 pattern; if symbol-table mocking proves painful again, move these to integration suite).
   - Cases (~7):
@@ -252,7 +252,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
     7. Post-guard `regex` matches → metric `regexMatched: true`.
   - Acceptance: 7 cases green under `pnpm test:unit` (or moved to integration if mock fights).
 
-- [ ] **Task 13: Unit tests — `web/lib/flows/__tests__/guards.test.ts`**
+- [x] **Task 13: Unit tests — `web/lib/flows/__tests__/guards.test.ts`**
   - Files: `web/lib/flows/__tests__/guards.test.ts` (new)
   - Cases (~8):
     1. `evaluateGuards([{cost:1000}], {costTokens: 500})` → `capExceeded: false`.
