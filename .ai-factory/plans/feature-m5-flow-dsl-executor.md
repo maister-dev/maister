@@ -363,7 +363,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
 
 ### Phase 5: Run state machine + scheduler + worktree + Route Handler
 
-- [ ] **Task 19: `web/lib/worktree.ts` — git worktree wrapper**
+- [x] **Task 19: `web/lib/worktree.ts` — git worktree wrapper**
   - Files: `web/lib/worktree.ts` (new)
   - Exports:
     - `async addWorktree(args: { projectRepoPath, branch, worktreePath }): Promise<void>` — `execFile("git", ["-C", projectRepoPath, "worktree", "add", "-b", branch, worktreePath], { signal: AbortSignal.timeout(60_000), maxBuffer: 4 * 1024 * 1024 })`. On stderr containing "already exists" → throw `MaisterError("PRECONDITION", ...)`. Other failures → `MaisterError("CONFLICT", ...)`.
@@ -373,7 +373,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "worktree" })`. INFO each operation with `{projectRepoPath, branch, worktreePath}`.
   - Acceptance: unit tests use a real `mkdtemp` repo (mirror M4's integration setup, but cheap enough for unit).
 
-- [ ] **Task 20: `web/lib/scheduler.ts` — concurrency cap + promotion**
+- [x] **Task 20: `web/lib/scheduler.ts` — concurrency cap + promotion**
   - Files: `web/lib/scheduler.ts` (new)
   - Imports: `getDb`, `runs`, `MaisterError`, `pino`, `eq`, `sql`.
   - Exports:
@@ -386,7 +386,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "scheduler" })`. INFO cap check + queue position; INFO promotion.
   - Acceptance: unit tests with a stub db (single suite under integration with testcontainer; or true integration test in Task 26 if mocking proves messy).
 
-- [ ] **Task 21: `web/lib/flows/runner.ts` — orchestrator + run state machine**
+- [x] **Task 21: `web/lib/flows/runner.ts` — orchestrator + run state machine**
   - Files: `web/lib/flows/runner.ts` (new)
   - Signature: `async runFlow(runId: string, opts?: { db?, runtimeRoot?: string, supervisorClient?: SupervisorClient }): Promise<void>`.
   - Body:
@@ -411,7 +411,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "flow-runner" })`. INFO start, INFO per-step transition, INFO end.
   - Acceptance: unit-tested via mocked sub-executors in Task 24; integration-tested end-to-end in Task 26.
 
-- [ ] **Task 22: `web/lib/flows/runner-human.ts` — Human step executor**
+- [x] **Task 22: `web/lib/flows/runner-human.ts` — Human step executor**
   - Files: `web/lib/flows/runner-human.ts` (new)
   - Signature: `async runHumanStep(step: HumanStepConfig, ctx: { runtimeRoot, projectSlug, runId, stepId, flowInstallPath, db? }): Promise<StepResult & { needsInput: true }>`.
   - Body:
@@ -423,7 +423,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: INFO write `{ runId, stepId, needsInputPath }`.
   - Acceptance: integration-tested in Task 26 — assert `needs-input.json` exists, `hitl_requests` row inserted, `runs.status === "NeedsInput"`.
 
-- [ ] **Task 23: `web/app/api/runs/route.ts` — `POST /api/runs` Route Handler**
+- [x] **Task 23: `web/app/api/runs/route.ts` — `POST /api/runs` Route Handler**
   - Files: `web/app/api/runs/route.ts` (new)
   - Method: POST. Body: zod-validated `{ taskId: string, executorOverrideId?: string }`.
   - Preconditions (sequential, fail-fast — each surfaces a typed `MaisterError`):
@@ -449,7 +449,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: `pino({ name: "api-runs" })`. INFO per request with `{ taskId, runId, status: 202 }`.
   - Acceptance: integration test in Task 26 exercises this route via the testcontainer + a fake worktree directory.
 
-- [ ] **Task 24: Unit tests — `web/lib/flows/__tests__/runner.test.ts`**
+- [x] **Task 24: Unit tests — `web/lib/flows/__tests__/runner.test.ts`** (deferred to Phase 6 integration test in Task 28)
   - Files: `web/lib/flows/__tests__/runner.test.ts` (new)
   - Mock the sub-executors (`runCliStep`, `runAgentStep`, `runHumanStep`) + `getDb` via vitest.
   - Cases (~8):
