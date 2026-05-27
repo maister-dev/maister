@@ -209,6 +209,29 @@ describe("loadFlowManifest", () => {
       code: "CONFIG",
     });
   });
+
+  it("rejects flow with unbalanced Mustache prompt template", async () => {
+    const bad = goldenFlowYaml.replace(
+      'prompt: "/aif-plan {{ task.prompt }}"',
+      'prompt: "/aif-plan {{ task.prompt"',
+    );
+    const path = await writeFixture("bad-template.yaml", bad);
+
+    let caught: unknown;
+
+    try {
+      await loadFlowManifest(path);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(isMaisterError(caught)).toBe(true);
+    expect((caught as { code: string }).code).toBe("CONFIG");
+    const msg = caught instanceof Error ? caught.message : "";
+
+    expect(msg).toMatch(/invalid mustache template/);
+    expect(msg).toContain("plan");
+  });
 });
 
 describe("validateFormSchemaVersion", () => {

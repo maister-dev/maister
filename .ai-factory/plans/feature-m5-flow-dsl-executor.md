@@ -125,7 +125,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
 
 ### Phase 2: Templating + flow context
 
-- [ ] **Task 5: `web/lib/flows/templating.ts` — Mustache strict resolver**
+- [x] **Task 5: `web/lib/flows/templating.ts` — Mustache strict resolver**
   - Files: `web/lib/flows/templating.ts` (new)
   - Imports: `Mustache from "mustache"`, `MaisterError from "@/lib/errors"`, `pino`.
   - Exports `renderStrict(template: string, context: FlowContext, opts?: { traceLog?: pino.Logger }): string`.
@@ -140,7 +140,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logging: DEBUG on every resolved path (when `traceLog` is provided); ERROR via thrown `MaisterError` only.
   - Acceptance: tested in Task 7. No I/O.
 
-- [ ] **Task 6: `web/lib/flows/context.ts` — FlowContext builder**
+- [x] **Task 6: `web/lib/flows/context.ts` — FlowContext builder**
   - Files: `web/lib/flows/context.ts` (new)
   - Exports `buildContext(args: { task: Task, run: Run, executor: Executor, stepRuns: StepRun[], envWhitelist?: RegExp[] }): FlowContext`.
   - Shape produced:
@@ -161,7 +161,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logging: DEBUG with the resolved env key list (NOT values).
   - Acceptance: tested in Task 7.
 
-- [ ] **Task 7: Unit tests — `web/lib/flows/__tests__/templating.test.ts` + `context.test.ts`**
+- [x] **Task 7: Unit tests — `web/lib/flows/__tests__/templating.test.ts` + `context.test.ts`**
   - Files: `web/lib/flows/__tests__/templating.test.ts` (new), `web/lib/flows/__tests__/context.test.ts` (new)
   - templating.test.ts cases (~10):
     1. `{{ task.prompt }}` resolves to task.prompt.
@@ -186,7 +186,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logging: tests assert no secret strings appear in pino test stream output (defensive — mirrors M4's pattern).
   - Acceptance: 18 cases green under `pnpm --filter @maister/web test:unit`.
 
-- [ ] **Task 8: Sanity-validate templates at config-load time**
+- [x] **Task 8: Sanity-validate templates at config-load time**
   - Files: `web/lib/config.ts` (extend `loadFlowManifest`)
   - After zod validation, for every step that has a template-bearing field (`agent.prompt`, `cli.command`, `human.form_schema` is a path not a template — skip):
     - Call `Mustache.parse(templateString)` inside a `try/catch`.
