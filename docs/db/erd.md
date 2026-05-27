@@ -134,7 +134,7 @@ erDiagram
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
-| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Guard against duplicate attempts. |
+| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous in M5 (PK already covers `id`); real per-attempt guard ships at Designed M8 as `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
 | `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |

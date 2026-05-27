@@ -1,18 +1,26 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.3.0"
+  version: "0.5.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries `claude-agent-acp` / `codex-acp`).
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
-    **Milestone status: M3.** The lifecycle (POST/DELETE /sessions, GET /sessions,
-    GET /sessions/:id/stream) is implemented end-to-end. `POST /sessions/:id/checkpoint`
-    and `POST /sessions/:id/input` are stubs reserved for M7 / M8.
+    **Milestone status: M5.** The lifecycle
+    (`POST` / `DELETE` `/sessions`, `GET /sessions`,
+    `GET /sessions/:id/stream`) and the ACP prompt boundary
+    (`POST /sessions/:id/prompt`) are implemented end-to-end. The M5 prompt
+    surface drives the Flow DSL `agent` step from `web/lib/flows/runner-agent.ts`
+    via the supervisor's `ClientSideConnection`; permission requests
+    auto-allow with a warn log until M7 wires HITL.
+    `POST /sessions/:id/checkpoint` (M8) and `POST /sessions/:id/input` (M7)
+    remain stubs.
 
     The SSE stream emitted by `GET /sessions/:id/stream` is described separately
-    in `api/async/supervisor-sse.asyncapi.yaml`.
+    in `api/async/supervisor-sse.asyncapi.yaml`; the M5 stream carries the
+    new `session.update` and `session.permission_auto` events alongside
+    `session.line` / `session.exited` / `session.crashed`.
 
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
@@ -34,10 +42,12 @@ security: []
 tags:
   - name: sessions
     description: ACP session lifecycle.
+  - name: prompt
+    description: ACP prompt boundary (M5 Flow DSL agent step driver).
   - name: stream
     description: Per-session event stream (SSE).
   - name: hitl
-    description: Human-in-the-loop input delivery (stubbed in M3).
+    description: Human-in-the-loop input delivery (stubbed in M3, wired in M7).
 paths:
   /sessions:
     post:
@@ -102,6 +112,75 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sessions/{id}/prompt:
+    post:
+      tags: [prompt]
+      summary: Send an ACP prompt to a live session
+      description: |
+        Drives the M5 Flow DSL `agent` step. The supervisor forwards the
+        prompt onto the per-session `ClientSideConnection` (built on
+        `@agentclientprotocol/sdk@0.22.1`) and blocks until the adapter
+        returns a `stopReason`. Concurrent `agent` steps in
+        `slash-in-existing` mode reuse one session across multiple prompt
+        calls; `new-session` steps create a fresh session per prompt.
+
+        Permission requests raised by the adapter mid-turn auto-allow on
+        M5 with a `session.permission_auto` SSE event and a `warn` log;
+        M7 replaces this with structured HITL.
+      operationId: sendSessionPrompt
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendPromptRequest" }
+      responses:
+        "200":
+          description: |
+            Prompt completed. The adapter's `stopReason` indicates whether
+            the turn ended cleanly, hit a token cap, exceeded max turn
+            requests, or was refused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendPromptResponse" }
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                unknown:
+                  value: { code: "PRECONDITION", message: "unknown session" }
+        "409":
+          description: |
+            Session exists but cannot accept a prompt — either it is no
+            longer `live` (already `exited`/`crashed`) or no ACP
+            connection has been attached (initialization race).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                notLive:
+                  value: { code: "PRECONDITION", message: "session not live" }
+                noConnection:
+                  value:
+                    code: "PRECONDITION"
+                    message: "session has no ACP connection"
+                zodReject:
+                  value:
+                    code: "PRECONDITION"
+                    message: "stepId: Required"
+        "500":
+          description: |
+            Adapter returned a malformed or non-conforming ACP frame, or
+            the ACP transport itself faulted mid-turn.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                acpProtocol:
+                  value: { code: "ACP_PROTOCOL", message: "prompt failed: ..." }
   /sessions/{id}:
     delete:
       tags: [sessions]
@@ -242,7 +321,17 @@ components:
       name: id
       in: path
       required: true
-      description: ACP session id (UUID v4 generated by the supervisor at spawn time).
+      description: |
+        Supervisor-assigned session id (UUID v4 generated at spawn time),
+        returned as `sessionId` in `StartSessionResponse`. This is the
+        path key for every `/sessions/{id}/...` endpoint.
+
+        **Not** the ACP `acpSessionId` — that field is the adapter's
+        resume handle (used in `resumeSessionId` on `POST /sessions`
+        and in `StartSessionResponse.acpSessionId` /
+        `SessionRecord.acpSessionId`). Calling
+        `POST /sessions/{acpSessionId}/prompt` with that handle will
+        return 404 even when the underlying ACP session is live.
       schema:
         type: string
         format: uuid
@@ -280,7 +369,7 @@ components:
         router: { $ref: "#/components/schemas/ExecutorRouter" }
     StartSessionRequest:
       type: object
-      required: [runId, projectSlug, worktreePath, stepId, prompt, executor]
+      required: [runId, projectSlug, worktreePath, stepId, executor]
       properties:
         runId:
           type: string
@@ -312,13 +401,6 @@ components:
           description: |
             Flow step id. Step log lands at `<runId>/<stepId>.log`. Constrained
             to safe filesystem characters.
-        prompt:
-          type: string
-          maxLength: 1000000
-          description: |
-            Initial prompt for the agent. **M3:** not yet plumbed into the
-            child — the adapter binary is invoked without an explicit prompt
-            arg; this field is reserved and validated.
         executor: { $ref: "#/components/schemas/Executor" }
         resumeSessionId:
           type: string
@@ -327,13 +409,68 @@ components:
           pattern: '^[A-Za-z0-9._-]+$'
           description: |
             Optional. When set, the supervisor adds `--resume <id>` to the
-            adapter's argv. M8 path; M3 wires it through verbatim.
+            adapter's argv. M5 wires it through verbatim; M8 uses it as
+            the checkpoint-resume handle.
     StartSessionResponse:
       type: object
-      required: [sessionId, pid]
+      required: [sessionId, pid, acpSessionId]
       properties:
-        sessionId: { type: string, format: uuid, description: ACP session id assigned by the supervisor. }
-        pid: { type: integer, minimum: 1, description: OS pid of the spawned adapter. }
+        sessionId:
+          type: string
+          format: uuid
+          description: Supervisor-assigned session id (path key for subsequent calls).
+        pid:
+          type: integer
+          minimum: 1
+          description: OS pid of the spawned adapter.
+        acpSessionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: |
+            ACP session id surfaced by `session/new` (or echoed back from
+            `resumeSessionId` on resume). Doubles as the `--resume` handle
+            for the M8 checkpoint/resume path. Cached at
+            `runs.acp_session_id` by the web tier.
+    SendPromptRequest:
+      type: object
+      required: [stepId, prompt]
+      properties:
+        stepId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: |
+            Flow step id this prompt belongs to. Echoed in supervisor
+            logs and used to attribute `session.update` events back to a
+            step in the web tier.
+        prompt:
+          type: string
+          maxLength: 1000000
+          description: |
+            Rendered Mustache prompt for the step. Sent verbatim as the
+            ACP `prompt` parameter; the supervisor does not re-template.
+    SendPromptStopReason:
+      type: string
+      enum: [end_turn, max_tokens, max_turn_requests, refusal]
+      description: |
+        ACP `stopReason` from `session/prompt`. The web tier additionally
+        maps transport-cancelled requests to `cancelled` client-side; the
+        supervisor itself only ever returns one of the four ACP values.
+    SendPromptResponse:
+      type: object
+      required: [stopReason]
+      properties:
+        stopReason: { $ref: "#/components/schemas/SendPromptStopReason" }
+        meta:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: |
+            ACP `_meta` passthrough (opaque object provided by the
+            adapter; shape is provider-specific). May be `null` or
+            omitted when the adapter sent no `_meta`.
     SessionStatus:
       type: string
       enum: [live, exited, crashed]
@@ -353,6 +490,14 @@ components:
         signal: { type: string, nullable: true, example: "SIGTERM" }
         logPath: { type: string, description: Absolute path to the step .log file. }
         monotonicId: { type: integer, minimum: 0, description: Highest event id emitted so far for this session. }
+        acpSessionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: |
+            ACP session id once `session/new` has been observed (or
+            echoed from `resumeSessionId`). Absent during the brief
+            window between spawn and ACP handshake.
     SupervisorErrorCode:
       type: string
       enum:

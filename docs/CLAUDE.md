@@ -158,12 +158,42 @@ Every `system-analytics/*.md` file MUST contain, in this order:
 3. **State machine** (where applicable) — `stateDiagram-v2`.
 4. **Process flows** — `flowchart` or `sequenceDiagram` for each
    end-to-end scenario.
-5. **Edge cases** — bulleted list of known failure / boundary modes,
+5. **Expectations** — bulleted acceptance contract. See §R5a for
+   fill-in rules. Domains added after this rule landed MUST include
+   this section.
+6. **Edge cases** — bulleted list of known failure / boundary modes,
    each linked to the relevant `MaisterError` code.
-6. **Linked artifacts** — pointers to API spec, ERD, ADR, source files.
+7. **Linked artifacts** — pointers to API spec, ERD, ADR, source files.
 
 The diagrams and bullets are the artifact. Prose between them is glue,
 not commentary.
+
+### R5a. Expectations section fill-in rules
+
+The **Expectations** section is the steady-state contract for the
+domain — what a reviewer (human or AI) can use as an acceptance
+checklist against the code, the DB, and the wire.
+
+- One bullet = one MUST-hold invariant, guarantee, or observable
+  behavior. One sentence each.
+- Phrase as a normative statement (MUST / NEVER / always / exactly /
+  at most / at least), not a description. RFC-2119 spirit; no formal
+  capitalization required.
+- Cover at minimum, when applicable to the domain: cardinality and
+  uniqueness rules, state-transition invariants, concurrency / cap
+  behavior, persistence vs in-memory boundaries, idempotence, retry /
+  recovery semantics, security-relevant defaults.
+- Every bullet MUST be testable — turnable into an assertion, a SQL
+  constraint check, or a review checklist item. If it cannot, it does
+  not belong here.
+- DO NOT restate diagrams or duplicate Edge cases. Expectations are
+  the contract; Edge cases are the named deviations from it.
+- Reference identifiers verbatim (`runs.status`, `worktree_path`,
+  `MaisterError("CONFIG")`, env-var names). No paraphrasing.
+- Cap at ≤ 12 bullets. If a domain needs more, the boundary is wrong —
+  split the file.
+- Tag implementation status only when the expectation does NOT hold
+  yet at the current milestone (e.g. `(Phase 2)`).
 
 ### R6. Implementation status is explicit
 
@@ -208,14 +238,15 @@ Before any docs PR merges, the diff MUST pass:
 
 | Artifact | Validator | How |
 | -------- | --------- | --- |
-| Mermaid blocks | Mermaid CLI or [Mermaid Live](https://mermaid.live) | Paste, ensure it renders without `Syntax error`. |
+| Mermaid blocks | `pnpm validate:docs` (repo root) | Parses every changed `docs/**/*.md` block via `mermaid.parse()`; exits non-zero on any syntax error. Use `pnpm validate:docs:all` to check the entire `docs/` tree regardless of git status. The Claude Code Stop hook in `.claude/settings.json` runs this gate automatically before the agent finishes a turn. |
 | OpenAPI 3.0.3 | `npx @redocly/cli lint <file>` or [editor.swagger.io](https://editor.swagger.io) | Zero errors; warnings reviewed. |
 | AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |
 | Markdown | `pnpm lint:md` (when present) | No broken intra-doc links. |
 
 CI gates land in Phase 2. For the POC, the author runs the checks
-locally. The `Validate all artifacts` task in the implementation plan
-covers this for the initial bulk migration.
+locally; the Mermaid gate runs automatically through the hook above.
+The `Validate all artifacts` task in the implementation plan covers
+this for the initial bulk migration.
 
 ## Adding a new artifact
 

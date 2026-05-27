@@ -225,7 +225,8 @@ Drizzle schema sketch (server-only, `lib/db/schema.ts`):
   status:
     'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle' | 'Review' |
     'Done' | 'Abandoned' | 'Crashed' | 'Failed',
-  attempt_number,                          // monotonic per task, starts at 1
+  // attempt counter lives on tasks.attempt_number in M5; (Designed M8)
+  // moves to runs.attempt_number with UNIQUE (task_id, attempt_number).
   current_step_id?,
   checkpoint_at?,                          // when graceful checkpoint happened
   keepalive_until?,                        // 30 min sliding window in NeedsInput

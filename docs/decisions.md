@@ -576,8 +576,12 @@ fragments the backlog.
 execution attempt. One task can spawn many runs over its lifetime. If
 a run terminates with `Failed | Crashed | Abandoned`, the task
 auto-returns to `Backlog` and the Launch button re-appears. The latest
-run is the one shown on the card. Database UNIQUE
-`(task_id, attempt_number)` guards against duplicate attempts.
+run is the one shown on the card. **(Designed M8)** Database UNIQUE
+`(task_id, attempt_number)` on `runs` guards against duplicate
+attempts. M5 ships only `tasks.attempt_number` as a mutable
+high-water mark (the `tasks_id_attempt_uq` UNIQUE on `(id,
+attempt_number)` is vacuous because `tasks.id` is the PK) and uses
+`ORDER BY started_at DESC LIMIT 1` for latest-run lookups.
 
 **Consequences:**
 

@@ -11,8 +11,16 @@ relationship to runs ([ADR-018](../decisions.md#adr-018-task--run-cardinality-is
 
 - **Task** — board card. Persisted as `tasks` row.
 - **Run** — execution attempt. See [`runs.md`](runs.md).
-- **Attempt number** — monotonic counter per task, starting at 1.
-  UNIQUE `(task_id, attempt_number)` on runs.
+- **Attempt number** — monotonic counter per task, starting at 1. M5
+  stores it as a **mutable high-water mark** on `tasks.attempt_number`
+  bumped inside the Launch transaction; there is no DB-level guarantee
+  that a given attempt was actually persisted on a run. The
+  `tasks_id_attempt_uq` UNIQUE on `(tasks.id, attempt_number)` is
+  vacuous (PK already enforces unique `id`) and provides no
+  per-attempt guard. **(Designed M8)** moves the stamp onto
+  `runs.attempt_number` with a real UNIQUE `(task_id, attempt_number)`
+  so every run row is immutably tagged and duplicates are rejected at
+  the DB.
 
 ## State machine — board axis
 
@@ -32,8 +40,9 @@ Notes:
 
 - The InFlight bucket contains runs in any of `Pending | Running |
 NeedsInput | NeedsInputIdle | Review | Crashed`.
-- "Latest run" is `MAX(attempt_number)` for the task; that's what the
-  card shows.
+- "Latest run" on the card today is `runs ORDER BY started_at DESC
+LIMIT 1 WHERE task_id = ?`. **(Designed M8)** once `runs.attempt_number`
+  lands this becomes `MAX(attempt_number) WHERE task_id = ?`.
 - Auto-return to `Backlog` on `Failed | Crashed | Abandoned` enables
   ralph-loop retry without recreating the task.
 
@@ -91,7 +100,7 @@ sequenceDiagram
         SCH-->>W: queue (status=Pending)
         W-->>UI: 202 + queue position
     end
-    W->>DB: INSERT runs (status=Pending, attempt_number=N+1)
+    W->>DB: INSERT runs (status=Pending)<br/>UPDATE tasks SET attempt_number=N+1
     W->>SCH: promote (cap not hit)
     SCH->>W: ok, proceed
     W->>SV: POST /sessions { runId, projectSlug, worktreePath, ... }
@@ -108,8 +117,40 @@ flowchart LR
     Latest{Latest run terminal?} -->|status in <br/>Failed/Crashed/Abandoned| Return[UPDATE tasks SET status=Backlog]
     Latest -->|status=Done| Done[UPDATE tasks SET status=Done<br/>terminal]
     Return --> UI[Card re-appears in Backlog<br/>Launch button re-enabled]
-    UI --> NextLaunch[Next Launch click ->,attempt_number = max + 1]
+    UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
+
+## Expectations
+
+- Task ↔ Run cardinality is 1:N; a task can spawn many runs over its
+  lifetime via the retry loop.
+- M5: per-task attempt counter lives on `tasks.attempt_number` as a
+  mutable high-water mark, monotonic starting at 1, bumped by the
+  Launch transaction. The DB has **no** per-attempt uniqueness guard
+  (`tasks_id_attempt_uq` is vacuous because `tasks.id` is the PK);
+  `runs` rows carry no attempt stamp at all, so duplicate or missing
+  attempts are not detectable from a single table.
+- **(Designed M8)** `runs.attempt_number` becomes the immutable
+  per-attempt stamp, monotonic per `task_id` starting at 1, with the
+  real DB-enforced UNIQUE `(task_id, attempt_number)` on `runs`.
+- "Latest run" displayed on a card is the row with `MAX(started_at)`
+  for the `task_id`. **(Designed M8)** switches to
+  `MAX(attempt_number) WHERE task_id = ?` on `runs`.
+- Board state is exactly `Backlog | InFlight | Done | Abandoned`.
+- `InFlight` is a derived bucket; it contains tasks whose latest run is
+  in `Pending | Running | NeedsInput | NeedsInputIdle | Review |
+  Crashed`.
+- Latest run terminates in `Failed | Crashed | Abandoned` → task auto-
+  returns to `Backlog` and Launch button re-appears.
+- `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
+- Title and prompt are non-empty at creation.
+- Launch runs precondition checks (clean repo, branch free, worktree
+  path free, executor registered) BEFORE inserting the `runs` row.
+- Global concurrency cap exceeded on Launch → run inserted as
+  `Pending`, UI shows queue position; this is NOT an error.
+- Discarding a task with a live run MUST terminate the supervisor
+  session (`DELETE /sessions/<id>`) before the task transition; failure
+  to terminate does NOT block the transition (reconciliation cleans up).
 
 ## Edge cases
 

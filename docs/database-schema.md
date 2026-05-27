@@ -86,8 +86,11 @@ UNIQUE `(projectId, flowRefId)`.
 }
 ```
 
-UNIQUE `(id, attemptNumber)` — guards against duplicate attempts.
-Indexed on `(projectId, status)` for board queries.
+UNIQUE `(id, attemptNumber)` is **vacuous** — `id` is the PK, so the
+composite UNIQUE guards nothing. M5 has no DB-level per-attempt
+uniqueness; the real `UNIQUE (task_id, attempt_number)` ships on
+`runs` at Designed M8. Indexed on `(projectId, status)` for board
+queries.
 
 ## `runs`
 

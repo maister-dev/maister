@@ -126,7 +126,14 @@ sequenceDiagram
     Note over A: Flow loops back to "plan" step with the human comments<br/>available as the configured comments_var (e.g. {{review_comments}})
 ```
 
-## Keep-alive activity tracking
+## Keep-alive activity tracking (Designed M8)
+
+The flow below describes the M8 target state. M5 does not implement
+any of it: `runs.keepalive_until` ships unused, no
+`POST /api/runs/[id]/activity` route exists, supervisor
+`POST /sessions/:id/checkpoint` still returns the deferred stub, and
+no `NeedsInput → NeedsInputIdle` transition fires today. The diagram
+is kept as the design contract M8 builds against.
 
 While a run is in `NeedsInput`, the run-detail page is responsible for
 keeping the worker alive:
@@ -162,6 +169,52 @@ fields:
     default: false
 ```
 
+## Expectations
+
+- HITL kind is exactly `permission | form | human`; mapping to wire
+  matches the three-kinds table verbatim.
+- Every HITL request is persisted as a `hitl_requests` row before the
+  run transitions to `NeedsInput`; UI never derives HITL state from
+  supervisor in-memory state.
+- **(Designed M8)** A run in `NeedsInput` extends `keepalive_until` by
+  `MAISTER_KEEPALIVE_MINUTES` (default 30) on every operator activity
+  event (page open, focus, form change). M5 has neither the
+  `POST /api/runs/[id]/activity` route nor a writer for
+  `runs.keepalive_until`; the column ships unused.
+- **(Designed M8)** Idle past `keepalive_until` triggers checkpoint →
+  run becomes `NeedsInputIdle` with `acp_session_id` retained. M5
+  supervisor `POST /sessions/:id/checkpoint` still returns the M8
+  deferred stub, so `NeedsInputIdle` is never reached today.
+- **(Designed M8)** 24 h elapsed in `NeedsInputIdle` without response
+  → `HITL_TIMEOUT`, run `Abandoned`, task → `Backlog`. Depends on the
+  checkpoint path above; no timeout watcher exists in M5.
+- Every form payload includes `schemaVersion: integer`; mismatch with
+  the Flow's declared version raises `CONFIG` with both versions
+  named.
+- Form-schema field types on POC are exactly `string | number |
+  boolean | enum | array`; unknown type refused with `CONFIG` at Flow
+  load.
+- **(Designed M7)** Operator responses MUST be written via
+  `atomicWriteJson` (tmp + rename) to
+  `.maister/<slug>/runs/<runId>/input-<stepId>.json`; last write wins
+  on rapid resubmit. M5 currently suspends `human` steps by writing
+  `needs-input.json` and inserting `hitl_requests`; no
+  `POST /api/runs/[id]/hitl-response` route exists yet, and supervisor
+  `POST /sessions/:id/input` still returns 501.
+- **(Designed M7)** `human` step rejection without `on_reject` defined
+  → run `Failed`; task returns to `Backlog` per the 1:N retry contract.
+  M5 only suspends the run in `NeedsInput`; the rejection branch and
+  the `on_reject.goto_step` loop are not yet wired in `runHumanStep`.
+- **(Designed M7)** `hitl_requests.responded_at` and `.response` are
+  written in the same transaction that updates `runs.status` back to
+  `Running`. M5 leaves both columns NULL — there is no response surface
+  to populate them, so the transition out of `NeedsInput` is the M7
+  acceptance contract, not an M5 one.
+- **(Designed M8)** HITL request lost during supervisor shutdown is
+  recoverable via the standard `acp_session_id` resume on next launch —
+  no separate reconciliation needed. Depends on M8 checkpoint/resume
+  landing the `--resume <id>` re-spawn path.
+
 ## Edge cases
 
 - **24h elapsed in `NeedsInputIdle`** → `HITL_TIMEOUT`. Run →
@@ -189,7 +242,9 @@ fields:
   [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror).
 - ERD: [`../db/hitl-domain.md`](../db/hitl-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
-  §`form_schema versioning`.
+  §`form_schema versioning`;
+  §`Environment variables (server tier)` for
+  `MAISTER_KEEPALIVE_MINUTES`.
 - API (external, planned for M7): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md).

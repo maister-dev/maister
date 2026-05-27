@@ -129,9 +129,37 @@ flowchart LR
     Check -- yes --> OK["supervisor POST /sessions"]
 ```
 
+## Expectations
+
+- A Flow plugin is identified by `{id}@{tag}`; install is idempotent on
+  that tuple and the cache at `~/.maister/flows/<id>@<tag>/` is
+  immutable once written.
+- `flow.yaml` is parsed exactly once at install and persisted verbatim
+  to `flows.manifest` (jsonb); runtime NEVER re-reads `flow.yaml`.
+- `flow.yaml schemaVersion: 1` mismatch refused with `CONFIG` BEFORE
+  any filesystem side effect.
+- `steps[]` ids are unique within a Flow; duplicates refused with
+  `CONFIG`.
+- Step types are exactly `cli | agent | guard | human`; unknown type
+  refused with `CONFIG`.
+- Steps execute sequentially in declaration order; no parallelism on
+  POC.
+- `agent` step MUST declare `mode`; `human` step MUST declare
+  `form_schema`; `guard` step MUST declare at least one of
+  `cost | time | regex` — else `CONFIG`.
+- `on_reject.goto_step` MUST resolve to an earlier step `id`; jumps to
+  a later or missing step refused with `CONFIG`.
+- `setup.sh` runs exactly once per `{id}@{tag}` install.
+- Executor resolution for every `agent` step is total — produces a
+  registered executor or fails with `EXECUTOR_UNAVAILABLE`.
+- Guard caps (`cost | time | regex`) are parsed and persisted as
+  metrics ONLY on POC; no kill-on-cap (Phase 2).
+- Templating in `prompt` is Mustache-style and resolves session
+  context, task fields, per-step output vars, and executor metadata.
+
 ## Edge cases
 
-- **`schemaVersion: 2` mismatch** → `MaisterError("CONFIG")` on load.
+- **`schemaVersion: 1` mismatch in `flow.yaml`** → `MaisterError("CONFIG")` on load.
 - **Duplicate step id within `steps[]`** → `CONFIG`.
 - **`on_reject.goto_step` references a missing step id** → `CONFIG`.
 - **`human` step without `form_schema`** → `CONFIG`.
