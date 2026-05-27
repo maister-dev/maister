@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    {
+      "name": "approved",
+      "label": "Approved?",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "comments",
+      "label": "Reviewer comments (optional)",
+      "type": "string"
+    }
+  ]
+}

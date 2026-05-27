@@ -146,3 +146,28 @@ The CLI runs under `tsx` with a tiny ESM loader
 (`web/scripts/_register-shim.mjs`) that maps `server-only` to its empty
 shim — without it, `tsx` outside Next.js would throw on the
 `import "server-only"` lines in `lib/*`.
+
+## Local-directory sources (M5)
+
+`installFlowPlugin()` accepts an absolute filesystem path or `file://`
+URL as `source`, in addition to git URLs. The installer auto-detects
+which path applies:
+
+- Absolute path → `fs.stat()` it. If it's a directory containing
+  `flow.yaml` **and not a `.git` directory**, copy via
+  `fs.cp(source, target, { recursive: true })` into the system cache.
+- Otherwise fall through to `git clone --branch <version> <source>`.
+
+The `.git` check is important: when a test fixture or an in-repo plugin
+happens to live inside a git repo, the installer still honors the
+`--version` tag instead of fs-copying the working tree.
+
+`version` becomes a label on the target path
+(`~/.maister/flows/<id>@<version>/`) and the row regardless of source
+kind, so `local-dev` (or any other label) is fine for in-monorepo
+plugins.
+
+The in-repo `aif` plugin uses this path — see
+[aif plugin](flow-aif-plugin.md). When `aif` extracts to its own repo,
+the only change is the `source` / `version` flip in `maister.yaml`. No
+code edits.

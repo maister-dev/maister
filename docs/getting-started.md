@@ -143,6 +143,52 @@ this CLI for end users — it is a manual smoke-test surface only.
 
 Full pipeline reference: [Flow Installer](flow-installer.md).
 
+## Launch a run (M5)
+
+After a task exists in `Backlog` for a project that has its Flow plugin
+installed, kick off a run.
+
+**Via HTTP** (the canonical surface that the future UI will call):
+
+```bash
+curl -X POST http://localhost:3000/api/runs \
+  -H 'content-type: application/json' \
+  -d '{ "taskId": "<task-uuid>" }'
+```
+
+Response (started): `202 { "runId": "...", "status": "Running" }`.
+Response (over cap): `202 { "runId": "...", "status": "Pending", "queuePosition": 1 }`.
+
+Optional body field: `executorOverrideId` (resolution order at runtime:
+override → task.executorOverrideId → project.defaultExecutorId →
+flow.recommendedExecutorId).
+
+**Via the dev CLI** (operates against an already-Pending run):
+
+```bash
+DB_URL=postgres://maister:maister@localhost:5432/maister \
+  pnpm --filter maister-web run-flow --task <task-uuid>
+```
+
+Behavior:
+
+- The Route Handler creates the workspace + run rows, runs `git
+  worktree add`, claims a global concurrency slot
+  (`MAISTER_MAX_CONCURRENT_RUNS`, default 3), then kicks off the runner
+  in the background.
+- The runner walks `flow.manifest.steps[]`, persists per-step state to
+  the `step_runs` table, drives `runs.status` through
+  `Running ↔ NeedsInput → Review | Failed`.
+- `agent` steps proxy to the supervisor at
+  `POST /sessions` + `POST /sessions/:id/prompt` (M5 wire — see
+  [Supervisor](supervisor.md)).
+- `human` steps suspend the run with `NeedsInput`, writing
+  `.maister/<slug>/runs/<run-id>/needs-input.json` and a `hitl_requests`
+  row. Resumption arrives in M7+M8.
+
+Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
+[aif plugin](flow-aif-plugin.md).
+
 ## Project layout
 
 For the full structural map see [Agent Map](../AGENTS.md). The short version:

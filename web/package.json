@@ -18,7 +18,8 @@
     "db:migrate": "tsx lib/db/migrate.ts",
     "db:seed": "tsx lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
-    "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts"
+    "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",
+    "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts"
   },
   "dependencies": {
     "@heroui/react": "3.0.4",

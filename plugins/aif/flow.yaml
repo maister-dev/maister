@@ -1,0 +1,27 @@
+schemaVersion: 1
+name: aif
+recommended_executor: claude-sonnet
+setup: ./setup.sh
+steps:
+  - id: explore
+    type: agent
+    mode: slash-in-existing
+    prompt: "/aif-explore {{ task.prompt }}"
+  - id: plan
+    type: agent
+    mode: slash-in-existing
+    prompt: "/aif-plan continue with the explored context"
+  - id: implement
+    type: agent
+    mode: slash-in-existing
+    prompt: "/aif-implement"
+  - id: fix
+    type: agent
+    mode: slash-in-existing
+    prompt: "/aif-fix any issues from /aif-implement"
+  - id: review
+    type: human
+    form_schema: ./schemas/review.json
+    on_reject:
+      goto_step: implement
+      comments_var: review_comments

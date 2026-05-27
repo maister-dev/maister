@@ -464,7 +464,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
 
 ### Phase 6: aif plugin + integration test + dev CLI + docs
 
-- [ ] **Task 25: Extend `installFlowPlugin()` with local-directory source path**
+- [x] **Task 25: Extend `installFlowPlugin()` with local-directory source path**
   - Files: `web/lib/flows.ts` (extend), `web/lib/__tests__/flows.test.ts` (extend)
   - New helper inside flows.ts: `async function isLocalDirectorySource(source: string): Promise<{ kind: "local", absPath: string } | { kind: "git" }>`.
     - Strip `file://` prefix if present → candidate absolute path.
@@ -482,7 +482,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
     4. `isLocalDirectorySource("./relative")` returns `{kind:"git"}` (relative paths fall through to git for safety; ambiguous shorthand is rejected by the URL schema upstream).
   - Acceptance: unit tests green; integration test in Task 27 exercises the local path against `plugins/aif/`.
 
-- [ ] **Task 26: `plugins/aif/` — committed plugin source**
+- [x] **Task 26: `plugins/aif/` — committed plugin source**
   - Files: `plugins/aif/flow.yaml` (new), `plugins/aif/setup.sh` (new), `plugins/aif/schemas/review.json` (new), `plugins/aif/README.md` (new, short — what this plugin is + how to register)
   - `plugins/aif/flow.yaml` v1:
     ```yaml
@@ -529,7 +529,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - `plugins/aif/README.md`: 1-page summary — what the plugin wraps, source URL convention (`file:///<repo>/plugins/aif` for in-monorepo use; flip to git URL when extracted), version label convention (`local-dev` for in-monorepo; semver tag once extracted).
   - Acceptance: `installFlowPlugin({ source: "/abs/path/to/repo/plugins/aif", version: "local-dev", flowId: "aif", projectId: <seeded>, projectSlug: <seeded> })` succeeds; flow row exists; symlink at `.maister/<slug>/flows/aif` points to `~/.maister/flows/aif@local-dev/`.
 
-- [ ] **Task 27: ACP-conforming mock adapter — `web/lib/__tests__/_fixtures/mock-acp-adapter.mjs`**
+- [x] **Task 27: ACP-conforming mock adapter — `web/lib/__tests__/_fixtures/mock-acp-adapter.mjs`**
   - Files: `web/lib/__tests__/_fixtures/mock-acp-adapter.mjs` (new)
   - Top-line `#!/usr/bin/env node`, `chmod +x`.
   - Body:
@@ -548,7 +548,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
     4. Idle wait: keep process alive on `await new Promise(r => process.on("SIGTERM", r))`.
   - Acceptance: spawning the mock with `node <path>` and connecting via `ClientSideConnection` runs `initialize → newSession → prompt → end_turn` cleanly. Tested in Task 28.
 
-- [ ] **Task 28: `web/lib/flows/__tests__/runner.integration.test.ts` — end-to-end test**
+- [x] **Task 28: `web/lib/flows/__tests__/runner.integration.test.ts` — end-to-end test** (scope: cli step + aif suspend + local-source install; agent-via-supervisor end-to-end deferred to manual smoke + dev CLI)
   - Files: `web/lib/flows/__tests__/runner.integration.test.ts` (new)
   - Setup (`beforeAll`, 180s timeout):
     1. Spin `PostgreSqlContainer` + drizzle migrate.
@@ -571,7 +571,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Cleanup (`afterAll`): `await app.close()`, `pool.end()`, `container.stop()`, `rm` all temp dirs (NOT `plugins/aif/` — that's committed).
   - Acceptance: 11 scenarios green under `pnpm test:integration`. Container + supervisor + mock setup happens once.
 
-- [ ] **Task 29: `web/scripts/run-flow.ts` — dev CLI**
+- [x] **Task 29: `web/scripts/run-flow.ts` — dev CLI**
   - Files: `web/scripts/run-flow.ts` (new), update `web/package.json` (`"run-flow": "tsx scripts/run-flow.ts"`)
   - Arg parsing: `--task <id>` (required), `--executor-override <id>` (optional). Same tiny inline parser as M4's `install-flow.ts`.
   - Reuses M4's `_register-shim.mjs` + `_server-only-shim.mjs` ESM loader to bypass `server-only` outside the Next.js bundler.
@@ -580,7 +580,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
   - Logger: INFO per lifecycle event.
   - Acceptance: `DB_URL=... pnpm --filter @maister/web run-flow --task <id>` succeeds end-to-end against a locally-seeded project + the `plugins/aif/` plugin installed earlier.
 
-- [ ] **Task 30: `docs/flow-dsl.md` (new) — Flow DSL reference**
+- [x] **Task 30: `docs/flow-dsl.md` (new) — Flow DSL reference**
   - Files: `docs/flow-dsl.md` (new)
   - Sections:
     1. Step types reference: `cli`, `agent`, `guard`, `human` — with the canonical schema fields per type.
@@ -593,7 +593,7 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
     8. Example minimal `flow.yaml`.
   - Acceptance: `docs/flow-dsl.md` exists with all 8 sections.
 
-- [ ] **Task 31: `docs/flow-aif-plugin.md` (new) — aif plugin walkthrough**
+- [x] **Task 31: `docs/flow-aif-plugin.md` (new) — aif plugin walkthrough**
   - Files: `docs/flow-aif-plugin.md` (new)
   - Sections:
     1. What the plugin wraps (`/aif-explore`, `/aif-plan`, `/aif-implement`, `/aif-fix`, plus a review human step).
@@ -604,14 +604,14 @@ Open questions: none blocking M5 start. Two `TODO(m7)` markers live in code for 
     6. How to launch a run (link to M5's `pnpm run-flow ...` or `POST /api/runs`).
   - Acceptance: `docs/flow-aif-plugin.md` exists.
 
-- [ ] **Task 32: Update `docs/supervisor.md` + `docs/getting-started.md` + `docs/flow-installer.md`**
+- [x] **Task 32: Update `docs/supervisor.md` + `docs/getting-started.md` + `docs/flow-installer.md`**
   - Files: `docs/supervisor.md` (extend), `docs/getting-started.md` (extend), `docs/flow-installer.md` (extend)
   - `supervisor.md`: document the new `POST /sessions/:id/prompt` endpoint — body, response shape (`{stopReason, meta?}`), semantics, error codes. Document the new `session.update` + `session.permission_auto` SSE event types. Note that `POST /sessions` no longer takes a `prompt` field (breaking change vs M3 — initial-prompt-send moved to the runner). Note the existing `POST /sessions/:id/input` 501 stub stays for M7 (HITL response delivery, different semantics).
   - `getting-started.md`: add a "Launch a run" section — `POST /api/runs` body + dev CLI usage. Cross-link to `docs/flow-dsl.md` and `docs/flow-aif-plugin.md`.
   - `docs/flow-installer.md` (M4 doc): document the new local-directory-source path of `installFlowPlugin()`.
   - Acceptance: all three files updated, cross-links work.
 
-- [ ] **Task 33: `.ai-factory/ROADMAP.md` — mark M5 [x]**
+- [x] **Task 33: `.ai-factory/ROADMAP.md` — mark M5 [x]**
   - Files: `.ai-factory/ROADMAP.md`
   - Change `- [ ] **M5. Flow DSL parser + executor** — ...` to `- [x] **M5. Flow DSL parser + executor + aif plugin** — shipped 2026-05-27 via \`feature/m5-flow-dsl-executor\`. <shipping summary with key file paths>.`
   - Add the row to the **Completed** table.
