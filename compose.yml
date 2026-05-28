@@ -17,6 +17,10 @@ services:
       MAISTER_NEEDSINPUTIDLE_TTL_HOURS: ${MAISTER_NEEDSINPUTIDLE_TTL_HOURS:-24}
       MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS: ${MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS:-60}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # Auth.js (NextAuth v5) — AUTH_SECRET is required; AUTH_URL optional.
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_URL: ${AUTH_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - maister_runtime:/app/.maister
       - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos

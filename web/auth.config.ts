@@ -9,6 +9,7 @@ const THIRTY_DAYS_SECONDS = 60 * 60 * 24 * 30;
  * Contains no DB/bcrypt imports so it can run in the middleware runtime.
  */
 export const authConfig = {
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
