@@ -11,6 +11,7 @@ import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { assertHitlResponse } from "@/lib/flows/hitl-validate";
 import { runFlow } from "@/lib/flows/runner";
 import { deliverPermission } from "@/lib/supervisor-client";
 
@@ -82,6 +83,45 @@ function httpStatusForCode(code: string): number {
 
 function runtimeRoot(): string {
   return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
+}
+
+function isPostgres(): boolean {
+  const url = process.env.DB_URL ?? "";
+
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
+}
+
+// Acquire a row-level lock on the HITL request row inside a transaction.
+// Postgres: SELECT ... FOR UPDATE. SQLite: deferred-write semantics rely on
+// the single-writer lock so the no-op `.where()` is correct.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function lockHitlRow(tx: any, hitlRequestId: string): Promise<any> {
+  if (isPostgres()) {
+    const rows = await tx
+      .select()
+      .from(hitlRequests)
+      .where(eq(hitlRequests.id, hitlRequestId))
+      .for("update");
+
+    return rows[0];
+  }
+  const rows = await tx
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, hitlRequestId));
+
+  return rows[0];
+}
+
+// Stable comparison so retries with the same payload are idempotent.
+// Different key order with the same fields hashes differently — clients
+// retrying should send the same byte stream.
+function payloadsEqual(a: unknown, b: unknown): boolean {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
 }
 
 type RouteParams = { params: Promise<{ runId: string; hitlRequestId: string }> };
@@ -175,6 +215,11 @@ type HandlerArgs = {
   startedAt: number;
 };
 
+type PermissionClaim =
+  | { kind: "claimed" }
+  | { kind: "already-delivered" }
+  | { kind: "noop-idempotent" };
+
 async function handlePermissionResponse(
   args: HandlerArgs,
 ): Promise<NextResponse> {
@@ -205,41 +250,85 @@ async function handlePermissionResponse(
     }
   }
 
-  // Phase 1: store the user's chosen optionId (overwriteable on retry)
+  // Phase 1: claim the row with a row-level lock. Two semantics co-exist:
+  //   1. unclaimed → CAS the response with our optionId
+  //   2. claimed with same optionId → idempotent retry; no UPDATE needed
+  //   3. claimed with a different optionId → 409 conflicting choice
+  //   4. respondedAt already set → 409 already delivered
+  // Returns a tag describing which branch fired so the caller can
+  // distinguish "we own the deferred and must deliver" from
+  // "another request already finished — return 200 idempotently".
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await db.transaction(async (tx: any) => {
-    const lockedHitl = await tx
-      .select()
-      .from(hitlRequests)
-      .where(eq(hitlRequests.id, hitlRequestId));
-    const lockedRun = await tx
+  const claim: PermissionClaim = await db.transaction(async (tx: any) => {
+    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
+    const lockedRunRows = await tx
       .select()
       .from(runs)
       .where(eq(runs.id, runId));
+    const lockedRun = lockedRunRows[0];
 
-    if (!lockedHitl[0] || !lockedRun[0]) {
+    if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
     }
-    if (TERMINAL_RUN_STATUS.has(lockedRun[0].status)) {
+    if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
         "CONFLICT",
-        `run is terminal (${lockedRun[0].status}); cannot respond`,
+        `run is terminal (${lockedRun.status}); cannot respond`,
       );
     }
-    if (lockedHitl[0].respondedAt) {
+    if (lockedHitl.respondedAt) {
+      const stored = (lockedHitl.response ?? {}) as { optionId?: string };
+
+      if (stored.optionId === optionId) {
+        return { kind: "already-delivered" } as const;
+      }
+      throw new MaisterError("CONFLICT", "hitl request already delivered");
+    }
+    const stored = lockedHitl.response as { optionId?: string } | null;
+
+    if (stored && stored.optionId && stored.optionId !== optionId) {
       throw new MaisterError(
         "CONFLICT",
-        "hitl request already delivered",
+        `permission already claimed with optionId="${stored.optionId}"; refusing to overwrite with "${optionId}"`,
       );
+    }
+    if (stored && stored.optionId === optionId) {
+      return { kind: "noop-idempotent" } as const;
     }
 
     await tx
       .update(hitlRequests)
       .set({ response: { optionId } })
-      .where(eq(hitlRequests.id, hitlRequestId));
+      .where(
+        and(
+          eq(hitlRequests.id, hitlRequestId),
+          isNull(hitlRequests.respondedAt),
+          isNull(hitlRequests.response),
+        ),
+      );
+
+    return { kind: "claimed" } as const;
   });
 
-  // Phase 2: deliver to supervisor, then mark respondedAt
+  if (claim.kind === "already-delivered") {
+    log.info(
+      {
+        runId,
+        hitlRequestId,
+        kind: "permission",
+        phase: "already-delivered",
+        latencyMs: Date.now() - startedAt,
+      },
+      "permission already delivered (idempotent retry)",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "NeedsInput" },
+      { status: 200 },
+    );
+  }
+
+  // Phase 2: deliver to supervisor, then mark respondedAt.
   try {
     await deliverPermission(
       schema.supervisorSessionId,
@@ -264,20 +353,29 @@ async function handlePermissionResponse(
         kind: "permission",
         phase: "delivered",
         supervisorAck: true,
+        idempotent: claim.kind === "noop-idempotent",
         latencyMs: Date.now() - startedAt,
       },
       "permission delivered",
     );
 
     return NextResponse.json(
-      { ok: true, runStatus: "Running" },
+      { ok: true, runStatus: "NeedsInput" },
       { status: 200 },
     );
   } catch (err) {
     if (isMaisterError(err) && err.code === "HITL_TIMEOUT") {
-      // Terminal failure — supervisor lost the deferred.
+      // Re-check under FOR UPDATE: a concurrent winner may have already
+      // marked respondedAt — in which case the supervisor 404 we just
+      // saw is the side-effect of THAT request succeeding, not a real
+      // timeout. Returning 200 here is the correct idempotent outcome.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await db.transaction(async (tx: any) => {
+      const outcome = await db.transaction(async (tx: any) => {
+        const lockedHitl = await lockHitlRow(tx, hitlRequestId);
+
+        if (lockedHitl?.respondedAt) {
+          return { transition: "already-delivered" } as const;
+        }
         await tx
           .update(runs)
           .set({ status: "Failed", endedAt: new Date() })
@@ -286,7 +384,27 @@ async function handlePermissionResponse(
           .update(hitlRequests)
           .set({ respondedAt: new Date() })
           .where(eq(hitlRequests.id, hitlRequestId));
+
+        return { transition: "terminal" } as const;
       });
+
+      if (outcome.transition === "already-delivered") {
+        log.info(
+          {
+            runId,
+            hitlRequestId,
+            kind: "permission",
+            phase: "concurrent-winner-200",
+            latencyMs: Date.now() - startedAt,
+          },
+          "supervisor 404 raced a concurrent delivery — treating as success",
+        );
+
+        return NextResponse.json(
+          { ok: true, runStatus: "NeedsInput" },
+          { status: 200 },
+        );
+      }
 
       log.warn(
         {
@@ -334,6 +452,10 @@ async function handlePermissionResponse(
   }
 }
 
+type FormClaim =
+  | { kind: "claimed"; storedResponse: unknown }
+  | { kind: "already-delivered"; storedResponse: unknown };
+
 async function handleFormHumanResponse(
   args: HandlerArgs,
 ): Promise<NextResponse> {
@@ -353,9 +475,11 @@ async function handleFormHumanResponse(
       `run is terminal (${runRow.status}); cannot respond`,
     );
   }
-  if (hitlRow.respondedAt) {
-    throw new MaisterError("CONFLICT", "hitl request already delivered");
-  }
+
+  // Phase 0: validate the response BEFORE any state mutation. Returns 422
+  // NEEDS_INPUT on failure so retries with a fixed payload are still
+  // possible (respondedAt remains null because the claim never ran).
+  assertHitlResponse(response, hitlRow.schema);
 
   const projectRows = await db
     .select({ slug: projects.slug })
@@ -367,6 +491,79 @@ async function handleFormHumanResponse(
     throw new MaisterError("PRECONDITION", "project slug not found");
   }
 
+  // Phase 1: claim the row before touching the filesystem. Concurrent
+  // double-submits with the same payload are idempotent; conflicting
+  // payloads return 409 BEFORE either request can write to disk.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const claim: FormClaim = await db.transaction(async (tx: any) => {
+    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
+    const lockedRunRows = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId));
+    const lockedRun = lockedRunRows[0];
+
+    if (!lockedHitl || !lockedRun) {
+      throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
+    }
+    if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `run is terminal (${lockedRun.status}); cannot respond`,
+      );
+    }
+    if (lockedHitl.respondedAt) {
+      if (payloadsEqual(lockedHitl.response, response)) {
+        return { kind: "already-delivered", storedResponse: lockedHitl.response } as const;
+      }
+      throw new MaisterError("CONFLICT", "hitl request already delivered");
+    }
+    if (lockedHitl.response !== null && lockedHitl.response !== undefined) {
+      if (!payloadsEqual(lockedHitl.response, response)) {
+        throw new MaisterError(
+          "CONFLICT",
+          "hitl request already claimed with a different response payload",
+        );
+      }
+      // same payload — idempotent retry. Fall through to artifact write.
+      return { kind: "claimed", storedResponse: lockedHitl.response } as const;
+    }
+
+    await tx
+      .update(hitlRequests)
+      .set({ response })
+      .where(
+        and(
+          eq(hitlRequests.id, hitlRequestId),
+          isNull(hitlRequests.respondedAt),
+          isNull(hitlRequests.response),
+        ),
+      );
+
+    return { kind: "claimed", storedResponse: response } as const;
+  });
+
+  if (claim.kind === "already-delivered") {
+    log.info(
+      {
+        runId,
+        hitlRequestId,
+        kind: hitlRow.kind,
+        phase: "already-delivered",
+        latencyMs: Date.now() - startedAt,
+      },
+      "form/human already delivered (idempotent retry)",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "NeedsInput" },
+      { status: 200 },
+    );
+  }
+
+  // Phase 2: write the artifact from the STORED response value. Even on
+  // an idempotent retry we re-write so that disk and DB stay consistent
+  // when an earlier attempt crashed between the claim and the write.
   const inputPath = path.join(
     runtimeRoot(),
     ".maister",
@@ -377,8 +574,11 @@ async function handleFormHumanResponse(
   );
 
   try {
-    await atomicWriteJson(inputPath, response);
+    await atomicWriteJson(inputPath, claim.storedResponse);
   } catch (err) {
+    // respondedAt is still null — leave the row claimed and retryable.
+    // The user's intent is durably stored in the DB; the runner's
+    // resume-from-existing-input branch will read it on the next try.
     log.warn(
       {
         runId,
@@ -397,37 +597,19 @@ async function handleFormHumanResponse(
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await db.transaction(async (tx: any) => {
-    const lockedHitl = await tx
-      .select()
-      .from(hitlRequests)
-      .where(eq(hitlRequests.id, hitlRequestId));
-    const lockedRun = await tx.select().from(runs).where(eq(runs.id, runId));
-
-    if (!lockedHitl[0] || !lockedRun[0]) {
-      throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
-    }
-    if (TERMINAL_RUN_STATUS.has(lockedRun[0].status)) {
-      throw new MaisterError(
-        "CONFLICT",
-        `run is terminal (${lockedRun[0].status}); cannot respond`,
-      );
-    }
-    if (lockedHitl[0].respondedAt) {
-      throw new MaisterError("CONFLICT", "hitl request already delivered");
-    }
-
-    // Mark the user's response as durably received WITHOUT flipping
-    // runs.status to Running here. runFlow's resume path requires the
-    // run to still be in NeedsInput so it walks to currentStepId
-    // instead of restarting from step 0. The runner does the
-    // NeedsInput→Running transition once it has accepted the work.
-    await tx
-      .update(hitlRequests)
-      .set({ response, respondedAt: new Date() })
-      .where(eq(hitlRequests.id, hitlRequestId));
-  });
+  // Phase 3: mark the response delivered. The runner is the single
+  // owner of the NeedsInput → Running transition (see runFlow's
+  // isResume detection); flipping status here would defeat the
+  // resume gate and restart the flow at step 0.
+  await db
+    .update(hitlRequests)
+    .set({ respondedAt: new Date() })
+    .where(
+      and(
+        eq(hitlRequests.id, hitlRequestId),
+        isNull(hitlRequests.respondedAt),
+      ),
+    );
 
   queueMicrotask(() =>
     void runFlow(runId).catch((err: unknown) =>
@@ -455,3 +637,4 @@ async function handleFormHumanResponse(
     { status: 200 },
   );
 }
+

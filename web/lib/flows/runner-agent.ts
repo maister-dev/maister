@@ -95,7 +95,7 @@ type PermissionContext = {
 async function handlePermissionRequest(
   ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
   pctx: PermissionContext,
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const hitlRequestId = randomUUID();
 
   try {
@@ -128,6 +128,8 @@ async function handlePermissionRequest(
       },
       "permission_request persisted; run transitioned to NeedsInput",
     );
+
+    return { ok: true } as const;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -177,6 +179,8 @@ async function handlePermissionRequest(
         "run-to-Crashed update failed after persist failure",
       );
     }
+
+    return { ok: false, reason: message } as const;
   }
 }
 
@@ -202,6 +206,7 @@ type EventConsumer = {
   done: Promise<void>;
   snapshot: () => string;
   reset: () => void;
+  permissionPersistFailure: () => { reason: string } | null;
 };
 
 function executorToSupervisorInput(
@@ -233,6 +238,7 @@ function startEventConsumer(
   const abort = new AbortController();
   let buf = "";
   let sawPermissionRequest = false;
+  let persistFailure: { reason: string } | null = null;
   const pendingWork: Promise<void>[] = [];
 
   const done = (async () => {
@@ -242,7 +248,13 @@ function startEventConsumer(
       })) {
         if (ev.type === "session.permission_request" && permissionCtx) {
           sawPermissionRequest = true;
-          pendingWork.push(handlePermissionRequest(ev, permissionCtx));
+          pendingWork.push(
+            handlePermissionRequest(ev, permissionCtx).then((outcome) => {
+              if (!outcome.ok && !persistFailure) {
+                persistFailure = { reason: outcome.reason };
+              }
+            }),
+          );
         }
         if (ev.type === "session.update") {
           if (sawPermissionRequest && permissionCtx) {
@@ -294,6 +306,7 @@ function startEventConsumer(
     reset: () => {
       buf = "";
     },
+    permissionPersistFailure: () => persistFailure,
   };
 }
 
@@ -365,14 +378,35 @@ async function runNewSession(
       await consumer.done;
     }
 
-    const ok = promptResult.stopReason === "end_turn";
+    // Permission-persistence failure overrides the adapter's stopReason:
+    // even if the agent gracefully ended after the cancelled tool call,
+    // the run is in a Crashed state and the runner MUST surface that
+    // to runFlow so the final transition to Review never happens.
+    const persistFailure = consumer.permissionPersistFailure();
+    const ok = !persistFailure && promptResult.stopReason === "end_turn";
+    const errorCode = persistFailure
+      ? ("CRASH" as const)
+      : ok
+        ? undefined
+        : ("ACP_PROTOCOL" as const);
+
+    if (persistFailure) {
+      log.error(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          reason: persistFailure.reason,
+        },
+        "permission-persistence failure propagated to step result",
+      );
+    }
 
     return {
       ok,
       stdout: consumer.snapshot(),
       vars: {},
       durationMs: Date.now() - startedAt,
-      errorCode: ok ? undefined : "ACP_PROTOCOL",
+      errorCode,
       acpSessionId: session.acpSessionId,
     };
   } finally {
@@ -439,14 +473,31 @@ async function runSlashInExisting(
     await consumer.done;
   }
 
-  const ok = promptResult.stopReason === "end_turn";
+  const persistFailure = consumer.permissionPersistFailure();
+  const ok = !persistFailure && promptResult.stopReason === "end_turn";
+  const errorCode = persistFailure
+    ? ("CRASH" as const)
+    : ok
+      ? undefined
+      : ("ACP_PROTOCOL" as const);
+
+  if (persistFailure) {
+    log.error(
+      {
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        reason: persistFailure.reason,
+      },
+      "permission-persistence failure propagated to step result",
+    );
+  }
 
   return {
     ok,
     stdout: consumer.snapshot(),
     vars: {},
     durationMs: Date.now() - startedAt,
-    errorCode: ok ? undefined : "ACP_PROTOCOL",
+    errorCode,
     acpSessionId: sessionId,
   };
 }

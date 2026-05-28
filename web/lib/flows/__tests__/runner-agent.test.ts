@@ -220,13 +220,13 @@ describe("runner-agent — session.permission_request handling", () => {
     ).toBe("req-2");
   });
 
-  it("cancels supervisor deferred + transitions run to Crashed when INSERT fails (Finding 3)", async () => {
+  it("cancels supervisor deferred + transitions run to Crashed AND returns ok=false errorCode=CRASH when INSERT fails", async () => {
     const db = makeFakeDb({ insertFails: true });
     const api = makeApi({
       events: [permissionRequest(1, "req-fail"), update(2, "tail"), exited(3)],
     });
 
-    await runAgentStep(
+    const result = await runAgentStep(
       { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
       makeCtx(db),
       api,
@@ -242,9 +242,13 @@ describe("runner-agent — session.permission_request handling", () => {
     const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
 
     expect(statusUpdates).toContain("Crashed");
+    // The crash signal must reach runFlow — otherwise the final Review
+    // transition would overwrite the Crashed state.
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe("CRASH");
   });
 
-  it("keeps consuming the stream when INSERT + cancelPermission both fail (best-effort)", async () => {
+  it("keeps consuming the stream AND returns errorCode=CRASH when INSERT + cancelPermission both fail", async () => {
     const db = makeFakeDb({ insertFails: true });
     const api = makeApi({
       events: [permissionRequest(1, "req-X"), update(2, "tail"), exited(3)],
@@ -263,7 +267,8 @@ describe("runner-agent — session.permission_request handling", () => {
     const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
 
     expect(statusUpdates).toContain("Crashed");
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe("CRASH");
   });
 
   it("no-hidden-deferred regression: cancelPermission called exactly once with the matching (sessionId, requestId)", async () => {

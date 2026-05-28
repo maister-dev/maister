@@ -79,8 +79,8 @@ const fakeDb = {
   select: (cols?: Row) => selectChain(cols),
   update: updateChain,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  transaction: async (fn: (tx: any) => Promise<void>) => {
-    await fn({
+  transaction: async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
+    return await fn({
       select: (cols?: Row) => selectChain(cols),
       update: updateChain,
     });
@@ -170,6 +170,8 @@ function seedFormRow(
   overrides: Partial<{
     runStatus: string;
     respondedAt: Date | null;
+    schema: unknown;
+    response: unknown;
   }> = {},
 ): { runId: string; hitlRequestId: string; stepId: string } {
   const runId = "run-form";
@@ -187,8 +189,8 @@ function seedFormRow(
     runId,
     stepId: "review",
     kind,
-    schema: { fields: [] },
-    response: null,
+    schema: overrides.schema ?? { fields: [] },
+    response: overrides.response ?? null,
     respondedAt: overrides.respondedAt ?? null,
   });
 
@@ -275,7 +277,31 @@ describe("HITL respond route — kind=permission", () => {
     });
   });
 
-  it("retry after EXECUTOR_UNAVAILABLE with a different optionId overwrites response and succeeds", async () => {
+  it("retry after EXECUTOR_UNAVAILABLE with a DIFFERENT optionId returns 409 (atomic claim contract)", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "no supervisor"),
+    );
+
+    const first = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(first.status).toBe(503);
+    // First call claimed the row with `allow`. A second submission must
+    // not silently overwrite the user's prior choice.
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
+    });
+
+    const second = await invokePost(runId, hitlRequestId, {
+      optionId: "deny",
+    });
+
+    expect(second.status).toBe(409);
+    expect(deliverPermissionSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("retry after EXECUTOR_UNAVAILABLE with the SAME optionId is idempotent and succeeds", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
 
     deliverPermissionSpy.mockRejectedValueOnce(
@@ -287,14 +313,15 @@ describe("HITL respond route — kind=permission", () => {
     expect(first.status).toBe(503);
 
     const second = await invokePost(runId, hitlRequestId, {
-      optionId: "deny",
+      optionId: "allow",
     });
 
     expect(second.status).toBe(200);
     expect(dbState.tables.hitl_requests[0].response).toEqual({
-      optionId: "deny",
+      optionId: "allow",
     });
-    expect(deliverPermissionSpy).toHaveBeenNthCalledWith(2, "sup-1", "req-1", "deny");
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    expect(deliverPermissionSpy).toHaveBeenCalledTimes(2);
   });
 
   it("already-delivered (respondedAt set) → 409", async () => {
@@ -306,6 +333,32 @@ describe("HITL respond route — kind=permission", () => {
 
     expect(res.status).toBe(409);
     expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("already-delivered with the SAME optionId is idempotent and returns 200", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      respondedAt: new Date(),
+      response: { optionId: "allow" },
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("HITL_TIMEOUT from supervisor when respondedAt is already set by a concurrent winner returns 200 (no run→Failed)", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockImplementation(async () => {
+      dbState.tables.hitl_requests[0].respondedAt = new Date();
+      throw new MaisterError("HITL_TIMEOUT", "expired");
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
   });
 
   it("run in terminal state (Failed) → 409", async () => {
@@ -409,6 +462,144 @@ describe("HITL respond route — kind=form / kind=human", () => {
     const res = await invokePost(runId, hitlRequestId, {});
 
     expect(res.status).toBe(400);
+  });
+
+  it("schema validation: scalar response when fields are declared returns 422", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      schema: {
+        fields: [{ name: "approved", type: "boolean", required: true }],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: "yes",
+    });
+
+    expect(res.status).toBe(422);
+  });
+
+  it("schema validation: missing required field returns 422 and does NOT write the artifact", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("form", {
+      schema: {
+        fields: [{ name: "approved", type: "boolean", required: true }],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { comments: "no opinion" },
+    });
+
+    expect(res.status).toBe(422);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+
+    expect(existsSync(artifactPath)).toBe(false);
+  });
+
+  it("schema validation: enum value outside options returns 422", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      schema: {
+        fields: [
+          {
+            name: "decision",
+            type: "enum",
+            required: true,
+            options: ["approve", "reject"],
+          },
+        ],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "maybe" },
+    });
+
+    expect(res.status).toBe(422);
+  });
+
+  it("schema validation: typed payload that matches the schema is accepted", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      schema: {
+        fields: [
+          { name: "approved", type: "boolean", required: true },
+          { name: "comments", type: "string" },
+        ],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true, comments: "lgtm" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      approved: true,
+      comments: "lgtm",
+    });
+  });
+
+  it("concurrent same-payload double-submit is idempotent and returns 200 both times", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form");
+    const payload = { approved: true };
+    const first = await invokePost(runId, hitlRequestId, { response: payload });
+
+    expect(first.status).toBe(200);
+
+    const second = await invokePost(runId, hitlRequestId, {
+      response: payload,
+    });
+
+    expect(second.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual(payload);
+  });
+
+  it("concurrent DIFFERENT-payload double-submit: second returns 409 and does NOT overwrite the artifact", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("form");
+    const first = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(first.status).toBe(200);
+
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+    const before = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(before).toEqual({ approved: true });
+
+    const second = await invokePost(runId, hitlRequestId, {
+      response: { approved: false },
+    });
+
+    expect(second.status).toBe(409);
+    const after = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(after).toEqual({ approved: true });
+  });
+
+  it("artifact-write failure returns 503 retryable and does NOT mark respondedAt", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form");
+    const payload = { approved: true };
+    const writeSpy = vi
+      .spyOn(await import("@/lib/atomic"), "atomicWriteJson")
+      .mockRejectedValueOnce(new Error("EACCES"));
+    const res = await invokePost(runId, hitlRequestId, { response: payload });
+
+    expect(res.status).toBe(503);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    // Response IS stored — the user's intent is captured durably
+    // so a retry replays the same value.
+    expect(dbState.tables.hitl_requests[0].response).toEqual(payload);
+    writeSpy.mockRestore();
   });
 });
 
