@@ -347,7 +347,7 @@ Decisions:
   - Logging: existing `logger.debug` pattern; do NOT log `reason` body content beyond its first 64 chars (operator may pass diagnostic strings that include cause stacks).
   - Acceptance: 8+ unit cases in Task 14 covering each error class for both helpers.
 
-- [ ] **Task 11: `runner-agent.ts` handles `session.permission_request` with hard-fail-on-insert** (Finding 3 fix)
+- [x] **Task 11: `runner-agent.ts` handles `session.permission_request` with hard-fail-on-insert** (Finding 3 fix)
   - Files: `web/lib/flows/runner-agent.ts:72-107` (extend `startEventConsumer`)
   - Add a branch for `ev.type === "session.permission_request"`. Wrap the work in an async IIFE so the surrounding `for await` loop keeps consuming subsequent events while this branch awaits DB calls.
   - Happy path inside try:
@@ -363,7 +363,7 @@ Decisions:
   - Logging: INFO `{runId, stepId, hitlRequestId, requestId}` on row insert; INFO on run-state transition with the same fields; ERROR on the insert-failure-cancel path with full cause.
   - Acceptance: covered by Task 14 + Task 16 integration tests.
 
-- [ ] **Task 12: `runner-human.ts` resume-on-existing-input idempotence + kind distinction**
+- [x] **Task 12: `runner-human.ts` resume-on-existing-input idempotence + kind distinction**
   - Files: `web/lib/flows/runner-human.ts` (extend the step handler)
   - Before computing the schema / writing `needs-input.json`, check whether `<MAISTER_RUNTIME_ROOT>/.maister/<projectSlug>/runs/<runId>/input-<stepId>.json` exists. If present:
     1. `const raw = await readFile(inputPath, "utf8")`; `const response = JSON.parse(raw)`.
@@ -374,7 +374,7 @@ Decisions:
   - Logging: INFO `{runId, stepId, resumeFromArtifact: boolean}` on entry; existing INFO line stays for the first-pass path.
   - Acceptance: covered by Task 14 + Task 16 integration tests.
 
-- [ ] **Task 13: `runner.ts` re-entry from `NeedsInput` + new `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` with two-phase commit** (Finding 2 fix)
+- [x] **Task 13: `runner.ts` re-entry from `NeedsInput` + new `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` with two-phase commit** (Finding 2 fix)
   - Files: `web/lib/flows/runner.ts` (extend the flow loop entry), `web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` (NEW)
   - `runner.ts` re-entry: when invoked on a run whose status is `NeedsInput` and whose `currentStepId` is set, START the loop at the index of `currentStepId` in `flow.steps`. On entry, fetch all `step_runs` for the current `runId`, group by `stepId`, keep the latest `attempt`'s `vars`, rehydrate `FlowContext.vars`. The existing init likely needs the rehydrate to be additive (move the `vars: {}` init behind an `if (existingStepRuns.length === 0)` guard).
   - The new response route handler (`route.ts`) implements the two-phase commit from the Decisions section. Algorithm pseudocode:

@@ -260,10 +260,25 @@ export async function runFlow(
     throw err;
   }
 
-  if (loaded.run.status !== "Running") {
+  if (loaded.run.status !== "Running" && loaded.run.status !== "NeedsInput") {
     throw new MaisterError(
       "PRECONDITION",
-      `run ${runId} not in Running state (got ${loaded.run.status})`,
+      `run ${runId} not in Running/NeedsInput state (got ${loaded.run.status})`,
+    );
+  }
+
+  const isResume =
+    loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+
+  if (isResume) {
+    await db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, runId));
+    loaded.run.status = "Running";
+    log2.info(
+      { currentStepId: loaded.run.currentStepId },
+      "runFlow resume from NeedsInput",
     );
   }
 
@@ -275,22 +290,52 @@ export async function runFlow(
 
   let failed = false;
   let needsInput = false;
+  const allSteps = loaded.manifest.steps;
+  const resumeIndex = isResume
+    ? Math.max(
+        0,
+        allSteps.findIndex((s) => s.id === loaded.run.currentStepId),
+      )
+    : 0;
+  const stepsToRun = allSteps.slice(resumeIndex);
 
   try {
-    for (const step of loaded.manifest.steps) {
+    for (const step of stepsToRun) {
       await db
         .update(runs)
         .set({ currentStepId: step.id })
         .where(eq(runs.id, runId));
 
       const mode = step.type === "agent" ? step.mode : undefined;
-      const { id: stepRunId } = await createStepRun({
-        runId,
-        stepId: step.id,
-        stepType: step.type,
-        mode,
-        db,
-      });
+      const existingStepRuns = await getStepRunsForRun(runId, db);
+      const lastForStep = [...existingStepRuns]
+        .reverse()
+        .find((sr) => sr.stepId === step.id);
+
+      let stepRunId: string;
+
+      if (
+        isResume &&
+        step.id === loaded.run.currentStepId &&
+        lastForStep &&
+        lastForStep.status === "NeedsInput"
+      ) {
+        stepRunId = lastForStep.id;
+        log2.info(
+          { stepRunId, stepId: step.id },
+          "resuming existing step-run from NeedsInput",
+        );
+      } else {
+        const created = await createStepRun({
+          runId,
+          stepId: step.id,
+          stepType: step.type,
+          mode,
+          db,
+        });
+
+        stepRunId = created.id;
+      }
 
       await markStepRunning(stepRunId, db);
 
