@@ -46,9 +46,22 @@ services:
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # CCR (Claude Code Router) — consumed by router=ccr executors. The
+      # daemon spawns lazily on the first router=ccr session. Token is
+      # required ONLY when at least one executor uses router=ccr and
+      # does not pin its own token in executor.env; absent token surfaces
+      # as 503 EXECUTOR_UNAVAILABLE at spawn time (documented contract).
+      MAISTER_CCR_AUTH_TOKEN: ${MAISTER_CCR_AUTH_TOKEN}
+      MAISTER_CCR_CONFIG_PATH: ${MAISTER_CCR_CONFIG_PATH:-/app/.ccr/config.json}
     volumes:
       - maister_runtime:/app/.maister
       - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
+      # CCR config file — operator-managed on the host, mounted read-only.
+      # Default host path is ~/.claude-code-router (standard CCR location).
+      # If the host directory does not exist, Docker auto-creates an empty
+      # mount; the supervisor's pre-flight then surfaces 503 with the
+      # docs pointer (intended contract, not a bug).
+      - ${MAISTER_CCR_CONFIG_HOST_PATH:-${HOME}/.claude-code-router}:/app/.ccr:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:7777/sessions').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
