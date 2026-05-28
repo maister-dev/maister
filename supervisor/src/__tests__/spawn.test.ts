@@ -191,6 +191,75 @@ describe("spawnSession", () => {
     expect(types).toContain("session.exited");
   });
 
+  it("uses run-scoped run.events.jsonl shared across multiple spawns for the same run (regression: multi-step SSE)", async () => {
+    const sessionA = "sess-A";
+    const sessionB = "sess-B";
+    const request = makeRequest({ runId: "run-multi", stepId: "stepA" });
+
+    const a = await spawnSession({
+      sessionId: sessionA,
+      request,
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [FIXTURE_PATH, "--lines", "2"],
+    });
+
+    expect(a.eventsLogPath.endsWith("/runs/run-multi/run.events.jsonl")).toBe(
+      true,
+    );
+
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(a.record, a.child, a.emitter, { eventsLog: a.eventsLog });
+    await new Promise<void>((r) => a.child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 50));
+    a.record.monotonicId += 1;
+    registry.emit(sessionA, {
+      type: "session.exited",
+      sessionId: sessionA,
+      monotonicId: a.record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const b = await spawnSession({
+      sessionId: sessionB,
+      request: { ...request, stepId: "stepB" },
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [FIXTURE_PATH, "--lines", "1"],
+    });
+
+    expect(b.eventsLogPath).toBe(a.eventsLogPath);
+
+    registry.register(b.record, b.child, b.emitter, { eventsLog: b.eventsLog });
+    await new Promise<void>((r) => b.child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 50));
+    b.record.monotonicId += 1;
+    registry.emit(sessionB, {
+      type: "session.exited",
+      sessionId: sessionB,
+      monotonicId: b.record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const raw = await readFile(a.eventsLogPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const sessionIds = lines.map(
+      (l) => (JSON.parse(l) as { sessionId: string }).sessionId,
+    );
+
+    expect(sessionIds.filter((s) => s === sessionA).length).toBeGreaterThanOrEqual(
+      2,
+    );
+    expect(sessionIds.filter((s) => s === sessionB).length).toBeGreaterThanOrEqual(
+      1,
+    );
+  });
+
   it("closes events.jsonl after terminal event so the file stat is stable", async () => {
     const sessionId = "session-elog-close";
     const request = makeRequest({

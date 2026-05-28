@@ -96,18 +96,14 @@ async function refreshRunStatus(
   return { status: row.status, currentStepId: row.currentStepId };
 }
 
-function eventsLogPath(
-  projectSlug: string,
-  runId: string,
-  stepId: string,
-): string {
+function eventsLogPath(projectSlug: string, runId: string): string {
   return path.join(
     runtimeRoot(),
     ".maister",
     projectSlug,
     "runs",
     runId,
-    `${stepId}.events.jsonl`,
+    "run.events.jsonl",
   );
 }
 
@@ -183,11 +179,12 @@ export async function GET(
       let cursor = 0;
       let lastSeen = lastEventId;
       let fh: FileHandle | null = null;
-      let currentStepId = run.currentStepId;
-      let projectSlug = run.projectSlug;
+      const projectSlug = run.projectSlug;
+      const logPath = eventsLogPath(projectSlug, runId);
       let lastStatusCheck = Date.now();
       let consecutiveEmpty = 0;
       const maxQuietMs = keepaliveMs();
+      let pending = "";
 
       const cleanup = async () => {
         if (fh) {
@@ -219,48 +216,53 @@ export async function GET(
         void cleanup();
       });
 
-      if (!currentStepId) {
-        try {
-          controller.enqueue(
-            encoder.encode(`:awaiting-step\n\n`),
-          );
-        } catch {
-          /* client gone */
-        }
-      }
+      const drainPending = () => {
+        let nl = pending.indexOf("\n");
 
-      try {
-        let pending = "";
+        while (nl !== -1) {
+          const line = pending.slice(0, nl);
 
-        while (!req.signal.aborted) {
-          if (!currentStepId) {
-            await delay(POLL_INTERVAL_MS);
-            const status = await refreshRunStatus(runId);
+          pending = pending.slice(nl + 1);
+          if (line.trim().length > 0) {
+            try {
+              const ev = JSON.parse(line) as {
+                type: string;
+                monotonicId: number;
+              };
 
-            if (!status) break;
-            currentStepId = status.currentStepId;
-            if (TERMINAL_RUN_STATUS.has(status.status)) {
-              break;
-            }
-            if (!currentStepId) {
-              if (Date.now() - startedAt > maxQuietMs) {
-                disconnectReason = "timeout";
-                break;
+              if (
+                typeof ev.monotonicId === "number" &&
+                ev.monotonicId > lastSeen
+              ) {
+                lastSeen = ev.monotonicId;
+                controller.enqueue(
+                  encoder.encode(
+                    formatSseEvent(ev.monotonicId, ev.type, line),
+                  ),
+                );
+                eventsSent += 1;
               }
-              continue;
+            } catch {
+              /* skip malformed line */
             }
           }
+          nl = pending.indexOf("\n");
+        }
+      };
 
+      try {
+        while (!req.signal.aborted) {
           if (!fh) {
             try {
-              fh = await open(
-                eventsLogPath(projectSlug, runId, currentStepId),
-                "r",
-              );
+              fh = await open(logPath, "r");
               cursor = 0;
               pending = "";
             } catch (err) {
               if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+                if (Date.now() - startedAt > maxQuietMs) {
+                  disconnectReason = "timeout";
+                  break;
+                }
                 await delay(POLL_INTERVAL_MS);
                 continue;
               }
@@ -273,37 +275,8 @@ export async function GET(
           cursor = nextOffset;
           if (chunk.length > 0) {
             consecutiveEmpty = 0;
-            pending += chunk.length ? new TextDecoder().decode(chunk) : "";
-            let nl = pending.indexOf("\n");
-
-            while (nl !== -1) {
-              const line = pending.slice(0, nl);
-
-              pending = pending.slice(nl + 1);
-              if (line.trim().length === 0) {
-                nl = pending.indexOf("\n");
-                continue;
-              }
-              try {
-                const ev = JSON.parse(line) as {
-                  type: string;
-                  monotonicId: number;
-                };
-
-                if (typeof ev.monotonicId === "number" && ev.monotonicId > lastSeen) {
-                  lastSeen = ev.monotonicId;
-                  controller.enqueue(
-                    encoder.encode(
-                      formatSseEvent(ev.monotonicId, ev.type, line),
-                    ),
-                  );
-                  eventsSent += 1;
-                }
-              } catch {
-                /* skip malformed line */
-              }
-              nl = pending.indexOf("\n");
-            }
+            pending += new TextDecoder().decode(chunk);
+            drainPending();
           } else {
             consecutiveEmpty += 1;
           }
@@ -318,51 +291,10 @@ export async function GET(
 
               if (tail.length > 0) {
                 pending += new TextDecoder().decode(tail);
-                let nl = pending.indexOf("\n");
-
-                while (nl !== -1) {
-                  const line = pending.slice(0, nl);
-
-                  pending = pending.slice(nl + 1);
-                  if (line.trim().length === 0) {
-                    nl = pending.indexOf("\n");
-                    continue;
-                  }
-                  try {
-                    const ev = JSON.parse(line) as {
-                      type: string;
-                      monotonicId: number;
-                    };
-
-                    if (
-                      typeof ev.monotonicId === "number" &&
-                      ev.monotonicId > lastSeen
-                    ) {
-                      lastSeen = ev.monotonicId;
-                      controller.enqueue(
-                        encoder.encode(
-                          formatSseEvent(ev.monotonicId, ev.type, line),
-                        ),
-                      );
-                      eventsSent += 1;
-                    }
-                  } catch {
-                    /* skip */
-                  }
-                  nl = pending.indexOf("\n");
-                }
+                drainPending();
               }
               disconnectReason = "terminal";
               break;
-            }
-            if (status.currentStepId && status.currentStepId !== currentStepId) {
-              currentStepId = status.currentStepId;
-              if (fh) {
-                await fh.close();
-                fh = null;
-              }
-              cursor = 0;
-              pending = "";
             }
           }
 

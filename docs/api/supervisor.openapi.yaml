@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.5.0"
+  version: "0.7.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries `claude-agent-acp` / `codex-acp`).
@@ -14,13 +14,13 @@ info:
     surface drives the Flow DSL `agent` step from `web/lib/flows/runner-agent.ts`
     via the supervisor's `ClientSideConnection`; permission requests
     auto-allow with a warn log until M7 wires HITL.
-    `POST /sessions/:id/checkpoint` (M8) and `POST /sessions/:id/input` (M7)
-    remain stubs.
+    `POST /sessions/:id/checkpoint` (M8) remains a stub;
+    `POST /sessions/:id/input` is implemented as of M7 (permission-only).
 
     The SSE stream emitted by `GET /sessions/:id/stream` is described separately
-    in `api/async/supervisor-sse.asyncapi.yaml`; the M5 stream carries the
-    new `session.update` and `session.permission_auto` events alongside
-    `session.line` / `session.exited` / `session.crashed`.
+    in `api/async/supervisor-sse.asyncapi.yaml`; as of M7 the stream
+    carries `session.update`, `session.permission_request`, `session.line`,
+    `session.exited`, and `session.crashed` events.
 
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
@@ -124,9 +124,11 @@ paths:
         `slash-in-existing` mode reuse one session across multiple prompt
         calls; `new-session` steps create a fresh session per prompt.
 
-        Permission requests raised by the adapter mid-turn auto-allow on
-        M5 with a `session.permission_auto` SSE event and a `warn` log;
-        M7 replaces this with structured HITL.
+        Permission requests raised by the adapter mid-turn surface as
+        `session.permission_request` SSE events (M7+). The supervisor
+        parks the ACP deferred until the web tier resolves it via
+        `POST /sessions/{id}/input`; the prompt promise stays in flight
+        for the duration of the HITL turn.
       operationId: sendSessionPrompt
       parameters:
         - $ref: "#/components/parameters/SessionId"
@@ -282,39 +284,75 @@ paths:
   /sessions/{id}/input:
     post:
       tags: [hitl]
-      summary: (M7 stub) Deliver HITL response to a live session
+      summary: Deliver an HITL permission decision to a live session (M7)
       description: |
-        **Stubbed in M3.** Returns 501 with `ACP_PROTOCOL`. M7 will accept
-        either an ACP `session/request_permission` reply (binary approve/deny)
-        or a pointer to a structured-form payload written under
-        `.maister/<slug>/runs/<runId>/input-<stepId>.json`.
+        Permission-only HITL surface. The body is a discriminated union on
+        `action`. The supervisor never writes filesystem artifacts on this
+        path — durable form/human responses are written directly by the
+        web tier; this endpoint only resolves or cancels the live ACP
+        `requestPermission` deferred held by the pending-permission
+        registry.
+
+        - `action: "select"` resolves the deferred with ACP
+          `{outcome: "selected", optionId}`.
+        - `action: "cancel"` resolves the deferred with ACP
+          `{outcome: "cancelled"}` and records `reason` in supervisor
+          logs.
       operationId: deliverInput
       parameters:
         - $ref: "#/components/parameters/SessionId"
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: true
-              description: Shape locked in M7 — see the AsyncAPI doc once it ships.
+            schema: { $ref: "#/components/schemas/InputBody" }
+            examples:
+              select:
+                summary: Approve a pending permission
+                value:
+                  kind: "permission"
+                  action: "select"
+                  requestId: "8a4a7b9d-0d6b-4b27-a09c-0a3f4f1e1d8e"
+                  optionId: "allow"
+              cancel:
+                summary: Cancel a pending permission
+                value:
+                  kind: "permission"
+                  action: "cancel"
+                  requestId: "8a4a7b9d-0d6b-4b27-a09c-0a3f4f1e1d8e"
+                  reason: "DB_PERSIST_FAILED"
       responses:
-        "404":
-          description: No session with that id.
+        "200":
+          description: Deferred resolved (or cancelled).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-        "501":
-          description: Not implemented in M3.
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "404":
+          description: |
+            No session with that id, OR no pending permission with that
+            `requestId` (deferred already evicted or timed out).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
-                stub:
+                missing:
                   value:
-                    code: "ACP_PROTOCOL"
-                    message: "Not implemented in M3 — see M7"
+                    code: "NEEDS_INPUT"
+                    message: "no pending permission with that requestId"
+        "409":
+          description: Body validation failure (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                refine:
+                  value:
+                    code: "PRECONDITION"
+                    message: "optionId: optionId is required when action='select'"
 components:
   parameters:
     SessionId:
@@ -507,12 +545,63 @@ components:
         - ACP_PROTOCOL
         - CHECKPOINT
         - CRASH
+        - HITL_TIMEOUT
+        - NEEDS_INPUT
       description: |
         Subset of the web-tier `MaisterErrorCode`. The web client translates
         this body into `MaisterError({ code })` at the boundary.
+
+        `HITL_TIMEOUT` (M7+) is raised when a pending permission deferred
+        ages past `MAISTER_KEEPALIVE_MINUTES`. `NEEDS_INPUT` (M7+) is
+        returned by `POST /sessions/{id}/input` when no matching pending
+        permission exists for the given `(sessionId, requestId)`.
     SupervisorErrorBody:
       type: object
       required: [code, message]
       properties:
         code: { $ref: "#/components/schemas/SupervisorErrorCode" }
         message: { type: string }
+    InputBody:
+      type: object
+      required: [kind, action, requestId]
+      description: |
+        Permission-only HITL response body for `POST /sessions/{id}/input`.
+        Discriminated on `action`:
+
+        - `select`: `optionId` is REQUIRED; the supervisor resolves the
+          live deferred with ACP `{outcome: "selected", optionId}`.
+        - `cancel`: `optionId` is forbidden; `reason` is optional and
+          logged. The supervisor resolves the deferred with ACP
+          `{outcome: "cancelled"}`.
+
+        There is no `kind: "form"` branch — durable form / human responses
+        are written by the web tier directly via `atomicWriteJson` and
+        never traverse this endpoint.
+      properties:
+        kind:
+          type: string
+          enum: [permission]
+        action:
+          type: string
+          enum: [select, cancel]
+        requestId:
+          type: string
+          format: uuid
+          description: |
+            v4 UUID minted by the supervisor at `requestPermission` time
+            and surfaced via the `session.permission_request` SSE event.
+        optionId:
+          type: string
+          minLength: 1
+          description: |
+            Required iff `action == "select"`. MUST be one of the
+            `options[].optionId` values the supervisor emitted on the
+            matching `session.permission_request` event.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Optional, only meaningful for `action == "cancel"`. Logged by
+            the supervisor for operator triage; not forwarded to the
+            agent. Truncated to 256 chars upstream.

@@ -63,13 +63,18 @@ export async function spawnSession(
     request.runId,
     `${request.stepId}.log`,
   );
+  // events.jsonl is per-RUN (not per-step) so that slash-in-existing
+  // sessions which span multiple steps and new-session-per-step spawns
+  // both append to the same ordered durable replay log. The web SSE
+  // bridge tails this single file and never has to switch handles
+  // when currentStepId advances.
   const eventsLogPath = resolve(
     runtimeRoot,
     ".maister",
     request.projectSlug,
     "runs",
     request.runId,
-    `${request.stepId}.events.jsonl`,
+    "run.events.jsonl",
   );
 
   await mkdir(dirname(logPath), { recursive: true });

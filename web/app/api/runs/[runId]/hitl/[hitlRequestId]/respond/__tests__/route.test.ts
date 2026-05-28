@@ -352,7 +352,10 @@ describe("HITL respond route — kind=form / kind=human", () => {
 
     expect(onDisk).toEqual(payload);
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
-    expect(dbState.tables.runs[0].status).toBe("Running");
+    // runs.status stays NeedsInput so runFlow's resume path fires
+    // instead of restarting the flow at step 0. The runner is the one
+    // that performs the NeedsInput → Running transition.
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
     await new Promise((r) => setImmediate(r));
     expect(runFlowSpy).toHaveBeenCalledWith(runId);
   });

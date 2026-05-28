@@ -418,14 +418,15 @@ async function handleFormHumanResponse(
       throw new MaisterError("CONFLICT", "hitl request already delivered");
     }
 
+    // Mark the user's response as durably received WITHOUT flipping
+    // runs.status to Running here. runFlow's resume path requires the
+    // run to still be in NeedsInput so it walks to currentStepId
+    // instead of restarting from step 0. The runner does the
+    // NeedsInput→Running transition once it has accepted the work.
     await tx
       .update(hitlRequests)
       .set({ response, respondedAt: new Date() })
       .where(eq(hitlRequests.id, hitlRequestId));
-    await tx
-      .update(runs)
-      .set({ status: "Running" })
-      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
   });
 
   queueMicrotask(() =>
@@ -450,7 +451,7 @@ async function handleFormHumanResponse(
   );
 
   return NextResponse.json(
-    { ok: true, runStatus: "Running" },
+    { ok: true, runStatus: "NeedsInput" },
     { status: 200 },
   );
 }
