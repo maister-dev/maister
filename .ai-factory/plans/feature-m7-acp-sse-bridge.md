@@ -521,7 +521,7 @@ Decisions:
 
 ### Phase 5: Documentation + roadmap + deployment verification
 
-- [ ] **Task 18: Update `docs/supervisor.md` + `docs/api/supervisor.openapi.yaml`**
+- [ ] **Task 18: Update `docs/supervisor.md` + `docs/api/supervisor.openapi.yaml`** — **DEFERRED**. ROADMAP entry captures the M7 contract changes; full OpenAPI + supervisor.md rewrite tracked as follow-up before downstream clients integrate.
   - Files: `docs/supervisor.md`, `docs/api/supervisor.openapi.yaml`
   - `docs/supervisor.md`:
     - HTTP API table: update the `/sessions/{id}/input` row from "Stub: Returns 501 …" to "Implemented (M7). **Permission-only**; discriminated body with `action: 'select' | 'cancel'`. Returns 200 / 404 / 409."
@@ -535,13 +535,13 @@ Decisions:
   - Logging: n/a.
   - Acceptance: OpenAPI lint clean; manual review confirms the prose matches the YAML.
 
-- [ ] **Task 19: Update `docs/api/async/supervisor-sse.asyncapi.yaml`**
+- [ ] **Task 19: Update `docs/api/async/supervisor-sse.asyncapi.yaml`** — **DEFERRED**. See Task 18.
   - Files: `docs/api/async/supervisor-sse.asyncapi.yaml`
   - Remove the `session.permission_auto` channel / message entirely. Add `session.permission_request` with the new schema. Update the "M5 placeholder, M7 replaces" notes.
   - Bump version to `0.7.0`.
   - Acceptance: AsyncAPI lint clean; examples align with the SessionEvent union in `supervisor/src/types.ts` after Task 6.
 
-- [ ] **Task 20: Create `docs/api/web.openapi.yaml` + `docs/api/async/web-runs.asyncapi.yaml`**
+- [ ] **Task 20: Create `docs/api/web.openapi.yaml` + `docs/api/async/web-runs.asyncapi.yaml`** — **DEFERRED**. See Task 18.
   - Files: `docs/api/web.openapi.yaml` (NEW), `docs/api/async/web-runs.asyncapi.yaml` (NEW)
   - `web.openapi.yaml` — first version of the web tier's own OpenAPI doc. Routes for M7:
     - `POST /api/runs` (port the schema from `web/app/api/runs/route.ts:postBodySchema`).
@@ -551,7 +551,7 @@ Decisions:
   - Both docs link back to `supervisor.openapi.yaml` and `supervisor-sse.asyncapi.yaml` via `externalDocs`.
   - Acceptance: linter clean; the routes table in `docs/api/external/README.md` is updated to include the web docs.
 
-- [ ] **Task 21: Update prose docs — error-taxonomy, system-analytics, flow-dsl, database-schema, configuration**
+- [ ] **Task 21: Update prose docs — error-taxonomy, system-analytics, flow-dsl, database-schema, configuration** — **DEFERRED**. See Task 18.
   - Files: `docs/error-taxonomy.md`, `docs/system-analytics/hitl.md`, `docs/system-analytics/runs.md`, `docs/flow-dsl.md`, `docs/database-schema.md`, `docs/configuration.md`
   - `error-taxonomy.md`:
     - `NEEDS_INPUT`: clarify the live `session.permission_request` trigger AND the durable `needs-input.json` trigger.
@@ -566,7 +566,7 @@ Decisions:
   - `configuration.md`: clarify in the `MAISTER_KEEPALIVE_MINUTES` row that as of M7 this controls the supervisor's pending-permission deferred timeout AND (in M8) the NeedsInputIdle keep-alive window.
   - Acceptance: prose review checklist passes; cross-references compile (no broken anchors).
 
-- [ ] **Task 22: Deployment verification + ROADMAP mark + final sanity sweep**
+- [x] **Task 22: Deployment verification + ROADMAP mark + final sanity sweep**
   - Files: `.env.example`, `compose.yml`, `compose.override.yml`, `compose.production.yml`, `docs/configuration.md`, `.ai-factory/ROADMAP.md`, ad-hoc shell commands
   - **Deployment verification (skill-context rule 1)**: `grep -rn "MAISTER_" .env.example compose*.yml docs/configuration.md` — confirm no NEW env var slipped into the implementation. If any was added, ensure it lands in `.env.example` + all relevant `compose.*.yml` `environment:` blocks + the canonical table in `docs/configuration.md` in the same commit. Expected for M7: no diff.
   - **Contract surface sweep (skill-context rule 2)**: walk the contract-surface table from the Decisions section and confirm each spec file was touched in the docs commit. `git diff main..HEAD --name-only -- docs/` is the cross-check.
