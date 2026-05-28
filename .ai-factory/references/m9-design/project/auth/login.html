@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-palette="forest" data-vibe="editorial">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sign in — MAIster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../landing/02-hifi.css">
+<link rel="stylesheet" href="login.css">
+</head>
+<body>
+
+<!-- ╔════════════════════════════════════════════════════════ NAV (minimal) -->
+<div class="nav-wrap minimal">
+  <nav class="nav" aria-label="Primary">
+    <div class="nav-l">
+      <a class="logo" id="brand-logo" title="Local instance">
+        <svg class="logo-mark" id="logo-mark" viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+          <polyline points="22 5 22 9 18 9"/>
+          <line x1="14" y1="2" x2="14" y2="4.5"/>
+          <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+          <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="wm lower" data-comment-anchor="8c4cb6d091-span">m<strong>ai</strong>ster<em>AI</em></span>
+      </a>
+    </div>
+    <div class="nav-r">
+      <button class="nav-tool" id="lang-toggle"><b id="lang-label">EN</b><span class="mu" id="lang-other">· RU</span></button>
+      <button class="nav-tool" id="theme-toggle" aria-pressed="false">
+        <svg id="theme-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 2v1.5M8 12.5V14M14 8h-1.5M3.5 8H2M12.24 3.76l-1.06 1.06M4.82 11.18l-1.06 1.06M12.24 12.24l-1.06-1.06M4.82 4.82L3.76 3.76"/></svg>
+        <span id="theme-label">Light</span>
+      </button>
+    </div>
+  </nav>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════ MAIN ═╗ -->
+<main class="auth-page" data-layout="split-spine">
+
+  <div class="auth-left">
+    <div class="auth-card">
+
+    <!-- card top: tiny logo + host -->
+    <div class="card-top">
+      <span class="mini-logo">
+        <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+          <polyline points="22 5 22 9 18 9"/>
+          <line x1="14" y1="2" x2="14" y2="4.5"/>
+          <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+          <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="wm">m<strong>ai</strong>ster</span>
+      </span>
+      <span class="host">/ instance · v0.0.1</span>
+    </div>
+
+    <!-- eyebrow + title -->
+    <div class="auth-eyebrow" id="auth-eyebrow" data-i18n="auth.eyebrow.login">Welcome back</div>
+    <h1 class="auth-title" id="auth-title" data-i18n="auth.title.login">Sign in.</h1>
+    <p class="auth-sub" id="auth-sub" data-i18n="auth.sub.login" data-comment-anchor="a5ec7a320d-p">Your instance is ready. Sign in to your control plane.</p>
+
+    <!-- tabs -->
+    <div class="auth-tabs" role="tablist">
+      <button id="tab-login"    aria-selected="true"  onclick="setAuthMode('login')"   data-i18n="auth.tab.login">Sign in</button>
+      <button id="tab-register" aria-selected="false" onclick="setAuthMode('register')" data-i18n="auth.tab.register">Create account</button>
+    </div>
+
+    <!-- ═══ LOGIN ═══════════════════════════════════════════ -->
+    <section class="auth-mode active" id="mode-login">
+      <form class="auth-form" onsubmit="event.preventDefault();">
+        <div class="field">
+          <label class="field-label" for="li-email" data-i18n="auth.field.email">Email</label>
+          <div class="input-wrap">
+            <span class="input-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M2 5l6 4 6-4"/></svg></span>
+            <input type="email" id="li-email" placeholder="you@instance.local" autocomplete="email" />
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-row">
+            <label class="field-label" for="li-pwd" data-i18n="auth.field.password">Password</label>
+            <a class="field-link" data-i18n="auth.field.forgot">Forgot password?</a>
+          </div>
+          <div class="input-wrap">
+            <span class="input-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg></span>
+            <input type="password" id="li-pwd" placeholder="••••••••••••" autocomplete="current-password" />
+            <button type="button" class="pwd-toggle" onclick="togglePwd('li-pwd', this)" aria-label="Show password">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <label class="field-check">
+          <input type="checkbox" checked />
+          <span class="box"></span>
+          <span data-i18n="auth.field.remember">Keep me signed in for 30 days on this device</span>
+        </label>
+
+        <button class="auth-submit" type="submit" data-i18n="auth.submit.login">Sign in <span class="arr">→</span></button>
+      </form>
+    </section>
+
+    <!-- ═══ REGISTER ════════════════════════════════════════ -->
+    <section class="auth-mode" id="mode-register">
+      <form class="auth-form" onsubmit="event.preventDefault();">
+        <div class="field">
+          <label class="field-label" for="rg-name" data-i18n="auth.field.name">Full name</label>
+          <div class="input-wrap">
+            <span class="input-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5" r="2.6"/><path d="M2.4 14c0-3 2.5-5.4 5.6-5.4S13.6 11 13.6 14"/></svg></span>
+            <input type="text" id="rg-name" placeholder="Alex Maister" autocomplete="name" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="rg-email" data-i18n="auth.field.email">Email</label>
+          <div class="input-wrap">
+            <span class="input-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M2 5l6 4 6-4"/></svg></span>
+            <input type="email" id="rg-email" placeholder="you@instance.local" autocomplete="email" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="rg-pwd" data-i18n="auth.field.password">Password</label>
+          <div class="input-wrap">
+            <span class="input-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg></span>
+            <input type="password" id="rg-pwd" placeholder="At least 12 characters" autocomplete="new-password" oninput="updatePwdStrength(this.value)" />
+            <button type="button" class="pwd-toggle" onclick="togglePwd('rg-pwd', this)" aria-label="Show password">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>
+            </button>
+          </div>
+          <div class="field-strength" id="pwd-strength" data-strength="0">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <span class="field-hint" id="pwd-hint" data-i18n="auth.hint.pwd">Use 12+ characters with a mix of letters, numbers and symbols</span>
+        </div>
+
+        <label class="field-check">
+          <input type="checkbox" />
+          <span class="box"></span>
+          <span data-i18n="auth.field.terms">I'm OK with operating a POC release on a single host.</span>
+        </label>
+
+        <button class="auth-submit" type="submit" data-i18n="auth.submit.register">Create account <span class="arr">→</span></button>
+      </form>
+    </section>
+
+    <!-- canonical swap (inside card foot) -->
+    <div class="card-foot-swap" id="auth-swap">
+      <span id="swap-text" data-i18n="auth.swap.toRegister">No account yet?</span>
+      <a id="swap-link" onclick="setAuthMode('register')">
+        <span data-i18n="auth.swap.signup">Create one</span> <span class="arr">→</span>
+      </a>
+    </div>
+
+  </div>
+  </div><!-- /.auth-left -->
+
+  <!-- ═══ RIGHT SIDE PANELS (one per split-layout) ═══════════ -->
+  <aside class="auth-right" aria-hidden="true" data-comment-anchor="35670dfc4e-aside">
+
+    <!-- spine panel -->
+    <div class="side-panel spine">
+      <div class="sp-eyebrow" data-i18n="side.spine.eye">Live · this instance</div>
+      <h3 data-i18n="side.spine.h3"><em>Where ship happens.</em><br>Backlog &rarr; merge, with proof.</h3>
+      <p class="sp-sub" data-i18n="side.spine.sub">Projects, tasks, agents, humans &mdash; and every handoff between. HITL where it counts. Autonomy where you trust it.</p>
+
+      <div class="sp-graph-wrap">
+        <div class="sp-graph-head">
+          <span class="sg-title">~/projects/maister &middot; graph</span>
+          <span class="sg-meta"><span class="sg-dot"></span> live</span>
+        </div>
+
+        <svg class="sp-graph" id="spine-graph" viewBox="0 0 460 230" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <defs>
+            <marker id="g-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" class="g-arrow"/>
+            </marker>
+            <marker id="g-arrow-rework" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--mute)"/>
+            </marker>
+          </defs>
+
+          <!-- column headers -->
+          <g class="g-labels">
+            <text class="g-label" x="35"  y="22">intent</text>
+            <text class="g-label" x="95"  y="22">task</text>
+            <text class="g-label" x="160" y="22">flow</text>
+            <text class="g-label" x="220" y="22">claim</text>
+            <text class="g-label" x="280" y="22">work</text>
+            <text class="g-label" x="340" y="22">review</text>
+            <text class="g-label" x="425" y="22">ship</text>
+          </g>
+
+          <!-- main spine -->
+          <path id="g-main"  class="g-spine" d="M 35 110 L 415 110" marker-end="url(#g-arrow)"/>
+          <!-- hidden sub-paths for particle motion (intent→review, review→ship) -->
+          <path id="g-intent-to-review" d="M 35 110 L 340 110" fill="none" stroke="none"/>
+          <path id="g-review-to-ship"   d="M 340 110 L 415 110" fill="none" stroke="none"/>
+
+          <!-- agent branch A · claude · flow → review -->
+          <path id="g-branch-a" class="g-branch"
+                d="M 160 110 C 160 78, 180 58, 210 58 L 290 58 C 320 58, 340 80, 340 110"/>
+
+          <!-- agent branch B · codex · claim → ship -->
+          <path id="g-branch-b" class="g-branch b-accent"
+                d="M 220 110 C 220 92, 250 80, 280 80 L 380 80 C 410 80, 425 92, 425 110"/>
+
+          <!-- pending / open branch (no merge yet) — queued -->
+          <path id="g-branch-c" class="g-branch b-pending"
+                d="M 280 110 C 280 132, 310 144, 340 144 L 425 144"/>
+
+          <!-- review-back rework track · review → flow (when rejection) -->
+          <path id="g-review-back" class="g-review-back"
+                d="M 340 110 C 340 130, 320 134, 290 134 L 210 134 C 180 134, 160 130, 160 110"/>
+
+          <!-- rework / feedback loop · ship → platform-agent → task -->
+          <path id="g-rework" class="g-rework"
+                d="M 425 110 C 425 168, 410 196, 370 196 L 130 196 C 100 196, 95 168, 95 110"
+                marker-end="url(#g-arrow-rework)"/>
+
+          <!-- spine nodes -->
+          <g id="g-nodes">
+            <circle class="g-node" data-id="n1" cx="35"  cy="110" r="5"/>
+            <circle class="g-node" data-id="n2" cx="95"  cy="110" r="5"/>
+            <circle class="g-node" data-id="n3" cx="160" cy="110" r="5"/>
+            <circle class="g-node" data-id="n4" cx="220" cy="110" r="5"/>
+            <circle class="g-node" data-id="n5" cx="280" cy="110" r="5"/>
+            <circle class="g-node" data-id="n6" cx="340" cy="110" r="5"/>
+            <circle class="g-node is-merged" data-id="n7" cx="425" cy="110" r="5"/>
+          </g>
+
+          <!-- branch heads (the agents working) -->
+          <g id="g-heads">
+            <circle data-id="ha" cx="250" cy="58" r="3.5" fill="var(--amber)"/>
+            <circle data-id="hb" cx="330" cy="80" r="3.5" fill="var(--accent-3)"/>
+            <circle data-id="hc" cx="395" cy="144" r="3" fill="var(--mute-2)"/>
+          </g>
+
+          <!-- agent tags -->
+          <g font-family="JetBrains Mono, monospace" font-size="8.5" text-anchor="middle">
+            <text x="250" y="49" fill="var(--amber)"    font-weight="600">claude</text>
+            <text x="330" y="71" fill="var(--accent-3)" font-weight="600">codex</text>
+            <text x="395" y="136" fill="var(--mute-2)">queued</text>
+          </g>
+
+          <!-- human reviewer icon (above review node) -->
+          <g id="g-human" class="g-human">
+            <line class="g-human-link" x1="358" y1="100" x2="345" y2="108"/>
+            <circle class="g-human-head" cx="358" cy="91" r="2.6"/>
+            <path class="g-human-body" d="M 353 100 C 353 95 363 95 363 100" fill="none"/>
+          </g>
+
+          <!-- platform-agent node on the rework loop -->
+          <g id="g-platform">
+            <rect x="190" y="187" width="80" height="18" rx="9"
+                  fill="var(--paper)" stroke="var(--mute)" stroke-width="1.2"/>
+            <circle cx="202" cy="196" r="2.2" fill="var(--mute)"/>
+            <text x="234" y="199.5" font-family="JetBrains Mono, monospace"
+                  font-size="9" fill="var(--ink-2)" text-anchor="middle" font-weight="600">platform-agent</text>
+          </g>
+
+          <!-- rework caption -->
+          <g font-family="JetBrains Mono, monospace" font-size="8" fill="var(--mute)" text-anchor="middle" letter-spacing="0.04em">
+            <text x="125" y="221">logs</text>
+            <text x="175" y="221">&middot; errors</text>
+            <text x="234" y="221">&middot; distill</text>
+            <text x="305" y="221">&middot; new intents</text>
+          </g>
+
+          <!-- particle layer (JS inserts circles here) -->
+          <g id="g-particles"></g>
+          <g id="g-pings"></g>
+        </svg>
+
+        <!-- terminal: live log -->
+        <div class="sp-terminal" id="spine-term" aria-hidden="true">
+          <div class="term-line" data-row="0"></div>
+          <div class="term-line" data-row="1"></div>
+          <div class="term-line" data-row="2"></div>
+          <div class="term-line" data-row="3"></div>
+          <div class="term-line" data-row="4"></div>
+          <div class="term-line is-active" data-row="5"><span id="term-text"></span><span class="term-cursor"></span></div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="li"><span class="sw" style="background:var(--amber)"></span><span data-i18n="side.spine.l1">Intent in flight</span></span>
+        <span class="li"><span class="sw" style="background:var(--accent-3)"></span><span data-i18n="side.spine.l2">Agent branch</span></span>
+        <span class="li"><span class="sw" style="background:var(--accent-4)"></span><span data-i18n="side.spine.l3">Merged</span></span>
+      </div>
+    </div>
+
+    <!-- instance panel -->
+    <div class="side-panel instance">
+      <div class="ip-eyebrow" data-i18n="side.inst.eye">Instance · live</div>
+      <h3 data-i18n="side.inst.h3">Already running. Last 24 hours.</h3>
+
+      <div class="ip-stats">
+        <div class="stat"><div class="v">3</div><div class="l" data-i18n="side.inst.s1">projects</div></div>
+        <div class="stat"><div class="v">12</div><div class="l" data-i18n="side.inst.s2">runs</div></div>
+        <div class="stat alert"><div class="v">2</div><div class="l" data-i18n="side.inst.s3">need you</div></div>
+      </div>
+
+      <div class="ip-feed">
+        <div class="ip-feed-head">
+          <span data-i18n="side.inst.recent">Recent activity</span>
+          <span style="color:var(--mute);text-transform:none;letter-spacing:0;font-size:10px;">~/projects/maister</span>
+        </div>
+        <div class="feed-row">
+          <span class="pill running" data-i18n="side.inst.p.running">running</span>
+          <b>r-7c2e</b><span class="meta">· bugfix · claude</span>
+          <span class="time">2m</span>
+        </div>
+        <div class="feed-row">
+          <span class="pill needs" data-i18n="side.inst.p.needs">needs you</span>
+          <b>r-7c2f</b><span class="meta">· spec-clarify · codex</span>
+          <span class="time">8m</span>
+        </div>
+        <div class="feed-row">
+          <span class="pill done" data-i18n="side.inst.p.done">done</span>
+          <b>r-7c2a</b><span class="meta">· merged · dev</span>
+          <span class="time">1h</span>
+        </div>
+        <div class="feed-row">
+          <span class="pill queued" data-i18n="side.inst.p.queued">queued</span>
+          <b>r-7c31</b><span class="meta">· autonomous</span>
+          <span class="time">2h</span>
+        </div>
+      </div>
+
+      <div class="ip-caption" data-i18n="side.inst.caption">↳ Sign in to take action.</div>
+    </div>
+
+    <!-- quote panel -->
+    <div class="side-panel quote">
+      <div class="qp-eyebrow" data-i18n="side.q.eye">From the field</div>
+      <blockquote data-i18n="side.q.quote">"<em>One place to manage them all.</em> Stopped flipping between five tabs. Started shipping."</blockquote>
+      <div class="cite">
+        <div class="ava">AK</div>
+        <div class="who">
+          <span class="name" data-i18n="side.q.name">Alex K.</span>
+          <span class="role" data-i18n="side.q.role">Tech lead · 6 months on MAIster</span>
+        </div>
+      </div>
+      <div class="qp-tag" data-i18n="footer.motto">Ship Happens.</div>
+    </div>
+
+  </aside>
+
+</main>
+
+<!-- ╔════════════════════════════════════════════════════ STATUS BAR ═══╗ -->
+<footer class="status-bar" aria-label="Instance status">
+  <div class="group">
+    <span class="live"><span class="dot"></span> <b>Connected</b></span>
+    <span class="sep">·</span>
+    <span>localhost:3000</span>
+    <span class="sep hide-sm">·</span>
+    <span class="hide-sm">v0.0.1</span>
+    <span class="sep hide-sm">·</span>
+    <span class="hide-sm">POC · single-host</span>
+  </div>
+  <div class="group">
+    <a href="#" data-i18n="status.docs">Docs ↗</a>
+    <span class="sep">·</span>
+    <a href="https://github.com/kanischev/mAIster" target="_blank" rel="noopener" title="Source on GitHub">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.08.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</footer>
+
+<!-- ╔═════════════════════════════════════════════════════════ SCRIPTS ═╗ -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../landing/02-hifi.js"></script>
+<script src="login.js"></script>
+<script type="text/babel" src="../landing/tweaks-panel.jsx"></script>
+<script type="text/babel" src="../landing/tweaks-app.jsx"></script>
+</body>
+</html>

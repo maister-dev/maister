@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-palette="amber" data-vibe="editorial">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MAIster — One place to manage them all</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="02-hifi.css">
+</head>
+<body>
+
+<!-- ╔═════════════════════════════════════════════════════════════ NAV ═══╗ -->
+<div class="nav-wrap">
+  <nav class="nav" aria-label="Primary">
+    <div class="nav-l">
+      <a class="logo" id="brand-logo" title="Click to cycle through logo iterations">
+        <svg class="logo-mark" id="logo-mark" viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <!-- E1 default: iteration loop with antenna + AI eye dots -->
+          <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+          <polyline points="22 5 22 9 18 9"/>
+          <line x1="14" y1="2" x2="14" y2="4.5"/>
+          <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+          <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="wm lower">m<strong>ai</strong>ster<em>AI</em></span>
+      </a>
+      <div class="nav-links">
+        <a data-i18n="nav.product">Product</a>
+        <a data-i18n="nav.docs">Docs</a>
+        <a data-i18n="nav.roadmap">Roadmap</a>
+        <a data-i18n="nav.decisions">Decisions</a>
+      </div>
+    </div>
+    <div class="nav-r">
+      <button class="nav-tool" id="lang-toggle" title="Switch language"><b id="lang-label">EN</b><span class="mu" id="lang-other">· RU</span></button>
+      <button class="nav-tool" id="theme-toggle" title="Toggle theme" aria-pressed="false">
+        <svg id="theme-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 2v1.5M8 12.5V14M14 8h-1.5M3.5 8H2M12.24 3.76l-1.06 1.06M4.82 11.18l-1.06 1.06M12.24 12.24l-1.06-1.06M4.82 4.82L3.76 3.76"/></svg>
+        <span id="theme-label">Light</span>
+      </button>
+      <a class="gh-star" href="https://github.com/kanischev/mAIster" target="_blank" rel="noopener" title="Star on GitHub">
+        <span class="gs-l">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.08.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </span>
+        <span class="gs-r"><span class="star">★</span> 1.2k</span>
+      </a>
+    </div>
+  </nav>
+</div>
+
+<!-- ╔════════════════════════════════════════════════════════════ HERO ═══╗ -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="eyebrow" data-i18n="hero.kicker">MAIster · The shared control plane for agentic AI software delivery</div>
+
+    <h1 class="h-display" data-i18n="hero.h1">
+      One place<br>to manage them all. <em>Humans and agents alike.</em>
+    </h1>
+
+    <p class="sub" data-i18n="hero.sub">
+      A shared dev-management platform for <b>teams of humans and agents</b>, collaborating in every direction. Tasks, flows, workspaces, reviews, merges — one place. <b>Path to autonomy</b> when you trust it, <b>tight oversight</b> when you don't.
+    </p>
+
+    <div class="ctas">
+      <a class="btn btn-amber" data-i18n="hero.cta1">Get started <span class="arr">→</span></a>
+      <a class="btn btn-ghost" data-i18n="hero.cta2">Read the docs ↗</a>
+      <span class="mu" data-i18n="hero.cta3">github.com/kanischev/mAIster · MIT</span>
+    </div>
+
+    <!-- floating decorative workflow nodes (n8n-style) -->
+    <div class="hero-deco n1" aria-hidden="true">
+      <div class="deco-card"><span class="dot a"></span> bugfix flow · running</div>
+    </div>
+    <div class="hero-deco n2" aria-hidden="true">
+      <div class="deco-card"><span class="dot b"></span> r-7c2f · needs you</div>
+    </div>
+    <div class="hero-deco n3" aria-hidden="true">
+      <div class="deco-card"><span class="dot c"></span> claude · sonnet-4-6</div>
+    </div>
+
+    <!-- HERO STAGE — animated spine -->
+    <div class="hero-stage" id="hero-stage" data-mode="spine" aria-hidden="true">
+      <div class="stage-bar">
+        <div class="lights"><span></span><span></span><span></span></div>
+        <div class="stage-title"><b data-i18n="hero.stage.title">Configurable spine</b> <span data-i18n="hero.stage.sub">· HITL anywhere · path to autonomy</span></div>
+        <div class="flow-picker" role="tablist">
+          <button data-flow="bugfix" aria-selected="true" data-i18n="hero.stage.bugfix">bugfix</button>
+          <button data-flow="spec" aria-selected="false" data-i18n="hero.stage.spec">spec-clarify</button>
+          <button data-flow="auto" aria-selected="false" data-i18n="hero.stage.auto">autonomous</button>
+        </div>
+      </div>
+      <div class="spine-canvas">
+        <svg class="spine-svg" viewBox="0 0 800 240" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <marker id="arr-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--amber)"/>
+            </marker>
+            <marker id="arr-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/>
+            </marker>
+          </defs>
+
+          <!-- step labels along the top -->
+          <g font-family="JetBrains Mono, monospace" font-size="11" fill="var(--mute)" text-anchor="middle">
+            <text x="50" y="30">Intent</text>
+            <text x="150" y="30">Flow</text>
+            <text x="250" y="30">Workspace</text>
+            <text x="350" y="30">Agents</text>
+            <text x="450" y="30">Iterate</text>
+            <text x="550" y="30">Review</text>
+            <text x="650" y="30">Merge</text>
+            <text x="750" y="30">Lessons</text>
+          </g>
+
+          <!-- main pipe (bottom) -->
+          <line id="pipe-main" x1="50" y1="170" x2="750" y2="170" stroke="var(--ink)" stroke-width="2" marker-end="url(#arr-ink)"/>
+
+          <!-- step nodes -->
+          <g id="step-nodes">
+            <circle cx="50"  cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="150" cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="250" cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="350" cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="450" cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="550" cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="650" cy="170" r="6" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <circle cx="750" cy="170" r="6" fill="var(--paper)" stroke="var(--mute)" stroke-width="2" stroke-dasharray="2 2"/>
+          </g>
+
+          <!-- HITL pings (positioned dynamically per flow) -->
+          <g id="hitl-pings">
+            <!-- bugfix default: pings at step 5 (iterate) and step 6 (review) -->
+            <g class="ping" data-step="5">
+              <line x1="450" y1="170" x2="450" y2="100" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="3 3"/>
+              <circle cx="450" cy="100" r="9" fill="var(--amber)">
+                <animate attributeName="r" values="9;12;9" dur="1.4s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="1;0.55;1" dur="1.4s" repeatCount="indefinite"/>
+              </circle>
+              <text x="450" y="80" font-family="JetBrains Mono, monospace" font-size="10" fill="var(--amber)" text-anchor="middle" font-weight="600">HITL</text>
+            </g>
+            <g class="ping" data-step="6">
+              <line x1="550" y1="170" x2="550" y2="100" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="3 3"/>
+              <circle cx="550" cy="100" r="9" fill="var(--amber)">
+                <animate attributeName="r" values="9;12;9" dur="1.4s" begin="0.4s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="1;0.55;1" dur="1.4s" begin="0.4s" repeatCount="indefinite"/>
+              </circle>
+              <text x="550" y="80" font-family="JetBrains Mono, monospace" font-size="10" fill="var(--amber)" text-anchor="middle" font-weight="600">HITL</text>
+            </g>
+          </g>
+
+          <!-- autonomy axis underneath -->
+          <g font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="0.04em">
+            <text x="50" y="220" fill="var(--amber)" font-weight="600">Tight oversight</text>
+            <text x="750" y="220" fill="var(--ink)" font-weight="600" text-anchor="end">Full autonomy →</text>
+          </g>
+        </svg>
+      </div>
+
+      <!-- ALT mode: live UI preview -->
+      <div class="stage-alt ui">
+        <div class="ui-chrome"><span></span><span></span><span></span></div>
+        <div class="ui-body">
+          <div class="ui-sb">
+            <div class="pr active"><span class="dot"></span>maister-poc</div>
+            <div class="pr"><span class="dot"></span>itracker</div>
+            <div class="pr"><span class="dot"></span>jmeter-tools</div>
+            <div class="pr"><span class="dot idle"></span>acp-broker</div>
+            <div class="pr"><span class="dot idle"></span>flow-installer</div>
+          </div>
+          <div class="ui-main">
+            <div class="ui-row"><span class="pill">running</span><b>r-7c2e</b><span>· bugfix flow · claude-sonnet · +62 −18</span></div>
+            <div class="ui-row"><span class="pill needs">needs you</span><b>r-7c2f</b><span>· spec-clarify · codex · approve schema change?</span></div>
+            <div class="ui-row"><span class="pill">running</span><b>r-7c30</b><span>· bugfix flow · claude-sonnet · +14 −6</span></div>
+            <div class="ui-row"><span class="pill idle">queued</span><b>r-7c31</b><span>· autonomous · codex · waiting for slot</span></div>
+            <div class="ui-row"><span class="pill idle">done</span><b>r-7c2a</b><span>· bugfix flow · ready for merge (+102 −38)</span></div>
+            <div class="ui-row"><span class="pill idle">done</span><b>r-7c29</b><span>· spec-clarify · merged to dev</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ALT mode: terminal stream -->
+      <div class="stage-alt terminal">
+        <div class="ln lA"><span class="p">$</span> <span class="cmd">maister</span> launch <span class="str">"fix race in queue worker"</span> <span class="opt">--flow</span> bugfix</div>
+        <div class="ln lB"><span class="mu">▸ workspace</span> .maister/itracker/runs/r-7c2e</div>
+        <div class="ln lC"><span class="mu">▸ spawn</span> <span class="cmd">claude-agent-acp</span> <span class="opt">model=</span><span class="str">sonnet-4-6</span></div>
+        <div class="ln lD"><span class="mu">▸ step</span> plan <span class="ok">✓</span></div>
+        <div class="ln lE"><span class="mu">▸ step</span> build <span class="mu">… reading 14 files · writing patch (+62 −18)</span></div>
+        <div class="ln lF"><span class="warn">▸ NeedsInput</span> approve schema change?</div>
+        <div class="ln lG"><span class="ok">▸ resumed</span> <span class="mu">user: yes</span></div>
+        <div class="ln lH"><span class="mu">▸ step</span> review <span class="ok">✓</span> judge: accept</div>
+        <div class="ln lI"><span class="ok">✓ done</span> <span class="mu">diff ready · merge --no-ff</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════════════════════════════════════ SPINE BOARD ═╗ -->
+<section class="section spine-explain">
+  <div class="section-inner">
+    <div class="eyebrow" data-i18n="spine.eye">§ Product spine</div>
+    <h2 class="h-section" data-i18n="spine.h2"><em>Backlog to merge.</em><br>Humans, agents, and the <span class="amber">path</span> in between.</h2>
+    <p class="sub" data-i18n="spine.sub">
+      The spine isn't a pipeline — it's a <b>configurable surface</b>. Each step accepts a human or an agent (or both). HITL is decided <b>per flow, per task</b>, not at one fixed point. Solo today; teams and full agentization next.
+    </p>
+
+    <div class="spine-board">
+      <div class="spine-board-head">
+        <div class="legend">
+          <span class="li"><span class="sw on"></span> <span data-i18n="spine.legend.on">HITL on</span></span>
+          <span class="li"><span class="sw maybe"></span> <span data-i18n="spine.legend.maybe">configurable</span></span>
+          <span class="li"><span class="sw off"></span> <span data-i18n="spine.legend.off">autonomous</span></span>
+        </div>
+        <div class="flow-picker" role="tablist" id="board-flow-picker">
+          <button data-flow="bugfix" aria-selected="true">bugfix</button>
+          <button data-flow="spec" aria-selected="false">spec-clarify</button>
+          <button data-flow="auto" aria-selected="false">autonomous</button>
+        </div>
+      </div>
+
+      <!-- HITL overlay row -->
+      <div class="hitl-band" id="board-hitl">
+        <div class="hitl-cell"><div class="pin"></div></div>
+        <div class="hitl-cell maybe"><div class="pin"></div></div>
+        <div class="hitl-cell"><div class="pin"></div></div>
+        <div class="hitl-cell"><div class="pin"></div></div>
+        <div class="hitl-cell on"><div class="pin"></div><span class="hint">HITL</span></div>
+        <div class="hitl-cell on"><div class="pin"></div><span class="hint">HITL</span></div>
+        <div class="hitl-cell"><div class="pin"></div></div>
+        <div class="hitl-cell"><div class="pin"></div></div>
+      </div>
+
+      <!-- spine cards -->
+      <div class="spine-row">
+        <div class="spine-step"><span class="n">01</span><span class="t" data-i18n="step.intent.t">Intent</span><span class="d" data-i18n="step.intent.d">A task — from a human, an agent, or a signal.</span></div>
+        <div class="spine-step"><span class="n">02</span><span class="t" data-i18n="step.flow.t">Flow</span><span class="d" data-i18n="step.flow.d">Pick + configure a flow plugin. Flows aren't one.</span></div>
+        <div class="spine-step"><span class="n">03</span><span class="t" data-i18n="step.ws.t">Workspace</span><span class="d" data-i18n="step.ws.d">An isolated git worktree per run.</span></div>
+        <div class="spine-step"><span class="n">04</span><span class="t" data-i18n="step.agents.t">Agents</span><span class="d" data-i18n="step.agents.d">Claude · Codex — via ACP. Cursor &amp; Aider soon.</span></div>
+        <div class="spine-step"><span class="n">05</span><span class="t" data-i18n="step.iterate.t">Iterate</span><span class="d" data-i18n="step.iterate.d">Step loops with HITL when needed. Ralph-loop friendly.</span></div>
+        <div class="spine-step"><span class="n">06</span><span class="t" data-i18n="step.review.t">Review</span><span class="d" data-i18n="step.review.d">Diff + judge artifact + accept / request-changes.</span></div>
+        <div class="spine-step"><span class="n">07</span><span class="t" data-i18n="step.merge.t">Merge</span><span class="d" data-i18n="step.merge.d">--no-ff to main/dev. Conflict = manual.</span></div>
+        <div class="spine-step phase2"><span class="badge" data-i18n="badge.p2">Phase 2</span><span class="n">08</span><span class="t" data-i18n="step.lessons.t">Lessons</span><span class="d" data-i18n="step.lessons.d">Bugs evolve project rules. Optional.</span></div>
+      </div>
+
+      <div class="autonomy-bar">
+        <span class="label-l" data-i18n="autonomy.l">Tight oversight</span>
+        <div class="axis"></div>
+        <span class="label-r" data-i18n="autonomy.r">→ Full autonomy</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══════════════════════════════════════════════════════ INTERACTIONS ═╗ -->
+<section class="section interactions">
+  <div class="section-inner">
+    <div class="eyebrow" data-i18n="int.eye">§ Four ways to collaborate</div>
+    <h2 class="h-section" data-i18n="int.h2"><em>Humans, agents,</em><br>and every <span class="amber">combination</span> of both.</h2>
+    <p class="sub" data-i18n="int.sub">A control plane that treats agents as first-class teammates, not a service queue. Every interaction has a clear surface, an artifact, and a queue.</p>
+
+    <div class="int-grid">
+
+      <!-- LEFT: cross diagram -->
+      <div class="cross-wrap">
+        <svg class="cross-svg" viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg" aria-label="Interaction cross diagram">
+          <defs>
+            <marker id="ax" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--amber)"/>
+            </marker>
+            <marker id="ix" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/>
+            </marker>
+            <marker id="ax-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M10 0 L0 5 L10 10 z" fill="var(--amber)"/>
+            </marker>
+            <marker id="ix-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M10 0 L0 5 L10 10 z" fill="var(--ink)"/>
+            </marker>
+          </defs>
+
+          <!-- diagonals (X) under nodes -->
+          <line x1="100" y1="100" x2="320" y2="320" stroke="var(--amber)" stroke-width="1.8" stroke-dasharray="4 4" marker-end="url(#ax)" marker-start="url(#ax-start)" opacity="0.85"/>
+          <line x1="320" y1="100" x2="100" y2="320" stroke="var(--amber)" stroke-width="1.8" stroke-dasharray="4 4" marker-end="url(#ax)" marker-start="url(#ax-start)" opacity="0.85"/>
+
+          <!-- top horizontal: H ←→ H -->
+          <line x1="125" y1="100" x2="295" y2="100" stroke="var(--ink)" stroke-width="2" marker-end="url(#ix)" marker-start="url(#ix-start)"/>
+          <!-- bottom horizontal: A ←→ A -->
+          <line x1="125" y1="320" x2="295" y2="320" stroke="var(--ink)" stroke-width="2" marker-end="url(#ix)" marker-start="url(#ix-start)"/>
+
+          <!-- center X marker -->
+          <circle cx="210" cy="210" r="22" fill="var(--paper)" stroke="var(--amber-line)" stroke-width="1.5"/>
+          <text x="210" y="215" font-family="JetBrains Mono, monospace" font-size="16" fill="var(--amber)" font-weight="700" text-anchor="middle">×</text>
+
+          <!-- 4 nodes -->
+          <!-- TL Human -->
+          <g transform="translate(70 70)">
+            <rect width="60" height="60" rx="12" fill="var(--ink)" />
+            <g transform="translate(30 30)" fill="var(--paper)">
+              <circle cy="-7" r="7"/>
+              <path d="M-13 16 c0 -8 6 -14 13 -14 s13 6 13 14 z"/>
+            </g>
+          </g>
+          <text x="100" y="148" class="cross-node-label" text-anchor="middle">Human</text>
+
+          <!-- TR Human -->
+          <g transform="translate(290 70)">
+            <rect width="60" height="60" rx="12" fill="var(--ink)" />
+            <g transform="translate(30 30)" fill="var(--paper)">
+              <circle cy="-7" r="7"/>
+              <path d="M-13 16 c0 -8 6 -14 13 -14 s13 6 13 14 z"/>
+            </g>
+          </g>
+          <text x="320" y="148" class="cross-node-label" text-anchor="middle">Human</text>
+
+          <!-- BL Agent -->
+          <g transform="translate(70 290)">
+            <rect width="60" height="60" rx="12" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <g transform="translate(30 32)" stroke="var(--ink)" stroke-width="1.6" fill="none">
+              <rect x="-13" y="-9" width="26" height="20" rx="5"/>
+              <circle cx="-5" cy="1" r="1.6" fill="var(--ink)"/>
+              <circle cx="5"  cy="1" r="1.6" fill="var(--ink)"/>
+              <line x1="0" y1="-15" x2="0" y2="-9"/>
+              <circle cx="0" cy="-17" r="1.6" fill="var(--ink)"/>
+            </g>
+          </g>
+          <text x="100" y="370" class="cross-node-label" text-anchor="middle">Agent</text>
+
+          <!-- BR Agent -->
+          <g transform="translate(290 290)">
+            <rect width="60" height="60" rx="12" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+            <g transform="translate(30 32)" stroke="var(--ink)" stroke-width="1.6" fill="none">
+              <rect x="-13" y="-9" width="26" height="20" rx="5"/>
+              <circle cx="-5" cy="1" r="1.6" fill="var(--ink)"/>
+              <circle cx="5"  cy="1" r="1.6" fill="var(--ink)"/>
+              <line x1="0" y1="-15" x2="0" y2="-9"/>
+              <circle cx="0" cy="-17" r="1.6" fill="var(--ink)"/>
+            </g>
+          </g>
+          <text x="320" y="370" class="cross-node-label" text-anchor="middle">Agent</text>
+
+          <!-- edge labels -->
+          <text x="210" y="90"  class="cross-edge-label" text-anchor="middle">h ↔ h</text>
+          <text x="210" y="340" class="cross-edge-label" text-anchor="middle">a ↔ a</text>
+          <text x="155" y="195" class="cross-edge-label" text-anchor="middle" fill="var(--amber)" transform="rotate(45 155 195)">h → a</text>
+          <text x="265" y="195" class="cross-edge-label" text-anchor="middle" fill="var(--amber)" transform="rotate(-45 265 195)">a → h</text>
+        </svg>
+      </div>
+
+      <!-- RIGHT: 4 description cards -->
+      <div class="int-cards">
+        <div class="int-card">
+          <div class="pair-glyph">
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+            <span class="pair-arrow">↔</span>
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+          </div>
+          <div class="body-text">
+            <h4 data-i18n="int.hh.t">Human ↔ Human</h4>
+            <p data-i18n="int.hh.d">Team backlog. Peer review on a diff. Hand-off comments on a HITL ticket. Tickets queue across projects.</p>
+          </div>
+        </div>
+
+        <div class="int-card">
+          <div class="pair-glyph">
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+            <span class="pair-arrow">→</span>
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+          </div>
+          <div class="body-text">
+            <h4 data-i18n="int.ha.t">Human → Agent</h4>
+            <p data-i18n="int.ha.d">Launch a task with prompt + flow + executor. Approve a permission. Send corrections back to the work loop.</p>
+          </div>
+        </div>
+
+        <div class="int-card">
+          <div class="pair-glyph">
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+            <span class="pair-arrow">→</span>
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+          </div>
+          <div class="body-text">
+            <h4 data-i18n="int.ah.t">Agent → Human</h4>
+            <p data-i18n="int.ah.d">NeedsInput artifacts. Schema-driven forms in the run page. Inbox badge across projects. Keep-alive + checkpoint/resume.</p>
+          </div>
+        </div>
+
+        <div class="int-card">
+          <div class="pair-glyph">
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+            <span class="pair-arrow">↔</span>
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+          </div>
+          <div class="body-text">
+            <h4 data-i18n="int.aa.t">Agent ↔ Agent <span class="phase" data-i18n="badge.p2">Phase 2</span></h4>
+            <p data-i18n="int.aa.d">Agent-to-agent hand-off inside a flow. Sub-agents spawned per step. Reviewer / log / dependency watchers.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ╔══════════════════════════════════════════════════════════ JTBD ════╗ -->
+<section class="section">
+  <div class="section-inner">
+    <div class="eyebrow" data-i18n="jtbd.eye">§ Built for</div>
+    <div class="jtbd-head">
+      <div>
+        <h2 class="h-section" data-i18n="jtbd.h2">Whoever's <em>running things.</em></h2>
+        <p class="sub tight" data-i18n="jtbd.sub">A collaborative <b>surface for agentic AI SDLC</b> — humans and agents role-play across design, plan, build, review, ship and learn. Solo today, teams next.</p>
+      </div>
+      <a class="more" data-i18n="jtbd.more">more personas <span class="arr">→</span></a>
+    </div>
+
+    <div class="personas">
+      <div class="persona">
+        <div class="face">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="9" r="3.5"/><path d="M5 21c0-4 3-7 7-7s7 3 7 7"/></svg>
+        </div>
+        <span class="role" data-i18n="persona.cto.role">Solo-architect / CTO</span>
+        <p class="quote" data-i18n="persona.cto.q">"When I manage five projects, <span class="em">I want one dashboard for active work, blocked runs, ready reviews and pending decisions,</span> so I know where my attention is needed."</p>
+        <div class="jobs">
+          <span class="job" data-i18n="persona.cto.j1">Portfolio view across N projects</span>
+          <span class="job" data-i18n="persona.cto.j2">"Needs you" inbox, cross-project</span>
+          <span class="job" data-i18n="persona.cto.j3">3 concurrent runs · queue the rest</span>
+        </div>
+      </div>
+
+      <div class="persona">
+        <div class="face">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7l8-4 8 4M4 7l8 4 8-4M4 7v10l8 4 8-4V7M12 11v10"/></svg>
+        </div>
+        <span class="role" data-i18n="persona.tl.role">Tech lead</span>
+        <p class="quote" data-i18n="persona.tl.q">"When I assign work to an agent, <span class="em">I want it to run headlessly with visible progress and a clean diff to review,</span> so I can run multiple tasks in parallel safely."</p>
+        <div class="jobs">
+          <span class="job" data-i18n="persona.tl.j1">Per-run isolated workspace</span>
+          <span class="job" data-i18n="persona.tl.j2">Live SSE log, piped to disk</span>
+          <span class="job" data-i18n="persona.tl.j3">git diff + merge --no-ff</span>
+        </div>
+      </div>
+
+      <div class="persona">
+        <div class="face">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6M14 4l-4 16"/></svg>
+        </div>
+        <span class="role" data-i18n="persona.se.role">Staff engineer</span>
+        <p class="quote" data-i18n="persona.se.q">"When a task is ambiguous, <span class="em">I want the agent to ask questions in a form, not a chat,</span> so requirements are clarified without losing context."</p>
+        <div class="jobs">
+          <span class="job" data-i18n="persona.se.j1">Schema-driven HITL forms</span>
+          <span class="job" data-i18n="persona.se.j2">Keep-alive + checkpoint/resume</span>
+          <span class="job" data-i18n="persona.se.j3">Retry-loop friendly (1 task, N runs)</span>
+        </div>
+      </div>
+
+      <div class="persona phase2">
+        <span class="badge" data-i18n="badge.p2">Phase 2</span>
+        <div class="face">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><path d="M3 21c0-3 2.5-6 6-6s6 3 6 6M13 14c1-.6 2.5-1 4-1 3 0 5 2.5 5 5"/></svg>
+        </div>
+        <span class="role" data-i18n="persona.lead.role">Team lead</span>
+        <p class="quote" data-i18n="persona.lead.q">"When my team and our agents share work, <span class="em">I want one queue across people and bots,</span> so hand-offs don't fall through."</p>
+        <div class="jobs">
+          <span class="job" data-i18n="persona.lead.j1">Shared backlog + assign-to-anyone</span>
+          <span class="job" data-i18n="persona.lead.j2">Role-based HITL routing</span>
+          <span class="job" data-i18n="persona.lead.j3">a→a hand-offs visible in the run</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════════════════════════════════════ GLUE GRID ══╗ -->
+<section class="section" style="background:var(--paper-warm)">
+  <div class="section-inner">
+    <div class="eyebrow" data-i18n="glue.eye">§ Nine pieces of glue</div>
+    <h2 class="h-section" data-i18n="glue.h2"><em>Connective tissue</em> for the tools you already use.</h2>
+    <p class="sub" data-i18n="glue.sub">No new IDE. No new agent. No new task tracker. MAIster is the layer between them.</p>
+
+    <div class="glue-grid">
+      <div class="glue span-2">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+        <div class="g-t" data-i18n="glue.portfolio.t">Multi-project portfolio</div>
+        <div class="g-d" data-i18n="glue.portfolio.d">One grid of every active workspace across every registered project. Filter by status. "Needs you (N)" badge counts pending HITL across all projects, all flows.</div>
+        <div class="g-meta">POC · per-project maister.yaml</div>
+      </div>
+      <div class="glue">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg></div>
+        <div class="g-t" data-i18n="glue.board.t">Per-project board</div>
+        <div class="g-d" data-i18n="glue.board.d">Backlog | In Flight. One-click Launch. Ralph-loop friendly: 1 task → N runs.</div>
+        <div class="g-meta">POC</div>
+      </div>
+      <div class="glue">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M9 12l6-6M9 12l6 6"/></svg></div>
+        <div class="g-t" data-i18n="glue.exec.t">Multi-executor · ACP</div>
+        <div class="g-d" data-i18n="glue.exec.d">Claude Code + Codex on day one. Cursor &amp; Aider land in Phase 2 with no protocol changes.</div>
+        <div class="g-meta">vendor-neutral · ACP 0.22.1</div>
+      </div>
+      <div class="glue">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <div class="g-t" data-i18n="glue.hitl.t">Configurable HITL</div>
+        <div class="g-d" data-i18n="glue.hitl.d">Per-step, per-flow, per-task. Schema-driven forms, not chat. Keep-alive + checkpoint/resume so an active review never times out mid-thought.</div>
+        <div class="g-meta">30-min keep-alive · 24h TTL</div>
+      </div>
+      <div class="glue">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h7M14 12h7M3 6h12M9 18h12"/></svg></div>
+        <div class="g-t" data-i18n="glue.diff.t">Diff review &amp; merge</div>
+        <div class="g-d" data-i18n="glue.diff.d">Raw git diff, accept / request-changes, --no-ff to main. Conflicts abort to manual resolve. No auto-clobber.</div>
+        <div class="g-meta">POC · ADR-012</div>
+      </div>
+      <div class="glue span-2">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 6c0-1 1-2 2-2h6l2 2h8c1 0 2 1 2 2v10c0 1-1 2-2 2H4c-1 0-2-1-2-2V6z"/><path d="M7 13l3 3 7-7"/></svg></div>
+        <div class="g-t" data-i18n="glue.sse.t">Live SSE everything</div>
+        <div class="g-d" data-i18n="glue.sse.d">Every agent stdout line streams over SSE, piped to disk in parallel. Last-Event-ID reconnect works without replaying from RAM. Per-run cost accounting in cost.jsonl.</div>
+        <div class="g-meta">ADR-007 · bounded memory</div>
+      </div>
+      <!-- NEW CARD: Project-tightened agents runtime -->
+      <div class="glue">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 8h18M8 3v18"/><circle cx="14" cy="13" r="2" fill="currentColor" stroke="none"/></svg></div>
+        <div class="g-t" data-i18n="glue.tight.t">Project-tightened agents runtime</div>
+        <div class="g-d" data-i18n="glue.tight.d">Each project gets its own agent runtime — skills, MCPs, rules and tools pinned per repo. Agents don't drift across projects.</div>
+        <div class="g-meta"><span class="phase" data-i18n="phase.soon">Soon</span></div>
+      </div>
+      <div class="glue phase2">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><path d="M3 21c0-3 2.5-6 6-6s6 3 6 6M13 14c1-.6 2.5-1 4-1 3 0 5 2.5 5 5"/></svg></div>
+        <div class="g-t" data-i18n="glue.team.t">Team collaboration</div>
+        <div class="g-d" data-i18n="glue.team.d">Shared backlog, role-based HITL routing, a→a hand-offs. Solo today, team next.</div>
+        <div class="g-meta"><span class="phase" data-i18n="badge.p2">Phase 2</span></div>
+      </div>
+      <div class="glue phase2">
+        <div class="g-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l10 6-10 6L2 8l10-6z"/><path d="M2 16l10 6 10-6M2 12l10 6 10-6"/></svg></div>
+        <div class="g-t" data-i18n="glue.memory.t">Project memory</div>
+        <div class="g-d" data-i18n="glue.memory.d">Bugs and reviews evolve project rules. Optional and curated — not a chat firehose.</div>
+        <div class="g-meta"><span class="phase" data-i18n="badge.p2">Phase 2</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════════════════════════════ EXECUTOR STRIP ════╗ -->
+<section class="exec" aria-label="Supported executors">
+  <div class="exec-inner">
+    <div class="exec-ttl" data-i18n="exec.title">Speaks fluent</div>
+    <div class="exec-row">
+      <div class="exec-item">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 22h20L12 2zm0 5l6.5 13H5.5L12 7z"/></svg></span>
+        Claude Code
+      </div>
+      <div class="exec-item">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M9 15l6-6"/></svg></span>
+        Codex
+      </div>
+      <div class="exec-item soon">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 8-16 8V4z"/></svg></span>
+        Cursor <span class="soon-tag" data-i18n="phase.soon">soon</span>
+      </div>
+      <div class="exec-item soon">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12l4-4 4 4 4-4 4 4"/><path d="M3 18l4-4 4 4 4-4 4 4"/></svg></span>
+        Aider <span class="soon-tag" data-i18n="phase.soon">soon</span>
+      </div>
+    </div>
+    <div class="exec-via" data-i18n="exec.via">via <b>Agent Client Protocol</b> · ACP 0.22.1</div>
+  </div>
+</section>
+
+<!-- ╔══════════════════════════════════════════════════════════ OSS ════╗ -->
+<section class="section">
+  <div class="section-inner">
+    <div class="oss-grid">
+      <div class="oss-left">
+        <div class="eyebrow" data-i18n="oss.eye">§ Open source</div>
+        <h2 class="h-section" data-i18n="oss.h2">MIT-licensed.<br>Single host.<br><em>Yours to fork.</em></h2>
+        <p data-i18n="oss.p">The whole thing fits on one machine: Postgres, Next.js, a supervisor daemon, two agent binaries. <code>docker compose up</code> and you're in.</p>
+        <div class="ctas">
+          <a class="btn btn-amber" data-i18n="oss.cta1">Get started <span class="arr">→</span></a>
+          <a class="btn btn-ghost" data-i18n="oss.cta2">Quick start ↗</a>
+        </div>
+      </div>
+
+      <div class="term" aria-hidden="true">
+        <div class="term-bar">
+          <span class="b"></span><span class="b"></span><span class="b"></span>
+          <span class="ttl">~/projects/maister · zsh</span>
+        </div>
+        <div class="term-body">
+          <div class="ln l1"><span class="p">$</span><span class="body"><span class="cmd">git</span> clone <span class="str">github.com/kanischev/mAIster</span></span></div>
+          <div class="ln l2"><span class="p">$</span><span class="body"><span class="cmd">cd</span> maister <span class="mu">&amp;&amp;</span> <span class="cmd">pre-commit</span> install</span></div>
+          <div class="ln l3"><span class="p">$</span><span class="body"><span class="cmd">pnpm</span> install <span class="opt">--frozen-lockfile</span></span></div>
+          <div class="ln l4"><span class="p">$</span><span class="body"><span class="cmd">docker</span> compose up <span class="opt">-d</span></span></div>
+          <div class="ln l5 comment"># http://localhost:3000</div>
+          <div class="ln l6 comment"># register a project · launch a task</div>
+          <div class="ln l7 success">ship happens.</div>
+          <div class="ln l8"><span class="p">$</span><span class="term-caret"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔════════════════════════════════════════════════════════ FOOTER ═══╗ -->
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="logo">
+          <svg class="logo-mark" viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+            <polyline points="22 5 22 9 18 9"/>
+            <line x1="14" y1="2" x2="14" y2="4.5"/>
+            <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+            <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          </svg>
+          <span class="wm lower">m<strong>ai</strong>ster<em>AI</em></span>
+        </a>
+        <span class="motto" data-i18n="footer.motto">Ship Happens.</span>
+        <p data-i18n="footer.tagline">The control plane for AI-powered software delivery. <b>One place to manage them all.</b></p>
+      </div>
+      <div class="foot-col">
+        <h4 data-i18n="footer.product">Product</h4>
+        <ul><li>Vision</li><li>Product view</li><li>Roadmap</li><li>Changelog</li></ul>
+      </div>
+      <div class="foot-col">
+        <h4 data-i18n="footer.docs">Docs</h4>
+        <ul><li>Getting started</li><li>Architecture</li><li>Supervisor</li><li>Configuration</li></ul>
+      </div>
+      <div class="foot-col">
+        <h4 data-i18n="footer.decisions">Decisions</h4>
+        <ul><li>ADRs</li><li>Error taxonomy</li><li>Flow installer</li><li>M0 spike</li></ul>
+      </div>
+      <div class="foot-col">
+        <h4 data-i18n="footer.project">Project</h4>
+        <ul><li>GitHub ↗</li><li>License (MIT)</li><li>Issues</li><li>Discussions</li></ul>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Albert Kanischev · MIT</span>
+      <span>v0.0.1 · poc · single-host</span>
+    </div>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="02-hifi.js"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="tweaks-app.jsx"></script>
+</body>
+</html>

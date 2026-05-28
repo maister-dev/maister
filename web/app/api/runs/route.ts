@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { requireProjectAction, requireSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -52,6 +53,10 @@ function errorResponse(err: unknown): NextResponse {
 
 function httpStatusForCode(code: string): number {
   switch (code) {
+    case "UNAUTHENTICATED":
+      return 401;
+    case "UNAUTHORIZED":
+      return 403;
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
@@ -86,6 +91,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    // Authenticate up front; project-role authz happens once projectId is
+    // derived from the task row below (taskId is body-controlled — never
+    // trust a body projectId).
+    await requireSession();
+
     const db = getDb() as unknown as {
       select: any;
       insert: any;
@@ -121,6 +131,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (project.archivedAt) {
       throw new MaisterError("PRECONDITION", "project is archived");
     }
+
+    await requireProjectAction(project.id, "launchRun");
 
     const flowRows = await db
       .select()

@@ -7,8 +7,10 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { httpStatusForAuthz, requireProjectRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 import { keepaliveMs } from "@/lib/runs/keepalive-config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -151,6 +153,21 @@ export async function GET(
       { code: "PRECONDITION", message: `run not found: ${runId}` },
       { status: 404 },
     );
+  }
+
+  // RBAC: viewer+ on the run's project (projectId derived from the run row).
+  try {
+    await requireProjectRole(run.projectId, "viewer");
+  } catch (err) {
+    if (isMaisterError(err)) {
+      const status = httpStatusForAuthz(err.code) ?? 500;
+
+      return NextResponse.json(
+        { code: err.code, message: err.message },
+        { status },
+      );
+    }
+    throw err;
   }
 
   const startedAt = Date.now();

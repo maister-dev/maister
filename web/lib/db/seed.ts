@@ -4,6 +4,7 @@ import type { MaisterYamlV2 } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 
+import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -14,11 +15,43 @@ import * as schemaModule from "./schema";
 import { upsertExecutorsFromConfig } from "@/lib/executors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
-const { flows, projects } = schemaModule as unknown as Record<string, any>;
+const { flows, projectMembers, projects, users } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({ name: "db:seed" });
 
 const DEV_PROJECT_SLUG = "maister-dev";
+const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? "admin@maister.local";
+const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "maister-admin";
+
+async function ensureAdminUser(
+  db: ReturnType<typeof drizzle>,
+): Promise<string> {
+  const existing = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, SEED_ADMIN_EMAIL));
+
+  if (existing.length > 0) {
+    log.info({ email: SEED_ADMIN_EMAIL, id: existing[0].id }, "admin exists");
+
+    return existing[0].id;
+  }
+
+  const id = randomUUID();
+  const passwordHash = await bcrypt.hash(SEED_ADMIN_PASSWORD, 12);
+
+  await db.insert(users).values({
+    id,
+    name: "Admin",
+    email: SEED_ADMIN_EMAIL,
+    passwordHash,
+    role: "admin",
+  });
+  log.info({ table: "users", id, email: SEED_ADMIN_EMAIL }, "inserted admin");
+
+  return id;
+}
 
 async function main() {
   const url = process.env.DB_URL;
@@ -32,6 +65,8 @@ async function main() {
   const db = drizzle(pool);
 
   try {
+    const adminUserId = await ensureAdminUser(db);
+
     const existing = await db
       .select()
       .from(projects)
@@ -108,6 +143,17 @@ async function main() {
     log.info(
       { table: "projects", id: projectId, defaultExecutorId },
       "updated default_executor_id",
+    );
+
+    await db.insert(projectMembers).values({
+      id: randomUUID(),
+      projectId,
+      userId: adminUserId,
+      role: "owner",
+    });
+    log.info(
+      { table: "project_members", projectId, userId: adminUserId },
+      "inserted owner membership",
     );
   } finally {
     await pool.end();

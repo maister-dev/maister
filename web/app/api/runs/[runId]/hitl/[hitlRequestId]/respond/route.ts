@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { requireProjectAction } from "@/lib/authz";
 import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -62,6 +63,10 @@ function errorResponse(
 
 function httpStatusForCode(code: string): number {
   switch (code) {
+    case "UNAUTHENTICATED":
+      return 401;
+    case "UNAUTHORIZED":
+      return 403;
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
@@ -189,6 +194,10 @@ export async function POST(
     if (!runRow) {
       throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
     }
+
+    // RBAC: projectId is server-state (from the run row), never body-supplied.
+    // Responding to HITL requires project member+.
+    await requireProjectAction(runRow.projectId, "answerHitl");
 
     if (hitlRow.kind === "permission") {
       return await handlePermissionResponse({

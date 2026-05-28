@@ -12,7 +12,9 @@ export type MaisterErrorCode =
   | "FLOW_INSTALL"
   | "ACP_PROTOCOL"
   | "CHECKPOINT"
-  | "STEP_CHECKPOINTED";
+  | "STEP_CHECKPOINTED"
+  | "UNAUTHENTICATED"
+  | "UNAUTHORIZED";
 
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;

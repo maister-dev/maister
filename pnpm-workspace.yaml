@@ -3,3 +3,9 @@ packages:
   - supervisor
 
 dangerouslyAllowAllBuilds: true
+
+minimumReleaseAgeExclude:
+  - icu-minify@4.13.0
+  - next-intl-swc-plugin-extractor@4.13.0
+  - next-intl@4.13.0
+  - use-intl@4.13.0

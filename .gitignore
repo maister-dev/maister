@@ -43,3 +43,6 @@ next-env.d.ts
 *.iml
 .vscode
 .qodo
+
+# M9 design-handoff screenshots (binary; reference only)
+.ai-factory/references/m9-design/project/screenshots/

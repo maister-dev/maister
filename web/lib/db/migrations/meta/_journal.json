@@ -29,6 +29,13 @@
       "when": 1779995231651,
       "tag": "0003_sour_zodiak",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780005703873,
+      "tag": "0004_petite_gamora",
+      "breakpoints": true
     }
   ]
 }

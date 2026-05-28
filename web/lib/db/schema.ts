@@ -3,10 +3,76 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+
+export const users = pgTable("users", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text("name"),
+  email: text("email").notNull().unique(),
+  emailVerified: timestamp("email_verified", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  image: text("image"),
+  passwordHash: text("password_hash"),
+  role: text("role", { enum: ["admin", "member", "viewer"] })
+    .notNull()
+    .default("member"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export const accounts = pgTable(
+  "accounts",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    provider: text("provider").notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
+    refresh_token: text("refresh_token"),
+    access_token: text("access_token"),
+    expires_at: integer("expires_at"),
+    token_type: text("token_type"),
+    scope: text("scope"),
+    id_token: text("id_token"),
+    session_state: text("session_state"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.provider, t.providerAccountId] }),
+  }),
+);
+
+export const sessions = pgTable("sessions", {
+  sessionToken: text("session_token").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expires: timestamp("expires", { withTimezone: true, mode: "date" }).notNull(),
+});
+
+export const verificationTokens = pgTable(
+  "verification_tokens",
+  {
+    identifier: text("identifier").notNull(),
+    token: text("token").notNull(),
+    expires: timestamp("expires", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.identifier, t.token] }),
+  }),
+);
 
 export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
@@ -96,6 +162,9 @@ export const tasks = pgTable(
     status: text("status", {
       enum: ["Backlog", "InFlight", "Done", "Abandoned"],
     })
+      .notNull()
+      .default("Backlog"),
+    stage: text("stage", { enum: ["Backlog", "Prepare"] })
       .notNull()
       .default("Backlog"),
     attemptNumber: integer("attempt_number").notNull().default(1),
@@ -259,6 +328,41 @@ export const hitlRequests = pgTable(
   }),
 );
 
+export const projectMembers = pgTable(
+  "project_members",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", {
+      enum: ["owner", "admin", "member", "viewer"],
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqMembership: unique("project_members_project_user_uq").on(
+      t.projectId,
+      t.userId,
+    ),
+    idxUser: index("project_members_user_idx").on(t.userId),
+  }),
+);
+
+export type User = typeof users.$inferSelect;
+export type Account = typeof accounts.$inferSelect;
+export type Session = typeof sessions.$inferSelect;
+export type VerificationToken = typeof verificationTokens.$inferSelect;
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type ProjectRole = ProjectMember["role"];
+export type GlobalRole = User["role"];
 export type Project = typeof projects.$inferSelect;
 export type Executor = typeof executors.$inferSelect;
 export type Flow = typeof flows.$inferSelect;

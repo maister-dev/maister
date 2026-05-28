@@ -22,14 +22,18 @@
     "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts"
   },
   "dependencies": {
+    "@auth/drizzle-adapter": "1.11.2",
     "@heroui/react": "3.0.4",
     "@heroui/styles": "3.0.4",
+    "bcryptjs": "3.0.3",
     "better-sqlite3": "^12.10.0",
     "clsx": "2.1.1",
     "drizzle-orm": "^0.36.4",
     "intl-messageformat": "10.7.16",
     "mustache": "^4.2.0",
     "next": "16.2.6",
+    "next-auth": "5.0.0-beta.31",
+    "next-intl": "4.13.0",
     "next-themes": "0.4.6",
     "pg": "^8.21.0",
     "pino": "^9.14.0",

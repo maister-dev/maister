@@ -3,7 +3,174 @@
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  --font-sans: "font", sans-serif;
-  --font-mono: "monospace", monospace;
+/* ═══════════════════════════════════════════════════════════════
+   MAIster design tokens — Forest palette (light + dark)
+   Ported from the Claude Design handoff:
+   .ai-factory/references/m9-design/project/landing/02-hifi.css
+   `--amber` is the brand accent and resolves to fern green here.
+   Theme is toggled by next-themes via the `.light` / `.dark` class
+   on <html> (attribute="class"), so tokens are keyed on those classes.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root,
+.light {
+  --ink: #0c120d;
+  --ink-2: #1f2a25;
+  --body: #344c34;
+  --mute: #64724c;
+  --mute-2: #9a958c;
+  --line: #dad7cd;
+  --line-soft: #f0efeb;
+  --paper: #ffffff;
+  --paper-warm: #f8f7f5;
+  --ivory: #e9e7e1;
+
+  --amber: #588157;
+  --amber-2: #466645;
+  --amber-soft: #dae0d0;
+  --amber-line: #b9cfb9;
+
+  --accent-2: #3a5a40;
+  --accent-2-soft: #d3e3d6;
+  --accent-3: #344e41;
+  --accent-3-soft: #d1e0d9;
+  --accent-4: #a3b18a;
+  --accent-4-soft: #edefe8;
+
+  --good: #2f8a4a;
+  --good-soft: #e6f1ea;
+
+  --shadow-sm: 0 1px 0 rgba(22, 20, 15, 0.04), 0 1px 2px rgba(22, 20, 15, 0.04);
+  --shadow-md: 0 8px 24px -12px rgba(22, 20, 15, 0.12),
+    0 2px 6px -2px rgba(22, 20, 15, 0.06);
+  --shadow-lg: 0 28px 56px -24px rgba(22, 20, 15, 0.16),
+    0 12px 24px -16px rgba(22, 20, 15, 0.08);
+  --shadow-glow: 0 0 0 1px rgba(22, 20, 15, 0.04),
+    0 20px 50px -20px rgba(22, 20, 15, 0.18);
+
+  --sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+  --mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+
+.dark {
+  --ink: #edefe8;
+  --ink-2: #c8d0b9;
+  --body: #b6c1a2;
+  --mute: #859865;
+  --mute-2: #6a655c;
+  --line: #1f2e26;
+  --line-soft: #141f1a;
+  --paper: #0a0f0d;
+  --paper-warm: #0c120d;
+  --ivory: #141f1a;
+
+  --amber: #96b795;
+  --amber-2: #b9cfb9;
+  --amber-soft: #233323;
+  --amber-line: #344c34;
+
+  --accent-2: #7aaa83;
+  --accent-2-soft: #172419;
+  --accent-3: #75a38c;
+  --accent-3-soft: #141f1a;
+  --accent-4: #c8d0b9;
+  --accent-4-soft: #212619;
+
+  --good: #5cb677;
+  --good-soft: #14241a;
+
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6),
+    0 2px 6px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 28px 56px -24px rgba(0, 0, 0, 0.7),
+    0 12px 24px -16px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 20px 50px -20px rgba(0, 0, 0, 0.8);
+}
+
+/* Expose design tokens as Tailwind utilities (runtime-switchable via @theme inline).
+   Enables text-ink, bg-paper, border-line, text-amber, etc. */
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-body: var(--body);
+  --color-mute: var(--mute);
+  --color-mute-2: var(--mute-2);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-paper: var(--paper);
+  --color-paper-warm: var(--paper-warm);
+  --color-ivory: var(--ivory);
+
+  --color-amber: var(--amber);
+  --color-amber-2: var(--amber-2);
+  --color-amber-soft: var(--amber-soft);
+  --color-amber-line: var(--amber-line);
+
+  --color-accent-2: var(--accent-2);
+  --color-accent-2-soft: var(--accent-2-soft);
+  --color-accent-3: var(--accent-3);
+  --color-accent-3-soft: var(--accent-3-soft);
+  --color-accent-4: var(--accent-4);
+  --color-accent-4-soft: var(--accent-4-soft);
+
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+/* ── base ─────────────────────────────────────────────────────── */
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--sans);
+  color: var(--body);
+  background: var(--paper-warm);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11", "calt";
+  transition:
+    background 0.25s ease,
+    color 0.25s ease;
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--mono);
+}
+
+::selection {
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+/* shared status/live pulse used across chrome + cards */
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent-4) 70%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent-4) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent-4) 0%, transparent);
+  }
 }

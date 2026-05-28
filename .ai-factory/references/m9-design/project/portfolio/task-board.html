@@ -1,0 +1,1006 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-palette="forest" data-vibe="editorial">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>maister — Task board · MAIster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../landing/02-hifi.css">
+<link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="task-board.css">
+</head>
+<body>
+
+<!-- ╔════════════════════════════════════════════════ NAV ═╗ -->
+<div class="nav-wrap minimal">
+  <nav class="nav" aria-label="Primary">
+    <div class="nav-l">
+      <a class="logo" href="../landing/02-hifi.html">
+        <svg class="logo-mark" viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+          <polyline points="22 5 22 9 18 9"/>
+          <line x1="14" y1="2" x2="14" y2="4.5"/>
+          <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+          <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="wm lower">m<strong>ai</strong>ster<em>AI</em></span>
+      </a>
+      <span class="crumb">
+        <span class="live-dot"></span>
+        <a href="home.html" style="cursor:pointer;">~/projects</a>
+        <span style="color:var(--line);">/</span>
+        <b>maister</b>
+        <span style="color:var(--line);">/</span>
+        <span>board</span>
+      </span>
+    </div>
+    <div class="nav-r">
+      <button class="nav-tool" id="lang-toggle"><b id="lang-label">EN</b><span class="mu" id="lang-other">· RU</span></button>
+      <button class="nav-tool" id="theme-toggle" aria-pressed="false">
+        <svg id="theme-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 2v1.5M8 12.5V14M14 8h-1.5M3.5 8H2M12.24 3.76l-1.06 1.06M4.82 11.18l-1.06 1.06M12.24 12.24l-1.06-1.06M4.82 4.82L3.76 3.76"/></svg>
+        <span id="theme-label">Light</span>
+      </button>
+      <span class="nav-user">
+        <span class="av">AK</span>
+        <span>alex</span>
+      </span>
+    </div>
+  </nav>
+</div>
+
+<!-- ╔══════════════════════════════════════════════ SHELL ═══════════╗ -->
+<div class="shell" data-density="comfy">
+
+  <!-- ═══ RAIL ═══════════════════════════════════════════════ -->
+  <aside class="rail" aria-label="Project rail">
+
+    <nav class="rail-nav" aria-label="Sections">
+      <a href="home.html">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+        Projects
+      </a>
+      <a class="is-active" data-jump="board">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="5" height="10" rx="1"/><rect x="9" y="3" width="5" height="6" rx="1"/><path d="M9 11h5"/></svg>
+        Board <span class="num" style="background:var(--accent-4);">2</span>
+      </a>
+      <a data-jump="inbox">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h12M2 12h7"/></svg>
+        Inbox <span class="num">3</span>
+      </a>
+      <a data-jump="flows">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3 L13 3 L9 8 L13 13 L3 13 L7 8 Z"/></svg>
+        Flows
+      </a>
+      <a data-jump="activity">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v10h10M3 8l3-3 3 3 4-4"/></svg>
+        Activity
+      </a>
+      <a data-jump="settings">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="2"/><path d="M8 1v3M8 12v3M15 8h-3M4 8H1M12.95 3.05l-2.12 2.12M5.17 10.83l-2.12 2.12M12.95 12.95l-2.12-2.12M5.17 5.17L3.05 3.05"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <section class="rail-section rail-ws">
+      <div class="rs-head">
+        <span>maister workspaces</span>
+        <a class="see-all">all <span class="num" id="rail-ws-count">6</span> →</a>
+      </div>
+      <ul class="ws-list">
+        <li class="ws-li" data-status="running" title="Open ws/portfolio-home">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/portfolio-home</code>
+            <span class="meta">claude · on review</span>
+          </div>
+          <span class="time">2m</span>
+        </li>
+        <li class="ws-li is-current" data-status="needs" title="Open ws/auth-flow">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/auth-flow</code>
+            <span class="meta">codex · paused</span>
+          </div>
+          <span class="time">8m</span>
+        </li>
+        <li class="ws-li" data-status="running" title="Open ws/cli-args-fix">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/cli-args-fix</code>
+            <span class="meta">codex · step 3/7</span>
+          </div>
+          <span class="time">36m</span>
+        </li>
+        <li class="ws-li" data-status="queued" title="Open ws/test-harness">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/test-harness</code>
+            <span class="meta">queued · in 2m</span>
+          </div>
+          <span class="time">—</span>
+        </li>
+        <li class="ws-li" data-status="done" title="Open ws/landing-v3">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/landing-v3</code>
+            <span class="meta">dev · merged</span>
+          </div>
+          <span class="time">3h</span>
+        </li>
+        <li class="ws-li" data-status="done" title="Open ws/sso-rfc">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/sso-rfc</code>
+            <span class="meta">claude · merged</span>
+          </div>
+          <span class="time">1d</span>
+        </li>
+      </ul>
+    </section>
+
+    <div class="agents-presence">
+      <div class="ap-head">Coding agents · this project</div>
+      <div class="ap-row">
+        <span class="ap-chip"><span class="dot"></span>claude</span>
+        <span class="ap-chip"><span class="dot"></span>codex</span>
+      </div>
+    </div>
+
+    <div class="rail-launch">
+      <button class="launch-btn" id="launch-btn">
+        <span class="lb-plus">+</span>
+        <span class="lb-text">Launch run</span>
+        <span class="lb-kbd">⌘L</span>
+      </button>
+      <div class="hint">From backlog · ad-hoc · resume idle</div>
+    </div>
+
+  </aside>
+
+  <!-- ═══ CANVAS ═════════════════════════════════════════════ -->
+  <main class="canvas">
+
+    <!-- PROJECT HERO -->
+    <header class="project-hero">
+      <div class="ph-l">
+        <div class="ph-eyebrow">
+          <span>projects</span>
+          <span class="crumb-sep">/</span>
+          <b>maister</b>
+        </div>
+        <div class="ph-title">
+          <h1>maister</h1>
+          <span class="lang-chip">ts</span>
+          <span class="ph-status">
+            <span class="pulse"></span> running
+          </span>
+        </div>
+        <a class="repo" data-action="repo">github.com/kanischev/mAIster ↗</a>
+        <p class="desc">Shared control plane. We dogfood here — every spine step, every flow, ourselves.</p>
+      </div>
+      <div class="ph-r">
+        <div class="ph-counts">
+          <div class="cnt needs" data-jump="inbox" role="button" tabindex="0">
+            <span class="n">3</span>
+            <span class="lbl">need you</span>
+          </div>
+          <div class="cnt flight" data-jump="board" role="button" tabindex="0">
+            <span class="n">2</span>
+            <span class="lbl">in prod</span>
+          </div>
+          <div class="cnt" data-jump="board" role="button" tabindex="0">
+            <span class="n">12</span>
+            <span class="lbl">backlog</span>
+          </div>
+          <div class="cnt" data-jump="activity" role="button" tabindex="0">
+            <span class="n">28</span>
+            <span class="lbl">merged 7d</span>
+          </div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn-mini" data-jump="activity">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v10h10M3 8l3-3 3 3 4-4"/></svg>
+            Activity
+          </button>
+          <button class="btn-mini" data-jump="settings">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="2"/><circle cx="8" cy="8" r="6"/></svg>
+            Settings
+          </button>
+          <button class="btn-mini primary" id="new-task-btn">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+            New task
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- PROJECT META STRIP -->
+    <div class="proj-meta">
+      <div class="pm-cell" data-kind="agent" data-jump="settings" role="button" tabindex="0">
+        <span class="pm-lbl"><span class="ico"></span>default agent</span>
+        <span class="pm-val">claude <span class="sub">· sonnet 4.5</span></span>
+      </div>
+      <div class="pm-cell" data-kind="flows" data-jump="flows" role="button" tabindex="0">
+        <span class="pm-lbl"><span class="ico"></span>flows configured</span>
+        <span class="pm-val">4 <span class="sub">· bugfix · spec-clarify · autonomous · refactor</span></span>
+      </div>
+      <div class="pm-cell" data-kind="mcps" data-jump="mcps" role="button" tabindex="0">
+        <span class="pm-lbl"><span class="ico"></span>mcps</span>
+        <span class="pm-val">5 <span class="sub">· gh · pg · linear · slack · figma</span></span>
+      </div>
+      <div class="pm-cell" data-kind="team" data-jump="settings" role="button" tabindex="0">
+        <span class="pm-lbl"><span class="ico"></span>team</span>
+        <span class="pm-val">
+          <span class="avas">
+            <span class="ava" title="Alex K">AK</span>
+            <span class="ava" title="Mira R">MR</span>
+            <span class="ava a" data-role="claude" title="claude">cl</span>
+            <span class="ava a" data-role="codex" title="codex">cx</span>
+          </span>
+          <span class="sub">2 humans · 2 agents</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- PROJECT TABS -->
+    <div class="proj-tabs" role="tablist">
+      <a class="is-active" role="tab" aria-selected="true" data-tab="board">Board <span class="n">15</span></a>
+      <a class="alt" role="tab" data-tab="activity">Activity</a>
+      <a class="alt" role="tab" data-tab="prs">PRs <span class="n">4</span></a>
+      <a class="alt" role="tab" data-tab="flows">Flows</a>
+      <a class="alt" role="tab" data-tab="mcps">MCPs</a>
+      <a class="alt" role="tab" data-tab="settings">Settings</a>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         TAB PANEL · BOARD
+         ════════════════════════════════════════════════════════ -->
+    <section class="tab-panel is-active" data-tab="board">
+
+      <!-- HITL INBOX BLOCK -->
+      <section class="hitl" aria-label="Human-in-the-loop inbox">
+        <div class="hitl-head">
+          <div class="hh-l">
+            <h2>HITL inbox</h2>
+            <span class="hh-tag">3 paused</span>
+            <span class="hh-meta">oldest <b>8m ago</b> · avg resolve <b>3m</b></span>
+          </div>
+          <div class="hh-r">
+            <span class="auto">auto-snooze idle <b>&gt; 1h</b></span>
+            <a class="all" data-jump="inbox">Open inbox →</a>
+          </div>
+        </div>
+
+        <div class="hitl-list">
+
+          <article class="hitl-item is-perm" data-agent="codex" data-ws="ws/auth-flow" tabindex="0">
+            <div class="hi-avatar">cx</div>
+            <div class="hi-body">
+              <div class="hi-q">
+                Needs permission to write outside <code>~/auth/</code> — touches <code>~/db/schema.prisma</code> for the session table.
+                <span class="opts">
+                  <span data-choice="allow this run">allow this run</span>
+                  <span data-choice="allow always">allow always</span>
+                  <span data-choice="deny">deny</span>
+                </span>
+              </div>
+              <div class="hi-meta">
+                <span class="ws">ws/auth-flow</span>
+                <span class="sep">·</span>
+                <span class="flow">spec-clarify · step 3/7</span>
+                <span class="sep">·</span>
+                <span class="paused">paused 8m ago</span>
+                <span class="sep">·</span>
+                <span>est resolve: 30s</span>
+              </div>
+            </div>
+            <div class="hi-act">
+              <button class="b snooze">snooze</button>
+              <button class="b review">Review →</button>
+            </div>
+          </article>
+
+          <article class="hitl-item is-pick" data-agent="codex" data-ws="ws/bot-orchestrator" tabindex="0">
+            <div class="hi-avatar">cx</div>
+            <div class="hi-body">
+              <div class="hi-q">Schema unclear for <code>BotSession.transcript</code> — pick one</div>
+              <div class="hi-pick">
+                <span class="opt" data-choice="jsonb"><code>jsonb</code> structured turns w/ ts &amp; speaker</span>
+                <span class="opt" data-choice="text"><code>text</code> single concatenated string</span>
+                <span class="opt" data-choice="fk"><code>fk →</code> separate <code>Turn</code> table</span>
+              </div>
+              <div class="hi-meta" style="margin-top:8px;">
+                <span class="ws">ws/bot-orchestrator</span>
+                <span class="sep">·</span>
+                <span class="flow">autonomous · step 4/7</span>
+                <span class="sep">·</span>
+                <span class="paused">paused 4m ago</span>
+                <span class="sep">·</span>
+                <span>NeedsInput artifact</span>
+              </div>
+            </div>
+            <div class="hi-act">
+              <button class="b snooze">defer</button>
+              <button class="b review">Review →</button>
+            </div>
+          </article>
+
+          <article class="hitl-item" data-agent="claude" data-ws="ws/portfolio-home" tabindex="0">
+            <div class="hi-avatar">cl</div>
+            <div class="hi-body">
+              <div class="hi-q">Ready to merge <code>ws/portfolio-home</code> → <code>main</code> · 12 commits · +864/−231</div>
+              <div class="hi-meta">
+                <span class="ws">ws/portfolio-home</span>
+                <span class="sep">·</span>
+                <span class="flow">autonomous · step 7/7</span>
+                <span class="sep">·</span>
+                <span class="paused">paused 2m ago</span>
+                <span class="sep">·</span>
+                <span>tests green · lint green · 1 review pending</span>
+              </div>
+            </div>
+            <div class="hi-act">
+              <button class="b snooze">later</button>
+              <button class="b review">Review diff →</button>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+      <!-- BOARD TOOLS -->
+      <div class="board-tools">
+        <div class="bt-l">
+          <span class="chip" data-filter="flow" aria-pressed="true">flow: <b>any</b> <span class="x">▾</span></span>
+          <span class="chip" data-filter="agent">agent: <b>any</b> <span class="x">▾</span></span>
+          <span class="chip" data-filter="prio">prio: <b>any</b> <span class="x">▾</span></span>
+          <span class="chip" data-filter="touched">touched: <b>7d</b> <span class="x">▾</span></span>
+        </div>
+        <div class="bt-r">
+          <span class="asof" id="asof"><span class="rdot"></span>as of <b id="asof-time">just now</b></span>
+          <span class="vsep"></span>
+          <span class="lbl">layout</span>
+          <span class="group" id="layout-group">
+            <button data-layout="board" aria-pressed="true">board</button>
+            <button data-layout="swimlanes">swimlanes</button>
+            <button data-layout="list">list</button>
+          </span>
+        </div>
+      </div>
+
+      <!-- BOARD — 6 stage columns -->
+      <section class="board" data-layout="board" aria-label="Task board">
+
+        <!-- ─── 1 · BACKLOG ─────────────────────────────── -->
+        <div class="col" data-stage="backlog">
+          <header class="col-head">
+            <h3>Backlog <span class="badge">12</span></h3>
+            <span class="ch-all" data-jump="board">view all →</span>
+          </header>
+          <div class="col-body">
+
+            <article class="task" data-flow="bugfix" data-prio="high" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">OAuth callback drops state param on Safari iOS 17</div>
+                <span class="t-flow">bugfix</span>
+              </div>
+              <div class="t-desc">Third report this week. <code>state</code> arrives empty on the second redirect — likely ITP.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="alex">alex</span></span>
+                  <span class="est">est <b>1h</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+            <article class="task from-echo" data-flow="refactor" data-prio="med" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">Extract <code>FlowDef</code> from spine runtime</div>
+                <span class="t-flow">refactor</span>
+              </div>
+              <div class="t-desc">Suggested by <code>echo</code> after 3 merges touched <code>spine/runner.ts</code> similarly.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="echo">echo</span></span>
+                  <span class="est">conf <b>0.78</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+            <article class="task" data-flow="autonomous" data-prio="med" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">Landing copy refresh — round 2 (hero + spine)</div>
+                <span class="t-flow">autonomous</span>
+              </div>
+              <div class="t-desc">Tighten the spine narrative. Drop "agentic". Voice = operator-direct.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="alex">alex</span></span>
+                  <span class="est">est <b>2h</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+            <article class="task from-echo" data-flow="bugfix" data-prio="low" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">Flaky: <code>NeedsInput resumes from artifact</code></div>
+                <span class="t-flow">bugfix</span>
+              </div>
+              <div class="t-desc">Failed <b>4×</b> in 30 CI runs. Race between artifact write and reader.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="echo">echo</span></span>
+                  <span class="est">conf <b>0.91</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+            <button class="task-add">
+              <span class="plus">+</span>
+              <span>add · paste gh issue · <b style="color:var(--ink-2);">⌘N</b></span>
+            </button>
+
+          </div>
+        </div>
+
+        <!-- ─── 2 · PREPARE ─────────────────────────────── -->
+        <div class="col" data-stage="prepare">
+          <header class="col-head">
+            <h3>Prepare <span class="badge">3</span></h3>
+            <span class="ch-all" data-jump="board">view all →</span>
+          </header>
+          <div class="col-body">
+
+            <article class="task" data-flow="spec-clarify" data-prio="high" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">Onboarding tour for first-run users</div>
+                <span class="t-flow">spec-clarify</span>
+              </div>
+              <div class="t-desc">Coach-marks: connect repo → configure flow → launch. PM call on copy pending.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="alex">mira</span></span>
+                  <span class="est">spec <b>60%</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+            <article class="task" data-flow="spec-clarify" data-prio="med" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">Telemetry strategy for paused-run analytics</div>
+                <span class="t-flow">spec-clarify</span>
+              </div>
+              <div class="t-desc">PostHog vs in-house events. Need a call on PII boundary — prompts may leak.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="alex">alex</span></span>
+                  <span class="est">spec <b>30%</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+            <article class="task" data-flow="autonomous" data-prio="med" tabindex="0">
+              <span class="t-prio"></span>
+              <div class="t-top">
+                <div class="t-title">Session-cookie helper rollout</div>
+                <span class="t-flow">refactor</span>
+              </div>
+              <div class="t-desc">14 callsites across <code>~/auth</code>, <code>~/api</code>, <code>~/middleware</code>. Plan drafted.</div>
+              <div class="t-foot">
+                <div class="t-meta">
+                  <span class="from">from <span class="by" data-by="claude">claude</span></span>
+                  <span class="est">spec <b>ready</b></span>
+                </div>
+                <button class="t-launch">launch ⌘L</button>
+              </div>
+            </article>
+
+          </div>
+        </div>
+
+        <!-- ─── 3 · IN PRODUCTION ───────────────────────── -->
+        <div class="col" data-stage="production">
+          <header class="col-head">
+            <h3>In production <span class="badge">2</span></h3>
+            <span class="ch-sub">live</span>
+          </header>
+          <div class="col-body">
+
+            <article class="flight-card" data-status="needs" data-agent="codex" data-ws="ws/auth-flow" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/auth-flow</span></div>
+                <span class="fc-agent">codex</span>
+              </div>
+              <div class="fc-step">
+                <span class="lbl">paused</span>
+                <span class="body">awaiting permission · write outside <code>~/auth/</code></span>
+              </div>
+              <div class="fc-spine" title="step 3/7 · paused at clarify">
+                <span class="seg done"></span><span class="seg done"></span><span class="seg now"></span>
+                <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">codex/auth-flow</span>
+                  <span class="diff"><span class="plus">+128</span> / <span class="minus">−42</span></span>
+                </div>
+                <span class="time">paused 8m</span>
+              </div>
+            </article>
+
+            <article class="flight-card" data-status="running" data-agent="codex" data-ws="ws/cli-args-fix" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/cli-args-fix</span></div>
+                <span class="fc-agent">codex</span>
+              </div>
+              <div class="fc-step">
+                <span class="lbl">clarify</span>
+                <span class="body">writing tests for <code>--no-cache</code> short + long forms</span>
+              </div>
+              <div class="fc-spine" title="step 3/7 · clarifying">
+                <span class="seg done"></span><span class="seg done"></span><span class="seg now"></span>
+                <span class="seg"></span><span class="seg"></span><span class="seg skip"></span><span class="seg"></span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">codex/cli-args-fix</span>
+                  <span class="diff"><span class="plus">+34</span> / <span class="minus">−6</span></span>
+                </div>
+                <span class="time">36m ago</span>
+              </div>
+            </article>
+
+            <article class="flight-card" data-status="queued" data-agent="claude" data-ws="ws/test-harness" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/test-harness</span></div>
+                <span class="fc-agent">claude</span>
+              </div>
+              <div class="fc-step">
+                <span class="lbl">queued</span>
+                <span class="body">waiting on <code>ws/auth-flow</code> · limit 2/2</span>
+              </div>
+              <div class="fc-spine">
+                <span class="seg"></span><span class="seg"></span><span class="seg"></span>
+                <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">claude/test-harness</span>
+                  <span class="commits">starts <b>~2m</b></span>
+                </div>
+                <span class="time">queued</span>
+              </div>
+            </article>
+
+          </div>
+        </div>
+
+        <!-- ─── 4 · ON REVIEW ───────────────────────────── -->
+        <div class="col" data-stage="review">
+          <header class="col-head">
+            <h3>On review <span class="badge">2</span></h3>
+            <span class="ch-all" data-jump="prs">PRs →</span>
+          </header>
+          <div class="col-body">
+
+            <article class="flight-card" data-status="needs" data-agent="claude" data-ws="ws/portfolio-home" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/portfolio-home</span></div>
+                <span class="fc-agent">claude</span>
+              </div>
+              <div class="fc-step">
+                <span class="lbl">review</span>
+                <span class="body">PR open → <code>main</code> · 1 review pending</span>
+              </div>
+              <div class="fc-spine" title="step 7/7 · awaiting review">
+                <span class="seg done"></span><span class="seg done"></span><span class="seg done"></span>
+                <span class="seg done"></span><span class="seg done"></span><span class="seg done"></span><span class="seg now"></span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">claude/portfolio-home</span>
+                  <span class="diff"><span class="plus">+864</span> / <span class="minus">−231</span></span>
+                </div>
+                <span class="time">2m ago</span>
+              </div>
+            </article>
+
+            <article class="flight-card" data-status="running" data-agent="codex" data-ws="ws/sso-rfc" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/billing-webhook</span></div>
+                <span class="fc-agent">codex</span>
+              </div>
+              <div class="fc-step">
+                <span class="lbl">review</span>
+                <span class="body">addressing 3 review comments on retry logic</span>
+              </div>
+              <div class="fc-spine" title="step 6/7">
+                <span class="seg done"></span><span class="seg done"></span><span class="seg done"></span>
+                <span class="seg done"></span><span class="seg done"></span><span class="seg now"></span><span class="seg"></span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">codex/billing-webhook</span>
+                  <span class="diff"><span class="plus">+212</span> / <span class="minus">−18</span></span>
+                </div>
+                <span class="time">22m ago</span>
+              </div>
+            </article>
+
+          </div>
+        </div>
+
+        <!-- ─── 5 · IN DELIVERY ─────────────────────────── -->
+        <div class="col" data-stage="delivery">
+          <header class="col-head">
+            <h3>In delivery <span class="badge">1</span></h3>
+            <span class="ch-sub">merged · shipping</span>
+          </header>
+          <div class="col-body">
+
+            <article class="flight-card" data-status="running" data-agent="dev" data-ws="ws/landing-v3" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/landing-v3</span></div>
+                <span class="fc-agent">dev</span>
+              </div>
+              <div class="fc-step">
+                <span class="lbl">deploy</span>
+                <span class="body">staging → prod · canary at <code>25%</code></span>
+              </div>
+              <div class="fc-spine" title="deploy">
+                <span class="seg done"></span><span class="seg done"></span><span class="seg done"></span>
+                <span class="seg done"></span><span class="seg done"></span><span class="seg done"></span><span class="seg now"></span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">main</span>
+                  <span class="diff"><span class="plus">+1,204</span> / <span class="minus">−442</span></span>
+                </div>
+                <span class="time">building</span>
+              </div>
+            </article>
+
+            <div class="col-empty">drops here once merged<br>auto-advances on green deploy</div>
+
+          </div>
+        </div>
+
+        <!-- ─── 6 · DONE ────────────────────────────────── -->
+        <div class="col" data-stage="done">
+          <header class="col-head">
+            <h3>Done <span class="badge">28</span></h3>
+            <span class="ch-sub">7d</span>
+          </header>
+          <div class="col-body">
+
+            <article class="flight-card" data-status="done" data-agent="claude" data-ws="ws/sso-rfc" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/sso-rfc</span></div>
+                <span class="fc-agent">claude</span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">main</span>
+                  <span class="diff"><span class="plus">+96</span> / <span class="minus">−4</span></span>
+                </div>
+                <span class="time">merged 1d</span>
+              </div>
+            </article>
+
+            <article class="flight-card" data-status="done" data-agent="codex" data-ws="ws/rate-limit" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/rate-limit</span></div>
+                <span class="fc-agent">codex</span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">main</span>
+                  <span class="diff"><span class="plus">+58</span> / <span class="minus">−12</span></span>
+                </div>
+                <span class="time">merged 2d</span>
+              </div>
+            </article>
+
+            <article class="flight-card" data-status="done" data-agent="dev" data-ws="ws/db-indexes" tabindex="0">
+              <span class="fc-stripe"></span>
+              <div class="fc-top">
+                <div class="fc-name"><span class="dot"></span><span class="nm">ws/db-indexes</span></div>
+                <span class="fc-agent">dev</span>
+              </div>
+              <div class="fc-foot">
+                <div class="l">
+                  <span class="branch">main</span>
+                  <span class="diff"><span class="plus">+24</span> / <span class="minus">−2</span></span>
+                </div>
+                <span class="time">merged 3d</span>
+              </div>
+            </article>
+
+          </div>
+        </div>
+
+      </section>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         TAB PANEL · ACTIVITY
+         ════════════════════════════════════════════════════════ -->
+    <section class="tab-panel" data-tab="activity">
+      <div class="panel-head">
+        <h2>Activity</h2>
+        <span class="sub">as of <b>just now</b> · 28 events today · live</span>
+      </div>
+      <div class="feed">
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="claude">cl</span>
+          <div class="body">
+            <div class="t"><b>claude</b> committed <code>e3b1a · feat(auth): split-spine layout</code></div>
+            <div class="m">ws/auth-flow · spine step 5/7</div>
+          </div>
+          <span class="when">2m</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="codex">cx</span>
+          <div class="body">
+            <div class="t"><b>codex</b> paused at <code>NeedsInput</code> · schema decision required</div>
+            <div class="m">ws/bot-orchestrator · autonomous step 4/7</div>
+          </div>
+          <span class="when">4m</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="dev">AK</span>
+          <div class="body">
+            <div class="t"><b>alex</b> approved permission · write to <code>~/db/schema.prisma</code></div>
+            <div class="m">ws/auth-flow · HITL resolved in 1m 12s</div>
+          </div>
+          <span class="when">9m</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="dev">dv</span>
+          <div class="body">
+            <div class="t"><b>dev</b> merged <code>r-7c2a</code> → <code>main</code> · --no-ff</div>
+            <div class="m">ws/landing-v3 · 18 commits · canary 25%</div>
+          </div>
+          <span class="when">3h</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="claude">cl</span>
+          <div class="body">
+            <div class="t"><b>claude</b> opened PR <code>#341</code> → <code>main</code></div>
+            <div class="m">ws/portfolio-home · +864/−231 · awaiting review</div>
+          </div>
+          <span class="when">2m</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="codex">cx</span>
+          <div class="body">
+            <div class="t"><b>codex</b> resumed checkpoint · 1.2k tok continuation</div>
+            <div class="m">ws/cli-args-fix · step 3/7</div>
+          </div>
+          <span class="when">36m</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         TAB PANEL · PRs
+         ════════════════════════════════════════════════════════ -->
+    <section class="tab-panel" data-tab="prs">
+      <div class="panel-head">
+        <h2>Pull requests</h2>
+        <span class="sub">as of <b>just now</b> · 4 open · 1 needs your review</span>
+      </div>
+      <div class="feed">
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="claude">cl</span>
+          <div class="body">
+            <div class="t"><code>#341</code> <b>feat: portfolio working pane + density modes</b></div>
+            <div class="m">claude/portfolio-home → main · +864/−231 · tests green</div>
+          </div>
+          <span class="pr-state review">review</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="codex">cx</span>
+          <div class="body">
+            <div class="t"><code>#338</code> <b>fix: billing webhook retry/backoff</b></div>
+            <div class="m">codex/billing-webhook → main · 3 comments open</div>
+          </div>
+          <span class="pr-state checks">checks</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="codex">cx</span>
+          <div class="body">
+            <div class="t"><code>#336</code> <b>wip: oauth state param on Safari ITP</b></div>
+            <div class="m">codex/auth-flow → main · draft · +128/−42</div>
+          </div>
+          <span class="pr-state draft">draft</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="ava" data-by="dev">dv</span>
+          <div class="body">
+            <div class="t"><code>#330</code> <b>chore: landing v3 + copy refresh</b></div>
+            <div class="m">main · merged --no-ff · canary 25%</div>
+          </div>
+          <span class="pr-state merged">merged</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         TAB PANEL · FLOWS
+         ════════════════════════════════════════════════════════ -->
+    <section class="tab-panel" data-tab="flows">
+      <div class="panel-head">
+        <h2>Flows</h2>
+        <span class="sub">4 configured · spine = 7 steps · <b>+ new flow</b></span>
+      </div>
+      <div class="card-grid">
+
+        <div class="def-card" data-flow="bugfix" tabindex="0">
+          <div class="dc-top">
+            <span class="dc-name"><span class="glyph"></span>bugfix</span>
+            <span class="dc-state">on</span>
+          </div>
+          <div class="dc-desc">Repro → failing test → patch → verify. Skips broad clarify; tight loop.</div>
+          <div class="dc-spine"><span class="on"></span><span class="on"></span><span></span><span class="on"></span><span class="on"></span><span></span><span class="on"></span></div>
+          <div class="dc-foot"><span><b>5</b> steps active</span><span>used <b>14×</b> · 7d</span></div>
+        </div>
+
+        <div class="def-card" data-flow="spec-clarify" tabindex="0">
+          <div class="dc-top">
+            <span class="dc-name"><span class="glyph"></span>spec-clarify</span>
+            <span class="dc-state">on</span>
+          </div>
+          <div class="dc-desc">Front-loads clarify + NeedsInput gates. For fuzzy or risky asks.</div>
+          <div class="dc-spine"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
+          <div class="dc-foot"><span><b>7</b> steps active</span><span>used <b>9×</b> · 7d</span></div>
+        </div>
+
+        <div class="def-card" data-flow="autonomous" tabindex="0">
+          <div class="dc-top">
+            <span class="dc-name"><span class="glyph"></span>autonomous</span>
+            <span class="dc-state">on</span>
+          </div>
+          <div class="dc-desc">Full spine, minimal gates. Pauses only on permission + merge.</div>
+          <div class="dc-spine"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
+          <div class="dc-foot"><span><b>7</b> steps active</span><span>used <b>11×</b> · 7d</span></div>
+        </div>
+
+        <div class="def-card" data-flow="refactor" tabindex="0">
+          <div class="dc-top">
+            <span class="dc-name"><span class="glyph"></span>refactor</span>
+            <span class="dc-state off">paused</span>
+          </div>
+          <div class="dc-desc">Mechanical multi-file edits with a mandatory diff-review gate.</div>
+          <div class="dc-spine"><span class="on"></span><span></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
+          <div class="dc-foot"><span><b>6</b> steps active</span><span>used <b>3×</b> · 7d</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         TAB PANEL · MCPs
+         ════════════════════════════════════════════════════════ -->
+    <section class="tab-panel" data-tab="mcps">
+      <div class="panel-head">
+        <h2>MCP connections</h2>
+        <span class="sub">5 servers · 4 connected · <b>+ add server</b></span>
+      </div>
+      <div class="card-grid">
+        <div class="def-card" tabindex="0">
+          <div class="dc-top"><span class="dc-name"><span class="glyph"></span>github</span><span class="dc-conn"><span class="dot"></span>connected</span></div>
+          <div class="dc-desc">Repos, PRs, issues, checks. Scope: <code>kanischev/mAIster</code>.</div>
+          <div class="dc-foot"><span><b>12</b> tools</span><span>last call <b>2m</b></span></div>
+        </div>
+        <div class="def-card" tabindex="0">
+          <div class="dc-top"><span class="dc-name"><span class="glyph" style="background:var(--accent-2);"></span>postgres</span><span class="dc-conn"><span class="dot"></span>connected</span></div>
+          <div class="dc-desc">Schema introspection + read replica. <code>maister_prod</code>.</div>
+          <div class="dc-foot"><span><b>6</b> tools</span><span>last call <b>8m</b></span></div>
+        </div>
+        <div class="def-card" tabindex="0">
+          <div class="dc-top"><span class="dc-name"><span class="glyph" style="background:var(--accent-3);"></span>linear</span><span class="dc-conn"><span class="dot"></span>connected</span></div>
+          <div class="dc-desc">Issue sync into backlog. Team <code>MAI</code>.</div>
+          <div class="dc-foot"><span><b>8</b> tools</span><span>last call <b>1h</b></span></div>
+        </div>
+        <div class="def-card" tabindex="0">
+          <div class="dc-top"><span class="dc-name"><span class="glyph" style="background:var(--accent-4);"></span>slack</span><span class="dc-conn"><span class="dot"></span>connected</span></div>
+          <div class="dc-desc">HITL pings to <code>#maister-ops</code>. DM on merge-ready.</div>
+          <div class="dc-foot"><span><b>4</b> tools</span><span>last call <b>2m</b></span></div>
+        </div>
+        <div class="def-card" tabindex="0">
+          <div class="dc-top"><span class="dc-name"><span class="glyph" style="background:var(--mute-2);"></span>figma</span><span class="dc-conn off"><span class="dot"></span>token expired</span></div>
+          <div class="dc-desc">Design-token export. Needs re-auth.</div>
+          <div class="dc-foot"><span><b>3</b> tools</span><span class="edit" style="color:var(--amber);font-weight:700;cursor:pointer;">reconnect →</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         TAB PANEL · SETTINGS
+         ════════════════════════════════════════════════════════ -->
+    <section class="tab-panel" data-tab="settings">
+      <div class="panel-head">
+        <h2>Project settings</h2>
+        <span class="sub">maister · github.com/kanischev/mAIster</span>
+      </div>
+      <div class="settings-stack">
+        <div class="srow">
+          <div class="sl"><div class="k">Default agent</div><div class="d">used for new runs unless overridden per-task</div></div>
+          <div class="sv">claude · sonnet 4.5 <span class="edit">change</span></div>
+        </div>
+        <div class="srow">
+          <div class="sl"><div class="k">Default flow</div><div class="d">applied when launching from backlog</div></div>
+          <div class="sv">spec-clarify <span class="edit">change</span></div>
+        </div>
+        <div class="srow">
+          <div class="sl"><div class="k">Concurrency limit</div><div class="d">max simultaneous running workspaces</div></div>
+          <div class="sv">2 runs <span class="edit">change</span></div>
+        </div>
+        <div class="srow">
+          <div class="sl"><div class="k">Auto-snooze idle HITL</div><div class="d">pause items waiting longer than the threshold</div></div>
+          <div class="sv"><span class="toggle" aria-pressed="true" role="switch" tabindex="0"></span></div>
+        </div>
+        <div class="srow">
+          <div class="sl"><div class="k">Require merge approval</div><div class="d">human gate before any branch merges to main</div></div>
+          <div class="sv"><span class="toggle" aria-pressed="true" role="switch" tabindex="0"></span></div>
+        </div>
+        <div class="srow">
+          <div class="sl"><div class="k">Echo task suggestions</div><div class="d">surface AI-suggested backlog tasks (✦)</div></div>
+          <div class="sv"><span class="toggle" aria-pressed="true" role="switch" tabindex="0"></span></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ╔══════════════════════════════════════════════ STATUS BAR ═══╗ -->
+<footer class="status-bar" aria-label="Instance status">
+  <div class="group">
+    <span class="live"><span class="dot"></span> <b>Connected</b></span>
+    <span class="sep">·</span>
+    <span>localhost:3000</span>
+    <span class="sep hide-sm">·</span>
+    <span class="hide-sm">v0.0.1</span>
+    <span class="sep hide-sm">·</span>
+    <span class="hide-sm" id="status-summary">maister · 2 in prod · 3 need you</span>
+  </div>
+  <div class="group">
+    <a>Docs ↗</a>
+    <span class="sep">·</span>
+    <a href="https://github.com/kanischev/mAIster" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.08.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</footer>
+
+<div id="toast"><span class="td"></span><span id="toast-msg"></span></div>
+
+<script src="task-board.js"></script>
+</body>
+</html>

@@ -1,0 +1,1084 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MAIster — Landing · Wireframe (Round 1.5)</title>
+<style>
+  :root{
+    --ink:#111315;
+    --ink-2:#3a3d42;
+    --mute:#7a7d83;
+    --line:#d6d7d9;
+    --line-2:#e6e7e8;
+    --fill:#f4f4f5;
+    --fill-2:#fafafa;
+    --bg:#ffffff;
+    --accent:#e76b2c;        /* annotation only — "future brand color" */
+    --accent-soft:#fff1e6;
+    --good:#2f8a4a;
+    --good-soft:#e7f3eb;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--fill-2);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  a{color:inherit}
+
+  .doc{max-width:1280px;margin:0 auto;padding:48px 32px 120px}
+  .doc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:32px;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:32px}
+  .doc-head h1{margin:0;font-size:28px;font-weight:600;letter-spacing:-0.01em}
+  .doc-head .crumb{font-family:var(--mono);font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:6px}
+  .doc-head .right{font-family:var(--mono);font-size:11px;color:var(--mute);text-align:right}
+  .doc-head .right b{color:var(--ink);font-weight:600}
+
+  .notes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:48px}
+  .note{background:#fff;border:1px solid var(--line);border-radius:6px;padding:16px 18px}
+  .note h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.12em;color:var(--mute);font-weight:600;font-family:var(--mono)}
+  .note ul{margin:0;padding-left:18px}
+  .note li{margin-bottom:6px;color:var(--ink-2);line-height:1.45}
+  .note li::marker{color:var(--mute)}
+  .note p{margin:0 0 6px;color:var(--ink-2)}
+  .pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:0.06em;padding:2px 6px;border-radius:3px;background:var(--accent-soft);color:var(--accent);border:1px solid #f6d3b5}
+  .pill.good{background:var(--good-soft);color:var(--good);border-color:#bfdcc6}
+  .pill.mute{background:var(--fill);color:var(--mute);border-color:var(--line)}
+
+  /* changelog table */
+  .changelog{background:#fff;border:1px solid var(--line);border-radius:6px;padding:0;margin-bottom:48px;overflow:hidden}
+  .changelog h3{margin:0;padding:14px 18px;font-size:11px;text-transform:uppercase;letter-spacing:0.12em;color:var(--mute);font-weight:600;font-family:var(--mono);background:var(--fill-2);border-bottom:1px solid var(--line)}
+  .changelog table{width:100%;border-collapse:collapse}
+  .changelog td,.changelog th{padding:10px 16px;border-bottom:1px solid var(--line-2);text-align:left;font-size:13px;vertical-align:top}
+  .changelog th{background:var(--fill-2);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--mute);font-weight:600}
+  .changelog td.where{font-family:var(--mono);font-size:11px;color:var(--mute);white-space:nowrap;width:160px}
+  .changelog td.your{color:var(--ink);font-style:italic;width:38%}
+  .changelog td.did{color:var(--ink-2)}
+  .changelog tr:last-child td{border-bottom:0}
+
+  .sec-h{display:flex;align-items:center;gap:12px;margin:48px 0 16px}
+  .sec-h .num{font-family:var(--mono);font-size:11px;color:var(--mute);min-width:42px;letter-spacing:0.08em}
+  .sec-h h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-0.005em}
+  .sec-h .rule{flex:1;height:1px;background:var(--line)}
+  .sec-h .pill{margin-left:8px}
+
+  /* option cards */
+  .opts{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .opt{background:#fff;border:1px solid var(--line);border-radius:6px;overflow:hidden;display:flex;flex-direction:column}
+  .opt-stage{background:var(--fill-2);border-bottom:1px solid var(--line);padding:32px;display:flex;align-items:center;justify-content:center;min-height:180px}
+  .opt-foot{padding:14px 18px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .opt-foot .label{font-weight:600;font-size:13px}
+  .opt-foot .desc{font-size:12px;color:var(--mute);margin-top:2px;line-height:1.5}
+  .opt-foot .tag{font-family:var(--mono);font-size:10px;color:var(--mute);border:1px solid var(--line);border-radius:3px;padding:2px 6px;height:max-content}
+
+  .logo-wrap{display:flex;flex-direction:column;align-items:center;gap:18px}
+  .logo-wrap svg{display:block}
+  .logo-mark-label{font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:0.04em}
+
+  /* hero mini */
+  .hero-mini{width:100%;height:200px;background:#fff;border:1px solid var(--line);border-radius:4px;position:relative;overflow:hidden}
+  .hero-mini .h-label{position:absolute;top:10px;left:12px;font-family:var(--mono);font-size:9px;color:var(--mute);letter-spacing:0.06em;z-index:2}
+  .hero-mini .h-cap{position:absolute;bottom:10px;left:12px;right:12px;font-family:var(--mono);font-size:9px;color:var(--mute);letter-spacing:0.04em}
+
+  /* generic */
+  .box{border:1px solid var(--line);background:var(--fill);border-radius:3px}
+  .lbl{font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.06em;text-transform:uppercase}
+
+  /* landing wireframe shell */
+  .lp{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 1px 0 rgba(0,0,0,0.02)}
+
+  .lp-nav{display:flex;align-items:center;justify-content:space-between;padding:18px 32px;border-bottom:1px solid var(--line)}
+  .lp-nav .left{display:flex;align-items:center;gap:32px}
+  .lp-nav .nav-logo{width:108px;height:22px;background:var(--ink);border-radius:2px;position:relative}
+  .lp-nav .nav-logo::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:1px;background:var(--accent)}
+  .lp-nav .nav-links{display:flex;gap:24px}
+  .lp-nav .nav-links span{width:54px;height:8px;background:var(--line);border-radius:2px}
+  .lp-nav .right{display:flex;align-items:center;gap:12px}
+  .lp-nav .switcher{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.06em}
+  .lp-nav .btn-ghost{font-family:var(--mono);font-size:10px;letter-spacing:0.08em;color:var(--mute);padding:8px 12px}
+  .lp-nav .btn-prim{font-family:var(--mono);font-size:10px;letter-spacing:0.08em;color:#fff;background:var(--ink);padding:8px 14px;border-radius:4px;display:inline-flex;align-items:center;gap:6px}
+
+  /* compact star-count widget in the nav */
+  .lp-nav .gh-star{display:inline-flex;align-items:stretch;border:1px solid var(--line);border-radius:4px;overflow:hidden;font-family:var(--mono);font-size:11px;line-height:1}
+  .lp-nav .gh-star .gs-l{padding:7px 10px;display:flex;align-items:center;gap:6px;color:var(--ink-2);background:#fff}
+  .lp-nav .gh-star .gs-l svg{width:13px;height:13px;display:block}
+  .lp-nav .gh-star .gs-r{padding:7px 10px;background:var(--fill-2);border-left:1px solid var(--line);color:var(--ink);font-weight:600;display:flex;align-items:center;gap:4px}
+  .lp-nav .gh-star .gs-r .star{color:var(--accent)}
+
+  /* HERO */
+  .lp-hero{padding:104px 80px 88px;border-bottom:1px solid var(--line);position:relative}
+  .lp-hero .kicker{font-family:var(--mono);font-size:11px;letter-spacing:0.18em;color:var(--mute);text-transform:uppercase;margin-bottom:24px;display:flex;align-items:center;gap:10px}
+  .lp-hero .kicker .dot{width:6px;height:6px;background:var(--accent);border-radius:50%}
+  .lp-hero h1{font-size:72px;line-height:1.02;font-weight:600;letter-spacing:-0.028em;margin:0 0 28px;max-width:14ch}
+  .lp-hero h1 em{font-style:normal;color:var(--mute);font-weight:400}
+  .lp-hero .sub{font-size:20px;color:var(--ink-2);max-width:62ch;line-height:1.45;margin:0 0 36px}
+  .lp-hero .sub b{color:var(--ink);font-weight:600}
+  .lp-hero .sub code{font-family:var(--mono);font-size:14px;background:var(--fill);border:1px solid var(--line);padding:1px 6px;border-radius:3px}
+  .lp-hero .ctas{display:flex;gap:12px;align-items:center}
+  .cta-prim{padding:14px 22px;background:var(--ink);color:#fff;border-radius:4px;font-family:var(--mono);font-size:12px;letter-spacing:0.06em;display:inline-flex;align-items:center;gap:10px}
+  .cta-prim .star{width:14px;height:14px;background:#fff;border-radius:2px;opacity:0.95}
+  .cta-prim .ct{font-family:var(--mono);font-size:11px;opacity:0.6}
+  .cta-sec{padding:14px 18px;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);font-size:12px;letter-spacing:0.06em;color:var(--ink-2)}
+
+  /* hero imagery slot with switcher tabs */
+  .imagery-wrap{margin-top:64px;border:1px dashed var(--line);background:#fafafa;border-radius:6px;overflow:hidden}
+  .imagery-tabs{display:flex;gap:0;border-bottom:1px dashed var(--line);padding:0}
+  .imagery-tab{flex:0 0 auto;padding:14px 22px;font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;border-right:1px dashed var(--line);background:transparent}
+  .imagery-tab[aria-selected="true"]{color:var(--ink);background:#fff;border-bottom:1px solid #fff;margin-bottom:-1px}
+  .imagery-tab[aria-selected="true"] .dot{background:var(--accent)}
+  .imagery-tab .dot{width:6px;height:6px;border-radius:50%;background:var(--line);display:inline-block;margin-right:8px;vertical-align:middle}
+  .imagery-tab.spacer{flex:1;border-right:0;cursor:default;padding-right:18px;text-align:right}
+  .imagery-stage{min-height:400px;display:flex;align-items:center;justify-content:center;padding:32px;position:relative}
+  .imagery-stage[hidden]{display:none}
+
+  /* annotation arrows */
+  .section-anno{position:absolute;right:24px;top:24px;max-width:240px;border-left:2px solid var(--accent);padding:4px 0 4px 10px;font-family:var(--mono);font-size:10px;line-height:1.55;color:var(--accent);background:rgba(255,255,255,0.85);backdrop-filter:blur(4px)}
+  .section-anno b{font-weight:600;display:block;color:var(--accent);margin-bottom:4px}
+  .lp-hero,.lp-spine,.lp-jtbd,.lp-feat,.lp-exec,.lp-oss,.lp-foot{position:relative}
+
+  /* SPINE EXPLAINER ─ NEW */
+  .lp-spine{padding:88px 80px;border-bottom:1px solid var(--line)}
+  .lp-spine h2{font-size:40px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px;max-width:20ch;line-height:1.05}
+  .lp-spine h2 em{font-style:normal;color:var(--mute);font-weight:400}
+  .lp-spine .sub{font-size:16px;color:var(--mute);max-width:64ch;margin:0 0 12px}
+  .lp-spine .sub b{color:var(--ink);font-weight:600}
+
+  /* HITL overlay band ABOVE the cards */
+  .spine-frame{margin-top:56px;border:1px solid var(--line);border-radius:6px;padding:28px 24px 24px;background:#fff}
+  .spine-frame-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding:0 4px}
+  .spine-frame-head .ttl{font-family:var(--mono);font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:0.1em}
+  .spine-frame-head .ttl b{color:var(--accent);font-weight:600}
+  .spine-frame-head .flow-pick{display:flex;gap:6px;align-items:center}
+  .spine-frame-head .flow-pick .lbl-i{font-family:var(--mono);font-size:10px;color:var(--mute);margin-right:6px}
+  .spine-frame-head .flow-pick button{font-family:var(--mono);font-size:10px;letter-spacing:0.06em;padding:4px 10px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink-2);cursor:pointer}
+  .spine-frame-head .flow-pick button[aria-selected="true"]{border-color:var(--ink);background:var(--ink);color:#fff}
+
+  .hitl-band{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:10px;padding:0 4px}
+  .hitl-cell{display:flex;align-items:center;justify-content:center;height:24px;position:relative}
+  .hitl-cell .pin{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line);background:#fff;position:relative;display:flex;align-items:center;justify-content:center}
+  .hitl-cell.on .pin{border-color:var(--accent);background:var(--accent-soft)}
+  .hitl-cell.on .pin::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .hitl-cell.maybe .pin{border-style:dashed}
+  .hitl-cell .hint{position:absolute;top:-2px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:8px;color:var(--mute);white-space:nowrap;background:#fff;padding:0 4px}
+
+  .spine-row{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;align-items:stretch;position:relative}
+  .spine-step{background:var(--fill-2);border:1px solid var(--line);border-radius:4px;padding:14px 12px;min-height:110px;display:flex;flex-direction:column;gap:6px;position:relative}
+  .spine-step .n{font-family:var(--mono);font-size:10px;color:var(--mute)}
+  .spine-step .t{font-weight:600;font-size:13px;letter-spacing:-0.005em}
+  .spine-step .d{font-size:11px;color:var(--mute);line-height:1.35}
+  .spine-step.phase2{background:#fff;border-style:dashed;opacity:0.75}
+  .spine-step.phase2 .badge{position:absolute;top:8px;right:8px;font-family:var(--mono);font-size:8px;letter-spacing:0.08em;color:var(--mute);text-transform:uppercase;background:var(--fill);padding:1px 5px;border-radius:2px;border:1px solid var(--line)}
+  .spine-step::after{content:"";position:absolute;right:-8px;top:50%;width:8px;height:1px;background:var(--line)}
+  .spine-step:last-child::after{display:none}
+
+  /* autonomy axis under cards */
+  .autonomy{display:flex;align-items:center;gap:12px;margin-top:18px;padding:0 4px;font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:0.04em}
+  .autonomy .axis{flex:1;height:6px;border-radius:3px;background:linear-gradient(to right, var(--accent-soft) 0%, var(--accent-soft) 30%, #fff 100%);border:1px solid var(--line);position:relative}
+  .autonomy .axis::after{content:"";position:absolute;right:-1px;top:50%;transform:translateY(-50%);border-left:8px solid var(--ink);border-top:5px solid transparent;border-bottom:5px solid transparent}
+  .autonomy .l{color:var(--accent)}.autonomy .r{color:var(--ink)}
+
+  /* multi-flow stack indicator above the frame */
+  .multi-flow-rail{display:flex;flex-direction:column;gap:4px;align-items:flex-start;margin-bottom:14px;padding:0 4px}
+  .multi-flow-rail .mfr{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.04em}
+  .multi-flow-rail .mfr .line{height:2px;width:120px;background:var(--line);border-radius:2px}
+  .multi-flow-rail .mfr.active .line{background:var(--accent)}
+  .multi-flow-rail .mfr.active{color:var(--ink)}
+  .multi-flow-rail .mfr .lbl-l{min-width:120px}
+  .multi-flow-rail .mfr .meta{color:var(--mute);font-style:italic}
+
+  /* JTBD personas */
+  .lp-jtbd{padding:88px 80px;border-bottom:1px solid var(--line)}
+  .lp-jtbd .jtbd-head{display:flex;align-items:flex-end;justify-content:space-between;gap:32px;margin-bottom:56px}
+  .lp-jtbd h2{font-size:40px;font-weight:600;letter-spacing:-0.02em;margin:0 0 12px;max-width:18ch;line-height:1.05}
+  .lp-jtbd .sub{font-size:16px;color:var(--mute);max-width:60ch;margin:0}
+  .lp-jtbd .more-link{font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:0.06em;white-space:nowrap}
+  .lp-jtbd .more-link .arr{color:var(--accent)}
+  .personas{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  .persona{border:1px solid var(--line);border-radius:6px;padding:24px 22px;display:flex;flex-direction:column;gap:12px;background:var(--fill-2);position:relative;min-height:280px}
+  .persona.phase2{background:#fff;border-style:dashed;opacity:0.78}
+  .persona.phase2 .badge{position:absolute;top:14px;right:14px;font-family:var(--mono);font-size:9px;letter-spacing:0.08em;color:var(--mute);text-transform:uppercase;background:var(--fill);padding:2px 6px;border-radius:3px;border:1px solid var(--line)}
+  .persona .face{width:36px;height:36px;background:var(--line);border-radius:50%}
+  .persona .role{font-family:var(--mono);font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:0.1em}
+  .persona .quote{font-size:15px;font-weight:500;letter-spacing:-0.005em;line-height:1.4;color:var(--ink);margin:0}
+  .persona .quote .em{color:var(--mute);font-weight:400}
+  .persona .jobs{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+  .persona .job{font-family:var(--mono);font-size:10px;color:var(--ink-2);display:flex;align-items:center;gap:8px;line-height:1.35}
+  .persona .job::before{content:"";width:8px;height:1px;background:var(--mute);flex:0 0 8px}
+
+  /* INTERACTIONS (NEW) — 4-way matrix with icons */
+  .lp-int{padding:88px 80px;border-bottom:1px solid var(--line);background:var(--fill-2)}
+  .lp-int h2{font-size:40px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px;line-height:1.05;max-width:20ch}
+  .lp-int h2 em{font-style:normal;color:var(--mute);font-weight:400}
+  .lp-int .sub{font-size:16px;color:var(--mute);max-width:60ch;margin:0 0 48px}
+  .matrix{display:grid;grid-template-columns:140px 1fr 1fr;gap:0;background:#fff;border:1px solid var(--line);border-radius:6px;overflow:hidden;max-width:820px}
+  .matrix .mcell{padding:24px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-height:150px;display:flex;flex-direction:column;gap:10px;justify-content:flex-start}
+  .matrix .mcell:nth-child(3n){border-right:0}
+  .matrix .mcell:nth-last-child(-n+3){border-bottom:0}
+  .matrix .mcell.head{background:var(--fill-2);align-items:center;justify-content:center;min-height:auto;padding:18px 16px;flex-direction:row;gap:10px}
+  .matrix .mcell.head .head-l{font-family:var(--mono);font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:0.1em}
+  .matrix .mcell.label{background:var(--fill-2);align-items:center;justify-content:center;flex-direction:row;gap:10px}
+  .matrix .mcell.label .head-l{font-family:var(--mono);font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:0.1em}
+  .matrix .mcell.corner{background:var(--fill-2);border-right:1px solid var(--line);min-height:auto}
+  .matrix .mcell .iconpair{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .matrix .mcell .iconpair .arr{font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:600}
+  .matrix .mcell .pair-d{font-size:12.5px;color:var(--mute);line-height:1.5}
+  .matrix .mcell .pair-meta{font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.06em;margin-top:auto}
+  .matrix .mcell.empty{background:var(--fill-2)}
+
+  /* glyphs */
+  .glyph{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;flex:0 0 28px}
+  .glyph.h{background:var(--ink);color:#fff}
+  .glyph.a{background:#fff;border:1px solid var(--ink);color:var(--ink)}
+  .glyph svg{width:16px;height:16px;display:block}
+
+  /* FEATURE GRID */
+  .lp-feat{padding:88px 80px;border-bottom:1px solid var(--line)}
+  .lp-feat h2{font-size:40px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px;max-width:22ch;line-height:1.05}
+  .lp-feat .sub{font-size:16px;color:var(--mute);max-width:60ch;margin:0 0 48px}
+  .feat-grid{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:auto;gap:16px}
+  .feat{background:#fff;border:1px solid var(--line);border-radius:6px;padding:24px;display:flex;flex-direction:column;gap:12px;min-height:180px}
+  .feat.span-2{grid-column:span 2}
+  .feat .ico{width:28px;height:28px;border:1px solid var(--line);border-radius:4px;background:var(--fill)}
+  .feat .ft-t{font-weight:600;font-size:15px;letter-spacing:-0.005em}
+  .feat .ft-d{font-size:13px;color:var(--mute);line-height:1.5}
+  .feat .ft-meta{font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.06em;margin-top:auto}
+  .feat .ft-meta .phase{color:var(--accent)}
+
+  /* EXECUTOR STRIP */
+  .lp-exec{padding:64px 80px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:48px;background:var(--fill-2)}
+  .lp-exec .ttl{font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:0.14em;text-transform:uppercase;flex:0 0 200px}
+  .lp-exec .row{display:flex;gap:48px;align-items:center;flex:1;flex-wrap:wrap}
+  .lp-exec .logo-slot{display:flex;align-items:center;gap:10px;color:var(--ink-2);font-size:15px;font-weight:500}
+  .lp-exec .logo-slot .dot{width:24px;height:24px;background:var(--line);border-radius:6px}
+  .lp-exec .more{font-family:var(--mono);font-size:11px;color:var(--mute)}
+
+  /* OSS CTA */
+  .lp-oss{padding:120px 80px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1.2fr 1fr;gap:64px;align-items:center}
+  .lp-oss .left h2{font-size:52px;font-weight:600;letter-spacing:-0.025em;line-height:1.03;margin:0 0 20px;max-width:14ch}
+  .lp-oss .left h2 em{font-style:normal;color:var(--mute);font-weight:400}
+  .lp-oss .left p{color:var(--ink-2);font-size:16px;max-width:48ch;line-height:1.55;margin:0 0 28px}
+  .lp-oss .left .ctas{display:flex;gap:12px}
+
+  /* terminal — colored + typewriter */
+  .term{background:#0d0f12;color:#d4d4d4;border-radius:8px;padding:20px 22px;font-family:var(--mono);font-size:13px;line-height:1.7;box-shadow:0 24px 48px -24px rgba(0,0,0,0.4),0 2px 0 0 rgba(255,255,255,0.04) inset;position:relative;overflow:hidden}
+  .term .term-bar{display:flex;align-items:center;gap:6px;margin:-20px -22px 16px;padding:10px 18px;background:#161a20;border-bottom:1px solid #20252c;border-radius:8px 8px 0 0}
+  .term .term-bar .b{width:10px;height:10px;border-radius:50%;background:#3a414b}
+  .term .term-bar .ttl{margin-left:10px;font-size:11px;color:#7a7d83;letter-spacing:0.04em}
+  .term .ln{display:flex;align-items:baseline;gap:10px;min-height:1.7em;white-space:nowrap;overflow:hidden;color:#d4d4d4}
+  .term .ln .p{color:#e76b2c;flex:0 0 auto;font-weight:600}
+  .term .ln .cmd{color:#9ab87a}
+  .term .ln .opt{color:#7da7d9}
+  .term .ln .str{color:#e2c275}
+  .term .ln .mu{color:#6c7079}
+  .term .ln.comment{color:#5a5f68;font-style:italic;margin-top:6px}
+  .term .ln .typ{display:inline-block;overflow:hidden;white-space:nowrap;border-right:2px solid transparent;animation:caret 0.9s steps(1) infinite}
+  .term .ln .body{display:inline-block;overflow:hidden;white-space:nowrap;width:0;animation:type 1.4s steps(40,end) forwards}
+  /* per-line stagger */
+  .term .ln.l1 .body{animation-delay:0.2s}
+  .term .ln.l2 .body{animation-delay:1.8s}
+  .term .ln.l3 .body{animation-delay:3.2s}
+  .term .ln.l4 .body{animation-delay:4.4s}
+  .term .ln.l5{opacity:0;animation:fadein 0.3s ease forwards;animation-delay:5.9s}
+  .term .ln.l6{opacity:0;animation:fadein 0.3s ease forwards;animation-delay:6.3s}
+  .term .ln.l7{opacity:0;animation:fadein 0.3s ease forwards;animation-delay:6.7s}
+  .term .ln.l1 .p,.term .ln.l2 .p,.term .ln.l3 .p,.term .ln.l4 .p{opacity:0;animation:fadein 0.15s ease forwards}
+  .term .ln.l1 .p{animation-delay:0.1s}
+  .term .ln.l2 .p{animation-delay:1.7s}
+  .term .ln.l3 .p{animation-delay:3.1s}
+  .term .ln.l4 .p{animation-delay:4.3s}
+  .term .caret{display:inline-block;width:8px;height:14px;background:#d4d4d4;vertical-align:middle;animation:caret 0.9s steps(1) infinite;margin-left:4px;opacity:0;animation-delay:7s,0s;animation-name:fadein,caret;animation-duration:0.15s,0.9s;animation-fill-mode:forwards,none;animation-iteration-count:1,infinite}
+  @keyframes type{from{width:0}to{width:100%}}
+  @keyframes caret{50%{opacity:0}}
+  @keyframes fadein{to{opacity:1}}
+
+  /* FOOTER */
+  .lp-foot{padding:64px 80px 40px;background:#fff}
+  .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;gap:32px;margin-bottom:48px}
+  .foot-brand .nav-logo{width:108px;height:22px;background:var(--ink);border-radius:2px;margin-bottom:14px;position:relative}
+  .foot-brand .nav-logo::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:1px;background:var(--accent)}
+  .foot-brand p{color:var(--mute);font-size:13px;max-width:36ch;line-height:1.55;margin:18px 0 0}
+  .foot-brand .motto{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:0.18em;text-transform:uppercase;margin-top:6px;display:block}
+  .foot-col h4{font-family:var(--mono);font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:0.12em;font-weight:600;margin:0 0 14px}
+  .foot-col ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  .foot-col li{font-size:13px;color:var(--ink-2)}
+  .foot-bottom{border-top:1px solid var(--line);padding-top:20px;display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:0.04em}
+
+  /* hero animation — spine with HITL pings, multi-flow stack */
+  .anim-spine{width:100%;max-width:680px;display:flex;flex-direction:column;gap:8px}
+  .anim-spine .flow-row{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.04em}
+  .anim-spine .flow-row .flow-lbl{min-width:120px;color:var(--mute)}
+  .anim-spine .flow-row.active .flow-lbl{color:var(--ink)}
+  .anim-spine .flow-row .pipe{flex:1;display:grid;grid-template-columns:repeat(8,1fr);gap:4px;position:relative}
+  .anim-spine .flow-row .pipe .seg{height:6px;background:var(--line);border-radius:1px}
+  .anim-spine .flow-row.active .pipe .seg{background:var(--ink-2)}
+  .anim-spine .flow-row .pipe .seg.skipped{background:repeating-linear-gradient(90deg, var(--line) 0 3px, transparent 3px 6px)}
+  .anim-spine .flow-row .pipe .pin{position:absolute;top:-6px;width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);animation:pingPulse 1.6s ease-in-out infinite}
+  @keyframes pingPulse{
+    0%,100%{transform:scale(1);opacity:1}
+    50%{transform:scale(1.25);opacity:0.55}
+  }
+  .anim-spine .legend{margin-top:14px;display:flex;gap:24px;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:0.04em;align-items:center;justify-content:center;flex-wrap:wrap}
+  .anim-spine .legend .li{display:flex;align-items:center;gap:6px}
+  .anim-spine .legend .sw{width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  .anim-spine .legend .sw.dash{background:repeating-linear-gradient(90deg, var(--line) 0 3px, transparent 3px 6px);border-radius:1px}
+  .anim-spine .legend .sw.ink{background:var(--ink-2)}
+  .anim-spine .legend .sw.line{background:var(--line)}
+  .anim-spine .step-axis{display:grid;grid-template-columns:120px 1fr;gap:6px;font-family:var(--mono);font-size:9px;color:var(--mute);letter-spacing:0.04em;margin-top:10px}
+  .anim-spine .step-axis .axis-r{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;text-align:center}
+  .anim-spine .step-axis .axis-r span{padding:2px 0}
+
+  /* UI screenshot mini for hero H2 */
+  .h2-screen{width:100%;max-width:700px;background:#fff;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .h2-screen .h2-chrome{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--fill-2)}
+  .h2-screen .h2-chrome .b{width:8px;height:8px;border-radius:50%;background:var(--line)}
+  .h2-screen .h2-body{display:flex;min-height:340px}
+  .h2-screen .h2-sb{width:24%;border-right:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--fill-2)}
+  .h2-screen .h2-mn{flex:1;padding:18px;display:flex;flex-direction:column;gap:10px}
+  .h2-screen .h2-row{height:10px;background:var(--line);border-radius:2px}
+  .h2-screen .h2-row.t{background:var(--ink-2);width:60%;height:14px}
+  .h2-screen .h2-row.s{width:70%}
+  .h2-screen .h2-cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
+  .h2-screen .h2-card{border:1px solid var(--line);border-radius:3px;height:60px;padding:8px;display:flex;flex-direction:column;gap:4px}
+  .h2-screen .h2-card.alert{border-color:var(--accent);background:var(--accent-soft)}
+  .h2-screen .h2-card .ll{height:5px;background:var(--line);border-radius:1px}
+  .h2-screen .h2-card .ll.short{width:50%}
+
+  /* toggle switcher (top right of hero options) */
+  .opt-switch{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;font-family:var(--mono);font-size:11px;letter-spacing:0.06em}
+  .opt-switch button{padding:8px 14px;background:#fff;color:var(--mute);border:0;cursor:pointer;border-right:1px solid var(--line)}
+  .opt-switch button:last-child{border-right:0}
+  .opt-switch button[aria-selected="true"]{background:var(--ink);color:#fff}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- doc header -->
+  <header class="doc-head">
+    <div>
+      <div class="crumb">Round 1.5 · Wireframe · Greyscale · Structure · Folded review comments</div>
+      <h1>Landing page — MAIster control plane</h1>
+    </div>
+    <div class="right">
+      <div><b>Screen 1 of 10</b> · Build order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10</div>
+      <div>Tone: bold / editorial · Palette: Amber Forge · Theme: light + dark · i18n: EN · RU</div>
+    </div>
+  </header>
+
+  <!-- ── CHANGELOG: comments → actions ─────────────────────── -->
+  <div class="changelog">
+    <h3>Round 1.5 · your 12 comments → what I did</h3>
+    <table>
+      <thead><tr><th class="where">Where</th><th class="your">You said</th><th class="did">I did</th></tr></thead>
+      <tbody>
+        <tr><td class="where">Logo A · "AI" stress</td><td class="your">"too obvious. suppose no"</td><td class="did">Dropped. Replaced with 3 new directions — all type-led, no square icon. See §01.</td></tr>
+        <tr><td class="where">Logo B · square mark</td><td class="your">"Like a mail app. Nope"</td><td class="did">Dropped. New directions avoid app-iconic square mark entirely.</td></tr>
+        <tr><td class="where">Logo C · [m]</td><td class="your">"maybe, but too tech-targeted"</td><td class="did">Dropped. New directions are operator-neutral, not CLI-coded.</td></tr>
+        <tr><td class="where">Hero H1 · spine flow</td><td class="your">"HITL could be everywhere, decided flow-by-flow / task-by-task. Flow is not single — show different in animation. Path to full autonomy: intent → merge to dev/main."</td><td class="did">Rebuilt the spine animation: <b>3 stacked flows</b> (bugfix, spec-clarify, autonomous) with <b>HITL pings as dots</b> appearing at any step, configurable per flow. Added <b>autonomy axis</b> at the bottom — pings fade as the flow learns. See hero H1 + §03 spine.</td></tr>
+        <tr><td class="where">Hero H2 · UI screenshot</td><td class="your">"Maybe. Let's create design + switcher, then decide."</td><td class="did">Kept both. Added a <b>live H1↔H2 switcher</b> directly inside the hero — click to toggle. Final pick stays open.</td></tr>
+        <tr><td class="where">Hero subhead</td><td class="your">"team's common dev-management platform with h↔a, a↔h, a↔a, h↔h interactions. Full-loop evolution is bonus, not core. Not the best product description."</td><td class="did">Rewrote subhead around <b>team-dev-management</b> framing and the <b>four interaction modes</b>. Lessons/evolution demoted to a Phase-2 spine card. Added a new <b>§04 Interactions matrix</b> section spelling out h↔a / a↔h / a↔a / h↔h with concrete examples.</td></tr>
+        <tr><td class="where">Spine heading "Nine steps."</td><td class="your">"With team interaction + product agentization in mind. For solo is the first scope."</td><td class="did">Reframed heading: "Backlog to merge. Humans, agents, and the path in between." Spine reduced to 7 steps + 1 Phase-2 step. Solo-first explicit in the supportive copy.</td></tr>
+        <tr><td class="where">Spine card "HITL"</td><td class="your">"Maybe smth about teams. Coming soon if not first-order scope."</td><td class="did">Removed HITL as a discrete step. Replaced with <b>"Iterate"</b> step. HITL is now a <b>configurable overlay band above all steps</b> with dots that turn on/off per flow. Added <b>"Team collab" Phase-2 spine card</b> with coming-soon badge.</td></tr>
+        <tr><td class="where">JTBD heading</td><td class="your">"More to come. These are at the start only."</td><td class="did">Added a fourth <b>"Team lead — Phase 2"</b> persona with coming-soon badge. Added <b>"more personas →"</b> link in the section header. Section heading broadened.</td></tr>
+        <tr><td class="where">Staff engineer persona</td><td class="your">"One place to manage them all."</td><td class="did">Treated as a tagline candidate. Hoisted to hero as <b>H1 headline option B</b> (built a switcher so you can compare against the existing "Stop babysitting…" wording). Re-used as the footer brand line.</td></tr>
+        <tr><td class="where">Footer tagline</td><td class="your">"remove 'not enterprise'. add 'Ship Happens' motto =)"</td><td class="did">Removed "not enterprise". Added <b>"SHIP HAPPENS."</b> as a kerned-out brand motto in the accent color directly under the footer wordmark.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- designer notes -->
+  <section class="notes" aria-label="Designer notes">
+    <div class="note">
+      <h3>What this round nails down</h3>
+      <ul>
+        <li><b>Product framing:</b> shared dev-management platform for humans + agents, not "babysit-replacement for one engineer".</li>
+        <li><b>Spine model:</b> flow is configurable, HITL is a per-step overlay, autonomy is a direction not a destination.</li>
+        <li><b>Lessons/evolution:</b> demoted from spine spine to a Phase-2 step — present but not load-bearing.</li>
+        <li><b>Logo:</b> 3 fresh type-led directions to replace the rejected A/B/C.</li>
+        <li><b>Personas:</b> seed set of 4 (3 solo + 1 team-coming-soon), with "more →" affordance.</li>
+        <li><b>Motto:</b> "Ship Happens." present in the footer.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>Still wireframe — deferred to hi-fi</h3>
+      <ul>
+        <li>Amber Forge palette applied; today only annotation strokes use <span class="pill">accent</span>.</li>
+        <li>Light + dark theme; EN/RU strings + RU line-height for Cyrillic.</li>
+        <li>Real SVG spine animation (path-draw + per-flow pings) — current is a CSS placeholder.</li>
+        <li>Real H1↔H2 hero switcher behavior. Today the switcher works inside this wireframe.</li>
+        <li>Real ACP logos (Anthropic, OpenAI, Zed, Cursor).</li>
+        <li>Final logo (one of D/E/F merged with your input).</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>What I need from you</h3>
+      <ul>
+        <li><b>Logos:</b> any of D / E / F land closer? Pure type-only acceptable?</li>
+        <li><b>H1 headline:</b> "Stop babysitting…" vs "One place to manage them all" vs neither?</li>
+        <li><b>Spine cards:</b> 7+1 OK, or want different naming (Intent/Iterate/Review/Merge/Lessons)?</li>
+        <li><b>Interactions matrix:</b> useful as its own section, or fold into the spine?</li>
+        <li><b>Personas:</b> add a "Solo founder" or "Agent operator" (PM-of-bots) too?</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────── -->
+  <!-- 1. LOGO MONOGRAM OPTIONS — NEW                          -->
+  <!-- ──────────────────────────────────────────────────────── -->
+  <div class="sec-h">
+    <span class="num">01</span>
+    <h2>Logo direction — 3 new options</h2>
+    <span class="pill mute">replaces rejected A · B · C</span>
+    <span class="rule"></span>
+  </div>
+
+  <div class="opts">
+
+    <!-- D. Wordmark + spine line under the baseline -->
+    <div class="opt">
+      <div class="opt-stage">
+        <div class="logo-wrap">
+          <svg width="240" height="60" viewBox="0 0 240 60" xmlns="http://www.w3.org/2000/svg" aria-label="MAIster — wordmark with spine line">
+            <text x="0" y="36" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="36" fill="#111315" letter-spacing="-1.4">maister</text>
+            <line x1="0" y1="46" x2="160" y2="46" stroke="#e76b2c" stroke-width="2"></line>
+            <!-- 3 tiny nodes anchoring the spine line -->
+            <circle cx="0" cy="46" r="2.5" fill="#e76b2c"></circle>
+            <circle cx="80" cy="46" r="2.5" fill="#e76b2c"></circle>
+            <circle cx="160" cy="46" r="2.5" fill="#e76b2c"></circle>
+          </svg>
+          <span class="logo-mark-label">D · Wordmark + spine line</span>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <div>
+          <div class="label">Type-led, spine-coded</div>
+          <div class="desc">A simple lowercase wordmark with a thin colored line underneath, dotted with three nodes — the product spine, in miniature. Line repeats as a divider throughout the site.</div>
+        </div>
+        <span class="tag">D</span>
+      </div>
+    </div>
+
+    <!-- E. Wordmark + iteration loop -->
+    <div class="opt">
+      <div class="opt-stage">
+        <div class="logo-wrap">
+          <svg width="240" height="60" viewBox="0 0 240 60" xmlns="http://www.w3.org/2000/svg" aria-label="MAIster — wordmark with iteration loop">
+            <text x="0" y="40" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="36" fill="#111315" letter-spacing="-1.4">maister</text>
+            <!-- iteration arc to the right of wordmark -->
+            <path d="M168 22 q24 0 24 18 q0 18 -22 18" stroke="#111315" stroke-width="2.5" fill="none" stroke-linecap="round"></path>
+            <!-- arrowhead -->
+            <path d="M170 53 l-6 4 l1 -7 z" fill="#111315"></path>
+          </svg>
+          <span class="logo-mark-label">E · Wordmark + iteration loop</span>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <div>
+          <div class="label">The loop IS the brand</div>
+          <div class="desc">Wordmark + a tight return-arrow loop. Speaks to ralph-loop, retry, evolution. Loop scales down to a 24px favicon. No square enclosure.</div>
+        </div>
+        <span class="tag">E</span>
+      </div>
+    </div>
+
+    <!-- F. Wordmark + N-rail (multi-project) -->
+    <div class="opt">
+      <div class="opt-stage">
+        <div class="logo-wrap">
+          <svg width="240" height="60" viewBox="0 0 240 60" xmlns="http://www.w3.org/2000/svg" aria-label="MAIster — wordmark with multi-project rail">
+            <!-- 4 short bars stacked left -->
+            <rect x="0" y="14"  width="22" height="3" rx="1" fill="#111315"></rect>
+            <rect x="0" y="22"  width="14" height="3" rx="1" fill="#111315"></rect>
+            <rect x="0" y="30"  width="22" height="3" rx="1" fill="#e76b2c"></rect>
+            <rect x="0" y="38"  width="10" height="3" rx="1" fill="#111315"></rect>
+            <text x="36" y="40" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="36" fill="#111315" letter-spacing="-1.4">maister</text>
+          </svg>
+          <span class="logo-mark-label">F · Wordmark + portfolio rail</span>
+        </div>
+      </div>
+      <div class="opt-foot">
+        <div>
+          <div class="label">Portfolio implied</div>
+          <div class="desc">A small four-bar rail beside the wordmark — N projects, one tier, one active (orange). Reads as a list, an equalizer, or a kanban viewed from the side.</div>
+        </div>
+        <span class="tag">F</span>
+      </div>
+    </div>
+
+  </div>
+
+  <p style="margin:18px 0 0;font-family:var(--mono);font-size:11px;color:var(--mute)">
+    All three are <b>wordmark-first, no square icon, no terminal vibe</b>. The accent line in D doubles as a site-wide visual element. Pick one or say "merge X + Y" — happy to fork further.
+  </p>
+
+  <!-- ──────────────────────────────────────────────────────── -->
+  <!-- 2. HERO TREATMENT — H1 + H2 KEPT, WITH LIVE SWITCHER     -->
+  <!-- ──────────────────────────────────────────────────────── -->
+  <div class="sec-h">
+    <span class="num">02</span>
+    <h2>Hero imagery — H1 + H2 (with switcher)</h2>
+    <span class="pill mute">H3 terminal moved to OSS section</span>
+    <span class="rule"></span>
+  </div>
+
+  <p style="margin:0 0 18px;font-family:var(--mono);font-size:11px;color:var(--mute)">
+    Per your note, both treatments live in the page. The hero (§03 below) ships a tab switcher between them; visitors can toggle. Final pick stays open until we go hi-fi.
+  </p>
+
+  <!-- ──────────────────────────────────────────────────────── -->
+  <!-- 3. THE LANDING WIREFRAME ITSELF                          -->
+  <!-- ──────────────────────────────────────────────────────── -->
+  <div class="sec-h">
+    <span class="num">03</span>
+    <h2>Full page wireframe</h2>
+    <span class="rule"></span>
+  </div>
+
+  <div class="lp" role="region" aria-label="Landing wireframe">
+
+    <!-- NAV -->
+    <div class="lp-nav">
+      <div class="left">
+        <div class="nav-logo" title="logo placeholder · option D/E/F applied later"></div>
+        <div class="nav-links">
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <div class="right">
+        <div class="switcher">EN · RU</div>
+        <div class="switcher">○ ◑ ●</div>
+        <div class="switcher">⬢ amber</div>
+        <a class="btn-ghost">Docs</a>
+        <a class="btn-ghost">Quick start</a>
+        <a class="gh-star" title="Star on GitHub">
+          <span class="gs-l">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.08.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            GitHub
+          </span>
+          <span class="gs-r"><span class="star">★</span> 1.2k</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- HERO -->
+    <section class="lp-hero">
+      <div class="section-anno"><b>Hero</b>· Two headline candidates (toggle ←/→). Subhead reframed around team + 4-way interactions. Imagery slot has an H1 ↔ H2 live switcher.</div>
+
+      <div class="kicker"><span class="dot"></span> MAIster · The shared control plane for AI-powered delivery</div>
+
+      <!-- H1 SWITCH -->
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+        <div class="opt-switch" role="tablist" aria-label="Headline options">
+          <button id="hl-a-btn" aria-selected="true" onclick="setHeadline('a')">Option A</button>
+          <button id="hl-b-btn" aria-selected="false" onclick="setHeadline('b')">Option B</button>
+        </div>
+        <span class="lbl">↳ pick a headline · A = original · B = "one place to manage them all"</span>
+      </div>
+
+      <h1 id="hl-a">Stop babysitting<br>your coding agents. <em>Run them as a portfolio.</em></h1>
+      <h1 id="hl-b" hidden>One place<br>to manage them all. <em>Humans and agents alike.</em></h1>
+
+      <p class="sub" data-comment-anchor="6efde7133a-p">
+        A shared dev-management platform for <b>teams of humans and agents</b>, collaborating in every direction. Tasks, flows, workspaces, reviews, merges — one place. <b>Path to autonomy</b> when you trust it, <b>tight oversight</b> when you don't. Lessons that compound are a bonus, not the contract.
+      </p>
+
+      <div class="ctas">
+        <a class="cta-prim">Get started <span class="ct">→</span></a>
+        <a class="cta-sec">Read the docs ↗</a>
+        <a class="cta-sec" style="border:0;color:var(--mute)">github.com/kanischev/maister · MIT</a>
+      </div>
+
+      <!-- HERO IMAGERY: switcher between H1 (spine) and H2 (UI) -->
+      <div class="imagery-wrap" style="margin-top:64px">
+        <div class="imagery-tabs" role="tablist" aria-label="Hero imagery">
+          <button class="imagery-tab" id="ht-h1" aria-selected="true"  onclick="setHero('h1')"><span class="dot"></span> H1 · Configurable spine</button>
+          <button class="imagery-tab" id="ht-h2" aria-selected="false" onclick="setHero('h2')"><span class="dot"></span> H2 · Live UI preview</button>
+          <span class="imagery-tab spacer">↪ click a tab — wireframe-only switcher · final pick TBD</span>
+        </div>
+
+        <!-- H1 STAGE -->
+        <div class="imagery-stage" id="hs-h1" data-comment-anchor="8ea639f47e-div">
+          <div class="anim-spine" aria-hidden="true">
+            <!-- step labels along top -->
+            <div class="step-axis">
+              <span></span>
+              <div class="axis-r">
+                <span>Intent</span><span>Flow</span><span>Workspace</span><span>Agents</span>
+                <span>Iterate</span><span>Review</span><span>Merge</span><span>Lessons</span>
+              </div>
+            </div>
+
+            <!-- 3 stacked flows showing different HITL configurations -->
+            <div class="flow-row active">
+              <span class="flow-lbl">bugfix flow</span>
+              <div class="pipe">
+                <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div>
+                <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg skipped"></div>
+                <!-- HITL pings at iterate + review -->
+                <div class="pin" style="left:calc(50% + 4px)"></div>
+                <div class="pin" style="left:calc(62.5% + 4px);animation-delay:0.4s"></div>
+              </div>
+            </div>
+
+            <div class="flow-row">
+              <span class="flow-lbl">spec-clarify flow</span>
+              <div class="pipe">
+                <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div>
+                <div class="seg"></div><div class="seg"></div><div class="seg skipped"></div><div class="seg skipped"></div>
+                <!-- multiple HITL pings early -->
+                <div class="pin" style="left:0%;animation-delay:0.1s"></div>
+                <div class="pin" style="left:25%;animation-delay:0.6s"></div>
+                <div class="pin" style="left:50%;animation-delay:1s"></div>
+              </div>
+            </div>
+
+            <div class="flow-row">
+              <span class="flow-lbl">autonomous flow</span>
+              <div class="pipe">
+                <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div>
+                <div class="seg"></div><div class="seg"></div><div class="seg"></div><div class="seg skipped"></div>
+                <!-- no HITL pings — full autonomy -->
+              </div>
+            </div>
+
+            <!-- autonomy axis -->
+            <div class="autonomy">
+              <span class="l">Tight oversight</span>
+              <div class="axis"></div>
+              <span class="r">→ Full autonomy</span>
+            </div>
+
+            <!-- legend -->
+            <div class="legend">
+              <span class="li"><span class="sw"></span> HITL · configurable per step</span>
+              <span class="li"><span class="sw ink"></span> Active step</span>
+              <span class="li"><span class="sw line"></span> Idle step</span>
+              <span class="li"><span class="sw dash"></span> Skipped / not in this flow</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- H2 STAGE -->
+        <div class="imagery-stage" id="hs-h2" hidden>
+          <div class="h2-screen" data-comment-anchor="cae97ec7bd-div">
+            <div class="h2-chrome"><span class="b"></span><span class="b"></span><span class="b"></span><span style="margin-left:8px;font-family:var(--mono);font-size:10px;color:var(--mute)">maister.local/portfolio</span></div>
+            <div class="h2-body">
+              <div class="h2-sb">
+                <div class="h2-row t" style="height:8px;width:60%"></div>
+                <div class="h2-row" style="width:90%"></div>
+                <div class="h2-row" style="width:80%"></div>
+                <div class="h2-row" style="width:70%"></div>
+                <div class="h2-row" style="width:85%"></div>
+                <div class="h2-row" style="width:75%"></div>
+              </div>
+              <div class="h2-mn">
+                <div class="h2-row t"></div>
+                <div class="h2-row s"></div>
+                <div class="h2-cards">
+                  <div class="h2-card"><div class="ll"></div><div class="ll short"></div></div>
+                  <div class="h2-card"><div class="ll"></div><div class="ll short"></div></div>
+                  <div class="h2-card alert"><div class="ll"></div><div class="ll short"></div></div>
+                </div>
+                <div class="h2-cards">
+                  <div class="h2-card"><div class="ll"></div><div class="ll short"></div></div>
+                  <div class="h2-card"><div class="ll"></div><div class="ll short"></div></div>
+                  <div class="h2-card"><div class="ll"></div><div class="ll short"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <p style="margin-top:14px" class="lbl">↑ Hero imagery slot · H1 stage = wireframe of the new configurable-spine animation · H2 stage = portfolio UI preview</p>
+    </section>
+
+    <!-- SPINE EXPLAINER ─ rebuilt -->
+    <section class="lp-spine">
+      <div class="section-anno"><b>Product spine</b>· Reframed: 7 active steps + 1 Phase-2 (Lessons). HITL is an overlay band, not a step. Path to autonomy is the axis.</div>
+
+      <h2><em>Backlog to merge.</em><br>Humans, agents, and the path in between.</h2>
+      <p class="sub" data-comment-anchor="0aff971dd6-em">
+        <b>The spine isn't a pipeline — it's a configurable surface.</b> Each step accepts a human or an agent (or both). HITL is decided <b>per flow, per task</b>, not at one fixed point. Solo first; teams and full agentization next.
+      </p>
+
+      <div class="spine-frame">
+
+        <!-- multi-flow rail -->
+        <div class="multi-flow-rail">
+          <div class="mfr active"><span class="lbl-l">bugfix flow</span><div class="line"></div><span class="meta">· HITL on iterate + review</span></div>
+          <div class="mfr"><span class="lbl-l">spec-clarify</span><div class="line"></div><span class="meta">· HITL on intent + flow + iterate</span></div>
+          <div class="mfr"><span class="lbl-l">autonomous</span><div class="line"></div><span class="meta">· no HITL · runs end-to-end</span></div>
+        </div>
+
+        <div class="spine-frame-head">
+          <span class="ttl"><b>HITL band</b> · click a step to toggle (per-flow / per-task)</span>
+          <div class="flow-pick">
+            <span class="lbl-i">view:</span>
+            <button aria-selected="true">bugfix</button>
+            <button aria-selected="false">spec-clarify</button>
+            <button aria-selected="false">autonomous</button>
+          </div>
+        </div>
+
+        <!-- HITL overlay row -->
+        <div class="hitl-band" data-comment-anchor="b5a2ffd594-div">
+          <div class="hitl-cell"><div class="pin" title="off"></div></div>
+          <div class="hitl-cell maybe"><div class="pin" title="maybe"></div></div>
+          <div class="hitl-cell"><div class="pin"></div></div>
+          <div class="hitl-cell"><div class="pin"></div></div>
+          <div class="hitl-cell on"><div class="pin"></div><span class="hint">HITL</span></div>
+          <div class="hitl-cell on"><div class="pin"></div><span class="hint">HITL</span></div>
+          <div class="hitl-cell"><div class="pin"></div></div>
+          <div class="hitl-cell"><div class="pin"></div></div>
+        </div>
+
+        <!-- spine cards -->
+        <div class="spine-row">
+          <div class="spine-step"><span class="n">01</span><span class="t">Intent</span><span class="d">A task — from a human, an agent, or a signal.</span></div>
+          <div class="spine-step"><span class="n">02</span><span class="t">Flow</span><span class="d">Pick + configure a flow plugin. Flows aren't one.</span></div>
+          <div class="spine-step"><span class="n">03</span><span class="t">Workspace</span><span class="d">An isolated git worktree per run.</span></div>
+          <div class="spine-step"><span class="n">04</span><span class="t">Agents</span><span class="d">Claude · Codex · soon Cursor &amp; Aider — via ACP.</span></div>
+          <div class="spine-step"><span class="n">05</span><span class="t">Iterate</span><span class="d">Step loops with HITL when needed. Ralph-loop friendly.</span></div>
+          <div class="spine-step"><span class="n">06</span><span class="t">Review</span><span class="d">Diff + judge artifact + accept / request-changes.</span></div>
+          <div class="spine-step"><span class="n">07</span><span class="t">Merge</span><span class="d">--no-ff to main/dev. Conflict = manual.</span></div>
+          <div class="spine-step phase2"><span class="badge">phase 2</span><span class="n">08</span><span class="t">Lessons</span><span class="d">Bugs evolve project rules. Optional.</span></div>
+        </div>
+
+        <!-- autonomy axis -->
+        <div class="autonomy">
+          <span class="l">Tight oversight</span>
+          <div class="axis"></div>
+          <span class="r">→ Full autonomy</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- INTERACTIONS MATRIX (NEW) -->
+    <section class="lp-int">
+      <div class="section-anno"><b>Interactions</b>· NEW section per your note: spell out h↔h, h↔a, a↔h, a↔a so the four-way story has a home.</div>
+
+      <h2><em>Four ways to collaborate.</em><br>Humans, agents, and every combination of both.</h2>
+      <p class="sub">A control plane that treats agents as first-class teammates, not a service queue. Every interaction has a clear surface, an artifact, and a queue.</p>
+
+      <div class="matrix">
+        <div class="mcell corner"></div>
+        <div class="mcell head">
+          <span class="glyph h" aria-label="human">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg>
+          </span>
+          <span class="head-l">→ Human</span>
+        </div>
+        <div class="mcell head">
+          <span class="glyph a" aria-label="agent">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <span class="head-l">→ Agent</span>
+        </div>
+
+        <div class="mcell label">
+          <span class="glyph h" aria-label="human">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg>
+          </span>
+          <span class="head-l">Human →</span>
+        </div>
+        <div class="mcell">
+          <div class="iconpair">
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+            <span class="arr">↔</span>
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+          </div>
+          <span class="pair-d">Team backlog. Peer review on a diff. Hand-off comments on a HITL ticket. Tickets queue across projects.</span>
+        </div>
+        <div class="mcell">
+          <div class="iconpair">
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+            <span class="arr">→</span>
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+          </div>
+          <span class="pair-d">Launch a task with prompt + flow + executor. Approve a permission. Send corrections back to the work loop.</span>
+        </div>
+
+        <div class="mcell label">
+          <span class="glyph a" aria-label="agent">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <span class="head-l">Agent →</span>
+        </div>
+        <div class="mcell">
+          <div class="iconpair">
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+            <span class="arr">→</span>
+            <span class="glyph h"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="4.5" r="2.6"/><path d="M2.4 14c0-3.1 2.5-5.4 5.6-5.4S13.6 10.9 13.6 14H2.4z"/></svg></span>
+          </div>
+          <span class="pair-d">NeedsInput artifacts. Schema-driven forms in the run page. Inbox badge across projects. Keep-alive + checkpoint/resume.</span>
+        </div>
+        <div class="mcell">
+          <div class="iconpair">
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+            <span class="arr">↔</span>
+            <span class="glyph a"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.9" fill="currentColor"/><circle cx="10" cy="8.5" r="0.9" fill="currentColor"/><line x1="8" y1="2" x2="8" y2="4"/><circle cx="8" cy="1.6" r="0.8" fill="currentColor" stroke="none"/></svg></span>
+          </div>
+          <span class="pair-d">Agent-to-agent hand-off inside a flow. Sub-agents spawned per step. Reviewer / log / dependency watchers <span class="pair-meta" style="display:inline">(Phase 2)</span>.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- JTBD personas (+ phase 2 team lead) -->
+    <section class="lp-jtbd">
+      <div class="section-anno"><b>JTBD / personas</b>· 4 cards · 3 active + 1 "Team lead — Phase 2". "more →" link in the header.</div>
+
+      <div class="jtbd-head">
+        <div>
+          <h2 data-comment-anchor="27f1a934e9-h2">Built for whoever's<br>running things.</h2>
+          <p class="sub">A collaborative <b>surface for agentic AI SDLC</b> — humans and agents role-play across design, plan, build, review, ship and learn. Solo today, teams next: start as one operator, scale to a team without changing the model.</p>
+        </div>
+        <a class="more-link">more personas <span class="arr">→</span></a>
+      </div>
+
+      <div class="personas">
+        <div class="persona">
+          <div class="face"></div>
+          <span class="role">Solo-architect / CTO</span>
+          <p class="quote">"When I manage five projects, <span class="em">I want one dashboard for active work, blocked runs, ready reviews and pending decisions,</span> so I know where my attention is needed."</p>
+          <div class="jobs">
+            <span class="job">Portfolio view across N projects</span>
+            <span class="job">"Needs you" inbox, cross-project</span>
+            <span class="job">3 concurrent runs · queue the rest</span>
+          </div>
+        </div>
+        <div class="persona">
+          <div class="face"></div>
+          <span class="role">Tech lead</span>
+          <p class="quote">"When I assign work to an agent, <span class="em">I want it to run headlessly with visible progress and a clean diff to review,</span> so I can run multiple tasks in parallel safely."</p>
+          <div class="jobs">
+            <span class="job">Per-run isolated workspace</span>
+            <span class="job">Live SSE log, piped to disk</span>
+            <span class="job">git diff + merge --no-ff</span>
+          </div>
+        </div>
+        <div class="persona" data-comment-anchor="0e1b4c6a33-div">
+          <div class="face"></div>
+          <span class="role">Staff engineer</span>
+          <p class="quote">"When a task is ambiguous, <span class="em">I want the agent to ask questions in a form, not a chat,</span> so requirements are clarified without losing context."</p>
+          <div class="jobs">
+            <span class="job">Schema-driven HITL forms</span>
+            <span class="job">Keep-alive + checkpoint/resume</span>
+            <span class="job">Retry-loop friendly (1 task, N runs)</span>
+          </div>
+        </div>
+        <div class="persona phase2">
+          <span class="badge">Phase 2</span>
+          <div class="face"></div>
+          <span class="role">Team lead</span>
+          <p class="quote">"When my team and our agents share work, <span class="em">I want one queue across people and bots,</span> so hand-offs don't fall through."</p>
+          <div class="jobs">
+            <span class="job">Shared backlog + assign-to-anyone</span>
+            <span class="job">Role-based HITL routing</span>
+            <span class="job">a→a hand-offs visible in the run</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURE GRID -->
+    <section class="lp-feat">
+      <div class="section-anno"><b>Features</b>· Asymmetric grid · 6 tiles. Phase-2 features clearly labeled.</div>
+
+      <h2>Eight pieces of glue,<br>tightly screwed together.</h2>
+      <p class="sub">No new IDE. No new agent. No new task tracker. MAIster is the connective tissue between the tools you already use.</p>
+
+      <div class="feat-grid">
+        <div class="feat span-2">
+          <div class="ico"></div>
+          <div class="ft-t">Multi-project portfolio</div>
+          <div class="ft-d">One grid of every active workspace across every registered project. Filter by status. "Needs you (N)" badge counts pending HITL across all projects, all flows.</div>
+          <div class="ft-meta">POC · per-project maister.yaml</div>
+        </div>
+        <div class="feat">
+          <div class="ico"></div>
+          <div class="ft-t">Per-project board</div>
+          <div class="ft-d">Backlog | In Flight. One-click Launch. Ralph-loop friendly: 1 task → N runs.</div>
+          <div class="ft-meta">POC</div>
+        </div>
+        <div class="feat">
+          <div class="ico"></div>
+          <div class="ft-t">Multi-executor · ACP</div>
+          <div class="ft-d">Claude Code + Codex on day one. Cursor &amp; Aider land in Phase 2 with no protocol changes.</div>
+          <div class="ft-meta">vendor-neutral · ACP 0.22.1</div>
+        </div>
+        <div class="feat">
+          <div class="ico"></div>
+          <div class="ft-t">Configurable HITL</div>
+          <div class="ft-d">Per-step, per-flow, per-task. Schema-driven forms, not chat. Keep-alive + checkpoint/resume so an active review never times out mid-thought.</div>
+          <div class="ft-meta">30-min keep-alive · 24h TTL</div>
+        </div>
+        <div class="feat">
+          <div class="ico"></div>
+          <div class="ft-t">Diff review &amp; merge</div>
+          <div class="ft-d">Raw git diff, accept / request-changes, --no-ff to main. Conflicts abort to manual resolve. No auto-clobber.</div>
+          <div class="ft-meta">POC · ADR-012</div>
+        </div>
+        <div class="feat span-2">
+          <div class="ico"></div>
+          <div class="ft-t">Live SSE everything</div>
+          <div class="ft-d">Every agent stdout line streams over SSE, piped to disk in parallel. Last-Event-ID reconnect works without replaying from RAM. Per-run cost accounting in cost.jsonl.</div>
+          <div class="ft-meta">ADR-007 · bounded memory</div>
+        </div>
+        <div class="feat">
+          <div class="ico"></div>
+          <div class="ft-t">Team collaboration</div>
+          <div class="ft-d">Shared backlog, role-based HITL routing, a→a hand-offs. Solo today, team next.</div>
+          <div class="ft-meta"><span class="phase">Phase 2</span></div>
+        </div>
+        <div class="feat">
+          <div class="ico"></div>
+          <div class="ft-t">Project memory</div>
+          <div class="ft-d">Bugs and reviews evolve project rules. Optional and curated — not a chat firehose.</div>
+          <div class="ft-meta"><span class="phase">Phase 2</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXECUTOR STRIP -->
+    <section class="lp-exec">
+      <div class="ttl">Speaks fluent</div>
+      <div class="row">
+        <div class="logo-slot"><span class="dot"></span> Claude Code</div>
+        <div class="logo-slot"><span class="dot"></span> Codex</div>
+        <div class="logo-slot" style="opacity:0.55"><span class="dot"></span> Cursor <span class="more">soon</span></div>
+        <div class="logo-slot" style="opacity:0.55"><span class="dot"></span> Aider <span class="more">soon</span></div>
+        <div class="more" style="margin-left:auto">via Agent Client Protocol (ACP)</div>
+      </div>
+    </section>
+
+    <!-- OSS CTA -->
+    <section class="lp-oss">
+      <div class="section-anno"><b>OSS CTA</b>· Headline · big · Ship-Happens spirit. Terminal block stays.</div>
+      <div class="left">
+        <h2>MIT-licensed.<br>Single host.<br><em>Yours to fork.</em></h2>
+        <p>The whole thing fits on one machine: Postgres, Next.js, a supervisor daemon, two agent binaries. <code style="font-family:var(--mono);font-size:13px;background:var(--fill);padding:2px 5px;border-radius:3px">docker compose up</code> and you're in.</p>
+        <div class="ctas">
+          <a class="cta-prim"><span class="star"></span>Star on GitHub <span class="ct">MIT</span></a>
+          <a class="cta-sec">Quick start →</a>
+        </div>
+      </div>
+      <div class="term" aria-hidden="true">
+        <div class="term-bar">
+          <span class="b"></span><span class="b"></span><span class="b"></span>
+          <span class="ttl">~/projects/maister · zsh</span>
+        </div>
+        <div class="ln l1"><span class="p">$</span><span class="body"><span class="cmd">git</span> clone <span class="str">github.com/kanischev/maister</span></span></div>
+        <div class="ln l2"><span class="p">$</span><span class="body"><span class="cmd">cd</span> maister <span class="mu">&amp;&amp;</span> <span class="cmd">pre-commit</span> install</span></div>
+        <div class="ln l3"><span class="p">$</span><span class="body"><span class="cmd">pnpm</span> install <span class="opt">--frozen-lockfile</span></span></div>
+        <div class="ln l4"><span class="p">$</span><span class="body"><span class="cmd">docker</span> compose up <span class="opt">-d</span></span></div>
+        <div class="ln l5 comment"># http://localhost:3000</div>
+        <div class="ln l6 comment"># register a project · launch a task</div>
+        <div class="ln l7 comment"># ship happens.<span class="caret"></span></div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="lp-foot">
+      <div class="foot-grid">
+        <div class="foot-brand">
+          <div class="nav-logo"></div>
+          <span class="motto">Ship Happens.</span>
+          <p data-comment-anchor="e758bf8ef4-p">The control plane for AI-powered software delivery. <b>One place to manage them all.</b></p>
+        </div>
+        <div class="foot-col">
+          <h4>Product</h4>
+          <ul>
+            <li>Vision</li>
+            <li>Product view</li>
+            <li>Roadmap</li>
+            <li>Changelog</li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Docs</h4>
+          <ul>
+            <li>Getting started</li>
+            <li>Architecture</li>
+            <li>Supervisor</li>
+            <li>Configuration</li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Decisions</h4>
+          <ul>
+            <li>ADRs</li>
+            <li>Error taxonomy</li>
+            <li>Flow installer</li>
+            <li>M0 spike</li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Project</h4>
+          <ul>
+            <li>GitHub ↗</li>
+            <li>License (MIT)</li>
+            <li>Issues</li>
+            <li>Discussions</li>
+          </ul>
+        </div>
+      </div>
+      <div class="foot-bottom">
+        <span>© 2026 Albert Kanischev · MIT</span>
+        <span>v0.0.1 · poc · single-host</span>
+      </div>
+    </footer>
+
+  </div>
+  <!-- /landing -->
+
+  <!-- ──────────────────────────────────────────────────────── -->
+  <!-- 4. NEXT                                                  -->
+  <!-- ──────────────────────────────────────────────────────── -->
+  <div class="sec-h">
+    <span class="num">04</span>
+    <h2>Where this lands</h2>
+    <span class="rule"></span>
+  </div>
+  <div class="notes" style="grid-template-columns:1fr 1fr">
+    <div class="note">
+      <h3>If round 1.5 is OK</h3>
+      <ul>
+        <li>Pick a logo direction (D / E / F or merge).</li>
+        <li>Lock the H1 headline (or say "show both, A/B test later").</li>
+        <li>Confirm spine card naming (Intent · Flow · Workspace · Agents · Iterate · Review · Merge · Lessons[P2]).</li>
+        <li>Confirm the Interactions matrix earns its keep — or fold back into spine.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>Hi-fi (Round 2) will add</h3>
+      <ul>
+        <li>Amber Forge palette · light + dark theme parity.</li>
+        <li>EN/RU string file + RU-tuned line-height.</li>
+        <li>Real animated SVG spine (per-flow ping timing, autonomy axis morph).</li>
+        <li>Working theme · language · palette · headline · hero-treatment switchers (top of page).</li>
+        <li>Final logo applied to nav + footer + favicon.</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function setHeadline(which){
+    const a = document.getElementById('hl-a');
+    const b = document.getElementById('hl-b');
+    const aBtn = document.getElementById('hl-a-btn');
+    const bBtn = document.getElementById('hl-b-btn');
+    if(which === 'a'){ a.hidden = false; b.hidden = true;  aBtn.setAttribute('aria-selected','true');  bBtn.setAttribute('aria-selected','false'); }
+    else             { a.hidden = true;  b.hidden = false; aBtn.setAttribute('aria-selected','false'); bBtn.setAttribute('aria-selected','true'); }
+  }
+  function setHero(which){
+    const h1 = document.getElementById('hs-h1');
+    const h2 = document.getElementById('hs-h2');
+    const t1 = document.getElementById('ht-h1');
+    const t2 = document.getElementById('ht-h2');
+    if(which === 'h1'){ h1.hidden = false; h2.hidden = true;  t1.setAttribute('aria-selected','true');  t2.setAttribute('aria-selected','false'); }
+    else              { h1.hidden = true;  h2.hidden = false; t1.setAttribute('aria-selected','false'); t2.setAttribute('aria-selected','true'); }
+  }
+</script>
+</body>
+</html>

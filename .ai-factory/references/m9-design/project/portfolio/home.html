@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-palette="forest" data-vibe="editorial">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Portfolio — MAIster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../landing/02-hifi.css">
+<link rel="stylesheet" href="home.css">
+</head>
+<body>
+
+<!-- ╔════════════════════════════════════════════════ NAV (minimal) ═╗ -->
+<div class="nav-wrap minimal">
+  <nav class="nav" aria-label="Primary">
+    <div class="nav-l">
+      <a class="logo" href="../landing/02-hifi.html">
+        <svg class="logo-mark" viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+          <polyline points="22 5 22 9 18 9"/>
+          <line x1="14" y1="2" x2="14" y2="4.5"/>
+          <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+          <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="wm lower">m<strong>ai</strong>ster<em>AI</em></span>
+      </a>
+      <span class="crumb">
+        <span class="live-dot"></span>
+        <span>~/projects</span>
+        <span style="color:var(--line);">/</span>
+        <b>portfolio</b>
+      </span>
+    </div>
+    <div class="nav-r">
+      <button class="nav-tool" id="lang-toggle"><b id="lang-label">EN</b><span class="mu" id="lang-other">· RU</span></button>
+      <button class="nav-tool" id="theme-toggle" aria-pressed="false">
+        <svg id="theme-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 2v1.5M8 12.5V14M14 8h-1.5M3.5 8H2M12.24 3.76l-1.06 1.06M4.82 11.18l-1.06 1.06M12.24 12.24l-1.06-1.06M4.82 4.82L3.76 3.76"/></svg>
+        <span id="theme-label">Light</span>
+      </button>
+      <span class="nav-user">
+        <span class="av">AK</span>
+        <span>alex</span>
+      </span>
+    </div>
+  </nav>
+</div>
+
+<!-- ╔══════════════════════════════════════════════ SHELL ═══════════╗ -->
+<div class="shell" data-density="comfy">
+
+  <!-- ═══ RAIL ═══════════════════════════════════════════════ -->
+  <aside class="rail" aria-label="Sections & active workspaces">
+
+    <nav class="rail-nav" aria-label="Sections">
+      <a class="is-active">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+        Projects
+      </a>
+      <a>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h12M2 12h7"/></svg>
+        Inbox <span class="num">2</span>
+      </a>
+      <a>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3 L13 3 L9 8 L13 13 L3 13 L7 8 Z"/></svg>
+        Flows
+      </a>
+      <a>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5" r="2.6"/><path d="M2.4 14c0-3 2.5-5.4 5.6-5.4S13.6 11 13.6 14"/></svg>
+        Agents
+      </a>
+      <a>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="4" cy="4" r="1.6"/><circle cx="12" cy="4" r="1.6"/><circle cx="4" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><path d="M4 5.6V10.4M12 5.6V10.4M5.6 4H10.4M5.6 12H10.4"/></svg>
+        MCPs
+      </a>
+      <a>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="2"/><path d="M8 1v3M8 12v3M15 8h-3M4 8H1M12.95 3.05l-2.12 2.12M5.17 10.83l-2.12 2.12M12.95 12.95l-2.12-2.12M5.17 5.17L3.05 3.05"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <section class="rail-section rail-ws">
+      <div class="rs-head">
+        <span>Active workspaces</span>
+        <a class="see-all">See all <span class="num" id="rail-ws-count">8</span> →</a>
+      </div>
+      <ul class="ws-list" id="rail-ws-list">
+
+        <li class="ws-li is-current" data-status="needs" title="Open ws/auth-flow · maister">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/auth-flow</code>
+            <span class="meta">maister · codex</span>
+          </div>
+          <span class="time">8m</span>
+        </li>
+
+        <li class="ws-li" data-status="running" title="Open ws/portfolio-home · maister">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/portfolio-home</code>
+            <span class="meta">maister · claude</span>
+          </div>
+          <span class="time">2m</span>
+        </li>
+
+        <li class="ws-li" data-status="needs" title="Open ws/bot-orchestrator · umnitsa">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/bot-orchestrator</code>
+            <span class="meta">umnitsa · codex</span>
+          </div>
+          <span class="time">4m</span>
+        </li>
+
+        <li class="ws-li" data-status="running" title="Open ws/voice-pipeline · umnitsa">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/voice-pipeline</code>
+            <span class="meta">umnitsa · claude</span>
+          </div>
+          <span class="time">22m</span>
+        </li>
+
+        <li class="ws-li" data-status="running" title="Open ws/speaker-portal · confup">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/speaker-portal</code>
+            <span class="meta">confup · claude</span>
+          </div>
+          <span class="time">14m</span>
+        </li>
+
+        <li class="ws-li" data-status="running" title="Open ws/billing · umnitsa">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/billing</code>
+            <span class="meta">umnitsa · codex</span>
+          </div>
+          <span class="time">1h</span>
+        </li>
+
+        <li class="ws-li" data-status="queued" title="Open ws/agenda-sync · confup">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/agenda-sync</code>
+            <span class="meta">confup · queued</span>
+          </div>
+          <span class="time">1h</span>
+        </li>
+
+        <li class="ws-li" data-status="done" title="Open ws/landing-v3 · maister">
+          <span class="dot"></span>
+          <div class="info">
+            <code class="name">ws/landing-v3</code>
+            <span class="meta">maister · merged</span>
+          </div>
+          <span class="time">3h</span>
+        </li>
+
+      </ul>
+    </section>
+
+    <div class="agents-presence">
+      <div class="ap-head">Coding agents · connected</div>
+      <div class="ap-row">
+        <span class="ap-chip"><span class="dot"></span>claude</span>
+        <span class="ap-chip"><span class="dot"></span>codex</span>
+        <span class="ap-chip idle" title="Coming soon"><span class="dot"></span>cursor</span>
+        <span class="ap-chip idle" title="Coming soon"><span class="dot"></span>aider</span>
+      </div>
+    </div>
+
+    <div class="rail-launch">
+      <button class="launch-btn" id="launch-btn">
+        <span class="lb-plus">+</span>
+        <span class="lb-text">Launch run</span>
+        <span class="lb-kbd">⌘L</span>
+      </button>
+      <div class="hint">From backlog · ad-hoc · resume idle</div>
+    </div>
+
+  </aside>
+
+  <!-- ═══ CANVAS ═════════════════════════════════════════════ -->
+  <main class="canvas" data-state="populated">
+
+    <!-- head -->
+    <header class="canvas-head">
+      <div>
+        <div class="eyebrow">Working pane · 3 projects</div>
+        <h1>Projects.</h1>
+        <div class="h-sub">Three repos under management. Eight workspaces in flight. Two things waiting on you.</div>
+      </div>
+      <div class="head-tools">
+        <div class="seg" data-tool="density" role="tablist" aria-label="Density">
+          <button data-density="comfy" aria-pressed="true" title="Comfy">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+            Comfy
+          </button>
+          <button data-density="compact" aria-pressed="false" title="Compact">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="3" height="3" rx="0.5"/><rect x="7" y="2" width="3" height="3" rx="0.5"/><rect x="12" y="2" width="2" height="3" rx="0.5"/><rect x="2" y="7" width="3" height="3" rx="0.5"/><rect x="7" y="7" width="3" height="3" rx="0.5"/><rect x="12" y="7" width="2" height="3" rx="0.5"/></svg>
+            Compact
+          </button>
+          <button data-density="list" aria-pressed="false" title="List">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+            List
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- live ticker -->
+    <div class="live-ticker">
+      <span class="lt-tag">live</span>
+      <span class="lt-text" id="ticker-text"><b>claude</b> committed <code>e3b1a · feat(auth): split-spine layout</code> in <b>maister · ws/auth-flow</b></span>
+    </div>
+
+    <!-- NEEDS-YOU strip -->
+    <section class="needs-strip" aria-label="Items needing review">
+      <div class="ns-head">
+        <span class="lhs">2 things need your review</span>
+        <span class="rhs"><a>Open inbox →</a></span>
+      </div>
+      <div class="ns-list">
+
+        <article class="ns-item" tabindex="0">
+          <div class="ni-proj">
+            <span><b>maister</b></span>
+          </div>
+          <div class="ni-body">
+            <div class="ni-q">
+              <span class="agent codex">codex</span>
+              Needs permission to write outside <code>~/auth/</code>
+            </div>
+            <div class="ni-meta">ws/auth-flow · paused 8m ago · spec-clarify flow</div>
+          </div>
+          <span class="ni-act">Review →</span>
+        </article>
+
+        <article class="ns-item" tabindex="0">
+          <div class="ni-proj">
+            <span><b>umnitsa</b></span>
+          </div>
+          <div class="ni-body">
+            <div class="ni-q">
+              <span class="agent codex">codex</span>
+              Schema unclear for <code>BotSession.transcript</code> — pick one
+            </div>
+            <div class="ni-meta">ws/bot-orchestrator · paused 4m ago · NeedsInput artifact</div>
+          </div>
+          <span class="ni-act">Review →</span>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- PROJECTS GRID -->
+    <section class="projects" aria-label="Projects">
+
+      <!-- ─── MAISTER ─────────────────────────────────────── -->
+      <article class="project" data-accent="1" data-project="maister">
+        <span class="pr-mark"></span>
+
+        <header class="pr-head">
+          <div class="h-l">
+            <h2>maister <span class="lang-chip">ts</span></h2>
+            <a class="repo">github.com/kanischev/mAIster ↗</a>
+            <p class="desc">The shared control plane. We dogfood here — every spine step, every flow, ourselves.</p>
+          </div>
+          <div class="h-r">
+            <span class="pr-status">
+              <span class="pulse"></span> running
+            </span>
+          </div>
+        </header>
+
+        <div class="pr-team">
+          <div class="avas">
+            <span class="ava h" title="Alex K (founder)">AK</span>
+            <span class="ava h" title="Mira R">MR</span>
+            <span class="ava a" data-role="claude" title="claude">cl</span>
+            <span class="ava a" data-role="codex" title="codex">cx</span>
+          </div>
+          <span class="pr-team-meta"><b>2 humans</b> · 2 agents</span>
+        </div>
+
+        <div class="pr-config">
+          <span class="cfg agent" data-agent="claude">
+            <span class="lbl"><span class="ico"></span>agent</span>
+            <b>claude</b>
+          </span>
+          <span class="cfg flow" title="bugfix · spec-clarify · autonomous · refactor">
+            <span class="lbl">flows</span>
+            <b>4 configured</b>
+          </span>
+          <span class="cfg mcps">
+            <span class="lbl">mcps</span>
+            <b>5</b>
+          </span>
+        </div>
+
+        <button class="pr-needs">
+          <span class="icon">!</span>
+          <span class="text"><b>codex</b> in <code>ws/auth-flow</code> wants permission to write outside <code>~/auth/</code></span>
+          <span class="arr">→</span>
+        </button>
+
+        <div class="pr-ws">
+          <header>
+            <span>Workspaces</span>
+            <span class="count">3 active</span>
+          </header>
+          <ul class="pr-ws-list">
+            <li class="ws-row" data-status="running" data-agent="claude">
+              <span class="dot"></span>
+              <span class="name">ws/portfolio-home</span>
+              <span class="agent">claude</span>
+              <span class="time">2m</span>
+            </li>
+            <li class="ws-row" data-status="needs" data-agent="codex">
+              <span class="dot"></span>
+              <span class="name">ws/auth-flow</span>
+              <span class="agent">codex</span>
+              <span class="time">8m</span>
+            </li>
+            <li class="ws-row" data-status="done" data-agent="dev">
+              <span class="dot"></span>
+              <span class="name">ws/landing-v3</span>
+              <span class="agent">dev</span>
+              <span class="time">3h</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="pr-recent">
+          <div class="pr-recent-head">
+            <span class="lhs">Recently merged</span>
+            <a>history →</a>
+          </div>
+          <ul>
+            <li class="rec-row">
+              <span class="name">ws/sso-rfc</span>
+              <span class="meta">claude · main</span>
+              <span class="time">1d</span>
+            </li>
+            <li class="rec-row">
+              <span class="name">ws/db-migration</span>
+              <span class="meta">dev · main</span>
+              <span class="time">3d</span>
+            </li>
+          </ul>
+        </div>
+
+        <footer class="pr-foot">
+          <div class="pr-tags">
+            <span class="pr-tag">react</span>
+            <span class="pr-tag">node</span>
+            <span class="pr-tag">acp</span>
+          </div>
+          <a class="backlog">backlog · <b>12</b> <span class="arr">→</span></a>
+        </footer>
+      </article>
+
+      <!-- ─── CONFUP ──────────────────────────────────────── -->
+      <article class="project" data-accent="3" data-project="confup">
+        <span class="pr-mark"></span>
+
+        <header class="pr-head">
+          <div class="h-l">
+            <h2>confup <span class="lang-chip">py</span></h2>
+            <a class="repo">github.com/kanischev/confup ↗</a>
+            <p class="desc">Conference operating system — CFP, speaker portal, agenda, ticketing in one rail.</p>
+          </div>
+          <div class="h-r">
+            <span class="pr-status">
+              <span class="pulse"></span> running
+            </span>
+          </div>
+        </header>
+
+        <div class="pr-team">
+          <div class="avas">
+            <span class="ava h" title="Alex K">AK</span>
+            <span class="ava h" title="Polina N">PN</span>
+            <span class="ava h" title="Tarik S">TS</span>
+            <span class="ava a" data-role="claude" title="claude">cl</span>
+          </div>
+          <span class="pr-team-meta"><b>3 humans</b> · 1 agent</span>
+        </div>
+
+        <div class="pr-config">
+          <span class="cfg agent" data-agent="claude">
+            <span class="lbl"><span class="ico"></span>agent</span>
+            <b>claude</b>
+          </span>
+          <span class="cfg flow" title="spec-clarify · bugfix · e2e-spike">
+            <span class="lbl">flows</span>
+            <b>3 configured</b>
+          </span>
+          <span class="cfg mcps">
+            <span class="lbl">mcps</span>
+            <b>3</b>
+          </span>
+        </div>
+
+        <div class="pr-ws">
+          <header>
+            <span>Workspaces</span>
+            <span class="count">2 active</span>
+          </header>
+          <ul class="pr-ws-list">
+            <li class="ws-row" data-status="running" data-agent="claude">
+              <span class="dot"></span>
+              <span class="name">ws/speaker-portal</span>
+              <span class="agent">claude</span>
+              <span class="time">14m</span>
+            </li>
+            <li class="ws-row" data-status="queued" data-agent="codex">
+              <span class="dot"></span>
+              <span class="name">ws/agenda-sync</span>
+              <span class="agent">queued</span>
+              <span class="time">1h</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="pr-recent">
+          <div class="pr-recent-head">
+            <span class="lhs">Recently merged</span>
+            <a>history →</a>
+          </div>
+          <ul>
+            <li class="rec-row">
+              <span class="name">ws/cfp-emails</span>
+              <span class="meta">claude · main</span>
+              <span class="time">4h</span>
+            </li>
+            <li class="rec-row">
+              <span class="name">ws/sponsor-deck</span>
+              <span class="meta">dev · main</span>
+              <span class="time">2d</span>
+            </li>
+          </ul>
+        </div>
+
+        <footer class="pr-foot">
+          <div class="pr-tags">
+            <span class="pr-tag">django</span>
+            <span class="pr-tag">postgres</span>
+            <span class="pr-tag">stripe</span>
+          </div>
+          <a class="backlog">backlog · <b>23</b> <span class="arr">→</span></a>
+        </footer>
+      </article>
+
+      <!-- ─── UMNITSA ─────────────────────────────────────── -->
+      <article class="project" data-accent="2" data-project="umnitsa">
+        <span class="pr-mark"></span>
+
+        <header class="pr-head">
+          <div class="h-l">
+            <h2>umnitsa <span class="lang-chip">go</span></h2>
+            <a class="repo">github.com/kanischev/umnitsa ↗</a>
+            <p class="desc">OpenClaw assistant bots cloud — voice, billing, orchestration for personal-AI deployments.</p>
+          </div>
+          <div class="h-r">
+            <span class="pr-status">
+              <span class="pulse"></span> running
+            </span>
+          </div>
+        </header>
+
+        <div class="pr-team">
+          <div class="avas">
+            <span class="ava h" title="Alex K">AK</span>
+            <span class="ava h" title="Dmitri L">DL</span>
+            <span class="ava h" title="Sofia V">SV</span>
+            <span class="ava h" title="Igor B">IB</span>
+            <span class="ava a" data-role="claude" title="claude">cl</span>
+            <span class="ava a" data-role="codex" title="codex">cx</span>
+          </div>
+          <span class="pr-team-meta"><b>4 humans</b> · 2 agents</span>
+        </div>
+
+        <div class="pr-config">
+          <span class="cfg agent" data-agent="codex">
+            <span class="lbl"><span class="ico"></span>agent</span>
+            <b>codex</b>
+          </span>
+          <span class="cfg flow" title="autonomous · bugfix · spec-clarify · voice-eval · perf-audit">
+            <span class="lbl">flows</span>
+            <b>5 configured</b>
+          </span>
+          <span class="cfg mcps">
+            <span class="lbl">mcps</span>
+            <b>6</b>
+          </span>
+        </div>
+
+        <button class="pr-needs">
+          <span class="icon">?</span>
+          <span class="text"><b>codex</b> needs schema pick for <code>BotSession.transcript</code> in <code>ws/bot-orchestrator</code></span>
+          <span class="arr">→</span>
+        </button>
+
+        <div class="pr-ws">
+          <header>
+            <span>Workspaces</span>
+            <span class="count">3 active</span>
+          </header>
+          <ul class="pr-ws-list">
+            <li class="ws-row" data-status="needs" data-agent="codex">
+              <span class="dot"></span>
+              <span class="name">ws/bot-orchestrator</span>
+              <span class="agent">codex</span>
+              <span class="time">4m</span>
+            </li>
+            <li class="ws-row" data-status="running" data-agent="claude">
+              <span class="dot"></span>
+              <span class="name">ws/voice-pipeline</span>
+              <span class="agent">claude</span>
+              <span class="time">22m</span>
+            </li>
+            <li class="ws-row" data-status="running" data-agent="codex">
+              <span class="dot"></span>
+              <span class="name">ws/billing</span>
+              <span class="agent">codex</span>
+              <span class="time">1h</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="pr-recent">
+          <div class="pr-recent-head">
+            <span class="lhs">Recently merged</span>
+            <a>history →</a>
+          </div>
+          <ul>
+            <li class="rec-row">
+              <span class="name">ws/lang-detect</span>
+              <span class="meta">claude · main</span>
+              <span class="time">6h</span>
+            </li>
+            <li class="rec-row">
+              <span class="name">ws/quota-meter</span>
+              <span class="meta">codex · main</span>
+              <span class="time">2d</span>
+            </li>
+          </ul>
+        </div>
+
+        <footer class="pr-foot">
+          <div class="pr-tags">
+            <span class="pr-tag">go</span>
+            <span class="pr-tag">temporal</span>
+            <span class="pr-tag">whisper</span>
+          </div>
+          <a class="backlog">backlog · <b>41</b> <span class="arr">→</span></a>
+        </footer>
+      </article>
+
+      <!-- ─── extra slots (revealed by Tweaks slider) ──────── -->
+      <article class="project pr-extra" data-accent="4" data-project="atlas" hidden>
+        <span class="pr-mark"></span>
+        <header class="pr-head">
+          <div class="h-l">
+            <h2>atlas <span class="lang-chip">rs</span></h2>
+            <a class="repo">github.com/kanischev/atlas ↗</a>
+            <p class="desc">Internal data pipeline — every event from every project lands here, queryable.</p>
+          </div>
+          <div class="h-r">
+            <span class="pr-status is-idle"><span class="pulse"></span> idle</span>
+          </div>
+        </header>
+        <div class="pr-team">
+          <div class="avas">
+            <span class="ava h">AK</span>
+            <span class="ava h">DL</span>
+          </div>
+          <span class="pr-team-meta"><b>2 humans</b> · 0 agents</span>
+        </div>
+        <div class="pr-ws">
+          <header><span>Workspaces</span><span class="count">none active</span></header>
+          <ul class="pr-ws-list">
+            <li class="ws-row" data-status="done" data-agent="dev">
+              <span class="dot"></span>
+              <span class="name">ws/ingest-v2</span>
+              <span class="agent">dev</span>
+              <span class="time">2d</span>
+            </li>
+          </ul>
+        </div>
+        <footer class="pr-foot">
+          <div class="pr-tags"><span class="pr-tag">rust</span><span class="pr-tag">clickhouse</span></div>
+          <a class="backlog">backlog · <b>6</b> <span class="arr">→</span></a>
+        </footer>
+      </article>
+
+      <article class="project pr-extra" data-accent="1" data-project="harbor" hidden>
+        <span class="pr-mark"></span>
+        <header class="pr-head">
+          <div class="h-l">
+            <h2>harbor <span class="lang-chip">sh</span></h2>
+            <a class="repo">github.com/kanischev/harbor ↗</a>
+            <p class="desc">Single-host deploy + secrets for everything above. nginx, caddy, docker-compose, snapshots.</p>
+          </div>
+          <div class="h-r">
+            <span class="pr-status"><span class="pulse"></span> running</span>
+          </div>
+        </header>
+        <div class="pr-team">
+          <div class="avas">
+            <span class="ava h">AK</span>
+            <span class="ava a" data-role="codex">cx</span>
+          </div>
+          <span class="pr-team-meta"><b>1 human</b> · 1 agent</span>
+        </div>
+        <div class="pr-ws">
+          <header><span>Workspaces</span><span class="count">1 active</span></header>
+          <ul class="pr-ws-list">
+            <li class="ws-row" data-status="running" data-agent="codex">
+              <span class="dot"></span>
+              <span class="name">ws/cert-rotate</span>
+              <span class="agent">codex</span>
+              <span class="time">7m</span>
+            </li>
+          </ul>
+        </div>
+        <footer class="pr-foot">
+          <div class="pr-tags"><span class="pr-tag">bash</span><span class="pr-tag">caddy</span></div>
+          <a class="backlog">backlog · <b>3</b> <span class="arr">→</span></a>
+        </footer>
+      </article>
+
+      <article class="project pr-extra" data-accent="3" data-project="echo" hidden>
+        <span class="pr-mark"></span>
+        <header class="pr-head">
+          <div class="h-l">
+            <h2>echo <span class="lang-chip">ts</span></h2>
+            <a class="repo">github.com/kanischev/echo ↗</a>
+            <p class="desc">Lessons-learned distillation. Reads merged diffs + bug reports, writes project rules.</p>
+          </div>
+          <div class="h-r">
+            <span class="pr-status is-idle"><span class="pulse"></span> idle</span>
+          </div>
+        </header>
+        <div class="pr-team">
+          <div class="avas">
+            <span class="ava h">AK</span>
+          </div>
+          <span class="pr-team-meta"><b>1 human</b> · 0 agents</span>
+        </div>
+        <div class="pr-ws">
+          <header><span>Workspaces</span><span class="count">none active</span></header>
+          <ul class="pr-ws-list">
+            <li class="ws-row" data-status="queued" data-agent="claude">
+              <span class="dot"></span>
+              <span class="name">ws/rules-update</span>
+              <span class="agent">queued</span>
+              <span class="time">—</span>
+            </li>
+          </ul>
+        </div>
+        <footer class="pr-foot">
+          <div class="pr-tags"><span class="pr-tag">ts</span><span class="pr-tag">sqlite</span></div>
+          <a class="backlog">backlog · <b>4</b> <span class="arr">→</span></a>
+        </footer>
+      </article>
+
+      <!-- ─── + NEW PROJECT TILE ─────────────────────────── -->
+      <article class="project is-new" tabindex="0" id="new-project-tile">
+        <span class="plus">+</span>
+        <h3>New project</h3>
+        <p>connect a repo · scaffold a new one</p>
+        <div class="ways">
+          <span>github</span>
+          <span>gitlab</span>
+          <span>local</span>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- ─── EMPTY STATE (only visible when canvas[data-state="empty"]) ── -->
+    <section class="empty-state">
+      <div class="es-icon">
+        <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12 a8 8 0 1 1 -2.34 -5.66"/>
+          <polyline points="22 5 22 9 18 9"/>
+          <line x1="14" y1="2" x2="14" y2="4.5"/>
+          <circle cx="14" cy="1.6" r="1" fill="currentColor" stroke="none"/>
+          <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+      <h2>No projects yet. <em>Let's connect one.</em></h2>
+      <p>MAIster manages repos, runs, and agents for you. Point us at a git remote or a folder — we'll do the rest.</p>
+      <div class="es-actions">
+        <button class="es-pri">+ Connect a repo <span style="font-family:var(--mono);opacity:.85;">→</span></button>
+        <button class="es-sec">Scaffold from template</button>
+        <button class="es-sec">Import from local</button>
+      </div>
+      <div class="es-tips">
+        <div class="es-tip"><kbd>⌘L</kbd> launches a run once a project's connected.</div>
+        <div class="es-tip">Each run lives in its own worktree — diff and merge with proof.</div>
+        <div class="es-tip">Active runs stay pinned to the rail, always one click away.</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ╔══════════════════════════════════════════════ STATUS BAR ═══╗ -->
+<footer class="status-bar" aria-label="Instance status">
+  <div class="group">
+    <span class="live"><span class="dot"></span> <b>Connected</b></span>
+    <span class="sep">·</span>
+    <span>localhost:3000</span>
+    <span class="sep hide-sm">·</span>
+    <span class="hide-sm">v0.0.1</span>
+    <span class="sep hide-sm">·</span>
+    <span class="hide-sm">8 workspaces · 2 need you</span>
+  </div>
+  <div class="group">
+    <a>Docs ↗</a>
+    <span class="sep">·</span>
+    <a href="https://github.com/kanischev/mAIster" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.08.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</footer>
+
+<!-- ╔══════════════════════════════════════════════════ SCRIPTS ═╗ -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="home.js"></script>
+<script type="text/babel" src="../landing/tweaks-panel.jsx"></script>
+<script type="text/babel" src="tweaks-app.jsx"></script>
+</body>
+</html>
