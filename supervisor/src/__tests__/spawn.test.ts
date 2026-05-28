@@ -248,16 +248,37 @@ describe("spawnSession", () => {
 
     const raw = await readFile(a.eventsLogPath, "utf8");
     const lines = raw.split("\n").filter((l) => l.length > 0);
-    const sessionIds = lines.map(
-      (l) => (JSON.parse(l) as { sessionId: string }).sessionId,
+    const events = lines.map(
+      (l) => JSON.parse(l) as { sessionId: string; monotonicId: number },
     );
 
-    expect(sessionIds.filter((s) => s === sessionA).length).toBeGreaterThanOrEqual(
-      2,
+    expect(
+      events.filter((e) => e.sessionId === sessionA).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      events.filter((e) => e.sessionId === sessionB).length,
+    ).toBeGreaterThanOrEqual(1);
+
+    // Regression: per-run monotonicId must be strictly increasing
+    // across consecutive sessions. Without the tail-seed, sessionB's
+    // ids would restart at 1 and the SSE bridge's `monotonicId >
+    // lastSeen` filter would silently drop them on reconnect.
+    const monotonicIds = events.map((e) => e.monotonicId);
+    const sessionBMin = Math.min(
+      ...events
+        .filter((e) => e.sessionId === sessionB)
+        .map((e) => e.monotonicId),
     );
-    expect(sessionIds.filter((s) => s === sessionB).length).toBeGreaterThanOrEqual(
-      1,
+    const sessionAMax = Math.max(
+      ...events
+        .filter((e) => e.sessionId === sessionA)
+        .map((e) => e.monotonicId),
     );
+
+    expect(sessionBMin).toBeGreaterThan(sessionAMax);
+    for (let i = 1; i < monotonicIds.length; i += 1) {
+      expect(monotonicIds[i]).toBeGreaterThan(monotonicIds[i - 1]);
+    }
   });
 
   it("closes events.jsonl after terminal event so the file stat is stable", async () => {

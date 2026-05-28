@@ -182,13 +182,25 @@ flowchart TD
   option.
 - Every state transition is persisted to `runs` BEFORE the UI reflects
   it; UI never derives status from supervisor in-memory state.
-- **(Designed M7)** SSE stream from web tier
-  (`GET /api/runs/[id]/stream`) supports `lastEventId` reconnect and
-  tails per-step output from
-  `.maister/<slug>/runs/<runId>/<stepId>.log`, never replays from
-  memory. The supervisor's per-session `GET /sessions/:id/stream`
-  already supports `Last-Event-ID`; the web-tier bridge route is
-  M7 work.
+- **(Implemented M7)** SSE stream from web tier
+  (`GET /api/runs/[runId]/stream`) tails a single durable per-run
+  log at `.maister/<slug>/runs/<runId>/run.events.jsonl` that the
+  supervisor appends to in lockstep with its own SSE channel.
+  `Last-Event-ID` (or `?lastEventId=` fallback) replays from the
+  durable file across step boundaries, supervisor restarts, and
+  consecutive sessions of the same run. The supervisor seeds
+  `record.monotonicId` from the tail of the run log on every spawn
+  so the per-run event sequence stays strictly increasing across
+  sessions. The bridge never replays from in-memory ring state on
+  the web side.
+- **(Implemented M7)** HITL response surface
+  (`POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`) does NOT
+  flip `runs.status` to `Running` itself; the runner is the sole
+  owner of the `NeedsInput → Running` transition so its `isResume`
+  gate matches. Terminal `NeedsInput → Failed` (permission
+  `HITL_TIMEOUT`) and `Running → Crashed` (HITL row insert failure
+  in the runner) are net-new in M7 — see
+  [`hitl.md`](hitl.md#expectations).
 - **(Designed M11)** Merge is `git merge --no-ff` only; conflicts
   always abort the merge and leave the run in `Review`. No merge
   route exists in M5.

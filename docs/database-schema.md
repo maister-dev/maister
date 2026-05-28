@@ -167,6 +167,9 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
   id, runId, stepId,
   kind: 'permission' | 'form' | 'human',
   schema (jsonb)?,               // form_schema with required schemaVersion
+                                 // OR permission descriptor:
+                                 //   { requestId, options, toolCall,
+                                 //     supervisorSessionId }
   prompt, response (jsonb)?,
   respondedAt?, createdAt
 }
@@ -177,6 +180,22 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
 `kind=human` is a `human`-typed Flow step with full `on_reject → goto_step`
 loop.
+
+**Two-phase response semantics (M7+).** `response` and `respondedAt`
+together encode the delivery state of an HITL row:
+
+| `response` | `respondedAt` | Meaning |
+| ---------- | ------------- | ------- |
+| `NULL`     | `NULL`        | Unclaimed — no user submission yet. |
+| set        | `NULL`        | Claimed — user's intent stored under a row-level `SELECT ... FOR UPDATE`, but the durable side-effect (supervisor `requestPermission` resolve, or `input-<stepId>.json` write) has not been acknowledged yet. Retryable from this state with the SAME payload (idempotent). |
+| set        | set           | Delivered. Same-payload retries return `200`; a retry that finds `runs.status = 'NeedsInput'` re-queues the runner wake-up so a process crash between commit and the original microtask cannot strand the run. |
+| `NULL`     | set           | Never occurs (invariant). |
+
+Conflicting-payload submissions are rejected with `409` at the CAS
+step — they never reach the side-effect. Permission rows additionally
+carry `schema.supervisorSessionId` so the web tier can route the
+deferred resolution to the right supervisor session without an extra
+round-trip.
 
 ## Cascade chain
 

@@ -142,7 +142,7 @@ describe("POST /sessions/:id/input direct validation paths", () => {
     expect(body.code).toBe("PRECONDITION");
   });
 
-  it("unknown session returns 404 NEEDS_INPUT", async () => {
+  it("unknown session returns 503 EXECUTOR_UNAVAILABLE (retryable — supervisor likely restarted)", async () => {
     booted = await bootBare();
     const res = await fetch(`${booted.url}/sessions/no-such-session/input`, {
       method: "POST",
@@ -155,13 +155,13 @@ describe("POST /sessions/:id/input direct validation paths", () => {
       }),
     });
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(503);
     const body = (await res.json()) as { code: string };
 
-    expect(body.code).toBe("NEEDS_INPUT");
+    expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
   });
 
-  it("known session with unknown requestId returns 404 NEEDS_INPUT", async () => {
+  it("known session with unknown requestId returns 410 HITL_TIMEOUT (terminal — deferred expired)", async () => {
     booted = await bootBare();
     await registerFakeSession(booted.registry, booted.runtimeRoot, "s-unknown");
     const res = await fetch(`${booted.url}/sessions/s-unknown/input`, {
@@ -175,10 +175,10 @@ describe("POST /sessions/:id/input direct validation paths", () => {
       }),
     });
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(410);
     const body = (await res.json()) as { code: string; message: string };
 
-    expect(body.code).toBe("NEEDS_INPUT");
+    expect(body.code).toBe("HITL_TIMEOUT");
     expect(body.message).toContain("pending");
   });
 
@@ -202,7 +202,7 @@ describe("POST /sessions/:id/input direct validation paths", () => {
     expect(body.message).toContain("optionId");
   });
 
-  it("action=cancel on unknown requestId returns 404 NEEDS_INPUT", async () => {
+  it("action=cancel on unknown requestId returns 410 HITL_TIMEOUT", async () => {
     booted = await bootBare();
     await registerFakeSession(booted.registry, booted.runtimeRoot, "s-canc");
     const res = await fetch(`${booted.url}/sessions/s-canc/input`, {
@@ -216,10 +216,10 @@ describe("POST /sessions/:id/input direct validation paths", () => {
       }),
     });
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(410);
     const body = (await res.json()) as { code: string };
 
-    expect(body.code).toBe("NEEDS_INPUT");
+    expect(body.code).toBe("HITL_TIMEOUT");
   });
 });
 
@@ -345,7 +345,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       }),
     });
 
-    expect(second.status).toBe(404);
+    expect(second.status).toBe(410);
   });
 
   it("cross-session isolation: select in session A leaves session B's deferred pending", async () => {
@@ -383,7 +383,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
     expect(pendingPermissions.size("sB")).toBe(1);
   });
 
-  it("posting a session A's requestId to session B returns 404 (ownership boundary)", async () => {
+  it("posting a session A's requestId to session B returns 410 (ownership boundary — deferred not found in B's pending set)", async () => {
     booted = await bootBare();
     await registerFakeSession(
       booted.registry,
@@ -414,7 +414,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       }),
     });
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(410);
     expect(dA.resolved()).toBeNull();
   });
 

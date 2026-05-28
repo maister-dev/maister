@@ -285,7 +285,18 @@ async function postInput(
   if (res.status === 200) {
     return (await res.json()) as { ok: true };
   }
+  if (res.status === 410) {
+    // Genuinely expired deferred — terminal. Distinct from the 503
+    // "unknown session" path, which is retryable and means the
+    // supervisor restarted or the session crashed.
+    const message = await readErrorMessage(res, "supervisor 410 on input");
+
+    throw new MaisterError("HITL_TIMEOUT", message);
+  }
   if (res.status === 404) {
+    // Defensive fallback: pre-M7 supervisors may still emit 404 with
+    // the same payload shape. Treat as terminal HITL_TIMEOUT — the
+    // M7 supervisor returns 410 for this case.
     const message = await readErrorMessage(res, "supervisor 404 on input");
 
     throw new MaisterError("HITL_TIMEOUT", message);

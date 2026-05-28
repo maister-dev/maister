@@ -332,13 +332,20 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const body = parsed.data;
 
     if (!registry.has(sessionId)) {
+      // Distinct from "unknown requestId": an unknown session typically
+      // means the supervisor restarted (or the session crashed) AFTER
+      // the deferred was minted. The user's reply is still valid; the
+      // recovery path is "retry once the supervisor has reconciled".
+      // We classify as EXECUTOR_UNAVAILABLE (retryable) so the web tier
+      // does NOT mark the run Failed.
       logger.warn(
         { sessionId, action: body.action, requestId: body.requestId },
-        "input route: unknown session",
+        "input route: unknown session — likely supervisor restart",
       );
-      reply
-        .status(404)
-        .send({ code: "NEEDS_INPUT", message: "unknown session" });
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "unknown session — supervisor may have restarted",
+      });
 
       return;
     }
@@ -375,8 +382,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     );
 
     if (!ok) {
-      reply.status(404).send({
-        code: "NEEDS_INPUT",
+      // Distinct from "unknown session": the session is alive but the
+      // requested deferred is missing — almost always means the
+      // MAISTER_KEEPALIVE_MINUTES timeout already fired (or another
+      // request resolved/cancelled the same deferred). Classify as
+      // HITL_TIMEOUT so the web tier treats it as terminal.
+      reply.status(410).send({
+        code: "HITL_TIMEOUT",
         message: "no pending permission with that requestId",
       });
 

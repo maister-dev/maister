@@ -346,7 +346,21 @@ describe("deliverPermission", () => {
     );
   });
 
-  it("throws HITL_TIMEOUT on supervisor 404 (deferred expired)", async () => {
+  it("throws HITL_TIMEOUT on supervisor 410 (M7+: deferred expired — terminal)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "HITL_TIMEOUT", message: "no pending" }),
+        { status: 410 },
+      ),
+    );
+
+    const promise = deliverPermission("s1", requestId, "allow");
+
+    await expect(promise).rejects.toBeInstanceOf(MaisterError);
+    await expect(promise).rejects.toMatchObject({ code: "HITL_TIMEOUT" });
+  });
+
+  it("throws HITL_TIMEOUT on supervisor 404 (defensive fallback for pre-M7 supervisors)", async () => {
     mockOnce(
       new Response(
         JSON.stringify({ code: "NEEDS_INPUT", message: "no pending" }),
@@ -358,6 +372,22 @@ describe("deliverPermission", () => {
 
     await expect(promise).rejects.toBeInstanceOf(MaisterError);
     await expect(promise).rejects.toMatchObject({ code: "HITL_TIMEOUT" });
+  });
+
+  it("throws EXECUTOR_UNAVAILABLE on supervisor 503 (M7+: unknown session — retryable)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          code: "EXECUTOR_UNAVAILABLE",
+          message: "unknown session — supervisor may have restarted",
+        }),
+        { status: 503 },
+      ),
+    );
+
+    await expect(
+      deliverPermission("s1", requestId, "allow"),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
   });
 
   it("throws EXECUTOR_UNAVAILABLE on supervisor 5xx (retryable)", async () => {

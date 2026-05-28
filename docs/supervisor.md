@@ -157,11 +157,51 @@ later. See M0 spike findings on the ~$0.28 cache-creation cost per
 respawn — the implication is that **keep-alive is cost-saving**, not just
 UX.
 
-### `POST /sessions/:id/input` *(stub — M7)*
+### `POST /sessions/:id/input` *(M7+)*
 
-Returns `501 { "code": "ACP_PROTOCOL", "message": "Not implemented in M3 — see M7" }`.
-M7 will wire HITL input delivery: `session/request_permission` for binary
-approve/deny, and structured-form responses via artifact + ACP message.
+Permission-only HITL surface. Body is a Zod-validated discriminated
+union on `action`:
+
+```
+{ kind: "permission", action: "select" | "cancel",
+  requestId: <uuid>, optionId?: string, reason?: string }
+```
+
+`action: "select"` resolves the live ACP `requestPermission` deferred
+held by the supervisor's `PendingPermissionRegistry` with
+`{outcome: "selected", optionId}`. `action: "cancel"` resolves it with
+`{outcome: "cancelled"}`. Status codes:
+
+- `200 { ok: true }` — deferred settled.
+- `503 { code: "EXECUTOR_UNAVAILABLE" }` — unknown session
+  (retryable; typically a supervisor restart between
+  `session.permission_request` emission and the user's response).
+- `410 { code: "HITL_TIMEOUT" }` — known session but no pending
+  deferred with that `requestId` (the deferred either timed out via
+  `MAISTER_KEEPALIVE_MINUTES` or another request already
+  resolved/cancelled it).
+- `409 { code: "PRECONDITION" }` — Zod validation failure on the
+  request body (e.g. `action="select"` with no `optionId`).
+
+The supervisor never writes input artifacts: durable form / human
+responses are written by the web tier's
+`POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
+its row-level claim succeeds.
+
+### Run-scoped durable event log: `<runId>/run.events.jsonl` *(M7+)*
+
+Every `SessionEvent` (`session.line`, `session.update`,
+`session.permission_request`, `session.exited`, `session.crashed`)
+is appended to a single per-run JSONL file at
+`.maister/<projectSlug>/runs/<runId>/run.events.jsonl` alongside the
+existing per-step raw `<stepId>.log` and the in-memory ring buffer
+that backs `GET /sessions/:id/stream`. Multiple spawns for the same
+run append to the same file (slash-in-existing reuses one session
+across steps; new-session-per-step spawns are sequential). On spawn,
+`record.monotonicId` is seeded from the tail of the existing log so
+the per-run event sequence stays strictly increasing across sessions
+— this is what the web SSE bridge at `GET /api/runs/[runId]/stream`
+relies on for cross-session `Last-Event-ID` resume.
 
 ## Module layout
 

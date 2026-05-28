@@ -113,6 +113,21 @@ async function lockHitlRow(tx: any, hitlRequestId: string): Promise<any> {
   return rows[0];
 }
 
+// Schedule a runner wake-up for a delivered HITL row. Called from both
+// the first-success path and the same-payload retry path so a process
+// restart between Phase 3 commit and the original microtask cannot
+// strand the run in NeedsInput.
+function scheduleResume(runId: string): void {
+  queueMicrotask(() =>
+    void runFlow(runId).catch((err: unknown) =>
+      log.error(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "background runFlow on resume failed",
+      ),
+    ),
+  );
+}
+
 // Stable comparison so retries with the same payload are idempotent.
 // Different key order with the same fields hashes differently — clients
 // retrying should send the same byte stream.
@@ -453,8 +468,8 @@ async function handlePermissionResponse(
 }
 
 type FormClaim =
-  | { kind: "claimed"; storedResponse: unknown }
-  | { kind: "already-delivered"; storedResponse: unknown };
+  | { kind: "claimed"; storedResponse: unknown; runStatus: string }
+  | { kind: "already-delivered"; storedResponse: unknown; runStatus: string };
 
 async function handleFormHumanResponse(
   args: HandlerArgs,
@@ -514,7 +529,11 @@ async function handleFormHumanResponse(
     }
     if (lockedHitl.respondedAt) {
       if (payloadsEqual(lockedHitl.response, response)) {
-        return { kind: "already-delivered", storedResponse: lockedHitl.response } as const;
+        return {
+          kind: "already-delivered",
+          storedResponse: lockedHitl.response,
+          runStatus: lockedRun.status as string,
+        } as const;
       }
       throw new MaisterError("CONFLICT", "hitl request already delivered");
     }
@@ -526,7 +545,11 @@ async function handleFormHumanResponse(
         );
       }
       // same payload — idempotent retry. Fall through to artifact write.
-      return { kind: "claimed", storedResponse: lockedHitl.response } as const;
+      return {
+        kind: "claimed",
+        storedResponse: lockedHitl.response,
+        runStatus: lockedRun.status as string,
+      } as const;
     }
 
     await tx
@@ -540,16 +563,32 @@ async function handleFormHumanResponse(
         ),
       );
 
-    return { kind: "claimed", storedResponse: response } as const;
+    return {
+      kind: "claimed",
+      storedResponse: response,
+      runStatus: lockedRun.status as string,
+    } as const;
   });
 
   if (claim.kind === "already-delivered") {
+    // Same-payload retry on an already-delivered row. If the run is
+    // still in NeedsInput, the original microtask may have been lost
+    // (process restart between commit and queueMicrotask, runner
+    // crash, etc.) — re-queue the wake here so the retry is the
+    // durable recovery path. Idempotent: runFlow's resume gate is a
+    // no-op if the run has already advanced.
+    const needsRequeue = claim.runStatus === "NeedsInput";
+
+    if (needsRequeue) {
+      scheduleResume(runId);
+    }
     log.info(
       {
         runId,
         hitlRequestId,
         kind: hitlRow.kind,
         phase: "already-delivered",
+        requeuedResume: needsRequeue,
         latencyMs: Date.now() - startedAt,
       },
       "form/human already delivered (idempotent retry)",
@@ -611,14 +650,7 @@ async function handleFormHumanResponse(
       ),
     );
 
-  queueMicrotask(() =>
-    void runFlow(runId).catch((err: unknown) =>
-      log.error(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "background runFlow on resume failed",
-      ),
-    ),
-  );
+  scheduleResume(runId);
 
   log.info(
     {

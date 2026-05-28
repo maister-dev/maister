@@ -586,6 +586,41 @@ describe("HITL respond route — kind=form / kind=human", () => {
     expect(after).toEqual({ approved: true });
   });
 
+  it("same-payload retry on an already-delivered row re-queues runFlow when the run is still NeedsInput", async () => {
+    // Simulate a process restart between Phase 3 commit and the
+    // queueMicrotask wake. We seed the row as already-delivered
+    // with respondedAt set, response stored, runStatus=NeedsInput.
+    // A second submission with the same payload should re-fire
+    // runFlow even though the route already considers the request
+    // delivered.
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      respondedAt: new Date(),
+      response: { approved: true },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(runFlowSpy).toHaveBeenCalledWith(runId);
+  });
+
+  it("same-payload retry does NOT re-queue runFlow if the run has already advanced past NeedsInput", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      respondedAt: new Date(),
+      response: { approved: true },
+      runStatus: "Running",
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(runFlowSpy).not.toHaveBeenCalled();
+  });
+
   it("artifact-write failure returns 503 retryable and does NOT mark respondedAt", async () => {
     const { runId, hitlRequestId } = seedFormRow("form");
     const payload = { approved: true };
