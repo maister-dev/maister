@@ -57,6 +57,7 @@ export const flows = pgTable(
     flowRefId: text("flow_ref_id").notNull(),
     source: text("source").notNull(),
     version: text("version").notNull(),
+    revision: text("revision").notNull().default("unknown"),
     installedPath: text("installed_path").notNull(),
     manifest: jsonb("manifest").notNull(),
     schemaVersion: integer("schema_version").notNull(),
@@ -148,6 +149,7 @@ export const runs = pgTable(
     acpSessionId: text("acp_session_id"),
     currentStepId: text("current_step_id"),
     flowVersion: text("flow_version").notNull(),
+    flowRevision: text("flow_revision").notNull().default("unknown"),
     checkpointAt: timestamp("checkpoint_at", {
       withTimezone: true,
       mode: "date",
