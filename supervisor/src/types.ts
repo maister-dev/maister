@@ -92,6 +92,12 @@ export type SessionRecord = {
   acpSessionId?: string;
 };
 
+export type PermissionOptionDescriptor = {
+  optionId: string;
+  kind?: string;
+  name?: string;
+};
+
 export type SessionEvent =
   | {
       type: "session.line";
@@ -106,11 +112,12 @@ export type SessionEvent =
       update: unknown;
     }
   | {
-      type: "session.permission_auto";
+      type: "session.permission_request";
       sessionId: string;
       monotonicId: number;
+      requestId: string;
+      options: ReadonlyArray<PermissionOptionDescriptor>;
       toolCall: unknown;
-      optionId: string;
     }
   | {
       type: "session.exited";

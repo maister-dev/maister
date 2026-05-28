@@ -4,12 +4,13 @@ import type { SessionRegistry, RegistryEntry } from "./registry";
 
 import { randomUUID } from "node:crypto";
 
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
 import { type CcrManager } from "./ccr-manager";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
+import { pendingPermissions } from "./pending-permissions";
 import { spawnSession } from "./spawn";
 import {
   httpStatusForCode,
@@ -19,6 +20,21 @@ import {
   SupervisorError,
   type SessionEvent,
 } from "./types";
+
+const InputBodySchema = z
+  .object({
+    kind: z.literal("permission"),
+    action: z.enum(["select", "cancel"]),
+    requestId: z.string().uuid(),
+    optionId: z.string().min(1).optional(),
+    reason: z.string().min(1).max(256).optional(),
+  })
+  .refine((b) => (b.action === "select" ? Boolean(b.optionId) : true), {
+    message: "optionId is required when action='select'",
+    path: ["optionId"],
+  });
+
+export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
 
@@ -294,11 +310,80 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(202).send({ status: "deferred", milestone: "M8" });
   });
 
-  app.post<SessionIdParams>("/sessions/:id/input", (_req, reply) => {
-    reply.status(501).send({
-      code: "ACP_PROTOCOL",
-      message: "Not implemented in M3 — see M7",
-    });
+  app.post<SessionIdParams>("/sessions/:id/input", (req, reply) => {
+    const sessionId = req.params.id;
+    const startedAt = Date.now();
+    const parsed = InputBodySchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+        .join("; ");
+
+      logger.warn(
+        { sessionId, status: 409, message },
+        "input route: validation failed",
+      );
+      reply.status(409).send({ code: "PRECONDITION", message });
+
+      return;
+    }
+
+    const body = parsed.data;
+
+    if (!registry.has(sessionId)) {
+      logger.warn(
+        { sessionId, action: body.action, requestId: body.requestId },
+        "input route: unknown session",
+      );
+      reply
+        .status(404)
+        .send({ code: "NEEDS_INPUT", message: "unknown session" });
+
+      return;
+    }
+
+    let ok: boolean;
+    let outcome: "ok" | "missing";
+
+    if (body.action === "select") {
+      ok = pendingPermissions.resolve(
+        sessionId,
+        body.requestId,
+        body.optionId as string,
+      );
+    } else {
+      ok = pendingPermissions.cancel(
+        sessionId,
+        body.requestId,
+        body.reason ?? "client-cancelled",
+      );
+    }
+
+    outcome = ok ? "ok" : "missing";
+    const latencyMs = Date.now() - startedAt;
+
+    logger.info(
+      {
+        sessionId,
+        action: body.action,
+        requestId: body.requestId,
+        latencyMs,
+        outcome,
+      },
+      "http POST /sessions/:id/input",
+    );
+
+    if (!ok) {
+      reply.status(404).send({
+        code: "NEEDS_INPUT",
+        message: "no pending permission with that requestId",
+      });
+
+      return;
+    }
+
+    reply.status(200).send({ ok: true });
   });
 }
 

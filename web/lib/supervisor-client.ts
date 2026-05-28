@@ -65,6 +65,12 @@ export type SupervisorSessionRecord = {
   monotonicId: number;
 };
 
+export type SupervisorPermissionOption = {
+  optionId: string;
+  kind?: string;
+  name?: string;
+};
+
 export type SupervisorEvent =
   | {
       type: "session.line";
@@ -79,11 +85,12 @@ export type SupervisorEvent =
       update: unknown;
     }
   | {
-      type: "session.permission_auto";
+      type: "session.permission_request";
       sessionId: string;
       monotonicId: number;
+      requestId: string;
+      options: ReadonlyArray<SupervisorPermissionOption>;
       toolCall: unknown;
-      optionId: string;
     }
   | {
       type: "session.exited";
@@ -239,6 +246,107 @@ export async function sendPrompt(
   }
 
   return (await res.json()) as PromptResult;
+}
+
+async function readErrorMessage(
+  res: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: unknown };
+
+    if (typeof body?.message === "string") return body.message;
+  } catch {
+    /* non-JSON body */
+  }
+
+  return fallback;
+}
+
+async function postInput(
+  sessionId: string,
+  body: Record<string, unknown>,
+  ctx: string,
+): Promise<{ ok: true }> {
+  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/input`;
+
+  logger.debug({ url, sessionId, action: body.action }, ctx);
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, ctx);
+  }
+  if (res.status === 200) {
+    return (await res.json()) as { ok: true };
+  }
+  if (res.status === 404) {
+    const message = await readErrorMessage(res, "supervisor 404 on input");
+
+    throw new MaisterError("HITL_TIMEOUT", message);
+  }
+  if (res.status >= 500 && res.status < 600) {
+    const message = await readErrorMessage(
+      res,
+      `supervisor ${res.status} on input`,
+    );
+
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", message);
+  }
+  if (res.status === 409) {
+    const message = await readErrorMessage(
+      res,
+      "supervisor 409 on input — body shape mismatch",
+    );
+
+    throw new MaisterError("ACP_PROTOCOL", message);
+  }
+
+  const message = await readErrorMessage(
+    res,
+    `supervisor ${res.status} on input`,
+  );
+
+  throw new MaisterError("ACP_PROTOCOL", message);
+}
+
+export async function deliverPermission(
+  sessionId: string,
+  requestId: string,
+  optionId: string,
+): Promise<{ ok: true }> {
+  return postInput(
+    sessionId,
+    {
+      kind: "permission",
+      action: "select",
+      requestId,
+      optionId,
+    },
+    "deliverPermission",
+  );
+}
+
+export async function cancelPermission(
+  sessionId: string,
+  requestId: string,
+  reason: string,
+): Promise<{ ok: true }> {
+  return postInput(
+    sessionId,
+    {
+      kind: "permission",
+      action: "cancel",
+      requestId,
+      reason: reason.slice(0, 256),
+    },
+    "cancelPermission",
+  );
 }
 
 export async function checkpointSession(sessionId: string): Promise<void> {

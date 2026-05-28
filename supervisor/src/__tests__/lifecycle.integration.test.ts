@@ -243,18 +243,9 @@ describe("supervisor lifecycle integration", () => {
     expect(body.code).toBe("PRECONDITION");
   });
 
-  it("POST /sessions/:id/input returns 501 (M3 stub)", async () => {
-    const { url } = await bootFor(["--hang"]);
-    const sessionId = await createSession(url);
-    const res = await fetch(`${url}/sessions/${sessionId}/input`, {
-      method: "POST",
-    });
-
-    expect(res.status).toBe(501);
-    const body = (await res.json()) as { code: string };
-
-    expect(body.code).toBe("ACP_PROTOCOL");
-  });
+  // M7 input route tests live in permission-roundtrip.integration.test.ts —
+  // they use a bypass-spawn boot to avoid the fake-acp.mjs adapter (which
+  // does not speak the ACP protocol).
 
   it("POST /sessions/:id/checkpoint returns 202 (M3 stub)", async () => {
     const { url } = await bootFor(["--hang"]);

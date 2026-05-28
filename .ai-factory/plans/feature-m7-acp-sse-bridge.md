@@ -270,7 +270,7 @@ Decisions:
 
 ### Phase 2: Supervisor — real POST /sessions/:id/input + session.permission_request
 
-- [ ] **Task 6: Remove `session.permission_auto` from `SessionEvent` and add `session.permission_request`**
+- [x] **Task 6: Remove `session.permission_auto` from `SessionEvent` and add `session.permission_request`**
   - Files: `supervisor/src/types.ts` (replace the `permission_auto` variant), `supervisor/src/registry.ts` (no change — ring buffer is type-agnostic, but verify TypeScript still compiles), the supervisor's emit sites, `web/lib/supervisor-client.ts` (mirror the union)
   - New variant:
     ```
@@ -288,7 +288,7 @@ Decisions:
   - Logging: n/a.
   - Acceptance: `pnpm --filter @maister/supervisor build` and `pnpm --filter @maister/web build` both pass with no `any` shims.
 
-- [ ] **Task 7: Rewrite `acp-client.ts:requestPermission` — emit event + register deferred + await + accept cancelled outcome**
+- [x] **Task 7: Rewrite `acp-client.ts:requestPermission` — emit event + register deferred + await + accept cancelled outcome**
   - Files: `supervisor/src/acp-client.ts:103-136`
   - Mint `requestId = randomUUID()`.
   - Bump `record.monotonicId`, emit `session.permission_request` event with `{requestId, options: params.options, toolCall: params.toolCall}`.
@@ -297,7 +297,7 @@ Decisions:
   - Logging: INFO `{sessionId, requestId, optionsCount, toolCallSummary: { id, kind, title }}` on emit (never the full `params.toolCall` body — same secret-hygiene rule as M3).
   - Acceptance: covered by Task 9 integration tests.
 
-- [ ] **Task 8: Real `POST /sessions/:id/input` handler — permission-only with select/cancel**
+- [x] **Task 8: Real `POST /sessions/:id/input` handler — permission-only with select/cancel**
   - Files: `supervisor/src/http-api.ts:296-301` (replace stub)
   - Define `InputBody` Zod schema per the decisions section: `{ kind: "permission", action: "select" | "cancel", requestId, optionId?, reason? }` with `.refine` enforcing `optionId` present iff `action === "select"`. **No `form` branch** — the supervisor never writes input artifacts (Finding 1 fix).
   - Handler:
@@ -310,7 +310,7 @@ Decisions:
   - Logging: INFO `{sessionId, action, requestId, latencyMs, outcome: "ok" | "missing"}` on every request; WARN on 404 with reason; never log raw body.
   - Acceptance: covered by Task 9 integration tests.
 
-- [ ] **Task 9: Integration tests for the supervisor M7 surface — permission round-trip + cancel + ownership + replay**
+- [x] **Task 9: Integration tests for the supervisor M7 surface — permission round-trip + cancel + ownership + replay**
   - Files: `supervisor/src/__tests__/permission-roundtrip.integration.test.ts` (NEW)
   - Extend `web/lib/__tests__/_fixtures/mock-acp-adapter.mjs` (or supervisor-side fixture, wherever it lives) to support an env-flagged "emit permission request" mode with options `["allow", "deny"]` and a stdout marker `permission outcome: <selected|cancelled> <optionId?>` so the test can assert what the adapter saw.
   - select round-trip cases:
@@ -333,7 +333,7 @@ Decisions:
 
 ### Phase 3: Web — HITL response route + runner permission/form handling + runner re-entry
 
-- [ ] **Task 10: Extend `web/lib/supervisor-client.ts` — `deliverPermission` + `cancelPermission`**
+- [x] **Task 10: Extend `web/lib/supervisor-client.ts` — `deliverPermission` + `cancelPermission`**
   - Files: `web/lib/supervisor-client.ts`
   - Add `deliverPermission(sessionId: string, requestId: string, optionId: string): Promise<{ ok: true }>` wrapping `POST /sessions/:id/input` with `{kind:"permission", action:"select", requestId, optionId}`.
   - Add `cancelPermission(sessionId: string, requestId: string, reason: string): Promise<{ ok: true }>` wrapping the same route with `{kind:"permission", action:"cancel", requestId, reason}`.
