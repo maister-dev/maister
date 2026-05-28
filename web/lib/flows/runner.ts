@@ -29,9 +29,10 @@ import {
 
 import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { promoteNextPending } from "@/lib/scheduler";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { systemCachePath } from "@/lib/flow-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executors, flows, projects, runs, tasks, workspaces } =
@@ -142,6 +143,12 @@ async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     );
   }
 
+  // Derive the bundle path from the immutable convention rather than
+  // the mutable `flows.installed_path` column. The system cache is
+  // keyed by `(flowRefId, revision)`; reading from a SHA-pinned
+  // directory guarantees the run executes against the exact bytes it
+  // was launched with, even if the operator re-installs the same tag
+  // at a different commit while the run is in flight.
   return {
     run,
     task,
@@ -150,7 +157,7 @@ async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     executor,
     workspace,
     projectSlug,
-    flowInstallPath: flow.installedPath,
+    flowInstallPath: systemCachePath(flow.flowRefId, run.flowRevision),
   };
 }
 
@@ -329,13 +336,40 @@ export async function runFlow(
 
   let failed = false;
   let needsInput = false;
+  // Track the highest-severity errorCode observed across the run so the
+  // terminal write can distinguish CRASH (operational failure — runner
+  // owes recovery) from ordinary Failed (step rejected the input). The
+  // schema enum already supports both; without this accumulator the
+  // terminal write would silently collapse CRASH to Failed.
+  let runErrorCode: MaisterErrorCode | null = null;
   const allSteps = loaded.manifest.steps;
   const resumeIndex = isResume
-    ? Math.max(
-        0,
-        allSteps.findIndex((s) => s.id === loaded.run.currentStepId),
-      )
+    ? allSteps.findIndex((s) => s.id === loaded.run.currentStepId)
     : 0;
+
+  // Defense-in-depth fail-closed: if the saved currentStepId is not in
+  // the manifest, the run's pinned flow bundle has drifted (someone
+  // hand-edited a SHA-keyed directory — a contract violation). DO NOT
+  // silently start from step 0; mark Crashed and surface CONFIG.
+  if (isResume && resumeIndex === -1) {
+    log2.error(
+      {
+        currentStepId: loaded.run.currentStepId,
+        flowRevision: loaded.run.flowRevision,
+      },
+      "stale resume pointer — currentStepId not in manifest; failing closed",
+    );
+    await db
+      .update(runs)
+      .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
+      .where(eq(runs.id, runId));
+
+    throw new MaisterError(
+      "CONFIG",
+      `currentStepId="${loaded.run.currentStepId}" not found in manifest for run ${runId}`,
+    );
+  }
+
   const stepsToRun = allSteps.slice(resumeIndex);
 
   try {
@@ -409,6 +443,7 @@ export async function runFlow(
         );
         await markStepFailed(stepRunId, { errorCode: e.code }, db);
         failed = true;
+        runErrorCode = e.code;
         break;
       }
 
@@ -430,19 +465,22 @@ export async function runFlow(
       }
 
       if (!result.ok) {
+        const stepErrorCode = (result.errorCode ?? "PRECONDITION") as Exclude<
+          StepResult["errorCode"],
+          undefined
+        >;
+
         await markStepFailed(
           stepRunId,
           {
-            errorCode: (result.errorCode ?? "PRECONDITION") as Exclude<
-              StepResult["errorCode"],
-              undefined
-            >,
+            errorCode: stepErrorCode,
             exitCode: result.exitCode,
             stdout: result.stdout,
           },
           db,
         );
         failed = true;
+        runErrorCode = stepErrorCode;
         log2.warn(
           {
             stepId: step.id,
@@ -482,6 +520,7 @@ export async function runFlow(
 
     log2.error({ err: e.message, code: e.code }, "runFlow top-level error");
     failed = true;
+    runErrorCode = e.code;
   }
 
   if (needsInput) {
@@ -497,12 +536,24 @@ export async function runFlow(
 
   const endedAt = new Date();
 
-  if (failed) {
+  if (failed && runErrorCode === "CRASH") {
+    // Operational failure (e.g. permission-persistence DB insert
+    // failed mid-step). Distinct from ordinary Failed: operators are
+    // expected to recover or discard via M12's reconciler. Without
+    // this branch the terminal write would silently downgrade
+    // Crashed → Failed and the runner-agent's CRASH propagation from
+    // pass 2 would be erased here.
+    await db
+      .update(runs)
+      .set({ status: "Crashed", endedAt, currentStepId: null })
+      .where(eq(runs.id, runId));
+    log2.error({ runErrorCode }, "runFlow ended Crashed");
+  } else if (failed) {
     await db
       .update(runs)
       .set({ status: "Failed", endedAt, currentStepId: null })
       .where(eq(runs.id, runId));
-    log2.warn({}, "runFlow ended Failed");
+    log2.warn({ runErrorCode }, "runFlow ended Failed");
   } else {
     await db
       .update(runs)

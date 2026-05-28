@@ -200,6 +200,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           executorId: executor.id,
           status: "Pending",
           flowVersion: flow.version,
+          // Snapshot the SHA so the runner can derive the immutable
+          // bundle path from `(flowRefId, flowRevision)`. A later flow
+          // upgrade mutates `flows.revision` but `runs.flow_revision`
+          // remains pinned to the version this run launched against.
+          flowRevision: flow.revision,
         });
         await tx
           .update(tasks)
