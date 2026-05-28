@@ -178,8 +178,11 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
-`kind=human` is a `human`-typed Flow step with full `on_reject → goto_step`
-loop.
+`kind=human` is a Flow step `type: human` whose definition carries an
+`on_reject` clause; in M7 it is wire-equivalent to `kind=form` (response
+captured, runner advances to the next step). The `on_reject.goto_step`
+rerouting loop is **Designed M8** — the row distinction is preserved so
+M8 can light up rerouting without a schema change.
 
 **Two-phase response semantics (M7+).** `response` and `respondedAt`
 together encode the delivery state of an HITL row:

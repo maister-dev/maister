@@ -10,7 +10,7 @@ import type {
 import type { FlowYamlV1, Step } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "./context";
@@ -271,14 +271,53 @@ export async function runFlow(
     loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
 
   if (isResume) {
-    await db
-      .update(runs)
-      .set({ status: "Running" })
-      .where(eq(runs.id, runId));
+    // Atomic resume claim: only ONE concurrent runFlow call for the
+    // same NeedsInput row may transition it to Running and continue.
+    // Without this guard, two near-simultaneous resume calls (the
+    // original Phase 3 microtask + the same-payload retry's
+    // re-queue) could both load NeedsInput, both flip to Running,
+    // and both execute the resumed step plus every step after it —
+    // duplicating side-effects and risking unique-constraint
+    // failures on step_runs (run_id, step_id, attempt).
+    const targetStepId = loaded.run.currentStepId;
+    const acquired = await db.transaction(async (tx: Db) => {
+      const rows: RunRow[] = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, runId));
+      const fresh = rows[0];
+
+      if (!fresh) return false;
+      if (fresh.status !== "NeedsInput") return false;
+      if (fresh.currentStepId !== targetStepId) return false;
+
+      await tx
+        .update(runs)
+        .set({ status: "Running" })
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "NeedsInput"),
+            eq(runs.currentStepId, targetStepId),
+          ),
+        );
+
+      return true;
+    });
+
+    if (!acquired) {
+      log2.info(
+        { currentStepId: targetStepId },
+        "runFlow resume claim lost — another invocation is already executing this resume",
+      );
+
+      return;
+    }
+
     loaded.run.status = "Running";
     log2.info(
-      { currentStepId: loaded.run.currentStepId },
-      "runFlow resume from NeedsInput",
+      { currentStepId: targetStepId },
+      "runFlow resume claim acquired — proceeding from NeedsInput",
     );
   }
 

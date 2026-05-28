@@ -16,8 +16,15 @@ artifact protocol used when the worker is checkpointed.
     `session/request_permission`.
   - `form` — structured form, schema declared in the Flow's
     `human` step `form_schema`.
-  - `human` — full human-review step with an `on_reject.goto_step`
-    loopback.
+  - `human` — Flow step `type: human` with an `on_reject` clause
+    declared in `flow.yaml`. **M7 behaviour:** the row is persisted
+    as `kind="human"` and the response is captured under the same
+    atomic-claim + artifact-write contract as `kind="form"`. The
+    loop-on-reject routing (`on_reject.goto_step` rerouting +
+    `comments_var` propagation) is **Designed M8** — until then,
+    `kind="human"` behaves wire-equivalent to `kind="form"`. The
+    distinction is preserved on the row so M8 can light up
+    rerouting without a schema change.
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
 enum | array` on POC.
@@ -32,7 +39,7 @@ enum | array` on POC.
 | ---- | ------- | ----- | --------------- | ---- |
 | `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
 | `form` | Agent writes `needs-input.json` mid-step | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
-| `human` | Flow step `type: human` | Yes (`form_schema`) | Yes (`on_reject.goto_step`) | Artifact only |
+| `human` | Flow step `type: human` with `on_reject` | Yes (`form_schema`) | Designed M8 (`on_reject.goto_step` not yet executed) | Artifact only |
 
 The decision tree:
 
@@ -205,10 +212,21 @@ fields:
   with conflicting payloads return 409 before any artifact is
   touched, and same-payload retries are idempotent. The supervisor
   never writes input artifacts.
-- **(Implemented M7)** `human` step rejection without `on_reject`
-  defined → run `Failed`; task returns to `Backlog` per the 1:N
-  retry contract. **(Designed M8)** `on_reject.goto_step` resume
-  routing in `runHumanStep`.
+- **(Implemented M7)** `human` step responses are captured under the
+  same two-phase commit + artifact-write contract as `form`. The
+  `on_reject` clause on the Flow step is preserved in the row's kind
+  (`hitl_requests.kind = "human"`) and may also be carried in the
+  response payload as `{ rejected: bool, comments?: string }`, but the
+  runner does NOT branch on it in M7 — it advances to the next step
+  with the response captured as ordinary `steps.<id>.vars`. The
+  reviewer UI MUST therefore treat M7 rejection as informational
+  (recorded for audit, the run continues), not as a routing action.
+- **(Designed M8)** Full `on_reject.goto_step` rerouting in
+  `runHumanStep`: when the response indicates rejection, the runner
+  jumps to the declared `goto_step` with `comments_var` populated
+  from the response. Until M8 lands, the API surface MUST NOT
+  represent rejection as a loop-back action — see `web.openapi.yaml`
+  and the UI MUST disable loop-back affordances.
 - **(Implemented M7)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
   * **Phase 1 (atomic claim).** `response` is stored under a row-level

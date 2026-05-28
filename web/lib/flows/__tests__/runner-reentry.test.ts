@@ -132,10 +132,8 @@ function makeFakeDb(initial: Partial<TableRows>): {
     select: (cols?: Record<string, unknown>) => selectChain(cols),
     insert: insertChain,
     update: updateChain,
-    transaction: async (
-      fn: (tx: unknown) => Promise<void>,
-    ): Promise<void> => {
-      await fn({
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+      return await fn({
         select: (cols?: Record<string, unknown>) => selectChain(cols),
         insert: insertChain,
         update: updateChain,
@@ -352,5 +350,59 @@ describe("runFlow re-entry", () => {
       .map((u) => u.set.currentStepId);
 
     expect(currentStepIdUpdates[0]).toBe("second");
+  });
+
+  it("atomic resume claim: two concurrent runFlow calls only execute the loop once", async () => {
+    const fixture = baseFixture();
+
+    fixture.runs[0].status = "NeedsInput";
+    fixture.runs[0].currentStepId = "first";
+    fixture.flows[0].manifest = {
+      schemaVersion: 1,
+      name: "tf",
+      steps: [
+        { id: "first", type: "human" as const, form_schema: "schema.json" },
+      ],
+    };
+    fixture.step_runs.push({
+      id: "sr-first-existing",
+      runId: "run-1",
+      stepId: "first",
+      stepType: "human",
+      status: "NeedsInput",
+      attempt: 1,
+      vars: {},
+      startedAt: new Date(0),
+    });
+
+    const { client, inserts, updates } = makeFakeDb(fixture);
+
+    await writeArtifact("first", { approved: true });
+
+    // Race two concurrent resume calls. Without the atomic claim,
+    // both would load NeedsInput and both would re-execute the step.
+    const [a, b] = await Promise.allSettled([
+      runFlow("run-1", { db: client, runtimeRoot }),
+      runFlow("run-1", { db: client, runtimeRoot }),
+    ]);
+
+    expect(a.status).toBe("fulfilled");
+    expect(b.status).toBe("fulfilled");
+
+    const statusUpdates = updates
+      .filter((u) => u.table === "runs" && "status" in u.set)
+      .map((u) => u.set.status);
+
+    // Exactly one NeedsInput→Running transition must occur. The
+    // losing claimant must NOT issue an UPDATE (so the count of
+    // transition rows is the number of distinct winning claims).
+    expect(statusUpdates.filter((s) => s === "Running")).toHaveLength(1);
+
+    // The losing claimant must NOT have inserted a fresh step_run
+    // row either — the winning side reuses the existing NeedsInput
+    // row, the loser exits before any step work happens.
+    const stepRunInserts = inserts.filter((i) => i.table === "step_runs");
+
+    expect(stepRunInserts.length).toBeLessThanOrEqual(0);
   });
 });

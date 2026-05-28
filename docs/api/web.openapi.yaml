@@ -291,6 +291,18 @@ components:
             Validated against the row's `schema` field (MAIster form
             schema — see `docs/configuration.md`). Returns 422 on
             failure.
+
+            **M7 behaviour for `kind="human"`:** the response is
+            captured under the same atomic-claim + artifact-write
+            contract as `kind="form"`. The runner advances to the
+            NEXT step with the response surfaced as
+            `steps.<stepId>.vars`. The Flow step's `on_reject` clause
+            is recorded on the row (`hitl_requests.kind = "human"`)
+            but the runner does NOT route on it — `on_reject.goto_step`
+            rerouting is **Designed M8**. UIs SHOULD therefore not
+            present rejection as a loop-back action in M7; record
+            rejection intent in the response payload for audit, but
+            understand the runner will not branch on it until M8.
     MaisterErrorBody:
       type: object
       required: [code, message]
