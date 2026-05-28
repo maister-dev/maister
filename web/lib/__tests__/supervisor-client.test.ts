@@ -9,9 +9,11 @@ import {
 } from "vitest";
 
 import {
+  cancelPermission,
   checkpointSession,
   createSession,
   deleteSession,
+  deliverPermission,
   listSessions,
   sendPrompt,
   streamSession,
@@ -318,5 +320,169 @@ describe("sendPrompt", () => {
 
     expect(caught).toBeInstanceOf(MaisterError);
     expect((caught as MaisterError).code).toBe("EXECUTOR_UNAVAILABLE");
+  });
+});
+
+describe("deliverPermission", () => {
+  const requestId = "00000000-0000-0000-0000-000000000001";
+
+  it("posts {kind:permission, action:select, requestId, optionId} and returns ok on 200", async () => {
+    mockOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const result = await deliverPermission("s1", requestId, "allow");
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/sessions/s1/input",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "permission",
+          action: "select",
+          requestId,
+          optionId: "allow",
+        }),
+      }),
+    );
+  });
+
+  it("throws HITL_TIMEOUT on supervisor 404 (deferred expired)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "NEEDS_INPUT", message: "no pending" }),
+        { status: 404 },
+      ),
+    );
+
+    const promise = deliverPermission("s1", requestId, "allow");
+
+    await expect(promise).rejects.toBeInstanceOf(MaisterError);
+    await expect(promise).rejects.toMatchObject({ code: "HITL_TIMEOUT" });
+  });
+
+  it("throws EXECUTOR_UNAVAILABLE on supervisor 5xx (retryable)", async () => {
+    mockOnce(
+      new Response(JSON.stringify({ code: "CRASH", message: "boom" }), {
+        status: 502,
+      }),
+    );
+
+    await expect(
+      deliverPermission("s1", requestId, "allow"),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+  });
+
+  it("throws EXECUTOR_UNAVAILABLE on network error (retryable)", async () => {
+    mockReject(new TypeError("fetch failed"));
+
+    await expect(
+      deliverPermission("s1", requestId, "allow"),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+  });
+
+  it("throws ACP_PROTOCOL on supervisor 409 (bug, body shape drift)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "PRECONDITION", message: "shape" }),
+        { status: 409 },
+      ),
+    );
+
+    await expect(
+      deliverPermission("s1", requestId, "allow"),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+  });
+});
+
+describe("cancelPermission", () => {
+  const requestId = "00000000-0000-0000-0000-000000000002";
+
+  it("posts {kind:permission, action:cancel, requestId, reason} and returns ok on 200", async () => {
+    mockOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const result = await cancelPermission("s1", requestId, "DB_PERSIST_FAILED");
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/sessions/s1/input",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "permission",
+          action: "cancel",
+          requestId,
+          reason: "DB_PERSIST_FAILED",
+        }),
+      }),
+    );
+  });
+
+  it("truncates reason to 256 chars", async () => {
+    mockOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const longReason = "x".repeat(500);
+
+    await cancelPermission("s1", requestId, longReason);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        body: expect.stringContaining(`"reason":"${"x".repeat(256)}"`),
+      }),
+    );
+  });
+
+  it("throws HITL_TIMEOUT on supervisor 404 (informational; runner-agent treats as best-effort)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "NEEDS_INPUT", message: "no pending" }),
+        { status: 404 },
+      ),
+    );
+
+    await expect(
+      cancelPermission("s1", requestId, "reason"),
+    ).rejects.toMatchObject({ code: "HITL_TIMEOUT" });
+  });
+
+  it("throws EXECUTOR_UNAVAILABLE on network error", async () => {
+    mockReject(new TypeError("fetch failed"));
+
+    await expect(
+      cancelPermission("s1", requestId, "reason"),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+  });
+});
+
+describe("permission helpers — body shape regression", () => {
+  it("deliverPermission body never contains kind:form", async () => {
+    mockOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await deliverPermission(
+      "s1",
+      "00000000-0000-0000-0000-000000000003",
+      "allow",
+    );
+
+    const call = fetchSpy.mock.calls[0];
+    const body = (call?.[1] as RequestInit | undefined)?.body as string;
+
+    expect(body).not.toContain('"kind":"form"');
+    expect(body).toContain('"kind":"permission"');
+  });
+
+  it("cancelPermission body never contains kind:form", async () => {
+    mockOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await cancelPermission(
+      "s1",
+      "00000000-0000-0000-0000-000000000004",
+      "reason",
+    );
+
+    const call = fetchSpy.mock.calls[0];
+    const body = (call?.[1] as RequestInit | undefined)?.body as string;
+
+    expect(body).not.toContain('"kind":"form"');
+    expect(body).toContain('"kind":"permission"');
   });
 });
