@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { FlowContext, StepResult } from "./types";
+import type { GuardConfig } from "./guards";
+
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -7,9 +10,6 @@ import pino from "pino";
 
 import { appendGuardMetric, evaluateGuards } from "./guards";
 import { renderStrict } from "./templating";
-
-import type { FlowContext, StepResult } from "./types";
-import type { GuardConfig } from "./guards";
 
 const execFileAsync = promisify(execFile);
 

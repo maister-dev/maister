@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+import type { MaisterYamlV2 } from "@/lib/config.schema";
+
 import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
@@ -9,11 +11,10 @@ import pino from "pino";
 
 import * as schemaModule from "./schema";
 
+import { upsertExecutorsFromConfig } from "@/lib/executors";
+
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
-const { executors, flows, projects } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { flows, projects } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({ name: "db:seed" });
 
@@ -46,47 +47,40 @@ async function main() {
     }
 
     const projectId = randomUUID();
-    const claudeId = randomUUID();
-    const codexId = randomUUID();
     const flowId = randomUUID();
+
+    const seedConfig: MaisterYamlV2 = {
+      schemaVersion: 2,
+      project: {
+        name: "MAIster Dev",
+        repo_path: "/repos/maister-dev",
+        main_branch: "main",
+        branch_prefix: "maister/",
+      },
+      executors: [
+        { id: "claude-sonnet", agent: "claude", model: "claude-sonnet-4-6" },
+        { id: "codex-default", agent: "codex", model: "gpt-5-codex" },
+      ],
+      default_executor: "claude-sonnet",
+      flows: [
+        {
+          id: "bugfix",
+          source: "github.com/maister/maister-flow-bugfix",
+          version: "v0.0.1",
+        },
+      ],
+    };
 
     await db.insert(projects).values({
       id: projectId,
       slug: DEV_PROJECT_SLUG,
-      name: "MAIster Dev",
-      repoPath: "/repos/maister-dev",
+      name: seedConfig.project.name,
+      repoPath: seedConfig.project.repo_path,
       maisterYamlPath: "/repos/maister-dev/maister.yaml",
     });
     log.info(
       { table: "projects", id: projectId, slug: DEV_PROJECT_SLUG },
       "inserted",
-    );
-
-    await db.insert(executors).values([
-      {
-        id: claudeId,
-        projectId,
-        executorRefId: "claude-sonnet",
-        agent: "claude",
-        model: "claude-sonnet-4-6",
-      },
-      {
-        id: codexId,
-        projectId,
-        executorRefId: "codex-default",
-        agent: "codex",
-        model: "gpt-5-codex",
-      },
-    ]);
-    log.info({ table: "executors", ids: [claudeId, codexId] }, "inserted");
-
-    await db
-      .update(projects)
-      .set({ defaultExecutorId: claudeId })
-      .where(eq(projects.id, projectId));
-    log.info(
-      { table: "projects", id: projectId, defaultExecutorId: claudeId },
-      "updated default_executor_id",
     );
 
     await db.insert(flows).values({
@@ -100,6 +94,21 @@ async function main() {
       schemaVersion: 1,
     });
     log.info({ table: "flows", id: flowId, refId: "bugfix" }, "inserted");
+
+    const { defaultExecutorId } = await upsertExecutorsFromConfig({
+      projectId,
+      config: seedConfig,
+      db,
+    });
+
+    await db
+      .update(projects)
+      .set({ defaultExecutorId })
+      .where(eq(projects.id, projectId));
+    log.info(
+      { table: "projects", id: projectId, defaultExecutorId },
+      "updated default_executor_id",
+    );
   } finally {
     await pool.end();
   }

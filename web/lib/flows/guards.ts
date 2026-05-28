@@ -1,11 +1,11 @@
 import "server-only";
 
+import type { GuardKind, GuardMetric } from "./types";
+
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
-
-import type { GuardKind, GuardMetric } from "./types";
 
 const log = pino({
   name: "flow-guards",

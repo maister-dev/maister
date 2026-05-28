@@ -159,9 +159,78 @@ curl -X POST http://localhost:3000/api/runs \
 Response (started): `202 { "runId": "...", "status": "Running" }`.
 Response (over cap): `202 { "runId": "...", "status": "Pending", "queuePosition": 1 }`.
 
-Optional body field: `executorOverrideId` (resolution order at runtime:
-override → task.executorOverrideId → project.defaultExecutorId →
-flow.recommendedExecutorId).
+Optional body field: `executorOverrideId`. Full 5-level resolution
+order at runtime: `launcher override → tasks.executorOverrideId →
+flows.executorOverrideId → projects.defaultExecutorId →
+flows.recommendedExecutorId`. Implementation in
+`web/lib/executors.ts:resolveExecutor()` (pure, returns
+`{executorId, tier}`).
+
+### (Optional) CCR multi-provider routing
+
+CCR (Claude Code Router) is bundled out-of-the-box for executors that
+need intelligent multi-provider routing inside one session (z.ai GLM,
+OpenRouter, MiniMax, …). There is NO need to globally install `ccr` —
+MAIster ships the npm package as a supervisor dep.
+
+1. Decide which providers you want to route through (see the upstream
+   project for the provider catalog).
+2. Create `~/.claude-code-router/config.json` per CCR's docs. Minimal
+   shape (placeholders only — replace with real keys):
+
+   ```json
+   {
+     "HOST": "127.0.0.1",
+     "PORT": 3456,
+     "Providers": [
+       {
+         "name": "z.ai",
+         "api_base_url": "https://api.z.ai/api/anthropic",
+         "api_key": "<Z_AI_KEY>",
+         "models": ["glm-4.6"]
+       }
+     ],
+     "Router": { "default": "z.ai,glm-4.6" }
+   }
+   ```
+
+3. Mark the executor with `router: ccr` in `maister.yaml`:
+
+   ```yaml
+   executors:
+     - id: claude-glm-ccr
+       agent: claude
+       model: glm-4.6
+       router: ccr
+       env:
+         ANTHROPIC_AUTH_TOKEN: ${CCR_ADAPTER_TOKEN}
+   ```
+
+   (The adapter token here is consumed by the spawned adapter, not by
+   CCR itself — provider keys live in `~/.claude-code-router/config.json`.
+   Alternatively set `MAISTER_CCR_AUTH_TOKEN` on the supervisor's env.)
+
+4. The supervisor's CCR manager starts the daemon automatically on
+   the first `router=ccr` spawn and reuses it across the supervisor
+   process lifetime. Missing config or health-check failure surfaces as
+   503 `EXECUTOR_UNAVAILABLE` with a pointer to
+   [executors §CCR setup](system-analytics/executors.md#ccr-setup).
+
+**Docker note.** The Docker runtime ships with CCR pre-wired in
+`compose.yml`: `MAISTER_CCR_AUTH_TOKEN` is forwarded into the
+supervisor container, and `~/.claude-code-router` on the host is
+bind-mounted read-only at `/app/.ccr` (overridable via
+`MAISTER_CCR_CONFIG_HOST_PATH`). If `~/.claude-code-router/config.json`
+is missing on the host, `router=ccr` sessions fail with 503
+`EXECUTOR_UNAVAILABLE` — that's the contract, not a bug. To smoke-test
+that the supervisor is reachable from inside the container:
+
+```bash
+docker compose run --rm supervisor node -e "fetch('http://127.0.0.1:7777/sessions').then(r=>console.log('supervisor ok', r.status))"
+```
+
+(Validating an actual `router=ccr` spawn end-to-end requires a real CCR
+config file with provider keys — that part stays operator-managed.)
 
 **Via the dev CLI** (operates against an already-Pending run):
 

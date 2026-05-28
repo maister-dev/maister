@@ -26,6 +26,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 0.22.1
         version: 0.22.1(zod@3.25.76)
+      '@musistudio/claude-code-router':
+        specifier: 2.0.0
+        version: 2.0.0
       fastify:
         specifier: ^5.2.1
         version: 5.8.5
@@ -1405,6 +1408,11 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@musistudio/claude-code-router@2.0.0':
+    resolution: {integrity: sha512-41CRIOgBtYAxY4+xBn+plXv87ghuv0kVcdTUOFcVdf2cwQMY8u+g6DJ9hX9JiSdlX3xVFpW2UFlx7xRUTx5I5g==}
+    engines: {node: '>=20.0.0', pnpm: '>=8.0.0'}
+    hasBin: true
 
   '@napi-rs/wasm-runtime@1.1.4':
     resolution: {integrity: sha512-3NQNNgA1YSlJb/kMH1ildASP9HW7/7kYnRI2szWJaofaS1hWmbGI4H+d3+22aGzXXN9IJ+n+GiFVcGipJP18ow==}
@@ -6423,6 +6431,8 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
+
+  '@musistudio/claude-code-router@2.0.0': {}
 
   '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:

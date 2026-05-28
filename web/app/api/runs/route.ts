@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { resolveExecutor } from "@/lib/executors";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
 import { addWorktree, removeWorktree } from "@/lib/worktree";
@@ -64,29 +65,10 @@ function httpStatusForCode(code: string): number {
 }
 
 function resolveWorktreeRoot(): string {
-  return process.env.MAISTER_WORKTREE_ROOT ?? path.join(tmpdir(), "maister-worktrees");
-}
-
-function resolveExecutor(args: {
-  override: string | undefined;
-  task: { executorOverrideId: string | null };
-  project: { defaultExecutorId: string | null };
-  flow: { recommendedExecutorId: string | null };
-}): string {
-  const id =
-    args.override ??
-    args.task.executorOverrideId ??
-    args.project.defaultExecutorId ??
-    args.flow.recommendedExecutorId;
-
-  if (!id) {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      "no executor resolved (no override, task override, project default, or flow recommendation)",
-    );
-  }
-
-  return id;
+  return (
+    process.env.MAISTER_WORKTREE_ROOT ??
+    path.join(tmpdir(), "maister-worktrees")
+  );
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -96,7 +78,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     body = postBodySchema.parse(await req.json());
   } catch (err) {
     return errorResponse(
-      new MaisterError("CONFIG", `invalid POST body: ${(err as Error).message}`),
+      new MaisterError(
+        "CONFIG",
+        `invalid POST body: ${(err as Error).message}`,
+      ),
     );
   }
 
@@ -108,7 +93,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       transaction: any;
     };
 
-    const taskRows = await db.select().from(tasks).where(eq(tasks.id, body.taskId));
+    const taskRows = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, body.taskId));
     const task = taskRows[0];
 
     if (!task) {
@@ -134,14 +122,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       throw new MaisterError("PRECONDITION", "project is archived");
     }
 
-    const flowRows = await db.select().from(flows).where(eq(flows.id, task.flowId));
+    const flowRows = await db
+      .select()
+      .from(flows)
+      .where(eq(flows.id, task.flowId));
     const flow = flowRows[0];
 
     if (!flow) {
       throw new MaisterError("PRECONDITION", "flow not found for task");
     }
 
-    const executorId = resolveExecutor({
+    const { executorId, tier: resolvedFromTier } = resolveExecutor({
       override: body.executorOverrideId,
       task,
       project,
@@ -174,6 +165,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         taskId: task.id,
         runId,
         executorId: executor.id,
+        resolvedFromTier,
         branch,
         worktreePath,
       },
@@ -249,10 +241,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         ),
       );
 
-      return NextResponse.json(
-        { runId, status: "Running" },
-        { status: 202 },
-      );
+      return NextResponse.json({ runId, status: "Running" }, { status: 202 });
     }
 
     return NextResponse.json(

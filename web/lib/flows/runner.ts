@@ -1,10 +1,5 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-import pino from "pino";
-
-import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
 import type {
   Executor as ExecutorRow,
   Flow as FlowRow,
@@ -12,11 +7,11 @@ import type {
   Task as TaskRow,
   Workspace as WorkspaceRow,
 } from "@/lib/db/schema";
-import { isMaisterError, MaisterError } from "@/lib/errors";
-import { promoteNextPending } from "@/lib/scheduler";
-import {
-  deleteSession as defaultDeleteSession,
-} from "@/lib/supervisor-client";
+import type { FlowYamlV1, Step } from "@/lib/config.schema";
+import type { AcpSessionState, FlowContext, StepResult } from "./types";
+
+import { eq } from "drizzle-orm";
+import pino from "pino";
 
 import { buildContext } from "./context";
 import { appendGuardMetric, evaluateGuards } from "./guards";
@@ -32,8 +27,11 @@ import {
   markStepSucceeded,
 } from "./step-runs";
 
-import type { FlowYamlV1, Step } from "@/lib/config.schema";
-import type { AcpSessionState, FlowContext, StepResult } from "./types";
+import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
+import { promoteNextPending } from "@/lib/scheduler";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import * as schemaModule from "@/lib/db/schema";
+import { getDb } from "@/lib/db/client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executors, flows, projects, runs, tasks, workspaces } =
@@ -119,7 +117,10 @@ async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   const projectSlug = projectRows[0]?.slug;
 
   if (!projectSlug) {
-    throw new MaisterError("PRECONDITION", `project not found for run ${runId}`);
+    throw new MaisterError(
+      "PRECONDITION",
+      `project not found for run ${runId}`,
+    );
   }
 
   const workspaceRows: WorkspaceRow[] = await db
@@ -359,7 +360,11 @@ export async function runFlow(
         );
         failed = true;
         log2.warn(
-          { stepId: step.id, errorCode: result.errorCode, exitCode: result.exitCode },
+          {
+            stepId: step.id,
+            errorCode: result.errorCode,
+            exitCode: result.exitCode,
+          },
           "step failed",
         );
         break;

@@ -16,6 +16,7 @@ import { atomicWriteJson } from "@/lib/atomic";
 import { loadProjectConfig, validateFormSchemaVersion } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { upsertExecutorsFromConfig } from "@/lib/executors";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -77,8 +78,6 @@ flows:
     expect(cfg.executors).toHaveLength(2);
 
     const projectId = randomUUID();
-    const claudeId = randomUUID();
-    const codexId = randomUUID();
     const flowId = randomUUID();
 
     await db.insert(schema.projects).values({
@@ -91,22 +90,14 @@ flows:
       maisterYamlPath,
     });
 
-    await db.insert(schema.executors).values([
-      {
-        id: claudeId,
-        projectId,
-        executorRefId: "claude-sonnet",
-        agent: "claude",
-        model: "claude-sonnet-4-6",
-      },
-      {
-        id: codexId,
-        projectId,
-        executorRefId: "codex-default",
-        agent: "codex",
-        model: "gpt-5-codex",
-      },
-    ]);
+    const { executorIdByRef } = await upsertExecutorsFromConfig({
+      projectId,
+      config: cfg,
+      db,
+    });
+
+    expect(executorIdByRef["claude-sonnet"]).toBeDefined();
+    expect(executorIdByRef["codex-default"]).toBeDefined();
 
     await db.insert(schema.flows).values({
       id: flowId,

@@ -63,25 +63,36 @@ Request body:
   "projectSlug": "myapp",                   // kebab-case
   "worktreePath": "/repos/myapp-wt",        // cwd for the child
   "stepId": "plan",                         // log file: <runId>/<stepId>.log
-  "prompt": "/aif-plan ...",                // M3: not yet plumbed into the child
   "executor": {
     "agent": "claude" | "codex",
     "model": "claude-sonnet-4-6",
     "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "..." },
-    "router": "ccr"                         // optional, reserved for CCR routing
+    "router": "ccr"                         // optional — see CCR lifecycle below
   },
   "resumeSessionId": "uuid-abc"             // optional, M8 path (passed as `--resume`)
 }
 ```
 
+(Note: prompts are sent separately via `POST /sessions/:id/prompt`
+since M5 — the body field is gone.)
+
+When `executor.router === "ccr"`, the supervisor lazy-starts the
+bundled `@musistudio/claude-code-router` daemon on the first such
+session in the supervisor's lifetime, then injects
+`ANTHROPIC_BASE_URL=<ccr-proxy-url>` and
+`ANTHROPIC_AUTH_TOKEN=<resolved>` into the child env (see "Env merge"
+below). Subsequent `router=ccr` sessions reuse the same daemon. See
+[CCR lifecycle](#ccr-lifecycle) and
+[executors §CCR setup](system-analytics/executors.md#ccr-setup).
+
 Responses:
 
 | Status | Body | When |
 | ------ | ---- | ---- |
-| `201` | `{ "sessionId": "<uuid>", "pid": 12345 }` | Spawn succeeded. |
+| `201` | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>" }` | Spawn succeeded; ACP handshake completed. |
 | `409` | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }` | Body failed Zod validation. |
 | `500` | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }` | Adapter binary not found on PATH. |
-| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | Reserved for resource-cap rejections (not used in M3). |
+| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | CCR-related failure for `router=ccr` executors: CCR config file missing (`~/.claude-code-router/config.json` / `MAISTER_CCR_CONFIG_PATH`), malformed JSON, daemon failed to become ready within ~10s (health check on `GET /health`), identity-mismatch (another process owns the port), or `ANTHROPIC_AUTH_TOKEN` missing (no `executor.env.ANTHROPIC_AUTH_TOKEN` and no `MAISTER_CCR_AUTH_TOKEN`). Also reserved for future resource-cap rejections. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
 
 ### `DELETE /sessions/:id`
 
@@ -183,7 +194,7 @@ JSON at the HTTP boundary.
 | ---- | ---- | ---- |
 | `PRECONDITION` | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId. |
 | `SPAWN` | 500 | `child_process.spawn` failed (ENOENT, EACCES…). |
-| `EXECUTOR_UNAVAILABLE` | 503 | Reserved for resource limits / executor pool exhaustion (M6). |
+| `EXECUTOR_UNAVAILABLE` | 503 | CCR-related failure for `router=ccr` executors (config missing / malformed JSON / daemon failed to become ready / identity mismatch / `ANTHROPIC_AUTH_TOKEN` missing). Also reserved for future resource-cap rejections. Implemented M6. |
 | `ACP_PROTOCOL` | 500 | Wire-level failure (used by the input stub today). |
 | `CHECKPOINT` | 500 | Reserved for M8 checkpoint failures. |
 | `CRASH` | 500 | Reserved for heartbeat-promoted crash conditions. |
@@ -237,6 +248,8 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_KEEPALIVE_MINUTES` | `30` | Reserved for M8 (NeedsInput keep-alive window). |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Per-executor `env` in `maister.yaml` wins; this is a process-wide default for the adapters. |
 | `ANTHROPIC_AUTH_TOKEN` | unset | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). |
+| `MAISTER_CCR_AUTH_TOKEN` | unset | Fallback `ANTHROPIC_AUTH_TOKEN` for `router=ccr` executors that don't pin a per-executor token in `executor.env`. Missing → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
+| `MAISTER_CCR_CONFIG_PATH` | `/app/.ccr/config.json` (Docker) / `~/.claude-code-router/config.json` (otherwise) | Where the supervisor reads CCR's `HOST`/`PORT`. Missing file or malformed JSON → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
 | `LOG_LEVEL` | `debug` | pino level: `trace | debug | info | warn | error | fatal | silent`. |
 
 Secrets MUST NEVER appear in:
@@ -247,13 +260,23 @@ Secrets MUST NEVER appear in:
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
 **Env merge semantics for the spawned child:** `supervisor/src/spawn.ts`
-builds the child's env as `{ ...process.env, ...executor.env }` — the
-supervisor's process env is the base, and the per-executor env from
-`maister.yaml` overlays on top. This means:
+builds the child's env as
+`{ ...process.env, ...ccrLayer, ...executor.env }` — three layers with
+`executor.env` always winning on collision:
+
+1. `process.env` — the supervisor's own env at startup (base).
+2. `ccrLayer` — empty when `executor.router !== "ccr"`. When CCR is
+   active, contains exactly two keys: `ANTHROPIC_BASE_URL=<ccr-proxy-url>`
+   (from `ccrManager.getProxyUrl()`) and `ANTHROPIC_AUTH_TOKEN=<resolved>`
+   (from `executor.env.ANTHROPIC_AUTH_TOKEN ?? MAISTER_CCR_AUTH_TOKEN`).
+3. `executor.env` — per-executor block from `maister.yaml`.
+
+This means:
 
 - `executor.env.ANTHROPIC_AUTH_TOKEN` always wins over the supervisor's
-  own `ANTHROPIC_AUTH_TOKEN`, which is what you want when routing one
-  particular executor through z.ai GLM, OpenRouter, etc.
+  own `ANTHROPIC_AUTH_TOKEN` AND over the CCR-injected token, which is
+  what you want when pinning one particular executor through z.ai GLM,
+  OpenRouter, etc. — even with CCR routing active.
 - The supervisor's `ANTHROPIC_API_KEY` is also inherited by the child
   even when not overridden — the adapter binary picks the right
   credential based on its own logic (`ANTHROPIC_AUTH_TOKEN` if the
@@ -263,6 +286,36 @@ supervisor's process env is the base, and the per-executor env from
   Anthropic key), unset the relevant variable in the supervisor's
   process env at startup; do not rely on `executor.env` to "shadow"
   values it doesn't list. Phase 2 may add an explicit allow-list mode.
+
+## CCR lifecycle
+
+When `executor.router === "ccr"` on `POST /sessions`, the supervisor
+goes through `ccrManager.ensureRunning()` before spawning the adapter:
+
+- **Singleton per supervisor process.** The CCR daemon spawns at most
+  once per supervisor process — lazy on the first `router=ccr` session,
+  reused by every subsequent one. No per-session daemon, no
+  per-executor daemon.
+- **Configuration is operator-managed.** Host+port come from
+  `MAISTER_CCR_CONFIG_PATH` (default per env-vars table above), keys
+  `HOST` and `PORT` at the JSON root. Defaults `127.0.0.1:3456` apply
+  when those keys are absent but the file is valid JSON. The file is
+  read-only from the supervisor's perspective.
+- **Readiness probe validates target identity.** The supervisor polls
+  `GET /health` (CCR's own endpoint). Only HTTP 200 counts as ready;
+  404 surfaces as an "identity mismatch" 503 (another process owns the
+  port). A child exit before readiness aborts the probe with a
+  target-aware error.
+- **Shutdown is gated on the existing supervisor handler.** The
+  `SIGTERM`/`SIGINT` handler in `supervisor/src/main.ts` awaits
+  `ccrManager.shutdown({ timeoutMs: 5000 })` before exiting, so the
+  CCR daemon dies with the supervisor. Escalation: SIGTERM → observed
+  exit event vs grace timer → SIGKILL on timer win → `await exited`
+  (never `proc.killed`; see
+  [`.ai-factory/rules/backend.md`](../.ai-factory/rules/backend.md)).
+- **All failure modes surface as `EXECUTOR_UNAVAILABLE` (503).** Full
+  table in
+  [executors §CCR setup](system-analytics/executors.md#ccr-setup).
 
 ## Running locally
 

@@ -17,6 +17,7 @@
     "@agentclientprotocol/claude-agent-acp": "0.37.0",
     "@agentclientprotocol/codex-acp": "0.0.44",
     "@agentclientprotocol/sdk": "0.22.1",
+    "@musistudio/claude-code-router": "2.0.0",
     "fastify": "^5.2.1",
     "pino": "^9.14.0",
     "pino-pretty": "^11.3.0",

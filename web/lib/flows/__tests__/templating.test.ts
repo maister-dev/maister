@@ -53,7 +53,10 @@ describe("renderStrict — Mustache strict resolver", () => {
   });
 
   it("does not HTML-escape — passes <script> through raw", () => {
-    const ctx = { ...baseContext, task: { ...baseContext.task, prompt: "<script>alert(1)</script>" } };
+    const ctx = {
+      ...baseContext,
+      task: { ...baseContext.task, prompt: "<script>alert(1)</script>" },
+    };
 
     expect(renderStrict("{{ task.prompt }}", ctx)).toBe(
       "<script>alert(1)</script>",

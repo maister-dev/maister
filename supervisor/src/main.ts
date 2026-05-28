@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import pino from "pino";
 
+import { ccrManager } from "./ccr-manager";
 import { startHeartbeatWatcher } from "./heartbeat";
 import { registerRoutes } from "./http-api";
 import { SessionRegistry } from "./registry";
@@ -94,6 +95,16 @@ export async function start(): Promise<void> {
     });
 
     await app.close();
+
+    try {
+      await ccrManager.shutdown({ timeoutMs: 5_000 });
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message },
+        "ccr-manager shutdown failed; continuing",
+      );
+    }
+
     logger.info({ elapsedMs: Date.now() - startedAt }, "shutdown-done");
     await new Promise<void>((r) => logger.flush(() => r()));
     process.exit(0);

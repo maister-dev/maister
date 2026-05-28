@@ -108,10 +108,7 @@ export async function tryStartRun(
 
     const queuePosition = Number(aheadRows[0]?.count ?? 0) + 1;
 
-    log.info(
-      { runId, liveCount, cap, queuePosition },
-      "tryStartRun → queued",
-    );
+    log.info({ runId, liveCount, cap, queuePosition }, "tryStartRun → queued");
 
     return { started: false, queuePosition } satisfies TryStartRunResult;
   });

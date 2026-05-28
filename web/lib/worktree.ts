@@ -32,10 +32,7 @@ const branchNameSchema = z
   .string()
   .min(1)
   .max(255)
-  .regex(
-    /^[A-Za-z0-9_./-]+$/,
-    "branch must match /^[A-Za-z0-9_./-]+$/",
-  )
+  .regex(/^[A-Za-z0-9_./-]+$/, "branch must match /^[A-Za-z0-9_./-]+$/")
   .refine((b) => !b.includes(".."), "branch must not contain '..'")
   .refine((b) => !b.endsWith(".lock"), "branch must not end with .lock");
 
@@ -66,7 +63,11 @@ export type AddWorktreeArgs = {
 };
 
 export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
-  const repo = validate(absolutePathSchema, args.projectRepoPath, "projectRepoPath");
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const br = validate(branchNameSchema, args.branch, "branch");
 
@@ -116,7 +117,11 @@ export type RemoveWorktreeArgs = {
 };
 
 export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
-  const repo = validate(absolutePathSchema, args.projectRepoPath, "projectRepoPath");
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
 
   const cmdArgs = ["-C", repo, "worktree", "remove"];
@@ -124,7 +129,10 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
   if (args.force) cmdArgs.push("--force");
   cmdArgs.push(wt);
 
-  log.info({ projectRepoPath: repo, worktreePath: wt, force: !!args.force }, "removeWorktree");
+  log.info(
+    { projectRepoPath: repo, worktreePath: wt, force: !!args.force },
+    "removeWorktree",
+  );
 
   try {
     const { stdout, stderr } = await execFileAsync("git", cmdArgs, {

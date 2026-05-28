@@ -58,11 +58,22 @@ function pickAutoAllowOption(
 export async function createAcpConnection(
   args: CreateAcpConnectionArgs,
 ): Promise<CreateAcpConnectionResult> {
-  const { stdin, stdoutSource, sessionId, worktreePath, record, emitter, logger } =
-    args;
+  const {
+    stdin,
+    stdoutSource,
+    sessionId,
+    worktreePath,
+    record,
+    emitter,
+    logger,
+  } = args;
 
-  const writable = Writable.toWeb(stdin) as unknown as NodeWritableStream<Uint8Array>;
-  const readable = Readable.toWeb(stdoutSource) as unknown as NodeReadableStream<Uint8Array>;
+  const writable = Writable.toWeb(
+    stdin,
+  ) as unknown as NodeWritableStream<Uint8Array>;
+  const readable = Readable.toWeb(
+    stdoutSource,
+  ) as unknown as NodeReadableStream<Uint8Array>;
   const stream = acp.ndJsonStream(
     writable as unknown as Parameters<typeof acp.ndJsonStream>[0],
     readable as unknown as Parameters<typeof acp.ndJsonStream>[1],

@@ -1,6 +1,11 @@
 import "server-only";
 
+import type { GuardConfig } from "./guards";
+import type { AcpSessionState, FlowContext, StepResult } from "./types";
+
 import pino from "pino";
+
+import { renderStrict } from "./templating";
 
 import {
   createSession,
@@ -12,15 +17,6 @@ import {
   type SupervisorEvent,
   type SupervisorExecutorInput,
 } from "@/lib/supervisor-client";
-
-import { renderStrict } from "./templating";
-
-import type { GuardConfig } from "./guards";
-import type {
-  AcpSessionState,
-  FlowContext,
-  StepResult,
-} from "./types";
 
 const log = pino({
   name: "flow-runner",
@@ -125,8 +121,9 @@ function startEventConsumer(
         }
         if (ev.type === "session.line") {
           // Defensive: legacy raw-line events may carry text we still want to capture.
-          const line = (ev as Extract<SupervisorEvent, { type: "session.line" }>)
-            .line;
+          const line = (
+            ev as Extract<SupervisorEvent, { type: "session.line" }>
+          ).line;
 
           buf = appendChunk(buf, line + "\n");
         }
