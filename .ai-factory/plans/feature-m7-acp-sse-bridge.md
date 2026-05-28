@@ -213,14 +213,14 @@ Decisions:
 
 ### Phase 1: Supervisor — structured events log + pending-permission registry
 
-- [ ] **Task 1: New `supervisor/src/events-log.ts` — JSONL writer for SessionEvent**
+- [x] **Task 1: New `supervisor/src/events-log.ts` — JSONL writer for SessionEvent**
   - Files: `supervisor/src/events-log.ts` (NEW)
   - Export `openEventsLog(path: string, opts?: { logger?: Logger }): EventsLogWriter` with methods `append(event: SessionEvent): void` and `close(): Promise<void>`.
   - Internal: open `fs.createWriteStream(path, { flags: "a" })` once; on `append`, `stream.write(JSON.stringify(event) + "\n")`. Track per-instance byte counter for telemetry. On `close`, end the stream and `await` the `finish` event.
   - Pino logger `name: "supervisor-events-log"`. DEBUG per append with `{path, monotonicId, type, bytes}`. WARN on backpressure (`stream.write` returns false). ERROR on stream `error` event.
   - Acceptance: writing 1000 events of mixed types produces a 1000-line file; each line is a valid `JSON.parse` round-trip into the original `SessionEvent`. Covered by Task 5 tests.
 
-- [ ] **Task 2: `spawn.ts` opens events.jsonl alongside the existing raw .log**
+- [x] **Task 2: `spawn.ts` opens events.jsonl alongside the existing raw .log**
   - Files: `supervisor/src/spawn.ts` (extend the existing log-path computation at lines 55–65)
   - Compute `eventsLogPath = resolve(runtimeRoot, ".maister", request.projectSlug, "runs", request.runId, `${request.stepId}.events.jsonl`)`.
   - `const eventsLog = openEventsLog(eventsLogPath, { logger });` next to the existing `logStream`.
@@ -229,7 +229,7 @@ Decisions:
   - Logging: extend the existing spawn INFO line with `{eventsLogPath}`.
   - Acceptance: spawning a session that emits N events leaves an N-line `.events.jsonl` on disk; the file ends with a newline; the file is closed (no `lsof` handle leak) after `session.exited`. Covered by Task 5 tests.
 
-- [ ] **Task 3: New `supervisor/src/pending-permissions.ts` — deferred registry with select/cancel/reject**
+- [x] **Task 3: New `supervisor/src/pending-permissions.ts` — deferred registry with select/cancel/reject**
   - Files: `supervisor/src/pending-permissions.ts` (NEW)
   - Export `createPendingPermissions(opts?: { logger?: Logger; timeoutMs?: number }): PendingPermissionRegistry` and the singleton `pendingPermissions = createPendingPermissions({ timeoutMs: keepaliveMinutesEnv() * 60_000 })`.
   - Type `PendingPermissionRegistry { register(sessionId, requestId, deferred): void; resolve(sessionId, requestId, optionId): boolean; cancel(sessionId, requestId, reason): boolean; reject(sessionId, requestId, error): boolean; size(sessionId): number; purgeSession(sessionId): void }`.
@@ -239,14 +239,14 @@ Decisions:
   - Pino logger `name: "supervisor-acp"`. DEBUG per `register`. INFO per `resolve` / `cancel` with `{sessionId, requestId, ageMs, optionId?, reason?}`. WARN per `reject` (timeout or purge). WARN on `register` collision (duplicate requestId for same sessionId — defensive).
   - Acceptance: covered by Task 5 tests.
 
-- [ ] **Task 4: Wire `purgeSession` into supervisor lifecycle**
+- [x] **Task 4: Wire `purgeSession` into supervisor lifecycle**
   - Files: `supervisor/src/registry.ts` (extend the existing exit / crash branches), `supervisor/src/main.ts` (extend SIGTERM cleanup)
   - On every `session.exited` / `session.crashed` event emit in `registry.ts:60-71`, call `pendingPermissions.purgeSession(sessionId)` AFTER pushing the terminal event to the ring buffer.
   - On supervisor shutdown (in `main.ts:63-118`), iterate `registry.forEach` and call `pendingPermissions.purgeSession(entry.record.sessionId)` for each live session BEFORE sending SIGTERM to the child. This ensures awaiting `requestPermission` calls inside the adapter get a clean `CRASH` rejection rather than dangling.
   - Logging: existing supervisor INFO `"shutdown-start"` already names `liveSessions`; extend with `pendingPermissionsCount: sum-of-registry-sizes`.
   - Acceptance: covered by Task 5 tests.
 
-- [ ] **Task 5: Unit tests for events-log + pending-permissions + spawn wiring**
+- [x] **Task 5: Unit tests for events-log + pending-permissions + spawn wiring**
   - Files: `supervisor/src/__tests__/events-log.test.ts` (NEW), `supervisor/src/__tests__/pending-permissions.test.ts` (NEW), `supervisor/src/__tests__/spawn.test.ts` (extend existing)
   - events-log unit cases (4):
     - `openEventsLog` + 3 `append` calls + `close` → file has 3 lines, each round-trips through `JSON.parse`.

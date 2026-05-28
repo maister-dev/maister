@@ -4,6 +4,8 @@ import type * as acp from "@agentclientprotocol/sdk";
 
 import { EventEmitter } from "node:events";
 
+import { type EventsLogWriter } from "./events-log";
+import { pendingPermissions } from "./pending-permissions";
 import {
   SupervisorError,
   type SessionEvent,
@@ -22,11 +24,13 @@ export type RegistryEntry = {
   eventBuffer: SessionEvent[];
   connection?: acp.ClientSideConnection;
   acpSessionId?: string;
+  eventsLog?: EventsLogWriter;
 };
 
 export type RegisterOptions = {
   connection?: acp.ClientSideConnection;
   acpSessionId?: string;
+  eventsLog?: EventsLogWriter;
 };
 
 const MAX_EVENT_BUFFER = 1000;
@@ -60,6 +64,7 @@ export class SessionRegistry {
       eventBuffer: [],
       connection: options.connection,
       acpSessionId: options.acpSessionId,
+      eventsLog: options.eventsLog,
     };
 
     this.entries.set(record.sessionId, entry);
@@ -67,6 +72,26 @@ export class SessionRegistry {
       entry.eventBuffer.push(event);
       if (entry.eventBuffer.length > MAX_EVENT_BUFFER) {
         entry.eventBuffer.shift();
+      }
+      entry.eventsLog?.append(event);
+      if (
+        event.type === "session.exited" ||
+        event.type === "session.crashed"
+      ) {
+        pendingPermissions.purgeSession(record.sessionId);
+        if (entry.eventsLog) {
+          const closing = entry.eventsLog;
+
+          void closing.close().catch((err: unknown) => {
+            this.logger.warn(
+              {
+                sessionId: record.sessionId,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "events-log close failed",
+            );
+          });
+        }
       }
     });
     this.logger.debug(

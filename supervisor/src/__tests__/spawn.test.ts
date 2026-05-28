@@ -1,6 +1,6 @@
 import type { SessionEvent, StartSessionRequest } from "../types";
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import pino from "pino";
 
 import { spawnSession } from "../spawn";
-import { SESSION_EVENT_CHANNEL } from "../registry";
+import { SESSION_EVENT_CHANNEL, SessionRegistry } from "../registry";
 
 const FIXTURE_PATH = resolve(
   fileURLToPath(import.meta.url),
@@ -150,6 +150,85 @@ describe("spawnSession", () => {
         binaryOverride: "/definitely/not/a/real/binary",
       }),
     ).rejects.toMatchObject({ code: "SPAWN" });
+  });
+
+  it("writes events.jsonl with one line per emitted SessionEvent after registry hookup", async () => {
+    const sessionId = "session-elog";
+    const request = makeRequest({ runId: "run-elog", stepId: "elog" });
+    const { child, emitter, record, eventsLog, eventsLogPath } =
+      await spawnSession({
+        sessionId,
+        request,
+        runtimeRoot: tempDir,
+        logger: silentLogger,
+        binaryOverride: "node",
+        preArgs: [FIXTURE_PATH, "--lines", "3"],
+      });
+
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(record, child, emitter, { eventsLog });
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    record.monotonicId += 1;
+    registry.emit(sessionId, {
+      type: "session.exited",
+      sessionId,
+      monotonicId: record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const raw = await readFile(eventsLogPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    const types = lines.map((l) => (JSON.parse(l) as { type: string }).type);
+
+    expect(types.filter((t) => t === "session.line")).toHaveLength(3);
+    expect(types).toContain("session.exited");
+  });
+
+  it("closes events.jsonl after terminal event so the file stat is stable", async () => {
+    const sessionId = "session-elog-close";
+    const request = makeRequest({
+      runId: "run-elog-close",
+      stepId: "elog-close",
+    });
+    const { child, emitter, record, eventsLog, eventsLogPath } =
+      await spawnSession({
+        sessionId,
+        request,
+        runtimeRoot: tempDir,
+        logger: silentLogger,
+        binaryOverride: "node",
+        preArgs: [FIXTURE_PATH, "--lines", "1"],
+      });
+
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(record, child, emitter, { eventsLog });
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    record.monotonicId += 1;
+    registry.emit(sessionId, {
+      type: "session.exited",
+      sessionId,
+      monotonicId: record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const before = await stat(eventsLogPath);
+
+    await new Promise<void>((r) => setTimeout(r, 50));
+    const after = await stat(eventsLogPath);
+
+    expect(after.size).toBe(before.size);
   });
 
   it("caps single line at MAX_LINE_BYTES and emits a truncated event", async () => {

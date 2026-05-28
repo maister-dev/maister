@@ -132,7 +132,8 @@ export type SupervisorErrorCode =
   | "EXECUTOR_UNAVAILABLE"
   | "ACP_PROTOCOL"
   | "CHECKPOINT"
-  | "CRASH";
+  | "CRASH"
+  | "HITL_TIMEOUT";
 
 export class SupervisorError extends Error {
   readonly code: SupervisorErrorCode;
@@ -164,6 +165,8 @@ export function httpStatusForCode(code: SupervisorErrorCode): number {
       return 409;
     case "EXECUTOR_UNAVAILABLE":
       return 503;
+    case "HITL_TIMEOUT":
+      return 410;
     case "SPAWN":
     case "ACP_PROTOCOL":
     case "CHECKPOINT":

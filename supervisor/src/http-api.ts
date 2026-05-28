@@ -71,17 +71,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   app.post("/sessions", async (req, reply) => {
     const parsed = StartSessionRequestSchema.parse(req.body);
     const sessionId = randomUUID();
-    const { child, emitter, record, acpStdoutTap } = await spawnSession({
-      sessionId,
-      request: parsed,
-      runtimeRoot,
-      logger,
-      binaryOverride: opts.spawnOverrides?.binary,
-      preArgs: opts.spawnOverrides?.preArgs,
-      ccrManager: opts.spawnOverrides?.ccrManager,
-    });
+    const { child, emitter, record, acpStdoutTap, eventsLog } =
+      await spawnSession({
+        sessionId,
+        request: parsed,
+        runtimeRoot,
+        logger,
+        binaryOverride: opts.spawnOverrides?.binary,
+        preArgs: opts.spawnOverrides?.preArgs,
+        ccrManager: opts.spawnOverrides?.ccrManager,
+      });
 
-    registry.register(record, child, emitter);
+    registry.register(record, child, emitter, { eventsLog });
     attachHeartbeat({ sessionId, child, registry, logger });
     await attachCost({
       sessionId,

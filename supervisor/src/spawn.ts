@@ -11,6 +11,7 @@ import {
   ccrManager as defaultCcrManager,
   type CcrManager,
 } from "./ccr-manager";
+import { openEventsLog, type EventsLogWriter } from "./events-log";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   SupervisorError,
@@ -44,6 +45,8 @@ export type SpawnSessionResult = {
   logPath: string;
   logStream: WriteStream;
   acpStdoutTap: PassThrough;
+  eventsLog: EventsLogWriter;
+  eventsLogPath: string;
 };
 
 export async function spawnSession(
@@ -60,9 +63,18 @@ export async function spawnSession(
     request.runId,
     `${request.stepId}.log`,
   );
+  const eventsLogPath = resolve(
+    runtimeRoot,
+    ".maister",
+    request.projectSlug,
+    "runs",
+    request.runId,
+    `${request.stepId}.events.jsonl`,
+  );
 
   await mkdir(dirname(logPath), { recursive: true });
   const logStream = createWriteStream(logPath, { flags: "a" });
+  const eventsLog = await openEventsLog(eventsLogPath, { logger });
 
   const args: string[] = opts.preArgs ? [...opts.preArgs] : [];
 
@@ -116,6 +128,7 @@ export async function spawnSession(
       hasEnv: Boolean(
         request.executor.env && Object.keys(request.executor.env).length > 0,
       ),
+      eventsLogPath,
     },
     "spawn",
   );
@@ -130,6 +143,7 @@ export async function spawnSession(
     const onError = (err: Error) => {
       child.off("spawn", onSpawn);
       logStream.end();
+      void eventsLog.close();
       logger.warn(
         {
           sessionId,
@@ -157,6 +171,7 @@ export async function spawnSession(
 
   if (pid === undefined) {
     logStream.end();
+    await eventsLog.close();
     throw new SupervisorError("SPAWN", "child has no pid after spawn");
   }
 
@@ -240,5 +255,14 @@ export async function spawnSession(
     logger.warn({ sessionId, err: err.message }, "stdout-error");
   });
 
-  return { child, emitter, record, logPath, logStream, acpStdoutTap };
+  return {
+    child,
+    emitter,
+    record,
+    logPath,
+    logStream,
+    acpStdoutTap,
+    eventsLog,
+    eventsLogPath,
+  };
 }
