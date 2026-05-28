@@ -1,36 +1,53 @@
 openapi: 3.0.3
 info:
   title: MAIster Web HTTP API
-  version: "0.7.0"
+  version: "0.9.0"
   description: |
     HTTP surface exposed by the Next.js web tier under `app/api/`. Consumed
-    by the MAIster UI and (in M7) by any process that wants to drive HITL
+    by the MAIster UI and (in M7+) by any process that wants to drive HITL
     or stream run events without bypassing the web tier's trust boundary.
 
-    **Milestone status: M7.**
+    **Milestone status: M9.**
 
     Routes shipped to date:
 
+    - `POST /api/projects` (M9) — register a project from a directory
+      containing `maister.yaml`. Admin-only (global role `admin`). Validates
+      the manifest, installs Flow plugins, persists DB rows.
+    - `POST /api/projects/{slug}/tasks` (M9) — create a task on a project
+      board. Requires project membership at `member` or above.
+    - `/api/auth/{...nextauth}` (M9) — Auth.js v5 credentials handler.
+      See [Authentication & RBAC](../configuration.md#authentication--rbac).
     - `POST /api/runs` (M5+) — launch a run from a Backlog task; precondition
-      checks, executor resolution, worktree create, scheduler claim.
+      checks, executor resolution, worktree create, scheduler claim. Requires
+      project membership at `member` or above (`launchRun`).
     - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
       two-phase atomic claim (this file documents the contract). Form and
       human-review flows write `input-<stepId>.json` after a DB claim, and
-      the runner's resume-from-existing-input branch picks it up.
+      the runner's resume-from-existing-input branch picks it up. Requires
+      project membership at `member` or above (`answerHitl`).
     - `GET /api/runs/{runId}/stream` (M7) — Server-Sent Events bridge.
       Tails the per-run durable replay log at
       `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` (produced by
       the supervisor — see `supervisor.openapi.yaml`). Reconnect via
       `Last-Event-ID`. Event shape mirrors the supervisor SSE doc
-      (`async/web-runs.asyncapi.yaml`).
+      (`async/web-runs.asyncapi.yaml`). Requires project membership at
+      `viewer` or above (`readBoard`).
+
+    **Authentication.** All routes require a valid session (Auth.js v5
+    credentials). Unauthenticated requests return `401 UNAUTHENTICATED`.
+    Insufficient role returns `403 UNAUTHORIZED`. The `security` field below
+    is left empty because Auth.js sessions are cookie-based and not
+    expressible as an OpenAPI security scheme without a custom extension.
 
     See also:
       - [`./supervisor.openapi.yaml`](./supervisor.openapi.yaml)
       - [`./async/web-runs.asyncapi.yaml`](./async/web-runs.asyncapi.yaml)
       - [`./async/supervisor-sse.asyncapi.yaml`](./async/supervisor-sse.asyncapi.yaml)
       - [`../error-taxonomy.md`](../error-taxonomy.md)
+      - [`../configuration.md`](../configuration.md) — Authentication & RBAC section
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -41,15 +58,240 @@ servers:
     description: Local Next.js dev server (default).
 security: []
 tags:
+  - name: projects
+    description: Project registration and task creation.
+  - name: auth
+    description: Auth.js v5 session management.
   - name: runs
     description: Run launch, status, and event streaming.
   - name: hitl
     description: Human-in-the-loop response surface.
 paths:
+  /api/projects:
+    post:
+      tags: [projects]
+      summary: Register a project from a maister.yaml directory
+      description: |
+        Admin-only (`requireGlobalRole("admin")`). Validates `maister.yaml`
+        v2 at `{dir}/maister.yaml`, derives the project slug from
+        `project.name` (kebab-case, server-side — never body-derived),
+        checks `slug` and `repo_path` uniqueness, persists `projects` +
+        `executors` rows, installs each Flow plugin listed in `flows[]`,
+        and inserts a `project_members` row for the caller with
+        `role = "owner"`.
+
+        Phases and their error codes:
+        1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` (403)
+        2. Load + validate `maister.yaml` — `CONFIG` (422)
+        3. Slug/repo_path collision check — `CONFLICT` (409)
+        4. DB insert (project + executors + owner membership) — `CONFIG` on
+           slug derivation failure (422)
+        5. Flow plugin installs — `FLOW_INSTALL` (502); on partial failure
+           the route deletes any already-written `flows` rows; the
+           `projects` row may remain (operator can retry or archive).
+
+        Source: `web/app/api/projects/route.ts`.
+      operationId: postProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostProjectBody" }
+            examples:
+              register-local:
+                summary: Register a local project
+                value:
+                  dir: /repos/my-app
+      responses:
+        "201":
+          description: Project registered. Slug and ID returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostProjectResponse" }
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller does not have global `admin` role (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `slug` or `repo_path` already registered (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: |
+            `maister.yaml` is missing, invalid YAML, fails schema
+            validation, or `project.name` cannot be kebab-cased
+            (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "502":
+          description: |
+            A Flow plugin `git clone` or manifest validation failed
+            (`FLOW_INSTALL`). Any already-installed flow rows for this
+            registration attempt are compensated (deleted); the project
+            row may remain.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tasks:
+    post:
+      tags: [projects]
+      summary: Create a task on a project board
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("createTask")`). The `projectId` is
+        resolved from the URL `slug` (server-state), never from the body.
+
+        Validates that `flowId` belongs to the project and, when
+        `executorOverrideId` is supplied, that it also belongs to the same
+        project. Both checks return `CONFIG` (422) on failure.
+
+        Source: `web/app/api/projects/[slug]/tasks/route.ts`.
+      operationId: postTask
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostTaskBody" }
+            examples:
+              create-task:
+                summary: Create a bugfix task
+                value:
+                  title: "Fix off-by-one in pagination"
+                  prompt: "The `/users` endpoint returns page 2 when page 1 is requested..."
+                  flowId: "flow-uuid-here"
+      responses:
+        "201":
+          description: Task created in `Backlog`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taskId]
+                properties:
+                  taskId:
+                    type: string
+                    format: uuid
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller is not a `member` or above for this project
+            (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Project not found or archived (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: |
+            `flowId` not configured for this project, or
+            `executorOverrideId` not registered for this project
+            (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/auth/{nextauth}:
+    get:
+      tags: [auth]
+      summary: Auth.js v5 credentials handler (GET)
+      description: |
+        Auth.js v5 catch-all handler at `/api/auth/[...nextauth]`. Handles
+        the standard Auth.js sub-paths: `session`, `csrf`, `providers`,
+        `signout` (GET form), and callback redirects.
+
+        Implemented by `auth()` exported from `web/auth.ts` (the full
+        Node.js runtime config with the Drizzle adapter). The edge-safe
+        split config lives in `web/auth.config.ts` (credentials provider
+        definition + `authorized` callback for middleware).
+
+        MAIster ships **credentials-only** authentication. OAuth providers
+        are not configured. The `accounts`, `sessions`, and
+        `verification_tokens` tables exist for the Drizzle adapter
+        contract.
+
+        Do not enumerate sub-paths here — see the Auth.js v5 docs for the
+        canonical path list. Source: `web/auth.ts`, `web/auth.config.ts`.
+      operationId: authGet
+      parameters:
+        - name: nextauth
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Auth.js response (session JSON, CSRF token, etc.).
+        "302":
+          description: Redirect (sign-in / sign-out flow).
+    post:
+      tags: [auth]
+      summary: Auth.js v5 credentials handler (POST)
+      description: |
+        Handles `signIn` (credentials), `signOut`, and callback POSTs.
+        Sign-in validates `email` + `password` against the `users` table
+        (`bcrypt` hash comparison). On success the session is persisted via
+        the Drizzle adapter and the session cookie is set.
+
+        `users.role` (global role: `admin | member | viewer`) is surfaced
+        on the session object and propagated to `SessionUser.role` used by
+        `lib/authz.ts`. The first registered user is seeded as `admin`
+        via `pnpm db:seed` (or the `SEED_ADMIN_*` env vars).
+      operationId: authPost
+      parameters:
+        - name: nextauth
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                password: { type: string }
+                csrfToken: { type: string }
+      responses:
+        "200":
+          description: Auth.js response (session update, sign-out confirmation).
+        "302":
+          description: Redirect after sign-in / sign-out.
+        "401":
+          description: Invalid credentials.
+
   /api/runs:
     post:
       tags: [runs]
       summary: Launch a new run for a Backlog task
+      description: |
+        Requires a valid session (`requireSession`) AND project membership
+        at `member` or above (`requireProjectAction("launchRun")`). The
+        `projectId` is derived from the task row, never from the body.
       operationId: postRun
       requestBody:
         required: true
@@ -62,6 +304,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PostRunResponse" }
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller is not a `member` or above for this project
+            (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
             Precondition failed. Examples: task not in Backlog, project
@@ -80,6 +334,10 @@ paths:
       tags: [hitl]
       summary: Deliver an HITL response (permission / form / human)
       description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`). The `projectId` is derived
+        from the run row, never from the body.
+
         Single user-facing HITL endpoint. The handler dispatches on the
         stored `hitl_requests.kind`:
 
@@ -150,6 +408,18 @@ paths:
                       Row state at response time. The runner promotes
                       the run to `Running` as soon as it picks up the
                       work.
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller is not a `member` or above for the run's project
+            (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "400":
           description: |
             Malformed body (`CONFIG`) — JSON parse failure or missing
@@ -267,6 +537,10 @@ paths:
       tags: [runs]
       summary: SSE bridge — stream per-run events
       description: |
+        Requires project membership at `viewer` or above
+        (`requireProjectRole(run.projectId, "viewer")`). The `projectId`
+        is derived from the run row, never from the query string.
+
         Server-Sent Events bridge. Tails a single per-run durable replay
         log at `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
         (written by the supervisor — see `supervisor.openapi.yaml`).
@@ -302,6 +576,18 @@ paths:
               schema:
                 type: string
                 enum: [text/event-stream]
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller is not a `viewer` or above for the run's project
+            (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "404":
           description: Run not found.
           content:
@@ -309,6 +595,55 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 components:
   schemas:
+    PostProjectBody:
+      type: object
+      required: [dir]
+      properties:
+        dir:
+          type: string
+          minLength: 1
+          description: |
+            Absolute path to the directory containing `maister.yaml`.
+            Must start with `/` and must not contain a `..` path
+            segment (validated server-side before any filesystem access).
+          example: /repos/my-app
+    PostProjectResponse:
+      type: object
+      required: [slug, projectId]
+      properties:
+        slug:
+          type: string
+          description: |
+            Kebab-case slug derived server-side from `project.name` in
+            `maister.yaml`. Never body-derived.
+        projectId:
+          type: string
+          format: uuid
+    PostTaskBody:
+      type: object
+      required: [title, prompt, flowId]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        prompt:
+          type: string
+          minLength: 1
+        flowId:
+          type: string
+          minLength: 1
+          description: |
+            ID of a `flows` row belonging to the project identified by
+            the URL `slug`. Any other flow ID returns `422 CONFIG`.
+        executorOverrideId:
+          type: string
+          minLength: 1
+          description: |
+            Optional. ID of an `executors` row belonging to this
+            project. Stored in `tasks.executor_override_id`; enters the
+            override chain at tier 2 (between run-launcher override and
+            per-flow override). Any other executor ID returns `422
+            CONFIG`.
     PostRunBody:
       type: object
       required: [taskId]
@@ -387,4 +722,6 @@ components:
             - FLOW_INSTALL
             - ACP_PROTOCOL
             - CHECKPOINT
+            - UNAUTHENTICATED
+            - UNAUTHORIZED
         message: { type: string }

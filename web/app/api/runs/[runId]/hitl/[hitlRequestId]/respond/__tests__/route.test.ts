@@ -116,6 +116,16 @@ vi.mock("@/lib/runs/resume-driver", () => ({
     scheduleResumedSessionDriveSpy(...(args as unknown[])),
 }));
 
+// Stub the authz boundary so the route's RBAC check passes without pulling
+// in @/auth → next-auth (whose beta ESM trips the Vitest resolver). These
+// cases exercise the two-phase/error logic, not authorization.
+vi.mock("@/lib/authz", () => ({
+  requireProjectAction: vi.fn(async () => ({
+    user: { id: "u-test", role: "member" },
+    role: "member",
+  })),
+}));
+
 let runtimeRoot: string;
 
 beforeEach(async () => {

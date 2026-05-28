@@ -1,11 +1,18 @@
 # Full database ERD
 
-All 8 tables in one diagram. For partial views by domain, see
+All 13 tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
+`VERIFICATION_TOKENS`, `PROJECT_MEMBERS`).
+For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md).
 
 ```mermaid
 erDiagram
+    USERS ||--o{ ACCOUNTS : "oauth links"
+    USERS ||--o{ SESSIONS : "active sessions"
+    USERS ||--o{ PROJECT_MEMBERS : "project roles"
+
+    PROJECTS ||--o{ PROJECT_MEMBERS : "members"
     PROJECTS ||--o{ EXECUTORS : has
     PROJECTS ||--o{ FLOWS : has
     PROJECTS ||--o{ TASKS : has
@@ -21,6 +28,47 @@ erDiagram
     RUNS ||--|| WORKSPACES : "one worktree per run"
     RUNS ||--o{ STEP_RUNS : "per-step record"
     RUNS ||--o{ HITL_REQUESTS : raises
+
+    USERS {
+        text id PK
+        text name
+        text email UK
+        timestamp email_verified
+        text image
+        text password_hash
+        text role "admin|member|viewer"
+        timestamp created_at
+    }
+
+    ACCOUNTS {
+        text user_id FK
+        text provider "PK part"
+        text provider_account_id "PK part"
+        text type
+        text refresh_token
+        text access_token
+        integer expires_at
+    }
+
+    SESSIONS {
+        text session_token PK
+        text user_id FK
+        timestamp expires
+    }
+
+    VERIFICATION_TOKENS {
+        text identifier "PK part"
+        text token "PK part"
+        timestamp expires
+    }
+
+    PROJECT_MEMBERS {
+        text id PK
+        text project_id FK
+        text user_id FK
+        text role "owner|admin|member|viewer"
+        timestamp created_at
+    }
 
     PROJECTS {
         text id PK
@@ -69,6 +117,7 @@ erDiagram
         text flow_id FK
         text executor_override_id FK
         text status "Backlog|InFlight|Done|Abandoned"
+        text stage "Backlog|Prepare"
         integer attempt_number "monotonic per task"
         timestamp created_at
         timestamp updated_at
@@ -136,6 +185,12 @@ erDiagram
 
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
+| `users` | implicit | `email` UNIQUE | Auth lookup by email. |
+| `accounts` | implicit PK | `(provider, provider_account_id)` | Auth.js adapter dedup. |
+| `sessions` | implicit PK | `session_token` | Session lookup. |
+| `verification_tokens` | implicit PK | `(identifier, token)` | Token lookup. |
+| `project_members` | `project_members_project_user_uq` | `(project_id, user_id)` UNIQUE | One membership per user/project. |
+| `project_members` | `project_members_user_idx` | `(user_id)` | Per-user project listing / authz. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
 | `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |

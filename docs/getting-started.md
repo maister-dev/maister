@@ -66,12 +66,20 @@ docker compose up -d
 docker compose logs -f                   # follow web + supervisor + postgres
 ```
 
-What you should see: the HeroUI Next.js template home page in dark mode.
-Navbar, theme toggle, and demo routes (`/about`, `/blog`, `/docs`,
-`/pricing`) all work. These are template stubs that will be replaced as the
-real MAIster routes land: portfolio home (`/`), projects list
-(`/projects`), per-project board (`/projects/[slug]`), task creation
-(`/projects/[slug]/tasks/new`), and run detail (`/runs/[id]`).
+What you should see (M9+): the MAIster login page at `/login`. Sign in with
+the credentials from `pnpm db:seed`. Active routes:
+
+| Route | Description |
+| ----- | ----------- |
+| `/login` | Credentials sign-in (Auth.js v5). |
+| `/` | Portfolio home — workspaces grid across all projects. |
+| `/projects` | Registered projects list + "Add project" button (admin only). |
+| `/projects/new` | Add-project form (admin only). Accepts absolute path to `maister.yaml` dir. |
+| `/projects/[slug]` | Per-project board — Backlog, Prepare, In Delivery, In Review columns. |
+| `/projects/[slug]/tasks/new` | Task creation form (member+). |
+
+The old HeroUI template stubs (`/about`, `/blog`, `/docs`, `/pricing`) have
+been removed.
 
 ## Other scripts
 
@@ -118,6 +126,39 @@ DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:seed
 Full reference: [Database Schema](database-schema.md). For the full env-var
 list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,
 `MAISTER_KEEPALIVE_MINUTES`): [Configuration](configuration.md).
+
+## Authentication setup (M9)
+
+MAIster requires `AUTH_SECRET` to start. Generate one and add it to `.env`:
+
+```bash
+openssl rand -base64 33   # paste the output as AUTH_SECRET=
+```
+
+The seed script (`pnpm db:seed`) creates the initial admin user. Defaults
+are `SEED_ADMIN_EMAIL=admin@maister.local` and
+`SEED_ADMIN_PASSWORD=maister-admin`. Override both in `.env` before any
+shared use:
+
+```env
+AUTH_SECRET=<generated>
+SEED_ADMIN_EMAIL=you@example.com
+SEED_ADMIN_PASSWORD=<strong-password>
+```
+
+After running `pnpm db:seed`, sign in at `http://localhost:3000/login` with
+those credentials. The first registered user is always `admin`.
+
+**Registering a project** requires the `admin` global role. After signing
+in, navigate to `/projects/new`, paste the absolute path to a directory
+containing `maister.yaml`, and submit. The server validates the manifest,
+installs referenced Flow plugins, and creates the project row. You
+(the admin) are automatically the project `owner`.
+
+**EN/RU language toggle.** The UI ships with English and Russian. The
+language is stored in the `NEXT_LOCALE` cookie. Use the toggle in the
+top-right navbar to switch locales without a page reload. The selection
+persists across sessions.
 
 ## Install a Flow plugin
 

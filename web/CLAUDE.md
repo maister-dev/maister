@@ -32,20 +32,109 @@ is template demo material to be **replaced** as we implement MAIster routes.
 | Pkg manager | pnpm                                             |
 | Node        | 24 (per root CLAUDE.md container target)         |
 
-Not yet installed (add when we wire backend per `../docs/`):
-`drizzle-orm`, `pg`, `zod`, `vitest`, `@playwright/test`. The
-`supervisor/` package additionally needs `@agentclientprotocol/sdk@0.22.1`
-(for ACP-client wire types), spawns the
-`@agentclientprotocol/claude-agent-acp@0.37.0` and
-`@agentclientprotocol/codex-acp@0.0.44` adapter binaries (declared as
-deps so the binaries are on path), plus an HTTP server (`hono` or
-`express`). All Apache-2.0. See
-`../docs/kaa-maister-m0-spike-findings-20260525.md` for full M0 spike
-results.
-
 **Do not** add other component libraries (no shadcn/ui, no MUI, no Chakra).
 HeroUI v3 + Tailwind 4 + `tailwind-variants` covers all UI primitives.
 Main/default UI language - EN, project should be i18n-ized. RU interface support is **REQUIRED**
+
+## M9 additions (shipped 2026-05-29)
+
+### Design tokens (forest theme)
+
+`styles/globals.css` defines the `@theme` block with `forest-*` CSS custom
+properties (backgrounds, surfaces, borders, text, accent, status colours).
+Light/dark variants switch via `next-themes` `class` strategy:
+`<ThemeProvider attribute="class" defaultTheme="dark">`. Components import
+the tokens as Tailwind utilities (`bg-forest-bg`, `text-forest-text-primary`,
+etc.). The tokens are also referenced via the `@custom-variant dark` rule so
+`dark:` prefixes resolve correctly.
+
+### Authentication (Auth.js v5 credentials)
+
+Two-file edge/Node split:
+
+- `auth.config.ts` — edge-safe. Defines the `CredentialsProvider` (email +
+  password with bcrypt), the `authorized` middleware callback, and
+  `trustHost: true`. Imported by `middleware.ts`.
+- `auth.ts` — Node.js runtime only. Imports `@auth/drizzle-adapter` wired
+  to `getDb()`, extends `session` and `jwt` callbacks to surface
+  `users.id` and `users.role` on the session object, re-exports `auth`,
+  `signIn`, `signOut`, `handlers`.
+
+`web/middleware.ts` protects all `(app)` route-group pages. Unauthenticated
+requests redirect to `/login`. API routes under `app/api/` call
+`requireSession()` / `requireProjectAction()` from `lib/authz.ts` directly
+to return machine-readable JSON errors.
+
+### RBAC model
+
+`lib/authz.ts` exports:
+
+- `requireSession()` — throws `UNAUTHENTICATED` (401) if no session.
+- `requireGlobalRole(min)` — throws `UNAUTHORIZED` (403) if `users.role`
+  is below `min`. Order: `viewer < member < admin`.
+- `requireProjectRole(projectId, min)` — checks `project_members.role`.
+  Global `admin` users bypass this check and receive `owner` access.
+  Order: `viewer < member < admin < owner`.
+- `requireProjectAction(projectId, action)` — convenience wrapper mapping
+  named actions (`readBoard`, `launchRun`, `createTask`, `answerHitl`,
+  `editSettings`) to minimum project roles via `PROJECT_ACTION_MIN`.
+- `httpStatusForAuthz(code)` — maps `UNAUTHENTICATED`→401,
+  `UNAUTHORIZED`→403 for use in API route error handlers.
+
+The `projectId` passed to project-scoped functions must always be a
+server-derived value (from a DB row), never a body field.
+
+### i18n (next-intl, cookie-based)
+
+- `i18n/request.ts` — locale resolution: `NEXT_LOCALE` cookie first,
+  then `Accept-Language` header, defaulting to `en`.
+- `messages/en.json` and `messages/ru.json` — message catalogs.
+- In-app toggle calls the `setLocale` server action (sets the cookie).
+- No URL-prefix routing. Locale is purely cookie-driven.
+- Server Components use `getTranslations()` from `next-intl/server`.
+  Client Components use `useTranslations()`.
+
+### Route groups
+
+```
+app/
+  (auth)/          # Public: /login — no session required.
+    login/
+  (app)/           # Protected: session required (middleware redirect).
+    page.tsx        # Portfolio home (/)
+    projects/
+      page.tsx      # Project list (/projects)
+      new/
+        page.tsx    # Add project form (/projects/new)
+      [slug]/
+        page.tsx    # Project board (/projects/[slug])
+        tasks/
+          new/
+            page.tsx  # Task creation (/projects/[slug]/tasks/new)
+```
+
+### Scope note
+
+Auth.js/NextAuth, project RBAC, the 6-column board design, and the
+credentials login flow are M9 additions that go beyond the original POC
+"out of scope" list in `../CLAUDE.md`. They were sanctioned by the user as
+part of this milestone.
+
+**Known M9 deferrals (do not implement without explicit instruction):**
+
+- PRs and MCPs board tabs exist in the UI as placeholders; there is no
+  backend for them.
+- The `projects` table does not have `lang`, `repo_url`, `description`,
+  `tags`, or `mcps` columns — those design ideas are omitted from the
+  schema until a migration is added.
+- The settings panel (`/projects/[slug]/settings`) is read-only; there is
+  no settings-write API route in M9.
+- The board's "In Delivery" stage is an approximation computed in
+  `web/lib/board.ts` from recently-merged run status — not a persisted
+  board column.
+- User management UI (invite, role change, remove member) is not
+  implemented; `project_members` rows are written only by `POST /api/projects`
+  (owner) and `pnpm db:seed` (admin).
 
 ## Scripts
 

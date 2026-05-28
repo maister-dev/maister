@@ -9,19 +9,115 @@ ultra-light dev only — never as a production target.
 
 ## Tables
 
-Eight tables. App-generated `text` IDs (UUID v4 or cuid2 — pick at insert
-time). All timestamps stored as `timestamp with timezone` in UTC.
+Thirteen tables (M9 added five auth tables and `project_members`).
+App-generated `text` IDs (UUID v4). All timestamps stored as
+`timestamp with timezone` in UTC.
+
+Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
+`accounts`, `sessions`, `verification_tokens`, `project_members`, and the
+`tasks.stage` column.
 
 | Table | Purpose | Cascades from |
 | ----- | ------- | ------------- |
+| `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`. | (root) |
+| `accounts` | Auth.js OAuth account links (Drizzle adapter contract). | `users.id` |
+| `sessions` | Auth.js session tokens. | `users.id` |
+| `verification_tokens` | Auth.js email-verification tokens. PK `(identifier, token)`. | (root) |
+| `project_members` | Per-project role assignments. UNIQUE `(project_id, user_id)`. | `projects.id`, `users.id` |
 | `projects` | Registered repos. `slug` + `repo_path` both UNIQUE. | (root) |
 | `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
 | `flows` | Installed Flow plugins per project, tag-pinned. | `projects.id` |
-| `tasks` | Board cards. Status `Backlog | InFlight | Done | Abandoned`. | `projects.id` |
+| `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
 | `step_runs` | Per-step execution records for the flow runner. | `runs.id` |
 | `hitl_requests` | HITL prompts emitted during a run. | `runs.id` |
+
+## `users`
+
+(Introduced in M9 — migration `0004_petite_gamora.sql`.)
+
+```ts
+{
+  id,
+  name?,
+  email (UNIQUE, NOT NULL),
+  emailVerified?,
+  image?,
+  passwordHash?,                  // bcrypt hash; null for OAuth-only users
+  role: 'admin' | 'member' | 'viewer',   // DEFAULT 'member'
+  createdAt
+}
+```
+
+`role` is the **global role** used by `requireGlobalRole()` in `lib/authz.ts`.
+The first user created via `pnpm db:seed` receives `role = 'admin'`.
+Global admins are treated as implicit owners of every project (no
+`project_members` row required).
+
+## `accounts`
+
+(Introduced in M9 — Drizzle adapter contract for Auth.js v5.)
+
+```ts
+{
+  userId,                         // FK -> users.id (cascade)
+  type, provider, providerAccountId,   // PK (provider, providerAccountId)
+  refresh_token?, access_token?, expires_at?,
+  token_type?, scope?, id_token?, session_state?
+}
+```
+
+Stores OAuth provider account links. MAIster M9 ships credentials-only;
+this table is populated by Auth.js when OAuth providers are added (Phase 2).
+
+## `sessions`
+
+(Introduced in M9 — Drizzle adapter contract for Auth.js v5.)
+
+```ts
+{
+  sessionToken (PK),
+  userId,                         // FK -> users.id (cascade)
+  expires
+}
+```
+
+## `verification_tokens`
+
+(Introduced in M9 — Drizzle adapter contract for Auth.js v5.)
+
+```ts
+{
+  identifier, token,              // PK (identifier, token)
+  expires
+}
+```
+
+## `project_members`
+
+(Introduced in M9 — migration `0004_petite_gamora.sql`.)
+
+```ts
+{
+  id,
+  projectId,                      // FK -> projects.id (cascade)
+  userId,                         // FK -> users.id (cascade)
+  role: 'owner' | 'admin' | 'member' | 'viewer',
+  createdAt
+}
+```
+
+UNIQUE `(projectId, userId)` — one membership row per (user, project).
+Indexed on `userId` for per-user project listing.
+
+`role` is the **project role** used by `requireProjectRole()` and
+`requireProjectAction()` in `lib/authz.ts`. Role order (ascending
+privilege): `viewer < member < admin < owner`.
+
+When `POST /api/projects` registers a project, it inserts the calling
+admin as `owner`. Global `admin` users bypass this table and are treated
+as implicit `owner` of every project.
 
 ## `projects`
 
@@ -98,10 +194,16 @@ UNIQUE `(projectId, flowRefId)`.
   flowId,                        // FK -> flows.id
   executorOverrideId?,           // FK -> executors.id, optional
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
+  stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
   attemptNumber,                 // monotonic per task, starts at 1
   createdAt, updatedAt
 }
 ```
+
+`stage` was added in M9 (migration `0004_petite_gamora.sql`). It drives
+the board's sub-column within the Backlog bucket (`Backlog` = unstarted,
+`Prepare` = marked for preparation). It is independent of `status`
+(which is the lifecycle axis). Default is `'Backlog'`.
 
 UNIQUE `(id, attemptNumber)` is **vacuous** — `id` is the PK, so the
 composite UNIQUE guards nothing. Current schema has no DB-level
@@ -228,10 +330,18 @@ round-trip.
 
 ## Cascade chain
 
-Deleting a project drops every descendant row in one statement:
+Deleting a user cascades to their `accounts`, `sessions`, and
+`project_members` rows. Deleting a project drops every descendant row in
+one statement:
 
 ```
+users
+  ├── accounts           (FK userId, cascade)
+  ├── sessions           (FK userId, cascade)
+  └── project_members    (FK userId, cascade)
+
 projects
+  ├── project_members    (FK projectId, cascade)
   ├── executors          (FK projectId, cascade)
   ├── flows              (FK projectId, cascade)
   ├── tasks              (FK projectId, cascade)
@@ -255,6 +365,7 @@ Created via Drizzle:
 
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
+| `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |
 | `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
 | `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
 | `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |

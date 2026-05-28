@@ -207,6 +207,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 
 | Var | Required | Default | Used by |
 | --- | -------- | ------- | ------- |
+| `AUTH_SECRET` | yes | — | Auth.js v5 session JWT signing. Generate with `openssl rand -base64 33`. Must be identical across all web replicas. |
+| `AUTH_URL` | no | derived from request host | Auth.js canonical origin (e.g. `https://maister.example.com`). Only needed when a reverse proxy rewrites the `Host` header in a way that breaks callback URLs. Leave blank in dev. |
+| `SEED_ADMIN_EMAIL` | no | `admin@maister.local` | `pnpm db:seed` — email for the initial admin user. |
+| `SEED_ADMIN_PASSWORD` | no | `maister-admin` | `pnpm db:seed` — password for the initial admin user. Change before any shared use. |
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global concurrency cap (across all projects) |
@@ -234,6 +238,74 @@ SSE, never embedded in `session/update` payloads visible to the browser.
 
 `.env.example` in the repo root documents the full set with safe placeholder
 values.
+
+## Authentication & RBAC
+
+MAIster uses **Auth.js v5** (formerly NextAuth.js) with a **credentials
+provider only**. OAuth providers are not configured in M9.
+
+The implementation is split into two files to satisfy Auth.js's edge/node
+boundary requirements:
+
+- `web/auth.config.ts` — edge-safe: credentials provider definition,
+  `authorized` callback used by `web/middleware.ts` to protect all
+  `(app)` routes.
+- `web/auth.ts` — Node.js runtime only: imports the Drizzle adapter
+  (`@auth/drizzle-adapter`) and extends the `session` / `jwt` callbacks
+  to surface `users.role` and `users.id` on the session object.
+
+**First user / admin bootstrap.** Run `pnpm db:seed` after `pnpm db:migrate`.
+The seed script creates the user identified by `SEED_ADMIN_EMAIL` /
+`SEED_ADMIN_PASSWORD` with `role = 'admin'`. The first user is always admin
+regardless of how they are created.
+
+**Global roles** (`users.role`): `admin | member | viewer`. Enforced by
+`lib/authz.ts:requireGlobalRole()`.
+
+| Role | Capabilities |
+| ---- | ------------ |
+| `admin` | Register projects, invite users, is implicit `owner` of every project. |
+| `member` | Default. Can be added to projects; cannot register new projects. |
+| `viewer` | Read-only access to projects they are explicitly added to. |
+
+**Project roles** (`project_members.role`): `owner | admin | member | viewer`.
+Enforced by `lib/authz.ts:requireProjectRole()` / `requireProjectAction()`.
+
+| Role | Min action | Capabilities |
+| ---- | ---------- | ------------ |
+| `owner` | — | All actions including project archival. |
+| `admin` | `editSettings` | Edit project settings. |
+| `member` | `launchRun`, `createTask`, `answerHitl` | Launch runs, create tasks, respond to HITL. |
+| `viewer` | `readBoard` | Read the board and stream run events. |
+
+Global `admin` users bypass the `project_members` table and are treated
+as `owner` on every project. Source: `web/lib/authz.ts`.
+
+**Middleware protection.** `web/middleware.ts` (Auth.js middleware) protects
+all routes under `(app)/`. Unauthenticated requests are redirected to
+`/login`. API routes additionally call `requireSession()` /
+`requireProjectAction()` directly to enforce role checks and return
+machine-readable `401 UNAUTHENTICATED` / `403 UNAUTHORIZED` JSON.
+
+## Internationalization (EN/RU)
+
+MAIster uses **next-intl** for bilingual EN/RU support.
+
+- **Locale detection** (request.ts at `web/i18n/request.ts`): reads the
+  `NEXT_LOCALE` cookie first; falls back to the `Accept-Language` request
+  header; defaults to `en`.
+- **Locale persistence**: the in-app language toggle calls the `setLocale`
+  server action, which sets the `NEXT_LOCALE` cookie on the response.
+  No URL-based locale prefix — locale is cookie-only.
+- **Message catalogs**: `web/messages/en.json` and `web/messages/ru.json`.
+  All user-visible strings must have entries in both files.
+- **Server usage**: `import { getTranslations } from "next-intl/server"` in
+  Server Components and Route Handlers.
+- **Client usage**: `import { useTranslations } from "next-intl"` in Client
+  Components.
+
+There is no `NEXT_LOCALE` environment variable. The cookie name `NEXT_LOCALE`
+is the next-intl default; ops documentation above records it for awareness.
 
 ## Public API
 
