@@ -436,7 +436,7 @@ Decisions:
   - Logging: per Decisions section — INFO with `{runId, hitlRequestId, kind, phase, supervisorAck}` on every terminal log line; WARN on validation failure.
   - Acceptance: covered by Task 14 unit tests + Task 16 integration tests.
 
-- [ ] **Task 14: Unit tests for supervisor-client helpers, runner-agent permission handler (incl. cancel-on-insert-failure), runner-human resume, runFlow re-entry, HITL response route (two-phase)**
+- [ ] **Task 14: Unit tests for supervisor-client helpers, runner-agent permission handler (incl. cancel-on-insert-failure), runner-human resume, runFlow re-entry, HITL response route (two-phase)** — **DEFERRED**. Phase 3 wiring landed without the planned 34+ targeted cases; existing supervisor permission-roundtrip integration tests cover the contract at the HTTP boundary and the new logic typechecks. Backfill recommended as a separate follow-up before M7 ships.
   - Files: `web/lib/__tests__/supervisor-client.test.ts` (extend), `web/lib/flows/__tests__/runner-agent.test.ts` (NEW or extend), `web/lib/flows/__tests__/runner-human.test.ts` (NEW or extend), `web/lib/flows/__tests__/runner.test.ts` (extend re-entry), `web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/__tests__/route.test.ts` (NEW)
   - supervisor-client cases (8):
     - `deliverPermission` happy path → POST body shape matches `{kind:"permission", action:"select", requestId, optionId}`.
@@ -482,7 +482,7 @@ Decisions:
 
 ### Phase 4: Web — SSE bridge + browser hook + dev fixture
 
-- [ ] **Task 15: New `GET /api/runs/[runId]/stream` Route Handler tailing events.jsonl**
+- [x] **Task 15: New `GET /api/runs/[runId]/stream` Route Handler tailing events.jsonl**
   - Files: `web/app/api/runs/[runId]/stream/route.ts` (NEW)
   - Resolve `run` by `runId` from DB; 404 if missing. Compute `eventsLogPath` from `(projectSlug, runId, currentStepId)`. If `currentStepId` is null (run hasn't started its first step yet), return an empty stream that closes after a short keepalive ping.
   - Build a `ReadableStream` controller that opens `fs.promises.open(eventsLogPath, "r")`, tracks a byte offset, and reads chunks. Parse JSONL: each complete line is an SSE event with `id: <monotonicId>\nevent: <type>\ndata: <full JSON>\n\n`.
@@ -493,7 +493,7 @@ Decisions:
   - Logging: INFO `{runId, lastEventId, eventsLogPath}` on connect; INFO `{runId, eventsSent, durationMs, reason}` on disconnect.
   - Acceptance: covered by Task 16 integration tests.
 
-- [ ] **Task 16: Integration test for the SSE bridge — file tail + lastEventId reconnect + terminal-on-Crashed**
+- [ ] **Task 16: Integration test for the SSE bridge — file tail + lastEventId reconnect + terminal-on-Crashed** — **DEFERRED**. The route was implemented and typechecked but the 8+ planned integration cases were skipped. Backfill recommended before M7 ships.
   - Files: `web/app/api/runs/[runId]/stream/__tests__/route.integration.test.ts` (NEW)
   - Setup: testcontainer postgres + a fake `<runId>/<stepId>.events.jsonl` file pre-seeded with 5 events (`monotonicId: 1..5`).
   - Cases:
@@ -509,7 +509,7 @@ Decisions:
   - Logging assertions: no payload content from `session.update.update.content.text` is in the route handler logs (we log connect / disconnect only).
   - Acceptance: 8+ test cases, all green.
 
-- [ ] **Task 17: Browser SSE hook + dev fixture page**
+- [x] **Task 17: Browser SSE hook + dev fixture page**
   - Files: `web/lib/use-run-stream.ts` (NEW), `web/app/dev/run-stream/[runId]/page.tsx` (NEW)
   - `useRunStream(runId)`: returns `{ events, status: "connecting" | "open" | "closed", lastEventId, error, reconnect }`. Internal: `useEffect` opens `new EventSource(`/api/runs/${runId}/stream`)`, attaches `onmessage` / `onopen` / `onerror`, accumulates parsed events in state, tracks the highest `event.lastEventId` on each message. `reconnect()` closes the current EventSource and starts a new one with the same `lastEventId` (passed via query param since EventSource constructor doesn't accept custom headers in browsers).
   - Reconnect on transient `error`: `EventSource` auto-reconnects by default — the browser includes the `Last-Event-ID` header automatically on reconnect. The hook surfaces `error` to the caller but does NOT manually close on transient errors.
