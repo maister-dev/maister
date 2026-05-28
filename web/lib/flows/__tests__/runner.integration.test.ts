@@ -235,6 +235,7 @@ describe("runFlow integration — human step suspends", () => {
       expect(
         crashed?.message ?? "agent steps failed because no supervisor",
       ).toBeTruthy();
+
       return;
     }
 

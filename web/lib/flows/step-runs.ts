@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { MaisterErrorCode } from "@/lib/errors";
+import type { StepRun } from "@/lib/db/schema";
+
 import { randomUUID } from "node:crypto";
 
 import { asc, eq } from "drizzle-orm";
@@ -7,8 +10,6 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import type { MaisterErrorCode } from "@/lib/errors";
-import type { StepRun } from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
 const { stepRuns } = schemaModule as unknown as Record<string, any>;

@@ -1,3 +1,5 @@
+import type { FlowContext } from "@/lib/flows/types";
+
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +7,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runCliStep } from "@/lib/flows/runner-cli";
-import type { FlowContext } from "@/lib/flows/types";
 
 let workDir: string;
 let worktreePath: string;

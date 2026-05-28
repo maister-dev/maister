@@ -378,7 +378,10 @@ async function installFlowPluginImpl(
     await mkdir(dirname(target), { recursive: true });
 
     if (sourceKind.kind === "local") {
-      log.info({ absPath: sourceKind.absPath, target }, "local-source-detected");
+      log.info(
+        { absPath: sourceKind.absPath, target },
+        "local-source-detected",
+      );
       await cp(sourceKind.absPath, target, {
         recursive: true,
         errorOnExist: false,

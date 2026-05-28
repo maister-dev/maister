@@ -1,15 +1,14 @@
 import "server-only";
 
-import pino from "pino";
-
 import type {
   Executor as ExecutorRow,
   Run as RunRow,
   StepRun as StepRunRow,
   Task as TaskRow,
 } from "@/lib/db/schema";
-
 import type { FlowContext } from "./types";
+
+import pino from "pino";
 
 const log = pino({
   name: "flow-context",

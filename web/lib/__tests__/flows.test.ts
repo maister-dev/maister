@@ -101,7 +101,10 @@ describe("isLocalDirectorySource", () => {
     const dir = join(workDir, "plugin");
 
     await mkdir(dir);
-    await writeFile(join(dir, "flow.yaml"), "schemaVersion: 1\nname: x\nsteps: []\n");
+    await writeFile(
+      join(dir, "flow.yaml"),
+      "schemaVersion: 1\nname: x\nsteps: []\n",
+    );
 
     const result = await isLocalDirectorySource(dir);
 
@@ -112,7 +115,10 @@ describe("isLocalDirectorySource", () => {
     const dir = join(workDir, "plugin2");
 
     await mkdir(dir);
-    await writeFile(join(dir, "flow.yaml"), "schemaVersion: 1\nname: x\nsteps: []\n");
+    await writeFile(
+      join(dir, "flow.yaml"),
+      "schemaVersion: 1\nname: x\nsteps: []\n",
+    );
 
     const url = pathToFileURL(dir).href;
     const result = await isLocalDirectorySource(url);
