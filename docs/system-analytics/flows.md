@@ -131,9 +131,24 @@ flowchart LR
 
 ## Expectations
 
-- A Flow plugin is identified by `{id}@{tag}`; install is idempotent on
-  that tuple and the cache at `~/.maister/flows/<id>@<tag>/` is
-  immutable once written.
+- A Flow plugin is identified at install time by its upstream **git
+  commit SHA**, captured via `git rev-parse HEAD` after the
+  tag-pinned clone. The system cache is keyed by the resolved SHA:
+  `~/.maister/flows/<flow_ref_id>@<short_sha>/`. The directory is
+  content-addressed and immutable once written — re-installing the
+  same tag at a different commit (force-pushed tag, replaced tag)
+  lands at a new directory, leaving the prior install untouched.
+- **(Implemented M7)** A run executes against an immutable,
+  content-addressed flow bundle. At launch the SHA is snapshotted into
+  `runs.flow_revision`; the runner derives the bundle path from
+  `(flows.flow_ref_id, runs.flow_revision)` via
+  `systemCachePath` — **never** from the mutable
+  `flows.installed_path` column. A flow upgrade is therefore safe even
+  for runs in flight: the new install lands at a new SHA-keyed
+  directory and existing runs keep reading their pinned directory.
+  Local-source installs (file:// to a non-git directory, used by POC
+  test fixtures) use the literal `"unknown"` sentinel as the
+  revision; production flows are git-only.
 - `flow.yaml` is parsed exactly once at install and persisted verbatim
   to `flows.manifest` (jsonb); runtime NEVER re-reads `flow.yaml`.
 - `flow.yaml schemaVersion: 1` mismatch refused with `CONFIG` BEFORE

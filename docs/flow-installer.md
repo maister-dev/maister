@@ -16,18 +16,53 @@ manifest schema (`flow.yaml` v1) see
 ## Layout
 
 ```
-~/.maister/flows/<flowId>@<version>/        # system cache (shared across projects)
+~/.maister/flows/<flowId>@<short_sha>/      # system cache, content-addressed
   flow.yaml                                  # parsed + validated v1 manifest
   setup.sh                                   # optional, executed once on install
   …shipped CLIs, skills, agents…
 
-<project repo>/.maister/<slug>/flows/<flowId>  # symlink → ../../../../~/.maister/...@<version>
+<project repo>/.maister/<slug>/flows/<flowId>  # symlink → ../../../../~/.maister/...@<short_sha>
 ```
 
-The system cache is keyed by `<flowId>@<version>` — installing the same
-flow tag for two projects results in one clone and two symlinks. The
-per-project symlink is what agents and Flow steps reference (steps like
-`form_schema: ./schemas/review.json` resolve relative to it).
+The system cache is keyed by `<flowId>@<short_sha>` — the 12-character
+prefix of the git commit SHA captured at install time via
+`git rev-parse HEAD` after the tag-pinned clone. Installing the same
+tag at the same upstream commit for two projects produces one cache
+directory and two symlinks. The per-project symlink is what agents and
+Flow steps reference (steps like `form_schema: ./schemas/review.json`
+resolve relative to it).
+
+### Version upgrade and immutability
+
+The system cache is **content-addressed**, not tag-addressed:
+
+- Re-installing the same tag at a different upstream commit
+  (force-pushed tag, replaced tag) produces a new cache directory at
+  the new SHA. The old directory stays on disk untouched.
+- Re-installing a different tag that resolves to the same commit
+  shares the cache directory with the original install.
+
+`flows.installed_path`, `flows.version`, `flows.revision`, and
+`flows.manifest` are all updated in place on upgrade — the row is
+the project's "currently installed" pointer. **Runs in flight do not
+read this column**: each run snapshots `flows.revision` into
+`runs.flow_revision` at launch and the runner derives the bundle
+path from `(flowRefId, runs.flow_revision)` via `systemCachePath`.
+A flow upgrade therefore cannot mutate the bytes of a still-running
+flow — the SHA-pinned directory remains intact and the runner keeps
+reading from it until the run completes or is discarded.
+
+Local-source installs (file:// to a non-git directory, used by POC
+test fixtures only) use the literal `"unknown"` sentinel as the
+revision; their cache directory lives at
+`~/.maister/flows/<flowId>@unknown/` and is NOT content-addressed.
+Production flows are git-only.
+
+Garbage collection of orphaned SHA-keyed directories
+(`@<old_sha>` with no live run pinned to it) is **future work** — a
+cron / install-time hook that scans `runs.flow_revision` and removes
+unreferenced directories. Until that ships, expect the cache to grow
+proportionally to the number of upgrades.
 
 ## Public API
 
@@ -44,8 +79,13 @@ const result = await installFlowPlugin({
   db: drizzleClient,                   // optional; defaults to getDb()
   signal: abortSignal,                 // optional; cancels long clones
 });
-// → { flowRowId, installedPath, symlinkPath, manifest }
+// → { flowRowId, installedPath, symlinkPath, manifest, revision }
 ```
+
+`revision` is the 40-char git commit SHA captured at install time
+(or `"unknown"` for local-source POC fixtures). Callers that launch
+runs MUST snapshot this into `runs.flow_revision` so the runner can
+derive the immutable bundle path.
 
 All known failures throw `MaisterError({ code: "FLOW_INSTALL", cause })`.
 `cause` carries the original `Error` (git stderr, fs error, manifest

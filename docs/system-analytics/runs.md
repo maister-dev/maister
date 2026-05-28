@@ -201,6 +201,22 @@ flowchart TD
   `HITL_TIMEOUT`) and `Running → Crashed` (HITL row insert failure
   in the runner) are net-new in M7 — see
   [`hitl.md`](hitl.md#expectations).
+- **(Implemented M7)** Every run is bound to an immutable,
+  content-addressed flow bundle. At launch the upstream git commit
+  SHA is snapshotted into `runs.flow_revision`; the runner derives
+  the bundle path from `(flows.flow_ref_id, runs.flow_revision)`.
+  Resumes read the exact same bytes regardless of intervening flow
+  upgrades. If `runs.current_step_id` is not present in the pinned
+  manifest at resume time, the runner fails closed: marks
+  `runs.status = "Crashed"` and raises `MaisterError("CONFIG")`. See
+  [`flows.md`](flows.md#expectations).
+- **(Implemented M7)** Terminal `runs.status` precedence: a step
+  whose result carries `errorCode = "CRASH"` (e.g. permission-row
+  insert failure surfaced by `runner-agent`) transitions the run to
+  `Crashed`, not `Failed`. The runner accumulates the highest-severity
+  error observed across the step loop in a local `runErrorCode`
+  carrier so the terminal write can branch
+  `CRASH → Crashed | other failure → Failed | success → Review`.
 - **(Designed M11)** Merge is `git merge --no-ff` only; conflicts
   always abort the merge and leave the run in `Review`. No merge
   route exists in M5.

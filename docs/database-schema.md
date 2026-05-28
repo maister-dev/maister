@@ -62,8 +62,23 @@ executor id resolves within its project's namespace, never cross-project.
   id, projectId,
   flowRefId,                     // the id from maister.yaml flows[]
   source,                        // e.g. 'github.com/org/maister-flow-bugfix'
-  version,                       // tag-pinned, e.g. 'v1.2.3'
-  installedPath,                 // resolved symlink target
+  version,                       // tag at install time, e.g. 'v1.2.3'
+  revision,                      // git commit SHA captured at install
+                                 //   via `git rev-parse HEAD`;
+                                 //   "unknown" sentinel for local-source
+                                 //   POC fixtures. Mutates on upgrade
+                                 //   alongside `version` and
+                                 //   `installedPath`; runs snapshot it
+                                 //   into `runs.flow_revision` at
+                                 //   launch and the runtime resolver
+                                 //   uses the snapshot, not this column.
+  installedPath,                 // ~/.maister/flows/<id>@<short_sha>/
+                                 //   — the currently installed bundle
+                                 //   for this project. The runtime
+                                 //   runner does NOT read this column;
+                                 //   it derives the bundle path from
+                                 //   (flowRefId, runs.flow_revision)
+                                 //   via systemCachePath.
   manifest (jsonb),              // parsed flow.yaml
   schemaVersion,
   recommendedExecutorId?,        // nullable, app-side FK to executors
@@ -101,7 +116,14 @@ queries.
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
   currentStepId?,                // (M5) id of the step the runner is on
-  flowVersion,                   // snapshot at launch time
+  flowVersion,                   // tag snapshot at launch — display
+  flowRevision,                  // git SHA snapshot at launch; the
+                                 //   runner derives the bundle path
+                                 //   `~/.maister/flows/<flow_ref_id>@<short_sha>/`
+                                 //   from this column (NEVER from the
+                                 //   mutable `flows.installed_path`).
+                                 //   Pre-migration rows backfill to
+                                 //   the literal "unknown" sentinel.
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
   startedAt, endedAt?
