@@ -71,11 +71,76 @@ async function resolveSchemaPath(
   }
 }
 
+async function tryReadInputArtifact(
+  inputPath: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await readFile(inputPath, "utf8");
+
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      throw new MaisterError(
+        "CONFIG",
+        `input artifact at ${inputPath} is not a JSON object`,
+      );
+    } catch (err) {
+      if (err instanceof MaisterError) throw err;
+      throw new MaisterError(
+        "CONFIG",
+        `input artifact at ${inputPath} is not valid JSON: ${(err as Error).message}`,
+        { cause: err as Error },
+      );
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (err instanceof MaisterError) throw err;
+    throw new MaisterError(
+      "CONFIG",
+      `failed to read input artifact at ${inputPath}: ${(err as Error).message}`,
+      { cause: err as Error },
+    );
+  }
+}
+
 export async function runHumanStep(
   step: HumanStepLike,
   ctx: RunHumanStepCtx,
-): Promise<StepResult & { needsInput: true }> {
+): Promise<StepResult & { needsInput: boolean }> {
   const startedAt = Date.now();
+  const inputArtifactPath = path.join(
+    ctx.runtimeRoot,
+    ".maister",
+    ctx.projectSlug,
+    "runs",
+    ctx.runId,
+    `input-${step.id}.json`,
+  );
+  const existingInput = await tryReadInputArtifact(inputArtifactPath);
+
+  if (existingInput) {
+    log.info(
+      {
+        runId: ctx.runId,
+        stepId: step.id,
+        inputArtifactPath,
+        resumeFromArtifact: true,
+      },
+      "human step resume from existing input artifact",
+    );
+
+    return {
+      ok: true,
+      stdout: "",
+      vars: existingInput,
+      durationMs: Date.now() - startedAt,
+      needsInput: false,
+    };
+  }
+
   const resolvedPath = await resolveSchemaPath(
     ctx.flowInstallPath,
     step.form_schema,
@@ -139,11 +204,13 @@ export async function runHumanStep(
     insert: (t: unknown) => { values: (v: unknown) => Promise<void> };
   };
 
+  const kind: "form" | "human" = step.on_reject ? "human" : "form";
+
   await db.insert(hitlRequests).values({
     id: randomUUID(),
     runId: ctx.runId,
     stepId: step.id,
-    kind: "form",
+    kind,
     schema,
     prompt: promptText,
   });

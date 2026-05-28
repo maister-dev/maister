@@ -66,7 +66,7 @@ flows:
 | `default_executor` | Must reference an `id` present in `executors[]`. |
 | `flows[].id` | Unique within the file. |
 | `flows[].source` | Non-empty. Resolved by the Flow loader (`git clone --branch <version>`). |
-| `flows[].version` | Tag-pinned (lock semantics). Non-empty. |
+| `flows[].version` | Tag-pinned (lock semantics). Non-empty. The tag is the user-facing pin; at install the loader records the resolved git commit SHA in `flows.revision` and at run launch snapshots it into `runs.flow_revision`. The runner derives the bundle path from `(flowRefId, flow_revision)`, so a tag re-pointed upstream after the run launched does not affect that run. |
 
 ### Optional fields
 

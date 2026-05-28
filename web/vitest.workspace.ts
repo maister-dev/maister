@@ -15,8 +15,12 @@ export default defineWorkspace([
     resolve: { alias },
     test: {
       name: "unit",
-      include: ["lib/**/*.test.ts", "lib/**/__tests__/**/*.test.ts"],
-      exclude: ["lib/**/*.integration.test.ts"],
+      include: [
+        "lib/**/*.test.ts",
+        "lib/**/__tests__/**/*.test.ts",
+        "app/**/__tests__/**/*.test.ts",
+      ],
+      exclude: ["lib/**/*.integration.test.ts", "app/**/*.integration.test.ts"],
       environment: "node",
     },
   },

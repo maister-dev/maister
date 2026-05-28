@@ -88,9 +88,13 @@ describe("installFlowPlugin (integration)", () => {
       db,
     });
 
-    expect(result.installedPath).toBe(
-      `${homeDir}/.maister/flows/valid-flow@v1.0.0`,
+    // Cache key is now the resolved git SHA (12-char prefix), not the
+    // tag — tag movement on the upstream repo doesn't affect in-flight
+    // runs because each install lands at a content-addressed directory.
+    expect(result.installedPath).toMatch(
+      new RegExp(`^${homeDir}/\\.maister/flows/valid-flow@[0-9a-f]{12}$`),
     );
+    expect(result.revision).toMatch(/^[0-9a-f]{40}$/);
     expect(result.symlinkPath).toBe(
       `${workspaceRoot}/.maister/demo-app/flows/valid-flow`,
     );
@@ -111,6 +115,7 @@ describe("installFlowPlugin (integration)", () => {
 
     expect(row.flowRefId).toBe("valid-flow");
     expect(row.version).toBe("v1.0.0");
+    expect(row.revision).toBe(result.revision);
     expect(row.installedPath).toBe(result.installedPath);
     expect(row.recommendedExecutorId).toBe("claude-default");
   });
@@ -213,9 +218,14 @@ describe("installFlowPlugin (integration)", () => {
     });
 
     expect(after.flowRowId).toBe(before.flowRowId);
-    expect(after.installedPath).toBe(
-      `${homeDir}/.maister/flows/upgradable@v1.1.0`,
+    expect(after.installedPath).toMatch(
+      new RegExp(`^${homeDir}/\\.maister/flows/upgradable@[0-9a-f]{12}$`),
     );
+    // Upgrade lands at a different SHA-keyed directory; the old
+    // bundle is untouched on disk so in-flight runs pinned to the
+    // prior revision keep reading their original bytes.
+    expect(after.installedPath).not.toBe(before.installedPath);
+    expect(after.revision).not.toBe(before.revision);
     expect(after.manifest.recommended_executor).toBe("claude-glm");
 
     const linkTarget = await readlink(after.symlinkPath);

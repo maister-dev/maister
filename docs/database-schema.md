@@ -62,8 +62,23 @@ executor id resolves within its project's namespace, never cross-project.
   id, projectId,
   flowRefId,                     // the id from maister.yaml flows[]
   source,                        // e.g. 'github.com/org/maister-flow-bugfix'
-  version,                       // tag-pinned, e.g. 'v1.2.3'
-  installedPath,                 // resolved symlink target
+  version,                       // tag at install time, e.g. 'v1.2.3'
+  revision,                      // git commit SHA captured at install
+                                 //   via `git rev-parse HEAD`;
+                                 //   "unknown" sentinel for local-source
+                                 //   POC fixtures. Mutates on upgrade
+                                 //   alongside `version` and
+                                 //   `installedPath`; runs snapshot it
+                                 //   into `runs.flow_revision` at
+                                 //   launch and the runtime resolver
+                                 //   uses the snapshot, not this column.
+  installedPath,                 // ~/.maister/flows/<id>@<short_sha>/
+                                 //   — the currently installed bundle
+                                 //   for this project. The runtime
+                                 //   runner does NOT read this column;
+                                 //   it derives the bundle path from
+                                 //   (flowRefId, runs.flow_revision)
+                                 //   via systemCachePath.
   manifest (jsonb),              // parsed flow.yaml
   schemaVersion,
   recommendedExecutorId?,        // nullable, app-side FK to executors
@@ -101,7 +116,14 @@ queries.
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
   currentStepId?,                // (M5) id of the step the runner is on
-  flowVersion,                   // snapshot at launch time
+  flowVersion,                   // tag snapshot at launch — display
+  flowRevision,                  // git SHA snapshot at launch; the
+                                 //   runner derives the bundle path
+                                 //   `~/.maister/flows/<flow_ref_id>@<short_sha>/`
+                                 //   from this column (NEVER from the
+                                 //   mutable `flows.installed_path`).
+                                 //   Pre-migration rows backfill to
+                                 //   the literal "unknown" sentinel.
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
   startedAt, endedAt?
@@ -167,6 +189,9 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
   id, runId, stepId,
   kind: 'permission' | 'form' | 'human',
   schema (jsonb)?,               // form_schema with required schemaVersion
+                                 // OR permission descriptor:
+                                 //   { requestId, options, toolCall,
+                                 //     supervisorSessionId }
   prompt, response (jsonb)?,
   respondedAt?, createdAt
 }
@@ -175,8 +200,27 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
-`kind=human` is a `human`-typed Flow step with full `on_reject → goto_step`
-loop.
+`kind=human` is a Flow step `type: human` whose definition carries an
+`on_reject` clause; in M7 it is wire-equivalent to `kind=form` (response
+captured, runner advances to the next step). The `on_reject.goto_step`
+rerouting loop is **Designed M8** — the row distinction is preserved so
+M8 can light up rerouting without a schema change.
+
+**Two-phase response semantics (M7+).** `response` and `respondedAt`
+together encode the delivery state of an HITL row:
+
+| `response` | `respondedAt` | Meaning |
+| ---------- | ------------- | ------- |
+| `NULL`     | `NULL`        | Unclaimed — no user submission yet. |
+| set        | `NULL`        | Claimed — user's intent stored under a row-level `SELECT ... FOR UPDATE`, but the durable side-effect (supervisor `requestPermission` resolve, or `input-<stepId>.json` write) has not been acknowledged yet. Retryable from this state with the SAME payload (idempotent). |
+| set        | set           | Delivered. Same-payload retries return `200`; a retry that finds `runs.status = 'NeedsInput'` re-queues the runner wake-up so a process crash between commit and the original microtask cannot strand the run. |
+| `NULL`     | set           | Never occurs (invariant). |
+
+Conflicting-payload submissions are rejected with `409` at the CAS
+step — they never reach the side-effect. Permission rows additionally
+carry `schema.supervisorSessionId` so the web tier can route the
+deferred resolution to the right supervisor session without an extra
+round-trip.
 
 ## Cascade chain
 

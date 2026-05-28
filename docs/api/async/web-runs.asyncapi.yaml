@@ -1,0 +1,151 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster Web — per-run SSE bridge
+  version: "0.7.0"
+  description: |
+    Server-Sent Events delivered by the Next.js web tier's
+    `GET /api/runs/{runId}/stream` endpoint (described in
+    `../web.openapi.yaml`).
+
+    M7. The web SSE bridge tails a single durable per-run log at
+    `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` that the
+    supervisor appends to in lockstep with its own SSE side-channel.
+    The wire event union is **identical** to the supervisor's SSE
+    union (see `supervisor-sse.asyncapi.yaml`): `session.line`,
+    `session.update`, `session.permission_request`, `session.exited`,
+    `session.crashed`.
+
+    Differences from `supervisor-sse.asyncapi.yaml`:
+
+    - The bridge replays from a durable file, not an in-memory ring
+      buffer. The web tier never loses events across consecutive
+      sessions of the same run (slash-in-existing reuses one session
+      across many steps; new-session-per-step opens fresh sessions
+      that all append to the same `run.events.jsonl`).
+    - Terminal close is driven by the `runs.status` row in Postgres
+      (`Done | Abandoned | Failed | Crashed`), not by the supervisor's
+      session-terminal signal. The bridge drains any trailing events
+      after the terminal status is detected, then closes.
+    - Reconnect via `Last-Event-ID` (or `?lastEventId=` fallback) works
+      across step boundaries and across web-tier restarts.
+
+    Consumers SHOULD treat this stream as authoritative for run-level
+    observability and use the supervisor SSE only when they need
+    session-level liveness signals that the durable log does not carry.
+  contact:
+    name: MAIster maintainers
+    url: https://github.com/your-org/mAIster
+  license:
+    name: MIT
+defaultContentType: application/json
+servers:
+  local:
+    url: http://localhost:3000
+    protocol: http
+    description: Local Next.js dev server.
+channels:
+  /api/runs/{runId}/stream:
+    parameters:
+      runId:
+        description: Run id (UUID v4).
+        schema:
+          type: string
+          format: uuid
+    bindings:
+      http:
+        type: response
+        method: GET
+        headers:
+          Content-Type:
+            type: string
+            const: text/event-stream
+    subscribe:
+      operationId: subscribeRunEvents
+      summary: Stream of run-scoped session events
+      description: |
+        Client connects via `GET /api/runs/{runId}/stream`. Web tier
+        tails `run.events.jsonl` and emits each event as SSE with the
+        standard `id: <monotonicId>\nevent: <type>\ndata: <json>\n\n`
+        framing.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/SessionLine"
+          - $ref: "#/components/messages/SessionUpdate"
+          - $ref: "#/components/messages/SessionPermissionRequest"
+          - $ref: "#/components/messages/SessionExited"
+          - $ref: "#/components/messages/SessionCrashed"
+          - $ref: "#/components/messages/SessionStreamTimeout"
+components:
+  messages:
+    SessionLine:
+      name: session.line
+      title: Child stdout line
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
+    SessionUpdate:
+      name: session.update
+      title: ACP session/update parameter
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
+    SessionPermissionRequest:
+      name: session.permission_request
+      title: Pending ACP permission request awaiting HITL decision
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
+    SessionExited:
+      name: session.exited
+      title: Session terminated cleanly
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
+    SessionCrashed:
+      name: session.crashed
+      title: Session terminated abnormally
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
+    SessionStreamTimeout:
+      name: session.stream_timeout
+      title: Synthetic web-side keep-alive timeout
+      summary: |
+        Emitted by the web bridge (not the supervisor) when no events
+        have been observed within `MAISTER_KEEPALIVE_MINUTES`. The
+        stream closes immediately afterwards. Consumers reconnecting
+        with `Last-Event-ID` will resume from the durable file.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionStreamTimeoutEvent" }
+  schemas:
+    EventBase:
+      type: object
+      required: [type, sessionId, monotonicId]
+      properties:
+        type:
+          type: string
+          enum:
+            - session.line
+            - session.update
+            - session.permission_request
+            - session.exited
+            - session.crashed
+            - session.stream_timeout
+        sessionId:
+          type: string
+          format: uuid
+        monotonicId:
+          type: integer
+          minimum: 1
+      description: |
+        Common envelope. Each event variant carries additional fields
+        documented in `supervisor-sse.asyncapi.yaml` — this AsyncAPI
+        doc references the same union via `EventBase` instead of
+        duplicating every payload schema (single source of truth).
+    SessionStreamTimeoutEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, reason]
+          properties:
+            type:
+              type: string
+              const: session.stream_timeout
+            reason:
+              type: string
+              description: Human-readable cause (e.g. "no events within keepalive window").

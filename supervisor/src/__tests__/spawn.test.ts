@@ -1,6 +1,6 @@
 import type { SessionEvent, StartSessionRequest } from "../types";
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import pino from "pino";
 
 import { spawnSession } from "../spawn";
-import { SESSION_EVENT_CHANNEL } from "../registry";
+import { SESSION_EVENT_CHANNEL, SessionRegistry } from "../registry";
 
 const FIXTURE_PATH = resolve(
   fileURLToPath(import.meta.url),
@@ -150,6 +150,175 @@ describe("spawnSession", () => {
         binaryOverride: "/definitely/not/a/real/binary",
       }),
     ).rejects.toMatchObject({ code: "SPAWN" });
+  });
+
+  it("writes events.jsonl with one line per emitted SessionEvent after registry hookup", async () => {
+    const sessionId = "session-elog";
+    const request = makeRequest({ runId: "run-elog", stepId: "elog" });
+    const { child, emitter, record, eventsLog, eventsLogPath } =
+      await spawnSession({
+        sessionId,
+        request,
+        runtimeRoot: tempDir,
+        logger: silentLogger,
+        binaryOverride: "node",
+        preArgs: [FIXTURE_PATH, "--lines", "3"],
+      });
+
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(record, child, emitter, { eventsLog });
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    record.monotonicId += 1;
+    registry.emit(sessionId, {
+      type: "session.exited",
+      sessionId,
+      monotonicId: record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const raw = await readFile(eventsLogPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    const types = lines.map((l) => (JSON.parse(l) as { type: string }).type);
+
+    expect(types.filter((t) => t === "session.line")).toHaveLength(3);
+    expect(types).toContain("session.exited");
+  });
+
+  it("uses run-scoped run.events.jsonl shared across multiple spawns for the same run (regression: multi-step SSE)", async () => {
+    const sessionA = "sess-A";
+    const sessionB = "sess-B";
+    const request = makeRequest({ runId: "run-multi", stepId: "stepA" });
+
+    const a = await spawnSession({
+      sessionId: sessionA,
+      request,
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [FIXTURE_PATH, "--lines", "2"],
+    });
+
+    expect(a.eventsLogPath.endsWith("/runs/run-multi/run.events.jsonl")).toBe(
+      true,
+    );
+
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(a.record, a.child, a.emitter, { eventsLog: a.eventsLog });
+    await new Promise<void>((r) => a.child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 50));
+    a.record.monotonicId += 1;
+    registry.emit(sessionA, {
+      type: "session.exited",
+      sessionId: sessionA,
+      monotonicId: a.record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const b = await spawnSession({
+      sessionId: sessionB,
+      request: { ...request, stepId: "stepB" },
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [FIXTURE_PATH, "--lines", "1"],
+    });
+
+    expect(b.eventsLogPath).toBe(a.eventsLogPath);
+
+    registry.register(b.record, b.child, b.emitter, { eventsLog: b.eventsLog });
+    await new Promise<void>((r) => b.child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 50));
+    b.record.monotonicId += 1;
+    registry.emit(sessionB, {
+      type: "session.exited",
+      sessionId: sessionB,
+      monotonicId: b.record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const raw = await readFile(a.eventsLogPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const events = lines.map(
+      (l) => JSON.parse(l) as { sessionId: string; monotonicId: number },
+    );
+
+    expect(
+      events.filter((e) => e.sessionId === sessionA).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      events.filter((e) => e.sessionId === sessionB).length,
+    ).toBeGreaterThanOrEqual(1);
+
+    // Regression: per-run monotonicId must be strictly increasing
+    // across consecutive sessions. Without the tail-seed, sessionB's
+    // ids would restart at 1 and the SSE bridge's `monotonicId >
+    // lastSeen` filter would silently drop them on reconnect.
+    const monotonicIds = events.map((e) => e.monotonicId);
+    const sessionBMin = Math.min(
+      ...events
+        .filter((e) => e.sessionId === sessionB)
+        .map((e) => e.monotonicId),
+    );
+    const sessionAMax = Math.max(
+      ...events
+        .filter((e) => e.sessionId === sessionA)
+        .map((e) => e.monotonicId),
+    );
+
+    expect(sessionBMin).toBeGreaterThan(sessionAMax);
+    for (let i = 1; i < monotonicIds.length; i += 1) {
+      expect(monotonicIds[i]).toBeGreaterThan(monotonicIds[i - 1]);
+    }
+  });
+
+  it("closes events.jsonl after terminal event so the file stat is stable", async () => {
+    const sessionId = "session-elog-close";
+    const request = makeRequest({
+      runId: "run-elog-close",
+      stepId: "elog-close",
+    });
+    const { child, emitter, record, eventsLog, eventsLogPath } =
+      await spawnSession({
+        sessionId,
+        request,
+        runtimeRoot: tempDir,
+        logger: silentLogger,
+        binaryOverride: "node",
+        preArgs: [FIXTURE_PATH, "--lines", "1"],
+      });
+
+    const registry = new SessionRegistry(silentLogger);
+
+    registry.register(record, child, emitter, { eventsLog });
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    record.monotonicId += 1;
+    registry.emit(sessionId, {
+      type: "session.exited",
+      sessionId,
+      monotonicId: record.monotonicId,
+      exitCode: 0,
+    });
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const before = await stat(eventsLogPath);
+
+    await new Promise<void>((r) => setTimeout(r, 50));
+    const after = await stat(eventsLogPath);
+
+    expect(after.size).toBe(before.size);
   });
 
   it("caps single line at MAX_LINE_BYTES and emits a truncated event", async () => {

@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: MAIster Supervisor — SSE event stream
-  version: "0.5.0"
+  version: "0.7.0"
   description: |
     Server-Sent Events delivered by the supervisor's
     `GET /sessions/{id}/stream` endpoint (described in
@@ -10,21 +10,29 @@ info:
     M3 events: every child stdout line yields one `session.line` event;
     the stream terminates with `session.exited` (clean / intentional) or
     `session.crashed` (non-zero exit, killing signal, orphan-detected).
-    M5 adds two ACP-aware events emitted by the supervisor's
-    `ClientSideConnection`:
+    M5 added one ACP-aware event:
 
     - `session.update` — structured ACP `session/update` parameter
       (delta payload from the adapter). One per ACP update received.
-    - `session.permission_auto` — supervisor auto-approved an ACP
-      `session/request_permission` mid-turn (M5 placeholder; M7
-      replaces this with real HITL routing).
+
+    M7 adds permission HITL routing and removes the M5 auto-allow
+    placeholder:
+
+    - `session.permission_request` — supervisor received an ACP
+      `session/request_permission` from the adapter and is awaiting
+      a response. The web tier delivers a decision via
+      `POST /sessions/{id}/input` with the matching `requestId`. The
+      deferred ages out after `MAISTER_KEEPALIVE_MINUTES`, after which
+      the supervisor rejects it with `HITL_TIMEOUT` and the adapter
+      observes a cancelled tool call.
 
     Terminal events (`session.exited` / `session.crashed`) close the
     connection. Clients reconnect with `Last-Event-ID: <monotonicId>`
     to replay any events with a higher id from the per-session
-    in-memory ring buffer (1000 entries). Older events are gone — the
-    file at `.maister/<projectSlug>/runs/<runId>/<stepId>.log` is the
-    durable record.
+    in-memory ring buffer (1000 entries). The supervisor also writes
+    every event to a run-scoped `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
+    durable log so the web SSE bridge can tail a single file across
+    consecutive sessions of the same run.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -65,7 +73,7 @@ channels:
         oneOf:
           - $ref: "#/components/messages/SessionLine"
           - $ref: "#/components/messages/SessionUpdate"
-          - $ref: "#/components/messages/SessionPermissionAuto"
+          - $ref: "#/components/messages/SessionPermissionRequest"
           - $ref: "#/components/messages/SessionExited"
           - $ref: "#/components/messages/SessionCrashed"
 components:
@@ -103,27 +111,36 @@ components:
             update:
               sessionUpdate: "agent_message_chunk"
               content: { type: "text", text: "Working on it..." }
-    SessionPermissionAuto:
-      name: session.permission_auto
-      title: M5 auto-approved permission request
+    SessionPermissionRequest:
+      name: session.permission_request
+      title: Pending ACP permission request awaiting HITL decision (M7)
       summary: |
         Supervisor received an ACP `session/request_permission` from the
-        adapter and auto-allowed it with the first available option.
-        Emitted alongside a `warn` log; M7 replaces this with structured
-        HITL and removes the auto-allow behaviour.
+        adapter. The supervisor's `PendingPermissionRegistry` parked the
+        deferred under the emitted `requestId`. Clients route this to
+        the user (typically via the web tier's HITL board), then resolve
+        the deferred via `POST /sessions/{id}/input` with
+        `{kind: "permission", action: "select" | "cancel", requestId,
+        optionId?}`. If no decision arrives within
+        `MAISTER_KEEPALIVE_MINUTES`, the supervisor rejects the deferred
+        with `HITL_TIMEOUT` and the adapter observes a cancelled tool
+        call.
       contentType: application/json
-      payload: { $ref: "#/components/schemas/SessionPermissionAutoEvent" }
+      payload: { $ref: "#/components/schemas/SessionPermissionRequestEvent" }
       examples:
-        - name: write-file-auto-allow
+        - name: write-file-request
           payload:
-            type: session.permission_auto
+            type: session.permission_request
             sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
             monotonicId: 7
+            requestId: "8a4a7b9d-0d6b-4b27-a09c-0a3f4f1e1d8e"
+            options:
+              - { optionId: "allow", kind: "allow_always", name: "Allow" }
+              - { optionId: "deny", kind: "reject_once", name: "Deny" }
             toolCall:
               toolCallId: "tc_01"
               kind: "edit"
               title: "Write README.md"
-            optionId: "allow"
     SessionExited:
       name: session.exited
       title: Session terminated cleanly
@@ -174,7 +191,7 @@ components:
           enum:
             - session.line
             - session.update
-            - session.permission_auto
+            - session.permission_request
             - session.exited
             - session.crashed
         sessionId:
@@ -220,28 +237,47 @@ components:
                 `plan`). Treated as opaque on the wire here — typed
                 clients should refer to `@agentclientprotocol/sdk` for
                 the discriminated union.
-    SessionPermissionAutoEvent:
+    SessionPermissionRequestEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"
         - type: object
-          required: [type, toolCall, optionId]
+          required: [type, requestId, options, toolCall]
           properties:
             type:
               type: string
-              const: session.permission_auto
+              const: session.permission_request
+            requestId:
+              type: string
+              format: uuid
+              description: |
+                v4 UUID minted by the supervisor's
+                `PendingPermissionRegistry` at the moment the deferred
+                was parked. Clients echo this back via
+                `POST /sessions/{id}/input` to identify which deferred
+                they are resolving or cancelling.
+            options:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                required: [optionId]
+                properties:
+                  optionId: { type: string, minLength: 1 }
+                  kind: { type: string }
+                  name: { type: string }
+              description: |
+                Subset of the ACP `PermissionOption[]` the adapter
+                offered. The web tier MUST only present these options
+                to the user; the supervisor does NOT cross-check
+                `optionId` against this set today (see Phase 2 note in
+                `system-analytics/hitl.md`).
             toolCall:
               type: object
               additionalProperties: true
               description: |
-                The ACP `toolCall` payload that triggered the permission
-                request (opaque JSON object).
-            optionId:
-              type: string
-              description: |
-                The id of the permission option the supervisor
-                auto-selected (M5 always picks the first available
-                option, typically `allow`). Echoed back to the adapter
-                via the ACP `session/request_permission` response.
+                Opaque ACP `toolCall` payload — passed through so that
+                the UI can render a tool-call summary alongside the
+                approve/deny prompt.
     SessionExitedEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

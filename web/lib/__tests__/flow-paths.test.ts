@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   flowIdSchema,
+  flowRevisionSchema,
   projectFlowSymlinkPath,
   projectSlugSchema,
   sourceUrlSchema,
@@ -13,16 +14,19 @@ import {
 } from "@/lib/flow-paths";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 
+// Forty-char lowercase hex git SHA used throughout the tests.
+const TEST_SHA = "abc1234567890abcdef1234567890abcdef12345";
+
 describe("systemCachePath", () => {
-  it("returns <HOME>/.maister/flows/<id>@<version> on the happy path", () => {
-    expect(systemCachePath("bugfix", "v1.2.3")).toBe(
-      `${os.homedir()}/.maister/flows/bugfix@v1.2.3`,
+  it("returns <HOME>/.maister/flows/<id>@<short_sha> for a real git SHA", () => {
+    expect(systemCachePath("bugfix", TEST_SHA)).toBe(
+      `${os.homedir()}/.maister/flows/bugfix@abc123456789`,
     );
   });
 
-  it("accepts versions with +build metadata (semver)", () => {
-    expect(systemCachePath("flow1", "v1.0.0-rc.1+build.5")).toBe(
-      `${os.homedir()}/.maister/flows/flow1@v1.0.0-rc.1+build.5`,
+  it("accepts the 'unknown' sentinel used for local-source installs", () => {
+    expect(systemCachePath("flow1", "unknown")).toBe(
+      `${os.homedir()}/.maister/flows/flow1@unknown`,
     );
   });
 });
@@ -37,60 +41,91 @@ describe("projectFlowSymlinkPath", () => {
 
 describe("flowIdSchema (SINK invariant)", () => {
   it("rejects flowId containing '/'", () => {
-    expect(() => systemCachePath("bug/fix", "v1.0.0")).toThrowError(
+    expect(() => systemCachePath("bug/fix", TEST_SHA)).toThrowError(
       MaisterError,
     );
     try {
-      systemCachePath("bug/fix", "v1.0.0");
+      systemCachePath("bug/fix", TEST_SHA);
     } catch (err) {
       expect(isMaisterError(err) && err.code).toBe("FLOW_INSTALL");
     }
   });
 
   it("rejects flowId equal to '..'", () => {
-    expect(() => systemCachePath("..", "v1.0.0")).toThrowError(MaisterError);
+    expect(() => systemCachePath("..", TEST_SHA)).toThrowError(MaisterError);
   });
 
   it("rejects flowId containing '..' as substring", () => {
-    expect(() => systemCachePath("a..b", "v1.0.0")).toThrowError(MaisterError);
+    expect(() => systemCachePath("a..b", TEST_SHA)).toThrowError(MaisterError);
   });
 
   it("rejects flowId equal to '.'", () => {
-    expect(() => systemCachePath(".", "v1.0.0")).toThrowError(MaisterError);
+    expect(() => systemCachePath(".", TEST_SHA)).toThrowError(MaisterError);
   });
 
   it("rejects empty flowId", () => {
-    expect(() => systemCachePath("", "v1.0.0")).toThrowError(MaisterError);
+    expect(() => systemCachePath("", TEST_SHA)).toThrowError(MaisterError);
   });
 
   it("rejects flowId longer than 64 chars", () => {
     const tooLong = "a".repeat(65);
 
-    expect(() => systemCachePath(tooLong, "v1.0.0")).toThrowError(MaisterError);
+    expect(() => systemCachePath(tooLong, TEST_SHA)).toThrowError(MaisterError);
   });
 
   it("rejects flowId with whitespace", () => {
-    expect(() => systemCachePath("bug fix", "v1.0.0")).toThrowError(
+    expect(() => systemCachePath("bug fix", TEST_SHA)).toThrowError(
       MaisterError,
     );
   });
 });
 
-describe("versionTagSchema (SINK invariant)", () => {
-  it("rejects version containing '/'", () => {
-    expect(() => systemCachePath("bugfix", "v1/0/0")).toThrowError(
+describe("flowRevisionSchema (SINK invariant on systemCachePath)", () => {
+  it("rejects a version tag where a revision is expected", () => {
+    // systemCachePath now demands a 40-char hex SHA (or the
+    // 'unknown' sentinel) — a semver tag must be rejected at the
+    // SINK so a confused caller cannot silently produce a tag-keyed
+    // cache directory under the new SHA-keyed regime.
+    expect(() => systemCachePath("bugfix", "v1.0.0")).toThrowError(
       MaisterError,
     );
   });
 
-  it("rejects version equal to '..'", () => {
+  it("rejects revision containing '/'", () => {
+    expect(() => systemCachePath("bugfix", "abc/123")).toThrowError(
+      MaisterError,
+    );
+  });
+
+  it("rejects revision equal to '..'", () => {
     expect(() => systemCachePath("bugfix", "..")).toThrowError(MaisterError);
   });
 
-  it("rejects empty version", () => {
+  it("rejects empty revision", () => {
     expect(() => systemCachePath("bugfix", "")).toThrowError(MaisterError);
   });
 
+  it("rejects revision that is 39-char hex (one short of a real SHA)", () => {
+    const tooShort = "a".repeat(39);
+
+    expect(() => systemCachePath("bugfix", tooShort)).toThrowError(
+      MaisterError,
+    );
+  });
+
+  it("rejects uppercase hex (git emits lowercase)", () => {
+    const upper = "ABC1234567890ABCDEF1234567890ABCDEF12345";
+
+    expect(() => systemCachePath("bugfix", upper)).toThrowError(MaisterError);
+  });
+
+  it("accepts a real 40-char hex SHA and the 'unknown' sentinel", () => {
+    expect(flowRevisionSchema.safeParse(TEST_SHA).success).toBe(true);
+    expect(flowRevisionSchema.safeParse("unknown").success).toBe(true);
+  });
+});
+
+describe("versionTagSchema (still exported for install-code use)", () => {
   it("accepts plain semver and arbitrary tag names", () => {
     expect(versionTagSchema.safeParse("v1.0.0").success).toBe(true);
     expect(versionTagSchema.safeParse("main").success).toBe(true);

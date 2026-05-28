@@ -9,13 +9,20 @@ import type {
 } from "node:stream/web";
 import type { Logger } from "pino";
 
+import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import {
+  pendingPermissions as defaultPendingPermissions,
+  type AcpPermissionOutcome,
+  type PendingPermissionRegistry,
+} from "./pending-permissions";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   SupervisorError,
+  type PermissionOptionDescriptor,
   type SessionEvent,
   type SessionRecord,
 } from "./types";
@@ -28,6 +35,7 @@ export type CreateAcpConnectionArgs = {
   record: SessionRecord;
   emitter: EventEmitter;
   logger: Logger;
+  pendingPermissions?: PendingPermissionRegistry;
 };
 
 export type CreateAcpConnectionResult = {
@@ -41,20 +49,6 @@ type ToolCallLike = {
   kind?: string;
 };
 
-function pickAutoAllowOption(
-  options: ReadonlyArray<{ optionId: string; kind?: string; name?: string }>,
-): { optionId: string; reason: "allow_always" | "allow_once" | "fallback" } {
-  const always = options.find((o) => o.kind === "allow_always");
-
-  if (always) return { optionId: always.optionId, reason: "allow_always" };
-
-  const once = options.find((o) => o.kind === "allow_once");
-
-  if (once) return { optionId: once.optionId, reason: "allow_once" };
-
-  return { optionId: options[0]?.optionId ?? "", reason: "fallback" };
-}
-
 export async function createAcpConnection(
   args: CreateAcpConnectionArgs,
 ): Promise<CreateAcpConnectionResult> {
@@ -67,6 +61,8 @@ export async function createAcpConnection(
     emitter,
     logger,
   } = args;
+  const pendingPermissions =
+    args.pendingPermissions ?? defaultPendingPermissions;
 
   const writable = Writable.toWeb(
     stdin,
@@ -103,36 +99,50 @@ export async function createAcpConnection(
     },
 
     async requestPermission(params) {
-      // TODO(m7): replace auto-allow with structured HITL (insert hitl_requests row,
-      //           emit session.permission_request, block until response artifact arrives).
       const tc = (params.toolCall ?? {}) as ToolCallLike;
-      const { optionId, reason } = pickAutoAllowOption(params.options);
+      const requestId = randomUUID();
+      const options: ReadonlyArray<PermissionOptionDescriptor> =
+        params.options.map((o) => ({
+          optionId: o.optionId,
+          kind: o.kind,
+          name: o.name,
+        }));
 
       record.monotonicId += 1;
       const event: SessionEvent = {
-        type: "session.permission_auto",
+        type: "session.permission_request",
         sessionId,
         monotonicId: record.monotonicId,
+        requestId,
+        options,
         toolCall: params.toolCall,
-        optionId,
       };
 
       emitter.emit(SESSION_EVENT_CHANNEL, event);
-      logger.warn(
+      logger.info(
         {
           sessionId,
-          toolCallId: tc.toolCallId,
-          toolCallTitle: tc.title,
-          toolCallKind: tc.kind,
-          optionId,
-          reason,
+          requestId,
+          optionsCount: options.length,
+          toolCallSummary: {
+            id: tc.toolCallId,
+            kind: tc.kind,
+            title: tc.title,
+          },
         },
-        "auto-allow-permission",
+        "permission-request emitted",
       );
 
-      return {
-        outcome: { outcome: "selected", optionId },
-      };
+      const outcome = await new Promise<AcpPermissionOutcome>(
+        (resolve, reject) => {
+          pendingPermissions.register(sessionId, requestId, {
+            resolve,
+            reject,
+          });
+        },
+      );
+
+      return { outcome };
     },
   };
 

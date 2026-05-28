@@ -1,0 +1,672 @@
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { NextRequest } from "next/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  hitlRequests as hitlRequestsTable,
+  projects as projectsTable,
+  runs as runsTable,
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+
+type Row = Record<string, unknown>;
+type Tables = {
+  runs: Row[];
+  hitl_requests: Row[];
+  projects: Row[];
+};
+
+const dbState: {
+  tables: Tables;
+  updates: Array<{ table: string; set: Row }>;
+} = {
+  tables: { runs: [], hitl_requests: [], projects: [] },
+  updates: [],
+};
+
+function tableOf(t: unknown): keyof Tables {
+  if (t === runsTable) return "runs";
+  if (t === hitlRequestsTable) return "hitl_requests";
+  if (t === projectsTable) return "projects";
+  throw new Error("unknown table");
+}
+
+const selectChain = (cols?: Row) => ({
+  from: (table: unknown) => {
+    const name = tableOf(table);
+    const project = () =>
+      cols
+        ? dbState.tables[name].map((r) => {
+            const o: Row = {};
+
+            for (const k of Object.keys(cols)) o[k] = r[k];
+
+            return o;
+          })
+        : dbState.tables[name];
+
+    return {
+      where: async () => project(),
+    };
+  },
+});
+
+const updateChain = (table: unknown) => {
+  const name = tableOf(table);
+
+  return {
+    set: (vals: Row) => ({
+      where: async () => {
+        dbState.updates.push({ table: name, set: vals });
+        for (const r of dbState.tables[name]) Object.assign(r, vals);
+      },
+    }),
+  };
+};
+
+const fakeDb = {
+  select: (cols?: Row) => selectChain(cols),
+  update: updateChain,
+
+  transaction: async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
+    return await fn({
+      select: (cols?: Row) => selectChain(cols),
+      update: updateChain,
+    });
+  },
+};
+
+const deliverPermissionSpy = vi.fn(
+  async (
+    _sessionId: string,
+    _requestId: string,
+    _optionId: string,
+  ): Promise<{ ok: true }> => ({ ok: true }),
+);
+const runFlowSpy = vi.fn(async (_runId: string): Promise<void> => undefined);
+
+vi.mock("@/lib/db/client", () => ({
+  getDb: () => fakeDb,
+}));
+
+vi.mock("@/lib/supervisor-client", () => ({
+  deliverPermission: (sessionId: string, requestId: string, optionId: string) =>
+    deliverPermissionSpy(sessionId, requestId, optionId),
+}));
+
+vi.mock("@/lib/flows/runner", () => ({
+  runFlow: (runId: string) => runFlowSpy(runId),
+}));
+
+let runtimeRoot: string;
+
+beforeEach(async () => {
+  runtimeRoot = await mkdtemp(join(tmpdir(), "hitl-resp-"));
+  process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
+  dbState.tables = { runs: [], hitl_requests: [], projects: [] };
+  dbState.updates = [];
+  deliverPermissionSpy.mockReset();
+  deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
+  runFlowSpy.mockReset();
+  runFlowSpy.mockImplementation(async () => undefined);
+});
+
+afterEach(async () => {
+  delete process.env.MAISTER_RUNTIME_ROOT;
+  await rm(runtimeRoot, { recursive: true, force: true });
+});
+
+function seedPermissionRow(
+  overrides: Partial<{
+    runStatus: string;
+    respondedAt: Date | null;
+    options: Array<{ optionId: string }>;
+    response: Row | null;
+  }> = {},
+): { runId: string; hitlRequestId: string } {
+  const runId = "run-perm";
+  const hitlRequestId = "hitl-perm";
+
+  dbState.tables.runs.push({
+    id: runId,
+    projectId: "proj-1",
+    status: overrides.runStatus ?? "NeedsInput",
+    currentStepId: "plan",
+  });
+  dbState.tables.projects.push({ id: "proj-1", slug: "demo" });
+  dbState.tables.hitl_requests.push({
+    id: hitlRequestId,
+    runId,
+    stepId: "plan",
+    kind: "permission",
+    schema: {
+      requestId: "req-1",
+      supervisorSessionId: "sup-1",
+      options: overrides.options ?? [
+        { optionId: "allow" },
+        { optionId: "deny" },
+      ],
+    },
+    response: overrides.response ?? null,
+    respondedAt: overrides.respondedAt ?? null,
+  });
+
+  return { runId, hitlRequestId };
+}
+
+function seedFormRow(
+  kind: "form" | "human" = "form",
+  overrides: Partial<{
+    runStatus: string;
+    respondedAt: Date | null;
+    schema: unknown;
+    response: unknown;
+  }> = {},
+): { runId: string; hitlRequestId: string; stepId: string } {
+  const runId = "run-form";
+  const hitlRequestId = "hitl-form";
+
+  dbState.tables.runs.push({
+    id: runId,
+    projectId: "proj-1",
+    status: overrides.runStatus ?? "NeedsInput",
+    currentStepId: "review",
+  });
+  dbState.tables.projects.push({ id: "proj-1", slug: "demo" });
+  dbState.tables.hitl_requests.push({
+    id: hitlRequestId,
+    runId,
+    stepId: "review",
+    kind,
+    schema: overrides.schema ?? { fields: [] },
+    response: overrides.response ?? null,
+    respondedAt: overrides.respondedAt ?? null,
+  });
+
+  return { runId, hitlRequestId, stepId: "review" };
+}
+
+async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
+  const { POST } = await import("../route");
+  const req = new NextRequest(
+    new Request(
+      `http://localhost/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  );
+
+  return POST(req, {
+    params: Promise.resolve({ runId, hitlRequestId }),
+  });
+}
+
+describe("HITL respond route — kind=permission", () => {
+  it("happy two-phase: stores response, delivers, marks respondedAt; returns 200", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(deliverPermissionSpy).toHaveBeenCalledWith(
+      "sup-1",
+      "req-1",
+      "allow",
+    );
+    const hitl = dbState.tables.hitl_requests[0];
+
+    expect(hitl.response).toEqual({ optionId: "allow" });
+    expect(hitl.respondedAt).toBeInstanceOf(Date);
+  });
+
+  it("rejects optionId not in declared options with 400", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      options: [{ optionId: "allow" }],
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      optionId: "rogue",
+    });
+
+    expect(res.status).toBe(400);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("HITL_TIMEOUT from supervisor → 410 + runs→Failed + respondedAt set", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("HITL_TIMEOUT", "expired"),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(410);
+    expect(dbState.tables.runs[0].status).toBe("Failed");
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+  });
+
+  it("EXECUTOR_UNAVAILABLE from supervisor → 503 + state preserved", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "no supervisor"),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(503);
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
+    });
+  });
+
+  it("retry after EXECUTOR_UNAVAILABLE with a DIFFERENT optionId returns 409 (atomic claim contract)", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "no supervisor"),
+    );
+
+    const first = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(first.status).toBe(503);
+    // First call claimed the row with `allow`. A second submission must
+    // not silently overwrite the user's prior choice.
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
+    });
+
+    const second = await invokePost(runId, hitlRequestId, {
+      optionId: "deny",
+    });
+
+    expect(second.status).toBe(409);
+    expect(deliverPermissionSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("retry after EXECUTOR_UNAVAILABLE with the SAME optionId is idempotent and succeeds", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "no supervisor"),
+    );
+
+    const first = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(first.status).toBe(503);
+
+    const second = await invokePost(runId, hitlRequestId, {
+      optionId: "allow",
+    });
+
+    expect(second.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
+    });
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    expect(deliverPermissionSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("already-delivered (respondedAt set) → 409", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      respondedAt: new Date(),
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(409);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("already-delivered with the SAME optionId is idempotent and returns 200", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      respondedAt: new Date(),
+      response: { optionId: "allow" },
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("HITL_TIMEOUT from supervisor when respondedAt is already set by a concurrent winner returns 200 (no run→Failed)", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    deliverPermissionSpy.mockImplementation(async () => {
+      dbState.tables.hitl_requests[0].respondedAt = new Date();
+      throw new MaisterError("HITL_TIMEOUT", "expired");
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+  });
+
+  it("run in terminal state (Failed) → 409", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "Failed",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(409);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
+  it("missing optionId returns 400 CONFIG", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    const res = await invokePost(runId, hitlRequestId, {});
+
+    expect(res.status).toBe(400);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("HITL respond route — kind=form / kind=human", () => {
+  it("form happy path: atomicWrite + commit + queueMicrotask runFlow; 200", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("form");
+    const payload = { approved: true };
+
+    const res = await invokePost(runId, hitlRequestId, { response: payload });
+
+    expect(res.status).toBe(200);
+
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+
+    expect(existsSync(artifactPath)).toBe(true);
+    const onDisk = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(onDisk).toEqual(payload);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+    // runs.status stays NeedsInput so runFlow's resume path fires
+    // instead of restarting the flow at step 0. The runner is the one
+    // that performs the NeedsInput → Running transition.
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+    await new Promise((r) => setImmediate(r));
+    expect(runFlowSpy).toHaveBeenCalledWith(runId);
+  });
+
+  it("human round-trip identical to form except kind is human", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("human");
+    const payload = { decision: "approve", comments: "lgtm" };
+
+    const res = await invokePost(runId, hitlRequestId, { response: payload });
+
+    expect(res.status).toBe(200);
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+    const onDisk = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(onDisk).toEqual(payload);
+  });
+
+  it("form already-delivered (respondedAt set) → 409", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      respondedAt: new Date(),
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(res.status).toBe(409);
+  });
+
+  it("form with terminal run state → 409", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      runStatus: "Crashed",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(res.status).toBe(409);
+  });
+
+  it("missing response body returns 400 CONFIG", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form");
+    const res = await invokePost(runId, hitlRequestId, {});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("schema validation: scalar response when fields are declared returns 422", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      schema: {
+        fields: [{ name: "approved", type: "boolean", required: true }],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: "yes",
+    });
+
+    expect(res.status).toBe(422);
+  });
+
+  it("schema validation: missing required field returns 422 and does NOT write the artifact", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("form", {
+      schema: {
+        fields: [{ name: "approved", type: "boolean", required: true }],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { comments: "no opinion" },
+    });
+
+    expect(res.status).toBe(422);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+
+    expect(existsSync(artifactPath)).toBe(false);
+  });
+
+  it("schema validation: enum value outside options returns 422", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      schema: {
+        fields: [
+          {
+            name: "decision",
+            type: "enum",
+            required: true,
+            options: ["approve", "reject"],
+          },
+        ],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "maybe" },
+    });
+
+    expect(res.status).toBe(422);
+  });
+
+  it("schema validation: typed payload that matches the schema is accepted", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      schema: {
+        fields: [
+          { name: "approved", type: "boolean", required: true },
+          { name: "comments", type: "string" },
+        ],
+      },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true, comments: "lgtm" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      approved: true,
+      comments: "lgtm",
+    });
+  });
+
+  it("concurrent same-payload double-submit is idempotent and returns 200 both times", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form");
+    const payload = { approved: true };
+    const first = await invokePost(runId, hitlRequestId, { response: payload });
+
+    expect(first.status).toBe(200);
+
+    const second = await invokePost(runId, hitlRequestId, {
+      response: payload,
+    });
+
+    expect(second.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual(payload);
+  });
+
+  it("concurrent DIFFERENT-payload double-submit: second returns 409 and does NOT overwrite the artifact", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("form");
+    const first = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(first.status).toBe(200);
+
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+    const before = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(before).toEqual({ approved: true });
+
+    const second = await invokePost(runId, hitlRequestId, {
+      response: { approved: false },
+    });
+
+    expect(second.status).toBe(409);
+    const after = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(after).toEqual({ approved: true });
+  });
+
+  it("same-payload retry on an already-delivered row re-queues runFlow when the run is still NeedsInput", async () => {
+    // Simulate a process restart between Phase 3 commit and the
+    // queueMicrotask wake. We seed the row as already-delivered
+    // with respondedAt set, response stored, runStatus=NeedsInput.
+    // A second submission with the same payload should re-fire
+    // runFlow even though the route already considers the request
+    // delivered.
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      respondedAt: new Date(),
+      response: { approved: true },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(runFlowSpy).toHaveBeenCalledWith(runId);
+  });
+
+  it("same-payload retry does NOT re-queue runFlow if the run has already advanced past NeedsInput", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      respondedAt: new Date(),
+      response: { approved: true },
+      runStatus: "Running",
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: true },
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(runFlowSpy).not.toHaveBeenCalled();
+  });
+
+  it("artifact-write failure returns 503 retryable and does NOT mark respondedAt", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form");
+    const payload = { approved: true };
+    const writeSpy = vi
+      .spyOn(await import("@/lib/atomic"), "atomicWriteJson")
+      .mockRejectedValueOnce(new Error("EACCES"));
+    const res = await invokePost(runId, hitlRequestId, { response: payload });
+
+    expect(res.status).toBe(503);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    // Response IS stored — the user's intent is captured durably
+    // so a retry replays the same value.
+    expect(dbState.tables.hitl_requests[0].response).toEqual(payload);
+    writeSpy.mockRestore();
+  });
+});
+
+describe("HITL respond route — error cases", () => {
+  it("unknown hitlRequestId (empty table) returns 409 PRECONDITION", async () => {
+    const res = await invokePost("run-x", "unknown-hitl", {
+      optionId: "allow",
+    });
+
+    expect(res.status).toBe(409);
+  });
+
+  it("mismatched runId returns 409 PRECONDITION", async () => {
+    seedPermissionRow();
+    const res = await invokePost("other-run", "hitl-perm", {
+      optionId: "allow",
+    });
+
+    expect(res.status).toBe(409);
+  });
+
+  it("malformed JSON body returns 400 CONFIG", async () => {
+    const { POST } = await import("../route");
+    const { runId, hitlRequestId } = seedPermissionRow();
+    const req = new NextRequest(
+      new Request(
+        `http://localhost/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{not valid",
+        },
+      ),
+    );
+
+    const res = await POST(req, {
+      params: Promise.resolve({ runId, hitlRequestId }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+});

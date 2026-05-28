@@ -3,11 +3,17 @@ import "server-only";
 import type { GuardConfig } from "./guards";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
+import { randomUUID } from "node:crypto";
+
+import { eq, and } from "drizzle-orm";
 import pino from "pino";
 
 import { renderStrict } from "./templating";
 
+import { getDb } from "@/lib/db/client";
+import { hitlRequests, runs } from "@/lib/db/schema";
 import {
+  cancelPermission,
   createSession,
   deleteSession,
   sendPrompt,
@@ -34,6 +40,10 @@ export type AgentStepLike = {
   post_guards?: GuardConfig[];
 };
 
+// FIXME(any): dual drizzle-orm peer-dep variants (mirrors lib/scheduler.ts).
+type DbClientLike = any;
+export type { DbClientLike };
+
 export type RunAgentStepCtx = {
   runtimeRoot: string;
   projectSlug: string;
@@ -49,6 +59,7 @@ export type RunAgentStepCtx = {
   };
   context: FlowContext;
   sessionState: AcpSessionState;
+  db?: DbClientLike;
 };
 
 export type SupervisorApi = {
@@ -56,6 +67,7 @@ export type SupervisorApi = {
   deleteSession: typeof deleteSession;
   sendPrompt: typeof sendPrompt;
   streamSession: typeof streamSession;
+  cancelPermission: typeof cancelPermission;
 };
 
 const defaultSupervisor: SupervisorApi = {
@@ -63,13 +75,136 @@ const defaultSupervisor: SupervisorApi = {
   deleteSession,
   sendPrompt,
   streamSession,
+  cancelPermission,
 };
+
+function synthesizePermissionPrompt(toolCall: unknown): string {
+  const tc = (toolCall ?? {}) as { title?: string };
+
+  return tc.title ? `Approve ${tc.title}?` : "Approve tool call?";
+}
+
+type PermissionContext = {
+  db: DbClientLike;
+  runId: string;
+  stepId: string;
+  supervisorSessionId: string;
+  cancelPermission: typeof cancelPermission;
+};
+
+async function handlePermissionRequest(
+  ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
+  pctx: PermissionContext,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const hitlRequestId = randomUUID();
+
+  try {
+    await pctx.db.transaction(async (tx: DbClientLike) => {
+      await tx.insert(hitlRequests).values({
+        id: hitlRequestId,
+        runId: pctx.runId,
+        stepId: pctx.stepId,
+        kind: "permission",
+        schema: {
+          requestId: ev.requestId,
+          options: ev.options,
+          toolCall: ev.toolCall,
+          supervisorSessionId: pctx.supervisorSessionId,
+        },
+        prompt: synthesizePermissionPrompt(ev.toolCall),
+      });
+      await tx
+        .update(runs)
+        .set({ status: "NeedsInput", currentStepId: pctx.stepId })
+        .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")));
+    });
+    log.info(
+      {
+        runId: pctx.runId,
+        stepId: pctx.stepId,
+        hitlRequestId,
+        requestId: ev.requestId,
+        supervisorSessionId: pctx.supervisorSessionId,
+      },
+      "permission_request persisted; run transitioned to NeedsInput",
+    );
+
+    return { ok: true } as const;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    log.error(
+      {
+        runId: pctx.runId,
+        stepId: pctx.stepId,
+        requestId: ev.requestId,
+        err: message,
+      },
+      "permission persistence failed — cancelling supervisor deferred",
+    );
+    try {
+      await pctx.cancelPermission(
+        pctx.supervisorSessionId,
+        ev.requestId,
+        `DB_PERSIST_FAILED:${message.slice(0, 128)}`,
+      );
+    } catch (cancelErr) {
+      const cm =
+        cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+
+      log.warn(
+        {
+          runId: pctx.runId,
+          stepId: pctx.stepId,
+          requestId: ev.requestId,
+          err: cm,
+        },
+        "cancelPermission also failed; supervisor timeout will fire",
+      );
+    }
+    try {
+      await pctx.db
+        .update(runs)
+        .set({ status: "Crashed", endedAt: new Date() })
+        .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")));
+    } catch (updateErr) {
+      log.warn(
+        {
+          runId: pctx.runId,
+          err:
+            updateErr instanceof Error ? updateErr.message : String(updateErr),
+        },
+        "run-to-Crashed update failed after persist failure",
+      );
+    }
+
+    return { ok: false, reason: message } as const;
+  }
+}
+
+async function transitionBackToRunning(
+  db: DbClientLike,
+  runId: string,
+): Promise<void> {
+  try {
+    await db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "NeedsInput→Running update failed",
+    );
+  }
+}
 
 type EventConsumer = {
   abort: AbortController;
   done: Promise<void>;
   snapshot: () => string;
   reset: () => void;
+  permissionPersistFailure: () => { reason: string } | null;
 };
 
 function executorToSupervisorInput(
@@ -96,16 +231,36 @@ function appendChunk(buf: string, chunk: string): string {
 function startEventConsumer(
   sessionId: string,
   supervisor: SupervisorApi,
+  permissionCtx?: PermissionContext,
 ): EventConsumer {
   const abort = new AbortController();
   let buf = "";
+  let sawPermissionRequest = false;
+  let persistFailure: { reason: string } | null = null;
+  const pendingWork: Promise<void>[] = [];
 
   const done = (async () => {
     try {
       for await (const ev of supervisor.streamSession(sessionId, {
         signal: abort.signal,
       })) {
+        if (ev.type === "session.permission_request" && permissionCtx) {
+          sawPermissionRequest = true;
+          pendingWork.push(
+            handlePermissionRequest(ev, permissionCtx).then((outcome) => {
+              if (!outcome.ok && !persistFailure) {
+                persistFailure = { reason: outcome.reason };
+              }
+            }),
+          );
+        }
         if (ev.type === "session.update") {
+          if (sawPermissionRequest && permissionCtx) {
+            sawPermissionRequest = false;
+            pendingWork.push(
+              transitionBackToRunning(permissionCtx.db, permissionCtx.runId),
+            );
+          }
           const update = ev.update as {
             sessionUpdate?: string;
             content?: { type?: string; text?: string };
@@ -137,6 +292,8 @@ function startEventConsumer(
         { err: (err as Error).message, sessionId },
         "event-consumer error",
       );
+    } finally {
+      await Promise.allSettled(pendingWork);
     }
   })();
 
@@ -147,6 +304,7 @@ function startEventConsumer(
     reset: () => {
       buf = "";
     },
+    permissionPersistFailure: () => persistFailure,
   };
 }
 
@@ -198,7 +356,13 @@ async function runNewSession(
       executor: executorToSupervisorInput(ctx.executor),
     });
 
-    consumer = startEventConsumer(session.sessionId, api);
+    consumer = startEventConsumer(session.sessionId, api, {
+      db: ctx.db ?? getDb(),
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      supervisorSessionId: session.sessionId,
+      cancelPermission: api.cancelPermission,
+    });
 
     let promptResult: PromptResult;
 
@@ -212,14 +376,35 @@ async function runNewSession(
       await consumer.done;
     }
 
-    const ok = promptResult.stopReason === "end_turn";
+    // Permission-persistence failure overrides the adapter's stopReason:
+    // even if the agent gracefully ended after the cancelled tool call,
+    // the run is in a Crashed state and the runner MUST surface that
+    // to runFlow so the final transition to Review never happens.
+    const persistFailure = consumer.permissionPersistFailure();
+    const ok = !persistFailure && promptResult.stopReason === "end_turn";
+    const errorCode = persistFailure
+      ? ("CRASH" as const)
+      : ok
+        ? undefined
+        : ("ACP_PROTOCOL" as const);
+
+    if (persistFailure) {
+      log.error(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          reason: persistFailure.reason,
+        },
+        "permission-persistence failure propagated to step result",
+      );
+    }
 
     return {
       ok,
       stdout: consumer.snapshot(),
       vars: {},
       durationMs: Date.now() - startedAt,
-      errorCode: ok ? undefined : "ACP_PROTOCOL",
+      errorCode,
       acpSessionId: session.acpSessionId,
     };
   } finally {
@@ -266,7 +451,13 @@ async function runSlashInExisting(
   }
 
   const sessionId = ctx.sessionState.currentSessionId;
-  const consumer = startEventConsumer(sessionId, api);
+  const consumer = startEventConsumer(sessionId, api, {
+    db: ctx.db ?? getDb(),
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    supervisorSessionId: sessionId,
+    cancelPermission: api.cancelPermission,
+  });
 
   let promptResult: PromptResult;
 
@@ -280,14 +471,31 @@ async function runSlashInExisting(
     await consumer.done;
   }
 
-  const ok = promptResult.stopReason === "end_turn";
+  const persistFailure = consumer.permissionPersistFailure();
+  const ok = !persistFailure && promptResult.stopReason === "end_turn";
+  const errorCode = persistFailure
+    ? ("CRASH" as const)
+    : ok
+      ? undefined
+      : ("ACP_PROTOCOL" as const);
+
+  if (persistFailure) {
+    log.error(
+      {
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        reason: persistFailure.reason,
+      },
+      "permission-persistence failure propagated to step result",
+    );
+  }
 
   return {
     ok,
     stdout: consumer.snapshot(),
     vars: {},
     durationMs: Date.now() - startedAt,
-    errorCode: ok ? undefined : "ACP_PROTOCOL",
+    errorCode,
     acpSessionId: sessionId,
   };
 }

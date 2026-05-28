@@ -16,8 +16,15 @@ artifact protocol used when the worker is checkpointed.
     `session/request_permission`.
   - `form` — structured form, schema declared in the Flow's
     `human` step `form_schema`.
-  - `human` — full human-review step with an `on_reject.goto_step`
-    loopback.
+  - `human` — Flow step `type: human` with an `on_reject` clause
+    declared in `flow.yaml`. **M7 behaviour:** the row is persisted
+    as `kind="human"` and the response is captured under the same
+    atomic-claim + artifact-write contract as `kind="form"`. The
+    loop-on-reject routing (`on_reject.goto_step` rerouting +
+    `comments_var` propagation) is **Designed M8** — until then,
+    `kind="human"` behaves wire-equivalent to `kind="form"`. The
+    distinction is preserved on the row so M8 can light up
+    rerouting without a schema change.
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
 enum | array` on POC.
@@ -32,7 +39,7 @@ enum | array` on POC.
 | ---- | ------- | ----- | --------------- | ---- |
 | `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
 | `form` | Agent writes `needs-input.json` mid-step | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
-| `human` | Flow step `type: human` | Yes (`form_schema`) | Yes (`on_reject.goto_step`) | Artifact only |
+| `human` | Flow step `type: human` with `on_reject` | Yes (`form_schema`) | Designed M8 (`on_reject.goto_step` not yet executed) | Artifact only |
 
 The decision tree:
 
@@ -194,22 +201,52 @@ fields:
 - Form-schema field types on POC are exactly `string | number |
   boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   load.
-- **(Designed M7)** Operator responses MUST be written via
+- **(Implemented M7)** Operator responses go through
+  `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`. Permission
+  responses are routed through the supervisor's
+  `POST /sessions/:id/input` (permission-only, discriminated `action:
+  "select" | "cancel"`). Form / `human` responses are written via
   `atomicWriteJson` (tmp + rename) to
-  `.maister/<slug>/runs/<runId>/input-<stepId>.json`; last write wins
-  on rapid resubmit. M5 currently suspends `human` steps by writing
-  `needs-input.json` and inserting `hitl_requests`; no
-  `POST /api/runs/[id]/hitl-response` route exists yet, and supervisor
-  `POST /sessions/:id/input` still returns 501.
-- **(Designed M7)** `human` step rejection without `on_reject` defined
-  → run `Failed`; task returns to `Backlog` per the 1:N retry contract.
-  M5 only suspends the run in `NeedsInput`; the rejection branch and
-  the `on_reject.goto_step` loop are not yet wired in `runHumanStep`.
-- **(Designed M7)** `hitl_requests.responded_at` and `.response` are
-  written in the same transaction that updates `runs.status` back to
-  `Running`. M5 leaves both columns NULL — there is no response surface
-  to populate them, so the transition out of `NeedsInput` is the M7
-  acceptance contract, not an M5 one.
+  `.maister/<slug>/runs/<runId>/input-<stepId>.json` by the web tier
+  AFTER the row-level CAS claim succeeds — concurrent double-submits
+  with conflicting payloads return 409 before any artifact is
+  touched, and same-payload retries are idempotent. The supervisor
+  never writes input artifacts.
+- **(Implemented M7)** `human` step responses are captured under the
+  same two-phase commit + artifact-write contract as `form`. The
+  `on_reject` clause on the Flow step is preserved in the row's kind
+  (`hitl_requests.kind = "human"`) and may also be carried in the
+  response payload as `{ rejected: bool, comments?: string }`, but the
+  runner does NOT branch on it in M7 — it advances to the next step
+  with the response captured as ordinary `steps.<id>.vars`. The
+  reviewer UI MUST therefore treat M7 rejection as informational
+  (recorded for audit, the run continues), not as a routing action.
+- **(Designed M8)** Full `on_reject.goto_step` rerouting in
+  `runHumanStep`: when the response indicates rejection, the runner
+  jumps to the declared `goto_step` with `comments_var` populated
+  from the response. Until M8 lands, the API surface MUST NOT
+  represent rejection as a loop-back action — see `web.openapi.yaml`
+  and the UI MUST disable loop-back affordances.
+- **(Implemented M7)** `hitl_requests.response` and `.responded_at`
+  use two-phase commit semantics:
+  * **Phase 1 (atomic claim).** `response` is stored under a row-level
+    `SELECT ... FOR UPDATE` only if the row is unclaimed, or claimed
+    with the same payload (idempotent retry). Different payload on
+    retry → 409.
+  * **Phase 2 (durable side-effect).** For permission, the supervisor
+    deferred is resolved; for form/human, `input-<stepId>.json` is
+    written from the STORED response.
+  * **Phase 3 (delivered marker).** `responded_at` is set ONLY after
+    the side-effect succeeds. The route does NOT flip `runs.status`
+    back to `Running` — the runner owns that transition on resume so
+    its `isResume` gate can match.
+  * Retry classification: supervisor 410 → `HITL_TIMEOUT` terminal
+    (run → `Failed`); supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
+    retryable (row stays claimed, `responded_at` NULL); artifact
+    write I/O failure → 503 retryable.
+  * Same-payload retry on an already-delivered row re-queues
+    `runFlow` so a process crash between Phase 3 commit and the
+    original microtask cannot strand the run in `NeedsInput`.
 - **(Designed M8)** HITL request lost during supervisor shutdown is
   recoverable via the standard `acp_session_id` resume on next launch —
   no separate reconciliation needed. Depends on M8 checkpoint/resume
@@ -223,9 +260,18 @@ fields:
   in `NeedsInput`; operator sees a validation error in the form.
 - **Unsupported field type in `form_schema`** → `CONFIG` at Flow load
   time (`web/lib/config.ts`).
-- **Operator submits twice in quick succession** — `atomicWriteJson`
-  guarantees the second write replaces the first cleanly (tmp +
-  rename). The supervisor receives the latest payload.
+- **Operator submits twice in quick succession** — the response
+  route's row-level CAS (`SELECT ... FOR UPDATE` + conditional
+  UPDATE) ensures only one submission claims the deferred. A
+  same-payload retry is idempotent (200 + re-queue resume); a
+  different-payload retry is rejected with 409 BEFORE any artifact
+  or supervisor side-effect runs.
+- **Supervisor restart while the user response is in-flight** —
+  supervisor returns 503 `EXECUTOR_UNAVAILABLE` for the
+  "unknown session" case (distinct from 410 `HITL_TIMEOUT` for
+  expired deferred). The web tier treats 503 as retryable: the
+  `responded_at` marker stays NULL, the response column holds the
+  user's intent, and a retry replays through the normal flow.
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.

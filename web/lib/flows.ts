@@ -8,12 +8,16 @@ import {
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   readlink,
+  rename,
+  rm,
   stat,
   symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
+import os from "node:os";
 import path, { dirname, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -67,6 +71,11 @@ export type InstallResult = {
   installedPath: string;
   symlinkPath: string;
   manifest: FlowYamlV1;
+  // Git commit SHA the bundle was installed from. For local-source
+  // installs (file:// to a non-git directory), this is the literal
+  // "unknown" sentinel and the bundle is keyed by (flowRefId, "unknown")
+  // — POC test fixtures use this; production flows are always git.
+  revision: string;
 };
 
 function asError(err: unknown): Error {
@@ -257,6 +266,34 @@ async function runSetupSh(opts: {
   }
 }
 
+// Capture the upstream git commit SHA inside an already-cloned directory.
+// Used after `gitClone` writes a tag-pinned clone into a temp location;
+// the SHA becomes the on-disk cache key.
+async function gitRevParseHead(opts: {
+  dir: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", opts.dir, "rev-parse", "HEAD"],
+      {
+        signal: buildExecSignal(opts.signal, CLONE_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+    const sha = stdout.trim();
+
+    if (!/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error(`rev-parse HEAD returned non-hex output: ${sha}`);
+    }
+
+    return sha;
+  } catch (err) {
+    throw wrapInstall(`git rev-parse HEAD failed in ${opts.dir}`, err);
+  }
+}
+
 async function upsertFlowRow(opts: {
   // FIXME(any): see InstallFlowPluginArgs.db
   db: any;
@@ -264,6 +301,7 @@ async function upsertFlowRow(opts: {
   flowId: string;
   source: string;
   version: string;
+  revision: string;
   installedPath: string;
   manifest: FlowYamlV1;
 }): Promise<string> {
@@ -279,6 +317,7 @@ async function upsertFlowRow(opts: {
         flowRefId: opts.flowId,
         source: opts.source,
         version: opts.version,
+        revision: opts.revision,
         installedPath: opts.installedPath,
         manifest: opts.manifest,
         schemaVersion: opts.manifest.schemaVersion,
@@ -289,6 +328,7 @@ async function upsertFlowRow(opts: {
         set: {
           source: opts.source,
           version: opts.version,
+          revision: opts.revision,
           installedPath: opts.installedPath,
           manifest: opts.manifest,
           schemaVersion: opts.manifest.schemaVersion,
@@ -363,33 +403,78 @@ async function installFlowPluginImpl(
   const { source, version, projectId, projectSlug, flowId, signal } = args;
   const workspaceRoot = args.workspaceRoot ?? process.cwd();
   const db = args.db ?? getDb();
-  const target = systemCachePath(flowId, version);
 
-  log.info({ flowId, version, source, target }, "installing flow plugin");
+  log.info({ flowId, version, source }, "installing flow plugin");
 
-  const alreadyInstalled =
-    (await pathExists(target)) && (await pathExists(join(target, "flow.yaml")));
+  const sourceKind = await isLocalDirectorySource(source);
+  let revision: string;
+  let target: string;
 
-  if (alreadyInstalled) {
-    log.info({ target }, "skip clone (already installed)");
-  } else {
-    const sourceKind = await isLocalDirectorySource(source);
+  if (sourceKind.kind === "local") {
+    // Local sources (file:// to a non-git directory) are not
+    // content-addressed in POC. Pin them to the "unknown" sentinel so
+    // the SHA-keyed cache schema still applies; the bundle lives at
+    // <id>@unknown and re-installing a different local dir at the same
+    // flowId overwrites it. Production flows are git-only.
+    revision = "unknown";
+    target = systemCachePath(flowId, revision);
 
-    await mkdir(dirname(target), { recursive: true });
+    const alreadyInstalled =
+      (await pathExists(target)) &&
+      (await pathExists(join(target, "flow.yaml")));
 
-    if (sourceKind.kind === "local") {
+    if (alreadyInstalled) {
+      log.info({ target }, "skip local-copy (already installed)");
+    } else {
       log.info(
         { absPath: sourceKind.absPath, target },
         "local-source-detected",
       );
+      await mkdir(dirname(target), { recursive: true });
       await cp(sourceKind.absPath, target, {
         recursive: true,
         errorOnExist: false,
         force: false,
       });
       log.info({ target }, "local-copy-done");
-    } else {
-      await gitClone({ source, version, target, signal });
+    }
+  } else {
+    // Git source. Clone to a temp directory first so we can capture
+    // the resolved commit SHA, then rename to the SHA-keyed cache
+    // path. This makes the cache content-addressed: tag movement on
+    // the upstream repo produces a new directory; in-flight runs
+    // pinned to the old SHA keep reading the old bytes.
+    const tmpDir = await mkdtemp(
+      path.join(os.tmpdir(), `maister-flow-clone-${flowId}-`),
+    );
+
+    try {
+      await gitClone({ source, version, target: tmpDir, signal });
+      revision = await gitRevParseHead({ dir: tmpDir, signal });
+      target = systemCachePath(flowId, revision);
+
+      const alreadyInstalled =
+        (await pathExists(target)) &&
+        (await pathExists(join(target, "flow.yaml")));
+
+      if (alreadyInstalled) {
+        // A concurrent install (or a previous install of the same
+        // SHA via a different tag pointing at the same commit) won
+        // the race. Discard our temp clone and use the cached copy.
+        log.info(
+          { target, revision },
+          "skip rename (cache already populated at this revision)",
+        );
+        await rm(tmpDir, { recursive: true, force: true });
+      } else {
+        await mkdir(dirname(target), { recursive: true });
+        await rename(tmpDir, target);
+        log.info({ target, revision }, "renamed clone to SHA-keyed cache");
+      }
+    } catch (err) {
+      // Best-effort cleanup of the temp clone on any failure.
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      throw err;
     }
   }
 
@@ -421,16 +506,17 @@ async function installFlowPluginImpl(
     flowId,
     source,
     version,
+    revision,
     installedPath: target,
     manifest,
   });
 
   log.info(
-    { flowId, version, flowRowId, target, symlinkPath },
+    { flowId, version, revision, flowRowId, target, symlinkPath },
     "flow plugin install complete",
   );
 
-  return { flowRowId, installedPath: target, symlinkPath, manifest };
+  return { flowRowId, installedPath: target, symlinkPath, manifest, revision };
 }
 
 export async function installFlowPlugin(

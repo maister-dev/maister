@@ -4,12 +4,13 @@ import type { SessionRegistry, RegistryEntry } from "./registry";
 
 import { randomUUID } from "node:crypto";
 
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
 import { type CcrManager } from "./ccr-manager";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
+import { pendingPermissions } from "./pending-permissions";
 import { spawnSession } from "./spawn";
 import {
   httpStatusForCode,
@@ -19,6 +20,21 @@ import {
   SupervisorError,
   type SessionEvent,
 } from "./types";
+
+const InputBodySchema = z
+  .object({
+    kind: z.literal("permission"),
+    action: z.enum(["select", "cancel"]),
+    requestId: z.string().uuid(),
+    optionId: z.string().min(1).optional(),
+    reason: z.string().min(1).max(256).optional(),
+  })
+  .refine((b) => (b.action === "select" ? Boolean(b.optionId) : true), {
+    message: "optionId is required when action='select'",
+    path: ["optionId"],
+  });
+
+export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
 
@@ -71,17 +87,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   app.post("/sessions", async (req, reply) => {
     const parsed = StartSessionRequestSchema.parse(req.body);
     const sessionId = randomUUID();
-    const { child, emitter, record, acpStdoutTap } = await spawnSession({
-      sessionId,
-      request: parsed,
-      runtimeRoot,
-      logger,
-      binaryOverride: opts.spawnOverrides?.binary,
-      preArgs: opts.spawnOverrides?.preArgs,
-      ccrManager: opts.spawnOverrides?.ccrManager,
-    });
+    const { child, emitter, record, acpStdoutTap, eventsLog } =
+      await spawnSession({
+        sessionId,
+        request: parsed,
+        runtimeRoot,
+        logger,
+        binaryOverride: opts.spawnOverrides?.binary,
+        preArgs: opts.spawnOverrides?.preArgs,
+        ccrManager: opts.spawnOverrides?.ccrManager,
+      });
 
-    registry.register(record, child, emitter);
+    registry.register(record, child, emitter, { eventsLog });
     attachHeartbeat({ sessionId, child, registry, logger });
     await attachCost({
       sessionId,
@@ -293,11 +310,92 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(202).send({ status: "deferred", milestone: "M8" });
   });
 
-  app.post<SessionIdParams>("/sessions/:id/input", (_req, reply) => {
-    reply.status(501).send({
-      code: "ACP_PROTOCOL",
-      message: "Not implemented in M3 — see M7",
-    });
+  app.post<SessionIdParams>("/sessions/:id/input", (req, reply) => {
+    const sessionId = req.params.id;
+    const startedAt = Date.now();
+    const parsed = InputBodySchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+        .join("; ");
+
+      logger.warn(
+        { sessionId, status: 409, message },
+        "input route: validation failed",
+      );
+      reply.status(409).send({ code: "PRECONDITION", message });
+
+      return;
+    }
+
+    const body = parsed.data;
+
+    if (!registry.has(sessionId)) {
+      // Distinct from "unknown requestId": an unknown session typically
+      // means the supervisor restarted (or the session crashed) AFTER
+      // the deferred was minted. The user's reply is still valid; the
+      // recovery path is "retry once the supervisor has reconciled".
+      // We classify as EXECUTOR_UNAVAILABLE (retryable) so the web tier
+      // does NOT mark the run Failed.
+      logger.warn(
+        { sessionId, action: body.action, requestId: body.requestId },
+        "input route: unknown session — likely supervisor restart",
+      );
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "unknown session — supervisor may have restarted",
+      });
+
+      return;
+    }
+
+    let ok: boolean;
+    let outcome: "ok" | "missing";
+
+    if (body.action === "select") {
+      ok = pendingPermissions.resolve(
+        sessionId,
+        body.requestId,
+        body.optionId as string,
+      );
+    } else {
+      ok = pendingPermissions.cancel(
+        sessionId,
+        body.requestId,
+        body.reason ?? "client-cancelled",
+      );
+    }
+
+    outcome = ok ? "ok" : "missing";
+    const latencyMs = Date.now() - startedAt;
+
+    logger.info(
+      {
+        sessionId,
+        action: body.action,
+        requestId: body.requestId,
+        latencyMs,
+        outcome,
+      },
+      "http POST /sessions/:id/input",
+    );
+
+    if (!ok) {
+      // Distinct from "unknown session": the session is alive but the
+      // requested deferred is missing — almost always means the
+      // MAISTER_KEEPALIVE_MINUTES timeout already fired (or another
+      // request resolved/cancelled the same deferred). Classify as
+      // HITL_TIMEOUT so the web tier treats it as terminal.
+      reply.status(410).send({
+        code: "HITL_TIMEOUT",
+        message: "no pending permission with that requestId",
+      });
+
+      return;
+    }
+
+    reply.status(200).send({ ok: true });
   });
 }
 

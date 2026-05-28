@@ -80,13 +80,26 @@ class MockAgent {
     });
 
     if (REQUEST_PERMISSION) {
-      await this.connection.requestPermission({
+      const result = await this.connection.requestPermission({
         sessionId: params.sessionId,
         toolCall: { toolCallId: "tc-1", title: "Mock tool", kind: "execute" },
         options: [
           { optionId: "allow", kind: "allow_always", name: "Allow" },
           { optionId: "deny", kind: "reject_once", name: "Deny" },
         ],
+      });
+      const outcome = result?.outcome;
+      const marker =
+        outcome?.outcome === "selected"
+          ? `permission outcome: selected ${outcome.optionId}`
+          : "permission outcome: cancelled";
+
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: marker },
+        },
       });
     }
 

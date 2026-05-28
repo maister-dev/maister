@@ -4,6 +4,7 @@ import pino from "pino";
 import { ccrManager } from "./ccr-manager";
 import { startHeartbeatWatcher } from "./heartbeat";
 import { registerRoutes } from "./http-api";
+import { pendingPermissions } from "./pending-permissions";
 import { SessionRegistry } from "./registry";
 
 const DEFAULT_PORT = 7777;
@@ -63,13 +64,18 @@ export async function start(): Promise<void> {
   const shutdown = async (signal: NodeJS.Signals) => {
     const startedAt = Date.now();
     const liveSessions = registry.size();
+    const pendingPermissionsCount = pendingPermissions.totalSize();
 
-    logger.info({ signal, liveSessions }, "shutdown-start");
+    logger.info(
+      { signal, liveSessions, pendingPermissionsCount },
+      "shutdown-start",
+    );
     stopHeartbeat();
 
     registry.forEach((entry) => {
       if (entry.record.status !== "live") return;
 
+      pendingPermissions.purgeSession(entry.record.sessionId);
       registry.markIntentionalShutdown(entry.record.sessionId);
       entry.child.kill("SIGTERM");
     });
