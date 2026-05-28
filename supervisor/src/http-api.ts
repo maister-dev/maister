@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
+import { type CcrManager } from "./ccr-manager";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
 import { spawnSession } from "./spawn";
@@ -24,6 +25,7 @@ const DEFAULT_KILL_GRACE_MS = 5_000;
 export type SpawnOverrides = {
   binary?: string;
   preArgs?: string[];
+  ccrManager?: CcrManager;
 };
 
 export type RegisterRoutesOptions = {
@@ -76,6 +78,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       logger,
       binaryOverride: opts.spawnOverrides?.binary,
       preArgs: opts.spawnOverrides?.preArgs,
+      ccrManager: opts.spawnOverrides?.ccrManager,
     });
 
     registry.register(record, child, emitter);
@@ -136,12 +139,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       return;
     }
     if (!entry.connection || !entry.acpSessionId) {
-      reply
-        .status(409)
-        .send({
-          code: "PRECONDITION",
-          message: "session has no ACP connection",
-        });
+      reply.status(409).send({
+        code: "PRECONDITION",
+        message: "session has no ACP connection",
+      });
 
       return;
     }

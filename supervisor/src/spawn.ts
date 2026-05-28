@@ -7,6 +7,10 @@ import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
+import {
+  ccrManager as defaultCcrManager,
+  type CcrManager,
+} from "./ccr-manager";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   SupervisorError,
@@ -30,6 +34,7 @@ export type SpawnSessionOptions = {
   logger: Logger;
   binaryOverride?: string;
   preArgs?: string[];
+  ccrManager?: CcrManager;
 };
 
 export type SpawnSessionResult = {
@@ -65,8 +70,37 @@ export async function spawnSession(
     args.push("--resume", request.resumeSessionId);
   }
 
+  const ccrLayer: NodeJS.ProcessEnv = {};
+
+  if (request.executor.router === "ccr") {
+    const ccr = opts.ccrManager ?? defaultCcrManager;
+
+    await ccr.ensureRunning();
+
+    const explicitToken = request.executor.env?.ANTHROPIC_AUTH_TOKEN;
+    const fallbackToken = process.env.MAISTER_CCR_AUTH_TOKEN;
+    const authToken = explicitToken || fallbackToken;
+
+    if (!authToken) {
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        "ANTHROPIC_AUTH_TOKEN missing for router=ccr executor; set MAISTER_CCR_AUTH_TOKEN or put it in executor.env",
+      );
+    }
+    const authTokenSource: "executor.env" | "MAISTER_CCR_AUTH_TOKEN" =
+      explicitToken ? "executor.env" : "MAISTER_CCR_AUTH_TOKEN";
+
+    ccrLayer.ANTHROPIC_BASE_URL = ccr.getProxyUrl();
+    ccrLayer.ANTHROPIC_AUTH_TOKEN = authToken;
+    logger.debug(
+      { sessionId, authTokenSource, proxyUrl: ccrLayer.ANTHROPIC_BASE_URL },
+      "ccr env layer composed",
+    );
+  }
+
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ...ccrLayer,
     ...(request.executor.env ?? {}),
   };
 
@@ -78,6 +112,7 @@ export async function spawnSession(
       cwd: request.worktreePath,
       resume: Boolean(request.resumeSessionId),
       router: request.executor.router ?? null,
+      routerInjected: request.executor.router ?? null,
       hasEnv: Boolean(
         request.executor.env && Object.keys(request.executor.env).length > 0,
       ),
