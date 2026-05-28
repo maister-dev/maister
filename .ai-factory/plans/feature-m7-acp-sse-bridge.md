@@ -436,7 +436,7 @@ Decisions:
   - Logging: per Decisions section — INFO with `{runId, hitlRequestId, kind, phase, supervisorAck}` on every terminal log line; WARN on validation failure.
   - Acceptance: covered by Task 14 unit tests + Task 16 integration tests.
 
-- [ ] **Task 14: Unit tests for supervisor-client helpers, runner-agent permission handler (incl. cancel-on-insert-failure), runner-human resume, runFlow re-entry, HITL response route (two-phase)** — **DEFERRED**. Phase 3 wiring landed without the planned 34+ targeted cases; existing supervisor permission-roundtrip integration tests cover the contract at the HTTP boundary and the new logic typechecks. Backfill recommended as a separate follow-up before M7 ships.
+- [x] **Task 14: Unit tests for supervisor-client helpers, runner-agent permission handler (incl. cancel-on-insert-failure), runner-human resume, runFlow re-entry, HITL response route (two-phase)** — landed in a follow-up commit. 40 new cases across 5 files (supervisor-client +11, runner-agent 6, runner-human 4, runner-reentry 3, HITL response route 16). Web unit suite at 208 green.
   - Files: `web/lib/__tests__/supervisor-client.test.ts` (extend), `web/lib/flows/__tests__/runner-agent.test.ts` (NEW or extend), `web/lib/flows/__tests__/runner-human.test.ts` (NEW or extend), `web/lib/flows/__tests__/runner.test.ts` (extend re-entry), `web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/__tests__/route.test.ts` (NEW)
   - supervisor-client cases (8):
     - `deliverPermission` happy path → POST body shape matches `{kind:"permission", action:"select", requestId, optionId}`.
