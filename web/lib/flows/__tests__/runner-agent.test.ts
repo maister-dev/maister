@@ -1,8 +1,5 @@
 import type { FlowContext } from "@/lib/flows/types";
-import type {
-  PromptResult,
-  SupervisorEvent,
-} from "@/lib/supervisor-client";
+import type { PromptResult, SupervisorEvent } from "@/lib/supervisor-client";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -102,8 +99,7 @@ function makeApi(opts: {
   ) => Promise<{ ok: true }>;
 }): SupervisorApi & { cancelSpy: ReturnType<typeof vi.fn> } {
   const cancelSpy = vi.fn(
-    opts.cancelImpl ??
-      (async () => ({ ok: true }) as { ok: true }),
+    opts.cancelImpl ?? (async () => ({ ok: true }) as { ok: true }),
   );
 
   return {
@@ -116,14 +112,18 @@ function makeApi(opts: {
     sendPrompt: vi.fn(async () => ({
       stopReason: opts.promptStopReason ?? "end_turn",
     })),
-    streamSession: vi.fn(() => eventStream(opts.events)) as unknown as
-      SupervisorApi["streamSession"],
+    streamSession: vi.fn(() =>
+      eventStream(opts.events),
+    ) as unknown as SupervisorApi["streamSession"],
     cancelPermission: cancelSpy as unknown as SupervisorApi["cancelPermission"],
     cancelSpy,
   };
 }
 
-function permissionRequest(monotonicId: number, requestId: string): SupervisorEvent {
+function permissionRequest(
+  monotonicId: number,
+  requestId: string,
+): SupervisorEvent {
   return {
     type: "session.permission_request",
     sessionId: "sup-session-1",
@@ -212,12 +212,12 @@ describe("runner-agent — session.permission_request handling", () => {
     );
 
     expect(db.insertCalls).toHaveLength(2);
-    expect(
-      (db.insertCalls[0].schema as { requestId: string }).requestId,
-    ).toBe("req-1");
-    expect(
-      (db.insertCalls[1].schema as { requestId: string }).requestId,
-    ).toBe("req-2");
+    expect((db.insertCalls[0].schema as { requestId: string }).requestId).toBe(
+      "req-1",
+    );
+    expect((db.insertCalls[1].schema as { requestId: string }).requestId).toBe(
+      "req-2",
+    );
   });
 
   it("cancels supervisor deferred + transitions run to Crashed AND returns ok=false errorCode=CRASH when INSERT fails", async () => {

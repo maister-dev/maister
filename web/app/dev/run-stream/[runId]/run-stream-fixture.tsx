@@ -13,9 +13,9 @@ export function RunStreamFixture({ runId }: { runId: string }) {
         <span>events: {events.length}</span>
         {error ? <span className="text-red-500">error: {error}</span> : null}
         <button
-          onClick={reconnect}
           className="ml-auto px-2 py-1 border rounded text-xs"
           type="button"
+          onClick={reconnect}
         >
           reconnect
         </button>

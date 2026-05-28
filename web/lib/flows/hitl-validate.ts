@@ -17,11 +17,7 @@ type FormSchemaLike = {
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    !Array.isArray(v)
-  );
+  return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
 function checkField(value: unknown, field: FormField): string | null {
@@ -35,7 +31,8 @@ function checkField(value: unknown, field: FormField): string | null {
   }
   switch (field.type) {
     case "string":
-      if (typeof value !== "string") return `field "${field.name}" must be a string`;
+      if (typeof value !== "string")
+        return `field "${field.name}" must be a string`;
       break;
     case "number":
       if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -43,10 +40,12 @@ function checkField(value: unknown, field: FormField): string | null {
       }
       break;
     case "boolean":
-      if (typeof value !== "boolean") return `field "${field.name}" must be a boolean`;
+      if (typeof value !== "boolean")
+        return `field "${field.name}" must be a boolean`;
       break;
     case "enum": {
-      if (typeof value !== "string") return `field "${field.name}" must be a string`;
+      if (typeof value !== "string")
+        return `field "${field.name}" must be a string`;
       const opts = field.options ?? [];
 
       if (!opts.includes(value)) {
@@ -55,7 +54,8 @@ function checkField(value: unknown, field: FormField): string | null {
       break;
     }
     case "array":
-      if (!Array.isArray(value)) return `field "${field.name}" must be an array`;
+      if (!Array.isArray(value))
+        return `field "${field.name}" must be an array`;
       break;
   }
 
@@ -67,7 +67,10 @@ export function validateHitlResponse(
   schema: unknown,
 ): { ok: true } | { ok: false; message: string } {
   if (!schema || typeof schema !== "object") {
-    return { ok: false, message: "hitl_requests.schema is missing or malformed" };
+    return {
+      ok: false,
+      message: "hitl_requests.schema is missing or malformed",
+    };
   }
   const fields = (schema as FormSchemaLike).fields;
 
@@ -89,10 +92,7 @@ export function validateHitlResponse(
   return { ok: true };
 }
 
-export function assertHitlResponse(
-  response: unknown,
-  schema: unknown,
-): void {
+export function assertHitlResponse(response: unknown, schema: unknown): void {
   const result = validateHitlResponse(response, schema);
 
   if (!result.ok) {

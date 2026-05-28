@@ -20,10 +20,7 @@ export default defineWorkspace([
         "lib/**/__tests__/**/*.test.ts",
         "app/**/__tests__/**/*.test.ts",
       ],
-      exclude: [
-        "lib/**/*.integration.test.ts",
-        "app/**/*.integration.test.ts",
-      ],
+      exclude: ["lib/**/*.integration.test.ts", "app/**/*.integration.test.ts"],
       environment: "node",
     },
   },

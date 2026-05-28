@@ -4,14 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NextRequest } from "next/server";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   hitlRequests as hitlRequestsTable,
@@ -78,7 +71,7 @@ const updateChain = (table: unknown) => {
 const fakeDb = {
   select: (cols?: Row) => selectChain(cols),
   update: updateChain,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   transaction: async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
     return await fn({
       select: (cols?: Row) => selectChain(cols),
@@ -197,11 +190,7 @@ function seedFormRow(
   return { runId, hitlRequestId, stepId: "review" };
 }
 
-async function invokePost(
-  runId: string,
-  hitlRequestId: string,
-  body: unknown,
-) {
+async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
   const { POST } = await import("../route");
   const req = new NextRequest(
     new Request(
@@ -226,7 +215,11 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(200);
-    expect(deliverPermissionSpy).toHaveBeenCalledWith("sup-1", "req-1", "allow");
+    expect(deliverPermissionSpy).toHaveBeenCalledWith(
+      "sup-1",
+      "req-1",
+      "allow",
+    );
     const hitl = dbState.tables.hitl_requests[0];
 
     expect(hitl.response).toEqual({ optionId: "allow" });

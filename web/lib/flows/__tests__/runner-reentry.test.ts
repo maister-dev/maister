@@ -45,7 +45,6 @@ function tableNameOf(table: unknown): keyof TableRows {
 }
 
 function makeFakeDb(initial: Partial<TableRows>): {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any;
   updates: CapturedUpdate[];
   inserts: Array<{ table: keyof TableRows; row: Record<string, unknown> }>;
@@ -177,10 +176,7 @@ async function writeArtifact(
   const dir = join(runtimeRoot, ".maister", "demo", "runs", "run-1");
 
   await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, `input-${stepId}.json`),
-    JSON.stringify(payload),
-  );
+  await writeFile(join(dir, `input-${stepId}.json`), JSON.stringify(payload));
 }
 
 function baseFixture(): TableRows {
@@ -272,7 +268,9 @@ describe("runFlow re-entry", () => {
 
     const { client } = makeFakeDb(fixture);
 
-    await expect(runFlow("run-1", { db: client, runtimeRoot })).rejects.toMatchObject({
+    await expect(
+      runFlow("run-1", { db: client, runtimeRoot }),
+    ).rejects.toMatchObject({
       code: "PRECONDITION",
     });
   });

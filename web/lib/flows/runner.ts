@@ -29,7 +29,11 @@ import {
 
 import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { promoteNextPending } from "@/lib/scheduler";
-import { isMaisterError, MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import {
+  isMaisterError,
+  MaisterError,
+  type MaisterErrorCode,
+} from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { systemCachePath } from "@/lib/flow-paths";

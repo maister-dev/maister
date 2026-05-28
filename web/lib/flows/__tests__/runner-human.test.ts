@@ -126,13 +126,7 @@ describe("runHumanStep — first pass", () => {
 describe("runHumanStep — resume from existing input artifact", () => {
   it("returns vars from the artifact and skips needs-input.json + hitl_requests insert", async () => {
     const formSchema = await writeSchema();
-    const artifactDir = join(
-      runtimeRoot,
-      ".maister",
-      "demo",
-      "runs",
-      "run-1",
-    );
+    const artifactDir = join(runtimeRoot, ".maister", "demo", "runs", "run-1");
 
     await mkdir(artifactDir, { recursive: true });
     const payload = { approved: true, comments: "looks good" };
@@ -163,19 +157,10 @@ describe("runHumanStep — resume from existing input artifact", () => {
 
   it("throws MaisterError(CONFIG) when the artifact is malformed JSON", async () => {
     const formSchema = await writeSchema();
-    const artifactDir = join(
-      runtimeRoot,
-      ".maister",
-      "demo",
-      "runs",
-      "run-1",
-    );
+    const artifactDir = join(runtimeRoot, ".maister", "demo", "runs", "run-1");
 
     await mkdir(artifactDir, { recursive: true });
-    await writeFile(
-      join(artifactDir, "input-review.json"),
-      "{not valid json",
-    );
+    await writeFile(join(artifactDir, "input-review.json"), "{not valid json");
 
     await expect(
       runHumanStep(

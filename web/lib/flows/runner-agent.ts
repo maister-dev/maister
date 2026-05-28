@@ -41,7 +41,7 @@ export type AgentStepLike = {
 };
 
 // FIXME(any): dual drizzle-orm peer-dep variants (mirrors lib/scheduler.ts).
-type DbClientLike = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type DbClientLike = any;
 export type { DbClientLike };
 
 export type RunAgentStepCtx = {
@@ -172,9 +172,7 @@ async function handlePermissionRequest(
         {
           runId: pctx.runId,
           err:
-            updateErr instanceof Error
-              ? updateErr.message
-              : String(updateErr),
+            updateErr instanceof Error ? updateErr.message : String(updateErr),
         },
         "run-to-Crashed update failed after persist failure",
       );

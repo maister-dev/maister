@@ -16,20 +16,17 @@ import { runFlow } from "@/lib/flows/runner";
 import { deliverPermission } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, projects, runs } =
-  schemaModule as unknown as Record<string, any>;
+const { hitlRequests, projects, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 const log = pino({
   name: "api-hitl",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const TERMINAL_RUN_STATUS = new Set([
-  "Failed",
-  "Crashed",
-  "Done",
-  "Abandoned",
-]);
+const TERMINAL_RUN_STATUS = new Set(["Failed", "Crashed", "Done", "Abandoned"]);
 
 const bodySchema = z.object({
   optionId: z.string().min(1).optional(),
@@ -94,7 +91,7 @@ function isPostgres(): boolean {
 // Acquire a row-level lock on the HITL request row inside a transaction.
 // Postgres: SELECT ... FOR UPDATE. SQLite: deferred-write semantics rely on
 // the single-writer lock so the no-op `.where()` is correct.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 async function lockHitlRow(tx: any, hitlRequestId: string): Promise<any> {
   if (isPostgres()) {
     const rows = await tx
@@ -118,13 +115,14 @@ async function lockHitlRow(tx: any, hitlRequestId: string): Promise<any> {
 // restart between Phase 3 commit and the original microtask cannot
 // strand the run in NeedsInput.
 function scheduleResume(runId: string): void {
-  queueMicrotask(() =>
-    void runFlow(runId).catch((err: unknown) =>
-      log.error(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "background runFlow on resume failed",
+  queueMicrotask(
+    () =>
+      void runFlow(runId).catch((err: unknown) =>
+        log.error(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "background runFlow on resume failed",
+        ),
       ),
-    ),
   );
 }
 
@@ -139,7 +137,9 @@ function payloadsEqual(a: unknown, b: unknown): boolean {
   }
 }
 
-type RouteParams = { params: Promise<{ runId: string; hitlRequestId: string }> };
+type RouteParams = {
+  params: Promise<{ runId: string; hitlRequestId: string }>;
+};
 
 export async function POST(
   req: NextRequest,
@@ -163,7 +163,6 @@ export async function POST(
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = getDb() as any;
     const hitlRows = await db
       .select()
@@ -218,11 +217,10 @@ export async function POST(
 }
 
 type HandlerArgs = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   hitlRow: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   runRow: any;
   body: z.infer<typeof bodySchema>;
   runId: string;
@@ -273,7 +271,7 @@ async function handlePermissionResponse(
   // Returns a tag describing which branch fired so the caller can
   // distinguish "we own the deferred and must deliver" from
   // "another request already finished — return 200 idempotently".
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const claim: PermissionClaim = await db.transaction(async (tx: any) => {
     const lockedHitl = await lockHitlRow(tx, hitlRequestId);
     const lockedRunRows = await tx
@@ -384,7 +382,7 @@ async function handlePermissionResponse(
       // marked respondedAt — in which case the supervisor 404 we just
       // saw is the side-effect of THAT request succeeding, not a real
       // timeout. Returning 200 here is the correct idempotent outcome.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const outcome = await db.transaction(async (tx: any) => {
         const lockedHitl = await lockHitlRow(tx, hitlRequestId);
 
@@ -435,8 +433,7 @@ async function handlePermissionResponse(
       return NextResponse.json(
         {
           code: "HITL_TIMEOUT",
-          message:
-            "permission window expired before response was delivered",
+          message: "permission window expired before response was delivered",
         },
         { status: 410 },
       );
@@ -509,7 +506,7 @@ async function handleFormHumanResponse(
   // Phase 1: claim the row before touching the filesystem. Concurrent
   // double-submits with the same payload are idempotent; conflicting
   // payloads return 409 BEFORE either request can write to disk.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const claim: FormClaim = await db.transaction(async (tx: any) => {
     const lockedHitl = await lockHitlRow(tx, hitlRequestId);
     const lockedRunRows = await tx
@@ -544,6 +541,7 @@ async function handleFormHumanResponse(
           "hitl request already claimed with a different response payload",
         );
       }
+
       // same payload — idempotent retry. Fall through to artifact write.
       return {
         kind: "claimed",
@@ -644,10 +642,7 @@ async function handleFormHumanResponse(
     .update(hitlRequests)
     .set({ respondedAt: new Date() })
     .where(
-      and(
-        eq(hitlRequests.id, hitlRequestId),
-        isNull(hitlRequests.respondedAt),
-      ),
+      and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
     );
 
   scheduleResume(runId);
@@ -669,4 +664,3 @@ async function handleFormHumanResponse(
     { status: 200 },
   );
 }
-

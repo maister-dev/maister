@@ -44,7 +44,9 @@ export function useRunStream(runId: string | null): UseRunStreamResult {
     setStatus("connecting");
     const url = new URL(
       `/api/runs/${encodeURIComponent(runId)}/stream`,
-      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "http://localhost",
     );
 
     if (lastEventIdRef.current !== null) {

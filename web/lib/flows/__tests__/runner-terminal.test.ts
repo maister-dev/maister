@@ -63,7 +63,6 @@ function tableNameOf(t: unknown): keyof TableRows {
 }
 
 function makeFakeDb(initial: TableRows): {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any;
   updates: Array<{ table: keyof TableRows; set: Row }>;
 } {
@@ -123,9 +122,7 @@ function makeFakeDb(initial: TableRows): {
     select: (cols?: Row) => selectChain(cols),
     insert: insertChain,
     update: updateChain,
-    transaction: async <T>(
-      fn: (tx: unknown) => Promise<T>,
-    ): Promise<T> => {
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       return await fn({
         select: (cols?: Row) => selectChain(cols),
         insert: insertChain,

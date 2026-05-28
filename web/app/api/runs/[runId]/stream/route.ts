@@ -18,12 +18,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const TERMINAL_RUN_STATUS = new Set([
-  "Done",
-  "Abandoned",
-  "Failed",
-  "Crashed",
-]);
+const TERMINAL_RUN_STATUS = new Set(["Done", "Abandoned", "Failed", "Crashed"]);
 
 const POLL_INTERVAL_MS = 100;
 const STATUS_REFRESH_MS = 500;
@@ -53,7 +48,6 @@ type RunLite = {
 };
 
 async function loadRunLite(runId: string): Promise<RunLite | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = getDb() as any;
   const rows = await db
     .select({
@@ -83,7 +77,6 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
 async function refreshRunStatus(
   runId: string,
 ): Promise<{ status: string; currentStepId: string | null } | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = getDb() as any;
   const rows = await db
     .select({ status: runs.status, currentStepId: runs.currentStepId })

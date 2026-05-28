@@ -412,10 +412,9 @@ describe("deliverPermission", () => {
 
   it("throws ACP_PROTOCOL on supervisor 409 (bug, body shape drift)", async () => {
     mockOnce(
-      new Response(
-        JSON.stringify({ code: "PRECONDITION", message: "shape" }),
-        { status: 409 },
-      ),
+      new Response(JSON.stringify({ code: "PRECONDITION", message: "shape" }), {
+        status: 409,
+      }),
     );
 
     await expect(
