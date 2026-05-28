@@ -26,6 +26,20 @@ export const versionTagSchema = z
   .regex(/^[A-Za-z0-9._+-]+$/, "version must match /^[A-Za-z0-9._+-]+$/")
   .refine(notDotRef, "version must not be '.', '..' or contain '..'");
 
+// Git commit SHA — 40 hex chars in canonical form, or the literal
+// "unknown" sentinel for pre-migration rows that have not yet been
+// re-installed under the SHA-keyed regime. Stored in `flows.revision`
+// and `runs.flow_revision`; used by the runner to derive the
+// immutable bundle path.
+export const flowRevisionSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(
+    /^(?:[0-9a-f]{40}|unknown)$/,
+    "revision must be a 40-char lowercase hex git SHA or the literal 'unknown' sentinel",
+  );
+
 export const projectSlugSchema = z
   .string()
   .min(1)
@@ -66,11 +80,24 @@ function validate<T>(
   return parsed.data;
 }
 
-export function systemCachePath(flowId: string, version: string): string {
-  const v = validate(versionTagSchema, version, "version");
-  const id = validate(flowIdSchema, flowId, "flowId");
+// Length of the SHA prefix used in the on-disk cache directory name.
+// 12 chars are eyeball-friendly and collision-safe for any plausible
+// number of cached flow versions. The full SHA stays in the DB column.
+const REVISION_SHORT_LEN = 12;
 
-  return path.join(os.homedir(), ".maister", "flows", `${id}@${v}`);
+// Produce the absolute path to the immutable per-revision flow bundle
+// in the system cache. Format: ~/.maister/flows/<flowRefId>@<sha[:12]>/.
+// The revision MUST be a git commit SHA (or the "unknown" sentinel
+// for pre-migration rows). The same (flowRefId, revision) pair always
+// resolves to the same path — re-installs at a new commit land at a
+// different directory, so runs pinned to the old revision keep reading
+// the old bytes.
+export function systemCachePath(flowRefId: string, revision: string): string {
+  const id = validate(flowIdSchema, flowRefId, "flowRefId");
+  const rev = validate(flowRevisionSchema, revision, "revision");
+  const short = rev.slice(0, REVISION_SHORT_LEN);
+
+  return path.join(os.homedir(), ".maister", "flows", `${id}@${short}`);
 }
 
 export function projectFlowSymlinkPath(
