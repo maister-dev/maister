@@ -82,6 +82,7 @@ C4Container
             Container(claude_acp, "claude-agent-acp", "Node binary", "ACP adapter wrapping @anthropic-ai/claude-agent-sdk.")
             Container(codex_acp, "codex-acp", "Node binary", "ACP adapter bundling @openai/codex.")
         }
+        Container(ccr_daemon, "CCR daemon", "Node — @musistudio/claude-code-router@2.0.0", "Multi-provider Anthropic-API-compatible proxy. Lazy-started by the supervisor on the first router=ccr session; one daemon per supervisor process.")
     }
 
     System_Ext(anthropic, "Anthropic API", "HTTPS")
@@ -98,10 +99,13 @@ C4Container
 
     Rel(supervisor, claude_acp, "child_process.spawn", "stdio JSONL")
     Rel(supervisor, codex_acp, "child_process.spawn", "stdio JSONL")
+    Rel(supervisor, ccr_daemon, "Spawn + health-check + SIGTERM on shutdown", "child_process.spawn")
     Rel(supervisor, fs, "Writes step .log + cost.jsonl", "POSIX")
 
     Rel(claude_acp, anthropic, "Inference", "HTTPS")
-    Rel(claude_acp, thirdparty, "Inference (env-router)", "HTTPS")
+    Rel(claude_acp, thirdparty, "Inference (env-router or CCR)", "HTTPS")
+    Rel(claude_acp, ccr_daemon, "Inference (router=ccr)", "HTTP 127.0.0.1")
+    Rel(ccr_daemon, thirdparty, "Routed inference (multi-provider)", "HTTPS")
     Rel(codex_acp, openai, "Inference", "HTTPS")
 ```
 
@@ -114,6 +118,7 @@ C4Container
 | Database | Implemented M2 | Postgres 16 (SQLite dev) | All persistent state for projects, executors, flows, tasks, runs, workspaces, HITL. |
 | `claude-agent-acp` | Implemented M3 (spawn-only) | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
 | `codex-acp` | Implemented M3 (spawn-only) | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
+| CCR daemon | Implemented M6 | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-API-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, exactly one daemon per supervisor process. Host+port read from `~/.claude-code-router/config.json`. |
 
 **Inter-container contracts.**
 
@@ -176,7 +181,8 @@ C4Component
 | ---- | ---- | ------- | ---------------- | ------------ |
 | `main` | `supervisor/src/main.ts` | Process entrypoint. | Read env, build Fastify + pino, wire components, listen, graceful shutdown. | `http-api`, `registry`, `heartbeat`. |
 | `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | 6 routes, Zod request validation, SSE pipe with `Last-Event-ID` replay from ring buffer, error handler maps `SupervisorError`/`ZodError` to status. | `spawn`, `registry`, `heartbeat`, `cost`, `types`. |
-| `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, append `--resume <id>` when present, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. | `registry` (channel constant), `types`. |
+| `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, append `--resume <id>` when present, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. When `executor.router === "ccr"`, await `ccr-manager.ensureRunning()` and inject `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into childEnv beneath the explicit `executor.env` overlay. | `registry` (channel constant), `ccr-manager`, `types`. |
+| `ccr-manager` | `supervisor/src/ccr-manager.ts` | CCR daemon lifecycle controller. **Implemented M6.** | Singleton state machine (`idle | starting | ready | failed | stopping`). Lazy-start the bundled CCR proxy on demand. Parse host+port from `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`). Exponential-backoff `GET /` health check ≤10 s. Graceful shutdown on SIGTERM/SIGINT via existing `main.ts` handler. | `node:child_process`, `node:fs/promises`, `types`. |
 | `registry` | `supervisor/src/registry.ts` | In-memory session table. | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown. | `types`. |
 | `heartbeat` | `supervisor/src/heartbeat.ts` | Lifecycle watcher. | exit/error → `session.exited`/`session.crashed`, orphan-PID polling via `process.kill(pid, 0)`. | `registry`, `types`. |
 | `cost` | `supervisor/src/cost.ts` | Cost accounting. | Lenient JSON parse on every line, traverse for `usage` (depth ≤ 8), append record to `cost.jsonl`. | `registry` (channel constant). |
@@ -236,13 +242,13 @@ added as M4+ milestones land. Stubs and naming live in `web/CLAUDE.md`.
 | --------- | -------------- | ------- | ------ |
 | `lib/projects` | `web/lib/projects.ts` | Registry CRUD, slug derivation, slug + repo_path uniqueness, recursive `MAISTER_PROJECTS_DIR` discovery, Flow plugin install on register. | Designed M4 |
 | `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Designed M5 |
-| `lib/executors` | `web/lib/executors.ts` | Executor registry CRUD, override-resolution chain, CCR env construction. | Designed M5 |
+| `lib/executors` | `web/lib/executors.ts` | Pure `resolveExecutor()` 5-level chain (launcher → task → flow override → project default → flow recommended) + `upsertExecutorsFromConfig()` helper (writes `executors` + `flows.executor_override_id` in one transaction). CCR env construction lives in `supervisor/src/spawn.ts`, not here. | Implemented M6 |
 | `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Designed M6 |
 | `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Designed M6 |
 | `lib/reconcile` | `web/lib/reconcile.ts` | Startup reconciliation: `runs` vs `git worktree list` vs supervisor live sessions. | Designed M6 |
 | `app/api/projects/route.ts` | Route Handler | Register / archive projects. | Designed M4 |
 | `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Designed M4 |
-| `app/api/runs/route.ts` | Route Handler | Precondition + executor resolution + worktree add + supervisor `POST /sessions`. | Designed M6 |
+| `app/api/runs/route.ts` | Route Handler | Precondition + executor resolution (delegates to `lib/executors:resolveExecutor`, logs `resolvedFromTier`) + worktree add + supervisor `POST /sessions`. | Implemented M5 (M6 extended override chain) |
 | `app/api/runs/[id]/stream/route.ts` | Route Handler | SSE bridge tailing the per-step log file. | Designed M7 |
 | `app/api/runs/[id]/hitl-response/route.ts` | Route Handler | Atomic write `input-<step-id>.json` → supervisor `POST /sessions/:id/input`. | Designed M7 |
 | `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Designed M8 |
@@ -286,12 +292,16 @@ sequenceDiagram
     participant LLM as Anthropic API
 
     U->>W: Click Launch on Backlog task
-    W->>DB: Load project, executors, flow manifest
+    W->>DB: Load project, task, executors, flow row + manifest
+    W->>W: resolveExecutor() — 5-level chain → {executorId, tier}
     W->>FS: Precondition checks (clean repo, branch free, worktree path free)
     W->>DB: Reserve run (status=Pending) + workspace row
     W->>FS: git worktree add ./maister/{slug}/runs/{runId}
-    W->>S: POST /sessions { runId, projectSlug, worktreePath, stepId, prompt, executor }
-    S->>A: spawn claude-agent-acp (cwd=worktreePath, env merged)
+    W->>S: POST /sessions { runId, projectSlug, worktreePath, stepId, executor }
+    opt executor.router is ccr (first session only)
+        S->>S: ccrManager.ensureRunning starts CCR if idle
+    end
+    S->>A: spawn claude-agent-acp with merged env (ANTHROPIC_BASE_URL/TOKEN injected for router=ccr)
     A-->>S: spawn event fires
     S-->>W: 201 { sessionId, pid }
     W->>DB: runs.acp_session_id = sessionId, status=Running

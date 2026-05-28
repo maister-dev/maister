@@ -76,7 +76,7 @@ flows:
 | `project.branch_prefix` | `maister/` | Run-branch prefix; combined with the slug. |
 | `executors[].env` | `null` | Map of env vars passed to the spawned agent (env-router pattern). |
 | `executors[].router` | unset | `ccr` enables `@musistudio/claude-code-router` multi-provider routing inside the session. |
-| `flows[].executor_override` | unset | When set, must reference an `id` in `executors[]`. Wins over Flow's `recommended_executor`. |
+| `flows[].executor_override` | unset | When set, must reference an `id` in `executors[]`. Persisted to `flows.executor_override_id` by `upsertExecutorsFromConfig()` and slots into the override chain at tier 3 (between task override and project default). |
 
 ### Cross-reference checks
 
@@ -91,15 +91,23 @@ field path in the message.
 
 ### Per-step executor override resolution
 
-Highest priority wins:
+Highest priority wins. The chain is five tiers — per-task choice
+beats per-flow rule:
 
-1. **Run launcher override** (UI Launch click).
-2. **Project per-flow override** (`flows[].executor_override`).
-3. **Project default** (`default_executor`).
-4. **Flow's `recommended_executor`** from `flow.yaml` (optional).
+1. **Run launcher override** (`POST /api/runs body.executorOverrideId`).
+2. **Task override** (`tasks.executor_override_id`).
+3. **Project per-flow override** (`flows.executor_override_id`, populated from `flows[].executor_override` in `maister.yaml`).
+4. **Project default** (`projects.default_executor_id`, populated from `default_executor` in `maister.yaml`).
+5. **Flow's `recommended_executor`** from `flow.yaml` (optional).
 
-If none of the above resolves to a registered executor, the loader
-throws `MaisterError({ code: "EXECUTOR_UNAVAILABLE" })`.
+Implementation lives in `web/lib/executors.ts:resolveExecutor()` and is
+called by `POST /api/runs`. The function is pure — no DB access, no
+log side effects — and returns `{executorId, tier}`. Callers can pass
+`override: undefined` to get the "computed executor for display" path
+used by the future M9 task-card badge.
+
+If none of the above resolves to a registered executor, the resolver
+throws `MaisterError({ code: "EXECUTOR_UNAVAILABLE" })` (HTTP 503).
 
 ## `flow.yaml` v1
 
@@ -212,6 +220,9 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `ANTHROPIC_API_KEY` | yes for default | — | Claude executor (unless overridden by per-executor `env`) |
 | `ANTHROPIC_BASE_URL` | no | api.anthropic.com | Per-executor `env` overrides the global default |
 | `ANTHROPIC_AUTH_TOKEN` | no | uses `ANTHROPIC_API_KEY` | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …) |
+| `MAISTER_CCR_AUTH_TOKEN` | no | unset | Fallback for `ANTHROPIC_AUTH_TOKEN` when an executor has `router: ccr` and does not pin the token in `executor.env`. Missing token → `EXECUTOR_UNAVAILABLE` (503). |
+| `MAISTER_CCR_CONFIG_PATH` | no | `/app/.ccr/config.json` in Docker, `~/.claude-code-router/config.json` otherwise | Container-side path the supervisor reads for CCR host+port. In compose this aligns with the bind-mount target — leave unset unless changing the layout. |
+| `MAISTER_CCR_CONFIG_HOST_PATH` | no (Docker only) | `${HOME}/.claude-code-router` | Host directory bind-mounted at `/app/.ccr` (read-only) in the supervisor service. Point at a secret-mount directory for hardened deployments. |
 
 Secrets MUST live in `.env` server-side. Never logged, never streamed via
 SSE, never embedded in `session/update` payloads visible to the browser.
@@ -246,6 +257,71 @@ import {
 
 Import the inferred types in Route Handlers / components instead of
 hand-rolling DTOs — the zod schema is the single source of truth.
+
+## CCR (Claude Code Router) bundling
+
+When an executor sets `router: ccr`, MAIster spawns the bundled
+[`@musistudio/claude-code-router@2.0.0`](https://www.npmjs.com/package/@musistudio/claude-code-router)
+daemon and routes the adapter through it for in-session multi-provider
+routing (z.ai GLM, MiniMax, OpenRouter, …).
+
+- The npm package is an exact-pinned **supervisor** dep — operators do
+  NOT need to install `ccr` globally. The bin is on the workspace path.
+- The supervisor owns the daemon lifecycle. The first `router=ccr`
+  spawn lazily starts CCR; subsequent spawns within the same supervisor
+  process reuse the same daemon; supervisor SIGTERM/SIGINT stops it.
+- The daemon's own configuration file
+  (`~/.claude-code-router/config.json`) is **user-managed**. MAIster
+  reads `HOST` / `PORT` from it (defaults `127.0.0.1:3456`) but never
+  writes the file. Provider keys, default models, routing rules — all
+  in that file. In Docker, the host directory (default
+  `~/.claude-code-router`, overridable via `MAISTER_CCR_CONFIG_HOST_PATH`)
+  is bind-mounted **read-only** at `/app/.ccr` inside the supervisor
+  container; the supervisor reads `/app/.ccr/config.json`.
+- The adapter token sent in `ANTHROPIC_AUTH_TOKEN` resolves from
+  `executor.env.ANTHROPIC_AUTH_TOKEN` ∨ `MAISTER_CCR_AUTH_TOKEN`
+  (server env). Missing token surfaces as `EXECUTOR_UNAVAILABLE`
+  (503).
+- See [executors §CCR setup](system-analytics/executors.md#ccr-setup)
+  for the full failure-mode table (config missing, malformed JSON,
+  health-check timeout, token missing).
+
+Example executor entry routing GLM-4.6 through CCR:
+
+```yaml
+executors:
+  - id: claude-glm-ccr
+    agent: claude
+    model: glm-4.6
+    router: ccr
+    env:
+      # Token consumed by the adapter (CCR currently accepts any non-empty
+      # value because routing decisions live in config.json). The vendor
+      # provider keys themselves go in ~/.claude-code-router/config.json,
+      # NOT here. Placeholders only.
+      ANTHROPIC_AUTH_TOKEN: ${CCR_ADAPTER_TOKEN}
+```
+
+Example `~/.claude-code-router/config.json` (placeholders — replace
+with real values):
+
+```json
+{
+  "HOST": "127.0.0.1",
+  "PORT": 3456,
+  "Providers": [
+    {
+      "name": "z.ai",
+      "api_base_url": "https://api.z.ai/api/anthropic",
+      "api_key": "<Z_AI_KEY_PLACEHOLDER>",
+      "models": ["glm-4.6"]
+    }
+  ],
+  "Router": {
+    "default": "z.ai,glm-4.6"
+  }
+}
+```
 
 ## See Also
 
