@@ -3,7 +3,7 @@
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
 > Last updated: 2026-05-28
-> Based on: 1 adversarial-review pass-through (M6 / 2026-05-28)
+> Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
 
 ## Rules
 
@@ -47,5 +47,19 @@ The verify report MUST contain an explicit "Runtime parity" section listing each
 Asymmetric coverage is a blocker, not a documented limitation. If the SET-only test exists and the CLEAR-half test is missing, the verify report MUST list the missing test as a blocking finding under "Config→DB symmetry". An integration test that asserts the stale value persists after CLEAR is the WORST outcome — flag it as a bug that has been enshrined as behavior, and require both the test and the implementation to be fixed before verify passes.
 
 This rule applies to any persistence layer (Postgres column, SQLite column, JSON file on disk that downstream code reads, env var written by a config materializer). The pattern "for entry in config: if !entry.field continue" is the giveaway.
+
+### Regression-test enumeration for trust-boundary, retry-semantics, and deferred-release classes
+**Source**: M7 adversarial review pass-through (2026-05-28)
+**Rule**: When the plan or diff touches any HTTP route handler, SSE event handler, or queue consumer that the plan-side rules in `.ai-factory/skill-context/aif-plan/SKILL.md` flag as relevant ("cross-resource identifier", "two-phase commit", "no hidden deferreds"), the verify step MUST confirm a regression test exists for EACH of the following classes that applies to the diff:
+
+| Class | Test must assert |
+| ----- | ---------------- |
+| Trust-boundary (body-controlled cross-resource id) | A request whose body field tries to name a different resource than the server-state-derived one is rejected — OR the body field is absent from the route entirely. Concrete shape: a test that constructs a request bound to session A but with a body claim of session B's runId, and asserts the handler does not write under session B's path. |
+| Retry-semantics (two-phase commit) | (a) The happy path leaves the idempotency marker set ONLY after the downstream ack. (b) Simulated downstream 4xx (terminal class) transitions the parent resource to its terminal state AND marks the row terminal-failed in the same call. (c) Simulated downstream 5xx / network error returns the retryable status and leaves the row in a state a retry can recover (response set, marker null); a follow-up retry under the same row succeeds when the downstream comes back. |
+| Deferred-release (no hidden deferreds) | A test that simulates a failure in the releasing-side code (DB error during the persist step, etc.) and asserts the deferred-creating-side release API was invoked exactly once with the right arguments. Use a spy on the cancel / reject API; without the spy, the regression cannot regress safely. |
+
+The verify report MUST contain an explicit "Failure-class regression coverage" subsection listing each applicable class and the test file + test name(s) that cover it. A class that applies to the diff with no matching test is a blocking finding, NOT a warning. A class that does not apply (e.g. the diff added a pure read-only route with no downstream effects) is marked `n/a` with a one-line justification.
+
+Reason: M7's first design described the three failure modes the Codex adversarial review found ONLY in the prose of the plan. None of the failure modes had a regression test, so an implementation following the prose could have shipped any of them. The fix added explicit test cases per failure class. The verify step's job is to make sure the test cases survived the implementation pass — they have a habit of being trimmed under deadline pressure. Re-derive the list from the plan + diff, not from the implementer's word.
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
