@@ -195,6 +195,11 @@ function baseFixture(): TableRows {
         status: "Pending",
         currentStepId: null,
         flowVersion: "v1",
+        // Runner derives the install path from (flowRefId, flowRevision).
+        // The unit-test fake DB lets us substitute the "unknown" sentinel
+        // here so the resolver produces a stable path under
+        // ~/.maister/flows/test-flow@unknown/ for the test environment.
+        flowRevision: "unknown",
       },
     ],
     tasks: [
@@ -212,9 +217,11 @@ function baseFixture(): TableRows {
       {
         id: "flow-1",
         projectId: "proj-1",
+        flowRefId: "test-flow",
         installedPath: flowInstallPath,
         manifest: flowManifest,
         version: "v1",
+        revision: "unknown",
       },
     ],
     executors: [
@@ -350,6 +357,38 @@ describe("runFlow re-entry", () => {
       .map((u) => u.set.currentStepId);
 
     expect(currentStepIdUpdates[0]).toBe("second");
+  });
+
+  it("boot on NeedsInput with an unknown currentStepId fails closed with Crashed + CONFIG and inserts no step_runs", async () => {
+    const fixture = baseFixture();
+
+    fixture.runs[0].status = "NeedsInput";
+    fixture.runs[0].currentStepId = "ghost-step-id-not-in-manifest";
+    fixture.flows[0].manifest = {
+      schemaVersion: 1,
+      name: "tf",
+      steps: [
+        { id: "first", type: "human" as const, form_schema: "schema.json" },
+        { id: "second", type: "human" as const, form_schema: "schema.json" },
+      ],
+    };
+
+    const { client, inserts, updates } = makeFakeDb(fixture);
+
+    await expect(
+      runFlow("run-1", { db: client, runtimeRoot }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    const stepRunInserts = inserts.filter((i) => i.table === "step_runs");
+
+    expect(stepRunInserts).toHaveLength(0);
+
+    const runsStatusUpdates = updates
+      .filter((u) => u.table === "runs" && "status" in u.set)
+      .map((u) => u.set.status);
+
+    // The fail-closed transition writes Crashed BEFORE throwing.
+    expect(runsStatusUpdates).toContain("Crashed");
   });
 
   it("atomic resume claim: two concurrent runFlow calls only execute the loop once", async () => {
