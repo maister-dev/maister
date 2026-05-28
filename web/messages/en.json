@@ -122,7 +122,12 @@
     "teamHumans": "{count, plural, one {# human} other {# humans}}",
     "teamAgents": "{count, plural, one {# agent} other {# agents}}",
     "activeCount": "{count} active",
-    "noneActive": "none active"
+    "noneActive": "none active",
+    "scaffold": "Scaffold from template",
+    "importLocal": "Import from local",
+    "esTip1": "⌘L launches a run once a project's connected.",
+    "esTip2": "Each run lives in its own worktree — diff and merge with proof.",
+    "esTip3": "Active runs stay pinned to the rail, always one click away."
   },
   "board": {
     "needYou": "need you",
@@ -160,7 +165,14 @@
     "asOf": "as of",
     "justNow": "just now",
     "prsDeferred": "Pull-request sync isn't wired up on this POC yet.",
-    "mcpsDeferred": "MCP server management isn't wired up on this POC yet."
+    "mcpsDeferred": "MCP server management isn't wired up on this POC yet.",
+    "defaultAgentDesc": "used for new runs unless overridden per-task",
+    "defaultFlow": "Default flow",
+    "defaultFlowDesc": "applied when launching from backlog",
+    "concurrency": "Concurrency limit",
+    "concurrencyDesc": "max simultaneous running workspaces",
+    "branchPrefix": "Branch prefix",
+    "branchPrefixDesc": "applied to every worktree branch"
   },
   "hitl": {
     "allowRun": "allow this run",

@@ -25,28 +25,24 @@ export async function SettingsPanel({
   const rows: { k: string; d: string; v: string }[] = [
     {
       k: tBoard("defaultAgent"),
-      // FIXME(i18n): no setting-description keys — English fallbacks inline.
-      d: "used for new runs unless overridden per-task",
+      d: tBoard("defaultAgentDesc"),
       v: defaultExecutorRef
         ? `${defaultAgent ?? "—"} · ${defaultExecutorRef}`
         : "—",
     },
     {
-      // FIXME(i18n): no "defaultFlow" key — English fallback inline.
-      k: "Default flow",
-      d: "applied when launching from backlog",
+      k: tBoard("defaultFlow"),
+      d: tBoard("defaultFlowDesc"),
       v: defaultFlow?.ref ?? "—",
     },
     {
-      // FIXME(i18n): no "concurrency" key — English fallback inline.
-      k: "Concurrency limit",
-      d: "max simultaneous running workspaces",
+      k: tBoard("concurrency"),
+      d: tBoard("concurrencyDesc"),
       v: process.env.MAISTER_MAX_CONCURRENT_RUNS ?? "3",
     },
     {
-      // FIXME(i18n): no "branchPrefix" key — English fallback inline.
-      k: "Branch prefix",
-      d: "applied to every worktree branch",
+      k: tBoard("branchPrefix"),
+      d: tBoard("branchPrefixDesc"),
       v: project.branchPrefix,
     },
   ];

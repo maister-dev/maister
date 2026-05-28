@@ -6,12 +6,7 @@ import Link from "next/link";
 export async function EmptyState(): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
 
-  // FIXME(i18n): es-tips strings have no message keys yet — English fallbacks inline.
-  const tips = [
-    "⌘L launches a run once a project's connected.",
-    "Each run lives in its own worktree — diff and merge with proof.",
-    "Active runs stay pinned to the rail, always one click away.",
-  ];
+  const tips = [t("esTip1"), t("esTip2"), t("esTip3")];
 
   return (
     <section className="flex flex-col items-center justify-center rounded-2xl border-[1.5px] border-dashed border-line bg-[repeating-linear-gradient(45deg,transparent_0_14px,color-mix(in_oklab,var(--line)_28%,transparent)_14px_15px)] px-6 pb-12 pt-20 text-center">
@@ -53,13 +48,13 @@ export async function EmptyState(): Promise<ReactElement> {
           className="rounded-full border border-line bg-paper px-[18px] py-3 text-[13.5px] font-medium text-ink-2 transition-colors hover:border-mute hover:text-ink"
           type="button"
         >
-          Scaffold from template
+          {t("scaffold")}
         </button>
         <button
           className="rounded-full border border-line bg-paper px-[18px] py-3 text-[13.5px] font-medium text-ink-2 transition-colors hover:border-mute hover:text-ink"
           type="button"
         >
-          Import from local
+          {t("importLocal")}
         </button>
       </div>
       <div className="mt-8 grid w-full max-w-[640px] grid-cols-1 gap-3 sm:grid-cols-3">

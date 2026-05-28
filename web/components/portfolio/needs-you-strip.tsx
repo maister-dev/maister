@@ -31,6 +31,7 @@ export async function NeedsYouStrip({
 }: NeedsYouStripProps): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
   const tNav = await getTranslations("nav");
+  const tHitl = await getTranslations("hitl");
 
   return (
     <section
@@ -79,8 +80,7 @@ export async function NeedsYouStrip({
               </div>
             </div>
             <span className="inline-flex flex-none items-center gap-1 font-mono text-[11px] font-bold tracking-[0.04em] text-amber">
-              {/* FIXME(i18n): no "Review" key — English fallback inline. */}
-              Review →
+              {tHitl("review")} →
             </span>
           </Link>
         ))}

@@ -122,7 +122,12 @@
     "teamHumans": "{count, plural, one {# человек} few {# человека} other {# человек}}",
     "teamAgents": "{count, plural, one {# агент} few {# агента} other {# агентов}}",
     "activeCount": "{count} активно",
-    "noneActive": "нет активных"
+    "noneActive": "нет активных",
+    "scaffold": "Создать из шаблона",
+    "importLocal": "Импорт из локальной папки",
+    "esTip1": "⌘L запускает run, как только проект подключён.",
+    "esTip2": "Каждый run живёт в своём worktree — дифф и мерж с доказательствами.",
+    "esTip3": "Активные run-ы закреплены на рейле, всегда в один клик."
   },
   "board": {
     "needYou": "нужно вам",
@@ -160,7 +165,14 @@
     "asOf": "на",
     "justNow": "только что",
     "prsDeferred": "Синхронизация pull-request пока не подключена на этом POC.",
-    "mcpsDeferred": "Управление MCP-серверами пока не подключено на этом POC."
+    "mcpsDeferred": "Управление MCP-серверами пока не подключено на этом POC.",
+    "defaultAgentDesc": "используется для новых run-ов, если не переопределён на задаче",
+    "defaultFlow": "Флоу по умолчанию",
+    "defaultFlowDesc": "применяется при запуске из бэклога",
+    "concurrency": "Лимит параллелизма",
+    "concurrencyDesc": "макс. одновременно работающих воркспейсов",
+    "branchPrefix": "Префикс ветки",
+    "branchPrefixDesc": "применяется к каждой ветке worktree"
   },
   "hitl": {
     "allowRun": "разрешить на этот запуск",
