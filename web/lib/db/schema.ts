@@ -61,6 +61,10 @@ export const flows = pgTable(
     manifest: jsonb("manifest").notNull(),
     schemaVersion: integer("schema_version").notNull(),
     recommendedExecutorId: text("recommended_executor_id"),
+    executorOverrideId: text("executor_override_id").references(
+      () => executors.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -210,10 +214,7 @@ export const stepRuns = pgTable(
       .default("Pending"),
     acpSessionId: text("acp_session_id"),
     stdout: text("stdout"),
-    vars: jsonb("vars")
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}),
+    vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
     exitCode: integer("exit_code"),
     errorCode: text("error_code"),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })

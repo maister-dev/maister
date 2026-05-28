@@ -15,6 +15,13 @@
       "when": 1779872831502,
       "tag": "0001_wandering_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779898650635,
+      "tag": "0002_safe_ma_gnuci",
+      "breakpoints": true
     }
   ]
 }
