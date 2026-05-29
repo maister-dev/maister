@@ -37,6 +37,14 @@ const postBodySchema = z.object({
   executorOverrideId: z.string().min(1).optional(),
 });
 
+// Explicit allow-list of project flow enablement states that may launch a run
+// (M10, ADR-021). `Installed`/`Disabled`/`Failed`/`Deprecated` are NOT
+// launchable — enablement is an explicit action separate from trust.
+const LAUNCHABLE_ENABLEMENT_STATES = new Set<string>([
+  "Enabled",
+  "UpdateAvailable",
+]);
+
 function errorResponse(err: unknown): NextResponse {
   if (isMaisterError(err)) {
     const status = httpStatusForCode(err.code);
@@ -153,22 +161,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // Resolve the project-enabled package revision (M10, ADR-021) and refuse
-    // launch on a disabled/failed/untrusted/incompatible/missing-setup package
-    // BEFORE any workspace creation. The revision is server-derived from the
-    // enablement pointer — never body-controlled.
+    // launch on a package that is not in an explicitly launchable state, or is
+    // untrusted/incompatible/missing-setup — BEFORE any workspace creation. The
+    // revision is server-derived from the enablement pointer, never
+    // body-controlled.
+    //
+    // Launchability is an explicit allow-list (LAUNCHABLE_ENABLEMENT_STATES):
+    // only `Enabled` and `UpdateAvailable` (which still has a live enabled
+    // revision) may launch. `Installed` is NOT launchable — a package installed
+    // from an untrusted source stays `Installed` after `/trust` and must be
+    // explicitly `/enable`d before it can run. This prevents trust alone from
+    // collapsing the trust+enable lifecycle into one launchable step.
     if (!flow.enabledRevisionId) {
       throw new MaisterError(
         "PRECONDITION",
         `flow "${flow.flowRefId}" has no enabled package revision`,
       );
     }
-    if (
-      flow.enablementState === "Disabled" ||
-      flow.enablementState === "Failed"
-    ) {
+    if (!LAUNCHABLE_ENABLEMENT_STATES.has(flow.enablementState)) {
       throw new MaisterError(
         "PRECONDITION",
-        `flow "${flow.flowRefId}" package is ${flow.enablementState}`,
+        `flow "${flow.flowRefId}" package is ${flow.enablementState}, not launchable (enable it first)`,
       );
     }
     if (flow.trustStatus === "untrusted") {

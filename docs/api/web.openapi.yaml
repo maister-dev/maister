@@ -7,9 +7,17 @@ info:
     by the MAIster UI and (in M7+) by any process that wants to drive HITL
     or stream run events without bypassing the web tier's trust boundary.
 
-    **Milestone status: M9.**
+    **Milestone status: M10.**
 
     Routes shipped to date:
+
+    - `POST /api/projects/{slug}/flow-packages/install` and the
+      `{flowRefId}/enable|disable|upgrade|rollback|trust`,
+      `{flowRefId}/revisions/{revisionId}/remove`, and
+      `GET {flowRefId}/upgrade-preview` routes (M10) — Flow package lifecycle.
+      Admin-only (`requireProjectAction("managePackages")`). See
+      [Flow packages](../system-analytics/flow-packages.md) and
+      [ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility).
 
     - `POST /api/projects` (M9) — register a project from a directory
       containing `maister.yaml`. Admin-only (global role `admin`). Validates
@@ -77,6 +85,8 @@ tags:
     description: Run launch, status, and event streaming.
   - name: hitl
     description: Human-in-the-loop response surface.
+  - name: flow-packages
+    description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
 paths:
   /api/projects:
     post:
@@ -843,7 +853,260 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/flow-packages/install:
+    post:
+      tags: [flow-packages]
+      summary: Install a Flow package into a project
+      description: |
+        M10 (ADR-021). Admin-only (`requireProjectAction("managePackages")`).
+        Two-phase install via `installFlowPlugin` → `installRevision`: a
+        `flow_revisions` row is written `Installing` before disk side-effects,
+        then flipped to `Installed`/`Failed`. Trusted-by-policy sources
+        (local/file:// or `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` match)
+        auto-enable; untrusted sources install as `Installed` (await
+        `/trust` + `/enable`). `slug` = url-param (server-state); `flowRefId`/
+        `source`/`version` are body-controlled, validated downstream.
+        Source: `web/app/api/projects/[slug]/flow-packages/install/route.ts`.
+      operationId: installFlowPackage
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InstallFlowPackageBody" }
+      responses:
+        "201":
+          description: Package installed (and enabled when trusted-by-policy).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallFlowPackageResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+        "502": { $ref: "#/components/responses/FlowInstall" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/enable:
+    post:
+      tags: [flow-packages]
+      summary: Enable a specific installed revision
+      description: |
+        M10. Admin-only. Sets the project's enabled revision to `revisionId`,
+        refreshing the denormalized cache and `recommended_executor_id` while
+        PRESERVING `executor_override_id`. Refuses untrusted / incompatible /
+        setup-incomplete revisions. `revisionId` is validated against the flow
+        AND the project's declared source (cross-source enable is rejected).
+        Source: `.../flow-packages/[flowRefId]/enable/route.ts`.
+      operationId: enableFlowRevision
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevisionIdBody" }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/disable:
+    post:
+      tags: [flow-packages]
+      summary: Disable a flow for new launches
+      description: |
+        M10. Admin-only. Sets `enablement_state='Disabled'`. In-flight runs
+        keep their pinned revision. Source:
+        `.../flow-packages/[flowRefId]/disable/route.ts`.
+      operationId: disableFlowPackage
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/upgrade:
+    post:
+      tags: [flow-packages]
+      summary: Install a new revision beside the current one
+      description: |
+        M10. Admin-only. Installs a new immutable revision (two-phase) from the
+        SAME source as the project's flow and marks it `UpdateAvailable`. Does
+        NOT auto-enable. Rejects a `source` that differs from the project's
+        declared flow source (re-sourcing is install/re-install).
+        Source: `.../flow-packages/[flowRefId]/upgrade/route.ts`.
+      operationId: upgradeFlowPackage
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpgradeFlowPackageBody" }
+      responses:
+        "201":
+          description: Candidate revision installed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revisionId]
+                properties:
+                  revisionId: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+        "502": { $ref: "#/components/responses/FlowInstall" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/rollback:
+    post:
+      tags: [flow-packages]
+      summary: Roll the enabled revision back to an older installed revision
+      description: |
+        M10. Admin-only. Switches the enabled pointer to an older installed
+        revision (same validation as enable, including source-scope). Never
+        mutates completed/active run history. Source:
+        `.../flow-packages/[flowRefId]/rollback/route.ts`.
+      operationId: rollbackFlowPackage
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevisionIdBody" }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/trust:
+    post:
+      tags: [flow-packages]
+      summary: Set or clear explicit trust for a flow package
+      description: |
+        M10. Admin-only. Sets `trust_status` to `trusted`/`untrusted`. Trust
+        alone does NOT make a package launchable — the package must still be
+        `/enable`d (launch requires `Enabled`/`UpdateAvailable`). Source:
+        `.../flow-packages/[flowRefId]/trust/route.ts`.
+      operationId: setFlowPackageTrust
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trusted]
+              properties:
+                trusted: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/remove:
+    post:
+      tags: [flow-packages]
+      summary: Remove an installed revision
+      description: |
+        M10. Admin-only. Marks the revision `Removed` and best-effort deletes
+        its cache. Refused with `CONFLICT` (409) while any run references it or
+        it is any project's enabled revision. `revisionId` is validated against
+        the flow AND the project's declared source. Automatic GC of
+        unreferenced revisions is M19. Source:
+        `.../flow-packages/[flowRefId]/revisions/[revisionId]/remove/route.ts`.
+      operationId: removeFlowRevision
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, minLength: 1 } }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/flow-packages/{flowRefId}/upgrade-preview:
+    get:
+      tags: [flow-packages]
+      summary: Diff the enabled revision against a candidate revision
+      description: |
+        M10. Admin-only. Returns a structured contract diff (steps, gates,
+        artifacts, capabilities, external ops, schema/setup changes) between the
+        project's enabled revision and `revisionId`. `revisionId` is validated
+        against the flow AND the project's declared source. Source:
+        `.../flow-packages/[flowRefId]/upgrade-preview/route.ts`.
+      operationId: getFlowUpgradePreview
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - { name: revisionId, in: query, required: true, schema: { type: string, minLength: 1 } }
+      responses:
+        "200":
+          description: Structured upgrade preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpgradePreview" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
 components:
+  responses:
+    Unauthenticated:
+      description: No valid session (`UNAUTHENTICATED`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    Forbidden:
+      description: |
+        Caller lacks the required project role (`UNAUTHORIZED`) or the account
+        must change its password first (`PASSWORD_CHANGE_REQUIRED`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    Precondition:
+      description: Precondition failed or conflict (`PRECONDITION` / `CONFLICT`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    Config:
+      description: Invalid body or incompatible package (`CONFIG`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    FlowInstall:
+      description: Flow package install/upgrade failed (`FLOW_INSTALL`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    OkResult:
+      description: Action succeeded.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok]
+            properties:
+              ok: { type: boolean, enum: [true] }
   schemas:
     PostProjectBody:
       type: object
@@ -1029,3 +1292,73 @@ components:
             - PASSWORD_CHANGE_REQUIRED
             - ACCOUNT_INACTIVE
         message: { type: string }
+
+    InstallFlowPackageBody:
+      type: object
+      required: [flowRefId, source, version]
+      properties:
+        flowRefId: { type: string, minLength: 1, example: "bugfix" }
+        source:
+          type: string
+          minLength: 1
+          example: "github.com/my-org/maister-flow-bugfix"
+        version: { type: string, minLength: 1, example: "v1.2.3" }
+
+    InstallFlowPackageResult:
+      type: object
+      required: [flowRowId, revisionId, revision, trustStatus, enablementState]
+      properties:
+        flowRowId: { type: string, format: uuid }
+        revisionId: { type: string, format: uuid }
+        revision:
+          type: string
+          description: Resolved revision — git SHA (40 hex) or local manifest-digest prefix.
+        trustStatus:
+          type: string
+          enum: [untrusted, trusted, trusted_by_policy]
+        enablementState:
+          type: string
+          enum: [Enabled, Installed]
+
+    UpgradeFlowPackageBody:
+      type: object
+      required: [source, version]
+      properties:
+        source: { type: string, minLength: 1 }
+        version: { type: string, minLength: 1 }
+
+    RevisionIdBody:
+      type: object
+      required: [revisionId]
+      properties:
+        revisionId: { type: string, minLength: 1, format: uuid }
+
+    ContractDiff:
+      type: object
+      required: [added, removed]
+      properties:
+        added: { type: array, items: { type: string } }
+        removed: { type: array, items: { type: string } }
+
+    UpgradePreview:
+      type: object
+      required:
+        - fromRevisionId
+        - toRevisionId
+        - schemaVersionChanged
+        - setupChanged
+        - steps
+        - gates
+        - artifacts
+        - capabilities
+        - externalOps
+      properties:
+        fromRevisionId: { type: string, format: uuid, nullable: true }
+        toRevisionId: { type: string, format: uuid }
+        schemaVersionChanged: { type: boolean }
+        setupChanged: { type: boolean }
+        steps: { $ref: "#/components/schemas/ContractDiff" }
+        gates: { $ref: "#/components/schemas/ContractDiff" }
+        artifacts: { $ref: "#/components/schemas/ContractDiff" }
+        capabilities: { $ref: "#/components/schemas/ContractDiff" }
+        externalOps: { $ref: "#/components/schemas/ContractDiff" }

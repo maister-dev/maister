@@ -72,7 +72,18 @@ async function main(): Promise<void> {
   for (const flow of flowRows) {
     const manifest = flow.manifest as FlowYamlV1;
     const digest = manifestDigest(manifest);
-    const resolvedRevision: string = flow.revision ?? "unknown";
+    // Content-address legacy rows. A real 40-hex git SHA is kept as-is (same
+    // SHA = same bytes = legitimately shared across projects). Anything else —
+    // null, the "unknown" sentinel from old local-source installs, or any
+    // non-SHA value — is derived from the manifest digest so two projects that
+    // share a flow id but carry DIFFERENT manifests resolve to DISTINCT
+    // revisions instead of colliding on (flowRefId, "unknown") and reusing the
+    // wrong manifest/cache path (Codex finding #2).
+    const isSha =
+      typeof flow.revision === "string" && /^[0-9a-f]{40}$/.test(flow.revision);
+    const resolvedRevision: string = isSha
+      ? flow.revision
+      : digest.slice(0, 40);
 
     // Upsert the immutable revision (global, content-addressed).
     const inserted: Array<{ id: string }> = await db

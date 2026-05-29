@@ -31,7 +31,10 @@ export async function GET(
     const { project, db } = await authorizeManagePackages(slug);
 
     const flowRows = await db
-      .select({ enabledRevisionId: flows.enabledRevisionId })
+      .select({
+        enabledRevisionId: flows.enabledRevisionId,
+        source: flows.source,
+      })
       .from(flows)
       .where(
         and(eq(flows.projectId, project.id), eq(flows.flowRefId, flowRefId)),
@@ -49,6 +52,7 @@ export async function GET(
       flowRefId,
       enabledRevisionId: flow.enabledRevisionId,
       candidateRevisionId: revisionId,
+      expectedSource: flow.source,
       db,
     });
 

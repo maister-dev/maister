@@ -102,6 +102,7 @@ export async function getFlowPackages(
     .select({
       id: flows.id,
       ref: flows.flowRefId,
+      source: flows.source,
       enabledRevisionId: flows.enabledRevisionId,
       enablementState: flows.enablementState,
       trustStatus: flows.trustStatus,
@@ -118,6 +119,7 @@ export async function getFlowPackages(
     .select({
       id: flowRevisions.id,
       ref: flowRevisions.flowRefId,
+      source: flowRevisions.source,
       versionLabel: flowRevisions.versionLabel,
       resolvedRevision: flowRevisions.resolvedRevision,
       packageStatus: flowRevisions.packageStatus,
@@ -174,7 +176,13 @@ export async function getFlowPackages(
   }
 
   return flowRows.map((flow) => {
+    // Source-scope: only surface revisions installed from THIS project's
+    // declared source for the flow id. Revisions are globally shared by
+    // (flowRefId, resolvedRevision), so without this filter a project could see
+    // and roll back to a revision installed by another project from a different
+    // (possibly untrusted) source under the same flow id (ADR-021).
     const revisions = (revisionsByRef.get(flow.ref) ?? [])
+      .filter((r) => r.source === flow.source)
       .slice()
       .sort((a, b) => b.installedAt.getTime() - a.installedAt.getTime());
     const enabled =

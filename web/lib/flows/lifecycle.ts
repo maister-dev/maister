@@ -32,6 +32,7 @@ type FlowEnablementRow = {
   id: string;
   projectId: string;
   flowRefId: string;
+  source: string;
   enabledRevisionId: string | null;
   enablementState: string;
   trustStatus: string;
@@ -73,10 +74,17 @@ async function loadFlow(
   return flow;
 }
 
+// Resolve a revision and bind it to the project's flow. Revisions are globally
+// content-addressed by (flowRefId, resolvedRevision), so matching on flowRefId
+// alone would let a project enable/rollback to a revision installed by another
+// project from a DIFFERENT (possibly untrusted) source under the same flow id.
+// `expectedSource` is the project's own declared source for the flow; requiring
+// rev.source === expectedSource closes that cross-source trust hole (ADR-021).
 async function loadRevisionForFlow(
   db: Db,
   flowRefId: string,
   revisionId: string,
+  expectedSource: string,
 ): Promise<RevisionRow> {
   const rows = await db
     .select()
@@ -88,6 +96,12 @@ async function loadRevisionForFlow(
     throw new MaisterError(
       "PRECONDITION",
       `revision ${revisionId} not found for flow "${flowRefId}"`,
+    );
+  }
+  if (rev.source !== expectedSource) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `revision ${revisionId} was installed from a different source than this project's "${flowRefId}" flow`,
     );
   }
 
@@ -172,7 +186,12 @@ export async function enableRevision(args: {
 }): Promise<void> {
   const db = args.db ?? getDb();
   const flow = await loadFlow(db, args.projectId, args.flowRefId);
-  const rev = await loadRevisionForFlow(db, args.flowRefId, args.revisionId);
+  const rev = await loadRevisionForFlow(
+    db,
+    args.flowRefId,
+    args.revisionId,
+    flow.source,
+  );
 
   assertEnableable(flow, rev);
 
@@ -262,6 +281,16 @@ export async function upgradeFlow(args: {
   const db = args.db ?? getDb();
   const flow = await loadFlow(db, args.projectId, args.flowRefId);
 
+  // Upgrade installs a new revision of the SAME flow from the SAME source.
+  // Re-sourcing a flow id (different upstream) is install/re-install, not
+  // upgrade — and would bypass the source-scoped enable boundary, so reject it.
+  if (args.source !== flow.source) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `upgrade source "${args.source}" differs from the project's "${args.flowRefId}" flow source "${flow.source}" — re-install to change source`,
+    );
+  }
+
   const rev = await installRevision({
     source: args.source,
     version: args.version,
@@ -322,10 +351,18 @@ export async function setTrust(args: {
 export async function removeRevision(args: {
   flowRefId: string;
   revisionId: string;
+  // The requesting project's declared source for the flow — a project may only
+  // remove revisions installed from its own source (ADR-021 trust boundary).
+  expectedSource: string;
   db?: Db;
 }): Promise<void> {
   const db = args.db ?? getDb();
-  const rev = await loadRevisionForFlow(db, args.flowRefId, args.revisionId);
+  const rev = await loadRevisionForFlow(
+    db,
+    args.flowRefId,
+    args.revisionId,
+    args.expectedSource,
+  );
 
   const refRuns = await db
     .select({ id: runs.id })
@@ -407,6 +444,8 @@ export async function upgradePreview(args: {
   flowRefId: string;
   enabledRevisionId: string | null;
   candidateRevisionId: string;
+  // The requesting project's declared source for the flow (source-scope bound).
+  expectedSource: string;
   db?: Db;
 }): Promise<UpgradePreview> {
   const db = args.db ?? getDb();
@@ -414,6 +453,7 @@ export async function upgradePreview(args: {
     db,
     args.flowRefId,
     args.candidateRevisionId,
+    args.expectedSource,
   );
 
   let fromManifest: FlowYamlV1 | undefined;
