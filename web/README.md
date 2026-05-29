@@ -1,42 +1,84 @@
-# Next.js & HeroUI Template
+# MAIster Web
 
-This is a template for creating applications using Next.js 16 (app directory) and HeroUI (v3).
+Next.js 16 + React 19 + HeroUI v3 control plane. Talks to `../supervisor/`
+over HTTP+SSE. See `CLAUDE.md` (this directory) for stack, conventions, and
+route map; `../CLAUDE.md` for product spine and architectural decisions.
 
-[Try it on CodeSandbox](https://githubbox.com/heroui-inc/heroui/next-app-template)
+## Run locally
 
-## Technologies Used
+From the repo root, with `pnpm` and Node 24 installed.
 
-- [Next.js 16](https://nextjs.org/docs/getting-started)
-- [HeroUI v3](https://heroui.com/)
-- [Tailwind CSS](https://tailwindcss.com/)
-- [Tailwind Variants](https://tailwind-variants.org)
-- [TypeScript](https://www.typescriptlang.org/)
-- [next-themes](https://github.com/pacocoursey/next-themes)
+1. **Install deps** (workspace-wide):
 
-## How to Use
+   ```bash
+   pnpm install --frozen-lockfile
+   ```
 
-### Use the template with create-next-app
+2. **Configure env**. Copy the sample and fill the required keys:
 
-To create a new project based on this template using `create-next-app`, run the following command:
+   ```bash
+   cp web/.env.sample web/.env.local
+   ```
+
+   At minimum set in `web/.env.local`:
+
+   - `AUTH_SECRET` — generate with `openssl rand -base64 33` (or `npx auth secret`).
+   - `DB_URL` — defaults to the compose Postgres at
+     `postgres://maister:maister@localhost:5432/maister`. For SQLite use
+     `file:./dev.db`.
+
+   The file is gitignored. Never commit it.
+
+3. **Start Postgres** (if using compose):
+
+   ```bash
+   docker compose up -d postgres
+   ```
+
+4. **Migrate and seed**:
+
+   ```bash
+   pnpm --filter maister-web db:migrate
+   pnpm --filter maister-web db:seed
+   ```
+
+   Migrations are not applied automatically on `pnpm dev` — re-run
+   `db:migrate` after pulling new migrations. See `lib/db/README.md`
+   for schema details.
+
+   Seed creates the admin user from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`
+   (default `admin@maister.local` / `maister-admin`, `must_change_password=true`).
+
+5. **Start the supervisor** (separate process; required for run launches):
+
+   ```bash
+   pnpm --filter @maister/supervisor dev
+   ```
+
+6. **Start the web dev server**:
+
+   ```bash
+   pnpm --filter maister-web dev
+   ```
+
+   App: <http://localhost:3000> · supervisor: <http://localhost:7777>.
+
+## Scripts
 
 ```bash
-npx create-next-app -e https://github.com/heroui-inc/next-app-template
-```
-
-### Install dependencies
-
-You can use one of them `npm`, `yarn`, `pnpm`, `bun`, Example using `npm`:
-
-```bash
-npm install
-```
-
-### Run the development server
-
-```bash
-npm run dev
+pnpm dev                # next dev
+pnpm build              # next build
+pnpm start              # next start (after build)
+pnpm lint               # eslint --fix
+pnpm typecheck          # tsc --noEmit
+pnpm test               # unit + integration (vitest)
+pnpm test:e2e           # playwright
+pnpm db:generate        # drizzle-kit generate
+pnpm db:migrate         # apply migrations
+pnpm db:seed            # seed admin user
+pnpm db:studio          # drizzle-kit studio
 ```
 
 ## License
 
-Licensed under the [MIT license](https://github.com/heroui-inc/next-app-template/blob/main/LICENSE).
+MIT — see `../LICENSE`.

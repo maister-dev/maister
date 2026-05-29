@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "@/lib/load-env";
 
 import type { MaisterYamlV2 } from "@/lib/config.schema";
 
