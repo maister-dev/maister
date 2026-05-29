@@ -49,6 +49,7 @@ export const PROJECT_ACTION_MIN = {
   createTask: "member",
   answerHitl: "member",
   editSettings: "admin",
+  managePackages: "admin",
 } as const satisfies Record<string, ProjectRole>;
 
 export type ProjectAction = keyof typeof PROJECT_ACTION_MIN;

@@ -207,7 +207,7 @@ async function gitClone(opts: {
   }
 }
 
-async function ensureSymlink(opts: {
+export async function ensureSymlink(opts: {
   target: string;
   linkPath: string;
 }): Promise<void> {
@@ -455,7 +455,10 @@ async function ensureRevisionIntentRow(opts: {
 
   // Conflict: a row already exists for this (flowRefId, resolvedRevision).
   const existing: Array<{ id: string; packageStatus: string }> = await opts.db
-    .select({ id: flowRevisions.id, packageStatus: flowRevisions.packageStatus })
+    .select({
+      id: flowRevisions.id,
+      packageStatus: flowRevisions.packageStatus,
+    })
     .from(flowRevisions)
     .where(
       and(
@@ -566,7 +569,8 @@ export async function installRevision(opts: {
 
   try {
     if (skipFinalize) {
-      if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      if (tmpDir)
+        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       log.info(
         { target, resolvedRevision },
         "revision already Installed; reusing cache",
@@ -655,7 +659,8 @@ export async function installRevision(opts: {
       .set({ packageStatus: "Failed" })
       .where(eq(flowRevisions.id, revisionId))
       .catch(() => {});
-    if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    if (tmpDir)
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 
     if (err instanceof MaisterError) throw err;
     throw wrapInstallStage({
@@ -755,7 +760,11 @@ async function installFlowPluginImpl(
     trustStatus === "trusted_by_policy" ? "Enabled" : "Installed";
 
   // The project symlink tracks the enabled revision's cache directory.
-  const symlinkPath = projectFlowSymlinkPath(workspaceRoot, projectSlug, flowId);
+  const symlinkPath = projectFlowSymlinkPath(
+    workspaceRoot,
+    projectSlug,
+    flowId,
+  );
 
   await ensureSymlink({ target: rev.installedPath, linkPath: symlinkPath });
   log.info({ symlinkPath }, "symlink ready");
