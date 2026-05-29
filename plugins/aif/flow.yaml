@@ -2,6 +2,17 @@ schemaVersion: 1
 name: aif
 recommended_executor: claude-sonnet
 setup: ./setup.sh
+# Package contract (M10, ADR-021): recorded + displayed; only `compat` and
+# schemaVersion are enforced today. capabilities/artifacts are opaque metadata
+# until M14/M12 give them runtime meaning.
+compat:
+  engine_min: 1.0.0
+capabilities:
+  - shell
+  - edit
+artifacts:
+  - diff
+  - human_note
 steps:
   - id: explore
     type: agent

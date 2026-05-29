@@ -11,11 +11,13 @@ import { NewTaskModal } from "@/components/board/new-task-modal";
 import { ProjectTabs } from "@/components/board/project-tabs";
 import { ActivityPanel } from "@/components/board/panels/activity-panel";
 import { DeferredPanel } from "@/components/board/panels/deferred-panel";
+import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
 import { FlowsPanel } from "@/components/board/panels/flows-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
+import { getFlowPackages } from "@/lib/queries/flow-packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { getPlatformStatus } from "@/lib/supervisor-client";
@@ -25,6 +27,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "activity",
   "prs",
   "flows",
+  "packages",
   "mcps",
   "settings",
 ];
@@ -193,6 +196,13 @@ export default async function ProjectBoardPage({
       {tab === "prs" ? <DeferredPanel kind="prs" /> : null}
       {tab === "mcps" ? <DeferredPanel kind="mcps" /> : null}
       {tab === "flows" ? <FlowsPanel flows={pageData.flows} /> : null}
+      {tab === "packages" ? (
+        <FlowPackagesPanel
+          isAdmin={isAdmin}
+          packages={await getFlowPackages(project.id)}
+          slug={slug}
+        />
+      ) : null}
       {tab === "settings" ? (
         <SettingsPanel data={pageData} isAdmin={isAdmin} />
       ) : null}
