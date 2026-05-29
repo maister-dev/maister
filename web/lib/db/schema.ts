@@ -133,6 +133,55 @@ export const executors = pgTable(
   }),
 );
 
+// Immutable, globally content-addressed Flow package revision (M10, ADR-021).
+// One row per (flow_ref_id, resolved_revision); the system cache
+// ~/.maister/flows/<id>@<sha>/ is shared across projects, so revisions are not
+// project-scoped. `package_status` is the GLOBAL revision lifecycle; per-project
+// enablement lives on `flows`.
+export const flowRevisions = pgTable(
+  "flow_revisions",
+  {
+    id: text("id").primaryKey(),
+    flowRefId: text("flow_ref_id").notNull(),
+    source: text("source").notNull(),
+    versionLabel: text("version_label").notNull(),
+    resolvedRevision: text("resolved_revision").notNull(),
+    manifestDigest: text("manifest_digest").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    engineMin: text("engine_min"),
+    engineMax: text("engine_max"),
+    contract: jsonb("contract"),
+    installedPath: text("installed_path").notNull(),
+    setupStatus: text("setup_status", {
+      enum: ["not_required", "pending", "done", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    packageStatus: text("package_status", {
+      enum: ["Discovered", "Installing", "Installed", "Failed", "Removed"],
+    })
+      .notNull()
+      .default("Installing"),
+    installedAt: timestamp("installed_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRefRevision: unique("flow_revisions_ref_revision_uq").on(
+      t.flowRefId,
+      t.resolvedRevision,
+    ),
+  }),
+);
+
+// Project-scoped enablement pointer for a Flow id. Keeps the denormalized
+// source/version/revision/manifest/... columns as a cache of the CURRENTLY
+// ENABLED revision (refreshed on enable/upgrade/rollback); runtime byte
+// authority is `flow_revisions` via runs.flow_revision_id.
 export const flows = pgTable(
   "flows",
   {
@@ -152,7 +201,31 @@ export const flows = pgTable(
       () => executors.id,
       { onDelete: "set null" },
     ),
+    enabledRevisionId: text("enabled_revision_id").references(
+      () => flowRevisions.id,
+      { onDelete: "set null" },
+    ),
+    enablementState: text("enablement_state", {
+      enum: [
+        "Installed",
+        "Enabled",
+        "UpdateAvailable",
+        "Deprecated",
+        "Disabled",
+        "Failed",
+      ],
+    })
+      .notNull()
+      .default("Installed"),
+    trustStatus: text("trust_status", {
+      enum: ["untrusted", "trusted", "trusted_by_policy"],
+    })
+      .notNull()
+      .default("untrusted"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },
@@ -239,6 +312,12 @@ export const runs = pgTable(
     currentStepId: text("current_step_id"),
     flowVersion: text("flow_version").notNull(),
     flowRevision: text("flow_revision").notNull().default("unknown"),
+    // Pinned immutable package revision (M10, ADR-021). Nullable for
+    // pre-migration legacy rows; new runs always set it and the runner reads
+    // the manifest + install path from this revision, not from live flows.*.
+    flowRevisionId: text("flow_revision_id").references(() => flowRevisions.id, {
+      onDelete: "set null",
+    }),
     checkpointAt: timestamp("checkpoint_at", {
       withTimezone: true,
       mode: "date",
@@ -387,6 +466,11 @@ export type GlobalRole = User["role"];
 export type Project = typeof projects.$inferSelect;
 export type Executor = typeof executors.$inferSelect;
 export type Flow = typeof flows.$inferSelect;
+export type FlowRevision = typeof flowRevisions.$inferSelect;
+export type FlowEnablementState = Flow["enablementState"];
+export type FlowTrustStatus = Flow["trustStatus"];
+export type FlowPackageStatus = FlowRevision["packageStatus"];
+export type FlowSetupStatus = FlowRevision["setupStatus"];
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type TaskStage = Task["stage"];

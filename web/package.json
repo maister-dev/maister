@@ -19,7 +19,8 @@
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",
-    "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts"
+    "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts",
+    "backfill-flow-revisions": "tsx --import ./scripts/_register-shim.mjs scripts/backfill-flow-revisions.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "1.11.2",
