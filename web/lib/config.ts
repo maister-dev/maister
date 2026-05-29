@@ -161,7 +161,17 @@ export async function loadFlowManifest(
   const manifest = parsed.data;
 
   log.debug(
-    { path: flowYamlPath, steps: manifest.steps.length },
+    {
+      path: flowYamlPath,
+      steps: manifest.steps.length,
+      contract: {
+        compat: manifest.compat,
+        capabilities: manifest.capabilities?.length ?? 0,
+        gates: manifest.gates?.length ?? 0,
+        artifacts: manifest.artifacts?.length ?? 0,
+        externalOps: manifest.external_ops?.length ?? 0,
+      },
+    },
     "flow.yaml loaded",
   );
 

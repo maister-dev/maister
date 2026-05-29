@@ -94,11 +94,26 @@ export const stepSchema = z.discriminatedUnion("type", [
   humanStepSchema,
 ]);
 
+// Engine/API compatibility range a Flow package declares. Enforced (engine +
+// schemaVersion) at enablement in M10; see ADR-021.
+export const flowCompatSchema = z.object({
+  engine_min: z.string().min(1).optional(),
+  engine_max: z.string().min(1).optional(),
+});
+
 export const flowYamlV1Schema = z.object({
   schemaVersion: z.literal(1),
   name: z.string().min(1),
   recommended_executor: z.string().min(1).optional(),
   setup: z.string().min(1).optional(),
+  // Package contract (M10): recorded + displayed as opaque metadata; only
+  // `compat` and `schemaVersion` are enforced today. Semantic validation of
+  // capabilities/gates/artifacts/external_ops lands with M11+ (see ADR-021).
+  compat: flowCompatSchema.optional(),
+  capabilities: z.array(z.string().min(1)).optional(),
+  gates: z.array(z.string().min(1)).optional(),
+  artifacts: z.array(z.string().min(1)).optional(),
+  external_ops: z.array(z.string().min(1)).optional(),
   steps: z.array(stepSchema).min(1),
 });
 
@@ -120,5 +135,6 @@ export type MaisterYamlV2 = z.infer<typeof maisterYamlV2Schema>;
 export type ExecutorConfig = z.infer<typeof executorSchema>;
 export type FlowEntry = z.infer<typeof flowEntrySchema>;
 export type FlowYamlV1 = z.infer<typeof flowYamlV1Schema>;
+export type FlowCompat = z.infer<typeof flowCompatSchema>;
 export type Step = z.infer<typeof stepSchema>;
 export type FormSchema = z.infer<typeof formSchemaSchema>;

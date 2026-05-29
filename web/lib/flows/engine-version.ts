@@ -1,0 +1,102 @@
+import "server-only";
+
+import pino from "pino";
+
+const log = pino({
+  name: "flow-engine-version",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+// The MAIster Flow engine/API version. A Flow package declares an optional
+// `compat.engine_min`/`compat.engine_max` range; enablement is refused when the
+// running engine falls outside it (see ADR-021). Bump when the Flow runtime
+// contract changes in a way packages can depend on.
+export const MAISTER_ENGINE_VERSION = "1.0.0";
+
+// Flow manifest `schemaVersion` values this engine can execute. Enablement of a
+// revision whose schemaVersion is not listed here is refused.
+export const SUPPORTED_FLOW_SCHEMA_VERSIONS: readonly number[] = [1];
+
+type SemverTuple = [number, number, number];
+
+function parseSemver(value: string): SemverTuple | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
+
+  if (!m) return null;
+
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function compareSemver(a: SemverTuple, b: SemverTuple): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+
+  return 0;
+}
+
+export type EngineCompatResult = {
+  compatible: boolean;
+  // Set when incompatible OR when a bound was unparseable; null on success.
+  reason: string | null;
+};
+
+// Returns whether MAISTER_ENGINE_VERSION satisfies the [min, max] inclusive
+// range. Undefined bounds are open-ended. Unparseable bounds are treated as
+// incompatible (a malformed declared range must not silently pass).
+export function isEngineCompatible(
+  min?: string,
+  max?: string,
+): EngineCompatResult {
+  const engine = parseSemver(MAISTER_ENGINE_VERSION);
+
+  if (!engine) {
+    return {
+      compatible: false,
+      reason: `engine version ${MAISTER_ENGINE_VERSION} is not valid semver`,
+    };
+  }
+
+  if (min !== undefined) {
+    const minTuple = parseSemver(min);
+
+    if (!minTuple) {
+      return { compatible: false, reason: `engine_min "${min}" is not valid semver` };
+    }
+    if (compareSemver(engine, minTuple) < 0) {
+      return {
+        compatible: false,
+        reason: `engine ${MAISTER_ENGINE_VERSION} < engine_min ${min}`,
+      };
+    }
+  }
+
+  if (max !== undefined) {
+    const maxTuple = parseSemver(max);
+
+    if (!maxTuple) {
+      return { compatible: false, reason: `engine_max "${max}" is not valid semver` };
+    }
+    if (compareSemver(engine, maxTuple) > 0) {
+      return {
+        compatible: false,
+        reason: `engine ${MAISTER_ENGINE_VERSION} > engine_max ${max}`,
+      };
+    }
+  }
+
+  return { compatible: true, reason: null };
+}
+
+// Returns whether a Flow manifest schemaVersion is executable by this engine.
+export function isSchemaVersionSupported(schemaVersion: number): boolean {
+  return SUPPORTED_FLOW_SCHEMA_VERSIONS.includes(schemaVersion);
+}
+
+log.info(
+  {
+    engineVersion: MAISTER_ENGINE_VERSION,
+    supportedFlowSchemaVersions: SUPPORTED_FLOW_SCHEMA_VERSIONS,
+  },
+  "flow engine version resolved",
+);
