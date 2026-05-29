@@ -16,7 +16,7 @@
 - Route handlers go in `app/api/<segment>/route.ts` and export named `GET`/`POST`/etc. Keep handlers thin: validate input, call into `@/lib/*`, format response.
 - For form mutations triggered from the UI, prefer Server Actions (`app/.../actions.ts`) over manual `fetch` to API routes. Use API routes for SSE (`/api/runs/[id]/stream`), cron, and the HITL response endpoint.
 - SSE consumption: open one `EventSource` per run-detail page. Reconnect with `lastEventId`. Tear down on unmount.
-- Render `git diff` output inside a `<pre>` block with monospace font. No syntax highlighting in POC.
+- Render `git diff` output inside a `<pre>` block with monospace font. Syntax highlighting is a Phase 2 enhancement unless a task explicitly includes it.
 - Branch the UI on `MaisterError.code`, never on `err.message`. The error code is the contract.
 - ESLint warnings count: do not commit code that adds new warnings. `no-console`, `react/jsx-sort-props`, `import/order`, `padding-line-between-statements`, `unused-imports/no-unused-imports`, and `react/self-closing-comp` are enforced auto-fixable rules.
 - Do not ship `console.log` in committed code. Add a server-side logger boundary when needed; the frontend should surface errors via toasts/UI, not the console.

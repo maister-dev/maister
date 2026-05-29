@@ -28,26 +28,23 @@
 
 ## Module Structure
 
-- `web/` is the entire app for the POC (Next.js 16 monolith):
-  UI + Route Handlers + server actions + subprocess runner + Drizzle DB +
-  SSE log streams.
+- `web/` is the Next.js control plane:
+  UI + Route Handlers + server actions + Drizzle DB + SSE bridge.
 - Suggested server-side module layout under `web/lib/` (introduce as
   needed, do not pre-scaffold):
   - `lib/errors.ts` — `MaisterError` discriminated union.
   - `lib/atomic.ts` — `atomicWriteJson` (tmp + rename).
   - `lib/worktree.ts` — `git worktree add | remove | list` wrapper
     (project-scoped paths).
-  - `lib/runner.ts` — `child_process.spawn` of `uv run <flow-cmd>`; pipes
-    stdout to SSE **and** to disk simultaneously, under the project subtree.
-  - `lib/config.ts` — `maister.yaml` v1 loader (`project` + `flows[]`),
+  - `lib/config.ts` — `maister.yaml` v2 loader (`project` + `executors[]` + `flows[]`),
     `schemaVersion` check, slug derivation, duplicate-flow-id check,
     zod-validated.
   - `lib/projects.ts` — project registry CRUD +
     `MAISTER_PROJECTS_DIR` auto-discovery.
   - `lib/scheduler.ts` — global concurrency cap
     (`MAISTER_MAX_CONCURRENT_RUNS`), Pending queue, auto-promote.
-  - `lib/db/` — Drizzle schema (`projects`, `tasks`, `runs`, `workspaces`,
-    `hitl_requests`) + client.
+  - `lib/db/` — Drizzle schema (`projects`, `executors`, `flows`, `tasks`,
+    `runs`, `workspaces`, `step_runs`, `hitl_requests`) + client.
   - `lib/reconcile.ts` — startup hook: per-project `runs` vs
     `git worktree list`; orphaned `Running` → `Crashed`.
 
@@ -55,7 +52,8 @@
 
 - Throw `MaisterError` with a discriminated `code`
   (`PRECONDITION | SPAWN | NEEDS_INPUT | HITL_TIMEOUT | CRASH | CONFLICT |
-  CONFIG`) for known domain failures. UI branches on `code`, never on string
+  CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL | CHECKPOINT`)
+  for known domain failures. UI branches on `code`, never on string
   matching.
 - Never wrap plain `Error` to "look typed". If you need a new error type,
   add it to the `MaisterError` taxonomy.
@@ -73,27 +71,18 @@
 
 ## Subprocess & Concurrency
 
-- One **block** = one subprocess invocation that runs to natural exit. No
-  long-running process held across a HITL wait.
-- No `chokidar`, no `fs.watch`, no polling. Subprocess exit codes drive UI
-  state transitions.
-- Block exit conventions:
-  - Exit 0, no artifact → block done, advance.
-  - Exit 0 + `.maister/<project-slug>/runs/<run-id>/needs-input.json` →
-    run state `Needs input`.
-  - Exit ≠ 0 → run state `Failed`.
-- POC concurrency cap: `MAISTER_MAX_CONCURRENT_RUNS=3` (env-configurable,
+- Agent processes are owned by `supervisor/`, not `web/`. Permission HITL
+  resolves through supervisor deferreds; form/human HITL resumes through
+  durable input artifacts.
+- No `chokidar`, no `fs.watch`, no polling for state transitions.
+- Default concurrency cap: `MAISTER_MAX_CONCURRENT_RUNS=3` (env-configurable,
   **global** across all projects, not per-project). Runs above the cap go to
   `Pending` and auto-start on slot free. UI shows queue position.
 
 ## SSE / Logging
 
-- One SSE message per stdout line. Include monotonic `id` for
-  `lastEventId` reconnect.
-- Stdout is streamed to disk
-  (`.maister/<project-slug>/runs/<run-id>/<block-id>.log`) via
-  `fs.createWriteStream` **in parallel** with SSE emission. Read-side tails
-  the file.
+- Supervisor emits structured session events with monotonic ids and also
+  writes raw step logs. Web run SSE tails durable `run.events.jsonl`.
 - Eslint rule `no-console: warn` is enforced. Use a logger boundary; do not
   ship `console.log` in committed code.
 
@@ -148,15 +137,10 @@
 - API keys and tokens must not appear in subprocess argv or environment
   visible to the frontend.
 
-## Out-of-POC Guard
+## Scope Labels
 
-Push back with "out of POC scope" and link to
-`docs/kaa-maister-design-20260522-174429.md` §"Out of POC (explicit)" if a
-task tries to add: Flow designer UI · multi-executor pool · adapter
-interface · background agents (reviewer / log / dependency) · Telegram ·
-A/B parallel runs · durable orchestration · auth / multi-user / RBAC ·
-AI-Judge · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
-event log table · test-run UI button · GitHub Actions CI/CD · syntax
-highlighting in diff view · skills invocation (read-only enumeration
-only) · project archival UI · cross-project task moves · external
-issue-tracker sync · project lesson capture.
+`Implemented`, `Designed`, and `Phase 2` are planning labels, not hard
+blockers. Large features such as Flow designer UI, background agents,
+Telegram, AI-Judge, guard enforcement, trust UI, extra executors, and
+team/RBAC support need an explicit plan and contract updates before
+implementation.

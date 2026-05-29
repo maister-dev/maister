@@ -26,7 +26,7 @@ Inside `supervisor/`, modules organized by concern: `acp-client`, `spawn`,
 `heartbeat`, `checkpoint`, `http-api`.
 
 This honors the post-ACP-revision structure without bolting on ceremony
-the POC doesn't need. Migration to **Explicit Architecture** stays
+the current target doesn't need. Migration to **Explicit Architecture** stays
 trivial later: `lib/db/` becomes Infrastructure, the `MaisterError`
 taxonomy becomes Domain, and use-case services move out of Route Handlers
 into an Application layer; `supervisor/` already IS its own bounded
@@ -35,7 +35,7 @@ context.
 ## Decision Rationale
 
 - **Project type:** Web control plane (Next.js + separate supervisor
-  daemon, two Node processes; single host POC, supervisor can later move
+  daemon, two Node processes; single host current target, supervisor can later move
   to a different host without code change).
 - **Tech stack:** Next.js 16 App Router · TypeScript 5.6 (strict) · HeroUI
   v3 · Tailwind 4 · Drizzle ORM · Postgres 16 · ACP (Zed-standard) via
@@ -46,7 +46,7 @@ context.
   plugin engine, multi-executor (claude + codex), workspace lifecycle,
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
-- **Scale:** POC, single host (multi-host capable),
+- **Scale:** current target, single host (multi-host capable),
   `MAISTER_MAX_CONCURRENT_RUNS=3` (global cap).
 - **Key factors:**
   - ACP is the executor interface — Stage 2 multi-executor pool is
@@ -72,13 +72,13 @@ concurrency scheduler, per-step executor override resolution). A flat
 `src/services/`, `src/controllers/` layout would mix unrelated logic.
 
 Why not Explicit Architecture? Decision matrix puts it at team size 5-30
-and "high" domain complexity. Domain logic on POC is small enough that
+and "high" domain complexity. Domain logic today is small enough that
 Domain/Application/Infrastructure separation would add ceremony without
 payoff. Refactor path stays open.
 
-Why not Microservices beyond web/supervisor split? Explicitly out of POC
-scope per `CLAUDE.md`. The two-process split is the minimum that gives
-us crash isolation; further fragmentation is Phase 2 or later.
+Why not Microservices beyond web/supervisor split? The two-process split
+is the minimum that gives crash isolation. Further fragmentation needs a
+separate operating-model decision.
 
 ## Folder Structure
 
@@ -136,7 +136,7 @@ mAIster/
     │       │   ├── route.ts                  # POST /api/runs (preconditions + supervisor session)
     │       │   └── [id]/
     │       │       ├── stream/route.ts       # GET SSE (bridges supervisor SSE)
-    │       │       ├── hitl-response/route.ts # POST HITL response
+    │       │       ├── hitl/[hitlRequestId]/respond/route.ts # POST HITL response
     │       │       ├── activity/route.ts     # POST keepalive bump
     │       │       ├── diff/route.ts         # GET git diff
     │       │       ├── merge/route.ts        # POST git merge --no-ff
@@ -259,13 +259,12 @@ client bundle.
   is split: supervisor owns process-level state (live / checkpointed /
   crashed); web tier owns run-level state (`Running | NeedsInput |
   NeedsInputIdle | Review | Crashed | …`) reflected in the `runs` table.
-- **HITL handoff:** agent emits `session/request_permission` (binary) OR
-  writes `.maister/<project-slug>/runs/<run-id>/needs-input.json`
-  (structured) → web tier records `hitl_requests` row → UI renders form
-  from JSON Schema (zod-validated) → server action writes
-  `input-<step-id>.json` via `atomicWriteJson` → if worker live,
-  supervisor delivers ACP message; if checkpointed, supervisor respawns
-  with `--resume <session-id>` and the agent reads the input artifact.
+- **HITL handoff:** adapter emits ACP `requestPermission` or the runner
+  reaches a form/human step -> web tier records `hitl_requests` row ->
+  UI renders an option picker or schema form -> response route performs
+  a DB claim before resolving supervisor permission or writing
+  `input-<step-id>.json` via `atomicWriteJson`. The runner owns
+  `NeedsInput -> Running`.
 - **Cross-`lib` calls:** allowed but unidirectional. Suggested layering
   inside `web/lib/` (lowest first): `errors` → `atomic` → `config` →
   `db` → `executors` → `flows` → `projects` → `worktree` →
@@ -278,7 +277,7 @@ client bundle.
 ## Key Principles
 
 1. **ACP is the executor interface.** No bespoke adapter interface.
-   claude + codex on POC. New executors land by adding to the
+   claude + codex today. New executors land by adding to the
    `executors[]` registry — no code change in the call sites.
 2. **Agent processes live in `supervisor/`, not Next.js.** Crash
    isolation matters: HMR / dev-mode hot reload must not kill live
@@ -300,9 +299,9 @@ client bundle.
    known domain failures (expanded taxonomy: `EXECUTOR_UNAVAILABLE`,
    `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). Never plain `Error`
    for domain errors.
-8. **No POC scope creep.** Out-of-POC list in root `CLAUDE.md` is
-   binding (custom ACP extensions, guard enforcement, plugin sandboxing,
-   Cursor/opencode/Aider executors — all explicitly Phase 2).
+8. **Scope labels guide planning, not blocking.** Treat `Implemented`,
+   `Designed`, and `Phase 2` as current status labels. Useful work can
+   move between labels when the implementation plan updates the contracts.
 9. **Migration path is intentional.** Today's `web/lib/` modules map
    cleanly to tomorrow's Domain (errors, types), Application
    (supervisor-client, reconcile, scheduler), and Infrastructure (db,
@@ -447,7 +446,7 @@ export function spawnAgent(opts: {
   const logPath = join('.maister', opts.projectSlug, 'runs', opts.runId, `${opts.stepId}.log`);
   const fileStream = createWriteStream(logPath, { flags: 'a' });
 
-  const args = ['--acp'];                          // pseudocode — exact CLI verified in M0 spike
+  const args = ['--acp'];                          // pseudocode; exact adapter CLI verified by local spike
 
   if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
 
@@ -552,11 +551,11 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
 - ❌ **Bespoke executor adapter interfaces.** No `ExecutorAdapter`, no
   `FlowAdapter` beyond what `lib/executors.ts` and ACP provide. Adding
   Cursor / opencode / Aider is configuration, not a new interface.
-- ❌ **Custom ACP extensions on POC.** Stage 1 uses Zed-standard ACP
+- ❌ **Custom ACP extensions without an ADR.** Current target uses standard ACP
   only. Structured-form HITL goes via artifact, not custom notification.
-- ❌ **Enforcing cost/time/regex guards in POC.** Parse-and-persist as
-  metrics on disk only. Enforcement is Phase 2.
-- ❌ **Trusting Flow plugins from arbitrary sources.** POC = internal
+- ❌ **Enforcing cost/time/regex guards without contract updates.** Parse-and-persist as
+  metrics on disk only today. Enforcement is Phase 2.
+- ❌ **Trusting Flow plugins from arbitrary sources.** Current target trusts internal
   sources only. Sandboxing + trust UI is Phase 2.
 - ❌ **Anemic `MaisterError`.** Constructing `new Error('something failed')`
   for a known domain failure. If the error has a meaningful UI branch,
@@ -564,6 +563,7 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
 - ❌ **Streaming or logging secrets.** API keys must never appear in SSE
   output, ACP `session/update` payloads visible to the browser, agent
   argv visible to the frontend, or committed code.
-- ❌ **Refactoring out-of-POC scope.** AI-Judge implementation, Flow
-  designer, background agents, Telegram, A/B runs, HITL as separate
-  swimlane cards — all explicitly out. Push back with "out of POC scope".
+- ❌ **Implementing large scope without updating contracts.** Flow
+  designer, background agents, Telegram, A/B runs, AI-Judge, extra
+  executors, guard enforcement, and trust UI need explicit contract and
+  roadmap updates before implementation.

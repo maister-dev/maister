@@ -11,13 +11,13 @@ relationship to runs ([ADR-018](../decisions.md#adr-018-task--run-cardinality-is
 
 - **Task** — board card. Persisted as `tasks` row.
 - **Run** — execution attempt. See [`runs.md`](runs.md).
-- **Attempt number** — monotonic counter per task, starting at 1. M5
+- **Attempt number** — monotonic counter per task, starting at 1. Current code
   stores it as a **mutable high-water mark** on `tasks.attempt_number`
   bumped inside the Launch transaction; there is no DB-level guarantee
   that a given attempt was actually persisted on a run. The
   `tasks_id_attempt_uq` UNIQUE on `(tasks.id, attempt_number)` is
   vacuous (PK already enforces unique `id`) and provides no
-  per-attempt guard. **(Designed M8)** moves the stamp onto
+  per-attempt guard. The designed run-attempt schema moves the stamp onto
   `runs.attempt_number` with a real UNIQUE `(task_id, attempt_number)`
   so every run row is immutably tagged and duplicates are rejected at
   the DB.
@@ -41,14 +41,14 @@ Notes:
 - The InFlight bucket contains runs in any of `Pending | Running |
 NeedsInput | NeedsInputIdle | Review | Crashed`.
 - "Latest run" on the card today is `runs ORDER BY started_at DESC
-LIMIT 1 WHERE task_id = ?`. **(Designed M8)** once `runs.attempt_number`
+LIMIT 1 WHERE task_id = ?`. Once `runs.attempt_number`
   lands this becomes `MAX(attempt_number) WHERE task_id = ?`.
 - Auto-return to `Backlog` on `Failed | Crashed | Abandoned` enables
   ralph-loop retry without recreating the task.
 
 ## Process flows
 
-### Create a task (Designed M4)
+### Create a task (Designed)
 
 ```mermaid
 sequenceDiagram
@@ -73,7 +73,7 @@ sequenceDiagram
     UI-->>U: card appears in Backlog column
 ```
 
-### Launch a task — retry loop (Designed M6)
+### Launch a task — retry loop (Implemented launch, UI designed)
 
 ```mermaid
 sequenceDiagram
@@ -124,17 +124,17 @@ flowchart LR
 
 - Task ↔ Run cardinality is 1:N; a task can spawn many runs over its
   lifetime via the retry loop.
-- M5: per-task attempt counter lives on `tasks.attempt_number` as a
+- Current code: per-task attempt counter lives on `tasks.attempt_number` as a
   mutable high-water mark, monotonic starting at 1, bumped by the
   Launch transaction. The DB has **no** per-attempt uniqueness guard
   (`tasks_id_attempt_uq` is vacuous because `tasks.id` is the PK);
   `runs` rows carry no attempt stamp at all, so duplicate or missing
   attempts are not detectable from a single table.
-- **(Designed M8)** `runs.attempt_number` becomes the immutable
+- **(Designed)** `runs.attempt_number` becomes the immutable
   per-attempt stamp, monotonic per `task_id` starting at 1, with the
   real DB-enforced UNIQUE `(task_id, attempt_number)` on `runs`.
 - "Latest run" displayed on a card is the row with `MAX(started_at)`
-  for the `task_id`. **(Designed M8)** switches to
+  for the `task_id`. Designed run-attempt schema switches to
   `MAX(attempt_number) WHERE task_id = ?` on `runs`.
 - Board state is exactly `Backlog | InFlight | Done | Abandoned`.
 - `InFlight` is a derived bucket; it contains tasks whose latest run is

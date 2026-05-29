@@ -38,12 +38,12 @@ stateDiagram-v2
     end note
 ```
 
-Status: **Designed M4**. Today the schema supports archival
+Status: **Designed**. Today the schema supports archival
 (`projects.archived_at`); no Route Handler is wired yet.
 
 ## Process flows
 
-### Register a project (Designed M4)
+### Register a project (Designed)
 
 ```mermaid
 sequenceDiagram
@@ -82,7 +82,7 @@ sequenceDiagram
     W-->>U: 201 { slug, repoPath, ... }
 ```
 
-### Auto-discovery on supervisor startup (Designed M4)
+### Auto-discovery on startup (Designed)
 
 Recursive scan of `MAISTER_PROJECTS_DIR` registers every `maister.yaml`
 found. Slug or `repo_path` collisions are rejected (the existing row
@@ -148,7 +148,7 @@ flowchart TD
 - ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl),
   [ADR-019 Project slug + repo_path uniqueness](../decisions.md#adr-019-project-slug--repo_path-uniqueness-soft-archival).
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md).
-- API: registration Route Handler (Designed M4) — see
+- API: registration Route Handler (Designed) — see
   [`../architecture.md`](../architecture.md) §Component map.
 - Config reference: [`../configuration.md`](../configuration.md).
 - Source: `web/lib/config.ts`, `web/lib/config.schema.ts`,

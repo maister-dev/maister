@@ -59,7 +59,7 @@ classDiagram
 
 ## Process flows
 
-### Install a Flow plugin (Designed M5)
+### Install a Flow plugin (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -88,11 +88,10 @@ sequenceDiagram
     end
 ```
 
-### Step DSL execution model (Designed M7)
+### Step DSL execution model (Partly implemented)
 
-Steps run sequentially. A `human` step's `on_reject.goto_step` can loop
-back to an earlier step, carrying the user's comments into
-`comments_var`.
+Steps run sequentially. The `on_reject.goto_step` loop is designed; today
+`human` responses are captured and the runner continues to the next step.
 
 ```mermaid
 flowchart TD
@@ -100,14 +99,14 @@ flowchart TD
     S1 --> T{type?}
     T -- cli --> Exec1[exec command in worktree]
     T -- agent --> Acp1[supervisor POST /sessions<br/>spawn adapter]
-    T -- guard --> Eval[parse cost/time/regex<br/>POC: metric-only]
+    T -- guard --> Eval[parse cost/time/regex<br/>metric-only today]
     T -- human --> Form[render form_schema in UI<br/>wait for response]
     Exec1 --> Next
     Acp1 --> Next
     Eval --> Next
     Form --> Verdict{accepted?}
     Verdict -- yes --> Next[Step N+1]
-    Verdict -- no, on_reject.goto_step --> Loop[jump to target step<br/>+ inject comments_var]
+    Verdict -- no, designed on_reject.goto_step --> Loop[jump to target step<br/>+ inject comments_var]
     Loop --> S1
     Next --> Done{more steps?}
     Done -- yes --> S1
@@ -121,9 +120,10 @@ The executor for an `agent` step is the highest-priority match:
 ```mermaid
 flowchart LR
     A["Run launcher override<br/>set at Launch click"] -->|wins| Resolved
-    B["Project per-flow override<br/>maister.yaml flows().executor_override"] -->|else| Resolved
-    C["Project default<br/>default_executor"] -->|else| Resolved
-    D["Flow recommended<br/>flow.yaml recommended_executor"] -->|else| Resolved
+    B["Task override<br/>tasks.executor_override_id"] -->|else| Resolved
+    C["Project per-flow override<br/>maister.yaml flows().executor_override"] -->|else| Resolved
+    D["Project default<br/>default_executor"] -->|else| Resolved
+    E["Flow recommended<br/>flow.yaml recommended_executor"] -->|else| Resolved
     Resolved["Resolved executor"] --> Check{registered?}
     Check -- no --> Err["throw MaisterError EXECUTOR_UNAVAILABLE"]
     Check -- yes --> OK["supervisor POST /sessions"]
@@ -138,7 +138,7 @@ flowchart LR
   content-addressed and immutable once written — re-installing the
   same tag at a different commit (force-pushed tag, replaced tag)
   lands at a new directory, leaving the prior install untouched.
-- **(Implemented M7)** A run executes against an immutable,
+- **(Implemented)** A run executes against an immutable,
   content-addressed flow bundle. At launch the SHA is snapshotted into
   `runs.flow_revision`; the runner derives the bundle path from
   `(flows.flow_ref_id, runs.flow_revision)` via
@@ -146,7 +146,7 @@ flowchart LR
   `flows.installed_path` column. A flow upgrade is therefore safe even
   for runs in flight: the new install lands at a new SHA-keyed
   directory and existing runs keep reading their pinned directory.
-  Local-source installs (file:// to a non-git directory, used by POC
+  Local-source installs (file:// to a non-git directory, used by
   test fixtures) use the literal `"unknown"` sentinel as the
   revision; production flows are git-only.
 - `flow.yaml` is parsed exactly once at install and persisted verbatim
@@ -157,8 +157,7 @@ flowchart LR
   `CONFIG`.
 - Step types are exactly `cli | agent | guard | human`; unknown type
   refused with `CONFIG`.
-- Steps execute sequentially in declaration order; no parallelism on
-  POC.
+- Steps execute sequentially in declaration order; no parallelism today.
 - `agent` step MUST declare `mode`; `human` step MUST declare
   `form_schema`; `guard` step MUST declare at least one of
   `cost | time | regex` — else `CONFIG`.
@@ -168,7 +167,7 @@ flowchart LR
 - Executor resolution for every `agent` step is total — produces a
   registered executor or fails with `EXECUTOR_UNAVAILABLE`.
 - Guard caps (`cost | time | regex`) are parsed and persisted as
-  metrics ONLY on POC; no kill-on-cap (Phase 2).
+  metrics only; no kill-on-cap today (Phase 2).
 - Templating in `prompt` is Mustache-style and resolves session
   context, task fields, per-step output vars, and executor metadata.
 
@@ -186,7 +185,7 @@ flowchart LR
   bumping the tag in `maister.yaml`.
 - **`setup.sh` exits non-zero** → `FLOW_INSTALL` (502); manifest stays
   uninstalled.
-- **Step output token cost exceeds guard cap (POC)** — metric only,
+- **Step output token cost exceeds guard cap** — metric only,
   no kill. Phase 2 adds enforcement.
 
 ## Linked artifacts

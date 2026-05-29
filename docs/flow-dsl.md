@@ -1,7 +1,7 @@
 # Flow DSL Reference
 
 This document describes the Flow DSL used by `flow.yaml` manifests inside
-Flow plugins, plus how the runner (M5) interprets it.
+Flow plugins, plus how the runner interprets it.
 
 ## Step types
 
@@ -12,7 +12,7 @@ the flow) and a `type` chosen from:
 | ------- | ------------------------------------------------------------------------- |
 | `cli`   | shells out to `bash -c <command>` with `cwd = worktreePath`               |
 | `agent` | drives an ACP session through `claude-agent-acp` / `codex-acp`           |
-| `guard` | observational gate — writes metrics, never blocks (POC)                   |
+| `guard` | observational gate — writes metrics, never blocks today                   |
 | `human` | suspends the run, writes `needs-input.json`, inserts a `hitl_requests` row|
 
 ### `cli` step
@@ -69,7 +69,7 @@ is success; `max_tokens` / `max_turn_requests` / `refusal` map to
 ```
 
 A standalone observational step. The runner evaluates the guard against
-the previous step's metrics (no enforcement on POC), writes a metric line
+the previous step's metrics (observational today), writes a metric line
 to `.maister/<slug>/runs/<run-id>/guards.jsonl`, and always returns
 success.
 
@@ -84,18 +84,20 @@ success.
     comments_var: review_comments
 ```
 
-Writes `needs-input.json` atomically, inserts a `hitl_requests` row of
-`kind: "form"`, transitions the run to `NeedsInput`, returns immediately.
-Resuming via the form response is M7 + M8 (input delivery + respawn).
+Inserts a `hitl_requests` row of `kind: "human"`, transitions the run to
+`NeedsInput`, and returns. The response route writes
+`input-<stepId>.json` after the HITL row is claimed, then schedules
+`runFlow`; the runner owns the `NeedsInput -> Running` transition.
 `on_reject.goto_step` is recorded but not yet executed by the runner.
 
-## Pre- and post-guards (POC: observational only)
+## Pre- and post-guards (observational)
 
 Guards attached to `cli` and `agent` steps are evaluated **before** the
 step (`pre_guards`, against zero observed metrics) and **after** the step
-(`post_guards`, against `{durationMs, stdout, costTokens}`). Cap
-exceedance emits a `WARN` log line but never aborts. Metrics are written
-to `.maister/<slug>/runs/<run-id>/guards.jsonl` for later analysis.
+(`post_guards`, against `{durationMs, stdout, costTokens}`). Cost guard
+evaluation reads token totals from `cost.jsonl` when present. Cap
+exceedance emits a `WARN` log line but never aborts. Guard metrics are
+written to `.maister/<slug>/runs/<run-id>/guards.jsonl`.
 
 Phase 2 will add enforcement (cancel on cost/time cap).
 
@@ -115,7 +117,7 @@ Context paths available inside templates:
 | `task.prompt`                    | `tasks.prompt`                             |
 | `task.attemptNumber`             | `tasks.attempt_number`                     |
 | `run.id`                         | `runs.id`                                  |
-| `run.attemptNumber`              | mirrors `task.attemptNumber` until M8      |
+| `run.attemptNumber`              | mirrors `task.attemptNumber` until run-level attempts land |
 | `run.projectSlug`                | `projects.slug`                            |
 | `executor.id`                    | `executors.id`                             |
 | `executor.agent`                 | `claude \| codex`                          |
@@ -146,7 +148,7 @@ Allow patterns: `LANG`, `LC_*`, `TZ`, `PATH`, `HOME`, `USER`, `SHELL`,
 
 ## Step output vars
 
-`step_runs.vars` is `{}` for `cli` and `agent` steps in M5 — the runner
+`step_runs.vars` is `{}` for `cli` and `agent` steps today — the runner
 does not yet extract structured output. The column + UNIQUE constraint
 ship now so future work (tool-call extraction, retry, etc.) can populate
 it without another migration.
@@ -165,21 +167,26 @@ mode).
   fallback.
 - `sessionUpdate` notifications stream during the turn; the supervisor
   re-emits them as `session.update` SSE events.
-- `requestPermission` is auto-allowed in M5 (`allow_always` > `allow_once`
-  > `options[0]`), with a `WARN` log + `session.permission_auto` SSE
-  event for audit. M7 replaces this with a blocking HITL round-trip.
+- `requestPermission` emits `session.permission_request`; the runner
+  persists a permission HITL row and moves the run to `NeedsInput`.
+  The user response route calls `POST /sessions/:id/input` with
+  `{kind:"permission", action:"select", requestId, optionId}`.
 
-## Run state machine (M5)
+## Run state machine
 
 ```
 Pending  ─tryStartRun─►  Running  ─runFlow─►  Review     (success)
                                     │
                                     └──┬──►   Failed     (step ok=false / throw)
-                                       └──►   NeedsInput (human step)
+                                       ├──►   Crashed    (crash-class error)
+                                       └──►   NeedsInput (permission/form/human)
+                                                  │
+                                                  └──► Running (runner-owned resume)
 ```
 
-M5 does NOT yet implement `NeedsInput → NeedsInputIdle` (idle-timer +
-checkpoint) or `Crashed` via heartbeat — those are M8 / M12.
+The designed checkpoint path adds `NeedsInput -> NeedsInputIdle ->
+Running` via `acp_session_id` resume. The checkpoint endpoint is still a
+deferred stub.
 
 ## Example minimal `flow.yaml`
 

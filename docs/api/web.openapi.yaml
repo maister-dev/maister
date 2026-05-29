@@ -4,22 +4,20 @@ info:
   version: "0.7.0"
   description: |
     HTTP surface exposed by the Next.js web tier under `app/api/`. Consumed
-    by the MAIster UI and (in M7) by any process that wants to drive HITL
+    by the MAIster UI and by any process that wants to drive HITL
     or stream run events without bypassing the web tier's trust boundary.
-
-    **Milestone status: M7.**
 
     Routes shipped to date:
 
-    - `POST /api/runs` (M5+) — launch a run from a Backlog task; precondition
+    - `POST /api/runs` — launch a run from a Backlog task; precondition
       checks, executor resolution, worktree create, scheduler claim.
-    - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
+    - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
       two-phase atomic claim (this file documents the contract). Form and
       human-review flows write `input-<stepId>.json` after a DB claim, and
       the runner's resume-from-existing-input branch picks it up.
-    - `GET /api/runs/{runId}/stream` (M7) — Server-Sent Events bridge.
+    - `GET /api/runs/{runId}/stream` — Server-Sent Events bridge.
       Tails the per-run durable replay log at
       `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` (produced by
       the supervisor — see `supervisor.openapi.yaml`). Reconnect via
@@ -88,8 +86,9 @@ paths:
           the row is unclaimed (or claimed with the same optionId).
           Phase 2 calls the supervisor; on success it marks
           `respondedAt`. Conflicting optionId on retry → 409. Same
-          optionId on retry → idempotent 200. Supervisor 404 racing a
-          concurrent winner → 200 (no `runs.status = Failed`).
+          optionId on retry → idempotent 200. If supervisor reports an
+          expired deferred but another request already marked delivery,
+          the route returns 200 instead of failing the run.
         - **form / human**: schema validation runs first (NEEDS_INPUT 422
           on failure). Then a row-level claim stores `response`. Only
           after the claim succeeds does the route write
@@ -171,7 +170,7 @@ paths:
         "410":
           description: |
             Permission deferred expired before delivery (`HITL_TIMEOUT`).
-            **Terminal in M7**: the run row was transitioned to
+            Terminal behavior: the run row is transitioned to
             `Failed` in the same transaction. Returned ONLY when no
             concurrent request has already marked `respondedAt` — a
             racing winner is detected and returns 200 instead.
@@ -292,17 +291,17 @@ components:
             schema — see `docs/configuration.md`). Returns 422 on
             failure.
 
-            **M7 behaviour for `kind="human"`:** the response is
+            Current behavior for `kind="human"`: the response is
             captured under the same atomic-claim + artifact-write
             contract as `kind="form"`. The runner advances to the
             NEXT step with the response surfaced as
             `steps.<stepId>.vars`. The Flow step's `on_reject` clause
             is recorded on the row (`hitl_requests.kind = "human"`)
             but the runner does NOT route on it — `on_reject.goto_step`
-            rerouting is **Designed M8**. UIs SHOULD therefore not
-            present rejection as a loop-back action in M7; record
+            rerouting is designed. UIs SHOULD therefore not
+            present rejection as a loop-back action today; record
             rejection intent in the response payload for audit, but
-            understand the runner will not branch on it until M8.
+            understand the runner will not branch on it until that work lands.
     MaisterErrorBody:
       type: object
       required: [code, message]

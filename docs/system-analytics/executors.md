@@ -4,14 +4,13 @@
 
 An **executor** is the identity tuple `{agent, model, env?, router?}`
 that names which coding-agent CLI MAIster spawns and which LLM provider
-backs it. Executors are project-scoped (no cross-project sharing in
-POC). The Flow Engine resolves which executor a given step should use
-via a four-level chain.
+backs it. Executors are project-scoped. The Flow Engine resolves which
+executor a given step should use via a five-level chain.
 
 ## Domain entities
 
 - **Executor row** — persisted as `executors` row, scoped to a project.
-- **Executor agent** — `'claude' | 'codex'` on POC. Drives binary
+- **Executor agent** — `'claude' | 'codex'` today. Drives binary
   dispatch in `supervisor/src/spawn.ts`.
 - **Model** — free-form string. The adapter validates against its own
   provider.
@@ -160,7 +159,7 @@ The function is callable two ways:
   override at Launch click; otherwise the chain falls through to the
   highest tier that resolves.
 - **Computed executor** — callers pass `override: undefined` (tier 1
-  skipped). This is the contract M9's task-card "computed executor"
+  skipped). This is the contract for a task-card "computed executor"
   badge calls to render *which executor a task would resolve to right
   now* without launching anything. The returned `tier` (`task`,
   `flowOverride`, `projectDefault`, or `flowRecommended`) drives the
@@ -194,9 +193,9 @@ Source of truth: `supervisor/src/spawn.ts` —
 ## Expectations
 
 - Executor identity tuple is `{agent, model, env?, router?}`; `agent`
-  enum is exactly `claude | codex` on POC.
+  enum is exactly `claude | codex` today.
 - Executors are project-scoped; `executors.id` is unique within a
-  project, NEVER shared across projects on POC.
+  project, NEVER shared across projects.
 - Adapter binary dispatch is deterministic from `executor.agent` via
   `BINARY_BY_AGENT` in `supervisor/src/spawn.ts` — no ambient lookup.
 - Child env is `{ ...process.env, ...ccrLayer, ...executor.env }`;
@@ -208,7 +207,7 @@ Source of truth: `supervisor/src/spawn.ts` —
   → project default → flow recommended; per-task choice ALWAYS wins
   over per-flow rule.
 - `resolveExecutor()` is pure (no DB / no logging) and callable with
-  `override: undefined` for the M9 task-card computed-executor badge.
+  `override: undefined` for a task-card computed-executor badge.
 - env-router is the default mode and requires zero extra dependencies;
   CCR is opt-in only when `router: ccr` is set on the executor.
 - CCR daemon lifecycle is supervisor-owned: lazy `ensureRunning()` on

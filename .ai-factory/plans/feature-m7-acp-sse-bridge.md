@@ -23,7 +23,7 @@ Rationale: Directly implements the next unimplemented milestone in `.ai-factory/
 
 ## Research Context
 
-Source: code exploration of `/repos/mAIster` on 2026-05-28 (no `.ai-factory/RESEARCH.md` Active Summary present), plus the `docs/kaa-maister-design-20260522-174429.md` design doc, `docs/kaa-maister-design-20260525-acp-revision.md` ACP-revision addendum, and the Codex adversarial-review findings from 2026-05-28 (incorporated above).
+Source: code exploration of `/repos/mAIster` on 2026-05-28 (no `.ai-factory/RESEARCH.md` Active Summary present), the active architecture/API docs, and the Codex adversarial-review findings from 2026-05-28 (incorporated above).
 
 Goal: take M7 from "schema + types + 501 stubs exist" to "live HITL round-trip works end-to-end for binary permission AND structured form, SSE bridges supervisor events to the browser via a tail-file Route Handler, and the run state machine moves Running ↔ NeedsInput on real signals WITH retry-safe failure semantics and no hidden deferreds."
 

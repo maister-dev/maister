@@ -7,24 +7,16 @@ info:
     `GET /sessions/{id}/stream` endpoint (described in
     `../supervisor.openapi.yaml`).
 
-    M3 events: every child stdout line yields one `session.line` event;
-    the stream terminates with `session.exited` (clean / intentional) or
-    `session.crashed` (non-zero exit, killing signal, orphan-detected).
-    M5 added one ACP-aware event:
+    Current events:
 
-    - `session.update` — structured ACP `session/update` parameter
-      (delta payload from the adapter). One per ACP update received.
+    - `session.line` — raw child stdout line.
+    - `session.update` — structured ACP `session/update` parameter.
+    - `session.permission_request` — ACP permission request waiting for
+      a web-delivered decision through `POST /sessions/{id}/input`.
+    - `session.exited` / `session.crashed` — terminal process events.
 
-    M7 adds permission HITL routing and removes the M5 auto-allow
-    placeholder:
-
-    - `session.permission_request` — supervisor received an ACP
-      `session/request_permission` from the adapter and is awaiting
-      a response. The web tier delivers a decision via
-      `POST /sessions/{id}/input` with the matching `requestId`. The
-      deferred ages out after `MAISTER_KEEPALIVE_MINUTES`, after which
-      the supervisor rejects it with `HITL_TIMEOUT` and the adapter
-      observes a cancelled tool call.
+    Permission deferreds age out after `MAISTER_KEEPALIVE_MINUTES`; a
+    late response returns `HITL_TIMEOUT`.
 
     Terminal events (`session.exited` / `session.crashed`) close the
     connection. Clients reconnect with `Last-Event-ID: <monotonicId>`
@@ -113,7 +105,7 @@ components:
               content: { type: "text", text: "Working on it..." }
     SessionPermissionRequest:
       name: session.permission_request
-      title: Pending ACP permission request awaiting HITL decision (M7)
+      title: Pending ACP permission request awaiting HITL decision
       summary: |
         Supervisor received an ACP `session/request_permission` from the
         adapter. The supervisor's `PendingPermissionRegistry` parked the
@@ -215,7 +207,7 @@ components:
             line:
               type: string
               description: |
-                Raw stdout line from the adapter. M5 still emits this
+                Raw stdout line from the adapter. The supervisor emits this
                 alongside the parsed `session.update` event so that
                 downstream cost / log consumers keep working unchanged.
     SessionUpdateEvent:

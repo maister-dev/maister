@@ -40,8 +40,9 @@ erDiagram
         text executor_id FK
         text status "Pending|Running|NeedsInput|NeedsInputIdle|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (--resume)"
-        text current_step_id "M5 — runner's cursor"
+        text current_step_id "runner cursor"
         text flow_version "tag snapshot at launch"
+        text flow_revision "git SHA snapshot at launch"
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp started_at
@@ -81,15 +82,15 @@ erDiagram
 
 - `tasks_id_attempt_uq` on `(id, attempt_number)` — **vacuous**:
   `tasks.id` is already the PK, so this composite UNIQUE guards
-  nothing. Shipped for historical reasons; the real per-attempt
-  uniqueness arrives at **(Designed M8)** as `UNIQUE (task_id,
+  nothing. Shipped for historical reasons; the designed per-attempt
+  uniqueness is `UNIQUE (task_id,
   attempt_number)` on `runs`.
 - `tasks_project_status_idx` on `(project_id, status)` — board queries.
 - `runs_project_status_idx` on `(project_id, status)` — portfolio
   queries and per-project In-Flight filters.
-- `runs_task_idx` on `(task_id)` — latest-attempt lookups (M5: `ORDER
-BY started_at DESC LIMIT 1`; **(Designed M8)** switches to `ORDER BY
-attempt_number DESC LIMIT 1` once `runs.attempt_number` lands).
+- `runs_task_idx` on `(task_id)` — latest-attempt lookups (`ORDER
+BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
+`ORDER BY attempt_number DESC LIMIT 1` once `runs.attempt_number` lands).
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.
 - `step_runs_run_step_attempt_uq` on `(run_id, step_id, attempt)` —
   one row per (run, step, attempt); guards future per-step retry.
@@ -131,8 +132,9 @@ full state diagram.
   the row is purged). Drawn as `||--||` because every active run has
   exactly one workspace.
 - `TASKS ||--o{ RUNS` — 1:N attempts. The "latest" run on a card is
-  the row with `MAX(started_at)` for the task in M5; **(Designed M8)**
-  switches to `MAX(runs.attempt_number)` once that column lands.
+  the row with `MAX(started_at)` for the task today; the designed
+  run-attempt schema switches to `MAX(runs.attempt_number)` once that
+  column lands.
 
 ## Linked artifacts
 

@@ -7,23 +7,22 @@
 Product spine:
 
 ```
-Backlog → Flow → Workspace → Headless Agents → HITL → AI-Judge → Diff Review → Merge → Lessons
+Backlog -> Flow -> Workspace -> Headless Agents -> HITL -> Diff Review -> Merge
 ```
 
-POC wedge:
-**thin Web shell over a CLI-Flow runner with multi-project portfolio +
-multi-workspace + HITL + per-project task board.** We orchestrate and wrap
-existing Flow frameworks (e.g. aif). We do NOT build a new Flow runner, Flow
-designer, or skill engine.
+Current wedge:
+**Web control plane + ACP supervisor daemon + Flow plugin engine** for
+multi-project portfolio, multi-workspace execution, HITL, and a per-project
+task board. We orchestrate and wrap existing agents and Flow frameworks.
 
 Audience: solo-technical CEO/CIO/staff-eng
 
 ## Repo state right now
 
 ```
-docs/        # VISION.md, PRODUCT_VIEW.md, design doc, eng-review test plan
+docs/        # Product, architecture, API contracts, DB docs, analytics
 web/         # Next.js 16 + React 19 + HeroUI v3 app — see web/CLAUDE.md
-supervisor/  # NOT scaffolded yet — separate Node daemon hosting ACP sessions
+supervisor/  # Fastify daemon hosting ACP sessions
 .agents/     # codex agent bundles (do not hand-edit)
 .codex/      # codex skills + config.toml
 .claude/     # claude skills + agents (do not hand-edit; manage via /aif tooling)
@@ -33,25 +32,25 @@ supervisor/  # NOT scaffolded yet — separate Node daemon hosting ACP sessions
 LICENSE      # MIT, Albert Kanischev, 2026
 ```
 
-Backend split (none of it scaffolded yet, only web slice exists):
+Backend split:
 - `web/` — Next.js (UI + Route Handlers + Drizzle + server actions). NO
   long-running agent processes live here.
 - `supervisor/` — separate Node daemon. Owns ACP sessions, spawns agent
-  processes (`claude`, `codex`), heartbeat, checkpoint+resume. Reachable
+  processes (`claude`, `codex`), heartbeat, and permission input delivery. Reachable
   from Next.js over HTTP+SSE; can run on a different host than the web tier.
 
 ## How to run
 
 ```bash
-cd web && pnpm install     # first time
-cd web && pnpm dev         # http://localhost:3000
-cd web && pnpm build && pnpm start
-cd web && pnpm lint        # eslint --fix
+pnpm install --frozen-lockfile
+pnpm --filter @maister/supervisor dev  # http://localhost:7777
+pnpm --filter maister-web dev          # http://localhost:3000
+pnpm --filter maister-web lint
 ```
 
 Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 
-## Stack (locked — Approach B, post-ACP revision)
+## Stack
 
 - **Framework**: Next.js 16+ App Router, server actions + RSC where it fits.
 - **Lang**: TypeScript end-to-end. Python only when a specific Flow plugin
@@ -68,13 +67,10 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
   `@anthropic-ai/claude-agent-sdk@0.3.146`) and `codex-acp` (from
   `@agentclientprotocol/codex-acp@0.0.44`, bundles
   `@openai/codex@^0.128.0`). Supervisor spawns one adapter process per
-  active session via Node `child_process.spawn`. Live process held
-  across `NeedsInput` for up to 30 min (extended by web-console
-  activity, env-tunable via `MAISTER_KEEPALIVE_MINUTES`); checkpoints
-  by graceful exit (Claude Code's own JSONL session store at
-  `~/.claude/projects/<cwd-encoded>/<uuid>.jsonl` IS the checkpoint),
-  respawned via `--resume <session-id>`. ⚠ Each respawn costs
-  ~$0.28 cache_creation tokens.
+  active session via Node `child_process.spawn`. Permission HITL is
+  resolved live. Checkpoint/resume remains designed and uses the
+  adapter's session id with `--resume <session-id>`. Each respawn costs
+  roughly `$0.28` cache_creation tokens.
 - **Model routing**: Two modes supported. **(a) env-router** — set
   `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` in `executor.env` for
   single Anthropic-API-compatible third-party provider (z.ai GLM:
@@ -99,33 +95,27 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 
 These were earned in two review passes. Reopen them only with new evidence.
 
-### 1. ACP-driven execution with hybrid HITL (keep-alive + checkpoint+resume)
+### 1. ACP-driven execution with hybrid HITL
 
 A Flow = sequence of **steps** typed `cli | agent | guard | human`, parsed
 from the Flow plugin's `flow.yaml` manifest. `agent` steps run as ACP
 sessions hosted by `supervisor/`, which spawns one agent process
 (`claude`, `codex`) per active session. State transitions are driven by
-**ACP notifications** (`session/update`, `session/request_permission`) on
-the live path AND by **artifact presence** (`needs-input.json`) on the
-durable / recovery path. Both signals coexist by design (hybrid).
+**ACP notifications** (`session.update`, `session.permission_request`) on
+the live path and by durable input artifacts for form/human responses.
 
 HITL lifecycle:
-- Agent emits `session/request_permission` (binary approve/deny) OR writes
-  `.maister/<project-slug>/runs/<run-id>/needs-input.json` (structured
-  form from JSON Schema). `human`-typed steps go through the artifact
-  path with a richer `on_reject` flow that loops back to a `goto_step`.
-- Run state → `NeedsInput`. The ACP session stays live for up to **30
-  minutes**. Each web-console activity from the user (opening the run
-  page, focusing it, typing in the form) **extends the window by 30
-  minutes**, so an active human review never gets timed out mid-thought.
-- On idle timeout → graceful checkpoint (the agent persists session state
-  via its own session store on disk) → process exits → run state
-  `NeedsInputIdle`. `runs.acp_session_id` is the resume handle.
-- User submits a response → atomic write of `input-<step-id>.json` via
-  `atomicWriteJson` → if the worker is still live, supervisor delivers an
-  ACP message; if checkpointed, supervisor re-spawns the agent process
-  with `--resume <session-id>` and the agent reads the input artifact.
-- TTL 24h in `NeedsInputIdle` without user response → `Abandoned`.
+- Agent emits ACP `requestPermission` or the runner reaches a form/human
+  step. The runner persists a `hitl_requests` row before the run enters
+  `NeedsInput`.
+- User submits through `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`.
+  Permission responses store `{optionId}` and resolve supervisor
+  `/sessions/:id/input`; form/human responses write
+  `input-<step-id>.json` via `atomicWriteJson`.
+- The response route never flips `runs.status` back to `Running`; the
+  runner owns `NeedsInput -> Running`.
+- The idle checkpoint path (`NeedsInput -> NeedsInputIdle -> --resume`) is
+  designed, not implemented.
 
 **Do not** introduce `fs.watch`, `chokidar`, or polling for state
 transitions. The live path is ACP notifications (kernel-level fd events
@@ -134,13 +124,11 @@ artifact check on resume.
 
 ### 2. SSE pipe-to-disk
 
-Supervisor streams every ACP `session/update` event line to
-`.maister/<project-slug>/runs/<run-id>/<step-id>.log` via
-`fs.createWriteStream` **in parallel** with the SSE emission to its HTTP
-clients. Next.js Route Handler (`/api/runs/[id]/stream`) tails the file —
-required so neither the supervisor nor the web tier OOMs on >10MB step
-output, and so reconnect via `lastEventId` works without replaying from
-memory.
+Supervisor writes raw step output to
+`.maister/<project-slug>/runs/<run-id>/<step-id>.log` and appends structured
+session events to `run.events.jsonl`. Next.js Route Handler
+(`/api/runs/[id]/stream`) tails `run.events.jsonl`, so reconnect via
+`lastEventId` works without replaying from memory.
 
 ### 3. Typed error taxonomy (`lib/errors.ts`)
 
@@ -151,15 +139,15 @@ UI branches on `code`, never on string matching. No string-matched errors.
 
 ### 4. Concurrency cap
 
-`MAISTER_MAX_CONCURRENT_RUNS=3` for POC (env-configurable). Cap is **global**
+`MAISTER_MAX_CONCURRENT_RUNS=3` by default (env-configurable). Cap is **global**
 across all projects, not per-project. Runs above the cap go to `Pending` and
 auto-start when a slot frees. UI shows queue position. Hard cap (no override
 from `maister.yaml`) — keeps RAM/token spend bounded on a single host.
 
-### 5. Multi-executor via ACP (claude + codex on POC)
+### 5. Multi-executor via ACP (claude + codex)
 
 ACP standardizes the agent surface via vendor-neutral
-`@agentclientprotocol/sdk`. On POC both `claude` and `codex` are
+`@agentclientprotocol/sdk`. Today both `claude` and `codex` are
 required, spawned by `supervisor/` via per-agent adapter binaries:
 - `claude` → `claude-agent-acp` (from
   `@agentclientprotocol/claude-agent-acp`, wraps
@@ -182,9 +170,10 @@ Model routing:
 
 Per-step executor override resolution (highest priority wins):
 1. Run launcher override (set at Launch click, optional).
-2. Project override in `maister.yaml` `flows[<id>].executor_override`.
-3. Project `default_executor`.
-4. Flow's `recommended_executor` in `flow.yaml` (optional, may be unset).
+2. Task override (`tasks.executor_override_id`).
+3. Project per-flow override in `maister.yaml` `flows[<id>].executor_override`.
+4. Project `default_executor`.
+5. Flow's `recommended_executor` in `flow.yaml` (optional, may be unset).
 
 ### 6. Flow Engine v2: plugin packaging + step DSL
 
@@ -237,7 +226,7 @@ steps:
     type: agent
     mode: new-session                  # or slash-in-existing
     prompt: "/aif-plan {{ task.prompt }}"
-    pre_guards: []                     # cost/time/regex on POC = metric-only
+    pre_guards: []                     # cost/time/regex are metric-only today
     post_guards: []
   - id: review
     type: human
@@ -253,8 +242,8 @@ on: `schemaVersion` mismatch (project file or any installed Flow's
 manifest), duplicate IDs within either file, unknown
 `executor`/`executor_override` reference, unknown `goto_step` target,
 slug collision, `repo_path` collision. Trust the Flow's `setup.sh` on
-first install (POC = internal Flow sources only; sandboxing + trust UI
-is Phase 2).
+first install. Current target trusts internal Flow sources; sandboxing +
+trust UI is Phase 2.
 
 Templating: full Mustache-style interpolation with session context, task
 fields, per-step output vars, executor metadata — required for
@@ -284,7 +273,7 @@ observability traces.
 `Review`, UI surfaces "Conflict — resolve manually" with parent repo path.
 No auto-resolve.
 
-## POC scope (what we build)
+## Current Scope
 
 - **Multi-project registry**: N projects per host, each configured by its own
   `maister.yaml` v2. Registration via UI form (path to dir containing
@@ -294,11 +283,11 @@ No auto-resolve.
 - **Flow plugin engine**: install plugins from `git URL + tag` to
   `~/.maister/flows/<id>@<tag>/` system cache; symlink into each consuming
   project's `.maister/<slug>/flows/`. Manifest (`flow.yaml`) is the source
-  of step DSL. Trust all sources on POC (internal Flows only).
-- **Multi-executor via ACP**: `claude` and `codex` both required on POC.
+  of step DSL. Trust internal Flow sources today.
+- **Multi-executor via ACP**: `claude` and `codex` both required.
   Per-step executor override resolution per §5. CCR support bundled.
 - **`supervisor/` daemon**: separate Node process owning ACP sessions,
-  process-per-session spawn, heartbeat, graceful checkpoint+resume,
+  process-per-session spawn, heartbeat, permission input delivery,
   cost-token metric on disk. Talks HTTP+SSE to Next.js (may live on a
   different host).
 - **Project portfolio (home)**: superset.sh-style grid of every active
@@ -307,8 +296,8 @@ No auto-resolve.
   status. "Needs you (N)" badge counts pending HITL across all projects.
 - **Per-project task board**: 2 columns — **Backlog** | **In Flight**. In
   Flight bucket holds `Running | NeedsInput | NeedsInputIdle | Review |
-  Crashed`. A task card in Backlog has a **Launch** button (no drag-and-drop
-  in POC); click = precondition checks → create Run → task moves to In
+  Crashed`. A task card in Backlog has a **Launch** button; click =
+  precondition checks → create Run → task moves to In
   Flight. Done/Abandoned surface in a filter tab, not as additional columns.
 - **HITL Inbox block**: dedicated panel on the per-project board listing
   pending `NeedsInput`/`NeedsInputIdle` requests (in-card form + send-back-
@@ -326,25 +315,19 @@ No auto-resolve.
   lifecycle**, **merge policy** — see §1-8 above.
 - **Concurrency**: global cap = 3 (env-configurable). Queue + position badge.
 
-## Out of POC scope (do not build, do not propose)
+## Phase 2 Candidates
+
+These are not forbidden. They need an explicit implementation plan because
+they change product surface, contracts, or operating model:
 
 Flow designer UI · background agents (reviewer/log/dependency) · Telegram ·
-A/B parallel runs · durable orchestration · auth/multi-user/RBAC · AI-Judge
-(only design in DSL — implementation Phase 2) · full Kanban (Done as
-drag-target / WIP limits / swim-lanes) · event log table · test-run UI button
-· GitHub Actions CI/CD · syntax highlighting in diff view · project archival
-UI (DB has `archived_at`, no button) · cross-project task moves · GitHub
-issue / Linear / YouGile sync · **custom ACP extensions** (Stage 1 = Zed
-standard only — structured-form HITL goes via artifact) · **cost/time/regex
-guard enforcement** (parse-and-persist as metrics only on POC — no
-kill-on-cap) · **Plugin trust UI / sandboxing** (trust all internal sources
-on POC) · **HITL as separate swimlane cards** (POC = badge + Inbox block in
-existing board) · **per-step `new-session-per-step` agent mode** is IN POC
-alongside `slash-in-existing-session` · **Cursor / opencode / Aider
-executors** (POC = claude + codex only via ACP).
-
-If a task adds any of the above, push back with "out of POC scope" and link
-to `docs/kaa-maister-design-20260522-174429.md` §"Out of POC (explicit)".
+A/B parallel runs · durable orchestration · auth/multi-user/RBAC · AI-Judge ·
+full Kanban (Done as drag-target / WIP limits / swim-lanes) · event log table ·
+test-run UI button · GitHub Actions CI/CD · syntax highlighting in diff view ·
+project archival UI · cross-project task moves · GitHub issue / Linear /
+YouGile sync · custom ACP extensions · cost/time/regex guard enforcement ·
+plugin trust UI / sandboxing · HITL as separate swimlane cards · Cursor /
+opencode / Aider executors.
 
 ## Conventions
 
@@ -355,9 +338,8 @@ to `docs/kaa-maister-design-20260522-174429.md` §"Out of POC (explicit)".
 - **SSE messages**: one per ACP `session/update` event line. Include
   monotonic `id` for `lastEventId` reconnect.
 - **Agent process lifetime**: spawned and owned by `supervisor/`, NOT by
-  Next.js. Lives across `NeedsInput` keep-alive (≤30 min, extended by
-  user activity), checkpoints on idle timeout, respawns via
-  `--resume <session-id>` on resume.
+  Next.js. Permission HITL stays live through supervisor deferreds.
+  Checkpoint/idle resume is designed and uses `--resume <session-id>`.
 - **Server-only secrets**: API keys read from `.env` server-side (Next.js)
   or supervisor-side. Never logged, never streamed, never sent to client.
   Never embedded in ACP `session/update` payloads visible to the browser.
@@ -368,9 +350,7 @@ to `docs/kaa-maister-design-20260522-174429.md` §"Out of POC (explicit)".
 - **Surgical changes**: every changed line traces to the request. Don't refactor
   adjacent code "while you're there".
 
-## M0 spike findings (2026-05-25 — completed)
-
-Full report: **`docs/kaa-maister-m0-spike-findings-20260525.md`**.
+## ACP Spike Findings (Current Baseline)
 
 1. ✅ **ACP packages pinned**: `@agentclientprotocol/claude-agent-acp@0.37.0`
    + `@agentclientprotocol/codex-acp@0.0.44` + `@agentclientprotocol/sdk@0.22.1`
@@ -396,20 +376,20 @@ Full report: **`docs/kaa-maister-m0-spike-findings-20260525.md`**.
    `ANTHROPIC_AUTH_TOKEN=<key>` in `executor.env`. CCR
    (`@musistudio/claude-code-router@2.0.0`, MIT) is for intelligent
    multi-provider routing in one session — keep optional.
-5. ⚠ **NEW: cache-creation cost per respawn** (~$0.28 of cache_creation
+5. ⚠ **Cache-creation cost per respawn** (~$0.28 of cache_creation
    tokens on each cross-process resume — cache key does NOT survive
    process boundary even within 5-min Anthropic prompt-cache TTL). The
    30-min keep-alive in §1 is cost-saving, not just UX. Surface
    `MAISTER_KEEPALIVE_MINUTES` env var for ops tuning.
 
-**Remaining loose ends** (not blocking M1):
+**Remaining loose ends**:
 - **tausik** — repo URL still TBD; defer to Phase 2.
 - **External validation** — 3 installations target. Friend names not
   required in advance.
 
-## Success criteria (POC, T+4 to T+5 weeks post-scope-expansion)
+## Success Criteria
 
-End-to-end: ≥2 projects registered via `maister.yaml` v2 (each pulling ≥2
+End-to-end: at least 2 projects registered via `maister.yaml` v2 (each pulling at least 2
 Flow plugins from git URLs by tag) → portfolio home shows active workspaces
 from both → task created from the project board with executor selected
 from project `executors[]` → Launch click → worktree created with
@@ -437,9 +417,9 @@ reassess wedge.
 - `web/CLAUDE.md` — Web UI slice: stack details, scripts, structure, conventions.
 - `docs/VISION.md` — one-liner, principles, MVP goal.
 - `docs/PRODUCT_VIEW.md` — Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later.
-- `docs/kaa-maister-design-20260522-174429.md` — locked design, stack
-  rationale, HITL protocol, success criteria, reviewer concerns.
-- `docs/kaa-maister-eng-review-test-plan-20260522-180855.md` — routes, key
-  interactions, edge cases, critical paths.
+- `docs/architecture.md` — current system shape and data flows.
+- `docs/decisions.md` — ADRs and locked technical choices.
+- `docs/api/` — OpenAPI and AsyncAPI contracts.
+- `docs/system-analytics/` — domain-specific process docs and diagrams.
 
 When this file disagrees with `docs/`, `docs/` wins — update this file.

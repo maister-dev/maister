@@ -4,7 +4,7 @@
 - **Created**: 2026-05-25
 - **Target window**: T+4 to T+5 weeks for technical POC (M1-M12); T+5 to T+6 weeks for dogfood (M13a); T+8 weeks for external validation (M13b)
 - **Scope**: the full POC, mapping every roadmap milestone (M1-M13) to concrete tasks with sequential / parallel ordering and critical-path annotations
-- **Authority**: `CLAUDE.md` §1-8 (architectural commitments), `docs/kaa-maister-design-20260522-174429.md` (locked design), `docs/kaa-maister-design-20260525-acp-revision.md` (post-ACP revision), `.ai-factory/ARCHITECTURE.md` (folder structure + dependency rules), `.ai-factory/ROADMAP.md` (milestone definitions). When this plan disagrees with those, those win — update this file.
+- **Authority**: `CLAUDE.md` §1-8 (architectural commitments), `.ai-factory/ARCHITECTURE.md` (folder structure + dependency rules), `.ai-factory/ROADMAP.md` (roadmap and completed work), and the active docs under `docs/`. When this plan disagrees with those, those win — update this file.
 
 ## Settings
 

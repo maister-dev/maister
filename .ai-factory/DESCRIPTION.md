@@ -4,10 +4,9 @@
 
 **MAIster is the control plane for AI-powered software delivery.** It turns
 backlog tasks into supervised agentic delivery Flows: workspace creation,
-ACP-driven agent execution, structured HITL, diff review, merge, and project
-learning.
+ACP-driven agent execution, structured HITL, diff review, and merge.
 
-The POC wedge: a **Web shell + ACP supervisor daemon + Flow plugin engine**
+Current wedge: a **Web shell + ACP supervisor daemon + Flow plugin engine**
 spanning multi-project portfolio + multi-executor (claude + codex) +
 multi-workspace + hybrid HITL + per-project task board. MAIster orchestrates
 agents through the Zed-standard Agent Client Protocol (ACP); Flow plugins
@@ -18,12 +17,11 @@ runtimes; MAIster is the control plane around them.
 Audience: solo-technical CEO / CIO / staff-eng running multiple repos and AI
 coding agents in parallel and tired of babysitting consoles.
 
-For the full vision, principles, and roadmap see `docs/VISION.md`,
-`docs/PRODUCT_VIEW.md`, and the locked design at
-`docs/kaa-maister-design-20260522-174429.md`. The current ROADMAP is at
+For the full vision, product model, architecture, and roadmap see
+`docs/VISION.md`, `docs/PRODUCT_VIEW.md`, `docs/architecture.md`, and
 `.ai-factory/ROADMAP.md`.
 
-## Core Features (POC scope)
+## Core Features
 
 - **Multi-project registry**: N projects per host, each configured by its own
   `maister.yaml` v2 (`project` + `executors[]` + `flows[]` with version
@@ -36,18 +34,19 @@ For the full vision, principles, and roadmap see `docs/VISION.md`,
   to `~/.maister/flows/<id>@<tag>/` system cache and symlinked per project.
   Each plugin carries a `flow.yaml` manifest with step DSL (`cli | agent |
   guard | human`), optional `setup.sh`, shipped CLIs, skills, and agents.
-- **Multi-executor via ACP**: `claude` and `codex` both required on POC.
+- **Multi-executor via ACP**: `claude` and `codex` both required.
   Executor identity = `{agent, model, env?, router?}` defined per project in
   `executors[]`. CCR (Claude Code Router) bundled for `router: ccr` to route
   z.ai GLM / MiniMax through `claude`. Per-step override resolution: run
-  launcher → project override → project default → flow recommended.
+  launcher -> task override -> project per-flow override -> project
+  default -> flow recommended.
 - **Portfolio home (superset.sh-style)**: single grid of every active
   workspace across all projects. Card = project · branch · status · last
   activity · executor · quick actions. Filters by project + status.
   "Needs you (N)" badge counts pending HITL across all projects.
 - **Per-project task board**: 2 columns `Backlog | In Flight`. In Flight
   holds `Running | NeedsInput | NeedsInputIdle | Review | Crashed`. A
-  Backlog card has a **Launch** button (no drag-and-drop in POC); click runs
+  Backlog card has a **Launch** button; click runs
   preconditions and creates a Run via supervisor `POST /sessions`. A
   dedicated **Inbox** block beside the board lists pending HITL requests
   with in-card form + send-back-with-comments for `human` step type.
@@ -65,22 +64,19 @@ For the full vision, principles, and roadmap see `docs/VISION.md`,
   than 7d.
 - **ACP-driven agent execution**: `supervisor/` daemon (separate Node
   process, HTTP+SSE IPC, may run on a different host) owns ACP sessions.
-  One agent process per session. Spawned on Launch; lives across
-  `NeedsInput` keep-alive (≤30 min, sliding window extended by web-console
-  activity); checkpoints on idle timeout, respawned via `--resume
-  <session-id>` on user response.
+  One agent process per session. Spawned on Launch; permission HITL is
+  resolved live. Checkpoint/idle resume remains designed.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
-  + artifact `needs-input.json` for structured forms (JSON Schema) +
-  `human` step type with review / send-back-with-comments + `goto_step`
-  loop. Run states `NeedsInput` and `NeedsInputIdle` distinguish live-worker
-  and checkpointed waits.
+  + artifact `input-<stepId>.json` for structured forms (JSON Schema) +
+  `human` step type with review comments. `on_reject.goto_step` is
+  designed but not executed today.
 - **Live log streaming**: supervisor publishes ACP `session/update` →
   per-step log file on disk + SSE stream → Next.js Route Handler bridge
   (`/api/runs/[id]/stream`) with `lastEventId` reconnect.
-- **Diff view + merge**: raw `git diff` rendered as `<pre>` (no syntax
-  highlighting in POC), `git merge --no-ff` on the parent's `main_branch`.
+- **Diff view + merge**: raw `git diff` rendered as `<pre>`,
+  `git merge --no-ff` on the parent's `main_branch`.
   Conflicts abort and surface "Conflict — resolve manually" in UI.
-- **Concurrency cap**: `MAISTER_MAX_CONCURRENT_RUNS=3` for POC
+- **Concurrency cap**: `MAISTER_MAX_CONCURRENT_RUNS=3`
   (env-configurable, global across projects). Runs above the cap go to
   `Pending`; UI shows queue position; auto-promote on slot free.
 - **Typed error taxonomy**: `MaisterError` with discriminated `code`
@@ -89,7 +85,7 @@ For the full vision, principles, and roadmap see `docs/VISION.md`,
   CHECKPOINT`). UI branches on `code`, never on string matching.
 - **i18n**: EN + RU from day one.
 
-## Tech Stack (locked — "Approach B", post-ACP revision)
+## Tech Stack
 
 | Layer            | Choice                                                            |
 | ---------------- | ----------------------------------------------------------------- |
@@ -102,12 +98,13 @@ For the full vision, principles, and roadmap see `docs/VISION.md`,
 | Database         | Postgres 16 primary (docker, named volume); SQLite via Drizzle    |
 |                  | dialect switch (`DB_URL=file:./dev.db`) for ultra-light dev only  |
 | ORM              | Drizzle (SQL-flavored, JOOQ-like). Not Prisma.                    |
-| Agent runtime    | ACP (Zed-standard) hosted by `supervisor/`, via the               |
-|                  | `@zed-industries/claude-code-acp` library (or its current         |
-|                  | successor — exact package + version pinned during M0 spike).      |
+| Agent runtime    | ACP hosted by `supervisor/`, via                                  |
+|                  | `@agentclientprotocol/claude-agent-acp`,                          |
+|                  | `@agentclientprotocol/codex-acp`, and                             |
+|                  | `@agentclientprotocol/sdk`.                                       |
 |                  | One agent process (`claude`, `codex`) per active session via      |
-|                  | Node `child_process.spawn`. Live across `NeedsInput` keep-alive   |
-|                  | ≤30 min, checkpoint+respawn via `--resume <session-id>`.          |
+|                  | Node `child_process.spawn`. Permission HITL resolves live;         |
+|                  | checkpoint+respawn via `--resume <session-id>` is designed.       |
 | Model routing    | CCR (Claude Code Router) bundled for `router: ccr` — z.ai GLM,    |
 |                  | MiniMax via Anthropic-API-compatible providers.                   |
 | Web ↔ supervisor | HTTP + SSE (supervisor may run on a different host)               |
@@ -139,7 +136,7 @@ MAIster is split into two Node processes:
   Drizzle DB access + SSE bridge to supervisor. No agent processes here.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per active session, heartbeat
-  watchdog, graceful checkpoint + respawn via `--resume`, token-count →
+  watchdog, designed checkpoint + respawn via `--resume`, token-count →
   cost-on-disk. HTTP+SSE interface; can run on a different host than `web/`.
 
 Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
@@ -148,7 +145,8 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 1. **ACP-driven execution with hybrid HITL**: ACP notifications drive the
    live path; artifact presence (`needs-input.json`) drives the durable
    path. `NeedsInput` keep-alive ≤30 min, extended by web-console
-   activity, then checkpoint → `NeedsInputIdle` → respawn via `--resume`.
+   activity; designed checkpoint path moves `NeedsInputIdle` →
+   respawn via `--resume`.
    No `fs.watch`, no `chokidar`, no polling for state transitions.
 2. **SSE pipe-to-disk**: every ACP `session/update` line streamed to per-
    step log file via `fs.createWriteStream` *in parallel* with SSE
@@ -157,9 +155,10 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 3. **Typed error taxonomy**: `MaisterError extends Error` with
    discriminated `code` (including new codes `EXECUTOR_UNAVAILABLE`,
    `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). UI branches on `code`.
-4. **Multi-executor via ACP**: claude + codex both required on POC. ACP
-   IS the adapter interface. Per-step override resolution: run launcher →
-   project override → project default → flow recommended. CCR bundled.
+4. **Multi-executor via ACP**: claude + codex both required. ACP
+   IS the adapter interface. Override resolution: run launcher ->
+   task override -> project per-flow override -> project default ->
+   flow recommended. CCR bundled.
 5. **Flow Engine v2 plugin model**: Flows are git-tag-pinned plugin
    bundles with `flow.yaml` manifest, `cli | agent | guard | human` step
    DSL, optional `setup.sh`, shipped skills/CLIs. Installed to
@@ -171,18 +170,14 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 6. **Atomic writes** to `.maister/`: tmp + rename via `atomicWriteJson`.
    Never partial-write a JSON the Flow / agent will read.
 
-Out-of-POC items (do not build, do not propose): Flow designer UI ·
-background agents · Telegram · A/B parallel runs · durable orchestration ·
-auth / multi-user / RBAC · AI-Judge (design in DSL OK, implementation
-Phase 2) · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
-event log table · test-run UI button · GitHub Actions CI/CD · syntax
-highlighting in diff view · project archival UI (DB has `archived_at`, no
-button) · cross-project task moves · GitHub issue / Linear / YouGile sync ·
-project lesson capture · custom ACP extensions (Stage 1 = Zed standard) ·
-cost / time / regex guard **enforcement** (parse-and-persist as metrics
-only on POC) · Plugin trust UI / sandboxing (trust internal sources) ·
-HITL as separate swimlane cards (POC = badge + Inbox block on existing
-board) · Cursor / opencode / Aider executors (POC = claude + codex).
+Phase 2 candidates: Flow designer UI · background agents · Telegram ·
+A/B parallel runs · durable orchestration · auth / multi-user / RBAC ·
+AI-Judge · full Kanban · event log table · test-run UI button · GitHub
+Actions CI/CD · syntax highlighting in diff view · project archival UI ·
+cross-project task moves · GitHub issue / Linear / YouGile sync · project
+lesson capture · custom ACP extensions · cost / time / regex guard
+enforcement · plugin trust UI / sandboxing · HITL as separate swimlane
+cards · Cursor / opencode / Aider executors.
 
 ## Non-Functional Requirements
 
@@ -209,7 +204,7 @@ board) · Cursor / opencode / Aider executors (POC = claude + codex).
 
 ## Success Criteria
 
-**POC (T+4 to T+5 weeks, post-scope-expansion):** ≥2 projects registered
+**Current target:** ≥2 projects registered
 via `maister.yaml` v2 (each pulling ≥2 Flow plugins from git URLs by tag)
 → portfolio home shows active workspaces from both → task created on a
 project board with executor selected from `executors[]` → Launch click →
@@ -241,10 +236,10 @@ win — update this file.
 
 - `docs/VISION.md` — product spine, principles, MVP goal.
 - `docs/PRODUCT_VIEW.md` — Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later.
-- `docs/kaa-maister-design-20260522-174429.md` — locked design, stack
-  rationale, HITL protocol, success criteria.
-- `docs/kaa-maister-eng-review-test-plan-20260522-180855.md` — routes, key
-  interactions, edge cases, critical paths.
+- `docs/architecture.md` — current system architecture and diagrams.
+- `docs/decisions.md` — ADRs and locked technical choices.
+- `docs/api/` — OpenAPI and AsyncAPI contracts.
+- `docs/system-analytics/` — domain process docs.
 - `CLAUDE.md` — architectural decisions and conventions for AI agents.
 - `web/CLAUDE.md` — Web/Next.js slice: stack details, scripts, structure,
   conventions.

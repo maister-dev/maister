@@ -18,7 +18,7 @@ Plugin source: `plugins/aif/` in this monorepo.
 The form has two fields: `approved: boolean (required)` + `comments: string`.
 On reject the plan calls back to `implement` via
 `on_reject.goto_step: implement` (the loop-back is recorded in
-`needs-input.json`; runner execution of the goto lands in M7+).
+the HITL response; runner execution of the goto is designed).
 
 ## Why slash-in-existing matters
 
@@ -66,7 +66,7 @@ pnpm --filter @maister/web install-flow \
   --flow-id aif
 ```
 
-When the plugin extracts to its own repo (post-M5), flip `source` to the
+When the plugin extracts to its own repo, flip `source` to the
 git URL and `version` to a real semver tag in `maister.yaml`:
 
 ```yaml

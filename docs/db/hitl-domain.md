@@ -14,7 +14,7 @@ erDiagram
         text run_id FK
         text step_id "Flow step that raised it"
         text kind "permission | form | human"
-        jsonb schema "form_schema (NULL for kind=permission)"
+        jsonb schema "form_schema or permission descriptor"
         text prompt "human-readable rationale"
         jsonb response "operator's answer (NULL while open)"
         timestamp responded_at "NULL while open"
@@ -24,8 +24,10 @@ erDiagram
 
 ## In-jsonb shape — `schema` column
 
-Present when `kind` is `form` or `human`. Validated by
-`formSchemaSchema` in `web/lib/config.schema.ts`.
+For `kind=form` and `kind=human`, `schema` stores the form schema and
+is validated by `formSchemaSchema` in `web/lib/config.schema.ts`. For
+`kind=permission`, `schema` stores `{ requestId, options, toolCall,
+supervisorSessionId }`.
 
 ```mermaid
 classDiagram
@@ -53,9 +55,9 @@ Shape varies by kind:
 
 | Kind | Response shape |
 | ---- | -------------- |
-| `permission` | `{ granted: boolean, comment?: string }` |
+| `permission` | `{ optionId: string }` |
 | `form` | An object whose keys match `schema.fields[].name`, with the matching `type`. |
-| `human` | Either a `form`-shaped object OR `{ rejected: true, comments: string, goto_step: string }` for the loopback path. |
+| `human` | Form-shaped object, optionally including review fields such as `{ rejected?: boolean, comments?: string }`. Rejection is audit data until the designed loopback path lands. |
 
 Free-form `additionalProperties` are tolerated (forward-compat).
 
@@ -68,9 +70,10 @@ Free-form `additionalProperties` are tolerated (forward-compat).
 ## Lifecycle
 
 ```
-created (responded_at IS NULL)
-  -> responded (responded_at IS NOT NULL, response populated)
-  -> expired (run -> Abandoned via HITL_TIMEOUT after 24h)
+open (response IS NULL, responded_at IS NULL)
+  -> claimed (response populated, responded_at IS NULL)
+  -> delivered (response populated, responded_at IS NOT NULL)
+  -> timed out (permission deferred -> Failed; designed idle timeout -> Abandoned)
 ```
 
 The row is never deleted (cascades from `runs` and `projects` only).

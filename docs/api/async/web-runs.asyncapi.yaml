@@ -7,13 +7,13 @@ info:
     `GET /api/runs/{runId}/stream` endpoint (described in
     `../web.openapi.yaml`).
 
-    M7. The web SSE bridge tails a single durable per-run log at
+    The web SSE bridge tails a single durable per-run log at
     `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` that the
     supervisor appends to in lockstep with its own SSE side-channel.
-    The wire event union is **identical** to the supervisor's SSE
-    union (see `supervisor-sse.asyncapi.yaml`): `session.line`,
-    `session.update`, `session.permission_request`, `session.exited`,
-    `session.crashed`.
+    The durable event union matches the supervisor's SSE union
+    (`session.line`, `session.update`, `session.permission_request`,
+    `session.exited`, `session.crashed`) plus one web-only synthetic
+    timeout event.
 
     Differences from `supervisor-sse.asyncapi.yaml`:
 
@@ -64,9 +64,11 @@ channels:
       summary: Stream of run-scoped session events
       description: |
         Client connects via `GET /api/runs/{runId}/stream`. Web tier
-        tails `run.events.jsonl` and emits each event as SSE with the
-        standard `id: <monotonicId>\nevent: <type>\ndata: <json>\n\n`
-        framing.
+        tails `run.events.jsonl` and emits durable events as SSE with
+        `id: <monotonicId>\ndata: <json>\n\n`. The web bridge does not
+        emit an `event:` field. Synthetic timeout events use only
+        `data: <json>\n\n` because they are not persisted in
+        `run.events.jsonl`.
       message:
         oneOf:
           - $ref: "#/components/messages/SessionLine"
@@ -125,7 +127,6 @@ components:
             - session.permission_request
             - session.exited
             - session.crashed
-            - session.stream_timeout
         sessionId:
           type: string
           format: uuid
@@ -138,14 +139,12 @@ components:
         doc references the same union via `EventBase` instead of
         duplicating every payload schema (single source of truth).
     SessionStreamTimeoutEvent:
-      allOf:
-        - $ref: "#/components/schemas/EventBase"
-        - type: object
-          required: [type, reason]
-          properties:
-            type:
-              type: string
-              const: session.stream_timeout
-            reason:
-              type: string
-              description: Human-readable cause (e.g. "no events within keepalive window").
+      type: object
+      required: [type, reason]
+      properties:
+        type:
+          type: string
+          const: session.stream_timeout
+        reason:
+          type: string
+          description: Human-readable cause (e.g. "no events within keepalive window").

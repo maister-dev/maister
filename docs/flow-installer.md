@@ -5,8 +5,8 @@
 `installFlowPlugin()` in `web/lib/flows.ts` is the **install pipeline**:
 clone a tagged git repo into the system cache, validate the manifest,
 symlink it into the project's `.maister/` subtree, and upsert the row
-into the `flows` table. M4 ships this pipeline; M5 (DSL parser) and M9
-(Add Project UI) consume it.
+into the `flows` table. The runner consumes installed bundles through
+the content-addressed cache.
 
 For what a Flow IS (entities, step DSL, lifecycle) see
 [`docs/system-analytics/flows.md`](system-analytics/flows.md). For the
@@ -52,8 +52,8 @@ A flow upgrade therefore cannot mutate the bytes of a still-running
 flow — the SHA-pinned directory remains intact and the runner keeps
 reading from it until the run completes or is discarded.
 
-Local-source installs (file:// to a non-git directory, used by POC
-test fixtures only) use the literal `"unknown"` sentinel as the
+Local-source installs (file:// to a non-git directory, used by
+test fixtures and in-repo plugins) use the literal `"unknown"` sentinel as the
 revision; their cache directory lives at
 `~/.maister/flows/<flowId>@unknown/` and is NOT content-addressed.
 Production flows are git-only.
@@ -83,7 +83,7 @@ const result = await installFlowPlugin({
 ```
 
 `revision` is the 40-char git commit SHA captured at install time
-(or `"unknown"` for local-source POC fixtures). Callers that launch
+(or `"unknown"` for local-source fixtures). Callers that launch
 runs MUST snapshot this into `runs.flow_revision` so the runner can
 derive the immutable bundle path.
 
@@ -117,8 +117,8 @@ on `code` only.
    Non-zero exit → WARN log, install continues, **no sentinel written**
    (so the next install will retry the script). `AbortSignal`
    cancellation → throws `FLOW_INSTALL` so the caller can surface it.
-   POC trusts internal sources per [`CLAUDE.md`](../CLAUDE.md)
-   §"Out of POC scope" — sandboxing is Phase 2.
+   Current MAIster trusts internal Flow sources; sandboxing and trust UI
+   are Phase 2.
 5. **Symlink**: `mkdir -p` parent, then:
    - missing → `symlink(target, linkPath)`,
    - symlink with correct target → no-op,
@@ -141,7 +141,7 @@ but **different** `projectId` run independent pipelines; the
 filesystem-level `pathExists(target)` check prevents both from running
 `git clone` against the shared cache target.
 
-POC is single-host + single-process — no cross-process file lock. If
+Current deployment is single-host + single-process — no cross-process file lock. If
 two Next.js processes ever installed the same flow tag simultaneously
 on the same host, the second `git clone` would fail with "destination
 already exists"; the second caller would still get a valid manifest
@@ -180,14 +180,14 @@ The project must already be registered (`projects.slug = demo-app`).
 The CLI calls `installFlowPlugin()` with `workspaceRoot =
 projects.repo_path`, prints structured pino logs, exits `0` on success
 and `1` on `MaisterError`. It is not in the CI matrix — manual smoke
-test only. The Add-Project UI in M9 will replace it for normal use.
+test only. The Add-Project UI will replace it for normal use.
 
 The CLI runs under `tsx` with a tiny ESM loader
 (`web/scripts/_register-shim.mjs`) that maps `server-only` to its empty
 shim — without it, `tsx` outside Next.js would throw on the
 `import "server-only"` lines in `lib/*`.
 
-## Local-directory sources (M5)
+## Local-directory sources
 
 `installFlowPlugin()` accepts an absolute filesystem path or `file://`
 URL as `source`, in addition to git URLs. The installer auto-detects

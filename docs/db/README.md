@@ -13,7 +13,7 @@ the ERD.
 
 | File | Scope |
 | ---- | ----- |
-| [`erd.md`](erd.md) | Full ERD across all 7 tables — one diagram. |
+| [`erd.md`](erd.md) | Full ERD across all 8 tables — one diagram. |
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
 | [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + form-schema shape. |

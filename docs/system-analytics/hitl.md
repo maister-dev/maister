@@ -17,20 +17,19 @@ artifact protocol used when the worker is checkpointed.
   - `form` — structured form, schema declared in the Flow's
     `human` step `form_schema`.
   - `human` — Flow step `type: human` with an `on_reject` clause
-    declared in `flow.yaml`. **M7 behaviour:** the row is persisted
+    declared in `flow.yaml`. Current behaviour: the row is persisted
     as `kind="human"` and the response is captured under the same
     atomic-claim + artifact-write contract as `kind="form"`. The
     loop-on-reject routing (`on_reject.goto_step` rerouting +
-    `comments_var` propagation) is **Designed M8** — until then,
+    `comments_var` propagation) is designed — until then,
     `kind="human"` behaves wire-equivalent to `kind="form"`. The
-    distinction is preserved on the row so M8 can light up
+    distinction is preserved on the row so the loop can light up
     rerouting without a schema change.
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
-enum | array` on POC.
-- **`needs-input.json`** — artifact written by the agent at
-  `.maister/<slug>/runs/<runId>/needs-input.json` when raising a
-  structured-form request from a checkpointable boundary.
+enum | array`.
+- **`needs-input.json`** — artifact written when a checkpointable
+  structured-form request is raised.
 - **`input-<stepId>.json`** — atomic-written response payload.
 
 ## Three kinds — when to use which
@@ -39,7 +38,7 @@ enum | array` on POC.
 | ---- | ------- | ----- | --------------- | ---- |
 | `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
 | `form` | Agent writes `needs-input.json` mid-step | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
-| `human` | Flow step `type: human` with `on_reject` | Yes (`form_schema`) | Designed M8 (`on_reject.goto_step` not yet executed) | Artifact only |
+| `human` | Flow step `type: human` with `on_reject` | Yes (`form_schema`) | Designed (`on_reject.goto_step` not yet executed) | Artifact only |
 
 The decision tree:
 
@@ -67,80 +66,85 @@ stateDiagram-v2
 
 ## Process flows
 
-### Live path — permission request (Designed M7)
+### Live path — permission request (Implemented)
 
 ```mermaid
 sequenceDiagram
     participant A as Adapter
     participant SV as Supervisor
-    participant W as Web tier
+    participant R as Runner
+    participant W as Web route
     participant DB as Postgres
     actor U as Operator
 
-    A-->>SV: jsonrpc session/request_permission
-    SV-->>W: SSE session.line (parsed in M7)
-    W->>DB: INSERT hitl_requests { kind=permission, prompt, ... }
-    W->>DB: UPDATE runs SET status=NeedsInput, keepalive_until=now+30min
+    A-->>SV: ACP requestPermission
+    SV-->>R: SSE session.permission_request
+    R->>DB: INSERT hitl_requests {kind=permission, schema.options}
+    R->>DB: UPDATE runs SET status=NeedsInput
     W-->>U: UI renders approve/deny prompt
-    U->>W: POST /api/runs/[id]/hitl-response { granted: true/false, comment? }
-    W->>SV: POST /sessions/[id]/input (M7)
-    SV->>A: jsonrpc response { result: { granted } }
-    A-->>SV: continues
-    W->>DB: UPDATE hitl_requests SET response, responded_at
-    W->>DB: UPDATE runs SET status=Running
+    U->>W: POST /api/runs/{runId}/hitl/{hitlRequestId}/respond {optionId}
+    W->>DB: Phase 1: claim row, store response {optionId}
+    W->>SV: Phase 2: POST /sessions/{sessionId}/input {action=select, optionId}
+    SV->>A: ACP response {outcome=selected, optionId}
+    W->>DB: Phase 3: set responded_at
+    A-->>SV: continues and emits session.update
+    SV-->>R: session.update
+    R->>DB: transition NeedsInput -> Running
 ```
 
-### Recovery path — structured form after checkpoint (Designed M8)
+### Structured form response (Implemented, checkpoint resume Designed)
 
 ```mermaid
 sequenceDiagram
-    participant A as Adapter
-    participant SV as Supervisor
-    participant W as Web tier
+    participant R as Runner
+    participant W as Web route
     participant FS as Filesystem
     participant DB as Postgres
     actor U as Operator
 
-    Note over A: Earlier — agent wrote needs-input.json,<br/>run was checkpointed (NeedsInputIdle).
+    Note over R: Earlier — form/human HITL row was created<br/>and run moved to NeedsInput.
     U->>W: Submit form response on run page
-    W->>FS: atomicWriteJson input-{stepId}.json
-    W->>DB: INSERT hitl_requests.response, responded_at
-    W->>SV: POST /sessions { resumeSessionId: acp_session_id, ... }
-    SV->>A: spawn --resume {id}
-    A->>FS: read input-{stepId}.json
-    A-->>SV: session.line resumed
-    SV-->>W: SSE session.line
-    W->>DB: UPDATE runs SET status=Running, keepalive_until=null
+    U->>W: POST /api/runs/{runId}/hitl/{hitlRequestId}/respond {response}
+    W->>DB: Phase 1: claim row, store response
+    W->>FS: Phase 2: atomicWriteJson input-{stepId}.json
+    W->>DB: Phase 3: set responded_at
+    W-->>R: schedule runFlow
+    R->>DB: claim NeedsInput -> Running
+    R->>FS: read input-{stepId}.json
+    Note over R: If checkpoint/resume lands, runner-owned resume<br/>uses acp_session_id instead of route-owned status flips.
 ```
 
-### Human-review send-back loop (Designed M7)
+### Human-review response (Implemented; loop Designed)
 
 ```mermaid
 sequenceDiagram
     actor U as Operator
-    participant W as Web tier
+    participant W as Web route
+    participant R as Runner
     participant FS as Filesystem
     participant DB as Postgres
-    participant A as Adapter (re-spawned at goto_step)
 
     Note over W: Flow reached a step type=human with on_reject.goto_step=plan
     W->>FS: render form_schema in UI
     U->>W: Reject with comments
-    W->>FS: atomicWriteJson input-{stepId}.json { rejected: true, comments: "..." }
-    W->>DB: hitl_requests.response, on_reject_goto=plan
-    W->>SV: POST /sessions ({ stepId: plan, prompt with comments_var injected })
-    SV->>A: spawn fresh adapter at the earlier step
-    Note over A: Flow loops back to "plan" step with the human comments<br/>available as the configured comments_var (e.g. {{review_comments}})
+    W->>DB: Phase 1: claim row, store response
+    W->>FS: Phase 2: atomicWriteJson input-{stepId}.json
+    W->>DB: Phase 3: set responded_at
+    W-->>R: schedule runFlow
+    R->>DB: claim NeedsInput -> Running
+    R->>R: continue next step; rejection is audit data
+    Note over R: Designed loop: on_reject.goto_step + comments_var<br/>will route to an earlier step when implemented.
 ```
 
-## Keep-alive activity tracking (Designed M8)
+## Keep-alive activity tracking (Designed)
 
-The flow below describes the M8 target state. M5 does not implement
-any of it: `runs.keepalive_until` ships unused, no
+The flow below describes the designed target state. Current code does
+not implement the activity route or checkpoint transition:
+`runs.keepalive_until` ships unused, no
 `POST /api/runs/[id]/activity` route exists, supervisor
 `POST /sessions/:id/checkpoint` still returns the deferred stub, and
-no `NeedsInput → NeedsInputIdle` transition fires today. The diagram
-is kept as the design contract M8 builds against.
+no `NeedsInput → NeedsInputIdle` transition fires today. The diagram is
+kept as the design contract for checkpoint/resume work.
 
 While a run is in `NeedsInput`, the run-detail page is responsible for
 keeping the worker alive:
@@ -183,25 +187,26 @@ fields:
 - Every HITL request is persisted as a `hitl_requests` row before the
   run transitions to `NeedsInput`; UI never derives HITL state from
   supervisor in-memory state.
-- **(Designed M8)** A run in `NeedsInput` extends `keepalive_until` by
+- **(Designed)** A run in `NeedsInput` extends `keepalive_until` by
   `MAISTER_KEEPALIVE_MINUTES` (default 30) on every operator activity
-  event (page open, focus, form change). M5 has neither the
+  event (page open, focus, form change). Current code has neither the
   `POST /api/runs/[id]/activity` route nor a writer for
   `runs.keepalive_until`; the column ships unused.
-- **(Designed M8)** Idle past `keepalive_until` triggers checkpoint →
-  run becomes `NeedsInputIdle` with `acp_session_id` retained. M5
-  supervisor `POST /sessions/:id/checkpoint` still returns the M8
-  deferred stub, so `NeedsInputIdle` is never reached today.
-- **(Designed M8)** 24 h elapsed in `NeedsInputIdle` without response
+- **(Designed)** Idle past `keepalive_until` triggers checkpoint →
+  run becomes `NeedsInputIdle` with `acp_session_id` retained.
+  Supervisor `POST /sessions/:id/checkpoint` still returns the current
+  deferred compatibility response, so `NeedsInputIdle` is never reached
+  today.
+- **(Designed)** 24 h elapsed in `NeedsInputIdle` without response
   → `HITL_TIMEOUT`, run `Abandoned`, task → `Backlog`. Depends on the
-  checkpoint path above; no timeout watcher exists in M5.
+  checkpoint path above; no timeout watcher exists.
 - Every form payload includes `schemaVersion: integer`; mismatch with
   the Flow's declared version raises `CONFIG` with both versions
   named.
-- Form-schema field types on POC are exactly `string | number |
+- Form-schema field types are exactly `string | number |
   boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   load.
-- **(Implemented M7)** Operator responses go through
+- **(Implemented)** Operator responses go through
   `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`. Permission
   responses are routed through the supervisor's
   `POST /sessions/:id/input` (permission-only, discriminated `action:
@@ -212,22 +217,22 @@ fields:
   with conflicting payloads return 409 before any artifact is
   touched, and same-payload retries are idempotent. The supervisor
   never writes input artifacts.
-- **(Implemented M7)** `human` step responses are captured under the
+- **(Implemented)** `human` step responses are captured under the
   same two-phase commit + artifact-write contract as `form`. The
   `on_reject` clause on the Flow step is preserved in the row's kind
   (`hitl_requests.kind = "human"`) and may also be carried in the
   response payload as `{ rejected: bool, comments?: string }`, but the
-  runner does NOT branch on it in M7 — it advances to the next step
+  runner does NOT branch on it today — it advances to the next step
   with the response captured as ordinary `steps.<id>.vars`. The
-  reviewer UI MUST therefore treat M7 rejection as informational
+  reviewer UI MUST therefore treat rejection as informational
   (recorded for audit, the run continues), not as a routing action.
-- **(Designed M8)** Full `on_reject.goto_step` rerouting in
+- **(Designed)** Full `on_reject.goto_step` rerouting in
   `runHumanStep`: when the response indicates rejection, the runner
   jumps to the declared `goto_step` with `comments_var` populated
-  from the response. Until M8 lands, the API surface MUST NOT
+  from the response. Until it lands, the API surface MUST NOT
   represent rejection as a loop-back action — see `web.openapi.yaml`
   and the UI MUST disable loop-back affordances.
-- **(Implemented M7)** `hitl_requests.response` and `.responded_at`
+- **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
   * **Phase 1 (atomic claim).** `response` is stored under a row-level
     `SELECT ... FOR UPDATE` only if the row is unclaimed, or claimed
@@ -247,9 +252,9 @@ fields:
   * Same-payload retry on an already-delivered row re-queues
     `runFlow` so a process crash between Phase 3 commit and the
     original microtask cannot strand the run in `NeedsInput`.
-- **(Designed M8)** HITL request lost during supervisor shutdown is
+- **(Designed)** HITL request lost during supervisor shutdown is
   recoverable via the standard `acp_session_id` resume on next launch —
-  no separate reconciliation needed. Depends on M8 checkpoint/resume
+  no separate reconciliation needed. Depends on checkpoint/resume
   landing the `--resume <id>` re-spawn path.
 
 ## Edge cases
@@ -275,9 +280,9 @@ fields:
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
-- **HITL on `human`-step rejected with no `on_reject` defined** →
-  treated as `human_review` rejection but no loop-back; run goes to
-  `Failed` (task returns to Backlog).
+- **HITL on `human` step is rejected** — rejection is stored as
+  response payload. The runner does not branch on it until the
+  designed `on_reject.goto_step` loop lands.
 - **`session/request_permission` arrives while the supervisor is
   shutting down** — request lost; agent will retry on next launch
   through the standard `acp_session_id` resume.
@@ -291,7 +296,7 @@ fields:
   §`form_schema versioning`;
   §`Environment variables (server tier)` for
   `MAISTER_KEEPALIVE_MINUTES`.
-- API (external, planned for M7): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
+- API (external): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md).
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),

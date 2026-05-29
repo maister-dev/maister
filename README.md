@@ -2,12 +2,10 @@
 
 > The control plane for AI-powered software delivery.
 
-MAIster turns backlog tasks into supervised agentic delivery Flows: workspace
-creation, headless agent execution, HITL, AI-Judge, diff review, merge, and
-project learning. The POC is a thin Web shell over a CLI-Flow runner with a
-**multi-project portfolio**, multi-workspace, HITL, and a **per-project task
-board** — it orchestrates existing Flow frameworks (`aif`), it does not build
-a new Flow runner.
+MAIster turns backlog tasks into supervised delivery Flows: workspace creation,
+ACP-driven agent execution, HITL, diff review, and merge. It is a Web control
+plane plus a separate ACP supervisor daemon. It wraps existing agents and Flow
+plugins; it does not replace Claude Code, Codex, or AI Factory.
 
 ## Quick Start
 
@@ -30,30 +28,32 @@ The repo is a pnpm monorepo (`web/` + `supervisor/`). The web tier is
 Next.js 16 (Drizzle schema, error taxonomy, `maister.yaml` v2 loader);
 the supervisor is the separate Node daemon that owns ACP sessions and
 agent processes. See [Supervisor](docs/supervisor.md) for the wire
-contract and [Architecture](.ai-factory/ARCHITECTURE.md) for the
-boundary rules.
+contract and [Architecture](docs/architecture.md) for the boundary rules.
 
-## Key Features (POC scope)
+## Key Features
 
 - **Multi-project registry** — N projects per host, each configured by its
-  own `maister.yaml` v1. Registration via UI form or
-  `MAISTER_PROJECTS_DIR` env auto-discovery.
+  own `maister.yaml` v2: project metadata, project-scoped executors, and
+  pinned Flow plugins.
 - **Portfolio home (superset.sh-style)** — single grid of every active
   workspace across all projects, with filters by project + status.
 - **Per-project task board** — 2 columns `Backlog | In Flight`. A Backlog
-  card has a **Launch** button (no drag-and-drop in POC); click creates a
+  card has a **Launch** button; click creates a
   Run. **task ↔ run is 1:N** — a failed/abandoned run returns the task to
   Backlog so Launch can fire attempt N+1 (ralph-loop friendly).
 - **Backlog → Flow launch** — task created with title + prompt + Flow
-  dropdown (from project's `flows[]`).
+  dropdown and optional executor override.
 - **Workspace per run** — `git worktree add` with precondition checks
   (clean parent repo, branch free, worktree path free), isolated under
   `.maister/<project-slug>/runs/<run-id>/`.
-- **Block-based HITL** — one subprocess per Flow block; UI form rendered
-  from `response_schema` on `needs-input.json`; resumed via
-  `--resume <block-id>` with no live process across the wait.
-- **Live log streaming** — SSE via Route Handler, one message per stdout
-  line, `lastEventId` reconnect, piped to disk in parallel.
+- **Multi-executor ACP** — claude and codex executors are configured per
+  project; CCR is available for `router: ccr` Claude routing.
+- **Hybrid HITL** — ACP permission requests become durable HITL rows;
+  structured form and human-review responses use atomic input artifacts and
+  runner-owned resume.
+- **Live run streaming** — supervisor writes per-step logs and
+  `run.events.jsonl`; the web SSE bridge replays durable events with
+  `Last-Event-ID`.
 - **Diff + merge** — raw `git diff` rendered as `<pre>`, `git merge --no-ff`
   on the parent's `main_branch`; conflicts abort to manual resolve.
 - **Crash recovery** — startup reconciles the `runs` table against
@@ -68,7 +68,7 @@ boundary rules.
 - Next.js 16 (App Router) · React 19 · TypeScript 5 (strict)
 - HeroUI v3 · Tailwind CSS 4 · `tailwind-variants` · `next-themes`
 - Drizzle ORM · Postgres 16 (SQLite via dialect switch for ultra-light dev)
-- Node `child_process.spawn` · `uv run` for the Python Flow bridge
+- Fastify supervisor · ACP adapter binaries · optional CCR router
 - vitest · Playwright · pnpm · Node 24
 
 ## Example
@@ -96,9 +96,9 @@ flows:
     version: v1.2.3
 EOF
 
-# Launch the Web UI, register the project, create a task on the board
-cd web && pnpm dev
-open http://localhost:3000
+# Launch the services, register the project, create a task on the board
+pnpm --filter @maister/supervisor dev
+pnpm --filter maister-web dev
 ```
 
 Full manifest reference: [Configuration](docs/configuration.md).
@@ -115,13 +115,20 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
 | [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | [Flow Installer](docs/flow-installer.md) | `installFlowPlugin()` pipeline, system cache, symlink, DB upsert, ops CLI |
+| [Flow DSL](docs/flow-dsl.md) | Step DSL and runner behavior |
+| [AIF Flow Plugin](docs/flow-aif-plugin.md) | Bundled `aif` Flow plugin walkthrough |
 | [Vision](docs/VISION.md) | One-liner, product spine, principles, MVP goal |
-| [Product View](docs/PRODUCT_VIEW.md) | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
-| [Design (Locked)](docs/kaa-maister-design-20260522-174429.md) | Stack rationale, HITL protocol, success criteria, reviewer concerns |
-| [ACP Pivot Revision](docs/kaa-maister-design-20260525-acp-revision.md) | Multi-executor ACP pivot — what changed and why |
-| [Eng Review Test Plan](docs/kaa-maister-eng-review-test-plan-20260522-180855.md) | Routes, key interactions, edge cases, critical paths |
-| [M0 Spike Findings](docs/kaa-maister-m0-spike-findings-20260525.md) | ACP library validation + cross-process resume cost |
-| [Architecture](.ai-factory/ARCHITECTURE.md) | Architecture pattern, folder structure, dependency rules |
+| [Product View](docs/PRODUCT_VIEW.md) | Target user, JTBD, current scope, Phase 2 |
+| [Architecture](docs/architecture.md) | C4 views, component map, data flows |
+| [Decisions](docs/decisions.md) | ADRs and locked technical choices |
+| [System Analytics](docs/system-analytics/README.md) | Domain state machines and process flows |
+| [Database ERDs](docs/db/README.md) | Mermaid ERDs by domain |
+| [API: Web](docs/api/web.openapi.yaml) | Web Route Handler contract |
+| [API: Supervisor](docs/api/supervisor.openapi.yaml) | Supervisor HTTP contract |
+| [Events: Web Run SSE](docs/api/async/web-runs.asyncapi.yaml) | Browser-facing run event stream |
+| [Events: Supervisor SSE](docs/api/async/supervisor-sse.asyncapi.yaml) | Supervisor session event stream |
+| [External API References](docs/api/external/README.md) | ACP and transitive provider references |
+| [Docs Rules](docs/CLAUDE.md) | Documentation structure and validation rules |
 | [Project Spec](.ai-factory/DESCRIPTION.md) | Full project specification |
 | [Agent Map](AGENTS.md) | Structural map for AI agents and new contributors |
 

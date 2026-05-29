@@ -6,8 +6,7 @@ info:
     **Narrow excerpt** of the [Agent Client Protocol](https://github.com/agentclientprotocol/protocol)
     surface that MAIster's supervisor consumes from spawned adapter binaries
     (`claude-agent-acp`, `codex-acp`). Full spec lives upstream — this file
-    documents only the messages MAIster reads or writes at M3 and the ones
-    designed for M7 / M8 / M10.
+    documents only the messages MAIster currently reads or writes.
 
     Wire: JSON-RPC 2.0 over the child's stdin/stdout, one message per
     newline-terminated line.
@@ -34,8 +33,8 @@ channels:
   child.stdout:
     description: |
       Newline-delimited JSON-RPC 2.0 frames from the agent process. The
-      supervisor at M3 treats each frame as opaque (`SessionLine` SSE
-      event); M7 will dispatch on `method`.
+      supervisor parses ACP notifications into structured SSE events and
+      also preserves raw stdout as `session.line`.
     subscribe:
       operationId: receiveAgentMessage
       summary: Messages emitted by the agent
@@ -45,11 +44,11 @@ channels:
           - $ref: "#/components/messages/SessionRequestPermission"
   child.stdin:
     description: |
-      Requests the supervisor writes to the agent's stdin. M3 writes
-      nothing here (spawn-only). M7 will deliver HITL responses.
+      Requests and responses the supervisor writes to the agent's stdin,
+      including prompt turns and permission decisions.
     publish:
       operationId: sendInputToAgent
-      summary: HITL responses delivered to the agent (M7+)
+      summary: HITL responses delivered to the agent
       message:
         oneOf:
           - $ref: "#/components/messages/SessionPermissionResponse"
@@ -60,9 +59,8 @@ components:
       name: session.update
       title: Streaming update from the agent
       summary: |
-        Notifications with method `session/update`. M3 forwards verbatim;
-        M7 parses into a typed event union (thinking, tool_use, text_delta,
-        artifact_write, etc.).
+        Notifications with method `session/update`; supervisor emits them
+        as `session.update` SSE events.
       payload: { $ref: "#/components/schemas/SessionUpdateNotification" }
     SessionRequestPermission:
       name: session.request_permission
@@ -70,8 +68,8 @@ components:
       summary: |
         Request from the agent for a binary human decision (read file,
         execute tool, network access). Drives transition to `NeedsInput`
-        on the run-side state machine. M7 will route the response back
-        via `child.stdin`.
+        on the run-side state machine. The supervisor routes the selected
+        `optionId` back through the live ACP deferred.
       payload: { $ref: "#/components/schemas/RequestPermissionRequest" }
     SessionPermissionResponse:
       name: session.request_permission.response
@@ -79,7 +77,7 @@ components:
       payload: { $ref: "#/components/schemas/RequestPermissionResponse" }
     SessionInputResponse:
       name: session.input
-      title: Structured-form HITL response (M10)
+      title: Structured-form HITL artifact pointer (designed)
       summary: |
         Wraps a pointer to the artifact written under
         `.maister/<slug>/runs/<runId>/input-<stepId>.json`. The agent reads
@@ -153,12 +151,17 @@ components:
           properties:
             result:
               type: object
-              required: [granted]
+              required: [outcome]
               properties:
-                granted: { type: boolean }
-                comment:
+                outcome:
                   type: string
-                  description: Optional human comment included with denial / approval.
+                  enum: [selected, cancelled]
+                optionId:
+                  type: string
+                  description: Present when `outcome == "selected"`.
+                reason:
+                  type: string
+                  description: Optional cancellation reason for supervisor logs.
     InputResponse:
       allOf:
         - $ref: "#/components/schemas/JsonRpcEnvelope"

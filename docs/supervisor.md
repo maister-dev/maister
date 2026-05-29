@@ -4,10 +4,10 @@
 
 The supervisor is a second Node process that owns the lifecycle of agent
 processes (`claude-agent-acp`, `codex-acp`). It speaks **HTTP + SSE** to
-the web tier and **stdio JSONL** to its spawned children. M3 scope: the
-process skeleton — spawn, heartbeat, cost accounting, six HTTP routes.
-Structured ACP event parsing (M7), keep-alive + checkpoint + `--resume`
-(M8), HITL input delivery (M7/M10) — explicitly deferred and stubbed.
+the web tier and **stdio JSONL** to its spawned children. Current scope:
+spawn, ACP prompt delivery, heartbeat, cost accounting, structured ACP
+events, permission HITL delivery, and durable run-event logging.
+Checkpoint/resume remains designed.
 
 ```
                      ┌─────────────────────┐                ┌──────────────────────────┐
@@ -16,7 +16,7 @@ Structured ACP event parsing (M7), keep-alive + checkpoint + `--resume`
    - lib/reconcile    │  (server-only)      │ ◀─── SSE ───── │   GET /sessions/:id/stream
                       └─────────────────────┘                │   GET /sessions          │
                                                               │   POST .../checkpoint    │
-                                                              │   POST .../input  (501)  │
+                                                              │   POST .../input          │
                                                               └────────────┬─────────────┘
                                                                            │ child_process.spawn
                                                                            ▼
@@ -39,9 +39,9 @@ runs. The supervisor isolates that failure mode and can run on a
 different host than the web tier — only the HTTP+SSE wire is shared.
 
 The architectural decision and its trade-offs live in
-[`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The M0 spike findings
-(package versions, cross-process resume cost) live in
-[`M0 Spike Findings`](kaa-maister-m0-spike-findings-20260525.md).
+[`architecture.md`](architecture.md). Resume is intentionally designed
+around keep-alive first because respawning an ACP session creates fresh
+cache-creation cost.
 
 ## HTTP API
 
@@ -69,12 +69,12 @@ Request body:
     "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "..." },
     "router": "ccr"                         // optional — see CCR lifecycle below
   },
-  "resumeSessionId": "uuid-abc"             // optional, M8 path (passed as `--resume`)
+  "resumeSessionId": "uuid-abc"             // optional checkpoint path (passed as `--resume`)
 }
 ```
 
-(Note: prompts are sent separately via `POST /sessions/:id/prompt`
-since M5 — the body field is gone.)
+(Note: prompts are sent separately via `POST /sessions/:id/prompt`;
+`POST /sessions` has no `prompt` field.)
 
 When `executor.router === "ccr"`, the supervisor lazy-starts the
 bundled `@musistudio/claude-code-router` daemon on the first such
@@ -108,17 +108,18 @@ not `session.crashed`, even on non-zero exit codes.
 
 ### `GET /sessions/:id/stream`
 
-Server-Sent Events. One event per child stdout line plus the terminal
-event. Newer clients can set `Last-Event-ID:` to skip events they already
-received — M3 honors it via a per-session in-memory ring buffer
-(capped at 1000 entries); full log-file replay (for older terminal events
-after the registry GC'd the entry) lands in M7+M9.
+Server-Sent Events. One event per child stdout line, structured ACP
+update, permission request, and terminal event. Clients can set
+`Last-Event-ID:` to skip events they already received from the
+per-session in-memory ring buffer (capped at 1000 entries). Run-level
+durable replay is served by the web bridge at
+`GET /api/runs/{runId}/stream`.
 
 Event grammar:
 
 ```
 id: <monotonicId>
-event: session.line | session.exited | session.crashed
+event: session.line | session.update | session.permission_request | session.exited | session.crashed
 data: <JSON, see below>
 [blank line]
 ```
@@ -129,6 +130,13 @@ Payload shapes (`SessionEvent` union):
 // session.line — every \n-terminated child stdout line
 { "type": "session.line", "sessionId": "...", "monotonicId": 1, "line": "<raw JSONL line>" }
 
+// session.update — structured ACP session/update payload
+{ "type": "session.update", "sessionId": "...", "monotonicId": 2, "update": { "...": "..." } }
+
+// session.permission_request — ACP requestPermission waiting for HITL
+{ "type": "session.permission_request", "sessionId": "...", "monotonicId": 3,
+  "requestId": "<uuid>", "toolCall": { "...": "..." }, "options": [{ "optionId": "allow", "...": "..." }] }
+
 // session.exited — clean exit OR intentional shutdown via DELETE
 { "type": "session.exited", "sessionId": "...", "monotonicId": N+1, "exitCode": 0 }
 
@@ -137,9 +145,9 @@ Payload shapes (`SessionEvent` union):
   "exitCode": 1 | null, "signal": "SIGSEGV" | null }
 ```
 
-The stream closes automatically after the terminal event. M3 treats
-each `line` as opaque JSONL — the web tier (M7+) will parse it into
-structured ACP `session/update` events.
+The stream closes automatically after the terminal event. `session.line`
+stays available for raw adapter logs and cost parsing; structured ACP
+notifications use `session.update` and `session.permission_request`.
 
 ### `GET /sessions`
 
@@ -148,16 +156,16 @@ stepId, status (`live | exited | crashed`), pid, startedAt, exitedAt,
 exitCode, signal, logPath, monotonicId. Used by `lib/reconcile.ts` and
 admin views.
 
-### `POST /sessions/:id/checkpoint` *(stub — M8)*
+### `POST /sessions/:id/checkpoint` *(designed)*
 
-Returns `202 { "status": "deferred", "milestone": "M8" }`. The full
+Returns `202 { "status": "deferred", "milestone": "M8" }`; `milestone`
+is a compatibility marker in the current response body. The full
 implementation will gracefully pause the agent (the agent persists its
 own JSONL session store) so `--resume <session-id>` can rebuild context
-later. See M0 spike findings on the ~$0.28 cache-creation cost per
-respawn — the implication is that **keep-alive is cost-saving**, not just
-UX.
+later. Prior spike measurements put respawn cache creation around $0.28,
+so keep-alive is cost-saving, not just UX.
 
-### `POST /sessions/:id/input` *(M7+)*
+### `POST /sessions/:id/input`
 
 Permission-only HITL surface. Body is a Zod-validated discriminated
 union on `action`:
@@ -188,7 +196,7 @@ responses are written by the web tier's
 `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
 its row-level claim succeeds.
 
-### Run-scoped durable event log: `<runId>/run.events.jsonl` *(M7+)*
+### Run-scoped durable event log: `<runId>/run.events.jsonl`
 
 Every `SessionEvent` (`session.line`, `session.update`,
 `session.permission_request`, `session.exited`, `session.crashed`)
@@ -213,10 +221,12 @@ supervisor/
 ├── vitest.workspace.ts            # unit | integration split
 ├── src/
 │   ├── main.ts                    # Fastify boot, pino logger, graceful shutdown
-│   ├── http-api.ts                # 6 routes + error handler (zod → 409, SupervisorError → status)
+│   ├── http-api.ts                # HTTP routes + error handler (zod → 409, SupervisorError → status)
 │   ├── spawn.ts                   # child_process.spawn dispatch; line-buffered stdout
 │   ├── heartbeat.ts               # exit/error → session.exited/crashed + orphan watcher
 │   ├── cost.ts                    # lenient JSON-parse → cost.jsonl
+│   ├── events-log.ts              # durable run.events.jsonl append
+│   ├── pending-permissions.ts     # live ACP requestPermission deferreds
 │   ├── registry.ts                # in-memory Map + per-session event ring buffer
 │   └── types.ts                   # Zod schemas + SessionEvent union + SupervisorError
 └── test/
@@ -234,10 +244,11 @@ JSON at the HTTP boundary.
 | ---- | ---- | ---- |
 | `PRECONDITION` | 409 (or 404 for unknown session) | Validation failure, duplicate sessionId. |
 | `SPAWN` | 500 | `child_process.spawn` failed (ENOENT, EACCES…). |
-| `EXECUTOR_UNAVAILABLE` | 503 | CCR-related failure for `router=ccr` executors (config missing / malformed JSON / daemon failed to become ready / identity mismatch / `ANTHROPIC_AUTH_TOKEN` missing). Also reserved for future resource-cap rejections. Implemented M6. |
-| `ACP_PROTOCOL` | 500 | Wire-level failure (used by the input stub today). |
-| `CHECKPOINT` | 500 | Reserved for M8 checkpoint failures. |
+| `EXECUTOR_UNAVAILABLE` | 503 | CCR-related failure, unknown live session during permission delivery, or future resource-cap rejection. |
+| `ACP_PROTOCOL` | 500 | Wire-level ACP failure. |
+| `CHECKPOINT` | 500 | Reserved for checkpoint failures. |
 | `CRASH` | 500 | Reserved for heartbeat-promoted crash conditions. |
+| `HITL_TIMEOUT` | 410 | Known session, but no pending permission deferred exists for the request id. |
 
 The web client `web/lib/supervisor-client.ts` parses `{ code, message }`
 from the body and re-throws as `MaisterError({ code })`. The taxonomy
@@ -263,10 +274,10 @@ bounded depth 8). When found, it appends a record to
 }
 ```
 
-`cache_creation_input_tokens` is the load-bearing field for ops:
-[M0 spike findings](kaa-maister-m0-spike-findings-20260525.md) measured
-~$0.28 of cache-creation tokens per cross-process respawn. The 30-min
-keep-alive window (M8) is the lever that controls this.
+`cache_creation_input_tokens` is the load-bearing field for ops. Prior
+spike work measured roughly `$0.28` of cache-creation tokens per
+cross-process respawn, so the keep-alive window is a cost control, not
+only a UX control.
 
 Records with no token fields are dropped (no `service_tier`-only rows).
 JSON parse failures are silently skipped — the supervisor never crashes
@@ -285,7 +296,7 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_HEARTBEAT_INTERVAL_MS` | `5000` | Orphan-child detection interval. |
 | `MAISTER_KILL_GRACE_MS` | `5000` | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown. |
 | `MAISTER_SHUTDOWN_GRACE_MS` | `15000` | Total wall-clock budget for graceful supervisor shutdown. |
-| `MAISTER_KEEPALIVE_MINUTES` | `30` | Reserved for M8 (NeedsInput keep-alive window). |
+| `MAISTER_KEEPALIVE_MINUTES` | `30` | Permission deferred timeout and web-stream inactivity timeout; also used by the designed checkpoint keep-alive path. |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Per-executor `env` in `maister.yaml` wins; this is a process-wide default for the adapters. |
 | `ANTHROPIC_AUTH_TOKEN` | unset | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). |
 | `MAISTER_CCR_AUTH_TOKEN` | unset | Fallback `ANTHROPIC_AUTH_TOKEN` for `router=ccr` executors that don't pin a per-executor token in `executor.env`. Missing → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
@@ -391,14 +402,14 @@ The integration test boots Fastify on an ephemeral port and spawns
 needs the real adapter binaries on PATH. Same fixture is used by the
 unit spawn test.
 
-## M5 wire change
+## Current Wire Shape
 
-M5 (2026-05-27) lands the request-side ACP wire. The supervisor now
-speaks JSON-RPC via `@agentclientprotocol/sdk@0.22.1`'s
-`ClientSideConnection` for every session.
+The supervisor speaks JSON-RPC via `@agentclientprotocol/sdk@0.22.1`'s
+`ClientSideConnection` for every session. `POST /sessions` does not
+accept a `prompt` field; prompts are sent to the live ACP session via
+`POST /sessions/:id/prompt`.
 
-**Breaking change vs M3:**
-`POST /sessions` no longer accepts a `prompt` field. The body is now:
+`POST /sessions` body:
 
 ```json
 {
@@ -417,7 +428,7 @@ The response now also includes the negotiated ACP session id:
 { "sessionId": "...", "pid": 1234, "acpSessionId": "..." }
 ```
 
-**New endpoint:** `POST /sessions/:id/prompt`
+`POST /sessions/:id/prompt`:
 ```json
 { "stepId": "plan", "prompt": "..." }
 ```
@@ -429,47 +440,39 @@ Body validated by `SendPromptRequestSchema` (`stepId` must match
 `stopReason` ∈ `end_turn | max_tokens | max_turn_requests | refusal`.
 `cancelled` is mapped to a 500 `ACP_PROTOCOL` error.
 
-`POST /sessions/:id/input` remains a 501 stub for M7 (HITL response
-delivery — different semantics).
+`POST /sessions/:id/input` resolves live ACP permission requests only.
+Form and human responses stay in the web tier and are written as
+durable input artifacts after the HITL row is claimed.
 
-**New SSE event types** (in addition to `session.line`,
-`session.exited`, `session.crashed`):
+SSE event types:
 
 - `session.update` — carries the structured `acp.SessionNotification.update`
-  payload (`agent_message_chunk`, `tool_call`, `plan`, etc.). Web tier
-  bridges these as-is and decomposes them downstream (M7+).
-- `session.permission_auto` — emitted whenever the supervisor
-  auto-allows a `requestPermission` (M5 policy). Payload:
-  `{toolCall, optionId}`. M7 replaces with a blocking
-  `session.permission_request` + artifact-driven response.
+  payload (`agent_message_chunk`, `tool_call`, `plan`, etc.).
+- `session.permission_request` — carries the live ACP permission request
+  and option ids. The web tier persists the HITL row, then resolves the
+  deferred through `/sessions/:id/input` after the user responds.
 
 The legacy `session.line` event type stays — `cost.ts` and any other
 raw-line consumer keep working unchanged. The supervisor tees stdout
 through a `PassThrough` so both consumers see every chunk.
 
-## Limitations on POC
+## Remaining Designed Pieces
 
-- **No structured HITL** — `requestPermission` is auto-allowed in M5
-  with WARN log + `session.permission_auto` SSE event. M7 wires the
-  blocking variant.
-- **No HITL input** — `POST /sessions/:id/input` returns 501; M7 wires
-  binary `session/request_permission`, M10 adds the structured-form path.
-- **No keep-alive or `--resume` plumbing** — `POST /sessions/:id/checkpoint`
-  is 202 stub; M8 ships the keep-alive window + JSONL session-store
-  checkpoint + cross-process resume.
-- **`lastEventId` replay is bounded to the in-memory ring buffer** (1000
-  entries per session). Older terminal events after the 30 s post-exit
-  grace period are gone. The web tier's eventual log-file tail bridge
-  (M7+M9) fills that gap.
-- **No Cursor / opencode / Aider executors** — POC = `claude` + `codex`
-  only via the `@agentclientprotocol/*` adapter binaries.
-- **No plugin sandboxing or trust UI** — POC trusts internal Flow
-  sources; sandboxing is Phase 2.
+- **Checkpoint/resume:** `POST /sessions/:id/checkpoint` returns
+  `202 {status:"deferred", milestone:"M8"}` with the current
+  compatibility marker until the keep-alive and `--resume` path lands.
+- **Session endpoint replay:** `GET /sessions/:id/stream` replays only
+  the in-memory ring buffer. Durable replay is intentionally a web
+  run-level concern through `GET /api/runs/{runId}/stream`.
+- **Executor breadth:** current adapters are Claude and Codex via ACP.
+  Additional executors remain Phase 2.
+- **Plugin sandboxing and trust UI:** Current target trusts internal Flow sources;
+  sandboxing is Phase 2.
 
 ## See Also
 
 - [Configuration](configuration.md) — `maister.yaml` v2 + env vars
 - [Error Taxonomy](error-taxonomy.md) — `MaisterError` codes the web tier raises after translation
-- [ACP Pivot Revision](kaa-maister-design-20260525-acp-revision.md) — the multi-executor design that motivated the supervisor split
-- [M0 Spike Findings](kaa-maister-m0-spike-findings-20260525.md) — adapter package versions and cross-process resume cost
-- [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract
+- [Supervisor OpenAPI](api/supervisor.openapi.yaml) — exact HTTP contract
+- [Supervisor SSE AsyncAPI](api/async/supervisor-sse.asyncapi.yaml) — exact SSE event union
+- [Architecture](architecture.md) — dependency rules and current system shape

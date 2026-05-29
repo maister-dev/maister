@@ -35,7 +35,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### Create a worktree (Designed M6)
+### Create a worktree (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -54,7 +54,7 @@ sequenceDiagram
     W->>DB: INSERT workspaces { run_id, project_id, branch, worktree_path, parent_repo_path }
 ```
 
-### Merge on Review (Designed M9)
+### Merge on Review (Designed)
 
 ```mermaid
 sequenceDiagram
@@ -78,7 +78,7 @@ sequenceDiagram
     end
 ```
 
-### Reconciliation on startup (Designed M6)
+### Reconciliation on startup (Designed)
 
 Compares three sources of truth:
 
@@ -151,8 +151,8 @@ flowchart LR
 - **`git worktree remove` fails** (locked worktree, missing dir) — GC
   logs and continues; row stays without `removed_at`. Operator can
   force-cleanup manually.
-- **Concurrent merges on the same `main_branch`** — POC trusts that the
-  parent repo is single-writer (one operator). Phase 2 may add a merge
+- **Concurrent merges on the same `main_branch`** — current target trusts
+  the parent repo is single-writer (one operator). Phase 2 may add a merge
   queue.
 
 ## Linked artifacts

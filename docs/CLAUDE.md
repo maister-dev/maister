@@ -1,7 +1,7 @@
 # CLAUDE.md — `docs/` (MAIster Documentation)
 
 > Read `../CLAUDE.md` first for the product spine, locked decisions, and
-> out-of-POC list. This file is the contract for **how** to maintain the
+> current scope labels. This file is the contract for **how** to maintain the
 > `docs/` folder — what lives where, in what format, and which rules apply
 > when editing.
 
@@ -25,7 +25,7 @@ truth). The fix is to update docs in the same PR.
 | File | What it answers |
 | ---- | ---------------- |
 | [`VISION.md`](VISION.md) | Product one-liner, principles, MVP goal. |
-| [`PRODUCT_VIEW.md`](PRODUCT_VIEW.md) | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later. |
+| [`PRODUCT_VIEW.md`](PRODUCT_VIEW.md) | Target user, product model, JTBD, current scope, Phase 2. |
 | [`getting-started.md`](getting-started.md) | Local setup, scripts, prerequisites. |
 
 ### Architecture layer
@@ -39,9 +39,11 @@ truth). The fix is to update docs in the same PR.
 
 | Path | Content | Format |
 | ---- | ------- | ------ |
+| [`api/web.openapi.yaml`](api/web.openapi.yaml) | Web tier HTTP API (REST). | OpenAPI 3.0.3 |
 | [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml) | Supervisor HTTP API (REST). | OpenAPI 3.0.3 |
+| [`api/async/web-runs.asyncapi.yaml`](api/async/web-runs.asyncapi.yaml) | Browser-facing run SSE stream. | AsyncAPI 2.6.0 |
 | [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml) | Supervisor SSE event stream. | AsyncAPI 2.6.0 |
-| [`api/external/`](api/external/) | Third-party APIs MAIster consumes. | OpenAPI / AsyncAPI |
+| [`api/external/acp.asyncapi.yaml`](api/external/acp.asyncapi.yaml) | Narrow ACP stdio contract used by the supervisor. | AsyncAPI 2.6.0 |
 
 ### Data layer (`db/`)
 
@@ -75,18 +77,9 @@ cases, process flows. One file per domain.
 | [`configuration.md`](configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + env vars. |
 | [`error-taxonomy.md`](error-taxonomy.md) | `MaisterError` codes + UI actions. |
 | [`supervisor.md`](supervisor.md) | Supervisor daemon prose reference. |
-
-### Historical (decision archive)
-
-These are frozen records of prior planning rounds. They MUST NOT be edited
-in place — refer back to them from `decisions.md` when an ADR cites them.
-
-| File | What it records |
-| ---- | --------------- |
-| [`kaa-maister-design-20260522-174429.md`](kaa-maister-design-20260522-174429.md) | First locked design pass. |
-| [`kaa-maister-design-20260525-acp-revision.md`](kaa-maister-design-20260525-acp-revision.md) | ACP pivot from single-executor to multi-executor. |
-| [`kaa-maister-eng-review-test-plan-20260522-180855.md`](kaa-maister-eng-review-test-plan-20260522-180855.md) | Eng review test plan from the same pass. |
-| [`kaa-maister-m0-spike-findings-20260525.md`](kaa-maister-m0-spike-findings-20260525.md) | M0 spike: ACP packages, cross-process resume cost. |
+| [`flow-dsl.md`](flow-dsl.md) | Flow step DSL and runner behavior. |
+| [`flow-installer.md`](flow-installer.md) | Flow plugin install pipeline. |
+| [`flow-aif-plugin.md`](flow-aif-plugin.md) | Bundled `aif` Flow plugin. |
 
 ## Rules
 
@@ -200,13 +193,14 @@ checklist against the code, the DB, and the wire.
 Every architecture or system-analytics file MUST mark each described
 piece as one of:
 
-- **Implemented (Mx)** — present in `main` at milestone Mx.
-- **Designed (Mx)** — locked in CLAUDE.md / ADR, not yet coded.
-- **Phase 2** — explicitly out of POC scope.
+- **Implemented** — present in the current branch.
+- **Designed** — contract accepted, not yet coded.
+- **Phase 2** — plausible later work, not part of the current target.
 
-Use a parenthetical tag: `(Implemented M3)`, `(Designed, Phase M7)`,
+Use a parenthetical tag such as `(Implemented)`, `(Designed)`, or
 `(Phase 2 — see PRODUCT_VIEW §Phase 2)`. This keeps the docs honest
-about what is real today.
+about what is real today without turning old milestone labels into
+blockers.
 
 ### R7. Cross-reference, do not duplicate
 
@@ -243,7 +237,7 @@ Before any docs PR merges, the diff MUST pass:
 | AsyncAPI 2.6.0 | `npx @asyncapi/cli validate <file>` | Zero errors. |
 | Markdown | `pnpm lint:md` (when present) | No broken intra-doc links. |
 
-CI gates land in Phase 2. For the POC, the author runs the checks
+CI gates land in Phase 2. Until then, the author runs the checks
 locally; the Mermaid gate runs automatically through the hook above.
 The `Validate all artifacts` task in the implementation plan covers
 this for the initial bulk migration.
@@ -267,8 +261,8 @@ this for the initial bulk migration.
 - ❌ Embedding a screenshot of a diagram instead of the Mermaid source.
 - ❌ Restating the `maister.yaml` schema in a system-analytics file —
   link to `configuration.md` instead.
-- ❌ Editing a `kaa-maister-*` historical doc to "update" it. Those are
-  frozen records.
+- ❌ Reintroducing old planning archives as active docs. Git history keeps
+  those records; active docs describe current contracts.
 - ❌ Adding a "see also" section that duplicates the glossary above.
 - ❌ Letting an OpenAPI/AsyncAPI file diverge from code without filing
   the diff as a defect.

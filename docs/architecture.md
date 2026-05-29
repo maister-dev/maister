@@ -5,12 +5,13 @@
 > choice. This file is the **how**: C4 diagrams, components, and
 > their contracts.
 
-Implementation status legend: **(Implemented Mx)** in `main` at
-milestone Mx · **(Designed Mx)** locked, not yet coded · **(Phase 2)**
-out of POC scope.
+Implementation status legend: **Implemented** present in the current branch ·
+**Designed** accepted contract, not yet coded · **Phase 2** later scope.
 
-Current state: **M3** — supervisor daemon + foundation libs in `web/`.
-No Next.js Route Handlers yet (web routes are template stubs).
+Current state: web foundation, DB schema, Flow installer/runner, executor
+resolution, scheduler, `POST /api/runs`, durable run SSE, and HITL response
+delivery are implemented. Project registration UI, diff/merge routes,
+keep-alive checkpoint/resume, recovery, and GC remain designed.
 
 ## C4 Context — system and its world
 
@@ -20,7 +21,7 @@ LLM calls to one of several providers.
 
 ```mermaid
 C4Context
-    title MAIster — System Context (POC)
+    title MAIster — System Context
 
     Person(operator, "Operator", "Solo-technical CEO / CIO / staff engineer running several projects in parallel.")
 
@@ -43,7 +44,7 @@ C4Context
 **Personas.**
 
 - **Operator** — primary persona. One human running several projects.
-  No teammates, no auth, no RBAC on POC.
+  No teammates, no auth, no RBAC in the current target.
 - *(Phase 2)* Small-team member — receives HITL items via the same UI.
 
 **External systems.**
@@ -70,7 +71,7 @@ instance. The supervisor MAY run on a different host than the web tier
 
 ```mermaid
 C4Container
-    title MAIster — Container View (POC)
+    title MAIster — Container View
 
     Person(operator, "Operator")
 
@@ -113,12 +114,12 @@ C4Container
 
 | Container | Status | Tech | Purpose |
 | --------- | ------ | ---- | ------- |
-| Web tier | Implemented M0 (scaffold) | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4 | UI, Route Handlers, server actions, Drizzle access. SSE bridge to supervisor. |
-| Supervisor daemon | Implemented M3 | Node 24 + Fastify + pino + Zod | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting. |
-| Database | Implemented M2 | Postgres 16 (SQLite dev) | All persistent state for projects, executors, flows, tasks, runs, workspaces, HITL. |
-| `claude-agent-acp` | Implemented M3 (spawn-only) | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
-| `codex-acp` | Implemented M3 (spawn-only) | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
-| CCR daemon | Implemented M6 | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-API-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, exactly one daemon per supervisor process. Host+port read from `~/.claude-code-router/config.json`. |
+| Web tier | Implemented | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4 | Route Handlers for run launch, HITL response, and durable run SSE; Drizzle access; Flow runner. |
+| Supervisor daemon | Implemented | Node 24 + Fastify + pino + Zod | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log. |
+| Database | Implemented | Postgres 16 (SQLite dev) | Persistent state for projects, executors, flows, tasks, runs, workspaces, step runs, HITL. |
+| `claude-agent-acp` | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
+| `codex-acp` | Implemented | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
+| CCR daemon | Implemented | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, one daemon per supervisor process. |
 
 **Inter-container contracts.**
 
@@ -130,25 +131,27 @@ C4Container
   Contract: [`database-schema.md`](database-schema.md) + [`db/erd.md`](db/erd.md).
 - **Supervisor ↔ Adapter** — stdio JSONL (Adapter binary speaks ACP
   on stdin/stdout). One child per session, spawned with
-  `cwd = worktreePath` and merged env. M3 ships opaque JSONL
-  passthrough; structured ACP `session/update` parsing lands in M7.
+  `cwd = worktreePath` and merged env. The supervisor emits raw
+  `session.line`, parsed `session.update`, `session.permission_request`,
+  and terminal events.
 
-## C4 Component — Supervisor (Implemented M3)
+## C4 Component — Supervisor (Implemented)
 
-The supervisor is the only fully-implemented container at M3. Its
-internal structure:
+The supervisor owns process lifecycle and the ACP boundary:
 
 ```mermaid
 C4Component
-    title Supervisor — Component View (M3)
+    title Supervisor — Component View
 
     Container_Boundary(supervisor, "Supervisor daemon") {
         Component(main, "main.ts", "Node entrypoint", "Fastify boot, pino logger, graceful shutdown.")
-        Component(http_api, "http-api.ts", "Fastify routes", "POST/DELETE /sessions, GET /sessions, GET /sessions/:id/stream, POST .../checkpoint (stub), POST .../input (501 stub).")
+        Component(http_api, "http-api.ts", "Fastify routes", "POST/DELETE /sessions, POST /sessions/:id/prompt, GET streams, checkpoint stub, permission input.")
         Component(spawn, "spawn.ts", "child_process.spawn dispatch", "Picks binary by agent, builds env, line-buffers stdout, writes step .log.")
         Component(registry, "registry.ts", "In-memory Map", "Session records + per-session event ring buffer (1000 entries).")
         Component(heartbeat, "heartbeat.ts", "Lifecycle watcher", "exit/error -> session.exited/crashed; orphan-PID detection every interval.")
         Component(cost, "cost.ts", "Stream observer", "Lenient JSON parse, finds usage object, appends to cost.jsonl.")
+        Component(events_log, "events-log.ts", "Run event writer", "Appends every SessionEvent to run.events.jsonl.")
+        Component(pending, "pending-permissions.ts", "Deferred registry", "Parks ACP permission requests until web responds or timeout fires.")
         Component(types, "types.ts", "Zod schemas + types", "StartSessionRequest, SessionEvent union, SupervisorError, httpStatusForCode.")
     }
 
@@ -162,6 +165,7 @@ C4Component
     Rel(http_api, registry, "register / get / list / subscribe")
     Rel(http_api, heartbeat, "attachHeartbeat()")
     Rel(http_api, cost, "attachCost()")
+    Rel(http_api, pending, "resolve/cancel permission")
     Rel(http_api, types, "Zod parse / error mapping")
 
     Rel(spawn, child, "child_process.spawn", "stdio JSONL")
@@ -169,6 +173,7 @@ C4Component
 
     Rel(heartbeat, registry, "emit terminal event")
     Rel(cost, fs, "Append cost.jsonl", "createWriteStream")
+    Rel(events_log, fs, "Append run.events.jsonl", "createWriteStream")
 
     Rel(main, http_api, "registerRoutes()")
     Rel(main, heartbeat, "startHeartbeatWatcher()")
@@ -180,31 +185,34 @@ C4Component
 | Name | File | Purpose | Responsibilities | Dependencies |
 | ---- | ---- | ------- | ---------------- | ------------ |
 | `main` | `supervisor/src/main.ts` | Process entrypoint. | Read env, build Fastify + pino, wire components, listen, graceful shutdown. | `http-api`, `registry`, `heartbeat`. |
-| `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | 6 routes, Zod request validation, SSE pipe with `Last-Event-ID` replay from ring buffer, error handler maps `SupervisorError`/`ZodError` to status. | `spawn`, `registry`, `heartbeat`, `cost`, `types`. |
+| `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | Session lifecycle routes, prompt route, permission input route, checkpoint stub, SSE pipe with `Last-Event-ID` replay, error mapping. | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
 | `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, append `--resume <id>` when present, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. When `executor.router === "ccr"`, await `ccr-manager.ensureRunning()` and inject `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into childEnv beneath the explicit `executor.env` overlay. | `registry` (channel constant), `ccr-manager`, `types`. |
-| `ccr-manager` | `supervisor/src/ccr-manager.ts` | CCR daemon lifecycle controller. **Implemented M6.** | Singleton state machine (`idle | starting | ready | failed | stopping`). Lazy-start the bundled CCR proxy on demand. Parse host+port from `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`). Exponential-backoff `GET /` health check ≤10 s. Graceful shutdown on SIGTERM/SIGINT via existing `main.ts` handler. | `node:child_process`, `node:fs/promises`, `types`. |
+| `ccr-manager` | `supervisor/src/ccr-manager.ts` | CCR daemon lifecycle controller. **Implemented.** | Singleton state machine (`idle | starting | ready | failed | stopping`). Lazy-start the bundled CCR proxy on demand. Parse host+port from `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`). Exponential-backoff `GET /` health check ≤10 s. Graceful shutdown on SIGTERM/SIGINT via existing `main.ts` handler. | `node:child_process`, `node:fs/promises`, `types`. |
 | `registry` | `supervisor/src/registry.ts` | In-memory session table. | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown. | `types`. |
 | `heartbeat` | `supervisor/src/heartbeat.ts` | Lifecycle watcher. | exit/error → `session.exited`/`session.crashed`, orphan-PID polling via `process.kill(pid, 0)`. | `registry`, `types`. |
 | `cost` | `supervisor/src/cost.ts` | Cost accounting. | Lenient JSON parse on every line, traverse for `usage` (depth ≤ 8), append record to `cost.jsonl`. | `registry` (channel constant). |
+| `events-log` | `supervisor/src/events-log.ts` | Durable run events. | Append every `SessionEvent` to `.maister/<slug>/runs/<runId>/run.events.jsonl`. | `node:fs`. |
+| `pending-permissions` | `supervisor/src/pending-permissions.ts` | Permission deferreds. | Resolve or cancel ACP `requestPermission` handles by `(sessionId, requestId)`. | `types`. |
 | `types` | `supervisor/src/types.ts` | Schemas + error. | Zod request/event schemas, `SessionEvent` union, `SupervisorError` class, `httpStatusForCode()`. | `zod`. |
 
-## C4 Component — Web foundation (Implemented M2)
+## C4 Component — Web foundation (Implemented)
 
-The web tier's library layer (no Route Handlers yet at M3 — those land
-in M4/M5+).
+The web tier owns persistence, Flow execution, and the browser-facing routes.
 
 ```mermaid
 C4Component
-    title Web foundation — Component View (M2)
+    title Web foundation — Component View
 
     Container_Boundary(web, "Web tier") {
         Component(errors, "lib/errors.ts", "MaisterError class", "Discriminated union over 11 codes. UI branches on code, never on message.")
         Component(atomic, "lib/atomic.ts", "Atomic file writer", "tmp + rename. Used for needs-input.json, input-{step}.json, etc.")
         Component(config_schema, "lib/config.schema.ts", "Zod schemas", "maister.yaml v2, flow.yaml v1, form_schema. Single source of truth for types.")
         Component(config, "lib/config.ts", "YAML loader", "Reads maister.yaml / flow.yaml, runs schema + cross-reference checks, throws MaisterError(CONFIG).")
-        Component(supervisor_client, "lib/supervisor-client.ts", "HTTP+SSE client", "createSession, deleteSession, listSessions, checkpointSession, streamSession (async generator).")
-        Component(db_schema, "lib/db/schema.ts", "Drizzle schema", "7 tables, FKs with cascade, indexes.")
+        Component(supervisor_client, "lib/supervisor-client.ts", "HTTP+SSE client", "createSession, sendPrompt, deliverPermission, cancelPermission, streamSession.")
+        Component(db_schema, "lib/db/schema.ts", "Drizzle schema", "8 tables, FKs with cascade, indexes.")
         Component(db_client, "lib/db/client.ts", "Drizzle factory", "buildClient, getDb (lazy singleton), maskUrl.")
+        Component(flow_runner, "lib/flows/runner.ts", "Flow runner", "Executes cli/agent/guard/human steps, pauses on NeedsInput, resumes from input artifacts.")
+        Component(run_api, "app/api/runs/*", "Route Handlers", "Launch runs, durable run SSE, HITL responses.")
     }
 
     ContainerDb_Ext(pg, "Database", "Postgres 16 / SQLite")
@@ -219,6 +227,8 @@ C4Component
     Rel(supervisor_client, supervisor, "REST + SSE", "HTTP")
     Rel(db_client, pg, "Drizzle queries", "TCP")
     Rel(atomic, fs, "tmp + rename", "POSIX")
+    Rel(flow_runner, supervisor_client, "sessions + prompts + permission cancel")
+    Rel(run_api, flow_runner, "background runFlow()")
 ```
 
 **Component table — Web foundation.**
@@ -229,35 +239,38 @@ C4Component
 | `lib/atomic` | `web/lib/atomic.ts` | `atomicWriteJson(path, data)` — tmp + rename. | `node:fs/promises`, `node:crypto`, `pino`. |
 | `lib/config.schema` | `web/lib/config.schema.ts` | Zod schemas for `maister.yaml` v2, `flow.yaml` v1, `form_schema`. | `zod`. |
 | `lib/config` | `web/lib/config.ts` | `loadProjectConfig`, `loadFlowManifest`, `validateFormSchemaVersion`. | `lib/config.schema`, `lib/errors`, `yaml`, `pino`. |
-| `lib/supervisor-client` | `web/lib/supervisor-client.ts` | `createSession`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`. | `lib/errors`, `pino`. |
-| `lib/db/schema` | `web/lib/db/schema.ts` | Drizzle table definitions for the 7 tables. | `drizzle-orm/pg-core`. |
+| `lib/supervisor-client` | `web/lib/supervisor-client.ts` | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`. | `lib/errors`, `pino`. |
+| `lib/db/schema` | `web/lib/db/schema.ts` | Drizzle table definitions for the 8 tables. | `drizzle-orm/pg-core`. |
 | `lib/db/client` | `web/lib/db/client.ts` | Drizzle client factory + lazy singleton. | `drizzle-orm`, `lib/errors`. |
+| `lib/flows/runner` | `web/lib/flows/runner.ts` | Flow step execution and resume gate. | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |
+| `app/api/runs` | `web/app/api/runs/route.ts` | Launch a run from a Backlog task. | `db`, `worktree`, `scheduler`, `flows/runner`. |
+| `app/api/runs/[runId]/stream` | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE. | `db`, `run.events.jsonl`. |
+| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up. | `db`, `atomic`, `supervisor-client`, `flows/runner`. |
 
-## Component map — Designed but not yet implemented
+## Component map — remaining designed pieces
 
-These components have a locked design (in CLAUDE.md / ADRs) and will be
-added as M4+ milestones land. Stubs and naming live in `web/CLAUDE.md`.
+These components remain planned or partially implemented:
 
 | Component | File (planned) | Purpose | Status |
 | --------- | -------------- | ------- | ------ |
-| `lib/projects` | `web/lib/projects.ts` | Registry CRUD, slug derivation, slug + repo_path uniqueness, recursive `MAISTER_PROJECTS_DIR` discovery, Flow plugin install on register. | Designed M4 |
-| `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Designed M5 |
-| `lib/executors` | `web/lib/executors.ts` | Pure `resolveExecutor()` 5-level chain (launcher → task → flow override → project default → flow recommended) + `upsertExecutorsFromConfig()` helper (writes `executors` + `flows.executor_override_id` in one transaction). CCR env construction lives in `supervisor/src/spawn.ts`, not here. | Implemented M6 |
-| `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Designed M6 |
-| `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Designed M6 |
-| `lib/reconcile` | `web/lib/reconcile.ts` | Startup reconciliation: `runs` vs `git worktree list` vs supervisor live sessions. | Designed M6 |
-| `app/api/projects/route.ts` | Route Handler | Register / archive projects. | Designed M4 |
-| `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Designed M4 |
-| `app/api/runs/route.ts` | Route Handler | Precondition + executor resolution (delegates to `lib/executors:resolveExecutor`, logs `resolvedFromTier`) + worktree add + supervisor `POST /sessions`. | Implemented M5 (M6 extended override chain) |
-| `app/api/runs/[id]/stream/route.ts` | Route Handler | SSE bridge tailing the per-step log file. | Designed M7 |
-| `app/api/runs/[id]/hitl-response/route.ts` | Route Handler | Atomic write `input-<step-id>.json` → supervisor `POST /sessions/:id/input`. | Designed M7 |
-| `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Designed M8 |
-| `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Designed M9 |
-| `app/api/runs/[id]/merge/route.ts` | Route Handler | `git merge --no-ff`; conflict → abort + Review. | Designed M9 |
+| `lib/projects` | `web/lib/projects.ts` | Registry CRUD, slug derivation, slug + repo_path uniqueness, recursive `MAISTER_PROJECTS_DIR` discovery, Flow plugin install on register. | Designed |
+| `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Implemented |
+| `lib/executors` | `web/lib/executors.ts` | Pure `resolveExecutor()` 5-level chain (launcher → task → flow override → project default → flow recommended) + `upsertExecutorsFromConfig()` helper (writes `executors` + `flows.executor_override_id` in one transaction). CCR env construction lives in `supervisor/src/spawn.ts`, not here. | Implemented |
+| `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Implemented |
+| `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Implemented |
+| `lib/reconcile` | `web/lib/reconcile.ts` | Startup reconciliation: `runs` vs `git worktree list` vs supervisor live sessions. | Designed |
+| `app/api/projects/route.ts` | Route Handler | Register / archive projects. | Designed |
+| `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Designed |
+| `app/api/runs/route.ts` | Route Handler | Precondition + executor resolution (delegates to `lib/executors:resolveExecutor`, logs `resolvedFromTier`) + worktree add + supervisor `POST /sessions`. | Implemented |
+| `app/api/runs/[runId]/stream/route.ts` | Route Handler | SSE bridge tailing `run.events.jsonl`. | Implemented |
+| `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
+| `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Designed |
+| `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Designed |
+| `app/api/runs/[id]/merge/route.ts` | Route Handler | `git merge --no-ff`; conflict → abort + Review. | Designed |
 
 ## Dependency rules
 
-Enforced informally on POC; CI gate is Phase 2. The current rules:
+Enforced by review today; a CI gate is Phase 2. The current rules:
 
 1. **`web/lib/` is server-only.** Every module in `web/lib/` imports
    `"server-only"` at the top. No Client Component may import from
@@ -276,10 +289,10 @@ Enforced informally on POC; CI gate is Phase 2. The current rules:
 6. **No re-exports of `pino` / `zod` / `yaml`.** Components import from
    the dep directly.
 
-## Data flow — happy path Launch (Designed M6+)
+## Data flow — Launch to Review (Implemented)
 
-This is the end-to-end flow once M6/M7 land. M3 ships only the
-supervisor part of it.
+`POST /api/runs` creates the workspace and DB rows. `runFlow()` owns step
+execution and moves the run to `Review` on success.
 
 ```mermaid
 sequenceDiagram
@@ -294,35 +307,41 @@ sequenceDiagram
     U->>W: Click Launch on Backlog task
     W->>DB: Load project, task, executors, flow row + manifest
     W->>W: resolveExecutor() — 5-level chain → {executorId, tier}
-    W->>FS: Precondition checks (clean repo, branch free, worktree path free)
-    W->>DB: Reserve run (status=Pending) + workspace row
-    W->>FS: git worktree add ./maister/{slug}/runs/{runId}
+    W->>FS: git worktree add under worktree root
+    W->>DB: Insert workspace + run(status=Pending), task -> InFlight
+    W->>DB: tryStartRun claims a concurrency slot
+    W->>W: runFlow(runId) in background
     W->>S: POST /sessions { runId, projectSlug, worktreePath, stepId, executor }
     opt executor.router is ccr (first session only)
         S->>S: ccrManager.ensureRunning starts CCR if idle
     end
     S->>A: spawn claude-agent-acp with merged env (ANTHROPIC_BASE_URL/TOKEN injected for router=ccr)
     A-->>S: spawn event fires
-    S-->>W: 201 { sessionId, pid }
-    W->>DB: runs.acp_session_id = sessionId, status=Running
+    S-->>W: 201 { sessionId, pid, acpSessionId }
+    W->>DB: runs.acp_session_id = acpSessionId
 
     A->>LLM: Inference call
     LLM-->>A: Streamed response
     A-->>S: stdout JSONL (one line per ACP event)
     S->>FS: Append {stepId}.log
-    S->>FS: Append cost.jsonl (when usage seen)
+    S->>FS: Append run.events.jsonl and cost.jsonl
     S-->>W: SSE session.line events
 
-    Note over W,S: User can request stream via GET /sessions/:id/stream<br/>with Last-Event-ID for replay
+    Note over U,W: Browser streams GET /api/runs/{runId}/stream<br/>from run.events.jsonl with Last-Event-ID
 
     A->>A: exit 0 on step complete
     A-->>S: child exit event
     S->>S: heartbeat updates record.status=exited
     S-->>W: SSE session.exited (terminal)
-    W->>DB: runs.status=Review, runs.ended_at=now
+    W->>DB: mark step succeeded, continue Flow
+    W->>DB: runs.status=Review, ended_at=now
 ```
 
-## Data flow — HITL keep-alive + resume (Designed M7/M8)
+## Data flow — HITL keep-alive + resume (Partly implemented)
+
+Permission HITL, form/human rows, atomic response artifacts, and runner-owned
+resume from `NeedsInput` are implemented. Keep-alive checkpoint to
+`NeedsInputIdle` remains designed.
 
 ```mermaid
 stateDiagram-v2
@@ -350,7 +369,7 @@ stateDiagram-v2
 
 ## Deployment
 
-POC ships as Docker Compose on a single host. The two services
+Current deployment ships as Docker Compose on a single host. The two services
 (`web`, `supervisor`) plus Postgres are defined in `compose.yml`, with
 dev overrides in `compose.override.yml` and a hardened production
 overlay in `compose.production.yml`.

@@ -19,7 +19,7 @@ erDiagram
     FLOWS ||--o{ TASKS : "selected at create"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
-    RUNS ||--o{ STEP_RUNS : "per-step record (M5)"
+    RUNS ||--o{ STEP_RUNS : "per-step record"
     RUNS ||--o{ HITL_REQUESTS : raises
 
     PROJECTS {
@@ -52,10 +52,12 @@ erDiagram
         text flow_ref_id "UNIQUE per project"
         text source "git URL"
         text version "tag"
+        text revision "git SHA"
         text installed_path
         jsonb manifest "parsed flow.yaml"
         integer schema_version
         text recommended_executor_id
+        text executor_override_id FK
         timestamp created_at
     }
 
@@ -80,8 +82,9 @@ erDiagram
         text executor_id FK
         text status "Pending..Done"
         text acp_session_id "resume handle"
-        text current_step_id "M5 runner cursor"
+        text current_step_id "runner cursor"
         text flow_version "snapshot at launch"
+        text flow_revision "snapshot at launch"
         timestamp checkpoint_at
         timestamp keepalive_until "30min sliding"
         timestamp started_at
@@ -134,9 +137,10 @@ erDiagram
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
-| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous in M5 (PK already covers `id`); real per-attempt guard ships at Designed M8 as `UNIQUE (task_id, attempt_number)` on `runs`. |
+| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
 | `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
+| `step_runs` | `step_runs_run_idx` | `(run_id)` | Per-run step lookups. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
 | `projects` | implicit | `slug`, `repo_path` UNIQUE | Registration collisions. |
 | `executors` | `executors_project_ref_uq` | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace. |

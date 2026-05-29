@@ -20,7 +20,7 @@ time). All timestamps stored as `timestamp with timezone` in UTC.
 | `tasks` | Board cards. Status `Backlog | InFlight | Done | Abandoned`. | `projects.id` |
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
-| `step_runs` | Per-step execution records for the M5 flow runner. | `runs.id` |
+| `step_runs` | Per-step execution records for the flow runner. | `runs.id` |
 | `hitl_requests` | HITL prompts emitted during a run. | `runs.id` |
 
 ## `projects`
@@ -36,7 +36,7 @@ time). All timestamps stored as `timestamp with timezone` in UTC.
 ```
 
 `slug` is kebab-cased from `name`. Archival is soft (`archivedAt`); no
-hard-delete in POC. Archived `repo_path` stays reserved against collisions.
+hard-delete in the current target. Archived `repo_path` stays reserved against collisions.
 
 ## `executors`
 
@@ -66,7 +66,7 @@ executor id resolves within its project's namespace, never cross-project.
   revision,                      // git commit SHA captured at install
                                  //   via `git rev-parse HEAD`;
                                  //   "unknown" sentinel for local-source
-                                 //   POC fixtures. Mutates on upgrade
+                                 //   fixtures. Mutates on upgrade
                                  //   alongside `version` and
                                  //   `installedPath`; runs snapshot it
                                  //   into `runs.flow_revision` at
@@ -82,6 +82,8 @@ executor id resolves within its project's namespace, never cross-project.
   manifest (jsonb),              // parsed flow.yaml
   schemaVersion,
   recommendedExecutorId?,        // nullable, app-side FK to executors
+  executorOverrideId?,           // nullable FK -> executors.id,
+                                 //   flow-level override
   createdAt
 }
 ```
@@ -102,9 +104,9 @@ UNIQUE `(projectId, flowRefId)`.
 ```
 
 UNIQUE `(id, attemptNumber)` is **vacuous** — `id` is the PK, so the
-composite UNIQUE guards nothing. M5 has no DB-level per-attempt
-uniqueness; the real `UNIQUE (task_id, attempt_number)` ships on
-`runs` at Designed M8. Indexed on `(projectId, status)` for board
+composite UNIQUE guards nothing. Current schema has no DB-level
+per-attempt uniqueness; the designed `UNIQUE (task_id, attempt_number)`
+belongs on `runs`. Indexed on `(projectId, status)` for board
 queries.
 
 ## `runs`
@@ -115,7 +117,7 @@ queries.
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
-  currentStepId?,                // (M5) id of the step the runner is on
+  currentStepId?,                // id of the step the runner is on
   flowVersion,                   // tag snapshot at launch — display
   flowRevision,                  // git SHA snapshot at launch; the
                                  //   runner derives the bundle path
@@ -130,7 +132,7 @@ queries.
 }
 ```
 
-`currentStepId` is set by the M5 runner before each step starts and
+`currentStepId` is set by the runner before each step starts and
 cleared on terminal transitions (`Review` / `Failed`). It is the cheap
 signal for "where is this run right now" without joining `step_runs`.
 
@@ -150,8 +152,6 @@ Indexed on `(projectId, status)` for portfolio/board queries and on
 One workspace per run. `worktreePath` is globally unique across the host.
 
 ## `step_runs`
-
-(Introduced in M5 — migration `0001_wandering_goliath.sql`.)
 
 ```ts
 {
@@ -201,12 +201,16 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
 `session/request_permission`). `kind=form` is a structured payload defined
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
 `kind=human` is a Flow step `type: human` whose definition carries an
-`on_reject` clause; in M7 it is wire-equivalent to `kind=form` (response
+`on_reject` clause; today it is wire-equivalent to `kind=form` (response
 captured, runner advances to the next step). The `on_reject.goto_step`
-rerouting loop is **Designed M8** — the row distinction is preserved so
-M8 can light up rerouting without a schema change.
+rerouting loop is designed — the row distinction is preserved so it can
+light up without a schema change.
 
-**Two-phase response semantics (M7+).** `response` and `respondedAt`
+For `kind=permission`, `schema` is not null and stores the live
+permission descriptor: `{ requestId, options, toolCall,
+supervisorSessionId }`. The response shape is `{ optionId: string }`.
+
+**Two-phase response semantics.** `response` and `respondedAt`
 together encode the delivery state of an HITL row:
 
 | `response` | `respondedAt` | Meaning |

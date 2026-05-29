@@ -4,7 +4,8 @@
 
 **MAIster is the control plane for AI-powered software delivery.**
 
-It turns backlog tasks into supervised agentic delivery Flows: workspace creation, headless agent execution, HITL, AI-Judge, diff review, merge and project learning.
+It turns backlog tasks into supervised delivery Flows: workspace creation,
+headless agent execution, HITL, diff review, and merge.
 
 ## Why
 
@@ -15,7 +16,7 @@ MAIster should remove the need to babysit coding-agent consoles. The human shoul
 ## Core product spine
 
 ```text
-Backlog → Flow → Workspace → Headless Agents → HITL → AI-Judge → Diff Review → Merge → Lessons
+Backlog -> Flow -> Workspace -> Headless Agents -> HITL -> Diff Review -> Merge
 ```
 
 ## Product principles
@@ -33,12 +34,9 @@ Backlog → Flow → Workspace → Headless Agents → HITL → AI-Judge → Dif
    HITL is not global. Each Flow step defines whether human input is must/can/autonomous.
 
 5. **Artifacts over chat sludge**
-   Specs, plans, diffs, tests, Judge reports, reviews and lessons must be stored as structured artifacts.
+   Specs, plans, diffs, tests, reviews and HITL responses must be stored as structured artifacts.
 
-6. **Project learns from work**
-   Bugs, incidents and reviews should produce lessons and evolve project rules/playbooks - this is the basic platform ability requirement.
-
-7. **Start personal, not enterprise**
+6. **Start personal, not enterprise**
    Optimize for one owner and small teams first: low ops, fast iteration, single host. Enterprise governance later if needed.
 
 ## MVP goal
@@ -56,15 +54,14 @@ Prove the spine on **several real projects in parallel**:
    worktree → Flow launched. Task moves to In Flight. Retry-friendly: a task
    may spawn many runs over its lifetime (1:N) — if a run fails or is
    abandoned, the task returns to Backlog with the Launch button re-enabled.
-6. Run Claude Code headlessly inside the worktree.
-7. Show run progress/logs/artifacts in Web UI (live SSE).
-8. Let human answer block-based HITL questions / approve.
+6. Run Claude Code or Codex headlessly inside the worktree through ACP.
+7. Show run progress, logs, and HITL in the Web UI through durable SSE.
+8. Let the user answer permission and structured-form HITL requests.
 9. Show diff and merge-to-main on clean-merge case.
 10. Run up to 3 sessions concurrently across projects (global cap, queue the rest).
 
 ## Not MVP
 
-- multiple executor pool;
 - autonomous task pulling;
 - background project agents;
 - A/B experiments;
@@ -73,8 +70,8 @@ Prove the spine on **several real projects in parallel**:
 - platform-level cross-project skills;
 - enterprise RBAC/compliance;
 - Temporal-class durable orchestration;
-- AI-Judge review artifact (Phase 2);
-- project lesson capture (Phase 2);
+- AI-Judge review artifact;
+- project lesson capture;
 - full Kanban (Done as drag-target / WIP limits / swim-lanes);
 - cross-project task moves;
 - GitHub issue / Linear / YouGile sync.

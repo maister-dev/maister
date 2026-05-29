@@ -11,7 +11,7 @@ two long-running Node processes:
 - **`supervisor/`** — a separate Node daemon (Fastify + pino) that owns
   ACP sessions and spawns the per-session agent processes
   (`claude-agent-acp`, `codex-acp`). See [Supervisor](supervisor.md)
-  for the wire contract and limitations on POC.
+  for the wire contract.
 
 ## Prerequisites
 
@@ -23,8 +23,7 @@ two long-running Node processes:
   integration tests; not required to run `pnpm dev` against a stubbed DB)
 - **Docker** (only for `compose up postgres` and the `testcontainers`
   integration test suite)
-- **uv** + **Python 3.12** (later — when the Flow subprocess lands; not
-  required today)
+- **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
 
 Check versions:
 
@@ -138,12 +137,12 @@ The installer clones the git repo at `<version>` into
 `~/.maister/flows/<flowId>@<version>/`, validates `flow.yaml`,
 creates the per-project symlink at
 `<project repo>/.maister/<slug>/flows/<flowId>/`, and upserts the
-row into the `flows` table. The Add-Project UI in M9 will replace
+row into the `flows` table. The Add-Project UI will replace
 this CLI for end users — it is a manual smoke-test surface only.
 
 Full pipeline reference: [Flow Installer](flow-installer.md).
 
-## Launch a run (M5)
+## Launch a run
 
 After a task exists in `Backlog` for a project that has its Flow plugin
 installed, kick off a run.
@@ -249,11 +248,11 @@ Behavior:
   the `step_runs` table, drives `runs.status` through
   `Running ↔ NeedsInput → Review | Failed`.
 - `agent` steps proxy to the supervisor at
-  `POST /sessions` + `POST /sessions/:id/prompt` (M5 wire — see
+  `POST /sessions` + `POST /sessions/:id/prompt` (see
   [Supervisor](supervisor.md)).
 - `human` steps suspend the run with `NeedsInput`, writing
-  `.maister/<slug>/runs/<run-id>/needs-input.json` and a `hitl_requests`
-  row. Resumption arrives in M7+M8.
+  a `hitl_requests` row. The response route writes
+  `input-<stepId>.json` and the runner resumes from that durable input.
 
 Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
 [aif plugin](flow-aif-plugin.md).
@@ -280,13 +279,13 @@ mAIster/
 ## Where to read next
 
 - **Before touching code**: read [CLAUDE.md](../CLAUDE.md) and
-  [web/CLAUDE.md](../web/CLAUDE.md). Both encode locked architectural
-  decisions earned in two review passes plus an explicit
-  "Out of POC scope" list.
+  [web/CLAUDE.md](../web/CLAUDE.md). Both encode product spine,
+  current implementation boundaries, and conventions.
 - **For the product context**: [Vision](VISION.md) → [Product View](PRODUCT_VIEW.md).
-- **For the engineering plan**: [Design (Locked)](kaa-maister-design-20260522-174429.md)
-  → [Eng Review Test Plan](kaa-maister-eng-review-test-plan-20260522-180855.md).
-- **For the code shape**: [Architecture](../.ai-factory/ARCHITECTURE.md).
+- **For the code shape**: [Architecture](architecture.md) and [Decisions](decisions.md).
+- **For contracts**: [Web OpenAPI](api/web.openapi.yaml),
+  [Supervisor OpenAPI](api/supervisor.openapi.yaml), and
+  [AsyncAPI specs](api/async/).
 
 ## Common pitfalls
 
@@ -303,13 +302,13 @@ mAIster/
 
 ## See Also
 
-- [Database Schema](database-schema.md) — 7 tables, FK cascade chain,
+- [Database Schema](database-schema.md) — 8 tables, FK cascade chain,
   Drizzle workflow
 - [Error Taxonomy](error-taxonomy.md) — `MaisterError` codes and when
   each one fires
 - [Configuration](configuration.md) — `maister.yaml` v2 + `flow.yaml`
   v1 + every env var
 - [Vision](VISION.md) — product spine and MVP goal
-- [Architecture](../.ai-factory/ARCHITECTURE.md) — folder structure,
+- [Architecture](architecture.md) — folder structure,
   dependency rules, code examples
 - [Agent Map](../AGENTS.md) — structural map for AI agents

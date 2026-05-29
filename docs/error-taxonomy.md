@@ -30,12 +30,12 @@ Eleven codes, all defined as a string union in `web/lib/errors.ts`.
 | ---- | ------- | ------------ | --------- |
 | `PRECONDITION` | A precondition for an action is not met (dirty repo, branch taken, worktree path occupied, global concurrency cap hit, executor not registered). | `POST /api/runs` validation before spawn. | Show the specific blocker, link to fix. |
 | `SPAWN` | Subprocess could not be launched (binary not on PATH, exec perm denied, OOM). | `supervisor/` when spawning `claude-agent-acp` or `codex-acp`. | "Executor failed to start" with stderr tail. |
-| `NEEDS_INPUT` | The run paused for human input (ACP `session/request_permission` or `needs-input.json` artifact). | Supervisor on ACP notification or artifact appearance. | Render HITL form / approve-deny prompt. |
-| `HITL_TIMEOUT` | 24h elapsed in `NeedsInputIdle` without user response. | Reconcile loop / GC cron. | Move run to `Abandoned`, return task to Backlog. |
+| `NEEDS_INPUT` | Soft validation/state code: the run is waiting for human input, or a submitted HITL response failed schema validation and can be corrected. | HITL/form response validation and run state projection. | Keep the form open and show the exact field error. |
+| `HITL_TIMEOUT` | Live permission deferred expired, or the designed 24h `NeedsInputIdle` timeout fires. | Supervisor input delivery / future timeout watcher. | Permission timeout marks the run `Failed`; idle timeout will abandon the run. |
 | `CRASH` | Worker died mid-`Running` without a graceful checkpoint. | Supervisor heartbeat watcher; startup reconcile. | "Recover or discard" panel with `acpSessionId` resume option. |
 | `CONFLICT` | `git merge --no-ff` could not auto-merge. | `POST /api/runs/[id]/merge`. | "Resolve manually" with parent repo path. |
 | `CONFIG` | A config file or env var is missing or malformed (`maister.yaml`, `flow.yaml`, `form_schema`, `DB_URL`). | `lib/config.ts` validators; `lib/db/client.ts`. | Show the offending field path; refuse to start. |
-| `EXECUTOR_UNAVAILABLE` | The executor named in run launcher / project override / Flow recommendation is not registered for this project. | Run-launch override resolution. | "Pick a different executor" with the registered list. |
+| `EXECUTOR_UNAVAILABLE` | Executor cannot be used now: unregistered executor, supervisor unreachable, CCR failure, unknown session during permission delivery, or retryable artifact I/O failure. | Run-launch override resolution; supervisor client; HITL response route. | Show retry/pick-another-executor depending on context. |
 | `FLOW_INSTALL` | `git clone --branch <tag>` of a Flow plugin failed, or the manifest was rejected. | Project registration (`POST /api/projects`); Flow loader. | Show the failing source URL + tag, link to the manifest error. |
 | `ACP_PROTOCOL` | Supervisor received an ACP message it cannot decode, or saw an unexpected state transition. | Supervisor ACP client. | "Executor sent an unexpected message" with the raw payload. |
 | `CHECKPOINT` | Graceful checkpoint failed (couldn't persist session state on idle-timeout). | Supervisor checkpoint path. | Worker stays live; UI surfaces a "couldn't checkpoint — keep tab open" warning. |
@@ -47,9 +47,10 @@ new MaisterError(code, message)
 new MaisterError(code, message, { cause: originalError })
 ```
 
-`cause` is the standard `ErrorOptions` shape; it survives JSON
-serialization across the SSE bridge so the UI can show the underlying
-error too. `name` is always `"MaisterError"` and `stack` is preserved.
+`cause` is the standard `ErrorOptions` shape and stays server-side. HTTP
+and SSE boundaries send `{code, message}` unless a route explicitly adds
+extra fields. `name` is always `"MaisterError"` and `stack` is preserved
+inside the process.
 
 ## Detection
 

@@ -41,10 +41,12 @@ erDiagram
         text flow_ref_id "id from maister.yaml flows[]"
         text source "git URL"
         text version "tag (lock semantics)"
+        text revision "git SHA"
         text installed_path "resolved symlink target"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
         text recommended_executor_id "nullable, app-side FK"
+        text executor_override_id "nullable FK"
         timestamp created_at
     }
 ```
@@ -72,6 +74,8 @@ erDiagram
 - `flows.recommended_executor_id` is also app-side FK because the
   manifest's `recommended_executor` references an executor id by ref
   string (not by row id).
+- `flows.executor_override_id` stores the per-flow override from
+  `maister.yaml flows[].executor_override`.
 
 ## Linked artifacts
 

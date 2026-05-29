@@ -61,7 +61,7 @@ flows:
 | `project.name` | Non-empty string. The `slug` is derived from this (kebab-case). |
 | `project.repo_path` | Non-empty absolute path. UNIQUE across registered projects. |
 | `executors[]` | At least one entry. Each `id` must be unique within the file. |
-| `executors[].agent` | `claude` or `codex` only. POC ships both adapters. |
+| `executors[].agent` | `claude` or `codex` only. Current adapters cover both. |
 | `executors[].model` | Non-empty. Free-form — the adapter validates. |
 | `default_executor` | Must reference an `id` present in `executors[]`. |
 | `flows[].id` | Unique within the file. |
@@ -104,7 +104,7 @@ Implementation lives in `web/lib/executors.ts:resolveExecutor()` and is
 called by `POST /api/runs`. The function is pure — no DB access, no
 log side effects — and returns `{executorId, tier}`. Callers can pass
 `override: undefined` to get the "computed executor for display" path
-used by the future M9 task-card badge.
+used by a task-card computed-executor badge.
 
 If none of the above resolves to a registered executor, the resolver
 throws `MaisterError({ code: "EXECUTOR_UNAVAILABLE" })` (HTTP 503).
@@ -128,7 +128,7 @@ steps:
     command: pnpm lint
   - id: budget
     type: guard
-    cost: 5                             # POC: parsed and persisted, not enforced
+    cost: 5                             # parsed and persisted, not enforced today
   - id: review
     type: human
     form_schema: ./schemas/review.json
@@ -159,11 +159,13 @@ Discriminated on `type`:
 the project's `executors[]` is validated at project-load time, not here —
 the manifest can be loaded standalone for testing.
 
-### Guard semantics (POC)
+### Guard semantics
 
-`cost` / `time` / `regex` guard fields are **parsed and persisted as
-metrics on disk** under `.maister/<slug>/runs/<run-id>/cost.jsonl`. They
-are **NOT enforced** in the POC — no kill-on-cap. Enforcement is Phase 2.
+`cost` / `time` / `regex` guard fields are parsed and evaluated as
+observational signals. Guard results are written to
+`.maister/<slug>/runs/<run-id>/guards.jsonl`. Cost guards compare
+against token totals from `cost.jsonl` when the supervisor has emitted
+usage records. Guards do not kill a run today; enforcement is Phase 2.
 
 ## `form_schema` versioning
 
@@ -195,8 +197,8 @@ fields:
     default: false
 ```
 
-Field types are limited to `string | number | boolean | enum | array` on
-POC. Add new types by extending `formFieldSchema` in
+Field types are limited to `string | number | boolean | enum | array`.
+Add new types by extending `formFieldSchema` in
 `web/lib/config.schema.ts`.
 
 ## Environment variables (server tier)

@@ -29,7 +29,7 @@
 | [ADR-001](#adr-001-nextjs-16--heroui-v3-as-the-web-stack) | Next.js 16 + HeroUI v3 as the web stack | Accepted | 2026-05-22 |
 | [ADR-002](#adr-002-supervisor-runs-as-a-separate-node-daemon) | Supervisor runs as a separate Node daemon | Accepted | 2026-05-25 |
 | [ADR-003](#adr-003-acp-as-the-agent-runtime-protocol) | ACP as the agent runtime protocol | Accepted | 2026-05-25 |
-| [ADR-004](#adr-004-multi-executor-claude--codex-on-poc) | Multi-executor: claude + codex on POC | Accepted | 2026-05-25 |
+| [ADR-004](#adr-004-multi-executor-claude--codex-on-current-target) | Multi-executor: claude + codex on current target | Accepted | 2026-05-25 |
 | [ADR-005](#adr-005-model-routing-env-router-default-ccr-optional) | Model routing: env-router default, CCR optional | Accepted | 2026-05-25 |
 | [ADR-006](#adr-006-hybrid-hitl-keep-alive--checkpointresume) | Hybrid HITL: keep-alive + checkpoint/resume | Accepted | 2026-05-25 |
 | [ADR-007](#adr-007-sse-pipe-to-disk-for-step-output) | SSE pipe-to-disk for step output | Accepted | 2026-05-22 |
@@ -56,7 +56,7 @@
 **Context:** The control plane needs a rich UI with server-rendered
 read pages, live updates, and a single TypeScript codebase shared with
 server actions and route handlers. The audience is one solo-technical
-operator on the POC; later, small teams.
+operator on the current target; later, small teams.
 
 **Decision:** Next.js 16 (App Router) + React 19 + HeroUI v3 (Tailwind 4)
 + `next-themes`. TypeScript strict end-to-end. No other component
@@ -95,7 +95,7 @@ host than the web tier.
 **Consequences:**
 
 - HMR / Next.js restarts no longer kill agents.
-- Two processes to operate. Docker Compose handles this for POC.
+- Two processes to operate. Docker Compose handles this for the current target.
 - The wire contract between web and supervisor is HTTP + SSE — the only
   coupling surface, documented in `api/supervisor.openapi.yaml` and
   `api/async/supervisor-sse.asyncapi.yaml`.
@@ -105,7 +105,7 @@ host than the web tier.
 **Alternatives Considered:**
 
 - **In-Next.js spawn:** the original M0 design. Killed by the HMR / restart fragility above.
-- **Per-run container (Docker-in-Docker):** higher operational overhead; not justified for a single-host POC.
+- **Per-run container (Docker-in-Docker):** higher operational overhead; not justified for a single-host target.
 
 ---
 
@@ -147,7 +147,7 @@ over stdio JSONL.
 
 ---
 
-### ADR-004: Multi-executor: claude + codex on POC
+### ADR-004: Multi-executor: claude + codex on current target
 
 **Date:** 2026-05-25
 **Status:** Accepted
@@ -156,22 +156,23 @@ one executor to prove the abstraction is real. M0 confirmed both ACP
 adapters work and the supervisor's spawn dispatch on
 `executor.agent` covers both.
 
-**Decision:** POC ships with **both** Claude Code AND Codex executors.
-Both are required to pass POC success criteria. Cursor, opencode,
-Aider, OpenHands stay out of POC scope.
+**Decision:** Current target ships with **both** Claude Code AND Codex executors.
+Both are required to pass success criteria. Cursor, opencode,
+Aider, and OpenHands are Phase 2 executor candidates.
 
 **Consequences:**
 
 - The `executors[]` table is real, not a placeholder. The override
-  resolution chain (run launcher → project per-flow override → project
-  default → flow recommended) gets exercised end-to-end.
+  resolution chain (run launcher -> task override -> project per-flow
+  override -> project default -> flow recommended) gets exercised
+  end-to-end.
 - Per-step executor override is verified on at least one Flow in
   acceptance.
-- Adding a third agent is Phase 2 work — out of scope for POC.
+- Adding a third agent is Phase 2 work.
 
 **Alternatives Considered:**
 
-- **Single executor on POC (Claude only):** the original M0 plan. Rejected because it postpones the most architecturally informative test (does the abstraction hold?).
+- **Single executor (Claude only):** the original M0 plan. Rejected because it postpones the most architecturally informative test (does the abstraction hold?).
 
 ---
 
@@ -259,8 +260,9 @@ event log to replay from.
 **Decision:** Supervisor writes every child stdout line to
 `.maister/<project-slug>/runs/<run-id>/<step-id>.log` via
 `fs.createWriteStream` **in parallel** with the SSE emission to its
-HTTP clients. The Next.js Route Handler
-(`/api/runs/[id]/stream`, planned M7+) tails the file for reconnect.
+HTTP clients. The supervisor also appends structured session events to
+`run.events.jsonl`; the Next.js Route Handler
+(`/api/runs/[id]/stream`) tails that durable run log for reconnect.
 
 **Consequences:**
 
@@ -271,7 +273,7 @@ HTTP clients. The Next.js Route Handler
 
 **Alternatives Considered:**
 
-- **In-memory ring buffer only:** M3 ships a 1000-entry buffer for hot replay, but the file is the long-term truth.
+- **In-memory ring buffer only:** the supervisor keeps a 1000-entry buffer for hot replay, but the file is the long-term truth.
 - **Per-run database row per event:** wrong tool — sequential append-only fits a file better than a relational table.
 
 ---
@@ -314,7 +316,7 @@ at the boundary.
 has finite RAM and a finite token budget. Without a cap, three
 projects competing for runs would OOM the host.
 
-**Decision:** `MAISTER_MAX_CONCURRENT_RUNS=3` for POC,
+**Decision:** `MAISTER_MAX_CONCURRENT_RUNS=3` by default,
 env-configurable. Cap is **global** across all registered projects, not
 per-project. Runs above the cap go to `Pending` and auto-start when a
 slot frees. UI shows a queue position badge. No per-project override
@@ -329,7 +331,7 @@ from `maister.yaml`.
 
 **Alternatives Considered:**
 
-- **Per-project cap in `maister.yaml`:** rejected — POC is single-tenant, simpler global cap covers it.
+- **Per-project cap in `maister.yaml`:** rejected — current target is single-tenant, simpler global cap covers it.
 - **No cap:** OOM risk on the demo host.
 
 ---
@@ -357,7 +359,7 @@ project's `maister.yaml`.
   rebuild.
 - Tag-pinned versions give lock semantics — Flow upgrades are
   explicit.
-- Trust model on POC: trust all internal Flow sources. Sandboxing /
+- Trust model today: trust all internal Flow sources. Sandboxing /
   trust UI is Phase 2 (see PRODUCT_VIEW §Phase 2).
 - Templating is full Mustache-style: session context, task fields,
   per-step output vars, executor metadata.
@@ -451,7 +453,7 @@ generated by `drizzle-kit` into `web/lib/db/migrations/`.
 **Alternatives Considered:**
 
 - **Prisma:** different mental model, harder to drop into raw SQL.
-- **SQLite only:** runs out of headroom (no `jsonb`, weaker FK enforcement) past the POC.
+- **SQLite only:** runs out of headroom (no `jsonb`, weaker FK enforcement) past local dev.
 
 ---
 
@@ -476,7 +478,7 @@ are contracts for code and AI agents, both of which read English).
 
 **Alternatives Considered:**
 
-- **EN-only on POC, i18n later:** every screen would need rewriting, accumulating retrofit cost.
+- **EN-only first, i18n later:** every screen would need rewriting, accumulating retrofit cost.
 - **RU-only:** rules out non-RU dogfooders.
 
 ---
@@ -576,9 +578,9 @@ fragments the backlog.
 execution attempt. One task can spawn many runs over its lifetime. If
 a run terminates with `Failed | Crashed | Abandoned`, the task
 auto-returns to `Backlog` and the Launch button re-appears. The latest
-run is the one shown on the card. **(Designed M8)** Database UNIQUE
+run is the one shown on the card. Designed database UNIQUE
 `(task_id, attempt_number)` on `runs` guards against duplicate
-attempts. M5 ships only `tasks.attempt_number` as a mutable
+attempts. Current schema ships only `tasks.attempt_number` as a mutable
 high-water mark (the `tasks_id_attempt_uq` UNIQUE on `(id,
 attempt_number)` is vacuous because `tasks.id` is the PK) and uses
 `ORDER BY started_at DESC LIMIT 1` for latest-run lookups.
@@ -607,7 +609,7 @@ contend on worktrees. Two projects with the same slug would collide on
 **Decision:** `projects.slug` AND `projects.repo_path` are both
 UNIQUE. Slug is derived from `project.name` (kebab-case). Archival is
 soft (`archived_at` timestamp); archived `repo_path` stays reserved
-against collisions. No hard delete in POC.
+against collisions. No hard delete in the current target.
 
 **Consequences:**
 

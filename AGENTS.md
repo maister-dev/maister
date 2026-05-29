@@ -8,10 +8,10 @@
 
 ## Project Overview
 
-**MAIster is the control plane for AI-powered software delivery.** POC wedge:
-thin Web shell over a CLI-Flow runner with multi-project portfolio +
-multi-workspace + HITL + per-project task board (Backlog | In Flight). Wraps
-existing Flow frameworks (`aif`) — does **not** build a new Flow runner.
+**MAIster is the control plane for AI-powered software delivery.** Current
+wedge: Web control plane + ACP supervisor + Flow plugin engine with
+multi-project portfolio, multi-workspace execution, HITL, and a per-project
+task board (Backlog | In Flight). Wraps existing agents and Flow frameworks.
 
 Full description: `.ai-factory/DESCRIPTION.md`.
 
@@ -38,7 +38,7 @@ mAIster/
 │   ├── config.yaml             # AI Factory configuration (language, paths, git)
 │   ├── DESCRIPTION.md          # Project specification
 │   ├── ARCHITECTURE.md         # Architecture pattern, folder structure, deps
-│   ├── ROADMAP.md              # Milestones (M0..M13), Completed table
+│   ├── ROADMAP.md              # Roadmap and completed work
 │   ├── plans/                  # Full-mode /aif-plan output, branch-keyed
 │   └── rules/                  # Project conventions for AI agents
 │       ├── base.md             # Project-wide rules
@@ -61,16 +61,17 @@ mAIster/
 ├── docs/                       # Product & engineering documentation
 │   ├── VISION.md
 │   ├── PRODUCT_VIEW.md
-│   ├── supervisor.md           # M3: HTTP+SSE API, lifecycle, cost.jsonl
+│   ├── supervisor.md           # HTTP+SSE API, lifecycle, cost.jsonl
 │   ├── configuration.md
 │   ├── database-schema.md
 │   ├── error-taxonomy.md
 │   ├── getting-started.md
-│   ├── kaa-maister-design-20260522-174429.md           # Locked design
-│   ├── kaa-maister-design-20260525-acp-revision.md     # ACP pivot
-│   ├── kaa-maister-eng-review-test-plan-20260522-180855.md
-│   └── kaa-maister-m0-spike-findings-20260525.md
-├── supervisor/                 # ── ACP SUPERVISOR DAEMON ── (M3)
+│   ├── architecture.md
+│   ├── decisions.md
+│   ├── api/
+│   ├── db/
+│   └── system-analytics/
+├── supervisor/                 # ── ACP SUPERVISOR DAEMON ──
 │   ├── src/
 │   │   ├── main.ts             # Fastify boot + graceful shutdown
 │   │   ├── http-api.ts         # 6 routes (POST/DELETE/GET /sessions, SSE, checkpoint/input stubs)
@@ -126,7 +127,7 @@ on a different host than the web tier.
 | `web/app/error.tsx` | Root error boundary |
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
-| `web/lib/db/schema.ts` | Drizzle schema: 7 tables (projects, executors, flows, tasks, runs, workspaces, hitl_requests) |
+| `web/lib/db/schema.ts` | Drizzle schema: 8 tables (projects, executors, flows, tasks, runs, workspaces, step_runs, hitl_requests) |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
 | `supervisor/src/main.ts` | Supervisor daemon entrypoint (Fastify on `:7777`) |
 | `supervisor/src/http-api.ts` | Six HTTP routes + SSE bridge |
@@ -142,15 +143,15 @@ on a different host than the web tier.
 | README | `README.md` | Landing page: quick start, key features, docs table |
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
-| Database Schema | `docs/database-schema.md` | 7 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 8 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Vision | `docs/VISION.md` | One-liner, product spine, principles, MVP goal |
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
-| Locked Design | `docs/kaa-maister-design-20260522-174429.md` | Stack rationale, HITL protocol, success criteria, reviewer concerns |
-| ACP Pivot Revision | `docs/kaa-maister-design-20260525-acp-revision.md` | Multi-executor ACP pivot — what changed and why |
-| Eng Review Test Plan | `docs/kaa-maister-eng-review-test-plan-20260522-180855.md` | Routes, key interactions, edge cases, critical paths |
-| M0 Spike Findings | `docs/kaa-maister-m0-spike-findings-20260525.md` | ACP library validation + cross-process resume cost |
+| Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
+| Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
+| System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL |
+| API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |
 | README (web) | `web/README.md` | HeroUI template README — replace when something to say |
 
 ## AI Context Files
@@ -158,12 +159,12 @@ on a different host than the web tier.
 | File | Purpose |
 | ---- | ------- |
 | `AGENTS.md` | This file — structural map for AI agents and new contributors |
-| `CLAUDE.md` | Root project instructions: product spine, locked architectural decisions, conventions, out-of-POC list |
+| `CLAUDE.md` | Root project instructions: product spine, locked architectural decisions, conventions |
 | `web/CLAUDE.md` | Web/Next.js slice: stack details, scripts, structure, HeroUI conventions |
 | `.ai-factory/DESCRIPTION.md` | Project specification synthesized from product docs |
 | `.ai-factory/ARCHITECTURE.md` | Architecture pattern, folder structure, dependency rules, code examples |
 | `.ai-factory/config.yaml` | AI Factory configuration (language, paths, git settings) |
-| `.ai-factory/ROADMAP.md` | Milestones (M0..M13) + Completed table |
+| `.ai-factory/ROADMAP.md` | Roadmap and completed work |
 | `.ai-factory/rules/base.md` | Project-wide conventions extracted from CLAUDE.md files |
 | `.ai-factory/rules/frontend.md` | Web-tier rules (HeroUI, RSC, lint) |
 | `.ai-factory/rules/backend.md` | Server-tier rules (supervisor, SSE, errors, concurrency) |
@@ -180,8 +181,8 @@ this file.
   - Right (decomposed): first `git checkout main`, then
     `git pull origin main`
 - **Read `CLAUDE.md` and `web/CLAUDE.md` first** before touching any code.
-  Both files encode locked architectural decisions earned in two review
-  passes and an explicit "Out of POC scope" list.
+  Both files encode product spine, current implementation boundaries, and
+  project conventions.
 - **Surgical changes only** — every changed line must trace directly to the
   user's request. Do not refactor adjacent code while you're there.
 - **Throw `MaisterError` with `code`** for known domain failures. Never use
@@ -194,8 +195,9 @@ this file.
   process exit codes feed the heartbeat-promoted crash event.
 - **Agent processes live in `supervisor/`, not `web/`.** The web tier
   reaches the supervisor through `web/lib/supervisor-client.ts` only.
-  ACP sessions are held live across `NeedsInput` (with a 30-min
-  keep-alive window planned for M8); they are not killed between HITL
-  turns.
-- **Out-of-POC push-back** — if a task adds anything from the
-  `CLAUDE.md` "Out of POC scope" list, push back and link the design doc.
+  ACP sessions are held live across permission HITL; designed checkpoint
+  resume uses the same `acp_session_id` handle.
+- **Scope labels are descriptive, not blockers** — use docs labels
+  (`Implemented`, `Designed`, `Phase 2`) to explain trade-offs. Do not
+  block useful work solely because an old planning note called it out of
+  scope.
