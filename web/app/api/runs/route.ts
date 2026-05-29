@@ -14,13 +14,17 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { resolveExecutor } from "@/lib/executors";
+import {
+  isEngineCompatible,
+  isSchemaVersionSupported,
+} from "@/lib/flows/engine-version";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
 import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import { addWorktree, removeWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, flows, projects, runs, tasks, workspaces } =
+const { executors, flowRevisions, flows, projects, runs, tasks, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -148,6 +152,73 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       throw new MaisterError("PRECONDITION", "flow not found for task");
     }
 
+    // Resolve the project-enabled package revision (M10, ADR-021) and refuse
+    // launch on a disabled/failed/untrusted/incompatible/missing-setup package
+    // BEFORE any workspace creation. The revision is server-derived from the
+    // enablement pointer — never body-controlled.
+    if (!flow.enabledRevisionId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" has no enabled package revision`,
+      );
+    }
+    if (
+      flow.enablementState === "Disabled" ||
+      flow.enablementState === "Failed"
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" package is ${flow.enablementState}`,
+      );
+    }
+    if (flow.trustStatus === "untrusted") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" package is not trusted — confirm trust before launch`,
+      );
+    }
+
+    const revisionRows = await db
+      .select()
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, flow.enabledRevisionId));
+    const revision = revisionRows[0];
+
+    if (!revision) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `enabled revision not found for flow "${flow.flowRefId}"`,
+      );
+    }
+    if (
+      revision.setupStatus === "pending" ||
+      revision.setupStatus === "failed"
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" package setup is ${revision.setupStatus}`,
+      );
+    }
+    if (!isSchemaVersionSupported(revision.schemaVersion)) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow "${flow.flowRefId}" requires unsupported manifest schemaVersion ${revision.schemaVersion}`,
+      );
+    }
+    {
+      const compat = isEngineCompatible(
+        revision.engineMin ?? undefined,
+        revision.engineMax ?? undefined,
+      );
+
+      if (!compat.compatible) {
+        throw new MaisterError(
+          "CONFIG",
+          `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
+        );
+      }
+    }
+
     const { executorId, tier: resolvedFromTier } = resolveExecutor({
       override: body.executorOverrideId,
       task,
@@ -234,12 +305,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           flowId: flow.id,
           executorId: executor.id,
           status: "Pending",
-          flowVersion: flow.version,
-          // Snapshot the SHA so the runner can derive the immutable
-          // bundle path from `(flowRefId, flowRevision)`. A later flow
-          // upgrade mutates `flows.revision` but `runs.flow_revision`
-          // remains pinned to the version this run launched against.
-          flowRevision: flow.revision,
+          // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
+          // the authoritative pin the runner resolves the manifest + bundle
+          // path from; the version/SHA text columns remain for display and the
+          // legacy fallback. A later upgrade/rollback changes the project's
+          // enabled revision but this run stays pinned to what it launched with.
+          flowVersion: revision.versionLabel,
+          flowRevision: revision.resolvedRevision,
+          flowRevisionId: revision.id,
         });
         await tx
           .update(tasks)

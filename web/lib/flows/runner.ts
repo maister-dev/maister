@@ -39,7 +39,7 @@ import { getDb } from "@/lib/db/client";
 import { systemCachePath } from "@/lib/flow-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, flows, projects, runs, tasks, workspaces } =
+const { executors, flowRevisions, flows, projects, runs, tasks, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -147,21 +147,49 @@ async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     );
   }
 
-  // Derive the bundle path from the immutable convention rather than
-  // the mutable `flows.installed_path` column. The system cache is
-  // keyed by `(flowRefId, revision)`; reading from a SHA-pinned
-  // directory guarantees the run executes against the exact bytes it
-  // was launched with, even if the operator re-installs the same tag
-  // at a different commit while the run is in flight.
+  // Resolve the manifest + bundle path from the IMMUTABLE pinned revision
+  // (M10, ADR-021). `runs.flow_revision_id` points at the flow_revisions row
+  // snapshotted at launch, so an upgrade/rollback that re-points the project's
+  // enabled revision (and rewrites the denormalized `flows.manifest` cache)
+  // cannot corrupt an in-flight run. Pre-migration rows have a null
+  // flow_revision_id and fall back to the legacy convention
+  // (`flows.manifest` + `systemCachePath(flowRefId, flow_revision)`).
+  let manifest = flow.manifest as FlowYamlV1;
+  let flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
+
+  if (run.flowRevisionId) {
+    const revisionRows: Array<{
+      manifest: unknown;
+      installedPath: string;
+    }> = await db
+      .select({
+        manifest: flowRevisions.manifest,
+        installedPath: flowRevisions.installedPath,
+      })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, run.flowRevisionId));
+    const revision = revisionRows[0];
+
+    if (!revision) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `pinned flow revision ${run.flowRevisionId} not found for run ${runId}`,
+      );
+    }
+
+    manifest = revision.manifest as FlowYamlV1;
+    flowInstallPath = revision.installedPath;
+  }
+
   return {
     run,
     task,
     flow,
-    manifest: flow.manifest as FlowYamlV1,
+    manifest,
     executor,
     workspace,
     projectSlug,
-    flowInstallPath: systemCachePath(flow.flowRefId, run.flowRevision),
+    flowInstallPath,
   };
 }
 
