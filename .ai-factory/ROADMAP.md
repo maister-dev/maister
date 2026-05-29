@@ -24,13 +24,504 @@
 
 - [x] **M9. Web UI core: registry + portfolio + board + auth + RU i18n** — shipped 2026-05-29. Replaced HeroUI template stubs with a themed login page, portfolio home, projects list, Add-Project form, and per-project board (Backlog / Prepare / In Delivery / In Review columns). Auth.js v5 credentials-only authentication with Drizzle adapter; global roles (`admin | member | viewer`) and per-project roles (`owner | admin | member | viewer`) enforced by `lib/authz.ts`; middleware protects all `(app)` routes. EN+RU via next-intl with cookie-based locale switching. Forest design-token system (light/dark via next-themes `class`). New tables: `users`, `accounts`, `sessions`, `verification_tokens`, `project_members`; new column `tasks.stage`; migration `0004_petite_gamora.sql`. New routes `POST /api/projects` (admin-only) and `POST /api/projects/{slug}/tasks` (member+); existing routes `POST /api/runs`, `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`, and `GET /api/runs/{runId}/stream` gained RBAC guards.
 
-- [ ] **M10. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow that loops `goto_step` with `comments_var` set.
+- [ ] **M10. Flow package lifecycle and distribution UX** — promote Flows from
+  "git repos the loader can clone" to managed delivery packages with visible
+  install, trust, compatibility, upgrade, rollback, deprecation, and project
+  adoption lifecycle. Current M4 proves the loader; this milestone makes Flow
+  packages operable by a product user and safe for all later graph/capability/
+  gate features.
 
-- [ ] **M11. Diff view + merge-to-main** — raw `git diff` in `<pre>` (no syntax highlighting on POC), `git merge --no-ff` on parent's `main_branch`, `MaisterError({code: 'CONFLICT'})` aborts merge and surfaces "resolve manually" with parent repo path.
+  **Expectation: package identity.** A Flow package has stable `flow_ref_id`,
+  source, resolved immutable revision, version label, manifest digest,
+  schema version, compatibility range, package status, trust status, setup
+  status, and installed-at metadata. Tags are user-facing pins; resolved SHAs
+  are runtime truth. Installed revisions are immutable and never overwritten.
 
-- [ ] **M12. Reconciliation + GC** — startup hook: per-project runs vs `git worktree list`, orphan `Running` → `Crashed`. Supervisor heartbeat: dead worker mid-`Running` → `Crashed`. Cron route: GC `Abandoned/Done` worktrees + checkpointed sessions older than 7d. "Recover or discard" UI for Crashed runs.
+  **Expectation: lifecycle states.** MAIster tracks package revisions through
+  `Discovered | Installing | Installed | Enabled | UpdateAvailable |
+  Deprecated | Disabled | Failed | Removed`. A project can enable one current
+  revision per Flow id while older revisions remain available for in-flight
+  runs and rollback. Removing a revision is blocked while any run still
+  references it.
 
-- [ ] **M13. Dogfood + external validation** — register MAIster repo in itself, ship ≥1 non-trivial PR through the **aif Flow plugin** against own backlog (validates aif-as-plugin end-to-end + retry loop on a real task). Then onboard 3 installations on external repos using either `aif` or `superpowers` plugins, ≥1 PR shipped end-to-end on each within T+21d after dogfood. 0/3 → thesis not validated, reassess wedge.
+  **Expectation: package surface in UI.** Project settings include a Flow
+  Packages page. The user can see installed packages, current revision,
+  available update, compatibility warnings, required capabilities, shipped
+  skills/agents, setup scripts, declared artifacts/gates, projects using the
+  package, and active runs pinned to old revisions. Install and upgrade are
+  explicit review actions, not silent side effects of reading `maister.yaml`.
+
+  **Expectation: install and trust review.** Installing a package fetches
+  metadata first, validates `flow.yaml`, computes digests, shows source,
+  version, resolved revision, setup script presence, declared capabilities,
+  MCP/tool/skill requests, gates, artifacts, and risk labels. Internal/local
+  sources may be trusted by policy; third-party sources require explicit trust
+  confirmation before setup or enablement.
+
+  **Expectation: upgrade and rollback.** Upgrading installs a new immutable
+  revision beside the old one, runs compatibility validation, and offers a
+  project-level switch. New runs use the enabled revision; existing runs keep
+  their snapshotted revision. Rollback switches the project back to an older
+  installed revision without mutating completed or active run history.
+
+  **Expectation: package contract.** A Flow package declares its node schema,
+  artifact kinds, gate kinds, required capability ids, shipped skills/agents,
+  external operation needs, setup hooks, optional migrations, and supported
+  MAIster engine/API version range. MAIster refuses enablement when the package
+  requires unsupported engine, adapter, gate, artifact, capability, or external
+  API features.
+
+  **Expectation: setup and migration safety.** Setup scripts are revision-scoped
+  and idempotent. They run only after trust confirmation and before enablement.
+  Future package migrations are explicit, project-scoped, logged, and reversible
+  when the package declares a rollback step. No setup or migration runs during
+  ordinary task launch.
+
+  **Acceptance criteria:**
+  - Flow package revisions are persisted separately from project Flow enablement
+    so multiple revisions of the same Flow can coexist.
+  - Installing a package records source, version label, resolved revision,
+    manifest digest, installed path, compatibility result, trust status, setup
+    status, and declared contract summary.
+  - Project settings can install, enable, disable, upgrade, rollback, and mark a
+    Flow package as trusted/untrusted where policy allows.
+  - Launch snapshots the enabled package revision and refuses if the package is
+    disabled, failed, untrusted, incompatible, or missing setup.
+  - In-flight and completed runs continue to resolve their original package
+    revision after upgrade, rollback, or disable.
+  - Upgrade preview shows added/removed/changed nodes, artifacts, gates,
+    capabilities, setup hooks, external operation requirements, and manifest
+    schema changes.
+  - Removing a package revision is refused while any run references it; GC may
+    remove only unreferenced disabled/failed revisions.
+  - Package install/upgrade failures surface as `FLOW_INSTALL` with source,
+    version, stage, command, exit status, and captured output.
+  - Deferred explicitly: public marketplace, ratings/reputation, automatic
+    malicious-code scanning, signed packages, org-wide policy, dependency
+    solver for Flow packages, and automatic package update rollout.
+
+- [ ] **M11. Flow graph maturity: node lifecycle, typed settings, rework, and human takeover** — add the execution-model foundation that must exist before the HITL UI becomes product-grade. Replace the current "ordered steps plus recorded `on_reject.goto_step`" mental model with a validated Flow graph v1 that still preserves simple linear Flows as the easy case.
+
+  **Expectation: node lifecycle model.** A Flow node has explicit sections for:
+  `input` (required artifacts, prior outputs, human answers, environment),
+  `action` (agent / cli / check / judge / human / human_edit / merge),
+  `pre_finish` (formatters, tests, AI judgments, artifact requirements),
+  `finish` (human review, approval, branch return, final acceptance),
+  `transitions` (success, failure, needs-input, reject, timeout), and
+  `rework` (allowed targets, workspace policy, loop limits, comments vars).
+  Existing `steps[]` Flows remain valid by compiling to a single-action node
+  with default input/pre-finish/finish sections.
+
+  **Expectation: node-specific settings.** Every node type has a typed
+  `settings` section instead of ad-hoc fields. AI-coding nodes declare allowed
+  executors/agent definitions, model or thinking-effort constraints, allowed
+  MCP servers, allowed tools with agent-aware mappings, shipped skills,
+  workspace and artifact access rules, permission mode, cost/time limits, and
+  explicit restrictions. Human nodes declare project roles or assignees,
+  allowed decisions, whether further tracks/rework routes are allowed, whether
+  manual takeover is allowed, SLA/staleness hints, and return requirements.
+  CLI/check/judge nodes declare commands, timeout, environment policy,
+  artifact inputs/outputs, and failure classification.
+
+  **Expectation: immutable run ledger.** Runtime stores every node attempt,
+  decision, input revision, artifact snapshot, checkpoint ref, branch handoff,
+  returned commit set, and stale/current gate marker. The current node pointer
+  may move backward or forward, but history is append-only.
+
+  **Expectation: review-driven rework.** Human review does not set arbitrary
+  raw `goto_step`. The Flow declares allowed decisions and targets; the
+  reviewer chooses one allowed decision, adds structured instructions, and
+  chooses an allowed workspace policy: keep changes, rewind to a node
+  checkpoint, or start a fresh attempt. On rework or manual return, downstream
+  gates/checks/judges from the handoff point become stale and must rerun before
+  merge.
+
+  **Expectation: manual takeover.** A human reviewer can claim a task from the
+  MAIster UI, receive a dedicated editable branch, work locally, commit and
+  push changes, then return the branch through the UI. While claimed, the task
+  board shows owner, elapsed time, branch, and pending return action. On return,
+  MAIster imports the commits, records a returned diff, marks downstream gates
+  stale, and resumes with the Flow-declared validation path.
+
+  **Acceptance criteria:**
+  - Flow manifest validation rejects unknown node ids, unknown roles, unknown
+    MCP/tool references, unknown executor references, unsafe cycles without
+    loop limits, unsupported workspace policies, and human decisions that target
+    undeclared nodes.
+  - A simple linear v1 Flow still runs without authors learning graph syntax.
+  - A graph Flow can execute `plan -> implement -> checks -> judge -> review`,
+    reject from review back to `implement` with comments, rerun checks/judge,
+    then reach a fresh user review gate.
+  - Manual takeover can move a run into `HumanWorking`, expose the handoff
+    branch and owner on the board, import returned commits, show the returned
+    diff, and force downstream checks/judges/user-review to rerun.
+  - Run detail UI distinguishes current vs stale gates and shows all node
+    attempts, decisions, checkpoints, handoffs, returned commits, and rerun
+    results in one timeline.
+  - AI node settings are visible in the UI and enforced by runtime boundaries:
+    no undeclared MCP/tool/skill/restriction escape hatch is silently allowed.
+  - The bundled `aif` Flow is migrated to the new node lifecycle model and
+    demonstrates review-driven rework plus manual takeover.
+  - Docs cover the Flow graph schema, node settings schema, run ledger,
+    rework semantics, manual takeover semantics, and backwards compatibility.
+
+- [ ] **M12. Typed artifacts and evidence graph** — make Flow
+  inputs/outputs first-class runtime objects, stored as typed metadata with
+  filesystem/git payloads. This is the review backbone: artifacts are not just
+  files, they are evidence that a run is ready or not ready.
+
+  **Expectation: Flow-declared artifacts.** Nodes can declare required inputs
+  and produced outputs with `id`, `kind`, optional schema, path/ref, visibility,
+  retention, and whether the artifact is required for review or merge. Initial
+  artifact kinds are `diff`, `log`, `test_report`, `lint_report`,
+  `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, and
+  `generic_file`.
+
+  **Expectation: artifact instances.** Runtime records immutable artifact
+  instances for every node attempt: run id, node id, attempt, producer,
+  artifact definition id, kind, uri/path, hash, size, created time, and
+  validity state (`current | stale | superseded | failed | skipped`). Payloads
+  remain in the run directory, worktree, or git repository; the database stores
+  the queryable evidence index.
+
+  **Expectation: evidence graph explorer.** Run detail includes an artifact
+  graph view that shows task inputs, node attempts, produced artifacts, gates,
+  human decisions, returned commits, stale/current status, and dependency edges.
+  The graph is an explorer, not a Flow designer: the user can inspect, filter,
+  open raw payloads, and understand why merge is blocked or allowed.
+
+  **Expectation: staleness semantics.** Rework, rewind, fresh attempts, and
+  manual takeover returns mark downstream artifacts and gates stale from the
+  selected handoff point. New successful node attempts supersede old artifacts
+  from the same node but never erase history.
+
+  **Acceptance criteria:**
+  - Flow validation rejects duplicate artifact ids, unknown required inputs,
+    unsupported artifact kinds, invalid artifact paths/refs, and merge-required
+    artifacts that no node can produce.
+  - Existing linear v1 Flows record default artifacts for logs, guard metrics,
+    human/form answers, and generated diffs without requiring graph syntax.
+  - A graph Flow can declare required inputs and produced outputs per node;
+    missing required inputs fail before action execution, and missing required
+    outputs fail before the node finishes.
+  - Rework or manual takeover return marks downstream artifacts stale; review
+    and merge refuse when required evidence is missing, stale, failed, or
+    skipped.
+  - The artifact graph explorer renders node attempts and artifacts with
+    current/stale/superseded states, supports filtering by node/kind/state, and
+    opens raw payloads from the run directory or git diff.
+  - Manual takeover return records a `commit_set` artifact and a returned
+    `diff` artifact before rerunning downstream validation.
+  - Artifact metadata survives process restart; the UI can explain run evidence
+    without rescanning arbitrary worktree state.
+  - Deferred explicitly: content-addressed blob store, artifact marketplace,
+    benchmark dataset management, rich preview sandboxing, cross-run artifact
+    reuse, full payload-schema validation for every artifact, and external
+    artifact ingestion beyond M16's generic gate report contract.
+
+- [ ] **M13. Role-owned work queue and assignment UX** — make human work
+  visible and claimable across board, inbox, run detail, and manual takeover.
+  This is not RBAC. For the current target, roles are Flow/project routing
+  labels and ownership signals that make paused work obvious. Any project
+  teammate may claim, respond, return, or merge; MAIster records who acted but
+  does not block actions by role.
+
+  **Expectation: role registry.** Projects can define roles such as
+  `owner`, `reviewer`, `maintainer`, `qa`, and `release-owner`. Flow human
+  nodes reference roles from that registry. In the solo-user target, and in
+  early team usage, roles are labels only: they explain why the task is waiting
+  and who picked it up, but do not restrict who can perform the action.
+
+  **Expectation: assignment object.** Every human decision, form answer,
+  review gate, manual takeover, conflict resolution, and later external hook
+  wait creates an assignment with task, run, node, role, optional assignee,
+  action kind, status, created time, claimed time, returned/responded time,
+  SLA hint, branch/ref when relevant, and current/stale evidence summary.
+
+  **Expectation: board and inbox UX.** The project board and portfolio inbox
+  show who owns the next action, how long it has been waiting, what action is
+  required, which branch is involved, and whether downstream evidence is stale.
+  A task card in human work must not look like a normal running task.
+
+  **Expectation: claim/return semantics.** Claiming is atomic and idempotent
+  for the same actor. Another project teammate may deliberately take over or
+  release stale work, and the ledger records that transfer. Conflicting
+  simultaneous responses or branch returns are rejected with a typed conflict.
+  Returning a manual takeover updates the assignment, records artifacts through
+  M12, and resumes the M11 validation path.
+
+  **Acceptance criteria:**
+  - Flow validation rejects human nodes that reference unknown project roles.
+  - Runtime creates assignments for `permission`, `form`, `human`,
+    `human_edit`, and merge-conflict/manual-resolution waits.
+  - Board cards and portfolio inbox display role, assignee or unclaimed state,
+    elapsed time, action kind, branch/ref, and stale-evidence summary.
+  - A user can claim, release, respond, and return assigned work from the UI;
+    each transition is appended to the run ledger.
+  - Any project teammate can act on any assignment; role mismatch never blocks
+    the action in this milestone.
+  - Manual takeover assignments expose checkout instructions and return action,
+    then close only after returned commits/diff are recorded as artifacts.
+  - Completed, cancelled, stale, and superseded assignments remain visible in
+    run history but no longer appear as actionable inbox items.
+  - Deferred explicitly: RBAC, project membership permissions, role-based
+    action blocking, escalation calendars, notifications, external board sync,
+    and org/team administration.
+
+- [ ] **M14. Scoped capability materialization** — make node and session
+  settings executable by giving MCP servers, skills, settings files, tools,
+  agent definitions, restrictions, and Flow-shipped resources a project-visible
+  registry plus runner-owned materialization. This turns M11 node settings from
+  descriptive YAML into enforceable runtime boundaries where the adapter
+  supports enforcement.
+
+  **Expectation: capability registry.** Projects expose named capability
+  records for MCP servers, skills, agent definitions, tool profiles,
+  agent settings profiles, environment profiles, and restriction policies.
+  Records include id, kind, source, version or revision when external,
+  supported agents, install status, trust status, and enforceability
+  (`enforced | instructed | unsupported`).
+
+  **Expectation: skill and capability import.** A project can install skills or
+  capability packs from a pinned git URL/tag or local path. Install records the
+  resolved commit SHA, manifest metadata, shipped files, and setup outcome.
+  Imports are project-scoped unless explicitly promoted to the system cache.
+
+  **Expectation: agent-aware mapping.** Abstract Flow refs such as
+  `tools: [shell, edit]` or `mcps: [github]` resolve through an agent-aware
+  mapping before execution. Claude, Codex, and future agents may use different
+  concrete tool names or config files, but the Flow author references the same
+  capability ids.
+
+  **Expectation: scoped materialization.** The Flow runner owns capability
+  scope. For a fresh per-node agent session, it materializes that node's allowed
+  skills, MCP config, adapter `settings.json` or equivalent settings file,
+  environment profile, and tool restrictions before the node starts, then
+  removes/restores them after the node completes. For a long-living ACP session,
+  those same files are session-wide: every AI node inside that session must use
+  the same resolved capability profile, or the Flow must declare a new session
+  boundary. Cleanup happens when the session scope ends. Cleanup failures are
+  explicit runner errors, not ignored warnings.
+
+  **Expectation: trust/install UX.** Flow or capability install shows source,
+  version, resolved revision, setup script presence, requested MCPs/tools,
+  shipped skills/agents, and restrictions before first use. Current target may
+  trust project-owned sources, but third-party sources must be visually marked
+  and require explicit install confirmation.
+
+  **Expectation: runtime enforcement boundary.** Before a node runs, MAIster
+  builds the per-node agent environment from resolved capabilities only. If a
+  node requires strict enforcement for a capability that is only `instructed`
+  or `unsupported` for the selected executor, launch fails with `CONFIG` or
+  `EXECUTOR_UNAVAILABLE`; silent fallback is forbidden. If an existing ACP
+  session cannot safely swap to a different capability profile, the runner must
+  start a fresh session at a declared boundary or reject the Flow/executor
+  combination.
+
+  **Acceptance criteria:**
+  - Project config can declare capability records and Flow node settings can
+    reference them by id.
+  - Flow validation rejects unknown MCPs, tools, skills, agents, restriction
+    policies, environment profiles, and unsupported agent/capability mappings.
+  - Importing a skill/capability pack from git records source, tag, resolved
+    SHA, manifest, setup status, and trust status.
+  - Before each AI session scope starts, the runner writes a materialization
+    plan for skills, MCP config, settings file, env profile, and tool
+    restrictions, then records it in the run ledger.
+  - For one-node sessions, the materialization plan may be node-scoped. For
+    long-living sessions, every AI node in the session validates against the
+    same profile.
+  - After each AI session scope reaches a terminal outcome, the runner removes
+    or restores every materialized skill/settings/MCP artifact, including
+    failure and cancellation paths.
+  - Run detail shows the resolved capability profile for each AI-coding node,
+    including what was enforced, instructed, or refused.
+  - Runtime starts agent sessions with only the resolved MCP/tool/skill/settings
+    profile for that session and logs the profile id without leaking secrets.
+  - Long-living session reuse is allowed only when all AI nodes inside the
+    session use the same materialized capability profile, or the adapter
+    supports safe profile swap and the Flow declares where it happens.
+  - Capability changes after a run starts do not mutate that run; the run
+    snapshots resolved capability revisions in its ledger.
+  - The bundled `aif` Flow declares its required skills/tools through the
+    registry and runs without hidden out-of-band capability assumptions.
+  - Deferred explicitly: public marketplace, remote rating/reputation,
+    automated malicious-code scanning, container sandboxing, organization-wide
+    capability policy, and cross-project capability promotion workflows.
+
+- [ ] **M15. Gate execution and readiness policy** — make readiness an explicit
+  Flow-distributed contract. Artifacts are evidence; gates are decisions over
+  evidence. A run can move forward, enter review, or merge only when its
+  Flow-declared blocking gates are current and passed or explicitly overridden.
+
+  **Expectation: gate definitions ship with the Flow.** Flow nodes declare
+  gates in `pre_finish`, `finish`, and optional transition guards. Gate
+  definitions are part of the Flow plugin so they travel with the delivery
+  process. Project config can provide reusable command profiles, skill
+  mappings, capability profiles, env profiles, and default timeout/cost
+  overrides, but the Flow declares which gates are required.
+
+  **Expectation: gate kinds.** Initial gate kinds are `command_check`
+  (formatter/test/lint/typecheck/build/custom command), `skill_check`
+  (internal skill or slash command such as review/fix/qa/checklist),
+  `ai_judgment` (structured model verdict over artifacts/diff/logs),
+  `artifact_required` (required evidence exists and is current),
+  `external_check` (CI or another external system reports a typed result
+  through the operations API), and `human_review`
+  (approve/rework/takeover/override decision).
+
+  **Expectation: gate policy.** Every gate has `mode: blocking | advisory`,
+  owner node, input artifacts, produced artifact, timeout/cost limits,
+  capability profile, retry policy, and stale-from dependencies. Gate status is
+  `pending | running | passed | failed | stale | skipped | overridden`.
+
+  **Expectation: structured verdicts.** AI and skill gates must produce a typed
+  result, not only prose: verdict, confidence, reasons, checked artifacts,
+  recommended next action, and optional patch/rework instruction. Prose is
+  stored as evidence, but UI readiness reads the typed result.
+
+  **Expectation: override without erasure.** A human can override a failed,
+  skipped, or stale advisory/blocking gate only through a declared
+  `human_review` decision. Override records a human note artifact and audit
+  event; it never deletes failed evidence.
+
+  **Acceptance criteria:**
+  - Flow validation rejects unknown gate kinds, missing produced artifacts,
+    unsupported gate modes/statuses, unknown skill/command/capability refs, and
+    merge-required gates that are unreachable.
+  - Existing linear v1 guards migrate as advisory `command_check` or
+    `artifact_required` gates without breaking old Flows.
+  - Gate execution records an immutable gate result linked to input artifacts,
+    output artifact, node attempt, capability profile, and status.
+  - Rework, manual takeover return, new commits, or changed upstream artifacts
+    mark dependent gates stale.
+  - Review and merge refuse when any required blocking gate is missing,
+    pending, running, failed, stale, or skipped.
+  - Internal skill/command gates run through the same scoped capability
+    materialization rules as AI nodes when they use an agent session.
+  - Run detail and board cards show a readiness summary:
+    `ready | blocked | stale | failed | waiting | overridden`.
+  - Deferred explicitly: complex policy language, org-wide gate templates,
+    deploy-environment gates, flaky-test intelligence, judge calibration lab,
+    provider-specific CI apps, and external CI ingestion beyond the generic
+    operations API/report contract.
+
+- [ ] **M16. External operations API, tokens, and thin MCP facade** — expose a
+  small project-scoped control surface for CI, local scripts, external tools,
+  and running agents. The canonical contract is the HTTP API with managed API
+  tokens; MCP is a thin agent-facing facade over the same service layer and
+  audit model, not a second orchestration backend.
+
+  **Expectation: API-first integration.** External systems use REST endpoints
+  secured by project-scoped tokens to create tasks, launch runs, read run
+  readiness, attach artifact metadata, and report external gate results. CI
+  never marks a run done directly; it reports evidence for a Flow-declared
+  `external_check` gate.
+
+  **Expectation: token management UI.** Project settings expose an
+  Integrations/API Tokens page. A teammate can create, list, and revoke tokens.
+  Tokens have a name, prefix, hashed secret, project scope, scopes, optional
+  expiry, created-by, created-at, last-used-at, and revoked-at. The secret is
+  shown once. Full RBAC is still deferred; token scopes are the first control
+  boundary.
+
+  **Expectation: minimal scopes.** Initial scopes are `tasks:create`,
+  `tasks:read`, `tasks:update`, `runs:launch`, `runs:read`,
+  `readiness:read`, `artifacts:attach`, and `gates:report`. Token failure modes
+  are explicit: invalid, expired, revoked, wrong project, or missing scope.
+
+  **Expectation: external gate reports.** A CI/reporting call records a typed
+  gate artifact with status, source, external run URL, commit SHA when present,
+  summary, structured payload, reporter token id, and reported-at timestamp.
+  The report participates in the same readiness summary, staleness rules,
+  artifact graph, and review/promotion refusal path as native gates.
+
+  **Expectation: thin MCP.** MAIster ships a narrow MCP server/tool facade for
+  agents: create/list/get/update task, launch run, get run, get readiness, and
+  report gate where the token permits. MCP calls must go through the same
+  domain services or HTTP API, use the same token/scopes, and produce the same
+  audit trail. MCP must not bypass API authorization, readiness, or run ledger
+  rules.
+
+  **Acceptance criteria:**
+  - Project settings can create, list, and revoke project API tokens; token
+    secrets are stored hashed and shown only once.
+  - Token-authenticated requests are attributed in audit/ledger records with
+    token id, actor label, scope used, project id, endpoint/tool, and result.
+  - External clients can create a backlog task without UI interaction.
+  - External clients can launch a run using the same launch contract as the UI,
+    including Flow, executor/runner, base branch, and target branch once branch
+    targeting lands.
+  - External clients can report an `external_check` gate result and attach
+    artifact metadata; the run detail evidence graph shows the result as normal
+    evidence.
+  - Readiness reflects external gate results and marks them stale when the
+    dependent commit/artifact changes.
+  - A failed, missing, stale, or skipped blocking external gate blocks review
+    and promotion until rerun or explicitly overridden by human review.
+  - MCP tools are a facade over the same service layer/API and cannot perform
+    any operation the token lacks scope for.
+  - Deferred explicitly: OAuth apps, user impersonation, full RBAC, generic
+    outbound webhooks, provider-specific GitHub/GitLab/Jenkins apps, external
+    board sync, and public-internet webhook hardening beyond token/HMAC.
+
+- [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11's typed decisions, manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
+
+- [ ] **M18. Branch targeting, diff review, and manual promotion** — replace
+  the narrow "merge to main" assumption with engineer-controlled branch
+  targeting. A run starts from a selected base branch, works in a MAIster run
+  branch/worktree, then promotes that result to a selected target branch by PR
+  or local merge after readiness passes.
+
+  **Expectation: launch branch selection.** Task launch UI lets the operator
+  choose Flow, runner/executor, base branch, and optionally target branch. Base
+  branch defaults to the project default branch; target branch defaults to the
+  base branch. Advanced branch controls should stay compact so the normal path
+  remains one-click.
+
+  **Expectation: worktree from base branch.** Worktree creation checks out the
+  selected base branch commit and creates the run branch from that commit. The
+  run ledger records base branch, base commit, run branch, target branch, and
+  launch-time executor/Flow selections.
+
+  **Expectation: promotion modes.** Initial modes are `local_merge` and
+  `pull_request`. Local merge merges the run branch into the target branch with
+  `--no-ff`. Pull request mode pushes/uses the run branch and creates or
+  updates a PR into the target branch. No deploy or release management is in
+  scope; production/release work stays manual outside MAIster.
+
+  **Expectation: review surface.** Review shows base branch -> run branch ->
+  target branch, returned manual takeover diffs, readiness summary, and raw diff
+  in a plain review surface. The final action says exactly where the result will
+  be promoted, for example `Promote to release/2.1`.
+
+  **Expectation: conflict handoff.** Conflicts never auto-resolve. A conflict
+  creates an assignment/manual takeover with parent repo path, target branch,
+  run branch, and exact failing command. The user resolves by hand and returns
+  through the normal assignment/artifact/gate path.
+
+  **Acceptance criteria:**
+  - Launch can select base branch and optional target branch; both are validated
+    against the project repo before worktree creation.
+  - Run branches are created from the selected base branch commit, not
+    hard-coded `main`.
+  - Review and run detail display base branch, base commit, run branch, target
+    branch, promotion mode, and readiness state.
+  - Promotion refuses unless required blocking gates are current and passed or
+    explicitly overridden.
+  - Local merge promotes run branch into target branch with `--no-ff`; conflict
+    aborts merge and creates a manual-resolution assignment.
+  - Pull request mode creates or updates one PR per run branch/target branch
+    pair and records PR URL/number as artifacts and ledger events.
+  - Promotion attempts are idempotent across retryable failures and never create
+    duplicate PRs/tags/promotion records for the same run.
+  - Deferred explicitly: deploy management, release trains, rollback
+    automation, semantic version inference, approval chains, changelog
+    generation beyond a promotion summary, and production environment control.
+
+- [ ] **M19. Reconciliation + GC** — startup hook: per-project runs vs `git worktree list`, orphan `Running` → `Crashed`. Supervisor heartbeat: dead worker mid-`Running` → `Crashed`. Cron route: GC `Abandoned/Done` worktrees + checkpointed sessions older than 7d. "Recover or discard" UI for Crashed runs.
+
+- [ ] **M20. Dogfood + external validation** — register MAIster repo in itself, ship ≥1 non-trivial PR through the **aif Flow plugin** against own backlog (validates aif-as-plugin end-to-end, Flow package lifecycle, review-driven rework, manual takeover, evidence graph review, role-owned assignments, capability registry, gate readiness, external operations API/MCP facade, and retry loop on a real task). Then onboard 3 installations on external repos using either `aif` or `superpowers` plugins, ≥1 PR shipped end-to-end on each within T+21d after dogfood. 0/3 → thesis not validated, reassess wedge.
 
 ## Completed
 

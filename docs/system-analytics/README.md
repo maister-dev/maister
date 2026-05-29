@@ -20,12 +20,14 @@ Every file in this folder follows the structure defined in
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
 | Projects | [`projects.md`](projects.md) | Registration, slug derivation, archival, Flow plugin install on register. |
+| Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
 | Flows | [`flows.md`](flows.md) | Plugin packaging, step DSL (cli/agent/guard/human), executor override resolution. |
 | Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
 | Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint/resume, crash recovery. |
 | Executors | [`executors.md`](executors.md) | Executor identity, env-router vs CCR, per-step override resolution. |
-| Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, merge policy, reconciliation on startup. |
+| Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, promotion policy, reconciliation on startup. |
 | HITL | [`hitl.md`](hitl.md) | Three HITL kinds (permission / form / human), keep-alive activity tracking. |
+| External operations | [`external-operations.md`](external-operations.md) | API tokens, external gate reports, and thin MCP facade for CI/scripts/agents. |
 
 ## What this folder is NOT
 

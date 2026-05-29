@@ -26,7 +26,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `project_members` | Per-project role assignments. UNIQUE `(project_id, user_id)`. | `projects.id`, `users.id` |
 | `projects` | Registered repos. `slug` + `repo_path` both UNIQUE. | (root) |
 | `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
-| `flows` | Installed Flow plugins per project, tag-pinned. | `projects.id` |
+| `flows` | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement. | `projects.id` |
 | `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
@@ -140,7 +140,10 @@ as implicit `owner` of every project.
 ```
 
 `slug` is kebab-cased from `name`. Archival is soft (`archivedAt`); no
-hard-delete in the current target. Archived `repo_path` stays reserved against collisions.
+hard-delete in the current target. Archived `repo_path` stays reserved against
+collisions. `mainBranch` is the current column name; product docs now call this
+`default_branch` because branch-targeted runs use it as both default base and
+default target branch.
 
 ## `executors`
 
@@ -193,6 +196,11 @@ executor id resolves within its project's namespace, never cross-project.
 ```
 
 UNIQUE `(projectId, flowRefId)`.
+
+Planned M10 replaces the mutable "one row is the current install" shape with
+separate package-revision and project-enablement records. Existing runs already
+have the critical safety property: they snapshot `runs.flow_revision` and do
+not resolve runtime bytes through mutable `flows.installed_path`.
 
 ## `tasks`
 
@@ -260,6 +268,9 @@ Indexed on `(projectId, status)` for portfolio/board queries and on
 ```
 
 One workspace per run. `worktreePath` is globally unique across the host.
+Planned M18 adds `baseBranch`, `baseCommit`, `targetBranch`, and
+`promotionMode` metadata so the run ledger can explain branch-targeted
+promotion without relying on naming conventions.
 
 ## `step_runs`
 
@@ -335,6 +346,30 @@ step — they never reach the side-effect. Permission rows additionally
 carry `schema.supervisorSessionId` so the web tier can route the
 deferred resolution to the right supervisor session without an extra
 round-trip.
+
+## Planned roadmap persistence
+
+The roadmap introduces product objects that are not yet represented as first
+class tables in the current Drizzle schema. They should land as additive
+migrations; do not overload current JSON blobs until the implementation plan
+explicitly chooses that as a temporary bridge.
+
+| Planned object | Why it exists | Likely parent |
+| -------------- | ------------- | ------------- |
+| `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
+| `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
+| `node_attempts` or expanded `step_runs` | Graph-node attempts, lifecycle section status, checkpoint refs, rerun/staleness state. | `runs.id` |
+| `artifacts` | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews, and external reports. | `runs.id`, node/step attempt |
+| `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
+| `gate_results` | Flow-declared readiness decisions over artifacts, including command, skill, AI, external, artifact-required, and human gates. | `runs.id`, artifact |
+| `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
+| `capability_records` | Project-visible registry for MCP servers, skills, tools, agent settings, env profiles, restrictions, and mappings. | `projects.id` |
+| `api_tokens` | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata. | `projects.id` |
+| `external_operation_events` | Audit/ledger records for token or MCP actions: task create, run launch, artifact attach, gate report, readiness read. | `projects.id`, optional run/task |
+
+Launch-time snapshots remain mandatory for every mutable surface: Flow package
+revision, capability profile revision, branch target, gate policy, and executor
+selection must be recoverable from the run ledger after later project changes.
 
 ## Cascade chain
 

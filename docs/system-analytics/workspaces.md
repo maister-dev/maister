@@ -5,7 +5,7 @@
 A **workspace** is the git worktree where a run executes. Every run
 gets a fresh worktree under `.maister/<slug>/runs/<runId>/`, isolated
 from other concurrent runs on the same project. Workspace lifecycle
-covers creation, merge, archival, and reconciliation on host or
+covers creation, promotion, archival, and reconciliation on host or
 process restart.
 
 ## Domain entities
@@ -14,6 +14,10 @@ process restart.
 - **Worktree path** — absolute filesystem path, globally UNIQUE.
 - **Branch** — derived as `<branch_prefix><task-slug>-<attempt>` (e.g.
   `maister/bugfix-login-button-3`).
+- **Base branch** — branch selected at launch; the run branch is created from
+  this branch's launch-time commit.
+- **Target branch** — branch selected for promotion. Defaults to the base
+  branch but can differ for engineer-controlled workflows.
 - **Parent repo** — `projects.repo_path`. The worktree shares `.git`
   with the parent.
 
@@ -23,19 +27,19 @@ process restart.
 stateDiagram-v2
     [*] --> Created: git worktree add
     Created --> Active: run promoted to Running
-    Active --> Merged: git merge --no-ff succeeds<br/>run status=Done
+    Active --> Merged: promotion succeeds<br/>run status=Done
     Active --> Stale: run terminal<br/>(Failed | Crashed | Abandoned)
     Stale --> Removed: GC cron after 7d<br/>git worktree remove
     Merged --> Removed: GC cron after 7d
-    Active --> ConflictReview: merge conflict<br/>run stays Review
-    ConflictReview --> Active: operator resolves<br/>and re-runs merge
+    Active --> ConflictReview: local promotion conflict<br/>run stays Review
+    ConflictReview --> Active: operator resolves<br/>and retries promotion
     ConflictReview --> Stale: operator abandons
     Removed --> [*]
 ```
 
 ## Process flows
 
-### Create a worktree (Implemented)
+### Create a worktree (Implemented; branch targeting Planned)
 
 ```mermaid
 sequenceDiagram
@@ -43,18 +47,21 @@ sequenceDiagram
     participant FS as Filesystem
     participant DB as Postgres
 
-    W->>DB: read project (repo_path, branch_prefix)
+    W->>DB: read project (repo_path, branch_prefix, default_branch)
+    W->>W: baseBranch = launch.baseBranch ?? default_branch
+    W->>W: targetBranch = launch.targetBranch ?? baseBranch
     W->>W: branchName = {branch_prefix}{task-slug}-{attempt}
     W->>W: worktreePath = .maister/{slug}/runs/{runId}/
-    W->>FS: git -C {repo_path} worktree add {worktreePath} -b {branchName}
+    W->>FS: git -C {repo_path} rev-parse {baseBranch}
+    W->>FS: git -C {repo_path} worktree add {worktreePath} -b {branchName} {baseBranch}
     alt git error
         FS-->>W: non-zero exit
         W-->>W: throw MaisterError(PRECONDITION)
     end
-    W->>DB: INSERT workspaces { run_id, project_id, branch, worktree_path, parent_repo_path }
+    W->>DB: INSERT workspaces { run_id, project_id, branch, base_branch, base_commit, target_branch, worktree_path, parent_repo_path }
 ```
 
-### Merge on Review (Designed)
+### Promote on Review (Designed)
 
 ```mermaid
 sequenceDiagram
@@ -63,11 +70,17 @@ sequenceDiagram
     participant FS as Filesystem
     participant DB as Postgres
 
-    U->>W: POST /api/runs/[id]/merge
+    U->>W: POST /api/runs/[id]/promote
     W->>DB: lookup run + workspace + project
-    W->>FS: git -C {repo_path} checkout {main_branch}
-    W->>FS: git -C {repo_path} merge --no-ff {workspace.branch}
-    alt clean merge
+    W->>W: verify readiness gates current/pass/overridden
+    alt mode = local_merge
+        W->>FS: git -C {repo_path} checkout {target_branch}
+        W->>FS: git -C {repo_path} merge --no-ff {workspace.branch}
+    else mode = pull_request
+        W->>FS: git -C {repo_path} push {remote} {workspace.branch}
+        W->>W: create/update PR {workspace.branch} -> {target_branch}
+    end
+    alt promotion succeeds
         FS-->>W: exit 0
         W->>DB: runs.status=Done, runs.ended_at=now
         W-->>U: 200 Done
@@ -121,13 +134,22 @@ flowchart LR
   enforced at the DB layer.
 - Branch name pattern is exactly `<branch_prefix><task-slug>-<attempt>`
   and is created with `git worktree add ... -b`.
+- **(Planned)** Launch can select `base_branch` and optional `target_branch`.
+  `target_branch` defaults to `base_branch`; `base_branch` defaults to
+  `project.default_branch`.
+- **(Planned)** Worktree creation records `base_branch`, `base_commit`,
+  `branch`, `target_branch`, and promotion mode in the run ledger. Runs are not
+  hard-coded to start from or promote to `main`.
 - Worktree creation runs preconditions (clean parent, branch free,
   path free) BEFORE the `git worktree add` call; failure throws
   `PRECONDITION` with no filesystem side effect.
 - Worktree shares `.git` with the parent repo at
   `projects.repo_path`; the parent is the single source of truth.
-- Merge policy is `git merge --no-ff` ONLY; conflict always invokes
-  `git merge --abort` and leaves the run in `Review`.
+- Local promotion merge policy is `git merge --no-ff` ONLY; conflict always
+  invokes `git merge --abort`, leaves the run in `Review`, and creates a
+  manual-resolution assignment.
+- Pull-request promotion creates or updates one PR from run branch to target
+  branch and records the PR URL/number as artifacts and ledger events.
 - Reconciliation runs on every Next.js boot AND every supervisor boot,
   comparing `runs`, `git worktree list`, and supervisor's live
   sessions.
@@ -151,14 +173,14 @@ flowchart LR
 - **`git worktree remove` fails** (locked worktree, missing dir) — GC
   logs and continues; row stays without `removed_at`. Operator can
   force-cleanup manually.
-- **Concurrent merges on the same `main_branch`** — current target trusts
-  the parent repo is single-writer (one operator). Phase 2 may add a merge
+- **Concurrent promotions on the same `target_branch`** — current target trusts
+  the parent repo is single-writer (one operator). Phase 2 may add a promotion
   queue.
 
 ## Linked artifacts
 
 - ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
-  [ADR-012 Merge policy](../decisions.md#adr-012-merge-policy-no-ff-abort-on-conflict).
+  [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table).
 - Related: [`runs.md`](runs.md), [`projects.md`](projects.md).
 - Source: planned `web/lib/worktree.ts`, `web/lib/reconcile.ts`.

@@ -114,7 +114,7 @@ task back to `Backlog`. Only explicit user `Discard` sends a task to
 **Runs** (execution axis):
 
 ```
-Pending -> Running -> Review -> Done
+Pending -> Running -> Review -> Done (promotion succeeds)
                   \-> NeedsInput <-> NeedsInputIdle -> Abandoned
                   \-> Crashed -> Running (Recover)
                               \-> Abandoned (Discard)
@@ -135,6 +135,12 @@ full state diagram.
   the row with `MAX(started_at)` for the task today; the designed
   run-attempt schema switches to `MAX(runs.attempt_number)` once that
   column lands.
+- Planned M18 adds branch-target metadata to `workspaces` or the run ledger:
+  base branch, base commit, target branch, and promotion mode.
+- Planned roadmap tables attach to runs for graph maturity: artifacts,
+  artifact edges, gate results, assignments, external operation events, and
+  richer node attempts. These are intentionally not drawn in the current ERD
+  until migrations exist.
 
 ## Linked artifacts
 

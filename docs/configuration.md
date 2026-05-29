@@ -23,8 +23,11 @@ schemaVersion: 2
 project:
   name: myapp
   repo_path: /repos/myapp
-  main_branch: main           # default: main
+  default_branch: main        # default base/target branch
   branch_prefix: maister/     # default: maister/
+promotion:
+  mode: pull_request          # local_merge | pull_request
+  remote: origin              # for pull_request mode
 executors:
   - id: claude-sonnet
     agent: claude
@@ -43,6 +46,32 @@ executors:
     agent: codex
     model: gpt-5-codex
 default_executor: claude-sonnet
+capabilities:
+  mcps:
+    - id: github
+      source: project
+      command: github-mcp-server
+      agents: [claude, codex]
+  skills:
+    - id: aif-implement
+      source: git
+      url: github.com/org/aif-skills
+      version: v1.0.0
+      agents: [claude, codex]
+  tools:
+    - id: shell
+      agents:
+        claude: Bash
+        codex: shell
+      enforceability: enforced
+  restrictions:
+    - id: no-global-installs
+      enforceability: instructed
+  settings:
+    - id: codex-default-step
+      agent: codex
+      source: project
+      path: .maister/capabilities/codex-default/settings.json
 flows:
   - id: bugfix
     source: github.com/org/maister-flow-bugfix
@@ -72,11 +101,87 @@ flows:
 
 | Field | Default | Notes |
 | ----- | ------- | ----- |
-| `project.main_branch` | `main` | Merge target for runs on this project. |
+| `project.default_branch` | `main` | Default base branch for new runs and default target branch for promotion. `project.main_branch` remains accepted as a backwards-compatible alias until the branch-targeting migration lands. |
 | `project.branch_prefix` | `maister/` | Run-branch prefix; combined with the slug. |
+| `promotion.mode` | `local_merge` | Planned M18. `local_merge` merges the run branch into the target branch locally; `pull_request` creates/updates a PR from the run branch into the target branch. |
+| `promotion.remote` | unset | Planned M18. Remote name used by pull-request mode. |
 | `executors[].env` | `null` | Map of env vars passed to the spawned agent (env-router pattern). |
 | `executors[].router` | unset | `ccr` enables `@musistudio/claude-code-router` multi-provider routing inside the session. |
 | `flows[].executor_override` | unset | When set, must reference an `id` in `executors[]`. Persisted to `flows.executor_override_id` by `upsertExecutorsFromConfig()` and slots into the override chain at tier 3 (between task override and project default). |
+
+### Planned Flow package lifecycle
+
+M10 keeps `maister.yaml` as the project-desired Flow list but moves package
+state into MAIster's database and UI. The file declares desired ids, sources,
+version labels, and optional executor overrides. Runtime package records store
+resolved revisions, manifest digests, compatibility results, trust decisions,
+setup status, enablement, upgrade history, and rollback targets.
+
+The important boundary: editing `maister.yaml` can propose a package install or
+upgrade, but it does not silently trust, enable, run setup, or mutate active
+runs. The operator reviews package metadata in the UI first. New runs use the
+project's enabled package revision; active runs keep their snapshotted
+`runs.flow_revision`.
+
+### Planned `capabilities` registry
+
+M14 adds a project-visible registry for names that Flow graph node settings can
+reference: MCP servers, skills, tools, agent definitions, agent settings files,
+environment profiles, and restrictions. The registry is intentionally
+project-scoped first. Public marketplace, organization policy, and cross-project
+promotion stay deferred.
+
+Each capability record has:
+
+| Field | Purpose |
+| ----- | ------- |
+| `id` | Stable name referenced by Flow node settings. |
+| `kind` | One of `mcp`, `skill`, `tool`, `agent_definition`, `agent_settings`, `env_profile`, `restriction`. |
+| `source` | `project`, `flow`, `git`, `local`, or `system`. |
+| `version` / `revision` | User pin and resolved immutable revision when external. |
+| `agents` | Supported executor agent ids, with optional concrete per-agent mapping. |
+| `trust` | Current install/trust status shown before first use. |
+| `enforceability` | `enforced`, `instructed`, or `unsupported` for the selected executor. |
+
+Runtime must snapshot the resolved capability profile into the run ledger before
+an AI node starts. If a node requires strict enforcement but the selected
+executor can only receive that capability as an instruction, launch fails rather
+than silently weakening the boundary.
+
+The Flow runner also owns scoped materialization. For a fresh per-node AI
+session, it writes or links only that node's allowed skills, MCP config, adapter
+`settings.json` or equivalent settings file, environment profile, and tool
+restriction files before the node starts, then removes or restores them when the
+node ends. For a long-living ACP session, those files are session-wide: every AI
+node inside the session must use the same resolved capability profile. A Flow
+that needs a different profile must declare a new session boundary, unless the
+adapter supports an explicit safe profile-swap operation.
+
+### Planned external operations configuration
+
+M16 external operations are configured from the MAIster UI and database, not
+from `maister.yaml`. API tokens are service credentials; putting token secrets
+or token hashes in a project repo would make rotation and audit worse.
+
+Each API token record has:
+
+| Field | Purpose |
+| ----- | ------- |
+| `id` | Internal stable identifier used for audit and gate reports. |
+| `name` | Human-readable label shown in Project Settings. |
+| `prefix` | Non-secret token prefix shown after creation for identification. |
+| `secret_hash` | One-way hash of the token secret. The raw secret is shown once. |
+| `project_id` | The only project the token can operate on. |
+| `scopes` | Allowed operations: `tasks:create`, `tasks:read`, `tasks:update`, `runs:launch`, `runs:read`, `readiness:read`, `artifacts:attach`, `gates:report`. |
+| `expires_at` | Optional expiry. Expired tokens fail closed. |
+| `revoked_at` | Revocation timestamp. Revoked tokens fail closed. |
+| `created_by` / `created_at` | Operator and time that created the token. |
+| `last_used_at` | Last accepted request/tool call timestamp. |
+
+The thin MCP facade uses the same token/scopes or a local session credential
+that resolves to the same internal token actor. MCP configuration may expose the
+MAIster API base URL and token to an agent process, but MCP never owns a
+separate authorization model.
 
 ### Cross-reference checks
 
@@ -85,6 +190,9 @@ flows:
 1. `default_executor` must exist in `executors[].id`.
 2. Every `flows[].executor_override` must exist in `executors[].id`.
 3. No duplicate executor IDs; no duplicate flow IDs.
+4. **(Planned M14)** Every Flow node capability reference must resolve to a
+   project, Flow-shipped, or system capability record, and that record must
+   support the selected executor agent.
 
 Any failure throws `MaisterError({ code: "CONFIG" })` with the offending
 field path in the message.

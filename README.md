@@ -3,9 +3,10 @@
 > The control plane for AI-powered software delivery.
 
 MAIster turns backlog tasks into supervised delivery Flows: workspace creation,
-ACP-driven agent execution, HITL, diff review, and merge. It is a Web control
-plane plus a separate ACP supervisor daemon. It wraps existing agents and Flow
-plugins; it does not replace Claude Code, Codex, or AI Factory.
+ACP-driven agent execution, HITL, evidence-backed review, and branch-targeted
+promotion. It is a Web control plane plus a separate ACP supervisor daemon. It
+wraps existing agents and Flow plugins; it does not replace Claude Code, Codex,
+or AI Factory.
 
 ## Quick Start
 
@@ -54,8 +55,9 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
 - **Live run streaming** — supervisor writes per-step logs and
   `run.events.jsonl`; the web SSE bridge replays durable events with
   `Last-Event-ID`.
-- **Diff + merge** — raw `git diff` rendered as `<pre>`, `git merge --no-ff`
-  on the parent's `main_branch`; conflicts abort to manual resolve.
+- **Diff + promotion** — raw `git diff` rendered as `<pre>`, then promote the
+  run branch to a selected target branch by local merge or pull request.
+  `local_merge` uses `git merge --no-ff`; conflicts abort to manual resolve.
 - **Crash recovery** — startup reconciles the `runs` table against
   `git worktree list` per project; orphaned `Running` rows become `Crashed`.
 - **Concurrency** — global cap `MAISTER_MAX_CONCURRENT_RUNS=3` across all
@@ -80,7 +82,7 @@ schemaVersion: 2
 project:
   name: myapp
   repo_path: /repos/myapp
-  main_branch: main
+  default_branch: main
   branch_prefix: maister/
 executors:
   - id: claude-sonnet

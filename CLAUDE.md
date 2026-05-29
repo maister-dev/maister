@@ -7,7 +7,7 @@
 Product spine:
 
 ```
-Backlog -> Flow -> Workspace -> Headless Agents -> HITL -> Diff Review -> Merge
+Project -> Flow package -> Task -> Run -> Workspace -> Headless Agents -> HITL -> Evidence Gates -> Review -> Promote
 ```
 
 Current wedge:
@@ -190,7 +190,7 @@ schemaVersion: 2
 project:
   name: myapp
   repo_path: /repos/myapp
-  main_branch: main
+  default_branch: main
   branch_prefix: maister/
 executors:
   - id: claude-sonnet
@@ -267,11 +267,13 @@ observability traces.
 - Cron route GCs `Abandoned/Done` worktrees + checkpointed sessions older
   than 7d across all projects.
 
-### 8. Merge policy
+### 8. Promotion policy
 
-`git merge --no-ff` on parent's `main_branch`. Conflict → abort, run stays
-`Review`, UI surfaces "Conflict — resolve manually" with parent repo path.
-No auto-resolve.
+After review/readiness gates pass, MAIster promotes the run branch to the
+selected target branch. Initial promotion modes are `local_merge` and
+`pull_request`. `local_merge` uses `git merge --no-ff`; conflict → abort, run
+stays `Review`, UI surfaces "Conflict — resolve manually" with parent repo
+path, run branch, target branch, and failing command. No auto-resolve.
 
 ## Current Scope
 
@@ -312,7 +314,7 @@ No auto-resolve.
 - **i18n**: EN + RU from day one.
 - **ACP-driven HITL**, **SSE pipe-to-disk**, **typed errors**,
   **multi-executor**, **`maister.yaml` v2 + Flow plugins**, **worktree
-  lifecycle**, **merge policy** — see §1-8 above.
+  lifecycle**, **promotion policy** — see §1-8 above.
 - **Concurrency**: global cap = 3 (env-configurable). Queue + position badge.
 
 ## Phase 2 Candidates
@@ -398,8 +400,8 @@ session, `session/update` events stream to UI → at least one HITL round-trip
 works for both flavors (binary approve/deny via `session/request_permission`
 AND structured form via artifact) → NeedsInput keep-alive extends on web
 activity → on idle timeout, run checkpoints to `NeedsInputIdle`; user
-response respawns via `--resume` → diff visible → merge-to-main works on
-clean-merge case → run survives Next.js restart AND supervisor restart with
+response respawns via `--resume` → diff visible → branch-targeted promotion
+works on clean local-merge or PR case → run survives Next.js restart AND supervisor restart with
 `Crashed` reconciliation → 3 concurrent runs scheduled across projects, 4th
 queues with position badge → retry loop works (Failed/Abandoned run → task
 back to Backlog → Launch again → attempt N+1) → per-step executor override

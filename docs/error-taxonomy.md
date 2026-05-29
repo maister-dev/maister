@@ -14,8 +14,8 @@ throw new MaisterError("CONFIG", "DB_URL env is required");
 ## Why a typed taxonomy
 
 - **UI rendering.** Components switch on `code` to pick the right action
-  ("Recover" for `CRASH`, "Resolve manually" for `CONFLICT`, "Reset config"
-  for `CONFIG`).
+  ("Recover" for `CRASH`, "Resolve manually" for a local promotion
+  `CONFLICT`, "Reset config" for `CONFIG`).
 - **Observability.** Codes are stable identifiers that survive message
   rewrites; logs and metrics can group by them.
 - **Discipline.** No string-matching on `err.message` anywhere. If a new
@@ -35,7 +35,7 @@ union in `web/lib/errors.ts`.
 | `NEEDS_INPUT` | The run paused for human input (ACP `session/request_permission` or `needs-input.json` artifact). | Supervisor on ACP notification or artifact appearance. | Render HITL form / approve-deny prompt. |
 | `HITL_TIMEOUT` | Supervisor's pending-permission deferred expired (M7) — typically `MAISTER_KEEPALIVE_MINUTES` elapsed without a `/respond` ack. **NOT** raised for the `NeedsInputIdle → Abandoned` transition (M8) — that is a sweeper-driven state flip with no error surface, NOT a `HITL_TIMEOUT`. | Supervisor `POST /sessions/:id/input`, web `/respond` HITL_TIMEOUT branch. | Run → `Failed`; respond returns 410 terminal. |
 | `CRASH` | Worker died mid-`Running` without a graceful checkpoint. | Supervisor heartbeat watcher; startup reconcile. | "Recover or discard" panel with `acpSessionId` resume option. |
-| `CONFLICT` | `git merge --no-ff` could not auto-merge. | `POST /api/runs/[id]/merge`. | "Resolve manually" with parent repo path. |
+| `CONFLICT` | Local promotion could not auto-merge the run branch into the selected target branch. | Planned `POST /api/runs/[id]/promote` when `promotion.mode = local_merge`. | "Resolve manually" with parent repo path, run branch, target branch, and failing command. |
 | `CONFIG` | A config file or env var is missing or malformed (`maister.yaml`, `flow.yaml`, `form_schema`, `DB_URL`). | `lib/config.ts` validators; `lib/db/client.ts`. | Show the offending field path; refuse to start. |
 | `EXECUTOR_UNAVAILABLE` | The executor named in run launcher / project override / Flow recommendation is not registered for this project. Also: supervisor 5xx during M8 keep-alive sweeper checkpoint, or supervisor 5xx / network failure during M8 resume from the HITL respond idle branch. Both M8 callers treat the code as retryable — sweeper re-attempts on next tick, respond returns 503 `{terminal:false}` to the operator. | Run-launch override resolution; `keepalive-sweeper` Pass 1; `resumeRun` from `/respond` idle branch. | "Pick a different executor" (launch path); silently retry next tick (sweeper); 503 `{terminal:false}` to operator (respond). |
 | `FLOW_INSTALL` | `git clone --branch <tag>` of a Flow plugin failed, or the manifest was rejected. | Project registration (`POST /api/projects`); Flow loader. | Show the failing source URL + tag, link to the manifest error. |

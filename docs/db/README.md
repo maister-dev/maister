@@ -9,6 +9,11 @@ The diagrams in this folder are the **visual** view. If they disagree
 with the Drizzle schema, the Drizzle schema wins — open a PR to fix
 the ERD.
 
+Roadmap persistence for Flow package revisions, artifacts, gates,
+assignments, capability records, API tokens, and external operation events is
+tracked in [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence)
+until migrations exist.
+
 ## Files
 
 | File | Scope |

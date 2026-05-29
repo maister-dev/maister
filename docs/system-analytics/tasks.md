@@ -11,6 +11,12 @@ relationship to runs ([ADR-018](../decisions.md#adr-018-task--run-cardinality-is
 
 - **Task** — board card. Persisted as `tasks` row.
 - **Run** — execution attempt. See [`runs.md`](runs.md).
+- **Assignment** — claimable human work item attached to the latest run,
+  planned for role-owned waits such as permission, form, review, manual
+  takeover, and conflict resolution.
+- **External operation** — planned token-authenticated API or MCP action that
+  can create/read/update tasks, launch runs, or report evidence without using
+  the web UI.
 - **Attempt number** — monotonic counter per task, starting at 1. Current code
   stores it as a **mutable high-water mark** on `tasks.attempt_number`
   bumped inside the Launch transaction; there is no DB-level guarantee
@@ -39,7 +45,10 @@ stateDiagram-v2
 Notes:
 
 - The InFlight bucket contains runs in any of `Pending | Running |
-NeedsInput | NeedsInputIdle | Review | Crashed`.
+NeedsInput | NeedsInputIdle | HumanWorking | Review | Crashed`.
+- Planned assignment-aware board cards show the latest active assignment:
+  role, assignee or unclaimed state, elapsed time, action kind, branch/ref when
+  relevant, and stale-evidence summary.
 - "Latest run" on the card today is `runs ORDER BY started_at DESC
 LIMIT 1 WHERE task_id = ?`. Once `runs.attempt_number`
   lands this becomes `MAX(attempt_number) WHERE task_id = ?`.
@@ -71,6 +80,25 @@ sequenceDiagram
     DB-->>W: row
     W-->>UI: 201 { id, status, ... }
     UI-->>U: card appears in Backlog column
+```
+
+### Create a task from external operations (Planned M16)
+
+```mermaid
+sequenceDiagram
+    participant EXT as CI/script/agent MCP
+    participant W as Web tier
+    participant DB as Postgres
+
+    EXT->>W: POST /api/projects/[slug]/tasks<br/>Authorization: Bearer token
+    W->>DB: SELECT api_token WHERE prefix/hash/project/scope valid
+    alt invalid, expired, revoked, wrong project, or missing scope
+        W-->>EXT: 401/403 PRECONDITION
+    end
+    W->>W: Validate title, prompt, flow, optional executor
+    W->>DB: INSERT tasks (status=Backlog, actor=token)
+    W->>DB: INSERT audit/event record
+    W-->>EXT: 201 { id, status, ... }
 ```
 
 ### Launch a task — retry loop (Implemented launch, UI designed)
@@ -120,6 +148,19 @@ flowchart LR
     UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
 
+### Assignment-aware board card (Planned)
+
+```mermaid
+flowchart TD
+    Run[Latest run] --> Active{active assignment?}
+    Active -- no --> Normal[show run status<br/>Pending/Running/Review/Crashed]
+    Active -- yes --> Card[show role + assignee<br/>elapsed time + action kind]
+    Card --> Branch{branch/ref?}
+    Branch -- yes --> BranchUi[show checkout/return affordance]
+    Branch -- no --> HitlUi[show response/review affordance]
+    Card --> Evidence[show current/stale<br/>evidence summary]
+```
+
 ## Expectations
 
 - Task ↔ Run cardinality is 1:N; a task can spawn many runs over its
@@ -138,12 +179,29 @@ flowchart LR
   `MAX(attempt_number) WHERE task_id = ?` on `runs`.
 - Board state is exactly `Backlog | InFlight | Done | Abandoned`.
 - `InFlight` is a derived bucket; it contains tasks whose latest run is
-  in `Pending | Running | NeedsInput | NeedsInputIdle | Review |
-  Crashed`.
+  in `Pending | Running | NeedsInput | NeedsInputIdle | HumanWorking |
+  Review | Crashed`.
+- **(Planned)** Human-owned waits create assignments. The latest active
+  assignment is rendered directly on the task card and in the portfolio inbox;
+  the card must make clear that the task is waiting on a role/person, not just
+  "running".
+- **(Planned)** Roles are routing labels and audit context, not permission
+  boundaries. Any project teammate can claim, respond, return, or merge in the
+  current target; MAIster records who acted without blocking on role mismatch.
+- **(Planned)** Assignment statuses are
+  `Open | Claimed | Working | Returned | Responded | Cancelled | Superseded`.
+  Only `Open | Claimed | Working` appear as actionable inbox items.
+- **(Planned)** Manual takeover assignments include branch/ref, checkout
+  affordance, return action, elapsed time, and stale-evidence summary.
 - Latest run terminates in `Failed | Crashed | Abandoned` → task auto-
   returns to `Backlog` and Launch button re-appears.
 - `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
 - Title and prompt are non-empty at creation.
+- **(Planned M16)** External task creation uses the same validation as the UI
+  and records the API token or MCP actor as the creator/audit subject.
+- **(Planned M16)** The thin MCP facade can create/list/get/update tasks only
+  through the same domain path as the API; it cannot bypass token scopes,
+  assignment rules, or run launch preconditions.
 - Launch runs precondition checks (clean repo, branch free, worktree
   path free, executor registered) BEFORE inserting the `runs` row.
 - Global concurrency cap exceeded on Launch → run inserted as

@@ -10,8 +10,9 @@ the content-addressed cache.
 
 For what a Flow IS (entities, step DSL, lifecycle) see
 [`docs/system-analytics/flows.md`](system-analytics/flows.md). For the
-manifest schema (`flow.yaml` v1) see
-[Configuration](configuration.md).
+planned package lifecycle product surface see
+[`docs/system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
+For the manifest schema (`flow.yaml` v1) see [Configuration](configuration.md).
 
 ## Layout
 
@@ -42,15 +43,21 @@ The system cache is **content-addressed**, not tag-addressed:
 - Re-installing a different tag that resolves to the same commit
   shares the cache directory with the original install.
 
-`flows.installed_path`, `flows.version`, `flows.revision`, and
-`flows.manifest` are all updated in place on upgrade — the row is
-the project's "currently installed" pointer. **Runs in flight do not
-read this column**: each run snapshots `flows.revision` into
-`runs.flow_revision` at launch and the runner derives the bundle
-path from `(flowRefId, runs.flow_revision)` via `systemCachePath`.
-A flow upgrade therefore cannot mutate the bytes of a still-running
-flow — the SHA-pinned directory remains intact and the runner keeps
-reading from it until the run completes or is discarded.
+Current implementation updates `flows.installed_path`, `flows.version`,
+`flows.revision`, and `flows.manifest` in place on upgrade — the row is
+the project's "currently installed" pointer. **Runs in flight do not read this
+column**: each run snapshots `flows.revision` into `runs.flow_revision` at
+launch and the runner derives the bundle path from `(flowRefId,
+runs.flow_revision)` via `systemCachePath`. A flow upgrade therefore cannot
+mutate the bytes of a still-running flow — the SHA-pinned directory remains
+intact and the runner keeps reading from it until the run completes or is
+discarded.
+
+Planned M10 moves the mutable project pointer out of the package revision
+record: package revisions become immutable rows, while project enablement
+selects which installed revision new runs should use. That unlocks explicit
+install, trust, enable, upgrade, rollback, disable, and removal UX without
+weakening the run pinning contract above.
 
 Local-source installs (file:// to a non-git directory, used by
 test fixtures and in-repo plugins) use the literal `"unknown"` sentinel as the

@@ -76,7 +76,7 @@ erDiagram
         text slug UK
         text name
         text repo_path UK
-        text main_branch
+        text main_branch "current column; product default_branch"
         text branch_prefix
         text maister_yaml_path
         text default_executor_id
@@ -101,8 +101,8 @@ erDiagram
         text flow_ref_id "UNIQUE per project"
         text source "git URL"
         text version "tag"
-        text revision "git SHA"
-        text installed_path
+        text revision "git SHA; mutable current pointer"
+        text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
         text recommended_executor_id
@@ -181,6 +181,14 @@ erDiagram
         timestamp created_at
     }
 ```
+
+## Planned roadmap extensions
+
+The current ERD intentionally shows only implemented tables. Roadmap M10-M18
+adds additive persistence for Flow package revisions and project enablement,
+graph node attempts, artifacts and artifact edges, gate results, assignments,
+capability records, API tokens, external operation events, and branch promotion
+metadata. See [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes
 

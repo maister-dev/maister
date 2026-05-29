@@ -16,7 +16,7 @@ erDiagram
         text slug UK "kebab-case derived from name"
         text name
         text repo_path UK "absolute filesystem path"
-        text main_branch "default 'main'"
+        text main_branch "current column; product default_branch"
         text branch_prefix "default 'maister/'"
         text maister_yaml_path "where the manifest was loaded from"
         text default_executor_id "FK validated app-side"
@@ -41,8 +41,8 @@ erDiagram
         text flow_ref_id "id from maister.yaml flows[]"
         text source "git URL"
         text version "tag (lock semantics)"
-        text revision "git SHA"
-        text installed_path "resolved symlink target"
+        text revision "git SHA; mutable current pointer"
+        text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
         text recommended_executor_id "nullable, app-side FK"
@@ -76,6 +76,9 @@ erDiagram
   string (not by row id).
 - `flows.executor_override_id` stores the per-flow override from
   `maister.yaml flows[].executor_override`.
+- Planned M10 splits immutable Flow package revisions from project Flow
+  enablement. Until that lands, `flows` is still the mutable current pointer;
+  run safety comes from `runs.flow_revision`.
 
 ## Linked artifacts
 

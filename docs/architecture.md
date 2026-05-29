@@ -10,7 +10,7 @@ Implementation status legend: **Implemented** present in the current branch ·
 
 Current state: web foundation, DB schema, Flow installer/runner, executor
 resolution, scheduler, `POST /api/runs`, durable run SSE, and HITL response
-delivery are implemented. Project registration UI, diff/merge routes,
+delivery are implemented. Project registration UI, diff/promotion routes,
 keep-alive checkpoint/resume, recovery, and GC remain designed.
 
 ## C4 Context — system and its world
@@ -25,7 +25,7 @@ C4Context
 
     Person(operator, "Operator", "Solo-technical CEO / CIO / staff engineer running several projects in parallel.")
 
-    System(maister, "MAIster", "Control plane: portfolio, board, runs, HITL, diff review, merge.")
+    System(maister, "MAIster", "Control plane: portfolio, board, runs, HITL, diff review, promotion.")
 
     System_Ext(anthropic, "Anthropic API", "Claude Sonnet / Haiku / Opus inference. Default LLM provider.")
     System_Ext(openai, "OpenAI Codex API", "Codex (GPT-5-Codex) inference for the codex executor.")
@@ -37,7 +37,7 @@ C4Context
     Rel(maister, anthropic, "Claude inference", "HTTPS (via claude-agent-acp)")
     Rel(maister, openai, "Codex inference", "HTTPS (via codex-acp)")
     Rel(maister, thirdparty, "Alternative inference", "HTTPS (env-router or CCR)")
-    Rel(maister, git, "Clones Flow plugins, may push merged branches", "HTTPS / SSH")
+    Rel(maister, git, "Clones Flow plugins, may push promoted run branches", "HTTPS / SSH")
     Rel(maister, fs, "Reads parent repos, writes .maister/ subtree", "POSIX")
 ```
 
@@ -59,7 +59,7 @@ C4Context
   (z.ai GLM, OpenRouter, anyscale) configured per-executor via
   `executor.env` (env-router) or via CCR.
 - **Git host** — GitHub or self-hosted. Read-only for Flow plugin
-  install. Push semantics for merged branches are operator-controlled.
+  install. Push semantics for promoted run branches are operator-controlled.
 - **Host filesystem** — parent repos at `executors[].repo_path`,
   per-run worktrees at `.maister/<slug>/runs/<run-id>/`, system Flow
   cache at `~/.maister/flows/<id>@<tag>/`.
@@ -267,7 +267,7 @@ These components remain planned or partially implemented:
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
 | `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Designed |
 | `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Designed |
-| `app/api/runs/[id]/merge/route.ts` | Route Handler | `git merge --no-ff`; conflict → abort + Review. | Designed |
+| `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote run branch to target branch by `local_merge` or `pull_request`; local merge conflict → abort + Review/manual resolution. | Designed |
 
 ## Dependency rules
 
@@ -361,8 +361,8 @@ stateDiagram-v2
     Crashed --> Running: user clicks Recover<br/>(--resume from acp_session_id)
     Crashed --> Abandoned: user clicks Discard
 
-    Review --> Done: user clicks Merge<br/>(git merge --no-ff succeeds)
-    Review --> Review: conflict on merge<br/>(stays in Review)
+    Review --> Done: user clicks Promote<br/>(local merge or PR succeeds)
+    Review --> Review: conflict on local promotion<br/>(stays in Review)
 
     Done --> [*]
     Abandoned --> [*]

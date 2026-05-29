@@ -14,9 +14,11 @@ archive) and the immediate fanout that lifecycle triggers.
   [`../db/projects-domain.md`](../db/projects-domain.md).
 - **Executor** — agent identity (`{agent, model, env?, router?}`)
   declared in `maister.yaml` `executors[]`. See [`executors.md`](executors.md).
-- **Flow installation** — git-cloned plugin under
-  `~/.maister/flows/<id>@<tag>/`, symlinked into the project's
-  `.maister/<slug>/flows/<id>/`. See [`flows.md`](flows.md).
+- **Flow package enablement** — project pointer to the package revision new
+  runs should use. Current implementation installs git-cloned plugins under
+  the MAIster flow cache and symlinks them into the project's `.maister/`
+  subtree; planned M10 separates immutable package revisions from project
+  enablement. See [`flow-packages.md`](flow-packages.md) and [`flows.md`](flows.md).
 
 Identifiers:
 
@@ -85,7 +87,7 @@ sequenceDiagram
             FL-->>W: throw MaisterError(FLOW_INSTALL)
             W->>DB: DELETE project (cascade: executors/flows/members)
             W->>FS: rm .maister/{slug} subtree
-            W-->>U: 502 FLOW_INSTALL (fully rolled back; retryable)
+            W-->>U: 502 FLOW_INSTALL<br/>fully rolled back, retryable
         end
     end
     W-->>U: 201 { slug, projectId }
@@ -129,6 +131,10 @@ flowchart TD
   `maister.yaml`; duplicates refused with `CONFIG`.
 - Flow plugin install is idempotent on `{id}@{tag}` — cache hit at
   `~/.maister/flows/<id>@<tag>/` short-circuits the clone.
+- **(Planned M10)** Project registration or `maister.yaml` refresh discovers
+  desired Flow packages, but install, trust, setup, and enablement are explicit
+  lifecycle actions in the UI. Active runs keep their snapshotted package
+  revision after upgrade or rollback.
 - Editing `maister.yaml` MUST re-validate before any row delta; a valid
   edit that changes nothing structurally produces no row change.
 - Auto-discovery from `MAISTER_PROJECTS_DIR` is recursive and rejects

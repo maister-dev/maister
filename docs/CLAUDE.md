@@ -67,7 +67,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/tasks.md`](system-analytics/tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
 | [`system-analytics/runs.md`](system-analytics/runs.md) | Run state machine, ACP keep-alive + checkpoint. |
 | [`system-analytics/executors.md`](system-analytics/executors.md) | Executor identity, model routing (env-router vs CCR). |
-| [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, merge policy, reconciliation. |
+| [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, promotion policy, reconciliation. |
 | [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
 
 ### Cross-cutting reference

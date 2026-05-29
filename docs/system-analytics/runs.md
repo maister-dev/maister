@@ -44,8 +44,8 @@ stateDiagram-v2
     Crashed --> Running: Recover click<br/>(--resume with acp_session_id)
     Crashed --> Abandoned: Discard click<br/>(force-discard worktree)
 
-    Review --> Done: merge --no-ff succeeds
-    Review --> Review: merge --no-ff conflict<br/>(stays in Review)
+    Review --> Done: promotion succeeds
+    Review --> Review: local promotion conflict<br/>(stays in Review)
     Review --> Abandoned: Abandon click
 
     Failed --> [*]: task returns to Backlog
@@ -58,7 +58,7 @@ Status names exactly match the `runs.status` enum in
 
 ## Process flows
 
-### Happy path — launch to Review (Implemented)
+### Happy path — launch to Review (Implemented), promote after Review (Designed)
 
 ```mermaid
 sequenceDiagram
@@ -87,9 +87,14 @@ sequenceDiagram
     W->>DB: runs.status=Review
     U->>W: GET /api/runs/[id]/diff (Designed)
     W-->>U: raw git diff
-    U->>W: POST /api/runs/[id]/merge
-    W->>FS: git merge --no-ff
-    alt clean merge
+    U->>W: POST /api/runs/[id]/promote
+    W->>DB: verify required gates current/pass/overridden
+    alt mode = local_merge
+        W->>FS: git merge --no-ff run branch into target branch
+    else mode = pull_request
+        W->>FS: create/update PR from run branch to target branch
+    end
+    alt promotion succeeds
         W->>DB: runs.status=Done
         W-->>U: 200 Done
     else conflict
@@ -211,9 +216,14 @@ flowchart TD
   error observed across the step loop in a local `runErrorCode`
   carrier so the terminal write can branch
   `CRASH → Crashed | other failure → Failed | success → Review`.
-- **(Designed)** Merge is `git merge --no-ff` only; conflicts
-  always abort the merge and leave the run in `Review`. No merge
-  route exists in the current branch.
+- **(Designed)** Promotion is the product action after Review. Initial modes
+  are `local_merge` and `pull_request`; both promote the MAIster run branch to
+  the selected target branch after readiness gates pass or are explicitly
+  overridden. No deploy or release management is implied.
+- **(Designed)** Local promotion uses `git merge --no-ff`; conflicts always
+  abort the merge, leave the run in `Review`, and create/keep a manual
+  resolution path. The legacy `merge` route name is superseded by
+  `POST /api/runs/[id]/promote` in the product contract.
 
 ## Edge cases
 
@@ -229,8 +239,8 @@ flowchart TD
 - **`CRASH`** — heartbeat detected dead PID (`ESRCH` on
   `process.kill(pid, 0)`), or child emitted non-zero exit + signal
   without intentional shutdown.
-- **`CONFLICT`** — `git merge --no-ff` could not auto-merge. Run stays
-  `Review`.
+- **`CONFLICT`** — local promotion could not auto-merge the run branch into
+  the selected target branch. Run stays `Review`.
 - **`CHECKPOINT`** — graceful checkpoint failed (designed path).
   Worker stays live; UI surfaces "couldn't checkpoint — keep tab open"
   warning.
