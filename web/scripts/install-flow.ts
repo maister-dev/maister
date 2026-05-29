@@ -111,8 +111,12 @@ async function main(): Promise<void> {
   log.info(
     {
       flowRowId: result.flowRowId,
+      revisionId: result.revisionId,
+      revision: result.revision,
       installedPath: result.installedPath,
       symlinkPath: result.symlinkPath,
+      trustStatus: result.trustStatus,
+      enablementState: result.enablementState,
     },
     "install-flow done",
   );
