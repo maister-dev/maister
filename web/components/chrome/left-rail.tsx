@@ -1,8 +1,11 @@
+import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement, ReactNode } from "react";
 
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
+
+import { PlatformStatusPill } from "@/components/chrome/platform-status";
 
 type WorkspaceStatus = "running" | "needs" | "queued" | "done";
 
@@ -20,6 +23,7 @@ export interface LeftRailProps {
   workspaces?: RailWorkspace[];
   inboxCount?: number;
   launchHref?: string;
+  platformStatus: PlatformStatus;
 }
 
 const navIcon = "h-3.5 w-3.5 shrink-0 text-mute";
@@ -71,6 +75,7 @@ export async function LeftRail({
   workspaces = [],
   inboxCount = 0,
   launchHref,
+  platformStatus,
 }: LeftRailProps): Promise<ReactElement> {
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
@@ -220,18 +225,17 @@ export async function LeftRail({
 
       <div className="flex flex-col gap-1.5 px-0.5 pb-0.5">
         <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-          {tPortfolio("agentsConnected")}
+          {tPortfolio("platformStatus")}
         </div>
-        <div className="flex flex-wrap gap-1">
-          {["claude", "codex"].map((agent) => (
-            <span
-              key={agent}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-ivory py-[3px] pl-[7px] pr-2 font-mono text-[10.5px] tracking-[0.02em] text-ink-2"
-            >
-              <span className="h-[5px] w-[5px] rounded-full bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]" />
-              {agent}
-            </span>
-          ))}
+        <div className="flex flex-wrap gap-1 font-mono text-[10.5px] tracking-[0.02em]">
+          <PlatformStatusPill
+            className="rounded-full border border-line bg-ivory py-[3px] pl-[7px] pr-2"
+            labels={{
+              ready: tPortfolio("supervisorReady"),
+              unavailable: tPortfolio("supervisorUnavailable"),
+            }}
+            status={platformStatus}
+          />
           {["cursor", "aider"].map((agent) => (
             <span
               key={agent}
@@ -259,7 +263,9 @@ export async function LeftRail({
           </kbd>
         </Link>
         <div className="px-0.5 font-mono text-[10px] tracking-[0.04em] text-mute">
-          {tPortfolio("launchHint")}
+          {platformStatus.kind === "ready"
+            ? tPortfolio("launchHint")
+            : tPortfolio("launchUnavailableHint")}
         </div>
       </div>
     </aside>

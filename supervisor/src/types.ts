@@ -76,6 +76,26 @@ export type SendPromptResponse = {
 
 export type SessionStatus = "live" | "exited" | "crashed";
 
+export const SupervisorHealthResponseSchema = z
+  .object({
+    status: z.literal("ready"),
+    version: z.string().min(1),
+    uptimeMs: z.number().int().nonnegative(),
+    checkedAt: z.string().datetime(),
+    sessions: z
+      .object({
+        live: z.number().int().nonnegative(),
+        exited: z.number().int().nonnegative(),
+        crashed: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type SupervisorHealthResponse = z.infer<
+  typeof SupervisorHealthResponseSchema
+>;
+
 export type SessionRecord = {
   sessionId: string;
   runId: string;

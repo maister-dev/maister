@@ -309,6 +309,13 @@ paths:
         with no pending forced password change) AND project membership at
         `member` or above (`requireProjectAction("launchRun")`). The
         `projectId` is derived from the task row, never from the body.
+
+        After auth, project, Flow, and executor checks pass, the web tier
+        calls the supervisor `GET /health` through
+        `web/lib/supervisor-client.ts`. If the supervisor is unreachable,
+        times out, returns non-200, or returns a malformed body, this route
+        fails with `503 EXECUTOR_UNAVAILABLE` before creating a git worktree,
+        run row, workspace row, or task status transition.
       operationId: postRun
       requestBody:
         required: true
@@ -348,7 +355,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Executor unavailable (e.g. CCR daemon failed to start).
+          description: |
+            Executor or platform unavailable (`EXECUTOR_UNAVAILABLE`).
+            Includes missing project executor registration and supervisor
+            readiness failure before launch side effects.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

@@ -1,6 +1,13 @@
 import "server-only";
 
+import type {
+  PlatformStatus,
+  PlatformUnavailableReason,
+} from "@/types/platform-status";
+
+import { cache } from "react";
 import pino from "pino";
+import { z } from "zod";
 
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 
@@ -10,6 +17,7 @@ const logger = pino({
 });
 
 const DEFAULT_BASE_URL = "http://localhost:7777";
+const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
 
 export type SupervisorExecutorInput = {
   agent: "claude" | "codex";
@@ -68,6 +76,28 @@ export type SupervisorSessionRecord = {
   // record.acpSessionId; mirrors supervisor/src/types.ts.
   acpSessionId?: string;
 };
+
+const SupervisorHealthSchema = z
+  .object({
+    status: z.literal("ready"),
+    version: z.string().min(1),
+    uptimeMs: z.number().int().nonnegative(),
+    checkedAt: z.string().datetime(),
+    sessions: z
+      .object({
+        live: z.number().int().nonnegative(),
+        exited: z.number().int().nonnegative(),
+        crashed: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type {
+  PlatformStatus,
+  PlatformUnavailableReason,
+  SupervisorHealth,
+} from "@/types/platform-status";
 
 export type SupervisorPermissionOption = {
   optionId: string;
@@ -171,6 +201,74 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
 
   return new MaisterError("EXECUTOR_UNAVAILABLE", `${ctx}: ${message}`);
 }
+
+function unavailable(
+  reason: PlatformUnavailableReason,
+  message: string,
+): PlatformStatus {
+  return { kind: "unavailable", reason, message };
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" || err.message.includes("aborted"))
+  );
+}
+
+export async function checkSupervisorHealth(
+  opts: { timeoutMs?: number } = {},
+): Promise<PlatformStatus> {
+  const url = `${baseUrl()}/health`;
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    opts.timeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
+  );
+  let res: Response;
+
+  logger.debug({ url }, "checkSupervisorHealth");
+
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    return unavailable(isAbortError(err) ? "timeout" : "network", message);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res, `supervisor ${res.status}`);
+
+    return unavailable("http", message);
+  }
+
+  let body: unknown;
+
+  try {
+    body = await res.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    return unavailable("malformed", message);
+  }
+
+  const parsed = SupervisorHealthSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return unavailable("malformed", parsed.error.message);
+  }
+
+  return { kind: "ready", health: parsed.data };
+}
+
+export const getPlatformStatus = cache(checkSupervisorHealth);
 
 export async function createSession(
   input: CreateSessionInput,

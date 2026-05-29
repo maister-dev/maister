@@ -7,6 +7,7 @@ import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
 import { getSessionUser } from "@/lib/authz";
 import { getRailWorkspaces } from "@/lib/queries/portfolio";
+import { getPlatformStatus } from "@/lib/supervisor-client";
 
 function initialsOf(name: string | null, email: string | null): string {
   const source = (name ?? email ?? "?").trim();
@@ -30,9 +31,10 @@ export default async function AppLayout({
     redirect("/change-password");
   }
 
-  const railWorkspaces = sessionUser
-    ? await getRailWorkspaces(sessionUser.id, sessionUser.role)
-    : [];
+  const [railWorkspaces, platformStatus] = await Promise.all([
+    sessionUser ? getRailWorkspaces(sessionUser.id, sessionUser.role) : [],
+    getPlatformStatus(),
+  ]);
 
   const navUser = sessionUser
     ? {
@@ -50,7 +52,11 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-14">
-      <TopNav crumb={<NavCrumb />} user={navUser} />
+      <TopNav
+        crumb={<NavCrumb />}
+        platformStatus={platformStatus}
+        user={navUser}
+      />
 
       <div
         data-shell
@@ -61,6 +67,7 @@ export default async function AppLayout({
           activeSection="projects"
           inboxCount={inboxCount}
           launchHref="/projects/new"
+          platformStatus={platformStatus}
           workspaces={railWorkspaces.map((ws) => ({
             ...ws,
             current: false,
@@ -69,7 +76,7 @@ export default async function AppLayout({
         <main className="min-w-0 px-4 pb-12 pt-7 md:px-9">{children}</main>
       </div>
 
-      <StatusBar />
+      <StatusBar platformStatus={platformStatus} />
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import type { PlatformStatus } from "@/types/platform-status";
+
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -7,7 +9,15 @@ import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 
@@ -30,6 +40,40 @@ vi.mock("@/auth", () => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+function readyPlatformStatus(): PlatformStatus {
+  return {
+    kind: "ready",
+    health: {
+      status: "ready",
+      version: "0.0.1",
+      uptimeMs: 1,
+      checkedAt: new Date().toISOString(),
+      sessions: { live: 0, exited: 0, crashed: 0 },
+    },
+  };
+}
+
+const checkSupervisorHealthMock = vi.fn<() => Promise<PlatformStatus>>(
+  async () => readyPlatformStatus(),
+);
+const addWorktreeMock = vi.fn(async (_input: unknown) => undefined);
+const removeWorktreeMock = vi.fn(async (_input: unknown) => undefined);
+
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: () => checkSupervisorHealthMock(),
+  };
+});
+
+vi.mock("@/lib/worktree", () => ({
+  addWorktree: (input: unknown) => addWorktreeMock(input),
+  removeWorktree: (input: unknown) => removeWorktreeMock(input),
+}));
 
 let POST: typeof import("@/app/api/runs/route").POST;
 
@@ -95,6 +139,24 @@ beforeAll(async () => {
     userId: "u-member-a",
     role: "member",
   });
+  await db.insert(schema.executors).values({
+    id: "exec-a",
+    projectId: "proj-a",
+    executorRefId: "claude-default",
+    agent: "claude",
+    model: "claude-sonnet-4-6",
+  });
+  await db
+    .update(schema.projects)
+    .set({ defaultExecutorId: "exec-a" })
+    .where(eq(schema.projects.id, "proj-a"));
+  await db.insert(schema.tasks).values({
+    id: "task-in-a",
+    projectId: "proj-a",
+    title: "A task",
+    prompt: "do a",
+    flowId: "flow-proj-a",
+  });
   // A Backlog task that belongs to project B (NOT A).
   await db.insert(schema.tasks).values({
     id: "task-in-b",
@@ -113,6 +175,12 @@ afterAll(async () => {
 });
 
 describe("POST /api/runs — project-membership trust boundary (integration)", () => {
+  beforeEach(() => {
+    checkSupervisorHealthMock.mockResolvedValue(readyPlatformStatus());
+    addWorktreeMock.mockClear();
+    removeWorktreeMock.mockClear();
+  });
+
   it("rejects an anonymous caller with 401", async () => {
     sessionRef.value = null;
 
@@ -157,6 +225,42 @@ describe("POST /api/runs — project-membership trust boundary (integration)", (
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, "task-in-b"));
+
+    expect(task[0].status).toBe("Backlog");
+  });
+
+  it("rejects launch when supervisor readiness is unavailable before worktree or DB side effects", async () => {
+    sessionRef.value = { user: { id: "u-member-a", role: "member" } };
+    checkSupervisorHealthMock.mockResolvedValueOnce({
+      kind: "unavailable",
+      reason: "network",
+      message: "fetch failed",
+    });
+
+    const res = await POST(request("task-in-a"));
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const workspaces = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.projectId, "proj-a"));
+
+    expect(workspaces).toHaveLength(0);
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-in-a"));
+
+    expect(runs).toHaveLength(0);
+
+    const task = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, "task-in-a"));
 
     expect(task[0].status).toBe("Backlog");
   });

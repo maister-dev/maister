@@ -18,6 +18,7 @@ import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
+import { getPlatformStatus } from "@/lib/supervisor-client";
 
 const VALID_TABS: readonly ProjectTab[] = [
   "board",
@@ -70,10 +71,11 @@ export default async function ProjectBoardPage({
   const tCommon = await getTranslations("common");
   const tNav = await getTranslations("nav");
 
-  const [pageData, board, hitl] = await Promise.all([
+  const [pageData, board, hitl, platformStatus] = await Promise.all([
     getProjectPageData(project),
     getBoardData(project.id),
     getHitlInbox(project.id),
+    getPlatformStatus(),
   ]);
 
   return (
@@ -175,7 +177,11 @@ export default async function ProjectBoardPage({
               justNow: t("justNow"),
             }}
           >
-            <Board canAct={canAct} data={board} />
+            <Board
+              canAct={canAct}
+              data={board}
+              platformStatus={platformStatus}
+            />
           </BoardTools>
         </section>
       ) : null}

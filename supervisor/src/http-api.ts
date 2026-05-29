@@ -19,6 +19,8 @@ import {
   StartSessionRequestSchema,
   SupervisorError,
   type SessionEvent,
+  type SessionStatus,
+  type SupervisorHealthResponse,
 } from "./types";
 
 const InputBodySchema = z
@@ -48,6 +50,13 @@ export type CheckpointResponse = {
 export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const SUPERVISOR_STARTED_AT_MS = Date.now();
+const SUPERVISOR_VERSION = process.env.npm_package_version ?? "0.0.1";
+const SESSION_STATUSES: readonly SessionStatus[] = [
+  "live",
+  "exited",
+  "crashed",
+];
 
 export type SpawnOverrides = {
   binary?: string;
@@ -65,6 +74,24 @@ export type RegisterRoutesOptions = {
 };
 
 type SessionIdParams = { Params: { id: string } };
+
+function countSessionsByStatus(
+  records: ReadonlyArray<{ status: SessionStatus }>,
+): SupervisorHealthResponse["sessions"] {
+  const counts: SupervisorHealthResponse["sessions"] = {
+    live: 0,
+    exited: 0,
+    crashed: 0,
+  };
+
+  for (const record of records) {
+    if (SESSION_STATUSES.includes(record.status)) {
+      counts[record.status] += 1;
+    }
+  }
+
+  return counts;
+}
 
 export function registerRoutes(opts: RegisterRoutesOptions): void {
   const { app, registry, logger, runtimeRoot } = opts;
@@ -93,6 +120,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     logger.error({ err: message }, "unhandled-error");
     reply.status(500).send({ code: "ACP_PROTOCOL", message });
+  });
+
+  app.get("/health", async (_req, reply) => {
+    const body: SupervisorHealthResponse = {
+      status: "ready",
+      version: SUPERVISOR_VERSION,
+      uptimeMs: Math.max(0, Date.now() - SUPERVISOR_STARTED_AT_MS),
+      checkedAt: new Date().toISOString(),
+      sessions: countSessionsByStatus(registry.list()),
+    };
+
+    reply.status(200).send(body);
   });
 
   app.post("/sessions", async (req, reply) => {

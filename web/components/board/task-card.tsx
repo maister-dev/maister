@@ -9,6 +9,8 @@ export interface TaskCardProps {
   card: BacklogCard;
   canAct: boolean;
   launchLabel: string;
+  launchDisabledLabel: string;
+  launchDisabledReason?: string;
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -30,6 +32,8 @@ const FLOW_CHIP: Record<string, string> = {
 export function TaskCard({
   card,
   canAct,
+  launchDisabledLabel,
+  launchDisabledReason,
   launchLabel,
 }: TaskCardProps): ReactElement {
   const chip = FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line";
@@ -61,7 +65,12 @@ export function TaskCard({
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
         <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute" />
         {canAct ? (
-          <LaunchButton label={launchLabel} taskId={card.taskId} />
+          <LaunchButton
+            disabledLabel={launchDisabledLabel}
+            disabledReason={launchDisabledReason}
+            label={launchLabel}
+            taskId={card.taskId}
+          />
         ) : null}
       </div>
     </article>

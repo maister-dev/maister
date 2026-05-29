@@ -5,18 +5,19 @@
 The supervisor is a second Node process that owns the lifecycle of agent
 processes (`claude-agent-acp`, `codex-acp`). It speaks **HTTP + SSE** to
 the web tier and **stdio JSONL** to its spawned children. M3 scope: the
-process skeleton — spawn, heartbeat, cost accounting, six HTTP routes.
+process skeleton — spawn, heartbeat, cost accounting, HTTP routes.
 Structured ACP event parsing (M7), keep-alive + checkpoint + `--resume`
 (M8), HITL input delivery (M7/M10) — explicitly deferred and stubbed.
 
 ```
                      ┌─────────────────────┐                ┌──────────────────────────┐
   web/                │  web/lib/           │   HTTP+SSE     │  supervisor/ (Fastify)   │
-   - app/api/runs     │  supervisor-client  │ ─────────────▶ │   POST/DELETE /sessions  │
+   - app/api/runs     │  supervisor-client  │ ─────────────▶ │   GET /health             │
+   - app shell        │  (server-only)      │                │   POST/DELETE /sessions  │
    - lib/reconcile    │  (server-only)      │ ◀─── SSE ───── │   GET /sessions/:id/stream
                       └─────────────────────┘                │   GET /sessions          │
                                                               │   POST .../checkpoint    │
-                                                              │   POST .../input  (501)  │
+                                                              │   POST .../input          │
                                                               └────────────┬─────────────┘
                                                                            │ child_process.spawn
                                                                            ▼
@@ -48,6 +49,29 @@ The architectural decision and its trade-offs live in
 All routes return `application/json`. Error responses match
 [`SupervisorErrorBody`](#errors) and the web client translates them into
 `MaisterError({ code })` via `web/lib/supervisor-client.ts`.
+
+### `GET /health`
+
+Readiness probe for the supervisor daemon itself. `200` means the
+daemon is reachable and can accept new session work:
+
+```json
+{
+  "status": "ready",
+  "version": "0.0.1",
+  "uptimeMs": 12345,
+  "sessions": { "live": 2, "exited": 1, "crashed": 0 },
+  "checkedAt": "2026-05-30T12:00:00.000Z"
+}
+```
+
+The body intentionally contains no project ids, run ids, executor
+secrets, env vars, or filesystem paths. The web tier treats network
+errors, timeouts, non-200 responses, and malformed bodies as
+`unavailable`; there is no "connected" fallback. `POST /api/runs`
+checks this readiness after auth/project/Flow/executor validation and
+before `git worktree add` or DB writes. On unavailable supervisor it
+returns `503 EXECUTOR_UNAVAILABLE` and leaves the task in `Backlog`.
 
 ### `POST /sessions`
 

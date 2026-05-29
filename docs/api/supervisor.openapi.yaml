@@ -40,6 +40,8 @@ servers:
         default: "7777"
 security: []
 tags:
+  - name: health
+    description: Supervisor readiness.
   - name: sessions
     description: ACP session lifecycle.
   - name: prompt
@@ -49,6 +51,22 @@ tags:
   - name: hitl
     description: Human-in-the-loop input delivery (stubbed in M3, wired in M7).
 paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Report supervisor readiness
+      description: |
+        Lightweight readiness probe for the supervisor daemon itself.
+        A `200` response means the daemon is reachable and can accept
+        session work. The body intentionally excludes project ids, run ids,
+        executor secrets, env vars, and filesystem paths.
+      operationId: getSupervisorHealth
+      responses:
+        "200":
+          description: Supervisor is ready to accept session work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorHealthResponse" }
   /sessions:
     post:
       tags: [sessions]
@@ -393,6 +411,41 @@ components:
         minLength: 1
         maxLength: 128
   schemas:
+    SupervisorHealthResponse:
+      type: object
+      required: [status, version, uptimeMs, sessions, checkedAt]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ready]
+        version:
+          type: string
+          minLength: 1
+          description: Supervisor package version.
+        uptimeMs:
+          type: integer
+          minimum: 0
+          description: Milliseconds since this supervisor process started.
+        sessions:
+          $ref: "#/components/schemas/SupervisorSessionCounts"
+        checkedAt:
+          type: string
+          format: date-time
+    SupervisorSessionCounts:
+      type: object
+      required: [live, exited, crashed]
+      additionalProperties: false
+      properties:
+        live:
+          type: integer
+          minimum: 0
+        exited:
+          type: integer
+          minimum: 0
+        crashed:
+          type: integer
+          minimum: 0
     ExecutorAgent:
       type: string
       enum: [claude, codex]

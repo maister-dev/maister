@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 
 import { AuthCard } from "@/components/auth/auth-card";
 import { SidePanel } from "@/components/auth/side-panel";
+import { getPlatformStatus } from "@/lib/supervisor-client";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("auth");
@@ -19,6 +20,7 @@ export default async function LoginPage({
 }): Promise<ReactElement> {
   const { callbackUrl } = await searchParams;
   const redirectTo = callbackUrl ?? "/";
+  const platformStatus = await getPlatformStatus();
 
   return (
     <>
@@ -33,7 +35,7 @@ export default async function LoginPage({
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 opacity-[0.55] [background-image:radial-gradient(var(--line)_1px,transparent_1px)] [background-size:24px_24px] [mask-image:radial-gradient(ellipse_at_50%_50%,#000_0%,transparent_80%)]"
         />
-        <SidePanel />
+        <SidePanel platformStatus={platformStatus} />
       </aside>
     </>
   );

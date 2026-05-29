@@ -16,7 +16,10 @@ const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
 });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
-globalThis.navigator = dom.window.navigator;
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: dom.window.navigator,
+});
 globalThis.HTMLElement = dom.window.HTMLElement;
 
 const { default: mermaid } = await import("mermaid");

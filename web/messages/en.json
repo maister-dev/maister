@@ -69,7 +69,8 @@
     "strength4": "Excellent."
   },
   "side": {
-    "spineEye": "Live · this instance",
+    "spineEyeReady": "Supervisor ready · this instance",
+    "spineEyeUnavailable": "Supervisor unavailable · launches paused",
     "spineH3em": "Where ship happens.",
     "spineH3rest": "Backlog → merge, with actions and decisions history.",
     "spineSub": "Projects, tasks, agents, humans — and every handoff between. HITL where it counts. Autonomy where you trust it.",
@@ -78,7 +79,9 @@
     "l3": "Merged"
   },
   "status": {
-    "connected": "Connected",
+    "supervisor": "supervisor",
+    "supervisorReady": "Supervisor ready",
+    "supervisorUnavailable": "Supervisor unavailable",
     "docs": "Docs",
     "poc": "POC · single-host"
   },
@@ -94,9 +97,12 @@
     "pausedAgo": "paused {time} ago",
     "activeWorkspaces": "Active workspaces",
     "seeAll": "See all",
-    "agentsConnected": "Coding agents · connected",
+    "platformStatus": "Platform readiness",
+    "supervisorReady": "supervisor ready",
+    "supervisorUnavailable": "supervisor unavailable",
     "launchRun": "Launch run",
     "launchHint": "From backlog · ad-hoc · resume idle",
+    "launchUnavailableHint": "Launches pause until the supervisor is ready.",
     "newProject": "New project",
     "newProjectSub": "connect a repo · scaffold a new one",
     "emptyTitle": "No projects yet.",
@@ -115,7 +121,7 @@
     "noneActive": "none active",
     "scaffold": "Scaffold from template",
     "importLocal": "Import from local",
-    "esTip1": "⌘L launches a run once a project's connected.",
+    "esTip1": "⌘L launches a run once the supervisor is ready.",
     "esTip2": "Each run lives in its own worktree — diff and merge with proof.",
     "esTip3": "Active runs stay pinned to the rail, always one click away."
   },
@@ -154,6 +160,8 @@
     "layoutList": "list",
     "asOf": "as of",
     "justNow": "just now",
+    "launchUnavailable": "paused",
+    "launchSupervisorUnavailable": "Supervisor unavailable. Start or recover the supervisor daemon, then retry.",
     "prsDeferred": "Pull-request sync isn't wired up on this POC yet.",
     "mcpsDeferred": "MCP server management isn't wired up on this POC yet.",
     "defaultAgentDesc": "used for new runs unless overridden per-task",

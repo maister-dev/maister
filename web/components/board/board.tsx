@@ -1,5 +1,6 @@
 import type { BoardColumn } from "@/lib/board";
 import type { BoardData } from "@/lib/queries/board";
+import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
@@ -11,6 +12,7 @@ import { TaskCard } from "@/components/board/task-card";
 export interface BoardProps {
   data: BoardData;
   canAct: boolean;
+  platformStatus: PlatformStatus;
 }
 
 const STAGE_KEY: Record<BoardColumn, string> = {
@@ -54,9 +56,14 @@ const COLUMN_LABEL: Record<BoardColumn, string> = {
 export async function Board({
   data,
   canAct,
+  platformStatus,
 }: BoardProps): Promise<ReactElement> {
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
+  const launchDisabledReason =
+    platformStatus.kind === "ready"
+      ? undefined
+      : t("launchSupervisorUnavailable");
 
   return (
     <section
@@ -120,6 +127,8 @@ export async function Board({
                   <TaskCard
                     canAct={canAct}
                     card={card}
+                    launchDisabledLabel={t("launchUnavailable")}
+                    launchDisabledReason={launchDisabledReason}
                     launchLabel={tCommon("launch")}
                   />
                 </div>

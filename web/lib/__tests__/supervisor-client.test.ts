@@ -10,10 +10,12 @@ import {
 
 import {
   cancelPermission,
+  checkSupervisorHealth,
   checkpointSession,
   createSession,
   deleteSession,
   deliverPermission,
+  getPlatformStatus,
   listSessions,
   sendPrompt,
   streamSession,
@@ -171,6 +173,85 @@ describe("listSessions", () => {
     const result = await listSessions();
 
     expect(result).toEqual(records);
+  });
+});
+
+describe("checkSupervisorHealth", () => {
+  const readyHealth = {
+    status: "ready",
+    version: "0.0.1",
+    uptimeMs: 42,
+    checkedAt: "2026-05-30T12:00:00.000Z",
+    sessions: { live: 1, exited: 2, crashed: 3 },
+  };
+
+  it("maps a valid health response to ready", async () => {
+    mockOnce(new Response(JSON.stringify(readyHealth), { status: 200 }));
+
+    await expect(checkSupervisorHealth()).resolves.toEqual({
+      kind: "ready",
+      health: readyHealth,
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/health",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("maps network failure to unavailable", async () => {
+    mockReject(new TypeError("fetch failed"));
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "network",
+    });
+  });
+
+  it("maps timeout to unavailable", async () => {
+    fetchSpy.mockImplementationOnce(
+      (...args: Parameters<typeof fetch>) =>
+        new Promise<Response>((_resolve, reject) => {
+          args[1]?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+
+    await expect(
+      checkSupervisorHealth({ timeoutMs: 1 }),
+    ).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "timeout",
+    });
+  });
+
+  it("maps non-200 response to unavailable", async () => {
+    mockOnce(new Response(JSON.stringify({ code: "CRASH" }), { status: 503 }));
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "http",
+    });
+  });
+
+  it("maps malformed body to unavailable", async () => {
+    mockOnce(
+      new Response(JSON.stringify({ status: "ready" }), { status: 200 }),
+    );
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
+    });
+  });
+
+  it("getPlatformStatus returns the health status", async () => {
+    mockOnce(new Response(JSON.stringify(readyHealth), { status: 200 }));
+
+    await expect(getPlatformStatus()).resolves.toEqual({
+      kind: "ready",
+      health: readyHealth,
+    });
   });
 });
 

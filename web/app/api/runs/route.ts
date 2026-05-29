@@ -16,6 +16,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { resolveExecutor } from "@/lib/executors";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
+import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import { addWorktree, removeWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -166,6 +167,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
         `executor ${executorId} not registered for project ${project.slug}`,
+      );
+    }
+
+    const platformStatus = await checkSupervisorHealth();
+
+    if (platformStatus.kind === "unavailable") {
+      log.warn(
+        {
+          taskId: task.id,
+          projectId: project.id,
+          executorId: executor.id,
+          reason: platformStatus.reason,
+          message: platformStatus.message,
+        },
+        "POST /api/runs supervisor readiness unavailable",
+      );
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
       );
     }
 

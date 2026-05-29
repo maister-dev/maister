@@ -70,8 +70,14 @@ sequenceDiagram
     participant A as Adapter
 
     U->>W: POST /api/runs {taskId, executorOverride?}
-    W->>DB: insert run Pending, scheduler claims Running
+    W->>DB: auth/project/flow/executor checks
+    W->>SV: GET /health
+    alt supervisor unavailable
+        W-->>U: 503 EXECUTOR_UNAVAILABLE (no worktree/run/workspace/task change)
+    end
     W->>FS: git worktree add
+    W->>DB: insert workspace + run Pending, task InFlight
+    W->>DB: scheduler claims Running
     W->>SV: POST /sessions
     SV->>A: spawn adapter
     A-->>SV: spawn ok

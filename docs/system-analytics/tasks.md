@@ -117,7 +117,11 @@ sequenceDiagram
     W->>DB: SELECT task, project, flow, executor
     W->>W: Resolve executor (override chain)
     alt EXECUTOR_UNAVAILABLE
-        W-->>UI: 503 + registered list
+        W-->>UI: 503 EXECUTOR_UNAVAILABLE
+    end
+    W->>SV: GET /health
+    alt supervisor unavailable
+        W-->>UI: 503 EXECUTOR_UNAVAILABLE (no worktree/run/workspace/task change)
     end
     W->>W: Run precondition checks (clean repo, branch free, worktree path free)
     alt PRECONDITION

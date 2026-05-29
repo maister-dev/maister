@@ -1,18 +1,28 @@
+import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
 import { SpineGraph } from "@/components/auth/spine-graph";
+import { PlatformStatusDot } from "@/components/chrome/platform-status";
 
-export async function SidePanel(): Promise<ReactElement> {
+export async function SidePanel({
+  platformStatus,
+}: {
+  platformStatus: PlatformStatus;
+}): Promise<ReactElement> {
   const t = await getTranslations("side");
   const motto = (await getTranslations())("footer.motto");
+  const spineEye =
+    platformStatus.kind === "ready"
+      ? t("spineEyeReady")
+      : t("spineEyeUnavailable");
 
   return (
     <div className="relative z-[2] w-full max-w-[680px]">
       <div className="mb-[18px] inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-mute">
-        <span className="h-1.5 w-1.5 rounded-full bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]" />
-        {t("spineEye")}
+        <PlatformStatusDot status={platformStatus} />
+        {spineEye}
       </div>
 
       <h3 className="m-0 mb-3 max-w-[25ch] text-[34px] font-semibold leading-[1.1] tracking-[-0.022em] text-ink">

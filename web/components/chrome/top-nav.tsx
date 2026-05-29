@@ -1,3 +1,4 @@
+import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement, ReactNode } from "react";
 
 import { getTranslations } from "next-intl/server";
@@ -5,18 +6,21 @@ import Link from "next/link";
 
 import { Logo } from "@/components/logo";
 import { LangSwitch } from "@/components/chrome/lang-switch";
+import { PlatformStatusDot } from "@/components/chrome/platform-status";
 import { ThemeSwitch } from "@/components/chrome/theme-switch";
 
 export interface TopNavProps {
   crumb?: ReactNode;
   user?: { name: string; initials: string };
   logoSize?: number;
+  platformStatus: PlatformStatus;
 }
 
 export async function TopNav({
   crumb,
   user,
   logoSize = 22,
+  platformStatus,
 }: TopNavProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
 
@@ -31,7 +35,7 @@ export async function TopNav({
             <Logo size={logoSize} />
           </Link>
           <span className="ml-[18px] inline-flex items-center gap-1.5 border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]" />
+            <PlatformStatusDot status={platformStatus} />
             <span>{t("crumbProjects")}</span>
             {crumb}
           </span>

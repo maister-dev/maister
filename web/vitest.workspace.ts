@@ -19,6 +19,8 @@ export default defineWorkspace([
         "lib/**/*.test.ts",
         "lib/**/__tests__/**/*.test.ts",
         "app/**/__tests__/**/*.test.ts",
+        "components/**/*.test.ts",
+        "components/**/__tests__/**/*.test.ts",
       ],
       exclude: ["lib/**/*.integration.test.ts", "app/**/*.integration.test.ts"],
       environment: "node",
@@ -28,7 +30,10 @@ export default defineWorkspace([
     resolve: { alias },
     test: {
       name: "integration",
-      include: ["lib/**/*.integration.test.ts"],
+      include: [
+        "lib/**/*.integration.test.ts",
+        "app/api/runs/**/*.integration.test.ts",
+      ],
       environment: "node",
       testTimeout: 60_000,
       hookTimeout: 60_000,

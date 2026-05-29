@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -177,6 +179,57 @@ afterEach(async () => {
 });
 
 describe("supervisor lifecycle integration", () => {
+  it("GET /health reports readiness and session status counts", async () => {
+    const { url, registry } = await bootFor(["--hang"]);
+    const emptyRes = await fetch(`${url}/health`);
+
+    expect(emptyRes.status).toBe(200);
+    const empty = (await emptyRes.json()) as {
+      status: string;
+      version: string;
+      uptimeMs: number;
+      checkedAt: string;
+      sessions: { live: number; exited: number; crashed: number };
+      runId?: string;
+      projectSlug?: string;
+      worktreePath?: string;
+      logPath?: string;
+    };
+
+    expect(empty.status).toBe("ready");
+    expect(empty.version).toMatch(/\d+\.\d+\.\d+/);
+    expect(empty.uptimeMs).toBeGreaterThanOrEqual(0);
+    expect(Number.isNaN(Date.parse(empty.checkedAt))).toBe(false);
+    expect(empty.sessions).toEqual({ live: 0, exited: 0, crashed: 0 });
+    expect(empty.runId).toBeUndefined();
+    expect(empty.projectSlug).toBeUndefined();
+    expect(empty.worktreePath).toBeUndefined();
+    expect(empty.logPath).toBeUndefined();
+
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+
+    registry.register(
+      {
+        sessionId: "health-live-session",
+        runId: "run-health",
+        projectSlug: "demo",
+        stepId: "step-1",
+        status: "live",
+        pid: child.pid ?? 0,
+        startedAt: new Date().toISOString(),
+        logPath: "/tmp/health-live-session.log",
+        monotonicId: 0,
+      },
+      child,
+      new EventEmitter(),
+    );
+
+    const liveRes = await fetch(`${url}/health`);
+    const live = (await liveRes.json()) as typeof empty;
+
+    expect(live.sessions).toEqual({ live: 1, exited: 0, crashed: 0 });
+  });
+
   it("POST /sessions returns 201 with sessionId+pid; GET /sessions lists it", async () => {
     const { url } = await bootFor(["--hang"]);
     const sessionId = await createSession(url);
