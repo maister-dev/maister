@@ -229,9 +229,9 @@ type HandlerArgs = {
 };
 
 type PermissionClaim =
-  | { kind: "claimed" }
-  | { kind: "already-delivered" }
-  | { kind: "noop-idempotent" };
+  | { kind: "claimed"; runStatus: string }
+  | { kind: "already-delivered"; runStatus: string }
+  | { kind: "noop-idempotent"; runStatus: string };
 
 async function handlePermissionResponse(
   args: HandlerArgs,
@@ -293,7 +293,10 @@ async function handlePermissionResponse(
       const stored = (lockedHitl.response ?? {}) as { optionId?: string };
 
       if (stored.optionId === optionId) {
-        return { kind: "already-delivered" } as const;
+        return {
+          kind: "already-delivered",
+          runStatus: lockedRun.status as string,
+        } as const;
       }
       throw new MaisterError("CONFLICT", "hitl request already delivered");
     }
@@ -306,7 +309,10 @@ async function handlePermissionResponse(
       );
     }
     if (stored && stored.optionId === optionId) {
-      return { kind: "noop-idempotent" } as const;
+      return {
+        kind: "noop-idempotent",
+        runStatus: lockedRun.status as string,
+      } as const;
     }
 
     await tx
@@ -320,7 +326,10 @@ async function handlePermissionResponse(
         ),
       );
 
-    return { kind: "claimed" } as const;
+    return {
+      kind: "claimed",
+      runStatus: lockedRun.status as string,
+    } as const;
   });
 
   if (claim.kind === "already-delivered") {
@@ -338,6 +347,118 @@ async function handlePermissionResponse(
     return NextResponse.json(
       { ok: true, runStatus: "NeedsInput" },
       { status: 200 },
+    );
+  }
+
+  // M8 T10 / D8: NeedsInputIdle branch. The intent is now in
+  // hitl_requests.response (Phase 1). There is no live supervisor
+  // session to deliverPermission to — we trigger a respawn via
+  // resumeRun and return 202. The runner-agent's permission_request
+  // handler (T11) will auto-deliver the stored intent against the new
+  // requestId once the resumed session re-issues the permission.
+  if (claim.runStatus === "NeedsInputIdle") {
+    const { resumeRun } = await import("@/lib/runs/resume");
+    const { scheduleResumedSessionDrive } = await import(
+      "@/lib/runs/resume-driver"
+    );
+    const r = await resumeRun(runId, { db });
+
+    if (r.ok) {
+      // [FIX] M8 review finding #2: schedule the actual driver. Until
+      // this lands, returning 202 here was a lie — the supervisor
+      // session existed but no one read its stream, sent it a prompt,
+      // or auto-delivered the stored intent.
+      const driveId = scheduleResumedSessionDrive({
+        runId,
+        supervisorSessionId: r.newSupervisorSessionId,
+        acpSessionId: r.acpSessionId,
+        stepId: hitlRow.stepId,
+      });
+
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          branch: "idle",
+          phase: "resume-spawned",
+          newSupervisorSessionId: r.newSupervisorSessionId,
+          driveId,
+          latencyMs: Date.now() - startedAt,
+        },
+        "permission stored; resume spawned + driver scheduled — auto-deliver async",
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: "NeedsInput",
+          state: "resume-in-progress",
+        },
+        { status: 202 },
+      );
+    }
+
+    // [FIX] M8 review finding #3: claim race lost is NOT a terminal
+    // failure — another /respond invocation owns the resume. Return
+    // 202 so the operator UI keeps showing "resume in progress" and
+    // the next idempotent retry (after auto-deliver completes) hits
+    // the already-delivered path and gets 200.
+    if (r.code === "CLAIM_RACE") {
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          branch: "idle",
+          phase: "claim-race",
+          latencyMs: Date.now() - startedAt,
+        },
+        "concurrent resume in progress — returning 202",
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: "NeedsInput",
+          state: "resume-in-progress",
+        },
+        { status: 202 },
+      );
+    }
+
+    if (r.retryable) {
+      log.warn(
+        {
+          runId,
+          hitlRequestId,
+          branch: "idle",
+          phase: "resume-retryable",
+          code: r.code,
+          latencyMs: Date.now() - startedAt,
+        },
+        "resume spawn failed — caller may retry",
+      );
+
+      return NextResponse.json(
+        { code: r.code, message: r.message, terminal: false },
+        { status: 503 },
+      );
+    }
+
+    log.warn(
+      {
+        runId,
+        hitlRequestId,
+        branch: "idle",
+        phase: "resume-terminal",
+        code: r.code,
+        latencyMs: Date.now() - startedAt,
+      },
+      "resume spawn failed terminally — run transitioned to Failed",
+    );
+
+    return NextResponse.json(
+      { code: r.code, message: r.message, terminal: true },
+      { status: 410 },
     );
   }
 
@@ -382,12 +503,24 @@ async function handlePermissionResponse(
       // marked respondedAt — in which case the supervisor 404 we just
       // saw is the side-effect of THAT request succeeding, not a real
       // timeout. Returning 200 here is the correct idempotent outcome.
-
+      //
+      // [FIX] M8 review pass 2 finding #1: if this was a
+      // `noop-idempotent` retry (same-payload re-submit) we must NOT
+      // mark the run Failed on the supervisor's 404. The 404 may be
+      // the stale checkpointed deferred that the sweeper cancelled —
+      // an M8 background resume driver is still delivering the
+      // operator's intent against a fresh requestId. In that case we
+      // return 202 "resume-in-progress" and let the auto-deliver
+      // path (or the next retry hitting `already-delivered`) close
+      // the row.
       const outcome = await db.transaction(async (tx: any) => {
         const lockedHitl = await lockHitlRow(tx, hitlRequestId);
 
         if (lockedHitl?.respondedAt) {
           return { transition: "already-delivered" } as const;
+        }
+        if (claim.kind === "noop-idempotent") {
+          return { transition: "in-flight-resume" } as const;
         }
         await tx
           .update(runs)
@@ -400,6 +533,28 @@ async function handlePermissionResponse(
 
         return { transition: "terminal" } as const;
       });
+
+      if (outcome.transition === "in-flight-resume") {
+        log.info(
+          {
+            runId,
+            hitlRequestId,
+            kind: "permission",
+            phase: "in-flight-resume-202",
+            latencyMs: Date.now() - startedAt,
+          },
+          "[FIX] supervisor 404 on idempotent retry — resume likely in flight; returning 202",
+        );
+
+        return NextResponse.json(
+          {
+            ok: true,
+            runStatus: "NeedsInput",
+            state: "resume-in-progress",
+          },
+          { status: 202 },
+        );
+      }
 
       if (outcome.transition === "already-delivered") {
         log.info(

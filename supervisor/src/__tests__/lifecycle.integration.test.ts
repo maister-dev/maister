@@ -247,14 +247,13 @@ describe("supervisor lifecycle integration", () => {
   // they use a bypass-spawn boot to avoid the fake-acp.mjs adapter (which
   // does not speak the ACP protocol).
 
-  it("POST /sessions/:id/checkpoint returns 202 (M3 stub)", async () => {
+  it("POST /sessions/:id/checkpoint on unknown session returns 404 (M8)", async () => {
     const { url } = await bootFor(["--hang"]);
-    const sessionId = await createSession(url);
-    const res = await fetch(`${url}/sessions/${sessionId}/checkpoint`, {
+    const res = await fetch(`${url}/sessions/unknown-checkpoint/checkpoint`, {
       method: "POST",
     });
 
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(404);
   });
 
   it("DELETE for unknown session returns 404", async () => {

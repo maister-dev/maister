@@ -285,6 +285,16 @@ components:
                 Adapter's OS exit code. Always present on this event.
                 Non-zero codes still arrive here when the shutdown was
                 intentional (operator issued `DELETE /sessions/{id}`).
+            reason:
+              type: string
+              enum: [checkpoint, intentional]
+              description: |
+                M8 supervisor-side intentional-shutdown marker.
+                `checkpoint` = graceful checkpoint issued via
+                `POST /sessions/{id}/checkpoint` (web sweeper or
+                explicit). `intentional` = plain `DELETE /sessions/{id}`.
+                Absent for natural process exit (the adapter ran to
+                completion on its own).
     SessionCrashedEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

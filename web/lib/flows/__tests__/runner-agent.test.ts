@@ -41,9 +41,15 @@ type InsertSpy = {
   insertFails: boolean;
 };
 
-function makeFakeDb(opts: { insertFails?: boolean } = {}): InsertSpy & {
+function makeFakeDb(
+  opts: {
+    insertFails?: boolean;
+    priorIntent?: Record<string, unknown> | null;
+  } = {},
+): InsertSpy & {
   insert: (...args: unknown[]) => unknown;
   update: (...args: unknown[]) => unknown;
+  select: (...args: unknown[]) => unknown;
   transaction: (fn: (tx: unknown) => Promise<void>) => Promise<void>;
 } {
   const state: InsertSpy = {
@@ -61,9 +67,27 @@ function makeFakeDb(opts: { insertFails?: boolean } = {}): InsertSpy & {
   });
   const updateChain = () => ({
     set: (vals: Record<string, unknown>) => ({
-      where: async () => {
+      where: (..._args: unknown[]) => {
         state.updates.push({ set: vals });
+        // Thenable that also exposes .returning() so callers that
+        // either `await db.update(t).set(...).where(...)` or
+        // `db.update(t).set(...).where(...).returning(...)` both work.
+        const result: any = Promise.resolve([{ id: "x" }]);
+
+        result.returning = async () => [{ id: "x" }];
+
+        return result;
       },
+    }),
+  });
+  // M8 T11: tryAutoDeliverStoredIntent reads hitl_requests for a prior
+  // stored intent. Tests without `priorIntent` get an empty result so
+  // the legacy "INSERT new row" path still fires.
+  const selectChain = () => ({
+    from: () => ({
+      where: () => ({
+        limit: async () => (opts.priorIntent ? [opts.priorIntent] : []),
+      }),
     }),
   });
 
@@ -71,10 +95,12 @@ function makeFakeDb(opts: { insertFails?: boolean } = {}): InsertSpy & {
     ...state,
     insert: insertChain,
     update: updateChain,
+    select: selectChain,
     transaction: async (fn) => {
       await fn({
         insert: insertChain,
         update: updateChain,
+        select: selectChain,
       });
     },
   };
@@ -116,6 +142,9 @@ function makeApi(opts: {
       eventStream(opts.events),
     ) as unknown as SupervisorApi["streamSession"],
     cancelPermission: cancelSpy as unknown as SupervisorApi["cancelPermission"],
+    deliverPermission: vi.fn(
+      async () => ({ ok: true }) as { ok: true },
+    ) as unknown as SupervisorApi["deliverPermission"],
     cancelSpy,
   };
 }
@@ -155,6 +184,26 @@ function exited(monotonicId: number): SupervisorEvent {
     sessionId: "sup-session-1",
     monotonicId,
     exitCode: 0,
+  };
+}
+
+function checkpointExited(monotonicId: number): SupervisorEvent {
+  return {
+    type: "session.exited",
+    sessionId: "sup-session-1",
+    monotonicId,
+    exitCode: 0,
+    reason: "checkpoint",
+  };
+}
+
+function intentionalExited(monotonicId: number): SupervisorEvent {
+  return {
+    type: "session.exited",
+    sessionId: "sup-session-1",
+    monotonicId,
+    exitCode: 0,
+    reason: "intentional",
   };
 }
 
@@ -305,5 +354,105 @@ describe("runner-agent — session.permission_request handling", () => {
     );
 
     expect(result.stdout).toContain("post-permission chunk");
+  });
+});
+
+// M8 Codex review fix #1: when the supervisor checkpoints the agent
+// mid-permission, the adapter cancels the pending requestPermission with
+// `{outcome: "cancelled"}` and the prompt returns with
+// `stopReason: "end_turn"` (the cancelled permission is journaled for
+// replay on --resume, not denied). The runner-agent MUST inspect
+// `session.exited.reason` and suppress step success even when the
+// stopReason looks successful.
+describe("runner-agent — session.exited.reason handling (M8 Codex fix #1)", () => {
+  it("session.exited.reason='checkpoint' suppresses success and returns STEP_CHECKPOINTED", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [permissionRequest(1, "req-cp"), checkpointExited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    // Step is paused, not succeeded — even though stopReason says end_turn.
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe("STEP_CHECKPOINTED");
+
+    // markCheckpointedFromExit must have fired — confirmed by an UPDATE
+    // setting status to NeedsInputIdle (with checkpointAt + null keepalive).
+    const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
+
+    expect(statusUpdates).toContain("NeedsInputIdle");
+    const idleUpdate = db.updates.find(
+      (u) => u.set.status === "NeedsInputIdle",
+    );
+
+    expect(idleUpdate).toBeDefined();
+    expect(idleUpdate?.set.keepaliveUntil).toBeNull();
+  });
+
+  it("session.exited with no reason still treats end_turn as success (regression guard)", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [update(1, "hello"), exited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.errorCode).toBeUndefined();
+
+    const statusUpdates = db.updates.map((u) => u.set.status).filter(Boolean);
+
+    expect(statusUpdates).not.toContain("NeedsInputIdle");
+  });
+
+  it("session.exited.reason='intentional' does NOT trigger STEP_CHECKPOINTED (only checkpoint reason should)", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [update(1, "hi"), intentionalExited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.errorCode).toBeUndefined();
+  });
+
+  it("checkpoint reason on slash-in-existing also returns STEP_CHECKPOINTED", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [permissionRequest(1, "req-cp-slash"), checkpointExited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const ctx = makeCtx(db, {
+      sessionState: {
+        currentSessionId: "sup-session-1",
+        lastSeenMonotonicId: 0,
+      },
+    });
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "slash-in-existing", prompt: "go" },
+      ctx,
+      api,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe("STEP_CHECKPOINTED");
   });
 });

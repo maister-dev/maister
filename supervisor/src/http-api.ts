@@ -34,6 +34,17 @@ const InputBodySchema = z
     path: ["optionId"],
   });
 
+// M8 T4 + T5: empty-body Zod schema for POST /sessions/:id/checkpoint.
+// Rejects unknown keys so callers cannot smuggle body-controlled fields
+// onto the checkpoint surface (D11 identifier-table rule).
+export const CheckpointBodySchema = z.object({}).strict();
+
+export type CheckpointResponse = {
+  alreadyCheckpointed: boolean;
+  sessionId: string;
+  monotonicId: number;
+};
+
 export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
@@ -107,6 +118,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       runId: parsed.runId,
       emitter,
       logger,
+      resumed: Boolean(parsed.resumeSessionId),
     });
 
     if (!child.stdin) {
@@ -198,7 +210,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       return;
     }
 
-    registry.markIntentionalShutdown(req.params.id);
+    registry.markIntentionalShutdown(req.params.id, "intentional");
     entry.child.kill("SIGTERM");
     const exited = await waitForExit(entry, killGraceMs);
 
@@ -294,8 +306,36 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
   });
 
-  app.post<SessionIdParams>("/sessions/:id/checkpoint", (req, reply) => {
-    if (!registry.has(req.params.id)) {
+  // M8 T4: real graceful checkpoint. Cancels every open permission
+  // deferred for the session with reason="checkpoint" (so the agent
+  // records "replay on resume" markers in its session journal),
+  // then SIGTERMs the child with a configurable grace window. On
+  // SIGKILL escalation we return 500 EXECUTOR_UNAVAILABLE — the web
+  // sweeper treats this as retryable; the next tick re-attempts.
+  // Idempotent on already-exited sessions: returns 200 with
+  // `alreadyCheckpointed: true` and the most recent monotonicId.
+  // Identifier table (D11):
+  //   sessionId  → URL path     (`url-param`)
+  //   body       → request body (empty — Zod strict reject unknown)
+  // NO body fields. NO cross-resource ids.
+  app.post<SessionIdParams>("/sessions/:id/checkpoint", async (req, reply) => {
+    const sessionId = req.params.id;
+    const startedAt = Date.now();
+    const parsed = CheckpointBodySchema.safeParse(req.body ?? {});
+
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+        .join("; ");
+
+      reply.status(409).send({ code: "PRECONDITION", message });
+
+      return;
+    }
+
+    const entry = registry.get(sessionId);
+
+    if (!entry) {
       reply
         .status(404)
         .send({ code: "PRECONDITION", message: "unknown session" });
@@ -303,11 +343,81 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       return;
     }
 
-    logger.info(
-      { sessionId: req.params.id, status: 202 },
-      "http POST /sessions/:id/checkpoint (stub M3)",
+    const checkpointLog = logger.child({ name: "supervisor-checkpoint" });
+
+    // Idempotency: if the child is already gone, return 200 with the
+    // current state. The sweeper may hit this branch when the
+    // supervisor restarted between two ticks.
+    if (
+      entry.record.status === "exited" ||
+      entry.record.status === "crashed"
+    ) {
+      checkpointLog.info(
+        {
+          sessionId,
+          status: entry.record.status,
+          alreadyCheckpointed: true,
+        },
+        "checkpoint endpoint idempotent ack",
+      );
+      reply.status(200).send({
+        alreadyCheckpointed: true,
+        sessionId,
+        monotonicId: entry.record.monotonicId,
+      });
+
+      return;
+    }
+
+    const requestIds = pendingPermissions.requestIds(sessionId);
+
+    checkpointLog.info(
+      {
+        sessionId,
+        pendingPermissionCount: requestIds.length,
+      },
+      "checkpoint requested",
     );
-    reply.status(202).send({ status: "deferred", milestone: "M8" });
+
+    for (const requestId of requestIds) {
+      pendingPermissions.cancel(sessionId, requestId, "checkpoint");
+    }
+
+    registry.markIntentionalShutdown(sessionId, "checkpoint");
+    entry.child.kill("SIGTERM");
+
+    const exited = await waitForExit(entry, killGraceMs);
+
+    if (!exited) {
+      checkpointLog.warn(
+        { sessionId, killGraceMs },
+        "checkpoint sigterm-grace-expired-sigkill",
+      );
+      entry.child.kill("SIGKILL");
+
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        `checkpoint timed out — SIGKILL escalation after ${killGraceMs}ms`,
+      );
+    }
+
+    const latencyMs = Date.now() - startedAt;
+
+    checkpointLog.info(
+      {
+        sessionId,
+        latencyMs,
+        pendingPermissionCount: requestIds.length,
+        alreadyCheckpointed: false,
+      },
+      "checkpoint complete",
+    );
+
+    reply.status(200).send({
+      alreadyCheckpointed: false,
+      sessionId,
+      monotonicId: entry.record.monotonicId,
+    });
   });
 
   app.post<SessionIdParams>("/sessions/:id/input", (req, reply) => {

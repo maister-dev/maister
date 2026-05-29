@@ -63,6 +63,10 @@ export type SupervisorSessionRecord = {
   signal?: string | null;
   logPath: string;
   monotonicId: number;
+  // M8 T6: keep-alive sweeper looks up sessions by acpSessionId. This
+  // is the post-newSession ACP-level id the supervisor stored on
+  // record.acpSessionId; mirrors supervisor/src/types.ts.
+  acpSessionId?: string;
 };
 
 export type SupervisorPermissionOption = {
@@ -97,6 +101,13 @@ export type SupervisorEvent =
       sessionId: string;
       monotonicId: number;
       exitCode: number;
+      // M8 review fix: optional supervisor-side intentional-shutdown
+      // marker. "checkpoint" = graceful checkpoint via
+      // POST /sessions/{id}/checkpoint (sweeper or manual). "intentional"
+      // = plain DELETE /sessions/{id}. Absent on natural process exit.
+      // Mirrors supervisor/src/types.ts and docs/api/async/supervisor-sse
+      // .asyncapi.yaml SessionExitedEvent.
+      reason?: "checkpoint" | "intentional";
     }
   | {
       type: "session.crashed";
@@ -360,20 +371,72 @@ export async function cancelPermission(
   );
 }
 
-export async function checkpointSession(sessionId: string): Promise<void> {
+// M8 T5: typed CheckpointResponse mirrors the supervisor's response
+// shape so callers (the keep-alive sweeper T6, the resume helper T9)
+// can branch on `alreadyCheckpointed` without re-parsing the body.
+//
+// HTTP status translation (D7 + D11):
+//   200  → { ok: true, alreadyCheckpointed, sessionId, monotonicId }
+//   404  → MaisterError("CHECKPOINT") — unknown session; terminal (sweeper marks markCheckpointed directly)
+//   409  → MaisterError("CHECKPOINT") — body validation rejected
+//   500  → MaisterError("EXECUTOR_UNAVAILABLE") — SIGKILL escalation; retryable, sweeper retries on next tick
+//   network/abort → MaisterError("EXECUTOR_UNAVAILABLE") — retryable
+export type CheckpointResponse = {
+  alreadyCheckpointed: boolean;
+  sessionId: string;
+  monotonicId: number;
+};
+
+export async function checkpointSession(
+  sessionId: string,
+): Promise<CheckpointResponse> {
   const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/checkpoint`;
 
   logger.debug({ url, sessionId }, "checkpointSession");
   let res: Response;
 
   try {
-    res = await fetch(url, { method: "POST" });
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
   } catch (err) {
     throw networkErrorToMaister(err, "checkpointSession");
   }
   if (!res.ok) {
+    // 5xx surface as EXECUTOR_UNAVAILABLE (retryable) regardless of
+    // supervisor's own error code — checkpoint over a 5xx is always
+    // safe to retry from the sweeper's perspective.
+    if (res.status >= 500) {
+      const body = (await res
+        .json()
+        .catch(() => ({ message: `supervisor ${res.status}` }))) as {
+        message?: string;
+      };
+
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        body.message ?? `supervisor ${res.status}`,
+      );
+    }
     throw await asMaisterError(res, "CHECKPOINT");
   }
+
+  const body = (await res.json()) as Partial<CheckpointResponse>;
+
+  if (
+    typeof body.alreadyCheckpointed !== "boolean" ||
+    typeof body.sessionId !== "string" ||
+    typeof body.monotonicId !== "number"
+  ) {
+    throw new MaisterError(
+      "CHECKPOINT",
+      `supervisor returned malformed CheckpointResponse: ${JSON.stringify(body)}`,
+    );
+  }
+
+  return body as CheckpointResponse;
 }
 
 export async function* streamSession(

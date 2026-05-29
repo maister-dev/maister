@@ -31,7 +31,8 @@ stateDiagram-v2
 
     Running --> NeedsInput: agent requests permission<br/>or writes needs-input.json
     NeedsInput --> NeedsInput: web activity bumps<br/>keepalive_until +30min
-    NeedsInput --> NeedsInputIdle: now > keepalive_until<br/>(graceful checkpoint)
+    NeedsInput --> NeedsInputIdle: now > keepalive_until<br/>(sweeper-driven checkpoint)
+    NeedsInput --> NeedsInputIdle: runner observes<br/>session.exited.reason=checkpoint
     NeedsInput --> Running: user submits input<br/>(supervisor delivers via ACP)
     NeedsInputIdle --> Running: user submits input<br/>(supervisor respawns --resume)
     NeedsInputIdle --> Abandoned: 24h elapsed<br/>without response
@@ -241,6 +242,102 @@ flowchart TD
 - **Abandon a `Running` run** — supervisor `DELETE /sessions/<id>` (sends
   SIGTERM → grace → SIGKILL), then transitions run to `Abandoned`,
   removes worktree on GC.
+
+## M8 keep-alive + checkpoint + resume
+
+### State transitions added by M8
+
+```
+                 keep-alive expired
+NeedsInput ────────────────────────────► NeedsInputIdle
+    ▲                                          │
+    │ markResumed                              │ operator submits
+    │ (via /respond on Idle)                   │ via /respond
+    │                                          │ (resumeRun)
+    └──────────────────────────────────────────┘
+                                               │
+                                               │ checkpoint_at +
+                                               │ NEEDSINPUTIDLE_TTL_HOURS
+                                               ▼
+                                          Abandoned
+NeedsInput ────► Crashed  (T11 resume-prompt watchdog timeout)
+NeedsInputIdle ─► Failed  (resumeRun terminal error: supervisor 400/404, empty acpSessionId)
+```
+
+All transitions go through atomic UPDATEs with status-guard WHERE
+clauses in `web/lib/runs/state-transitions.ts` (markCheckpointed,
+markCheckpointedFromExit, markResumed, bumpKeepalive, failResumedRun,
+crashResumedRun, rollbackResumedRun). No code mutates `runs.status`
+directly outside these helpers and the scheduler.
+
+`markCheckpointed` and `markCheckpointedFromExit` share identical SQL
+(`UPDATE runs SET status='NeedsInputIdle', checkpoint_at=now(),
+keepalive_until=NULL WHERE id=:id AND status='NeedsInput'`) and differ
+only in the trigger they record in logs — sweeper-driven vs.
+runner-agent-observing-`session.exited.reason="checkpoint"`. The
+status-guard makes them idempotent w.r.t. each other.
+
+### Keep-alive sliding window
+
+The keep-alive window is the interval between the latest
+`POST /api/runs/:runId/activity` (or the supervisor's most recent
+`session.permission_request` event) and `keepalive_until`.
+
+- Every web-console activity ping calls `bumpKeepalive(runId)` →
+  sets `keepalive_until = now + MAISTER_KEEPALIVE_MINUTES`.
+- The frontend `useActivityPing(runId)` hook fires pings on mount,
+  `visibilitychange → visible`, `window.focus`, debounced (5s)
+  pointerdown/keydown, AND a periodic heartbeat every
+  `MAISTER_KEEPALIVE_MINUTES / 2` while the tab is visible.
+- The activity route returns:
+  - `204` while the row is in `Running` or `NeedsInput`.
+  - `409` on `NeedsInputIdle` (hint: use `/respond` to resume).
+  - `410` on any terminal status (the hook then stops pinging).
+
+### Idle sweeper + scheduler interaction
+
+`web/lib/runs/keepalive-sweeper.ts` is a `globalThis`-singleton timer
+that runs `runSweepTick()` every `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS`
+(default 30). Each tick runs two passes serially, each capped at 50
+rows per tick and concurrency 4:
+
+| Pass | SELECT | Per-row action |
+|------|--------|----------------|
+| 1 | `NeedsInput WHERE keepalive_until < now()` | look up supervisor session by `acpSessionId`; if live → `checkpointSession()` then `markCheckpointed`; if not live → `markCheckpointed` directly; on supervisor 5xx → leave row, next tick retries; on success → `releaseSlotOnIdle` → `promoteNextPending` |
+| 2 | `NeedsInputIdle WHERE checkpoint_at + ttl < now()` | UPDATE to `Abandoned` with status-guard; close any open `hitl_requests.respondedAt`; TTL = `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` |
+
+The scheduler cap is `count(status IN ('Running','NeedsInput'))` —
+`NeedsInputIdle` does NOT count, so a checkpointed run frees a slot
+immediately. Resumes (`NeedsInputIdle → NeedsInput` via
+`markResumed`) bypass the cap by design — operator-driven, not
+auto-scheduled.
+
+Every resume-driver terminal transition (`completeResumedStepAndHandoff`
+last-step `Review`, `failResumedRun`, `crashResumedRun`) MUST call
+`promoteNextPending` after the terminal write — same contract as
+`runFlow`'s normal-path terminal in `web/lib/flows/runner.ts:586`.
+Without this, capacity freed by a resume-driver terminal stays
+effectively locked until some other run terminates.
+
+### Resume-recovery sweep (boot-time, Codex review fix #2)
+
+`web/instrumentation.ts` runs `runResumeRecoverySweep()` once on Node
+runtime boot, BEFORE the keep-alive sweeper. The sweep catches HITL
+intents stranded across a web-process restart between the `/respond`
+202 (`state: "resume-in-progress"`) response and the in-process
+`queueMicrotask` driver attaching. The durable shape that flags a
+candidate is `runs.status='NeedsInput' AND acpSessionId IS NOT NULL`
+joined to the latest `hitl_requests` row where `response IS NOT NULL
+AND respondedAt IS NULL`.
+
+| Supervisor state for the row's `acpSessionId` | Action |
+|------------------------------------------------|--------|
+| Live (`listSessions` returns matching record) | Re-schedule `scheduleResumedSessionDrive` against the live session — driver takes ownership. |
+| Gone (`listSessions` ok but no match) | Atomic `rollbackResumedRun` to `NeedsInputIdle` (status-guarded). `hitl_requests.response` stays in place — operator's same-payload retry on `/respond` re-enters the standard resume path. |
+| Supervisor 5xx / network failure | Skip the candidate this boot. Pass 2 of the keep-alive sweeper (TTL → `Abandoned`) is the long-term safety net. |
+
+Always-on, no feature flag. Idempotent — a second invocation finds no
+matching rows.
 
 ## Linked artifacts
 

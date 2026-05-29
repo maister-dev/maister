@@ -4,20 +4,22 @@ info:
   version: "0.7.0"
   description: |
     HTTP surface exposed by the Next.js web tier under `app/api/`. Consumed
-    by the MAIster UI and by any process that wants to drive HITL
+    by the MAIster UI and (in M7) by any process that wants to drive HITL
     or stream run events without bypassing the web tier's trust boundary.
+
+    **Milestone status: M7.**
 
     Routes shipped to date:
 
-    - `POST /api/runs` — launch a run from a Backlog task; precondition
+    - `POST /api/runs` (M5+) — launch a run from a Backlog task; precondition
       checks, executor resolution, worktree create, scheduler claim.
-    - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` — durable
+    - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
       two-phase atomic claim (this file documents the contract). Form and
       human-review flows write `input-<stepId>.json` after a DB claim, and
       the runner's resume-from-existing-input branch picks it up.
-    - `GET /api/runs/{runId}/stream` — Server-Sent Events bridge.
+    - `GET /api/runs/{runId}/stream` (M7) — Server-Sent Events bridge.
       Tails the per-run durable replay log at
       `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` (produced by
       the supervisor — see `supervisor.openapi.yaml`). Reconnect via
@@ -86,9 +88,8 @@ paths:
           the row is unclaimed (or claimed with the same optionId).
           Phase 2 calls the supervisor; on success it marks
           `respondedAt`. Conflicting optionId on retry → 409. Same
-          optionId on retry → idempotent 200. If supervisor reports an
-          expired deferred but another request already marked delivery,
-          the route returns 200 instead of failing the run.
+          optionId on retry → idempotent 200. Supervisor 404 racing a
+          concurrent winner → 200 (no `runs.status = Failed`).
         - **form / human**: schema validation runs first (NEEDS_INPUT 422
           on failure). Then a row-level claim stores `response`. Only
           after the claim succeeds does the route write
@@ -167,13 +168,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "202":
+          description: |
+            M8 idle-branch: claim succeeded and `resumeRun` spawned a
+            fresh supervisor session. Returns 202
+            `{ ok: true, runStatus: "NeedsInput", state: "resume-in-progress" }`.
+            Auto-delivery against the new requestId happens asynchronously
+            inside the runner-agent (typically 5-60 s). Subsequent
+            same-payload retries while `respondedAt IS NULL` keep
+            returning 202; after auto-delivery completes the retries
+            return 200 idempotent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runStatus]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runStatus: { type: string, enum: ["NeedsInput"] }
+                  state: { type: string, enum: ["resume-in-progress"] }
         "410":
           description: |
-            Permission deferred expired before delivery (`HITL_TIMEOUT`).
-            Terminal behavior: the run row is transitioned to
-            `Failed` in the same transaction. Returned ONLY when no
-            concurrent request has already marked `respondedAt` — a
-            racing winner is detected and returns 200 instead.
+            Either (M7) permission deferred expired before delivery
+            (`HITL_TIMEOUT`) — the run row was transitioned to `Failed`
+            in the same transaction; or (M8 idle branch) `resumeRun`
+            failed terminally (`CHECKPOINT`) — supervisor 400 / 404 /
+            201-with-empty-acpSessionId. The idle-branch response
+            includes `terminal: true`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -192,6 +213,52 @@ paths:
             write failed with I/O error. `respondedAt` remains null;
             response is durably stored so a retry replays the same
             value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/activity:
+    post:
+      tags: [runs]
+      summary: (M8) Keep-alive activity ping
+      description: |
+        Bumps `runs.keepalive_until` to `now + MAISTER_KEEPALIVE_MINUTES`
+        so the keep-alive sweeper does not checkpoint a run while the
+        operator is actively reviewing it. Identifier table:
+        `runId` is a `url-param` (UUID v4); the body has NO
+        cross-resource ids (optional `{kind?: "activity"}` marker only).
+        Activity does NOT auto-resume idle runs — `NeedsInputIdle`
+        rows return 409 with a hint to call
+        `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` instead.
+      operationId: activityPing
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Keep-alive bumped on a `Running` or `NeedsInput` row.
+        "400":
+          description: `runId` is not a valid UUID v4.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: Run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            Run is in `NeedsInputIdle` (caller must use `/respond`) or
+            in `Pending` (no live window to bump).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "410":
+          description: |
+            Run is in a terminal status (`Done`, `Abandoned`, `Failed`,
+            `Crashed`, `Review`). Hook should stop pinging.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -291,17 +358,17 @@ components:
             schema — see `docs/configuration.md`). Returns 422 on
             failure.
 
-            Current behavior for `kind="human"`: the response is
+            **M7 behaviour for `kind="human"`:** the response is
             captured under the same atomic-claim + artifact-write
             contract as `kind="form"`. The runner advances to the
             NEXT step with the response surfaced as
             `steps.<stepId>.vars`. The Flow step's `on_reject` clause
             is recorded on the row (`hitl_requests.kind = "human"`)
             but the runner does NOT route on it — `on_reject.goto_step`
-            rerouting is designed. UIs SHOULD therefore not
-            present rejection as a loop-back action today; record
+            rerouting is **Designed M8**. UIs SHOULD therefore not
+            present rejection as a loop-back action in M7; record
             rejection intent in the response payload for audit, but
-            understand the runner will not branch on it until that work lands.
+            understand the runner will not branch on it until M8.
     MaisterErrorBody:
       type: object
       required: [code, message]

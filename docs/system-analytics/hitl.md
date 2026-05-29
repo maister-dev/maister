@@ -256,6 +256,40 @@ fields:
   recoverable via the standard `acp_session_id` resume on next launch —
   no separate reconciliation needed. Depends on checkpoint/resume
   landing the `--resume <id>` re-spawn path.
+- **(Implemented M8 — Codex review fix #1)** When the supervisor
+  cancels a pending permission as part of a checkpoint flow (sweeper or
+  `POST /sessions/:id/checkpoint`), the adapter resolves the deferred
+  with `{outcome: "cancelled"}` and returns `stopReason: "end_turn"`
+  from `prompt()` — the cancelled permission is journaled for replay
+  on the next `--resume`. The web runner-agent MUST observe
+  `session.exited.reason="checkpoint"` on the SSE stream and suppress
+  step success: it calls `markCheckpointedFromExit(runId)`
+  (`NeedsInput → NeedsInputIdle`, same SQL as the sweeper's
+  `markCheckpointed` with a distinct trigger marker in logs) and
+  returns `errorCode: "STEP_CHECKPOINTED"` from the step. `runFlow`
+  treats `STEP_CHECKPOINTED` as a pause (not a failure): mark the
+  step_run NeedsInput, skip terminal write, `promoteNextPending` (slot
+  is free, `NeedsInputIdle` does not count). Without this contract a
+  checkpoint mid-permission would race the sweeper's idle transition
+  and the step could be marked succeeded with an un-replayed
+  permission.
+- **(Implemented M8 — Codex review fix #2)** Claimed-but-undelivered
+  HITL intents (`hitl_requests.response IS NOT NULL AND respondedAt
+  IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
+  boot via `web/lib/runs/resume-recovery.ts:runResumeRecoverySweep`.
+  The sweep runs in `web/instrumentation.ts` BEFORE the keep-alive
+  sweeper and either re-schedules `scheduleResumedSessionDrive`
+  against a live supervisor session OR atomically rolls the run back
+  to `NeedsInputIdle` (status-guarded; intent preserved). Supervisor
+  5xx during recovery → skip-this-boot, the keep-alive sweeper's
+  24 h TTL is the long-term safety net. Always-on, no flag.
+- **(Implemented M8 — Codex review fix #3)** Every resume-driver
+  terminal transition (`completeResumedStepAndHandoff` last-step
+  `Review`, `failResumedRun`, `crashResumedRun`) calls
+  `promoteNextPending` after a successful status-guarded write —
+  mirrors `runFlow`'s normal-path pattern at
+  `web/lib/flows/runner.ts:586`. Failed status-guard (race lost) is
+  detected via `{ok: false}` and skipped, so no double-promotion.
 
 ## Edge cases
 
@@ -286,6 +320,80 @@ fields:
 - **`session/request_permission` arrives while the supervisor is
   shutting down** — request lost; agent will retry on next launch
   through the standard `acp_session_id` resume.
+
+## M8 — live vs idle HITL response paths
+
+The `POST /api/runs/:runId/hitl/:hitlRequestId/respond` route branches
+on the locked `runs.status` read inside the M7 atomic-claim transaction:
+
+```
+                 lockedRun.status?
+                       │
+        ┌──────────────┴──────────────┐
+        │                             │
+   NeedsInput                  NeedsInputIdle
+        │                             │
+        ▼                             ▼
+  Phase 2: deliverPermission     Phase 2: resumeRun
+   (sync supervisor RPC)         (spawn fresh session)
+        │                             │
+        ▼                             ▼
+   200 ok                         202 resume-in-progress
+                                       │
+                                       ▼
+                             Phase 3 (async — runner-agent):
+                             on next session.permission_request
+                             from the resumed session, look up the
+                             stored hitl_requests row and auto-deliver
+                             the operator's intent against the NEW
+                             requestId, then mark respondedAt with
+                             audit { originalRequestId, reissuedRequestId,
+                             deliveredViaResume: true }.
+```
+
+### Two-phase commit on the idle branch
+
+| Phase | Layer | DB write | Side-effect |
+|-------|-------|----------|-------------|
+| 1 | web route | M7 atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE) | none |
+| 2 | web route → `resumeRun(runId)` | inside `markResumed`: `UPDATE runs SET status='NeedsInput', keepalive_until=now+N, checkpoint_at=null WHERE id=:id AND status='NeedsInputIdle'` | `POST /sessions` to supervisor with `resumeSessionId` |
+| 3 | runner-agent permission_request handler | `UPDATE hitl_requests SET respondedAt=now(), response=<merged>` | `POST /sessions/:id/input` to supervisor with the new `requestId` |
+
+The route NEVER awaits Phase 3 — it returns 202 immediately after
+Phase 2's 201 from the supervisor. Phase 3 happens asynchronously
+within the runner-agent's event loop over the next 5-60 s.
+
+### Idempotency guards (idle branch)
+
+- Retry with same payload while `respondedAt IS NULL` AND
+  `runs.status='NeedsInput'` (resume already in progress; runner-agent
+  hasn't auto-delivered yet): 202 `{state:"resume-in-progress"}`.
+- Retry with same payload after successful auto-deliver
+  (respondedAt set): 200 idempotent.
+- Retry after terminal `Failed` (Phase 2 failed terminally):
+  410 `{terminal:true}`.
+- Retry with different payload: 409 (M7 CAS rule).
+
+### Resume failures
+
+The classification table mirrors `resumeRun(runId)` results:
+
+| Supervisor status | MaisterError | HTTP | Run status |
+|---|---|---|---|
+| 5xx / network | EXECUTOR_UNAVAILABLE | 503 `{terminal:false}` | unchanged (NeedsInputIdle) |
+| 400 spawn refused | CHECKPOINT | 410 `{terminal:true}` | Failed (via failResumedRun) |
+| 201 empty acpSessionId | CHECKPOINT | 410 `{terminal:true}` | Failed |
+| 404 unknown checkpoint | CHECKPOINT | 410 `{terminal:true}` | Failed |
+
+### Resume-prompt watchdog (deferred enforcement)
+
+`MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` (default 60) bounds the wait
+for the resumed session's first `session.permission_request`. On
+expiry the runner-agent must call `crashResumedRun(runId)` → run
+transitions to `Crashed` and the stored intent is closed with
+`respondedAt=now()` (audit: `{abandonedReason:"resume-prompt-timeout"}`).
+The helper exists in `web/lib/runs/state-transitions.ts`; the
+runner-agent enforcement is queued for a follow-up patch.
 
 ## Linked artifacts
 

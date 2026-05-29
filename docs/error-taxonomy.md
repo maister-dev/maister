@@ -24,21 +24,22 @@ throw new MaisterError("CONFIG", "DB_URL env is required");
 
 ## Codes
 
-Eleven codes, all defined as a string union in `web/lib/errors.ts`.
+Twelve codes, all defined as a string union in `web/lib/errors.ts`.
 
 | Code | Meaning | Where thrown | UI action |
 | ---- | ------- | ------------ | --------- |
 | `PRECONDITION` | A precondition for an action is not met (dirty repo, branch taken, worktree path occupied, global concurrency cap hit, executor not registered). | `POST /api/runs` validation before spawn. | Show the specific blocker, link to fix. |
 | `SPAWN` | Subprocess could not be launched (binary not on PATH, exec perm denied, OOM). | `supervisor/` when spawning `claude-agent-acp` or `codex-acp`. | "Executor failed to start" with stderr tail. |
-| `NEEDS_INPUT` | Soft validation/state code: the run is waiting for human input, or a submitted HITL response failed schema validation and can be corrected. | HITL/form response validation and run state projection. | Keep the form open and show the exact field error. |
-| `HITL_TIMEOUT` | Live permission deferred expired, or the designed 24h `NeedsInputIdle` timeout fires. | Supervisor input delivery / future timeout watcher. | Permission timeout marks the run `Failed`; idle timeout will abandon the run. |
+| `NEEDS_INPUT` | The run paused for human input (ACP `session/request_permission` or `needs-input.json` artifact). | Supervisor on ACP notification or artifact appearance. | Render HITL form / approve-deny prompt. |
+| `HITL_TIMEOUT` | Supervisor's pending-permission deferred expired (M7) — typically `MAISTER_KEEPALIVE_MINUTES` elapsed without a `/respond` ack. **NOT** raised for the `NeedsInputIdle → Abandoned` transition (M8) — that is a sweeper-driven state flip with no error surface, NOT a `HITL_TIMEOUT`. | Supervisor `POST /sessions/:id/input`, web `/respond` HITL_TIMEOUT branch. | Run → `Failed`; respond returns 410 terminal. |
 | `CRASH` | Worker died mid-`Running` without a graceful checkpoint. | Supervisor heartbeat watcher; startup reconcile. | "Recover or discard" panel with `acpSessionId` resume option. |
 | `CONFLICT` | `git merge --no-ff` could not auto-merge. | `POST /api/runs/[id]/merge`. | "Resolve manually" with parent repo path. |
 | `CONFIG` | A config file or env var is missing or malformed (`maister.yaml`, `flow.yaml`, `form_schema`, `DB_URL`). | `lib/config.ts` validators; `lib/db/client.ts`. | Show the offending field path; refuse to start. |
-| `EXECUTOR_UNAVAILABLE` | Executor cannot be used now: unregistered executor, supervisor unreachable, CCR failure, unknown session during permission delivery, or retryable artifact I/O failure. | Run-launch override resolution; supervisor client; HITL response route. | Show retry/pick-another-executor depending on context. |
+| `EXECUTOR_UNAVAILABLE` | The executor named in run launcher / project override / Flow recommendation is not registered for this project. Also: supervisor 5xx during M8 keep-alive sweeper checkpoint, or supervisor 5xx / network failure during M8 resume from the HITL respond idle branch. Both M8 callers treat the code as retryable — sweeper re-attempts on next tick, respond returns 503 `{terminal:false}` to the operator. | Run-launch override resolution; `keepalive-sweeper` Pass 1; `resumeRun` from `/respond` idle branch. | "Pick a different executor" (launch path); silently retry next tick (sweeper); 503 `{terminal:false}` to operator (respond). |
 | `FLOW_INSTALL` | `git clone --branch <tag>` of a Flow plugin failed, or the manifest was rejected. | Project registration (`POST /api/projects`); Flow loader. | Show the failing source URL + tag, link to the manifest error. |
 | `ACP_PROTOCOL` | Supervisor received an ACP message it cannot decode, or saw an unexpected state transition. | Supervisor ACP client. | "Executor sent an unexpected message" with the raw payload. |
-| `CHECKPOINT` | Graceful checkpoint failed (couldn't persist session state on idle-timeout). | Supervisor checkpoint path. | Worker stays live; UI surfaces a "couldn't checkpoint — keep tab open" warning. |
+| `CHECKPOINT` | Terminal resume failure (M8). Supervisor 400 (spawn refused), 201 with empty `acpSessionId`, or 404 (unknown checkpoint) during `resumeRun` from the `/respond` idle branch. Also raised when `checkpointSession()` receives a malformed 200 response body. | Web `resumeRun`; web `supervisor-client.checkpointSession`. | Run → `Failed` via `failResumedRun`; respond returns 410 `{terminal:true}`; UI surfaces "this run can't be resumed". |
+| `STEP_CHECKPOINTED` | Step paused mid-permission by a supervisor checkpoint (M8 Codex review fix #1). The runner-agent observed `session.exited.reason === "checkpoint"` on the SSE stream and called `markCheckpointedFromExit`, transitioning the run to `NeedsInputIdle`. This is NOT a failure — the cancelled permission is journaled for replay on the next `--resume`. Distinct from `CHECKPOINT` (terminal resume failure). | Web `runner-agent` in both `new-session` and `slash-in-existing` modes. | Run is in `NeedsInputIdle`; UI surfaces the same Inbox panel as keepalive-driven idle. Step is replayed by the resume-driver on operator response. |
 
 ## Construction
 
@@ -47,10 +48,9 @@ new MaisterError(code, message)
 new MaisterError(code, message, { cause: originalError })
 ```
 
-`cause` is the standard `ErrorOptions` shape and stays server-side. HTTP
-and SSE boundaries send `{code, message}` unless a route explicitly adds
-extra fields. `name` is always `"MaisterError"` and `stack` is preserved
-inside the process.
+`cause` is the standard `ErrorOptions` shape; it survives JSON
+serialization across the SSE bridge so the UI can show the underlying
+error too. `name` is always `"MaisterError"` and `stack` is preserved.
 
 ## Detection
 

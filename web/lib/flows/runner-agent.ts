@@ -5,17 +5,19 @@ import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { renderStrict } from "./templating";
 
 import { getDb } from "@/lib/db/client";
 import { hitlRequests, runs } from "@/lib/db/schema";
+import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   cancelPermission,
   createSession,
   deleteSession,
+  deliverPermission,
   sendPrompt,
   streamSession,
   type CreateSessionResult,
@@ -68,6 +70,7 @@ export type SupervisorApi = {
   sendPrompt: typeof sendPrompt;
   streamSession: typeof streamSession;
   cancelPermission: typeof cancelPermission;
+  deliverPermission: typeof deliverPermission;
 };
 
 const defaultSupervisor: SupervisorApi = {
@@ -76,6 +79,7 @@ const defaultSupervisor: SupervisorApi = {
   sendPrompt,
   streamSession,
   cancelPermission,
+  deliverPermission,
 };
 
 function synthesizePermissionPrompt(toolCall: unknown): string {
@@ -90,12 +94,105 @@ type PermissionContext = {
   stepId: string;
   supervisorSessionId: string;
   cancelPermission: typeof cancelPermission;
+  deliverPermission: typeof deliverPermission;
 };
+
+// M8 T11 / D9: look for a prior hitl_requests row where the operator
+// already submitted an intent (response set) but it has not been
+// delivered (respondedAt null). If found, auto-deliver against the
+// NEW requestId and mark the ORIGINAL row's respondedAt with audit.
+async function tryAutoDeliverStoredIntent(
+  ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
+  pctx: PermissionContext,
+): Promise<{ delivered: boolean; reason?: string }> {
+  const priorRows = await pctx.db
+    .select()
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, pctx.runId),
+        eq(hitlRequests.stepId, pctx.stepId),
+        eq(hitlRequests.kind, "permission"),
+        isNull(hitlRequests.respondedAt),
+        isNotNull(hitlRequests.response),
+      ),
+    )
+    .limit(1);
+  const prior = priorRows[0];
+
+  if (!prior) return { delivered: false };
+
+  const stored = prior.response as { optionId?: string } | null;
+  const optionId = stored?.optionId;
+
+  if (!optionId) return { delivered: false };
+
+  const priorRequestId =
+    (prior.schema as { requestId?: string } | null)?.requestId ?? null;
+  const startedAt = Date.now();
+
+  try {
+    await pctx.deliverPermission(
+      pctx.supervisorSessionId,
+      ev.requestId,
+      optionId,
+    );
+    await pctx.db
+      .update(hitlRequests)
+      .set({
+        respondedAt: new Date(),
+        response: {
+          optionId,
+          _audit: {
+            originalRequestId: priorRequestId,
+            reissuedRequestId: ev.requestId,
+            deliveredViaResume: true,
+          },
+        },
+      })
+      .where(eq(hitlRequests.id, prior.id));
+
+    log.info(
+      {
+        runId: pctx.runId,
+        stepId: pctx.stepId,
+        originalRequestId: priorRequestId,
+        reissuedRequestId: ev.requestId,
+        supervisorSessionId: pctx.supervisorSessionId,
+        latencyMs: Date.now() - startedAt,
+      },
+      "auto-delivered stored intent on resumed session",
+    );
+
+    return { delivered: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    log.warn(
+      {
+        runId: pctx.runId,
+        stepId: pctx.stepId,
+        originalRequestId: priorRequestId,
+        reissuedRequestId: ev.requestId,
+        err: message,
+      },
+      "auto-deliver supervisor 5xx — leaving intent un-acked; agent will retry",
+    );
+
+    return { delivered: false, reason: message };
+  }
+}
 
 async function handlePermissionRequest(
   ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
   pctx: PermissionContext,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const auto = await tryAutoDeliverStoredIntent(ev, pctx);
+
+  if (auto.delivered) {
+    return { ok: true } as const;
+  }
+
   const hitlRequestId = randomUUID();
 
   try {
@@ -205,6 +302,12 @@ type EventConsumer = {
   snapshot: () => string;
   reset: () => void;
   permissionPersistFailure: () => { reason: string } | null;
+  // M8 Codex review fix #1: true iff a `session.exited` event with
+  // `reason: "checkpoint"` was observed on the SSE stream. The runner
+  // uses this to suppress step success even when the adapter returned
+  // `stopReason: "end_turn"` (which it will, because a cancelled-with-
+  // reason permission is journaled-for-replay, not denied).
+  checkpointReasonObserved: () => boolean;
 };
 
 function executorToSupervisorInput(
@@ -237,6 +340,7 @@ function startEventConsumer(
   let buf = "";
   let sawPermissionRequest = false;
   let persistFailure: { reason: string } | null = null;
+  let checkpointObserved = false;
   const pendingWork: Promise<void>[] = [];
 
   const done = (async () => {
@@ -283,6 +387,9 @@ function startEventConsumer(
           buf = appendChunk(buf, line + "\n");
         }
         if (ev.type === "session.exited" || ev.type === "session.crashed") {
+          if (ev.type === "session.exited" && ev.reason === "checkpoint") {
+            checkpointObserved = true;
+          }
           break;
         }
       }
@@ -305,6 +412,7 @@ function startEventConsumer(
       buf = "";
     },
     permissionPersistFailure: () => persistFailure,
+    checkpointReasonObserved: () => checkpointObserved,
   };
 }
 
@@ -362,6 +470,7 @@ async function runNewSession(
       stepId: ctx.stepId,
       supervisorSessionId: session.sessionId,
       cancelPermission: api.cancelPermission,
+      deliverPermission: api.deliverPermission,
     });
 
     let promptResult: PromptResult;
@@ -380,7 +489,37 @@ async function runNewSession(
     // even if the agent gracefully ended after the cancelled tool call,
     // the run is in a Crashed state and the runner MUST surface that
     // to runFlow so the final transition to Review never happens.
+    //
+    // M8 Codex review fix #1: checkpoint observation ALSO overrides
+    // stopReason. A cancelled-with-reason permission causes the adapter
+    // to return end_turn — but the step is paused (journaled for replay
+    // on --resume), NOT successful. Surface STEP_CHECKPOINTED so runFlow
+    // does not advance and does not write terminal Review.
     const persistFailure = consumer.permissionPersistFailure();
+    const checkpointed = consumer.checkpointReasonObserved();
+
+    if (checkpointed) {
+      await markCheckpointedFromExit(ctx.runId, { db: ctx.db ?? getDb() });
+      log.info(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          stopReason: promptResult.stopReason,
+          acpSessionId: session.acpSessionId,
+        },
+        "[FIX] step paused by supervisor checkpoint — STEP_CHECKPOINTED",
+      );
+
+      return {
+        ok: false,
+        stdout: consumer.snapshot(),
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "STEP_CHECKPOINTED" as const,
+        acpSessionId: session.acpSessionId,
+      };
+    }
+
     const ok = !persistFailure && promptResult.stopReason === "end_turn";
     const errorCode = persistFailure
       ? ("CRASH" as const)
@@ -457,6 +596,7 @@ async function runSlashInExisting(
     stepId: ctx.stepId,
     supervisorSessionId: sessionId,
     cancelPermission: api.cancelPermission,
+    deliverPermission: api.deliverPermission,
   });
 
   let promptResult: PromptResult;
@@ -471,7 +611,32 @@ async function runSlashInExisting(
     await consumer.done;
   }
 
+  // M8 Codex review fix #1: see runNewSession for rationale.
   const persistFailure = consumer.permissionPersistFailure();
+  const checkpointed = consumer.checkpointReasonObserved();
+
+  if (checkpointed) {
+    await markCheckpointedFromExit(ctx.runId, { db: ctx.db ?? getDb() });
+    log.info(
+      {
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        stopReason: promptResult.stopReason,
+        sessionId,
+      },
+      "[FIX] slash-in-existing step paused by supervisor checkpoint — STEP_CHECKPOINTED",
+    );
+
+    return {
+      ok: false,
+      stdout: consumer.snapshot(),
+      vars: {},
+      durationMs: Date.now() - startedAt,
+      errorCode: "STEP_CHECKPOINTED" as const,
+      acpSessionId: sessionId,
+    };
+  }
+
   const ok = !persistFailure && promptResult.stopReason === "end_turn";
   const errorCode = persistFailure
     ? ("CRASH" as const)

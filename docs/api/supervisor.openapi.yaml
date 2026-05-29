@@ -7,14 +7,18 @@ info:
     sessions and spawns adapter binaries `claude-agent-acp` / `codex-acp`).
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
-    Current supervisor contract. Session lifecycle, ACP prompt delivery,
-    structured ACP events, permission HITL delivery, cost capture, and
-    durable run-event append are implemented end-to-end. `POST
-    /sessions/:id/checkpoint` remains a designed stub; `POST
-    /sessions/:id/input` is implemented for permission decisions only.
+    **Milestone status: M5.** The lifecycle
+    (`POST` / `DELETE` `/sessions`, `GET /sessions`,
+    `GET /sessions/:id/stream`) and the ACP prompt boundary
+    (`POST /sessions/:id/prompt`) are implemented end-to-end. The M5 prompt
+    surface drives the Flow DSL `agent` step from `web/lib/flows/runner-agent.ts`
+    via the supervisor's `ClientSideConnection`; permission requests
+    auto-allow with a warn log until M7 wires HITL.
+    `POST /sessions/:id/checkpoint` (M8) remains a stub;
+    `POST /sessions/:id/input` is implemented as of M7 (permission-only).
 
     The SSE stream emitted by `GET /sessions/:id/stream` is described separately
-    in `api/async/supervisor-sse.asyncapi.yaml`; the stream
+    in `api/async/supervisor-sse.asyncapi.yaml`; as of M7 the stream
     carries `session.update`, `session.permission_request`, `session.line`,
     `session.exited`, and `session.crashed` events.
 
@@ -29,7 +33,7 @@ info:
 servers:
   - url: http://localhost:{port}
     description: |
-      Local supervisor on the operator's workstation. Current deployment ships single-host
+      Local supervisor on the operator's workstation. POC ships single-host
       docker compose; production deployments substitute their own host.
     variables:
       port:
@@ -39,11 +43,11 @@ tags:
   - name: sessions
     description: ACP session lifecycle.
   - name: prompt
-    description: ACP prompt boundary for Flow DSL agent steps.
+    description: ACP prompt boundary (M5 Flow DSL agent step driver).
   - name: stream
     description: Per-session event stream (SSE).
   - name: hitl
-    description: Human-in-the-loop permission input delivery.
+    description: Human-in-the-loop input delivery (stubbed in M3, wired in M7).
 paths:
   /sessions:
     post:
@@ -83,7 +87,7 @@ paths:
                 enoent:
                   value: { code: "SPAWN", message: "spawn claude-agent-acp failed: ENOENT" }
         "503":
-          description: CCR failure, adapter unavailable, or future resource-cap rejection.
+          description: Reserved for executor pool exhaustion (M6).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -113,7 +117,7 @@ paths:
       tags: [prompt]
       summary: Send an ACP prompt to a live session
       description: |
-        Drives the Flow DSL `agent` step. The supervisor forwards the
+        Drives the M5 Flow DSL `agent` step. The supervisor forwards the
         prompt onto the per-session `ClientSideConnection` (built on
         `@agentclientprotocol/sdk@0.22.1`) and blocks until the adapter
         returns a `stopReason`. Concurrent `agent` steps in
@@ -121,7 +125,7 @@ paths:
         calls; `new-session` steps create a fresh session per prompt.
 
         Permission requests raised by the adapter mid-turn surface as
-        `session.permission_request` SSE events. The supervisor
+        `session.permission_request` SSE events (M7+). The supervisor
         parks the ACP deferred until the web tier resolves it via
         `POST /sessions/{id}/input`; the prompt promise stays in flight
         for the duration of the HITL turn.
@@ -216,8 +220,7 @@ paths:
         Supports `Last-Event-ID` for reconnect replay from a per-session
         in-memory ring buffer (1000 entries). Older events that have
         already been GC'd are not replayable from this endpoint — the
-        web tier's durable run bridge fills that gap at
-        `GET /api/runs/{runId}/stream`.
+        web tier's eventual log-file tail bridge (M7+M9) fills that gap.
 
         Full event schemas live in `api/async/supervisor-sse.asyncapi.yaml`.
       operationId: streamSession
@@ -253,36 +256,52 @@ paths:
   /sessions/{id}/checkpoint:
     post:
       tags: [sessions]
-      summary: Designed graceful checkpoint of the session
+      summary: (M8) Graceful checkpoint of the session
       description: |
-        Returns 202 with `{ "status": "deferred", "milestone": "M8" }`.
-        The `milestone` value is a compatibility marker in the current body.
-        The designed implementation will gracefully pause the agent so the JSONL session
-        store (`~/.claude/projects/<cwd-encoded>/<uuid>.jsonl`) can be reused
-        by `--resume <session-id>` from a fresh process.
+        Cancels every open `pendingPermissions` deferred for the session
+        with reason `"checkpoint"`, SIGTERMs the child within
+        `MAISTER_KILL_GRACE_MS`, and on graceful exit emits
+        `session.exited { reason: "checkpoint" }` on the SSE stream.
+        Idempotent: an already-exited session returns 200 with
+        `alreadyCheckpointed: true` and the most recent `monotonicId`.
+        On SIGKILL escalation returns 500 `EXECUTOR_UNAVAILABLE` — the
+        web sweeper treats this as retryable.
       operationId: checkpointSession
       parameters:
         - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: Strictly empty. Unknown keys → 409.
       responses:
-        "202":
-          description: Stub accepted; current response body is preserved for compatibility.
+        "200":
+          description: Graceful checkpoint completed (or idempotent ack).
           content:
             application/json:
-              schema:
-                type: object
-                required: [status, milestone]
-                properties:
-                  status: { type: string, enum: [deferred] }
-                  milestone: { type: string, example: "M8" }
+              schema: { $ref: "#/components/schemas/CheckpointResponse" }
         "404":
           description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "409":
+          description: Body validation failed (unknown keys).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "500":
+          description: SIGTERM grace expired; SIGKILL was issued. Sweeper retries.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /sessions/{id}/input:
     post:
       tags: [hitl]
-      summary: Deliver an HITL permission decision to a live session
+      summary: Deliver an HITL permission decision to a live session (M7)
       description: |
         Permission-only HITL surface. The body is a discriminated union on
         `action`. The supervisor never writes filesystem artifacts on this
@@ -329,17 +348,17 @@ paths:
                 required: [ok]
                 properties:
                   ok: { type: boolean, enum: [true] }
-        "410":
+        "404":
           description: |
-            Known session, but no pending permission exists for that
-            `requestId` (deferred already resolved or timed out).
+            No session with that id, OR no pending permission with that
+            `requestId` (deferred already evicted or timed out).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
                 missing:
                   value:
-                    code: "HITL_TIMEOUT"
+                    code: "NEEDS_INPUT"
                     message: "no pending permission with that requestId"
         "409":
           description: Body validation failure (`PRECONDITION`).
@@ -351,16 +370,6 @@ paths:
                   value:
                     code: "PRECONDITION"
                     message: "optionId: optionId is required when action='select'"
-        "503":
-          description: Unknown session or unavailable executor process while delivering input.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                unknownSession:
-                  value:
-                    code: "EXECUTOR_UNAVAILABLE"
-                    message: "unknown session"
 components:
   parameters:
     SessionId:
@@ -455,8 +464,8 @@ components:
           pattern: '^[A-Za-z0-9._-]+$'
           description: |
             Optional. When set, the supervisor adds `--resume <id>` to the
-            adapter's argv. The designed checkpoint path uses it as the
-            checkpoint-resume handle.
+            adapter's argv. M5 wires it through verbatim; M8 uses it as
+            the checkpoint-resume handle.
     StartSessionResponse:
       type: object
       required: [sessionId, pid, acpSessionId]
@@ -476,7 +485,7 @@ components:
           description: |
             ACP session id surfaced by `session/new` (or echoed back from
             `resumeSessionId` on resume). Doubles as the `--resume` handle
-            for the designed checkpoint/resume path. Cached at
+            for the M8 checkpoint/resume path. Cached at
             `runs.acp_session_id` by the web tier.
     SendPromptRequest:
       type: object
@@ -554,18 +563,39 @@ components:
         - CHECKPOINT
         - CRASH
         - HITL_TIMEOUT
+        - NEEDS_INPUT
       description: |
         Subset of the web-tier `MaisterErrorCode`. The web client translates
         this body into `MaisterError({ code })` at the boundary.
 
-        `HITL_TIMEOUT` is raised when a pending permission deferred
-        ages past `MAISTER_KEEPALIVE_MINUTES` or was already resolved.
+        `HITL_TIMEOUT` (M7+) is raised when a pending permission deferred
+        ages past `MAISTER_KEEPALIVE_MINUTES`. `NEEDS_INPUT` (M7+) is
+        returned by `POST /sessions/{id}/input` when no matching pending
+        permission exists for the given `(sessionId, requestId)`.
     SupervisorErrorBody:
       type: object
       required: [code, message]
       properties:
         code: { $ref: "#/components/schemas/SupervisorErrorCode" }
         message: { type: string }
+    CheckpointResponse:
+      type: object
+      description: |
+        M8 graceful-checkpoint response. Always includes the boolean
+        `alreadyCheckpointed` so callers can branch without inspecting
+        any status code beyond 200. The `monotonicId` is the most
+        recent event sequence number emitted on this session — useful
+        for SSE `lastEventId` reconnects after the checkpoint.
+      required: [alreadyCheckpointed, sessionId, monotonicId]
+      properties:
+        alreadyCheckpointed:
+          type: boolean
+          description: |
+            `true` if the session was already in `exited` or `crashed`
+            when the checkpoint was requested (idempotent retry).
+            `false` for a fresh graceful exit.
+        sessionId: { type: string }
+        monotonicId: { type: integer, minimum: 0 }
     InputBody:
       type: object
       required: [kind, action, requestId]
