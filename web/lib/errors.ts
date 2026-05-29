@@ -11,7 +11,8 @@ export type MaisterErrorCode =
   | "EXECUTOR_UNAVAILABLE"
   | "FLOW_INSTALL"
   | "ACP_PROTOCOL"
-  | "CHECKPOINT";
+  | "CHECKPOINT"
+  | "STEP_CHECKPOINTED";
 
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;

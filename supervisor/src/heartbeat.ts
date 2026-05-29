@@ -42,12 +42,18 @@ export function attachHeartbeat(opts: AttachHeartbeatOptions): void {
     entry.record.monotonicId += 1;
 
     if (treatAsExited) {
-      logger.info({ sessionId, code, signal, intentional }, "session-exited");
+      logger.info(
+        { sessionId, code, signal, intentional, reason: entry.intentionalReason },
+        "session-exited",
+      );
       emitTerminal({
         type: "session.exited",
         sessionId,
         monotonicId: entry.record.monotonicId,
         exitCode: code ?? 0,
+        ...(entry.intentionalReason
+          ? { reason: entry.intentionalReason }
+          : {}),
       });
     } else {
       logger.warn({ sessionId, code, signal }, "session-crashed");

@@ -9,6 +9,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { keepaliveMs } from "@/lib/runs/keepalive-config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projects, runs } = schemaModule as unknown as Record<string, any>;
@@ -26,15 +27,6 @@ const CHUNK_SIZE = 64 * 1024;
 
 function runtimeRoot(): string {
   return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
-}
-
-function keepaliveMs(): number {
-  const raw = process.env.MAISTER_KEEPALIVE_MINUTES ?? "30";
-  const minutes = Number.parseInt(raw, 10);
-
-  return Number.isFinite(minutes) && minutes > 0
-    ? minutes * 60_000
-    : 30 * 60_000;
 }
 
 type RouteParams = { params: Promise<{ runId: string }> };

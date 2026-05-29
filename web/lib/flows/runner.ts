@@ -340,6 +340,14 @@ export async function runFlow(
 
   let failed = false;
   let needsInput = false;
+  // M8 Codex review fix #1: the runner-agent reported a session.exited
+  // .reason="checkpoint" mid-step. The agent's markCheckpointedFromExit
+  // has already transitioned the row NeedsInput → NeedsInputIdle. The
+  // step is paused, not failed; the run's slot is now FREE (NeedsInputIdle
+  // doesn't count against the cap), so we must promoteNextPending on the
+  // way out — unlike the plain `needsInput` branch where the slot stays
+  // busy via NeedsInput.
+  let checkpointed = false;
   // Track the highest-severity errorCode observed across the run so the
   // terminal write can distinguish CRASH (operational failure — runner
   // owes recovery) from ordinary Failed (step rejected the input). The
@@ -468,6 +476,30 @@ export async function runFlow(
         break;
       }
 
+      if (result.errorCode === "STEP_CHECKPOINTED") {
+        // The runner-agent observed `session.exited.reason="checkpoint"`
+        // mid-step and already called markCheckpointedFromExit (row is
+        // now NeedsInputIdle). Mark the step_runs row as paused and
+        // persist acpSessionId for future --resume. DO NOT write
+        // runs.status (would race with markCheckpointedFromExit).
+        // DO NOT mark the step Failed — the step is paused, not failed,
+        // and the resume-driver will replay this same step on operator
+        // response.
+        await markStepNeedsInput(stepRunId, db);
+        if (result.acpSessionId && !loaded.run.acpSessionId) {
+          await db
+            .update(runs)
+            .set({ acpSessionId: result.acpSessionId })
+            .where(eq(runs.id, runId));
+        }
+        checkpointed = true;
+        log2.info(
+          { stepId: step.id },
+          "[FIX] step paused by supervisor checkpoint — runFlow exiting cleanly, slot freed",
+        );
+        break;
+      }
+
       if (!result.ok) {
         const stepErrorCode = (result.errorCode ?? "PRECONDITION") as Exclude<
           StepResult["errorCode"],
@@ -534,6 +566,37 @@ export async function runFlow(
       opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
       log2,
     );
+
+    return;
+  }
+
+  if (checkpointed) {
+    log2.info(
+      {},
+      "[FIX] runFlow paused on STEP_CHECKPOINTED — run is NeedsInputIdle, slot freed",
+    );
+    await cleanupSlashSession(
+      sessionState,
+      opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
+      log2,
+    );
+    try {
+      const nextOpts: RunFlowOptions = {
+        db: opts.db,
+        runtimeRoot: opts.runtimeRoot,
+        supervisorApi: opts.supervisorApi,
+      };
+
+      await promoteNextPending({
+        db,
+        runFlow: (next) => void runFlow(next, nextOpts),
+      });
+    } catch (err) {
+      log2.error(
+        { err: (err as Error).message },
+        "[FIX] promoteNextPending after STEP_CHECKPOINTED failed (non-fatal)",
+      );
+    }
 
     return;
   }

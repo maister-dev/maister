@@ -174,17 +174,80 @@ describe("listSessions", () => {
   });
 });
 
-describe("checkpointSession", () => {
-  it("resolves on 202", async () => {
+describe("checkpointSession (M8)", () => {
+  it("resolves on 200 with a typed CheckpointResponse body", async () => {
     mockOnce(
-      new Response(JSON.stringify({ status: "deferred" }), { status: 202 }),
+      new Response(
+        JSON.stringify({
+          alreadyCheckpointed: false,
+          sessionId: "s1",
+          monotonicId: 42,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
     );
 
-    await expect(checkpointSession("s1")).resolves.toBeUndefined();
+    const r = await checkpointSession("s1");
+
+    expect(r.alreadyCheckpointed).toBe(false);
+    expect(r.sessionId).toBe("s1");
+    expect(r.monotonicId).toBe(42);
   });
 
-  it("rejects with CHECKPOINT fallback on 500", async () => {
-    mockOnce(new Response("oops", { status: 500 }));
+  it("resolves on 200 with alreadyCheckpointed: true (idempotency)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          alreadyCheckpointed: true,
+          sessionId: "s1",
+          monotonicId: 99,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const r = await checkpointSession("s1");
+
+    expect(r.alreadyCheckpointed).toBe(true);
+    expect(r.monotonicId).toBe(99);
+  });
+
+  it("rejects with EXECUTOR_UNAVAILABLE on 500 (retryable; sweeper retries)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          code: "EXECUTOR_UNAVAILABLE",
+          message: "checkpoint timed out — SIGKILL escalation",
+        }),
+        { status: 500, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(checkpointSession("s1")).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+    });
+  });
+
+  it("rejects with CHECKPOINT on 404 (unknown session — terminal)", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ code: "PRECONDITION", message: "unknown session" }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(checkpointSession("s1")).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+  });
+
+  it("rejects with CHECKPOINT on malformed 200 response body", async () => {
+    mockOnce(
+      new Response(JSON.stringify({ alreadyCheckpointed: "yes" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
 
     await expect(checkpointSession("s1")).rejects.toMatchObject({
       code: "CHECKPOINT",

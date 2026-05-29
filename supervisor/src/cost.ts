@@ -18,6 +18,12 @@ export type CostRecord = {
   output_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  // M8 T13: marks entries written by a supervisor session that was
+  // started via `--resume <id>`. Ops can compute the cache-creation
+  // tax (M0 finding: ~$0.28 per cross-process resume) via
+  // `sum(cache_creation_input_tokens) WHERE resumed=true`. Pure
+  // observability — no control-plane decision branches on this flag.
+  resumed?: boolean;
 };
 
 export type AttachCostOptions = {
@@ -27,6 +33,9 @@ export type AttachCostOptions = {
   runId: string;
   emitter: EventEmitter;
   logger: Logger;
+  // M8 T13: true when the session was spawned via `--resume <id>`.
+  // Stamped onto every appended cost.jsonl record. Default false.
+  resumed?: boolean;
 };
 
 export type CostHandle = {
@@ -47,12 +56,15 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
   await mkdir(dirname(costPath), { recursive: true });
   const stream = createWriteStream(costPath, { flags: "a" });
 
+  const resumed = Boolean(opts.resumed);
   const onEvent = (event: SessionEvent) => {
     if (event.type !== "session.line") return;
 
     const record = extractCost(event.line, opts.sessionId);
 
     if (!record) return;
+
+    if (resumed) record.resumed = true;
 
     stream.write(`${JSON.stringify(record)}\n`);
     opts.logger.debug(
@@ -61,6 +73,7 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
         cache_creation: record.cache_creation_input_tokens,
         input: record.input_tokens,
         output: record.output_tokens,
+        resumed,
       },
       "cost-append",
     );

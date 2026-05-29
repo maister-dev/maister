@@ -119,6 +119,27 @@ export type PromoteNextPendingOptions = {
   runFlow?: (runId: string) => void;
 };
 
+// M8 D2: NeedsInputIdle does NOT count toward the cap. When the keep-alive
+// sweeper checkpoints a NeedsInput row into NeedsInputIdle the slot is
+// freed; this helper logs the transition AND drives promoteNextPending so
+// any queued Pending row can move into the freed slot.
+export type ReleaseSlotOnIdleOptions = {
+  runId: string;
+  db?: Db;
+  runFlow?: (runId: string) => void;
+};
+
+export async function releaseSlotOnIdle(
+  opts: ReleaseSlotOnIdleOptions,
+): Promise<{ promotedRunId: string | null }> {
+  log.debug(
+    { runId: opts.runId },
+    "releaseSlotOnIdle — NeedsInputIdle transition freed scheduler slot",
+  );
+
+  return promoteNextPending({ db: opts.db, runFlow: opts.runFlow });
+}
+
 export async function promoteNextPending(
   opts: PromoteNextPendingOptions = {},
 ): Promise<{ promotedRunId: string | null }> {

@@ -124,6 +124,13 @@ export type SessionEvent =
       sessionId: string;
       monotonicId: number;
       exitCode: number;
+      // M8 T4 + T17: optional reason — `"checkpoint"` for sweeper-/
+      // checkpoint-endpoint-driven exits, `"intentional"` for plain
+      // DELETE /sessions/:id. Absent on natural process exit (process
+      // ran to completion). Web tier branches: `"checkpoint"` triggers
+      // `markCheckpointed` reconciliation; `"intentional"` is the plain
+      // operator-cancel path.
+      reason?: "checkpoint" | "intentional";
     }
   | {
       type: "session.crashed";

@@ -89,6 +89,11 @@ const deliverPermissionSpy = vi.fn(
 );
 const runFlowSpy = vi.fn(async (_runId: string): Promise<void> => undefined);
 
+// [FIX] M8 review finding #2 / #3: mocks for the idle-branch
+// dependencies. Tests override these per-case.
+const resumeRunSpy = vi.fn();
+const scheduleResumedSessionDriveSpy = vi.fn();
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
@@ -102,6 +107,15 @@ vi.mock("@/lib/flows/runner", () => ({
   runFlow: (runId: string) => runFlowSpy(runId),
 }));
 
+vi.mock("@/lib/runs/resume", () => ({
+  resumeRun: (...args: unknown[]) => resumeRunSpy(...(args as unknown[])),
+}));
+
+vi.mock("@/lib/runs/resume-driver", () => ({
+  scheduleResumedSessionDrive: (...args: unknown[]) =>
+    scheduleResumedSessionDriveSpy(...(args as unknown[])),
+}));
+
 let runtimeRoot: string;
 
 beforeEach(async () => {
@@ -113,6 +127,9 @@ beforeEach(async () => {
   deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
   runFlowSpy.mockReset();
   runFlowSpy.mockImplementation(async () => undefined);
+  resumeRunSpy.mockReset();
+  scheduleResumedSessionDriveSpy.mockReset();
+  scheduleResumedSessionDriveSpy.mockImplementation(() => "drive-id");
 });
 
 afterEach(async () => {
@@ -668,5 +685,146 @@ describe("HITL respond route — error cases", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("HITL respond route — [FIX] NeedsInputIdle branch", () => {
+  it("schedules the driver and returns 202 on resumeRun success", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInputIdle",
+    });
+
+    resumeRunSpy.mockResolvedValueOnce({
+      ok: true,
+      newSupervisorSessionId: "sup-2",
+      acpSessionId: "acp-1",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { state?: string };
+
+    expect(body.state).toBe("resume-in-progress");
+    expect(resumeRunSpy).toHaveBeenCalledTimes(1);
+    expect(scheduleResumedSessionDriveSpy).toHaveBeenCalledTimes(1);
+    expect(scheduleResumedSessionDriveSpy.mock.calls[0]?.[0]).toMatchObject({
+      runId,
+      supervisorSessionId: "sup-2",
+      acpSessionId: "acp-1",
+      stepId: "plan",
+    });
+  });
+
+  it("CLAIM_RACE → 202 resume-in-progress (NOT 410); driver NOT scheduled", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInputIdle",
+    });
+
+    resumeRunSpy.mockResolvedValueOnce({
+      ok: false,
+      code: "CLAIM_RACE",
+      retryable: false,
+      message: "concurrent resume in progress",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(202);
+    expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
+  });
+
+  it("retryable EXECUTOR_UNAVAILABLE → 503 with terminal:false", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInputIdle",
+    });
+
+    resumeRunSpy.mockResolvedValueOnce({
+      ok: false,
+      code: "EXECUTOR_UNAVAILABLE",
+      retryable: true,
+      message: "supervisor 503",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { terminal?: boolean };
+
+    expect(body.terminal).toBe(false);
+    expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
+  });
+
+  it("terminal CHECKPOINT → 410 with terminal:true", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInputIdle",
+    });
+
+    resumeRunSpy.mockResolvedValueOnce({
+      ok: false,
+      code: "CHECKPOINT",
+      retryable: false,
+      message: "supervisor 400",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(410);
+    const body = (await res.json()) as { terminal?: boolean };
+
+    expect(body.terminal).toBe(true);
+    expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
+  });
+
+  it("[FIX-PASS2-F1] same-payload retry after resume started: noop-idempotent + NeedsInput + supervisor 404 → 202 (NOT Failed)", async () => {
+    // Scenario: original /respond was for NeedsInputIdle; resumeRun
+    // moved status to NeedsInput; driver is delivering against a fresh
+    // requestId. Operator retries with the same payload. The route
+    // sees noop-idempotent + NeedsInput, calls deliverPermission with
+    // the STALE supervisorSessionId/requestId from the original
+    // checkpointed session, supervisor returns 404 HITL_TIMEOUT. The
+    // route MUST recognize this as a likely in-flight resume and
+    // return 202, NOT mark the run Failed.
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInput",
+      response: { optionId: "allow" } as Row,
+    });
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("HITL_TIMEOUT", "stale checkpointed deferred"),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(202);
+    // Critical: the run must NOT be Failed.
+    expect(dbState.tables.runs[0].status).toBe("NeedsInput");
+    // Critical: respondedAt must NOT be set — the in-flight driver
+    // will set it once auto-delivery against the new requestId
+    // succeeds.
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+  });
+
+  it("same-payload retry from in-progress state behaves idempotently (claim already 'noop-idempotent') — does not double-spawn", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInputIdle",
+      response: { optionId: "allow" } as Row,
+    });
+
+    // Phase 1 sees stored.optionId === optionId → noop-idempotent.
+    // Phase 2 (idle branch) still routes through resumeRun. Test
+    // that resumeRun being called once is fine even on a retry —
+    // the second call would race on markResumed and the route maps
+    // it to 202.
+    resumeRunSpy.mockResolvedValueOnce({
+      ok: false,
+      code: "CLAIM_RACE",
+      retryable: false,
+      message: "concurrent resume in progress",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(202);
   });
 });

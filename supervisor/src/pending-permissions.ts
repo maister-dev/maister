@@ -22,6 +22,9 @@ export type PendingPermissionRegistry = {
   reject(sessionId: string, requestId: string, error: Error): boolean;
   size(sessionId?: string): number;
   totalSize(): number;
+  // M8 T4: enumerate currently-open requestIds for a session so the
+  // checkpoint endpoint can cancel them all in lockstep before SIGTERM.
+  requestIds(sessionId: string): string[];
   purgeSession(sessionId: string): void;
 };
 
@@ -198,6 +201,12 @@ export function createPendingPermissions(
       for (const bySession of sessions.values()) total += bySession.size;
 
       return total;
+    },
+
+    requestIds(sessionId): string[] {
+      const bySession = sessions.get(sessionId);
+
+      return bySession ? Array.from(bySession.keys()) : [];
     },
 
     purgeSession(sessionId): void {

@@ -60,7 +60,7 @@ describe("isMaisterError", () => {
 });
 
 describe("MaisterErrorCode exhaustiveness", () => {
-  it("covers all 11 codes (compile-time satisfies check)", () => {
+  it("covers all 12 codes (compile-time satisfies check)", () => {
     const CODES = [
       "PRECONDITION",
       "SPAWN",
@@ -73,9 +73,10 @@ describe("MaisterErrorCode exhaustiveness", () => {
       "FLOW_INSTALL",
       "ACP_PROTOCOL",
       "CHECKPOINT",
+      "STEP_CHECKPOINTED",
     ] as const satisfies readonly MaisterErrorCode[];
 
-    expect(CODES).toHaveLength(11);
+    expect(CODES).toHaveLength(12);
     for (const code of CODES) {
       const err = new MaisterError(code, "x");
 

@@ -210,7 +210,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global concurrency cap (across all projects) |
-| `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (extended by web-console activity) |
+| `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
+| `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
+| `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
+| `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | M8 resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed via `--resume`, the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
 | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
@@ -324,6 +327,27 @@ with real values):
   }
 }
 ```
+
+## Cost tracking on resume (M8)
+
+Every line appended to `.maister/<projectSlug>/runs/<runId>/cost.jsonl`
+by a supervisor session that was spawned via `--resume <id>` carries
+`"resumed": true`. The marker is added in `supervisor/src/cost.ts`'s
+`attachCost(opts)` from `opts.resumed = Boolean(parsed.resumeSessionId)`
+at session creation time. The M0 spike measured ~$0.28 of
+`cache_creation_input_tokens` per cross-process resume — keep-alive
+saves this cost when the operator is paying attention. Ops can monitor
+the tax via:
+
+```sql
+-- across runs, the cache-creation tokens paid as the cost of resuming
+select sum((j->>'cache_creation_input_tokens')::int) as cache_tokens_paid_on_resume
+from cost_lines  -- ingestion view derived from cost.jsonl
+where (j->>'resumed')::boolean = true;
+```
+
+There is no control-plane decision branch on `resumed=true` — it is
+observability only.
 
 ## See Also
 

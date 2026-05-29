@@ -16,11 +16,19 @@ export type SessionEmitter = EventEmitter;
 
 export const SESSION_EVENT_CHANNEL = "session.event";
 
+// M8 T4: when the supervisor initiates an intentional shutdown it
+// records the reason (`intentional` for plain DELETE, `checkpoint` for
+// graceful checkpoint). Heartbeat reads this on the child's `exit`
+// event and propagates it onto `session.exited.reason` so the web tier
+// can distinguish operator-cancel runs from sweeper-driven checkpoints.
+export type IntentionalReason = "intentional" | "checkpoint";
+
 export type RegistryEntry = {
   record: SessionRecord;
   child: ChildProcess;
   emitter: SessionEmitter;
   intentionalShutdown: boolean;
+  intentionalReason?: IntentionalReason;
   eventBuffer: SessionEvent[];
   connection?: acp.ClientSideConnection;
   acpSessionId?: string;
@@ -118,12 +126,16 @@ export class SessionRegistry {
     entry.acpSessionId = acpSessionId;
   }
 
-  markIntentionalShutdown(sessionId: string): boolean {
+  markIntentionalShutdown(
+    sessionId: string,
+    reason: IntentionalReason = "intentional",
+  ): boolean {
     const entry = this.entries.get(sessionId);
 
     if (!entry) return false;
 
     entry.intentionalShutdown = true;
+    entry.intentionalReason = reason;
 
     return true;
   }
