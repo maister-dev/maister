@@ -16,7 +16,7 @@ export default async function AuthLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm">
-      <div className="sticky top-0 z-40 border-b border-transparent bg-transparent">
+      <div className="sticky top-0 z-40 border-b border-line bg-[color-mix(in_oklab,var(--paper-warm)_82%,transparent)] backdrop-blur-[14px] backdrop-saturate-[140%]">
         <nav
           aria-label="Primary"
           className="flex w-full items-center justify-between gap-8 px-8 py-5"

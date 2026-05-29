@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ReactElement, SubmitEvent } from "react";
 
 import { useActionState, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -51,6 +51,14 @@ const submitBtn = clsx(
   "shadow-[0_8px_24px_-8px_var(--amber),0_2px_6px_-2px_rgba(0,0,0,0.08),0_1px_0_rgba(255,255,255,0.15)_inset]",
   "hover:-translate-y-px hover:bg-amber-2 disabled:cursor-wait disabled:opacity-70",
 );
+
+const tabBtn = (active: boolean): string =>
+  clsx(
+    "flex-1 cursor-pointer rounded-full border-0 px-3.5 py-[9px] font-sans text-[13px] leading-none transition-all",
+    active
+      ? "bg-paper font-semibold text-ink shadow-[0_1px_0_rgba(0,0,0,0.04),0_2px_6px_-2px_rgba(0,0,0,0.08)]"
+      : "bg-transparent font-medium text-mute hover:text-ink",
+  );
 
 function EyeIcon({ open }: { open: boolean }): ReactElement {
   return (
@@ -112,9 +120,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
     return t(map[code]);
   };
 
-  const handleRegisterSubmit = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ) => {
+  const handleRegisterSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setRegError(undefined);
     setRegPending(true);
@@ -189,11 +195,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
       >
         <button
           aria-selected={isLogin}
-          className={clsx(
-            "flex-1 cursor-pointer rounded-full border-0 bg-transparent px-3.5 py-[9px] font-sans text-[13px] font-medium leading-none text-mute transition-all hover:text-ink",
-            isLogin &&
-              "bg-paper font-semibold text-ink shadow-[0_1px_0_rgba(0,0,0,0.04),0_2px_6px_-2px_rgba(0,0,0,0.08)]",
-          )}
+          className={tabBtn(isLogin)}
           role="tab"
           type="button"
           onClick={() => setMode("login")}
@@ -202,11 +204,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
         </button>
         <button
           aria-selected={!isLogin}
-          className={clsx(
-            "flex-1 cursor-pointer rounded-full border-0 bg-transparent px-3.5 py-[9px] font-sans text-[13px] font-medium leading-none text-mute transition-all hover:text-ink",
-            !isLogin &&
-              "bg-paper font-semibold text-ink shadow-[0_1px_0_rgba(0,0,0,0.04),0_2px_6px_-2px_rgba(0,0,0,0.08)]",
-          )}
+          className={tabBtn(!isLogin)}
           role="tab"
           type="button"
           onClick={() => setMode("register")}
@@ -217,6 +215,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
 
       {isLogin ? (
         <form
+          key="auth-login"
           ref={fallbackSignInRef}
           action={loginAction}
           className="flex flex-col gap-3.5"
@@ -286,7 +285,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
                 className={inputBase}
                 id="li-pwd"
                 name="password"
-                placeholder="••••••••••••"
+                placeholder={t("passwordPlaceholder")}
                 type={showLoginPwd ? "text" : "password"}
               />
               <button
@@ -329,7 +328,11 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
           </button>
         </form>
       ) : (
-        <form className="flex flex-col gap-3.5" onSubmit={handleRegisterSubmit}>
+        <form
+          key="auth-register"
+          className="flex flex-col gap-3.5"
+          onSubmit={handleRegisterSubmit}
+        >
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabel} htmlFor="rg-name">
               {t("fullName")}
@@ -411,7 +414,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
                 className={inputBase}
                 id="rg-pwd"
                 name="password"
-                placeholder="At least 12 characters"
+                placeholder={t("regPwdPlaceholder")}
                 type={showRegPwd ? "text" : "password"}
                 value={pwdValue}
                 onChange={(e) => setPwdValue(e.target.value)}
