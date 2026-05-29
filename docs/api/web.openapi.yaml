@@ -256,9 +256,11 @@ paths:
         the Drizzle adapter and the session cookie is set.
 
         `users.role` (global role: `admin | member | viewer`) is surfaced
-        on the session object and propagated to `SessionUser.role` used by
-        `lib/authz.ts`. The first registered user is seeded as `admin`
-        via `pnpm db:seed` (or the `SEED_ADMIN_*` env vars).
+        on the session, but `lib/authz.ts` re-reads the live role from the DB
+        on every authorization check (the cached JWT role is not trusted; a
+        deleted user invalidates the session). The single bootstrap admin is
+        seeded by migration `0005` (`admin@maister.local`, `must_change_password
+        = true`); public registration always creates `member`.
       operationId: authPost
       parameters:
         - name: nextauth

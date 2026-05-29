@@ -47,6 +47,7 @@ async function ensureAdminUser(
     email: SEED_ADMIN_EMAIL,
     passwordHash,
     role: "admin",
+    mustChangePassword: true,
   });
   log.info({ table: "users", id, email: SEED_ADMIN_EMAIL }, "inserted admin");
 

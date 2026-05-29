@@ -247,17 +247,30 @@ provider only**. OAuth providers are not configured in M9.
 The implementation is split into two files to satisfy Auth.js's edge/node
 boundary requirements:
 
-- `web/auth.config.ts` — edge-safe: credentials provider definition,
-  `authorized` callback used by `web/middleware.ts` to protect all
-  `(app)` routes.
-- `web/auth.ts` — Node.js runtime only: imports the Drizzle adapter
-  (`@auth/drizzle-adapter`) and extends the `session` / `jwt` callbacks
-  to surface `users.role` and `users.id` on the session object.
+- `web/auth.config.ts` — edge-safe: credentials provider slot + `jwt` /
+  `session` callbacks (no DB). `web/middleware.ts` builds `NextAuth(authConfig)`
+  to protect all `(app)` routes (redirect to `/login` when unauthenticated).
+- `web/auth.ts` — Node.js runtime only: Drizzle adapter
+  (`@auth/drizzle-adapter`) + credentials `authorize`, and a DB-backed `jwt`
+  callback that re-reads `users.role` / `users.mustChangePassword` on every
+  refresh and **invalidates the session (returns `null`) if the user no longer
+  exists**. This keeps the JWT from outliving a role revocation.
 
-**First user / admin bootstrap.** Run `pnpm db:seed` after `pnpm db:migrate`.
-The seed script creates the user identified by `SEED_ADMIN_EMAIL` /
-`SEED_ADMIN_PASSWORD` with `role = 'admin'`. The first user is always admin
-regardless of how they are created.
+**Admin bootstrap (seeded, not first-user).** A single default admin is created
+by **migration `0005`** (`admin@maister.local` / `maister-admin`, bcrypt) so
+every deployment has exactly one bootstrap admin after `pnpm db:migrate`. The
+row carries `must_change_password = true`, so the well-known default password
+**must be changed on first login** before any app access. `pnpm db:seed` is
+idempotent with this (it reuses the existing admin by email). **Public
+registration never grants admin** — `register()` always creates `member`; this
+closes the concurrent-first-user admin-minting race. Promote additional admins
+by editing `users.role` (an admin UI for this is Phase 2).
+
+**DB-authoritative authorization.** `lib/authz.ts` re-reads the live `users.role`
+from the database on every check (`getSessionUser` → `requireGlobalRole` /
+`requireProjectRole`); the cached JWT role is **never** trusted for an
+authorization decision. A demoted or deleted user loses authority on their next
+request, not at JWT expiry.
 
 **Global roles** (`users.role`): `admin | member | viewer`. Enforced by
 `lib/authz.ts:requireGlobalRole()`.

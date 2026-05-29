@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { GlobalRole } from "@/lib/db/schema";
 
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
@@ -35,6 +36,54 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
   }),
+  callbacks: {
+    ...authConfig.callbacks,
+    // Node-only JWT callback: re-read the live role + mustChangePassword from
+    // the DB on every refresh so a demoted/disabled user loses authority and a
+    // changed password clears the gate without waiting for the 30-day token to
+    // expire. A vanished user invalidates the session (return null → sign-out).
+    // This never runs on the edge (middleware uses authConfig's no-DB variant).
+    jwt: async ({ token, user }) => {
+      if (user) {
+        const u = user as {
+          id?: string;
+          role?: GlobalRole;
+          mustChangePassword?: boolean;
+        };
+
+        token.id = u.id;
+        token.role = u.role ?? "member";
+        token.mustChangePassword = u.mustChangePassword ?? false;
+
+        return token;
+      }
+
+      if (typeof token.id === "string") {
+        const rows = await db()
+          .select({
+            role: users.role,
+            mustChangePassword: users.mustChangePassword,
+          })
+          .from(users)
+          .where(eq(users.id, token.id));
+        const row = rows[0];
+
+        if (!row) {
+          log.warn(
+            { userId: token.id },
+            "jwt: user gone — invalidating session",
+          );
+
+          return null;
+        }
+
+        token.role = row.role;
+        token.mustChangePassword = row.mustChangePassword;
+      }
+
+      return token;
+    },
+  },
   providers: [
     Credentials({
       credentials: {
@@ -82,6 +131,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
           name: user.name,
           image: user.image,
           role: user.role,
+          mustChangePassword: user.mustChangePassword,
         };
       },
     }),

@@ -1,5 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 
+import { redirect } from "next/navigation";
+
 import { LeftRail } from "@/components/chrome/left-rail";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
@@ -22,6 +24,11 @@ export default async function AppLayout({
   children: ReactNode;
 }): Promise<ReactElement> {
   const sessionUser = await getSessionUser();
+
+  // Force a password change before any app access (seeded admin / admin-reset).
+  if (sessionUser?.mustChangePassword) {
+    redirect("/change-password");
+  }
 
   const railWorkspaces = sessionUser
     ? await getRailWorkspaces(sessionUser.id, sessionUser.role)

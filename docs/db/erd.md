@@ -37,6 +37,7 @@ erDiagram
         text image
         text password_hash
         text role "admin|member|viewer"
+        boolean must_change_password
         timestamp created_at
     }
 

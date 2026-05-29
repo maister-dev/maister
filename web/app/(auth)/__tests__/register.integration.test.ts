@@ -49,7 +49,18 @@ afterAll(async () => {
 });
 
 describe("register action (integration)", () => {
-  it("first user becomes admin", async () => {
+  it("migration seeds exactly one bootstrap admin with must_change_password", async () => {
+    const admins = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.role, "admin"));
+
+    expect(admins).toHaveLength(1);
+    expect(admins[0].email).toBe("admin@maister.local");
+    expect(admins[0].mustChangePassword).toBe(true);
+  });
+
+  it("public registration never grants admin (always member)", async () => {
     const result = await register({
       name: "First User",
       email: "first@test.com",
@@ -64,7 +75,16 @@ describe("register action (integration)", () => {
       .where(eq(schema.users.email, "first@test.com"));
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].role).toBe("admin");
+    expect(rows[0].role).toBe("member");
+    expect(rows[0].mustChangePassword).toBe(false);
+
+    // The bootstrap admin remains the only admin.
+    const admins = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.role, "admin"));
+
+    expect(admins).toHaveLength(1);
   });
 
   it("second user becomes member", async () => {

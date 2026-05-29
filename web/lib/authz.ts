@@ -13,7 +13,7 @@ import { MaisterError } from "@/lib/errors";
 
 const log = pino({ name: "authz", level: process.env.LOG_LEVEL ?? "info" });
 
-const { projectMembers } = schema;
+const { projectMembers, users } = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -23,6 +23,7 @@ function db(): NodePgDatabase<typeof schema> {
 export interface SessionUser {
   id: string;
   role: GlobalRole;
+  mustChangePassword: boolean;
   email?: string | null;
   name?: string | null;
 }
@@ -51,16 +52,47 @@ export const PROJECT_ACTION_MIN = {
 
 export type ProjectAction = keyof typeof PROJECT_ACTION_MIN;
 
+async function loadUser(id: string) {
+  const rows = await db()
+    .select({
+      id: users.id,
+      role: users.role,
+      email: users.email,
+      name: users.name,
+      mustChangePassword: users.mustChangePassword,
+    })
+    .from(users)
+    .where(eq(users.id, id));
+
+  return rows[0] ?? null;
+}
+
+/**
+ * Resolve the current user. DB-authoritative: the JWT supplies only the user
+ * id (server-issued); role, mustChangePassword, and existence are re-read from
+ * the database so a demoted/deleted user loses authority immediately rather
+ * than at JWT expiry. Returns null when unauthenticated OR the user is gone.
+ */
 export async function getSessionUser(): Promise<SessionUser | null> {
   const session = await auth();
+  const id = session?.user?.id;
 
-  if (!session?.user?.id) return null;
+  if (!id) return null;
+
+  const row = await loadUser(id);
+
+  if (!row) {
+    log.warn({ userId: id }, "session references a missing user — denying");
+
+    return null;
+  }
 
   return {
-    id: session.user.id,
-    role: session.user.role,
-    email: session.user.email,
-    name: session.user.name,
+    id: row.id,
+    role: row.role,
+    mustChangePassword: row.mustChangePassword,
+    email: row.email,
+    name: row.name,
   };
 }
 

@@ -46,14 +46,22 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
   image?,
   passwordHash?,                  // bcrypt hash; null for OAuth-only users
   role: 'admin' | 'member' | 'viewer',   // DEFAULT 'member'
+  mustChangePassword: boolean,    // DEFAULT false; true forces a password change
   createdAt
 }
 ```
 
 `role` is the **global role** used by `requireGlobalRole()` in `lib/authz.ts`.
-The first user created via `pnpm db:seed` receives `role = 'admin'`.
-Global admins are treated as implicit owners of every project (no
-`project_members` row required).
+The single bootstrap admin is seeded by **migration `0005`**
+(`admin@maister.local`, `role = 'admin'`, `must_change_password = true`); public
+registration always creates `role = 'member'`. `requireGlobalRole()` /
+`requireProjectRole()` re-read this column from the DB on every check — the
+cached JWT role is never trusted. Global admins are treated as implicit owners
+of every project (no `project_members` row required).
+
+`mustChangePassword` gates app access: when `true`, the `(app)` layout redirects
+the user to `/change-password` until they set a new password (cleared by the
+`changePassword` server action). Generally reusable for admin-forced resets.
 
 ## `accounts`
 

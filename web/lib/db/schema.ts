@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -24,6 +25,7 @@ export const users = pgTable("users", {
   role: text("role", { enum: ["admin", "member", "viewer"] })
     .notNull()
     .default("member"),
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),

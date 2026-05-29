@@ -52,18 +52,28 @@ etc.). The tokens are also referenced via the `@custom-variant dark` rule so
 
 Two-file edge/Node split:
 
-- `auth.config.ts` — edge-safe. Defines the `CredentialsProvider` (email +
-  password with bcrypt), the `authorized` middleware callback, and
-  `trustHost: true`. Imported by `middleware.ts`.
-- `auth.ts` — Node.js runtime only. Imports `@auth/drizzle-adapter` wired
-  to `getDb()`, extends `session` and `jwt` callbacks to surface
-  `users.id` and `users.role` on the session object, re-exports `auth`,
-  `signIn`, `signOut`, `handlers`.
+- `auth.config.ts` — edge-safe (no DB). `jwt` / `session` callbacks seed
+  `id` / `role` / `mustChangePassword` from `user` at sign-in, plus
+  `trustHost: true`. Imported by `middleware.ts` (which builds
+  `NextAuth(authConfig)`).
+- `auth.ts` — Node.js runtime only. `@auth/drizzle-adapter` + the
+  `CredentialsProvider` (email + password, bcrypt), and a DB-backed `jwt`
+  callback that re-reads `users.role` / `users.mustChangePassword` on every
+  refresh and **returns `null` (signs the user out) if the user row is gone**.
+  Re-exports `auth`, `signIn`, `signOut`, `handlers`.
 
 `web/middleware.ts` protects all `(app)` route-group pages. Unauthenticated
 requests redirect to `/login`. API routes under `app/api/` call
 `requireSession()` / `requireProjectAction()` from `lib/authz.ts` directly
 to return machine-readable JSON errors.
+
+**Admin bootstrap:** the single default admin is seeded by **migration
+`0005`** (`admin@maister.local` / `maister-admin`, `must_change_password =
+true`) — NOT by first-user registration. `register()` always creates
+`member` (no admin auto-promotion → no concurrent-first-user admin race).
+`must_change_password` is enforced by the `(app)` layout, which redirects to
+`/change-password` until the user sets a new password (`changePassword`
+server action). The column is reusable for admin-forced resets.
 
 ### RBAC model
 
@@ -83,6 +93,12 @@ to return machine-readable JSON errors.
 
 The `projectId` passed to project-scoped functions must always be a
 server-derived value (from a DB row), never a body field.
+
+**DB-authoritative:** `getSessionUser()` re-reads the live `users` row
+(role + `mustChangePassword` + existence) from the DB on every call — the
+JWT supplies only the user `id`. A demoted/deleted user therefore loses
+authority on their next request, not at the 30-day JWT expiry. Never branch
+authorization on the cached `session.user.role`.
 
 ### i18n (next-intl, cookie-based)
 

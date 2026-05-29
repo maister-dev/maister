@@ -6,11 +6,13 @@ declare module "next-auth" {
     user: {
       id: string;
       role: GlobalRole;
+      mustChangePassword: boolean;
     } & DefaultSession["user"];
   }
 
   interface User {
     role?: GlobalRole;
+    mustChangePassword?: boolean;
   }
 }
 
@@ -18,5 +20,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     id?: string;
     role?: GlobalRole;
+    mustChangePassword?: boolean;
   }
 }

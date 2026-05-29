@@ -146,8 +146,13 @@ SEED_ADMIN_EMAIL=you@example.com
 SEED_ADMIN_PASSWORD=<strong-password>
 ```
 
-After running `pnpm db:seed`, sign in at `http://localhost:3000/login` with
-those credentials. The first registered user is always `admin`.
+The single bootstrap admin is seeded by **migration `0005`** (defaults
+`admin@maister.local` / `maister-admin`), so it exists right after
+`pnpm db:migrate` — `pnpm db:seed` only adds dev project data and reuses that
+admin. Sign in at `http://localhost:3000/login` with those credentials; the
+account has `must_change_password = true`, so you are routed to
+`/change-password` and must set a new password before reaching the app. **Public
+registration always creates a `member`** — it never grants admin.
 
 **Registering a project** requires the `admin` global role. After signing
 in, navigate to `/projects/new`, paste the absolute path to a directory

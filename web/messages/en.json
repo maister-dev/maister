@@ -207,6 +207,17 @@
     "executorDefault": "Project default",
     "create": "Create task"
   },
+  "changePassword": {
+    "title": "Change your password",
+    "sub": "Your account requires a new password before you can continue.",
+    "newPassword": "New password",
+    "confirm": "Confirm password",
+    "hint": "Use 12+ characters with a mix of letters, numbers and symbols",
+    "submit": "Set password & continue",
+    "errorWeak": "Password must be at least 12 characters.",
+    "errorMismatch": "The two passwords do not match.",
+    "errorGeneric": "Could not update the password. Try again."
+  },
   "roles": {
     "admin": "admin",
     "member": "member",

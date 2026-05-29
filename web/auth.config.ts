@@ -19,10 +19,20 @@ export const authConfig = {
   },
   providers: [],
   callbacks: {
+    // Edge-safe JWT callback (no DB). Seeds claims from `user` at sign-in.
+    // The Node `auth.ts` overrides this with a DB-refreshing variant so role
+    // and mustChangePassword stay authoritative on every server request.
     jwt({ token, user }) {
       if (user) {
-        token.id = user.id;
-        token.role = (user as { role?: GlobalRole }).role ?? "member";
+        const u = user as {
+          id?: string;
+          role?: GlobalRole;
+          mustChangePassword?: boolean;
+        };
+
+        token.id = u.id;
+        token.role = u.role ?? "member";
+        token.mustChangePassword = u.mustChangePassword ?? false;
       }
 
       return token;
@@ -31,6 +41,7 @@ export const authConfig = {
       if (session.user) {
         session.user.id = (token.id as string) ?? session.user.id;
         session.user.role = (token.role as GlobalRole) ?? "member";
+        session.user.mustChangePassword = Boolean(token.mustChangePassword);
       }
 
       return session;

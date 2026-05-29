@@ -63,8 +63,9 @@ export async function register(input: {
     return { ok: false, error: "duplicate" };
   }
 
-  const firstUser = await conn.select({ id: users.id }).from(users).limit(1);
-  const role = firstUser.length === 0 ? "admin" : "member";
+  // Public registration NEVER grants admin. The single bootstrap admin is
+  // seeded by migration 0005 (or `pnpm db:seed`); promotions happen via an
+  // existing admin. This closes the concurrent-first-user admin-minting race.
   const passwordHash = await hashPassword(parsed.data.password);
 
   await conn.insert(users).values({
@@ -72,10 +73,10 @@ export async function register(input: {
     name: parsed.data.name,
     email,
     passwordHash,
-    role,
+    role: "member",
   });
 
-  log.info({ email, role }, "user registered");
+  log.info({ email, role: "member" }, "user registered");
 
   return { ok: true };
 }
