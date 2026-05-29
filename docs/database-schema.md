@@ -193,21 +193,64 @@ executor id resolves within its project's namespace, never cross-project.
                                  //   it derives the bundle path from
                                  //   (flowRefId, runs.flow_revision)
                                  //   via systemCachePath.
-  manifest (jsonb),              // parsed flow.yaml
+  manifest (jsonb),              // parsed flow.yaml (denormalized cache of
+                                 //   the ENABLED revision; refreshed on
+                                 //   enable/upgrade/rollback)
   schemaVersion,
   recommendedExecutorId?,        // nullable, app-side FK to executors
   executorOverrideId?,           // nullable FK -> executors.id,
-                                 //   flow-level override
-  createdAt
+                                 //   flow-level override (PRESERVED across
+                                 //   enable/rollback)
+  enabledRevisionId?,            // M10 FK -> flow_revisions.id (set null);
+                                 //   the project's currently enabled revision
+  enablementState,               // M10 enum: Installed | Enabled |
+                                 //   UpdateAvailable | Deprecated | Disabled |
+                                 //   Failed (default Installed)
+  trustStatus,                   // M10 enum: untrusted | trusted |
+                                 //   trusted_by_policy (default untrusted)
+  createdAt, updatedAt
 }
 ```
 
 UNIQUE `(projectId, flowRefId)`.
 
-Planned M10 replaces the mutable "one row is the current install" shape with
-separate package-revision and project-enablement records. Existing runs already
-have the critical safety property: they snapshot `runs.flow_revision` and do
-not resolve runtime bytes through mutable `flows.installed_path`.
+M10 (ADR-021) repurposed `flows` as the project **enablement pointer**: the
+`source/version/revision/installedPath/manifest/schemaVersion/
+recommendedExecutorId` columns are now a denormalized cache of the *enabled*
+revision; runtime byte authority is `flow_revisions` via `runs.flow_revision_id`.
+
+## `flow_revisions`
+
+Immutable, globally content-addressed Flow package revision (M10, ADR-021).
+Shared across projects — the system cache `~/.maister/flows/<id>@<sha>/` is not
+project-scoped.
+
+```ts
+{
+  id,
+  flowRefId,                     // the id from maister.yaml flows[]
+  source,
+  versionLabel,                  // user-facing tag pin
+  resolvedRevision,              // git SHA (40 hex) or local manifest-digest
+                                 //   prefix; immutable cache key
+  manifestDigest,                // sha256 of canonical manifest JSON
+  manifest (jsonb),              // snapshot the runner reads via
+                                 //   runs.flow_revision_id
+  schemaVersion,
+  engineMin?, engineMax?,        // compat range (enforced at enablement)
+  contract (jsonb)?,             // { capabilities, gates, artifacts,
+                                 //   external_ops } — opaque in M10
+  installedPath,                 // ~/.maister/flows/<id>@<short_sha>/
+  setupStatus,                   // not_required | pending | done | failed
+  packageStatus,                 // GLOBAL lifecycle: Discovered | Installing |
+                                 //   Installed | Failed | Removed
+  installedAt
+}
+```
+
+UNIQUE `(flowRefId, resolvedRevision)`. Two-phase install: a row is written at
+`packageStatus='Installing'` before disk side-effects, then flipped to
+`Installed` (AFTER-side marker) or `Failed`.
 
 ## `tasks`
 
@@ -244,13 +287,16 @@ queries.
   acpSessionId?,                 // resume handle for --resume <id>
   currentStepId?,                // id of the step the runner is on
   flowVersion,                   // tag snapshot at launch — display
-  flowRevision,                  // git SHA snapshot at launch; the
-                                 //   runner derives the bundle path
-                                 //   `~/.maister/flows/<flow_ref_id>@<short_sha>/`
-                                 //   from this column (NEVER from the
-                                 //   mutable `flows.installed_path`).
-                                 //   Pre-migration rows backfill to
-                                 //   the literal "unknown" sentinel.
+  flowRevision,                  // git SHA snapshot at launch (display +
+                                 //   legacy fallback path).
+  flowRevisionId?,               // M10 FK -> flow_revisions.id (set null).
+                                 //   The pinned immutable revision; the runner
+                                 //   resolves manifest + installed_path from
+                                 //   THIS row, so upgrade/rollback of the
+                                 //   project's enabled revision never affects
+                                 //   an in-flight run. Null on pre-migration
+                                 //   rows -> runner falls back to
+                                 //   flows.manifest + systemCachePath.
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
   startedAt, endedAt?

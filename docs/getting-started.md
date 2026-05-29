@@ -100,7 +100,17 @@ db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply migrations against $DB_URL
 db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
 db:studio          # drizzle-kit studio
+backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
+                         # existing flows rows after applying migration 0006
+                         # (idempotent; run once after upgrading to M10)
 ```
+
+> **Upgrading to M10:** after `pnpm db:migrate` applies `0006`, run
+> `pnpm --filter maister-web backfill-flow-revisions` once. It seeds a
+> `flow_revisions` row per existing flow, points each project's enablement at
+> it (grandfathered `Enabled` + `trusted_by_policy`), and links historical runs.
+> Set `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` (see
+> [configuration](configuration.md)) to auto-trust your internal Flow sources.
 
 **Supervisor (`pnpm --filter @maister/supervisor …`):**
 

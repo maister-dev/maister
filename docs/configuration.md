@@ -226,6 +226,16 @@ schemaVersion: 1
 name: Bugfix
 recommended_executor: claude-sonnet     # optional
 setup: ./setup.sh                       # optional one-time install hook
+# Optional M10 package contract (ADR-021): recorded + displayed as opaque
+# metadata. Only `compat` + `schemaVersion` are ENFORCED at enablement;
+# capabilities/gates/artifacts/external_ops gain runtime meaning in M11+.
+compat:                                 # optional engine compatibility range
+  engine_min: 1.0.0
+  engine_max: 2.0.0
+capabilities: [shell, edit]             # optional opaque string list
+gates: []                               # optional opaque string list
+artifacts: [diff, human_note]           # optional opaque string list
+external_ops: []                        # optional opaque string list
 steps:
   - id: plan
     type: agent
@@ -266,6 +276,18 @@ Discriminated on `type`:
 `recommended_executor`, if present, is a non-empty string. Its existence in
 the project's `executors[]` is validated at project-load time, not here —
 the manifest can be loaded standalone for testing.
+
+### Package contract + compatibility (M10)
+
+`compat`, `capabilities`, `gates`, `artifacts`, and `external_ops` are optional.
+They are parsed, digested into `flow_revisions.manifest_digest`, recorded in
+`flow_revisions.contract`, and surfaced in the Flow Packages UI. Enablement and
+launch ENFORCE only two compatibility checks (`web/lib/flows/engine-version.ts`):
+the manifest `schemaVersion` must be in `SUPPORTED_FLOW_SCHEMA_VERSIONS`, and
+`MAISTER_ENGINE_VERSION` must fall within `compat.engine_min..engine_max`.
+Incompatibility surfaces as `CONFIG` (422). Semantic validation of the opaque
+contract lists is deferred to the milestone that introduces each concept (see
+[ADR-021](decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)).
 
 ### Guard semantics
 
@@ -322,6 +344,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global concurrency cap (across all projects) |
+| `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |

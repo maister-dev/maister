@@ -462,9 +462,22 @@ local-dev --flow-id greet --project <slug>`.
 Launch a run: `POST /api/runs` with `{ taskId }` (after seeding a task
 that references this flow).
 
+## Package contract fields (M10)
+
+Beyond `steps`, a `flow.yaml` may declare optional package-contract fields
+(ADR-021): `compat: { engine_min, engine_max }`, and the opaque string lists
+`capabilities`, `gates`, `artifacts`, `external_ops`. They are recorded in
+`flow_revisions.contract`, digested into `flow_revisions.manifest_digest`, and
+shown in the Flow Packages UI. Only `compat` + `schemaVersion` are enforced at
+enablement/launch (`web/lib/flows/engine-version.ts`); the lists are opaque
+until M11+ gives them runtime meaning. See
+[`configuration.md`](configuration.md) and
+[`system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
+
 ## See also
 
 - `docs/flow-aif-plugin.md` — walkthrough of the bundled `aif` plugin.
+- `docs/system-analytics/flow-packages.md` — package lifecycle, trust, revisions.
 - `docs/flow-installer.md` — install pipeline + local-source path.
 - `docs/supervisor.md` — ACP wire, SSE events, prompt endpoint.
 - `docs/getting-started.md` — end-to-end "Launch a run" recipe.
