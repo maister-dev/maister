@@ -67,19 +67,25 @@ sequenceDiagram
         DB-->>W: existing row
         W-->>U: 409 PRECONDITION (slug/repo_path taken)
     end
+    W->>DB: BEGIN tx: INSERT project + executors + owner membership
+    alt unique violation (concurrent duplicate)
+        DB-->>W: 23505
+        W-->>U: 409 CONFLICT
+    end
+    DB-->>W: committed
     loop for each flows[]
         W->>FL: install(source, version)
-        FL->>FS: git clone --branch {tag}<br/>into ~/.maister/flows/{id}@{tag}
+        FL->>FS: git clone --branch {tag}<br/>into ~/.maister/flows/{id}@{sha}
         FL->>FS: symlink into .maister/{slug}/flows/{id}
         FL->>CFG: loadFlowManifest(flow.yaml)
         alt FLOW_INSTALL error
             FL-->>W: throw MaisterError(FLOW_INSTALL)
-            W-->>U: 502 FLOW_INSTALL + failing source URL
+            W->>DB: DELETE project (cascade: executors/flows/members)
+            W->>FS: rm .maister/{slug} subtree
+            W-->>U: 502 FLOW_INSTALL (fully rolled back; retryable)
         end
     end
-    W->>DB: INSERT projects + executors + flows
-    DB-->>W: ok
-    W-->>U: 201 { slug, repoPath, ... }
+    W-->>U: 201 { slug, projectId }
 ```
 
 ### Auto-discovery on startup (Designed)
@@ -135,13 +141,20 @@ flowchart TD
   duplicated id in the message.
 - **`default_executor` not in `executors[].id`** → `CONFIG`.
 - **`flows[].executor_override` not in `executors[].id`** → `CONFIG`.
-- **Slug collision on register** → `PRECONDITION` (409).
-- **`repo_path` collision on register** → `PRECONDITION` (409). Archived
+- **Slug collision on register** → `CONFLICT` (409).
+- **`repo_path` collision on register** → `CONFLICT` (409). Archived
   projects' `repo_path` stays reserved per ADR-019.
+- **Concurrent duplicate register (TOCTOU past the collision check)** → the
+  unique constraint on `slug` / `repo_path` fires inside the insert
+  transaction; translated to `CONFLICT` (409), not a 500.
 - **Flow plugin `git clone --branch <tag>` fails** → `FLOW_INSTALL` (502).
+  Registration is **fully rolled back** (project row deleted, cascading to
+  executors/flows/owner membership; slug artifact subtree removed), so the
+  identical `maister.yaml` can be retried with no leftover row. The shared
+  system cache (`~/.maister/flows/<id>@<sha>`) is intentionally retained.
 - **Flow's `flow.yaml` schema mismatch** → `CONFIG` raised by
   `loadFlowManifest`, surfaced as `FLOW_INSTALL` at the registration
-  boundary.
+  boundary (same full rollback as above).
 
 ## Linked artifacts
 

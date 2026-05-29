@@ -84,11 +84,17 @@ paths:
         1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` (403)
         2. Load + validate `maister.yaml` — `CONFIG` (422)
         3. Slug/repo_path collision check — `CONFLICT` (409)
-        4. DB insert (project + executors + owner membership) — `CONFIG` on
-           slug derivation failure (422)
-        5. Flow plugin installs — `FLOW_INSTALL` (502); on partial failure
-           the route deletes any already-written `flows` rows; the
-           `projects` row may remain (operator can retry or archive).
+        4. DB write (project + executors + owner membership) in ONE
+           transaction — `CONFIG` (422) on slug-derivation failure; a
+           concurrent duplicate that races the collision check trips the
+           unique constraint and is reported as `CONFLICT` (409).
+        5. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
+           all-or-nothing: on any install failure the route fully
+           compensates — deletes the `projects` row (FK cascade removes
+           executors, flows, and the owner membership) and removes the
+           slug-scoped artifact subtree — so the same `maister.yaml` can be
+           retried with no leftover row. The shared, content-addressed system
+           cache (`~/.maister/flows/<id>@<sha>`) is intentionally retained.
 
         Source: `web/app/api/projects/route.ts`.
       operationId: postProject
@@ -136,9 +142,10 @@ paths:
         "502":
           description: |
             A Flow plugin `git clone` or manifest validation failed
-            (`FLOW_INSTALL`). Any already-installed flow rows for this
-            registration attempt are compensated (deleted); the project
-            row may remain.
+            (`FLOW_INSTALL`). The whole registration is rolled back — the
+            `projects` row is deleted (cascading to executors, flows, and the
+            owner membership) and the slug-scoped artifact subtree is removed —
+            so the identical request can be retried without a 409.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

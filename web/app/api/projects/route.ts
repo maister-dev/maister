@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 
 import { eq, or } from "drizzle-orm";
@@ -19,7 +20,7 @@ import { installFlowPlugin } from "@/lib/flows";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches usage in
 // web/app/api/runs/route.ts, web/lib/flows.ts, web/lib/executors.ts).
-const { flows, projectMembers, projects } = schemaModule as unknown as Record<
+const { projectMembers, projects } = schemaModule as unknown as Record<
   string,
   any
 >;
@@ -74,6 +75,24 @@ function errorResponse(err: unknown): NextResponse {
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
     { status: 500 },
+  );
+}
+
+// Postgres unique_violation (23505) — a concurrent registration of the same
+// slug/repo_path that slipped past the read-time collision check (TOCTOU).
+// The unique constraint is the real guard; translate it to a clean 409.
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as {
+    code?: string;
+    cause?: { code?: string };
+    message?: string;
+  };
+
+  if (e?.code === "23505" || e?.cause?.code === "23505") return true;
+
+  return (
+    typeof e?.message === "string" &&
+    /duplicate key value|unique constraint/i.test(e.message)
   );
 }
 
@@ -154,47 +173,66 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const projectId = randomUUID();
 
-    // Phase (c): durable rows (project + executors) inside a transaction.
-    // upsertExecutorsFromConfig opens its own transaction; the project row
-    // must exist first (FK), so insert it before, then set the resolved
-    // default_executor_id and the owner membership.
-    await db.insert(projects).values({
-      id: projectId,
-      slug,
-      name: config.project.name,
-      repoPath,
-      mainBranch: config.project.main_branch,
-      branchPrefix: config.project.branch_prefix,
-      maisterYamlPath,
-    });
+    // Phase (c): project + executors + default-executor + owner membership in
+    // ONE transaction (atomic — a crash mid-way leaves no owner-less project).
+    // upsertExecutorsFromConfig calls `.transaction()` on the db it's given;
+    // passing the outer `tx` nests via a savepoint, so it joins this unit.
+    try {
+      await db.transaction(async (tx: any) => {
+        await tx.insert(projects).values({
+          id: projectId,
+          slug,
+          name: config.project.name,
+          repoPath,
+          mainBranch: config.project.main_branch,
+          branchPrefix: config.project.branch_prefix,
+          maisterYamlPath,
+        });
 
-    const { defaultExecutorId } = await upsertExecutorsFromConfig({
-      projectId,
-      config,
-      db,
-    });
+        const { defaultExecutorId } = await upsertExecutorsFromConfig({
+          projectId,
+          config,
+          db: tx,
+        });
 
-    await db
-      .update(projects)
-      .set({ defaultExecutorId })
-      .where(eq(projects.id, projectId));
+        await tx
+          .update(projects)
+          .set({ defaultExecutorId })
+          .where(eq(projects.id, projectId));
 
-    await db.insert(projectMembers).values({
-      id: randomUUID(),
-      projectId,
-      userId: admin.id,
-      role: "owner",
-    });
+        await tx.insert(projectMembers).values({
+          id: randomUUID(),
+          projectId,
+          userId: admin.id,
+          role: "owner",
+        });
+      });
+    } catch (err) {
+      // Concurrent registration of the same slug/repo_path that beat the
+      // read-time collision check → the unique constraint fires. Nothing was
+      // committed (atomic), so just report the conflict.
+      if (isUniqueViolation(err)) {
+        throw new MaisterError(
+          "CONFLICT",
+          `project slug "${slug}" or repo_path "${repoPath}" already registered`,
+        );
+      }
+      throw err;
+    }
 
     log.info(
       { projectId, slug, repoPath },
       "register project rows persisted, installing flows",
     );
 
-    // Phase (d): flow-install side-effects. Each install upserts its own
-    // flows row + symlink. On failure → FLOW_INSTALL (502). Best-effort
-    // compensation: clear any flows rows already written this call; the
-    // project row may remain (admin can retry or archive).
+    // Phase (d): flow-install side-effects (clone + symlink + flows row), which
+    // cannot live inside a DB transaction. On any failure, fully compensate so
+    // registration is all-or-nothing and the same maister.yaml can be retried:
+    //   1. delete the project row — FK ON DELETE CASCADE removes executors,
+    //      flows, and project_members in one shot (frees the unique slug/repo).
+    //   2. remove the slug-scoped artifact subtree this call may have created.
+    // The shared, content-addressed system cache (~/.maister/flows/<id>@<sha>)
+    // is intentionally left — it is reused across projects and across retries.
     try {
       for (const flow of config.flows) {
         await installFlowPlugin({
@@ -215,17 +253,34 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     } catch (err) {
       log.error(
         { projectId, slug, err: (err as Error).message },
-        "flow install failed during register",
+        "flow install failed during register — compensating",
       );
+
+      // (1) DB rollback first — frees the unique slug/repo so a retry isn't
+      // blocked by a 409. This is the critical compensation; log loudly if it
+      // fails (the only path that leaves a stuck row).
       await db
-        .delete(flows)
-        .where(eq(flows.projectId, projectId))
+        .delete(projects)
+        .where(eq(projects.id, projectId))
         .catch((delErr: unknown) =>
           log.error(
-            { projectId, delErr: (delErr as Error).message },
-            "compensating flows cleanup failed (manual cleanup may be required)",
+            { projectId, slug, delErr: (delErr as Error).message },
+            "CRITICAL: project rollback failed — manual cleanup required",
           ),
         );
+
+      // (2) Disk cleanup — slug-scoped subtree only (matches installFlowPlugin's
+      // default workspaceRoot = process.cwd()). Leftover symlinks are harmless
+      // on retry (they re-resolve to the cache), so this is best-effort.
+      const slugSubtree = path.join(process.cwd(), ".maister", slug);
+
+      await rm(slugSubtree, { recursive: true, force: true }).catch(
+        (rmErr: unknown) =>
+          log.error(
+            { slugSubtree, rmErr: (rmErr as Error).message },
+            "compensating artifact cleanup failed",
+          ),
+      );
 
       if (isMaisterError(err)) throw err;
       throw new MaisterError(
