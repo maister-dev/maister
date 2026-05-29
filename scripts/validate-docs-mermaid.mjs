@@ -16,9 +16,13 @@ const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
 });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
+// Node 18+ exposes a read-only `navigator` getter on globalThis, so a plain
+// assignment throws ("only a getter"). Redefine it instead so jsdom's
+// navigator is used by mermaid under newer Node runtimes.
 Object.defineProperty(globalThis, "navigator", {
-  configurable: true,
   value: dom.window.navigator,
+  configurable: true,
+  writable: true,
 });
 globalThis.HTMLElement = dom.window.HTMLElement;
 

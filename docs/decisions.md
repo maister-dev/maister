@@ -46,6 +46,7 @@
 | [ADR-018](#adr-018-task--run-cardinality-is-1n) | Task ↔ Run cardinality is 1:N | Accepted | 2026-05-22 |
 | [ADR-019](#adr-019-project-slug--repo_path-uniqueness-soft-archival) | Project slug + repo_path uniqueness, soft archival | Accepted | 2026-05-22 |
 | [ADR-020](#adr-020-fastify--pino-in-the-supervisor) | Fastify + pino in the supervisor | Accepted | 2026-05-25 |
+| [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility) | Flow package lifecycle: multi-revision, trust, and compatibility | Accepted | 2026-05-30 |
 
 ---
 
@@ -651,6 +652,90 @@ Graceful shutdown with `MAISTER_SHUTDOWN_GRACE_MS` budget and
 
 - **Express:** larger, slower, weaker types.
 - **Hono:** fine, but less familiar; no compelling reason to switch.
+
+---
+
+### ADR-021: Flow package lifecycle: multi-revision, trust, and compatibility
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** ADR-010 packaged Flows as git-tag-pinned plugin bundles and M4
+shipped the loader. But the loader stores exactly one row per
+`(project_id, flow_ref_id)` (`UNIQUE` constraint) and the runner reads the
+manifest from the live `flows.manifest` column. That makes upgrade, rollback,
+and coexisting revisions unrepresentable, and means a future "upgrade" would
+silently corrupt the manifest of any in-flight run (the run's bytes are already
+pinned on disk via the content-addressed cache, but its manifest is not).
+M10 needs Flow packages to be operable by a product user — installed, trusted,
+upgraded, rolled back, disabled — and safe for every later milestone (M11–M16)
+that ships capabilities/gates/artifacts *inside* a package.
+
+**Decision:**
+
+1. **Multi-revision model.** Introduce an immutable `flow_revisions` table,
+   globally content-addressed by `(flow_ref_id, resolved_revision)` (the system
+   cache `~/.maister/flows/<id>@<sha>/` is already shared across projects). It
+   holds the manifest snapshot, `manifest_digest`, schema version, engine
+   compatibility range, opaque package contract, install path, `setup_status`,
+   and a **global** revision lifecycle `package_status`
+   (`Discovered|Installing|Installed|Failed|Removed`). The existing `flows` row
+   is repurposed as a **project enablement pointer** (`enabled_revision_id`,
+   project-relative `enablement_state`
+   `Installed|Enabled|UpdateAvailable|Deprecated|Disabled|Failed`,
+   `trust_status`), keeping its `source/version/revision/installed_path/manifest/
+   schema_version/recommended_executor_id/executor_override_id` columns as a
+   denormalized cache of the *currently enabled* revision. `runs` gains
+   `flow_revision_id` (nullable FK); the runner reads the manifest + install path
+   from this pinned revision, falling back to `flows.manifest` only for legacy
+   rows. Authority for runtime bytes is `flow_revisions`, never the cache.
+2. **Two-phase install.** `installFlowPlugin` records a `flow_revisions` row at
+   `package_status='Installing'` before any disk side-effect, then flips to
+   `Installed` (the AFTER-side marker) or `Failed`. Install/upgrade failures
+   surface as `FLOW_INSTALL` carrying `{source, version, stage, command,
+   exitStatus, output}`.
+3. **Trust policy.** `local`/`file://` sources and git sources whose URL matches
+   `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` are `trusted_by_policy`; everything
+   else is `untrusted` until an explicit per-(project, revision) trust
+   confirmation. Launch and enablement refuse untrusted revisions.
+4. **Compatibility: enforce engine + schema only.** The package contract
+   (declared capabilities, gates, artifacts, external ops, setup hooks) is
+   *recorded and displayed* as opaque metadata in M10; only
+   `SUPPORTED_FLOW_SCHEMA_VERSIONS` and the `MAISTER_ENGINE_VERSION` range
+   (`compat.engine_min/max`) are enforced at enablement. Semantic validation of
+   each contract element is deferred to the milestone that introduces it (M11
+   graph, M12 artifacts, M14 capabilities, M15 gates).
+
+**Consequences:**
+
+- Multiple revisions of the same Flow coexist; upgrade installs beside the old,
+  rollback flips the enablement pointer, and in-flight/completed runs keep their
+  pinned revision through upgrade/rollback/disable.
+- `removeRevision` is refused while any run references the revision or it is an
+  enabled revision (`CONFLICT`); automatic GC stays M19.
+- A schema migration (`0006`) plus a TS backfill (`backfill-flow-revisions`,
+  digests need sha256 of canonical JSON) is required; existing installs are
+  grandfathered as `trusted_by_policy` + `Enabled`.
+- One new env var (`MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`). No new
+  `MaisterError` code — `FLOW_INSTALL` carries richer detail.
+
+**Alternatives Considered:**
+
+- **Keep one row, add a history table only:** leaves `flows.manifest` as live
+  authority — the in-flight upgrade-corruption bug persists. Rejected.
+- **Drop the denormalized `flows.*` columns entirely:** cleaner single source,
+  but large churn in `resolveExecutor`/queries/launch and a heavier migration
+  for marginal benefit. Rejected for surgical scope.
+- **Adopt [microsoft/apm](https://github.com/microsoft/apm) (Agent Package
+  Manager) as the package backend:** APM manages static agent *context*
+  primitives (skills/prompts/agents/MCP) via `apm.yml` + lockfile + trust
+  policy, but has no flow/step/run concept, so it cannot replace `flow.yaml`,
+  the loader, or the runner. It is a standalone Python CLI whose install model
+  conflicts with the web-tier/no-mandatory-Python architecture, and its
+  distinctive features (content scanning, signed packages, org policy, dependency
+  solver) are exactly what M10 defers. Rejected for M10; recorded as a reference
+  for **M14 (scoped capability materialization)**, where a Flow's shipped
+  skills/agents/MCP servers are actually installed — APM and the AGENTS.md /
+  Agent Skills / MCP standards it builds on are candidates there.
 
 ---
 
