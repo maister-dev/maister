@@ -58,7 +58,10 @@ function relativeTime(from: Date, now: Date): string {
   return `${days}d`;
 }
 
-function extractOptions(kind: HitlRequest["kind"], raw: unknown): HitlOption[] {
+export function extractOptions(
+  kind: HitlRequest["kind"],
+  raw: unknown,
+): HitlOption[] {
   if (raw === null || typeof raw !== "object") return [];
   const opts = (raw as { options?: unknown }).options;
 

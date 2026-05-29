@@ -24,8 +24,9 @@ throw new MaisterError("CONFIG", "DB_URL env is required");
 
 ## Codes
 
-Fourteen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`
-and `UNAUTHORIZED`), all defined as a string union in `web/lib/errors.ts`.
+Fifteen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
+`UNAUTHORIZED`, and `PASSWORD_CHANGE_REQUIRED`), all defined as a string
+union in `web/lib/errors.ts`.
 
 | Code | Meaning | Where thrown | UI action |
 | ---- | ------- | ------------ | --------- |
@@ -43,6 +44,7 @@ and `UNAUTHORIZED`), all defined as a string union in `web/lib/errors.ts`.
 | `STEP_CHECKPOINTED` | Step paused mid-permission by a supervisor checkpoint (M8 Codex review fix #1). The runner-agent observed `session.exited.reason === "checkpoint"` on the SSE stream and called `markCheckpointedFromExit`, transitioning the run to `NeedsInputIdle`. This is NOT a failure — the cancelled permission is journaled for replay on the next `--resume`. Distinct from `CHECKPOINT` (terminal resume failure). | Web `runner-agent` in both `new-session` and `slash-in-existing` modes. | Run is in `NeedsInputIdle`; UI surfaces the same Inbox panel as keepalive-driven idle. Step is replayed by the resume-driver on operator response. |
 | `UNAUTHENTICATED` | No valid session — request arrived without a cookie or with an expired/invalid session token. Maps to **HTTP 401**. | `lib/authz.ts:requireSession()`. Also thrown by `requireGlobalRole()` and `requireProjectRole()` when no session exists. | Redirect to sign-in page. Never show partial data. |
 | `UNAUTHORIZED` | Session is valid but the caller's role (global or project) is below the required minimum. Maps to **HTTP 403**. | `lib/authz.ts:requireGlobalRole()`, `requireProjectRole()`, `requireProjectAction()`. | Show "Access denied" with the required role; do not expose the project/resource name to the caller. |
+| `PASSWORD_CHANGE_REQUIRED` | Session is valid but the account still has `users.must_change_password = true` (seeded admin / admin-forced reset). Maps to **HTTP 403**. Fails closed on every role-gated API. | `lib/authz.ts:requireActiveSession()` (called by `requireGlobalRole()` / `requireProjectRole()`). `requireSession()` / `getSessionUser()` stay permissive so the change-password flow itself works. | Route the user to `/change-password`; block all other actions until cleared. |
 
 ## Construction
 

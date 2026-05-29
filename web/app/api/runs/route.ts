@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction, requireSession } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -56,6 +56,7 @@ function httpStatusForCode(code: string): number {
     case "UNAUTHENTICATED":
       return 401;
     case "UNAUTHORIZED":
+    case "PASSWORD_CHANGE_REQUIRED":
       return 403;
     case "PRECONDITION":
     case "CONFLICT":
@@ -91,11 +92,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    // Authenticate up front; project-role authz happens once projectId is
-    // derived from the task row below (taskId is body-controlled — never
-    // trust a body projectId).
-    await requireSession();
+    // Auth-first: authenticate AND clear the forced-password-change gate up
+    // front, so must-change callers cannot probe task/project existence before
+    // auth. Project-role authz happens once projectId is derived from the task
+    // row below (taskId is body-controlled — never trust a body projectId).
+    await requireActiveSession();
 
+    // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
     const db = getDb() as unknown as {
       select: any;
       insert: any;

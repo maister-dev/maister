@@ -89,6 +89,13 @@ beforeAll(async () => {
       role: "member",
       passwordHash: "x",
     },
+    {
+      id: "u-mustchange",
+      email: "mc@test.com",
+      role: "member",
+      passwordHash: "x",
+      mustChangePassword: true,
+    },
   ]);
   await db.insert(schema.projectMembers).values({
     id: "pm-member",
@@ -106,6 +113,21 @@ afterAll(async () => {
 });
 
 describe("POST /api/projects/[slug]/tasks — trust boundary (integration)", () => {
+  it("blocks a forced-password-change caller BEFORE slug probing (403 PASSWORD_CHANGE_REQUIRED)", async () => {
+    // Auth-first: a must-change account hitting a NONEXISTENT slug must get the
+    // password-change gate (403), NOT a PRECONDITION "project not found" (409)
+    // shape-leak. Proves account-state precedes the URL-slug resource read.
+    sessionRef.value = { user: { id: "u-mustchange", role: "member" } };
+
+    const res = await POST(
+      request({ title: "t", prompt: "p", flowId: "flow-proj-a" }),
+      params("does-not-exist"),
+    );
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PASSWORD_CHANGE_REQUIRED");
+  });
+
   it("rejects a non-member with 403", async () => {
     sessionRef.value = { user: { id: "u-outsider", role: "member" } };
 

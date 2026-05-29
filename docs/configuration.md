@@ -272,6 +272,15 @@ from the database on every check (`getSessionUser` → `requireGlobalRole` /
 authorization decision. A demoted or deleted user loses authority on their next
 request, not at JWT expiry.
 
+**Forced password change fails closed on APIs too.** The `(app)` layout redirects
+`must_change_password` users to `/change-password`, AND every role-gated API
+funnels through `requireActiveSession()` (inside `requireGlobalRole` /
+`requireProjectRole`), which rejects a forced-change account with
+`PASSWORD_CHANGE_REQUIRED` (403). So the seeded admin cannot call `POST /api/projects`,
+`POST /api/runs`, task creation, or HITL response with the default password — the
+page redirect is not the only gate. `requireSession` / `getSessionUser` stay
+permissive so the change-password flow itself can run.
+
 **Global roles** (`users.role`): `admin | member | viewer`. Enforced by
 `lib/authz.ts:requireGlobalRole()`.
 

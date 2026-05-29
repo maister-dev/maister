@@ -38,34 +38,37 @@ stateDiagram-v2
     end note
 ```
 
-Status: **Designed**. Today the schema supports archival
-(`projects.archived_at`); no Route Handler is wired yet.
+Status: **Registration Implemented (M9)** — `POST /api/projects` is live
+(admin-only; see [`../api/web.openapi.yaml`](../api/web.openapi.yaml) and
+`web/app/api/projects/route.ts`). **Archive** remains **Designed**: the schema
+supports it (`projects.archived_at`) but no `DELETE /api/projects/[slug]` route
+is wired yet (Phase 2).
 
 ## Process flows
 
-### Register a project (Designed)
+### Register a project (Implemented M9)
 
 ```mermaid
 sequenceDiagram
     actor U as Operator
     participant W as Web tier
     participant CFG as lib/config
-    participant FL as lib/flows (planned)
+    participant FL as lib/flows
     participant DB as Postgres
     participant FS as Filesystem
 
-    U->>W: POST /api/projects { maisterYamlPath }
-    W->>CFG: loadProjectConfig(path)
+    U->>W: POST /api/projects { dir }
+    W->>CFG: loadProjectConfig(dir + /maister.yaml)
     CFG->>FS: readFile maister.yaml
     CFG->>CFG: zod parse + cross-ref checks
     alt CONFIG error
         CFG-->>W: throw MaisterError(CONFIG)
-        W-->>U: 400 BAD_CONFIG + offending field
+        W-->>U: 422 CONFIG + offending field
     end
     W->>DB: SELECT WHERE slug=? OR repo_path=?
     alt collision
         DB-->>W: existing row
-        W-->>U: 409 PRECONDITION (slug/repo_path taken)
+        W-->>U: 409 CONFLICT (slug/repo_path taken)
     end
     W->>DB: BEGIN tx: INSERT project + executors + owner membership
     alt unique violation (concurrent duplicate)

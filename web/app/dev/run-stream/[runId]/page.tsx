@@ -1,10 +1,17 @@
 /* dev-only — replaced by Run Detail page in M9 */
 
+import { notFound } from "next/navigation";
+
 import { RunStreamFixture } from "./run-stream-fixture";
 
 type Params = { params: Promise<{ runId: string }> };
 
 export default async function DevRunStreamPage({ params }: Params) {
+  // Dev-only fixture — never expose in production builds.
+  if (process.env.NODE_ENV === "production") {
+    notFound();
+  }
+
   const { runId } = await params;
 
   return (

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -35,6 +35,7 @@ function httpStatusForCode(code: string): number {
     case "UNAUTHENTICATED":
       return 401;
     case "UNAUTHORIZED":
+    case "PASSWORD_CHANGE_REQUIRED":
       return 403;
     case "PRECONDITION":
     case "CONFLICT":
@@ -86,6 +87,11 @@ export async function POST(
   }
 
   try {
+    // Auth-first: authenticate AND clear the forced-password-change gate
+    // BEFORE resolving the URL slug, so unauthenticated or must-change callers
+    // cannot probe project existence. Project membership is enforced below.
+    await requireActiveSession();
+
     const db = getDb() as unknown as { select: any; insert: any };
 
     // Resolve project from the URL slug (server-state) before authz — never

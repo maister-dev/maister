@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { requireActiveSession } from "@/lib/authz";
 import {
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
@@ -120,6 +121,11 @@ vi.mock("@/lib/runs/resume-driver", () => ({
 // in @/auth → next-auth (whose beta ESM trips the Vitest resolver). These
 // cases exercise the two-phase/error logic, not authorization.
 vi.mock("@/lib/authz", () => ({
+  requireActiveSession: vi.fn(async () => ({
+    id: "u-test",
+    role: "member",
+    mustChangePassword: false,
+  })),
   requireProjectAction: vi.fn(async () => ({
     user: { id: "u-test", role: "member" },
     role: "member",
@@ -836,5 +842,30 @@ describe("HITL respond route — [FIX] NeedsInputIdle branch", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(202);
+  });
+});
+
+describe("HITL respond route — auth-first ordering", () => {
+  it("runs requireActiveSession BEFORE any resource lookup (no shape-leak)", async () => {
+    // A forced-password-change caller. The gate MUST fire before the route
+    // probes hitl_requests/runs — otherwise a must-change account could read
+    // PRECONDITION "not found" shapes off this state-changing endpoint.
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError(
+        "PASSWORD_CHANGE_REQUIRED",
+        "Password change required before any action",
+      ),
+    );
+
+    // dbState is empty: if the route looked up the row first it would answer
+    // 409 PRECONDITION ("hitl request not found"). Auth-first yields 403.
+    const res = await invokePost("ghost-run", "ghost-hitl", {
+      optionId: "allow",
+    });
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PASSWORD_CHANGE_REQUIRED");
+    // No write happened — the handler never reached the claim transaction.
+    expect(dbState.updates).toHaveLength(0);
   });
 });

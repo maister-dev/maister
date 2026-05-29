@@ -38,7 +38,10 @@ info:
 
     **Authentication.** All routes require a valid session (Auth.js v5
     credentials). Unauthenticated requests return `401 UNAUTHENTICATED`.
-    Insufficient role returns `403 UNAUTHORIZED`. The `security` field below
+    Insufficient role returns `403 UNAUTHORIZED`. An authenticated account
+    with a pending forced password change (seeded admin, admin-forced reset)
+    is rejected on every role-gated route with `403 PASSWORD_CHANGE_REQUIRED`
+    until it sets a new password. The `security` field below
     is left empty because Auth.js sessions are cookie-based and not
     expressible as an OpenAPI security scheme without a custom extension.
 
@@ -81,7 +84,8 @@ paths:
         `role = "owner"`.
 
         Phases and their error codes:
-        1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` (403)
+        1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` or
+           `PASSWORD_CHANGE_REQUIRED` (403)
         2. Load + validate `maister.yaml` — `CONFIG` (422)
         3. Slug/repo_path collision check — `CONFLICT` (409)
         4. DB write (project + executors + owner membership) in ONE
@@ -121,7 +125,9 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "403":
           description: |
-            Caller does not have global `admin` role (`UNAUTHORIZED`).
+            Caller does not have global `admin` role (`UNAUTHORIZED`), or the
+            authenticated account must change its password first
+            (`PASSWORD_CHANGE_REQUIRED`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -203,7 +209,8 @@ paths:
         "403":
           description: |
             Caller is not a `member` or above for this project
-            (`UNAUTHORIZED`).
+            (`UNAUTHORIZED`), or the authenticated account must change its
+            password first (`PASSWORD_CHANGE_REQUIRED`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -298,8 +305,9 @@ paths:
       tags: [runs]
       summary: Launch a new run for a Backlog task
       description: |
-        Requires a valid session (`requireSession`) AND project membership
-        at `member` or above (`requireProjectAction("launchRun")`). The
+        Requires an active session (`requireActiveSession` — authenticated and
+        with no pending forced password change) AND project membership at
+        `member` or above (`requireProjectAction("launchRun")`). The
         `projectId` is derived from the task row, never from the body.
       operationId: postRun
       requestBody:
@@ -321,7 +329,13 @@ paths:
         "403":
           description: |
             Caller is not a `member` or above for this project
-            (`UNAUTHORIZED`).
+            (`UNAUTHORIZED`), or the authenticated account must change its
+            password first (`PASSWORD_CHANGE_REQUIRED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "400":
+          description: Malformed request body (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -425,7 +439,8 @@ paths:
         "403":
           description: |
             Caller is not a `member` or above for the run's project
-            (`UNAUTHORIZED`).
+            (`UNAUTHORIZED`), or the authenticated account must change its
+            password first (`PASSWORD_CHANGE_REQUIRED`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -593,7 +608,8 @@ paths:
         "403":
           description: |
             Caller is not a `viewer` or above for the run's project
-            (`UNAUTHORIZED`).
+            (`UNAUTHORIZED`), or the authenticated account must change its
+            password first (`PASSWORD_CHANGE_REQUIRED`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -733,4 +749,5 @@ components:
             - CHECKPOINT
             - UNAUTHENTICATED
             - UNAUTHORIZED
+            - PASSWORD_CHANGE_REQUIRED
         message: { type: string }

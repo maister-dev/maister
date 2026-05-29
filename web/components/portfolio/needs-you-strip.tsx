@@ -30,7 +30,6 @@ export async function NeedsYouStrip({
   count,
 }: NeedsYouStripProps): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
-  const tNav = await getTranslations("nav");
   const tHitl = await getTranslations("hitl");
 
   return (
@@ -41,14 +40,6 @@ export async function NeedsYouStrip({
       <div className="flex items-center justify-between px-[18px] pb-2 pt-3 font-mono text-[10.5px] font-bold uppercase tracking-[0.14em] text-amber">
         <span className="inline-flex items-center gap-2.5 before:h-1.5 before:w-1.5 before:rounded-full before:bg-amber before:content-[''] before:animate-[pulse-dot_2.2s_ease-out_infinite]">
           {t("needsStripTitle", { count })}
-        </span>
-        <span>
-          <Link
-            className="font-semibold text-amber hover:text-amber-2"
-            href="/inbox"
-          >
-            {tNav("inbox")} →
-          </Link>
         </span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-px border-t border-amber-line bg-amber-line">
@@ -76,7 +67,7 @@ export async function NeedsYouStrip({
                 {item.prompt}
               </div>
               <div className="mt-[3px] font-mono text-[10.5px] tracking-[0.02em] text-mute">
-                {item.branch} · paused {item.time} ago
+                {item.branch} · {t("pausedAgo", { time: item.time })}
               </div>
             </div>
             <span className="inline-flex flex-none items-center gap-1 font-mono text-[11px] font-bold tracking-[0.04em] text-amber">

@@ -101,6 +101,7 @@ function httpStatusForCode(code: string): number {
     case "UNAUTHENTICATED":
       return 401;
     case "UNAUTHORIZED":
+    case "PASSWORD_CHANGE_REQUIRED":
       return 403;
     case "PRECONDITION":
     case "CONFLICT":

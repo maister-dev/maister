@@ -27,7 +27,6 @@ export async function HitlInbox({
   if (inbox.count === 0) return null;
   const t = await getTranslations("board");
   const tHitl = await getTranslations("hitl");
-  const tCommon = await getTranslations("common");
 
   return (
     <section
@@ -48,14 +47,6 @@ export async function HitlInbox({
               <b className="font-semibold text-ink-2">{inbox.oldest}</b>
             </span>
           ) : null}
-        </div>
-        <div className="flex items-center gap-3">
-          <a
-            className="cursor-pointer font-mono text-[11px] font-bold tracking-[0.04em] text-amber hover:text-amber-2"
-            href="/inbox"
-          >
-            {tCommon("openInbox")} →
-          </a>
         </div>
       </div>
 

@@ -108,3 +108,30 @@ describe("authz is DB-authoritative on role (integration)", () => {
     expect(resolved?.mustChangePassword).toBe(true);
   });
 });
+
+describe("must_change_password fails closed on role-gated APIs (integration)", () => {
+  it("rejects a must-change user with PASSWORD_CHANGE_REQUIRED, then allows after clearing", async () => {
+    await seedUser("u-forced", "admin");
+    await db
+      .update(schema.users)
+      .set({ mustChangePassword: true })
+      .where(eq(schema.users.id, "u-forced"));
+    sessionRef.value = { user: { id: "u-forced", role: "admin" } };
+
+    // Every protected API funnels through requireGlobalRole / requireProjectRole
+    // → requireActiveSession, so a forced-change account is blocked everywhere.
+    await expect(requireGlobalRole("member")).rejects.toMatchObject({
+      code: "PASSWORD_CHANGE_REQUIRED",
+    });
+
+    await db
+      .update(schema.users)
+      .set({ mustChangePassword: false })
+      .where(eq(schema.users.id, "u-forced"));
+
+    await expect(requireGlobalRole("admin")).resolves.toMatchObject({
+      id: "u-forced",
+      role: "admin",
+    });
+  });
+});

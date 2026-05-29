@@ -36,7 +36,9 @@ export async function StatusBar({
       <div className="flex items-center gap-3.5">
         <Link
           className="inline-flex items-center gap-1.5 text-mute transition-colors hover:text-ink"
-          href="/docs"
+          href="https://github.com/kanischev/mAIster/tree/main/docs"
+          rel="noreferrer"
+          target="_blank"
         >
           {t("docs")} ↗
         </Link>

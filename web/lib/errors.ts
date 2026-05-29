@@ -14,7 +14,8 @@ export type MaisterErrorCode =
   | "CHECKPOINT"
   | "STEP_CHECKPOINTED"
   | "UNAUTHENTICATED"
-  | "UNAUTHORIZED";
+  | "UNAUTHORIZED"
+  | "PASSWORD_CHANGE_REQUIRED";
 
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;

@@ -7,7 +7,11 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { httpStatusForAuthz, requireProjectRole } from "@/lib/authz";
+import {
+  httpStatusForAuthz,
+  requireActiveSession,
+  requireProjectRole,
+} from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -146,6 +150,25 @@ export async function GET(
 ): Promise<Response> {
   const { runId } = await params;
   const lastEventId = parseLastEventId(req);
+
+  // Auth-first: authenticate AND clear the forced-password-change gate BEFORE
+  // the run lookup, so unauthenticated / must-change callers cannot probe run
+  // existence (404-vs-403 shape). Project membership is enforced below once
+  // projectId is derived from the run row.
+  try {
+    await requireActiveSession();
+  } catch (err) {
+    if (isMaisterError(err)) {
+      const status = httpStatusForAuthz(err.code) ?? 500;
+
+      return NextResponse.json(
+        { code: err.code, message: err.message },
+        { status },
+      );
+    }
+    throw err;
+  }
+
   const run = await loadRunLite(runId);
 
   if (!run) {

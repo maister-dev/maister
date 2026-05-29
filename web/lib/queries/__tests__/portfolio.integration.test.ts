@@ -8,7 +8,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 
@@ -17,6 +17,10 @@ const schema = schemaModule as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+let getPortfolio: typeof import("@/lib/queries/portfolio").getPortfolio;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -29,6 +33,8 @@ beforeAll(async () => {
   db = drizzle(pool);
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+
+  ({ getPortfolio } = await import("@/lib/queries/portfolio"));
 }, 180_000);
 
 afterAll(async () => {
@@ -233,5 +239,57 @@ describe("portfolio queries (integration)", () => {
       .where(eq(schema.projectMembers.userId, user));
 
     expect(memberships).toHaveLength(0);
+  });
+
+  it("getPortfolio exposes the real run id on the Needs-You item (not the slug)", async () => {
+    const user = await createUser("needs@test.com");
+    const project = await createProject("Needs Project");
+    const flow = await createFlow(project);
+
+    await addProjectMember(user, project, "member");
+
+    const executorId = randomUUID();
+
+    await db.insert(schema.executors).values({
+      id: executorId,
+      projectId: project,
+      executorRefId: "claude-sonnet",
+      agent: "claude",
+      model: "claude-sonnet-4-6",
+    });
+
+    const taskId = await createTask(project, flow, "Needs Task");
+    const runId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      taskId,
+      projectId: project,
+      flowId: flow,
+      executorId,
+      status: "NeedsInput",
+      flowVersion: "v1.0.0",
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: "maister/needs",
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/needs",
+    });
+    await db.insert(schema.hitlRequests).values({
+      id: randomUUID(),
+      runId,
+      stepId: "plan",
+      kind: "permission",
+      prompt: "needs you",
+    });
+
+    const portfolio = await getPortfolio(user, "member");
+    const proj = portfolio.projects.find((p) => p.id === project);
+
+    expect(proj?.need?.runId).toBe(runId);
+    expect(proj?.need?.runId).not.toBe(proj?.slug);
   });
 });

@@ -107,8 +107,30 @@ export async function requireSession(): Promise<SessionUser> {
   return user;
 }
 
-export async function requireGlobalRole(min: GlobalRole): Promise<SessionUser> {
+/**
+ * Authenticated AND cleared for action. Every protected, role-gated API funnels
+ * through here (via requireGlobalRole / requireProjectRole), so a user whose
+ * account still requires a password change (seeded admin, admin-forced reset)
+ * is rejected on ALL of them — the page-level redirect is not the only gate.
+ * `requireSession` / `getSessionUser` stay permissive on purpose: the
+ * change-password page + `changePassword` action need the session to clear it.
+ */
+export async function requireActiveSession(): Promise<SessionUser> {
   const user = await requireSession();
+
+  if (user.mustChangePassword) {
+    log.warn({ userId: user.id }, "denied: password change required");
+    throw new MaisterError(
+      "PASSWORD_CHANGE_REQUIRED",
+      "Password change required before any action",
+    );
+  }
+
+  return user;
+}
+
+export async function requireGlobalRole(min: GlobalRole): Promise<SessionUser> {
+  const user = await requireActiveSession();
   const granted = GLOBAL_ORDER[user.role] >= GLOBAL_ORDER[min];
 
   log.debug({ userId: user.id, role: user.role, min, granted }, "global role");
@@ -151,7 +173,7 @@ export async function requireProjectRole(
   projectId: string,
   min: ProjectRole,
 ): Promise<ProjectAccess> {
-  const user = await requireSession();
+  const user = await requireActiveSession();
 
   if (user.role === "admin") {
     log.debug(
@@ -187,6 +209,7 @@ export function requireProjectAction(
 export function httpStatusForAuthz(code: string): number | null {
   if (code === "UNAUTHENTICATED") return 401;
   if (code === "UNAUTHORIZED") return 403;
+  if (code === "PASSWORD_CHANGE_REQUIRED") return 403;
 
   return null;
 }

@@ -27,7 +27,8 @@
     "board": "Board",
     "activity": "Activity",
     "prs": "PRs",
-    "crumbProjects": "~/projects"
+    "crumbProjects": "~/projects",
+    "comingSoon": "Coming soon"
   },
   "auth": {
     "host": "/ instance · v0.0.1",
@@ -102,6 +103,8 @@
     "heading": "Projects.",
     "subheading": "{projects} repos under management. {workspaces} workspaces in flight. {needs} things waiting on you.",
     "needsStripTitle": "{count} things need your review",
+    "ticker": "<b>{projects}</b> projects · <b>{workspaces}</b> workspaces in flight · <b>{needs}</b> waiting on you",
+    "pausedAgo": "paused {time} ago",
     "activeWorkspaces": "Active workspaces",
     "seeAll": "See all",
     "agentsConnected": "Coding agents · connected",
@@ -206,6 +209,20 @@
     "executorLabel": "Executor",
     "executorDefault": "Project default",
     "create": "Create task"
+  },
+  "run": {
+    "eyebrow": "run",
+    "backToBoard": "← Back to board",
+    "noPending": "No input is pending for this run.",
+    "pendingTitle": "Waiting on you",
+    "responseLabel": "Response (JSON)",
+    "responseHint": "Enter a JSON value matching the requested schema below.",
+    "schemaLabel": "Requested schema",
+    "submit": "Submit response",
+    "submitting": "Submitting…",
+    "errorInvalidJson": "Response must be valid JSON.",
+    "branch": "branch",
+    "step": "step"
   },
   "changePassword": {
     "title": "Change your password",

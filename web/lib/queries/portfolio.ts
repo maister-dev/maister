@@ -3,7 +3,7 @@ import "server-only";
 import type { GlobalRole, ProjectRole } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -58,6 +58,7 @@ export interface PortfolioRecentMerge {
 }
 
 export interface PortfolioNeed {
+  runId: string;
   prompt: string;
   agent: AgentRole;
   branch: string;
@@ -229,12 +230,19 @@ export async function getPortfolio(
       .from(runs)
       .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-      .where(and(inArray(runs.projectId, projectIds), eq(runs.status, "Done")))
+      .where(
+        and(
+          inArray(runs.projectId, projectIds),
+          eq(runs.status, "Done"),
+          isNull(workspaces.removedAt),
+        ),
+      )
       .orderBy(desc(runs.endedAt)),
 
     client
       .select({
         projectId: runs.projectId,
+        runId: runs.id,
         prompt: hitlRequests.prompt,
         agent: executors.agent,
         branch: workspaces.branch,
@@ -248,6 +256,7 @@ export async function getPortfolio(
         and(
           inArray(runs.projectId, projectIds),
           isNull(hitlRequests.respondedAt),
+          isNull(workspaces.removedAt),
         ),
       )
       .orderBy(desc(hitlRequests.createdAt)),
@@ -338,6 +347,7 @@ export async function getPortfolio(
     );
     if (!firstNeedByProject.has(row.projectId)) {
       firstNeedByProject.set(row.projectId, {
+        runId: row.runId,
         prompt: row.prompt,
         agent: row.agent as AgentRole,
         branch: row.branch,
@@ -441,7 +451,7 @@ export async function getRailWorkspaces(
             projectMembers,
             and(
               eq(projectMembers.projectId, runs.projectId),
-              eq(projectMembers.userId, sql`${userId}`),
+              eq(projectMembers.userId, userId),
             ),
           )
           .where(

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -66,6 +66,7 @@ function httpStatusForCode(code: string): number {
     case "UNAUTHENTICATED":
       return 401;
     case "UNAUTHORIZED":
+    case "PASSWORD_CHANGE_REQUIRED":
       return 403;
     case "PRECONDITION":
     case "CONFLICT":
@@ -168,6 +169,13 @@ export async function POST(
   }
 
   try {
+    // Auth-first: authenticate AND clear the forced-password-change gate
+    // BEFORE any resource lookup, so unauthenticated or must-change callers
+    // cannot probe HITL/run existence via PRECONDITION shape-leaks. Project
+    // membership is enforced below, once projectId is derived from the run row.
+    await requireActiveSession();
+
+    // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
     const db = getDb() as any;
     const hitlRows = await db
       .select()

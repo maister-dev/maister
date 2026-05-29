@@ -59,6 +59,14 @@ beforeAll(async () => {
     role: "member",
     passwordHash: "x",
   });
+  // A member whose account still requires a forced password change.
+  await db.insert(schema.users).values({
+    id: "u-mustchange",
+    email: "mustchange@test.com",
+    role: "member",
+    passwordHash: "x",
+    mustChangePassword: true,
+  });
   for (const [id, slug] of [
     ["proj-a", "proj-a"],
     ["proj-b", "proj-b"],
@@ -112,6 +120,19 @@ describe("POST /api/runs — project-membership trust boundary (integration)", (
 
     expect(res.status).toBe(401);
     expect((await res.json()).code).toBe("UNAUTHENTICATED");
+  });
+
+  it("blocks a forced-password-change caller BEFORE task probing (403 PASSWORD_CHANGE_REQUIRED)", async () => {
+    // Auth-first: a must-change account hitting a NONEXISTENT task must get the
+    // password-change gate (403 PASSWORD_CHANGE_REQUIRED), NOT a PRECONDITION
+    // "task not found" (409) shape-leak. Proves account-state precedes any
+    // resource read.
+    sessionRef.value = { user: { id: "u-mustchange", role: "member" } };
+
+    const res = await POST(request("does-not-exist"));
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PASSWORD_CHANGE_REQUIRED");
   });
 
   it("rejects launching a task whose project the caller is NOT a member of (403)", async () => {

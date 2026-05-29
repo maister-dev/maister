@@ -44,7 +44,8 @@ C4Context
 **Personas.**
 
 - **Operator** — primary persona. One human running several projects.
-  No teammates, no auth, no RBAC in the current target.
+  Credentials auth + global/project RBAC shipped in M9 (`web/lib/authz.ts`);
+  still effectively single-operator (no team invites yet).
 - *(Phase 2)* Small-team member — receives HITL items via the same UI.
 
 **External systems.**

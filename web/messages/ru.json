@@ -27,7 +27,8 @@
     "board": "Доска",
     "activity": "Активность",
     "prs": "PR",
-    "crumbProjects": "~/projects"
+    "crumbProjects": "~/projects",
+    "comingSoon": "Скоро"
   },
   "auth": {
     "host": "/ инстанс · v0.0.1",
@@ -102,6 +103,8 @@
     "heading": "Проекты.",
     "subheading": "{projects} репозиториев под управлением. {workspaces} воркспейсов в работе. {needs} ждут вас.",
     "needsStripTitle": "{count} требуют вашего внимания",
+    "ticker": "<b>{projects}</b> проектов · <b>{workspaces}</b> в работе · <b>{needs}</b> ждут вас",
+    "pausedAgo": "приостановлено {time} назад",
     "activeWorkspaces": "Активные воркспейсы",
     "seeAll": "Все",
     "agentsConnected": "Кодинг-агенты · подключены",
@@ -206,6 +209,20 @@
     "executorLabel": "Исполнитель",
     "executorDefault": "По умолчанию проекта",
     "create": "Создать задачу"
+  },
+  "run": {
+    "eyebrow": "запуск",
+    "backToBoard": "← Назад к доске",
+    "noPending": "Для этого запуска нет ожидающего ввода.",
+    "pendingTitle": "Ждёт вашего ответа",
+    "responseLabel": "Ответ (JSON)",
+    "responseHint": "Введите JSON-значение по схеме ниже.",
+    "schemaLabel": "Запрошенная схема",
+    "submit": "Отправить ответ",
+    "submitting": "Отправка…",
+    "errorInvalidJson": "Ответ должен быть корректным JSON.",
+    "branch": "ветка",
+    "step": "шаг"
   },
   "changePassword": {
     "title": "Смените пароль",

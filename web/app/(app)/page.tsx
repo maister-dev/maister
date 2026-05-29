@@ -27,7 +27,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
       prompt: p.need!.prompt,
       branch: p.need!.branch,
       time: p.activeWorkspaces.find((ws) => ws.status === "needs")?.time ?? "—",
-      runId: p.slug,
+      runId: p.need!.runId,
     }));
 
   return (
@@ -64,16 +64,14 @@ export default async function PortfolioPage(): Promise<ReactElement> {
       ) : (
         <>
           <LiveTicker>
-            <b className="font-semibold text-ink-2">
-              {portfolio.projects.length}
-            </b>{" "}
-            projects ·{" "}
-            <b className="font-semibold text-ink-2">
-              {portfolio.totalActiveWorkspaces}
-            </b>{" "}
-            workspaces in flight ·{" "}
-            <b className="font-semibold text-ink-2">{portfolio.totalNeeds}</b>{" "}
-            waiting on you
+            {t.rich("ticker", {
+              projects: portfolio.projects.length,
+              workspaces: portfolio.totalActiveWorkspaces,
+              needs: portfolio.totalNeeds,
+              b: (chunks) => (
+                <b className="font-semibold text-ink-2">{chunks}</b>
+              ),
+            })}
           </LiveTicker>
 
           {needsItems.length > 0 ? (

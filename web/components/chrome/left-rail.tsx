@@ -75,13 +75,26 @@ export async function LeftRail({
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
 
-  const sections: { id: string; label: string; href: string }[] = [
-    { id: "projects", label: tNav("projects"), href: "/" },
-    { id: "inbox", label: tNav("inbox"), href: "/inbox" },
-    { id: "flows", label: tNav("flows"), href: "/flows" },
-    { id: "agents", label: tNav("agents"), href: "/agents" },
-    { id: "mcps", label: tNav("mcps"), href: "/mcps" },
-    { id: "settings", label: tNav("settings"), href: "/settings" },
+  // `ready: false` sections are documented M9 deferrals (no route yet). They
+  // render as non-navigating "coming soon" items so they never 404 — matching
+  // the cursor/aider "coming soon" agent-chip precedent below.
+  const sections: {
+    id: string;
+    label: string;
+    href: string;
+    ready: boolean;
+  }[] = [
+    { id: "projects", label: tNav("projects"), href: "/", ready: true },
+    { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: false },
+    { id: "flows", label: tNav("flows"), href: "/flows", ready: false },
+    { id: "agents", label: tNav("agents"), href: "/agents", ready: false },
+    { id: "mcps", label: tNav("mcps"), href: "/mcps", ready: false },
+    {
+      id: "settings",
+      label: tNav("settings"),
+      href: "/settings",
+      ready: false,
+    },
   ];
 
   return (
@@ -96,18 +109,8 @@ export async function LeftRail({
         {sections.map((section) => {
           const isActive = section.id === activeSection;
           const showBadge = section.id === "inbox" && inboxCount > 0;
-
-          return (
-            <Link
-              key={section.id}
-              aria-current={isActive ? "page" : undefined}
-              className={clsx(
-                "flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12.5px]",
-                "hover:bg-ivory hover:text-ink",
-                isActive ? "bg-ivory font-semibold text-ink" : "text-ink-2",
-              )}
-              href={section.href}
-            >
+          const body = (
+            <>
               <svg
                 aria-hidden="true"
                 className={isActive ? navIconActive : navIcon}
@@ -124,6 +127,34 @@ export async function LeftRail({
                   {inboxCount}
                 </span>
               ) : null}
+            </>
+          );
+
+          if (!section.ready) {
+            return (
+              <span
+                key={section.id}
+                aria-disabled="true"
+                className="flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12.5px] text-mute opacity-60"
+                title={tNav("comingSoon")}
+              >
+                {body}
+              </span>
+            );
+          }
+
+          return (
+            <Link
+              key={section.id}
+              aria-current={isActive ? "page" : undefined}
+              className={clsx(
+                "flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12.5px]",
+                "hover:bg-ivory hover:text-ink",
+                isActive ? "bg-ivory font-semibold text-ink" : "text-ink-2",
+              )}
+              href={section.href}
+            >
+              {body}
             </Link>
           );
         })}
