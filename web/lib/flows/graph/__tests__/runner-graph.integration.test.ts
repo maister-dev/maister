@@ -129,6 +129,7 @@ async function writeDecision(
   seeded: Seeded,
   nodeId: string,
   decision: string,
+  extra: Record<string, unknown> = {},
 ): Promise<void> {
   const dir = join(
     seeded.runtimeRoot,
@@ -141,7 +142,7 @@ async function writeDecision(
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, `input-${nodeId}.json`),
-    JSON.stringify({ decision }),
+    JSON.stringify({ decision, ...extra }),
     "utf8",
   );
 }
@@ -334,5 +335,64 @@ describe("runGraph — traversal + ledger", () => {
     const finalRun = await getRun(seeded.runId);
 
     expect(finalRun.status).toBe("Failed");
+  }, 60_000);
+
+  it("injects the reviewer's comments into the rework target's context (commentsVar)", async () => {
+    // `fix` is reached ONLY via rework, so its {{ review_comments }} template
+    // is rendered exclusively with the injected value present.
+    const commentsFlow = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.1.0" },
+      nodes: [
+        {
+          id: "plan",
+          type: "cli",
+          action: { command: "echo plan" },
+          transitions: { success: "review" },
+        },
+        {
+          id: "review",
+          type: "human",
+          finish: {
+            human: {
+              decisions: ["approve", "rework"],
+              commentsVar: "review_comments",
+            },
+          },
+          transitions: { approve: "done", rework: "fix" },
+          rework: {
+            allowedTargets: ["fix"],
+            workspacePolicies: ["keep"],
+            maxLoops: 2,
+            commentsVar: "review_comments",
+          },
+        },
+        {
+          id: "fix",
+          type: "cli",
+          action: { command: 'echo "rc:{{ review_comments }}"' },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(commentsFlow);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    await writeDecision(seeded, "review", "rework", {
+      comments: "tighten-errors",
+    });
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const fix = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "fix",
+    );
+
+    expect(fix?.status).toBe("Succeeded");
+    expect(fix?.stdout ?? "").toContain("rc:tighten-errors");
   }, 60_000);
 });

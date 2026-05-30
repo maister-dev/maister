@@ -664,6 +664,85 @@ describe("HITL respond route — kind=form / kind=human", () => {
   });
 });
 
+describe("HITL respond route — graph review decision (M11a)", () => {
+  const reviewSchema = {
+    review: true,
+    allowedDecisions: ["approve", "rework"],
+    transitions: { approve: "done", rework: "implement" },
+    reworkTargets: ["implement"],
+    workspacePolicies: ["keep"],
+  };
+
+  it("valid rework decision: 200, persists decision/workspace_policy/rework_target", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human", {
+      schema: reviewSchema,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: {
+        decision: "rework",
+        comments: "tighten errors",
+        workspacePolicy: "keep",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const row = dbState.tables.hitl_requests[0];
+
+    expect(row.decision).toBe("rework");
+    expect(row.workspacePolicy).toBe("keep");
+    expect(row.reworkTarget).toBe("implement");
+    expect(row.respondedAt).toBeInstanceOf(Date);
+  });
+
+  it("approve decision (terminal target): 200, no rework_target/workspace_policy", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human", {
+      schema: reviewSchema,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "approve" },
+    });
+
+    expect(res.status).toBe(200);
+    const row = dbState.tables.hitl_requests[0];
+
+    expect(row.decision).toBe("approve");
+    expect(row.reworkTarget).toBeNull();
+    expect(row.workspacePolicy).toBeNull();
+  });
+
+  it("undeclared decision → 422 NEEDS_INPUT, no mutation (pre-claim)", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human", {
+      schema: reviewSchema,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "bogus" },
+    });
+
+    expect(res.status).toBe(422);
+    const row = dbState.tables.hitl_requests[0];
+
+    expect(row.respondedAt).toBeNull();
+    expect(row.response).toBeNull();
+    expect(row.decision ?? null).toBeNull();
+  });
+
+  it("rework with an unallowed workspacePolicy → 422, no mutation", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human", {
+      schema: reviewSchema,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "rework", workspacePolicy: "fresh-attempt" },
+    });
+
+    expect(res.status).toBe(422);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+  });
+});
+
 describe("HITL respond route — error cases", () => {
   it("unknown hitlRequestId (empty table) returns 409 PRECONDITION", async () => {
     const res = await invokePost("run-x", "unknown-hitl", {

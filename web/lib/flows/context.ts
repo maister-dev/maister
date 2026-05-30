@@ -152,6 +152,10 @@ export type BuildContextArgs = {
   // unchanged.
   nodeAttempts?: NodeAttemptRow[];
   projectSlug: string;
+  // M11a: extra top-level template vars injected for the rework target (e.g.
+  // the review `commentsVar`). Reserved keys (task/run/executor/steps/env)
+  // always win over these.
+  extraVars?: Record<string, unknown>;
   envWhitelist?: RegExp[];
   envSource?: Record<string, string | undefined>;
   outputTruncationBytes?: number;
@@ -174,6 +178,8 @@ export function buildContext(args: BuildContextArgs): FlowContext {
   );
 
   return {
+    // Extra vars first so the reserved keys below always win.
+    ...(args.extraVars ?? {}),
     task: {
       id: args.task.id,
       title: args.task.title,

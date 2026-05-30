@@ -392,6 +392,11 @@ export async function runGraph(
     lastSeenMonotonicId: 0,
   };
 
+  // On a rework jump, the reviewer's comments are injected into the rework
+  // target's next-attempt context under the node's `commentsVar`; consumed by
+  // the immediately-following node, then cleared.
+  let pendingInjectedVars: Record<string, unknown> | undefined;
+
   let needsInput = false;
   let checkpointed = false;
   let failed = false;
@@ -481,7 +486,11 @@ export async function runGraph(
         stepRuns: [],
         nodeAttempts: attempts,
         projectSlug: loaded.projectSlug,
+        extraVars: pendingInjectedVars,
       });
+
+      // The injected rework comments are consumed by this node only.
+      pendingInjectedVars = undefined;
 
       let result: NodeResult;
 
@@ -635,6 +644,21 @@ export async function runGraph(
           { decision: outcome, workspacePolicy: chosenPolicy },
           db,
         );
+
+        // Inject the reviewer's comments into the rework target's next-attempt
+        // context under the node's commentsVar (Phase 5.4). The reviewer submits
+        // them in `comments` (or the commentsVar key) of the response.
+        const commentsVar =
+          node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
+
+        if (commentsVar) {
+          const vars = result.vars as Record<string, unknown>;
+          const comments = vars[commentsVar] ?? vars.comments;
+
+          if (comments !== undefined) {
+            pendingInjectedVars = { [commentsVar]: comments };
+          }
+        }
 
         // Flip downstream nodes/gates stale so they rerun on the next attempt
         // (Issue 2 fix / AC-3 staleness). `target` is the rework jump destination;

@@ -12,7 +12,11 @@ import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { assertHitlResponse } from "@/lib/flows/hitl-validate";
+import {
+  assertHitlResponse,
+  assertReviewDecision,
+  isReviewSchema,
+} from "@/lib/flows/hitl-validate";
 import { runFlow } from "@/lib/flows/runner";
 import { deliverPermission } from "@/lib/supervisor-client";
 
@@ -663,7 +667,28 @@ async function handleFormHumanResponse(
   // Phase 0: validate the response BEFORE any state mutation. Returns 422
   // NEEDS_INPUT on failure so retries with a fixed payload are still
   // possible (respondedAt remains null because the claim never ran).
-  assertHitlResponse(response, hitlRow.schema);
+  //
+  // A graph human_review HITL validates the decision against the server-state
+  // allow-list stored on the row at creation (never body-trusted) and resolves
+  // the columns persisted at claim time. Non-review form/human stays on the
+  // form-schema validation.
+  let reviewFields: {
+    decision?: string;
+    workspacePolicy?: string | null;
+    reworkTarget?: string | null;
+  } = {};
+
+  if (isReviewSchema(hitlRow.schema)) {
+    const resolved = assertReviewDecision(response, hitlRow.schema);
+
+    reviewFields = {
+      decision: resolved.decision,
+      workspacePolicy: resolved.workspacePolicy ?? null,
+      reworkTarget: resolved.reworkTarget ?? null,
+    };
+  } else {
+    assertHitlResponse(response, hitlRow.schema);
+  }
 
   const projectRows = await db
     .select({ slug: projects.slug })
@@ -724,7 +749,7 @@ async function handleFormHumanResponse(
 
     await tx
       .update(hitlRequests)
-      .set({ response })
+      .set({ response, ...reviewFields })
       .where(
         and(
           eq(hitlRequests.id, hitlRequestId),
