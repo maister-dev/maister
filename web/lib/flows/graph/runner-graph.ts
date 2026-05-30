@@ -19,6 +19,7 @@ import { runCliStep } from "../runner-cli";
 
 import { cleanupSlashSession, asError } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
+import { runNodeGates } from "./gates-exec";
 import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
@@ -561,9 +562,43 @@ export async function runGraph(
         loaded.run.acpSessionId = result.acpSessionId;
       }
 
-      // TODO(M11a Phase 4): run node.gates (pre_finish) here — a blocking gate
-      // failure aborts the finish (run Failed unless a rework target exists);
-      // advisory records + continues. Phase 3 graph flows declare no gates.
+      // Run pre_finish.gates after the action succeeds, before the node
+      // finishes (ADR-024). Each gate writes a gate_results row for THIS
+      // attempt, so a re-run node (after rework) re-executes its gates — the
+      // prior attempt's gates were flipped stale by markDownstreamStale. A
+      // blocking gate failure aborts the finish: the node goes Failed -> run
+      // Failed. Advisory gates record + continue. M11a gate results FEED but do
+      // NOT gate promotion (M15/M18).
+      if (node.gates.length > 0) {
+        const gateOutcome = await runNodeGates(
+          node,
+          nodeAttemptId,
+          loaded,
+          context,
+          {
+            runtimeRoot,
+            worktreePath,
+            sessionState,
+            supervisorApi: opts.supervisorApi,
+            db,
+          },
+        );
+
+        if (!gateOutcome.ok) {
+          await markNodeFailed(
+            nodeAttemptId,
+            { errorCode: "PRECONDITION" },
+            db,
+          );
+          failed = true;
+          runErrorCode = "PRECONDITION";
+          log2.warn(
+            { nodeId: node.id, gateId: gateOutcome.blockingFailedGateId },
+            "blocking gate failed — node Failed",
+          );
+          break;
+        }
+      }
 
       // Determine the outcome that drives the transition. Action nodes finish
       // with "success"; a human review node finishes with its chosen decision.
