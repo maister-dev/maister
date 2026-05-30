@@ -2,37 +2,60 @@ schemaVersion: 1
 name: aif
 recommended_executor: claude-sonnet
 setup: ./setup.sh
-# Package contract (M10, ADR-021): recorded + displayed; only `compat` and
-# schemaVersion are enforced today. capabilities/artifacts are opaque metadata
-# until M14/M12 give them runtime meaning.
+# Package contract (M10, ADR-021). Flow graph v1 (M11a, ADR-022): this flow
+# uses the `nodes[]` graph form, so it MUST declare engine_min >= 1.1.0.
 compat:
-  engine_min: 1.0.0
+  engine_min: 1.1.0
 capabilities:
   - shell
   - edit
 artifacts:
   - diff
   - human_note
-steps:
-  - id: explore
-    type: agent
-    mode: slash-in-existing
-    prompt: "/aif-explore {{ task.prompt }}"
+# Flow graph v1 (M11a): plan -> implement -> checks -> judge -> review.
+# A `rework` decision at review jumps back to implement; the downstream
+# checks/judge attempts go stale and re-run before a fresh review.
+nodes:
   - id: plan
-    type: agent
-    mode: slash-in-existing
-    prompt: "/aif-plan continue with the explored context"
+    type: ai_coding
+    action:
+      prompt: "/aif-plan {{ task.prompt }}"
+    transitions:
+      success: implement
+
   - id: implement
-    type: agent
-    mode: slash-in-existing
-    prompt: "/aif-implement"
-  - id: fix
-    type: agent
-    mode: slash-in-existing
-    prompt: "/aif-fix any issues from /aif-implement"
+    type: ai_coding
+    action:
+      prompt: "/aif-implement"
+    transitions:
+      success: checks
+
+  - id: checks
+    type: check
+    action:
+      command: "pnpm -s lint"
+    transitions:
+      success: judge
+
+  - id: judge
+    type: judge
+    action:
+      prompt: "Review the implementation diff against the task requirements. Reply with a JSON verdict object {\"verdict\":\"pass\"|\"fail\",\"confidence\":0-1,\"reasons\":[...],\"recommendedAction\":\"...\"}."
+    transitions:
+      success: review
+
   - id: review
     type: human
-    form_schema: ./schemas/review.json
-    on_reject:
-      goto_step: implement
-      comments_var: review_comments
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve, rework]
+        commentsVar: review_comments
+    transitions:
+      approve: done
+      rework: implement
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments

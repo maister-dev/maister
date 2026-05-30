@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -19,8 +19,16 @@ import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, projects, runs, stepRuns, tasks, workspaces } =
-  schema;
+const {
+  executors,
+  flows,
+  nodeAttempts,
+  projects,
+  runs,
+  stepRuns,
+  tasks,
+  workspaces,
+} = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -207,8 +215,15 @@ describe("runFlow integration — cli step end-to-end", () => {
   });
 });
 
-describe("runFlow integration — human step suspends", () => {
-  it("aif plugin halts at review step with status NeedsInput", async () => {
+describe("runFlow integration — aif graph dispatch (M11a)", () => {
+  it("migrated aif (nodes[]) dispatches to the graph runner and writes node_attempts", async () => {
+    // aif is now a graph flow (plan -> implement -> checks -> judge -> review).
+    // runFlow must dispatch it to runGraph (NOT the linear path). With no
+    // supervisor configured here, the first ai_coding node (plan) cannot spawn
+    // and the run goes terminal — but the append-only node_attempts ledger
+    // proves we took the graph path. The full graph review -> rework -> approve
+    // loop is covered by runner-graph.integration.test.ts (cli nodes, no
+    // supervisor needed).
     const { runId } = await seedRun({
       flowId: aifFlowId,
       taskPrompt: "fix the bug",
@@ -218,44 +233,33 @@ describe("runFlow integration — human step suspends", () => {
 
     expect(start.started).toBe(true);
 
-    let crashed: Error | null = null;
-
     try {
-      await runFlow(runId, {
-        db,
-        runtimeRoot: workspaceRoot,
-      });
-    } catch (err) {
-      crashed = err as Error;
+      await runFlow(runId, { db, runtimeRoot: workspaceRoot });
+    } catch {
+      // a spawn failure may surface as a throw; tolerated — we assert on state.
     }
 
     const after = await db.select().from(runs).where(eq(runs.id, runId));
 
-    if (after[0].status === "Failed") {
-      expect(
-        crashed?.message ?? "agent steps failed because no supervisor",
-      ).toBeTruthy();
+    // Terminal (Failed/Crashed) because plan needs a supervisor; never linear
+    // Review (which would mean the graph dispatch didn't happen).
+    expect(["Failed", "Crashed"]).toContain(after[0].status);
 
-      return;
-    }
+    const na = await db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, runId));
 
-    expect(["NeedsInput"]).toContain(after[0].status);
+    expect(na.length).toBeGreaterThan(0);
+    expect(na.some((r: { nodeId: string }) => r.nodeId === "plan")).toBe(true);
 
-    const needsInputPath = join(
-      workspaceRoot,
-      ".maister",
-      "demo-app",
-      "runs",
-      runId,
-      "needs-input.json",
-    );
+    // Linear-only step_runs must NOT be written for a graph flow.
+    const sr = await db
+      .select()
+      .from(stepRuns)
+      .where(eq(stepRuns.runId, runId));
 
-    await stat(needsInputPath);
-    const body = JSON.parse(await readFile(needsInputPath, "utf8"));
-
-    expect(body.stepId).toBe("review");
-    expect(body.schemaVersion).toBe(1);
-    expect(body.schema.fields).toBeDefined();
+    expect(sr.length).toBe(0);
   });
 });
 
