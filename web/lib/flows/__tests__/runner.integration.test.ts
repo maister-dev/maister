@@ -268,7 +268,9 @@ describe("installFlowPlugin — local source path", () => {
 
     expect(rows.length).toBe(1);
     expect(rows[0].source).toBe(PLUGIN_AIF_PATH);
-    expect(rows[0].installedPath).toContain("aif@local-dev");
+    // M10 (ADR-021): local sources are content-addressed by manifest digest,
+    // not the version label, so the cache dir is aif@<12-hex-digest-prefix>.
+    expect(rows[0].installedPath).toMatch(/\/aif@[0-9a-f]{12}$/);
   });
 });
 

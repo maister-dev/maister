@@ -183,7 +183,9 @@ describe("installFlowPlugin (integration)", () => {
     } catch (err) {
       if (!isMaisterError(err)) throw err;
       expect(err.code).toBe("FLOW_INSTALL");
-      expect(err.message).toMatch(/git clone failed/);
+      // M10 (ADR-021): structured stage-tagged FLOW_INSTALL message that still
+      // carries the underlying git stderr after the command/exitStatus prefix.
+      expect(err.message).toMatch(/flow install failed \[stage=clone\]/);
     }
   });
 
@@ -275,7 +277,7 @@ describe("installFlowPlugin (integration)", () => {
     expect(mtimeAfter).toBe(mtimeBefore);
   });
 
-  it("setup.sh non-zero exit: install still completes (POC trusts internal sources)", async () => {
+  it("setup.sh non-zero exit (trusted_by_policy): revision installed but not enabled", async () => {
     const result = await installFlowPlugin({
       source: setupFailRepo,
       version: "v1.0.0",
@@ -287,9 +289,13 @@ describe("installFlowPlugin (integration)", () => {
     });
 
     expect(result.flowRowId).toBeTruthy();
-    expect(result.installedPath).toBe(
-      `${homeDir}/.maister/flows/setup-fails@v1.0.0`,
+    expect(result.installedPath).toMatch(
+      new RegExp(`^${homeDir}/\\.maister/flows/setup-fails@[0-9a-f]{12}$`),
     );
+    // M10 (ADR-021): setup.sh runs after trust (trusted_by_policy for a local
+    // absolute source). A non-zero exit marks the revision Failed and leaves
+    // the project enablement at "Installed" — it is NOT auto-enabled.
+    expect(result.enablementState).toBe("Installed");
 
     const linkTarget = await readlink(result.symlinkPath);
 
