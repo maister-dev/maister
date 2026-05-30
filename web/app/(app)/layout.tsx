@@ -39,6 +39,8 @@ export default async function AppLayout({
   const navUser = sessionUser
     ? {
         name: sessionUser.name ?? sessionUser.email ?? "you",
+        email: sessionUser.email ?? "",
+        role: sessionUser.role,
         initials: initialsOf(
           sessionUser.name ?? null,
           sessionUser.email ?? null,

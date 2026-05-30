@@ -85,6 +85,17 @@
     "docs": "Docs",
     "poc": "POC · single-host"
   },
+  "accountMenu": {
+    "label": "User menu",
+    "settings": "Personal settings",
+    "password": "Change password",
+    "signOut": "Sign out",
+    "role": {
+      "admin": "admin",
+      "member": "member",
+      "viewer": "viewer"
+    }
+  },
   "footer": {
     "motto": "Ship Happens."
   },
@@ -229,6 +240,37 @@
     "errorWeak": "Password must be at least 12 characters.",
     "errorMismatch": "The two passwords do not match.",
     "errorGeneric": "Could not update the password. Try again."
+  },
+  "account": {
+    "eyebrow": "Account",
+    "title": "Personal settings",
+    "sub": "Manage the details attached to your signed-in MAIster account.",
+    "profileTitle": "Profile",
+    "profileSub": "This name appears in the shell and project activity.",
+    "displayName": "Display name",
+    "email": "Email",
+    "saveProfile": "Save profile",
+    "saving": "Saving…",
+    "profileSaved": "Profile updated.",
+    "profileError": "Enter a display name between 1 and 120 characters.",
+    "passwordLink": "Change password",
+    "backToAccount": "← Back to account",
+    "securityEyebrow": "Security",
+    "passwordTitle": "Change password",
+    "passwordSub": "Set a new password for this account. Use at least 12 characters.",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm password",
+    "passwordHint": "Use 12+ characters with a mix of letters, numbers and symbols",
+    "changePassword": "Change password",
+    "passwordSaved": "Password updated.",
+    "passwordWeak": "Password must be at least 12 characters.",
+    "passwordMismatch": "The two passwords do not match.",
+    "passwordError": "Could not update the password. Try again.",
+    "role": {
+      "admin": "admin",
+      "member": "member",
+      "viewer": "viewer"
+    }
   },
   "roles": {
     "admin": "admin",

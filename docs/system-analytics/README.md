@@ -19,6 +19,7 @@ Every file in this folder follows the structure defined in
 
 | Domain | File | What it covers |
 | ------ | ---- | -------------- |
+| Identity and access | [`identity-access.md`](identity-access.md) | Users, Auth.js sessions, RBAC gates, user menu, personal settings, password changes. |
 | Projects | [`projects.md`](projects.md) | Registration, slug derivation, archival, Flow plugin install on register. |
 | Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
 | Flows | [`flows.md`](flows.md) | Plugin packaging, step DSL (cli/agent/guard/human), executor override resolution. |

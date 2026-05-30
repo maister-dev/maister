@@ -62,6 +62,7 @@ cases, process flows. One file per domain.
 
 | File | Domain |
 | ---- | ------ |
+| [`system-analytics/identity-access.md`](system-analytics/identity-access.md) | Users, Auth.js sessions, RBAC gates, account settings. |
 | [`system-analytics/projects.md`](system-analytics/projects.md) | Project registration, Flow plugin install. |
 | [`system-analytics/flows.md`](system-analytics/flows.md) | Flow plugin packaging, step DSL, executor override. |
 | [`system-analytics/tasks.md`](system-analytics/tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |

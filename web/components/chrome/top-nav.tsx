@@ -8,10 +8,11 @@ import { Logo } from "@/components/logo";
 import { LangSwitch } from "@/components/chrome/lang-switch";
 import { PlatformStatusDot } from "@/components/chrome/platform-status";
 import { ThemeSwitch } from "@/components/chrome/theme-switch";
+import { UserMenu, type NavUser } from "@/components/chrome/user-menu";
 
 export interface TopNavProps {
   crumb?: ReactNode;
-  user?: { name: string; initials: string };
+  user?: NavUser;
   logoSize?: number;
   platformStatus: PlatformStatus;
 }
@@ -43,14 +44,7 @@ export async function TopNav({
         <div className="flex items-center gap-2.5">
           <LangSwitch />
           <ThemeSwitch />
-          {user ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-paper py-1.5 pl-1.5 pr-3 font-mono text-[11px] tracking-[0.04em] text-ink-2">
-              <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full border border-amber-line bg-amber-soft text-[10.5px] font-bold text-amber">
-                {user.initials}
-              </span>
-              <span>{user.name}</span>
-            </span>
-          ) : null}
+          {user ? <UserMenu user={user} /> : null}
         </div>
       </nav>
     </div>

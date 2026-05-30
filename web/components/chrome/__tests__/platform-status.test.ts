@@ -40,6 +40,6 @@ describe("platform status presentation", () => {
         unavailable: "Unavailable",
       }),
     ).toBe("Unavailable");
-    expect(platformStatusDotClass(status)).toContain("bg-amber");
+    expect(platformStatusDotClass(status)).toContain("bg-red-500");
   });
 });

@@ -18,7 +18,7 @@ export function platformStatusLabel(
 export function platformStatusDotClass(status: PlatformStatus): string {
   return status.kind === "ready"
     ? "bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]"
-    : "bg-amber";
+    : "bg-red-500";
 }
 
 export function PlatformStatusDot({
