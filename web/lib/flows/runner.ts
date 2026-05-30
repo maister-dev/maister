@@ -382,7 +382,9 @@ export async function runFlow(
   // schema enum already supports both; without this accumulator the
   // terminal write would silently collapse CRASH to Failed.
   let runErrorCode: MaisterErrorCode | null = null;
-  const allSteps = loaded.manifest.steps;
+  // M11a: `steps` is optional on the manifest (graph flows use `nodes[]` and run
+  // through the graph runner, Phase 3). The linear runner handles `steps[]` only.
+  const allSteps = loaded.manifest.steps ?? [];
   const resumeIndex = isResume
     ? allSteps.findIndex((s) => s.id === loaded.run.currentStepId)
     : 0;

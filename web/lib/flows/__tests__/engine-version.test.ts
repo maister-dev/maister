@@ -14,11 +14,15 @@ describe("isEngineCompatible", () => {
 
   it("is compatible when engine is within [min, max]", () => {
     expect(isEngineCompatible("0.1.0", "2.0.0").compatible).toBe(true);
-    expect(isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION).compatible).toBe(true);
+    expect(
+      isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION)
+        .compatible,
+    ).toBe(true);
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    const r = isEngineCompatible("1.1.0");
+    // Engine is 1.1.0 (M11a bump); a min above it must be rejected.
+    const r = isEngineCompatible("1.2.0");
 
     expect(r.compatible).toBe(false);
     expect(r.reason).toContain("engine_min");

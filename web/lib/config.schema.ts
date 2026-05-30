@@ -102,21 +102,170 @@ export const flowCompatSchema = z.object({
   engine_max: z.string().min(1).optional(),
 });
 
-export const flowYamlV1Schema = z.object({
-  schemaVersion: z.literal(1),
-  name: z.string().min(1),
-  recommended_executor: z.string().min(1).optional(),
-  setup: z.string().min(1).optional(),
-  // Package contract (M10): recorded + displayed as opaque metadata; only
-  // `compat` and `schemaVersion` are enforced today. Semantic validation of
-  // capabilities/gates/artifacts/external_ops lands with M11+ (see ADR-021).
-  compat: flowCompatSchema.optional(),
-  capabilities: z.array(z.string().min(1)).optional(),
-  gates: z.array(z.string().min(1)).optional(),
-  artifacts: z.array(z.string().min(1)).optional(),
-  external_ops: z.array(z.string().min(1)).optional(),
-  steps: z.array(stepSchema).min(1),
+// --- M11a: Flow graph v1 (`nodes[]`) — ADR-022 ---------------------------
+// A graph manifest declares `nodes[]` instead of `steps[]` (mutually
+// exclusive). Cross-reference + cycle validation lives in `loadFlowManifest`
+// (`config.ts`); zod here covers shape only.
+
+// Reserved transition target meaning "the run is done" (reaches `Review`). A
+// transition (e.g. `approve`) may point here instead of a node id; the runner
+// treats it as terminal. Not a node — exempt from unknown-node-id validation.
+export const TERMINAL_TRANSITION_TARGET = "done";
+
+export const workspacePolicySchema = z.enum([
+  "keep",
+  "rewind-to-node-checkpoint",
+  "fresh-attempt",
+]);
+
+const gateKindSchema = z.enum([
+  "command_check",
+  "skill_check",
+  "ai_judgment",
+  "artifact_required",
+  "external_check",
+  "human_review",
+]);
+
+export const gateSchema = z.object({
+  id: z.string().min(1),
+  kind: gateKindSchema,
+  mode: z.enum(["blocking", "advisory"]).default("blocking"),
+  command: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  skill: z.string().min(1).optional(),
+  inputArtifacts: z.array(z.string().min(1)).optional(),
+  output: z
+    .object({ id: z.string().min(1), kind: z.string().min(1) })
+    .passthrough()
+    .optional(),
+  // node ids whose rework marks this gate stale
+  staleFrom: z.array(z.string().min(1)).optional(),
 });
+
+const nodeInputSchema = z
+  .object({
+    requires: z
+      .array(
+        z.union([
+          z.string().min(1),
+          z
+            .object({ artifact: z.string().min(1), kind: z.string().min(1) })
+            .passthrough(),
+        ]),
+      )
+      .optional(),
+  })
+  .passthrough();
+
+const nodeOutputSchema = z
+  .object({
+    // Typed artifact instances are M12; recorded but not validated in M11a.
+    produces: z
+      .array(
+        z
+          .object({ id: z.string().min(1), kind: z.string().min(1) })
+          .passthrough(),
+      )
+      .optional(),
+  })
+  .passthrough();
+
+export const humanDecisionSchema = z.string().min(1);
+
+const finishHumanSchema = z.object({
+  role: z.string().min(1).optional(),
+  decisions: z.array(humanDecisionSchema).min(1),
+  commentsVar: z.string().min(1).optional(),
+});
+
+const reworkSchema = z.object({
+  allowedTargets: z.array(z.string().min(1)).min(1),
+  workspacePolicies: z.array(workspacePolicySchema).min(1),
+  maxLoops: z.number().int().positive(),
+  commentsVar: z.string().min(1).optional(),
+});
+
+// Fields common to every node type.
+const nodeCommon = {
+  id: z.string().min(1),
+  input: nodeInputSchema.optional(),
+  output: nodeOutputSchema.optional(),
+  // M11c/M14 capability fields. In M11a `settings` is an OPAQUE PASSTHROUGH —
+  // preserved (never stripped) but NOT enforced; `loadFlowManifest` emits
+  // SETTINGS_NOT_ENFORCED_WARN. Typed validation + enforcement = M11c.
+  settings: z.record(z.string(), z.unknown()).optional(),
+  pre_finish: z.object({ gates: z.array(gateSchema).optional() }).optional(),
+  finish: z
+    .object({ human: finishHumanSchema.optional() })
+    .passthrough()
+    .optional(),
+  // decision/outcome -> target node id
+  transitions: z.record(z.string(), z.string().min(1)).optional(),
+  rework: reworkSchema.optional(),
+};
+
+const aiCodingNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("ai_coding"),
+  action: z.object({ prompt: z.string().min(1) }).passthrough(),
+});
+
+const judgeNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("judge"),
+  action: z.object({ prompt: z.string().min(1) }).passthrough(),
+});
+
+const cliNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("cli"),
+  action: z.object({ command: z.string().min(1) }).passthrough(),
+});
+
+const checkNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("check"),
+  action: z.object({ command: z.string().min(1) }).passthrough(),
+});
+
+const humanNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("human"),
+  action: z.object({}).passthrough().optional(),
+});
+
+export const nodeSchema = z.discriminatedUnion("type", [
+  aiCodingNodeSchema,
+  judgeNodeSchema,
+  cliNodeSchema,
+  checkNodeSchema,
+  humanNodeSchema,
+]);
+
+export const flowYamlV1Schema = z
+  .object({
+    schemaVersion: z.literal(1),
+    name: z.string().min(1),
+    recommended_executor: z.string().min(1).optional(),
+    setup: z.string().min(1).optional(),
+    // Package contract (M10): recorded + displayed as opaque metadata; only
+    // `compat` and `schemaVersion` are enforced today. Semantic validation of
+    // capabilities/gates/artifacts/external_ops lands with M11+ (see ADR-021).
+    compat: flowCompatSchema.optional(),
+    capabilities: z.array(z.string().min(1)).optional(),
+    gates: z.array(z.string().min(1)).optional(),
+    artifacts: z.array(z.string().min(1)).optional(),
+    external_ops: z.array(z.string().min(1)).optional(),
+    // Exactly one of `steps` (linear) or `nodes` (graph v1) is present —
+    // enforced by the .refine below (ADR-022). `steps` was required before
+    // M11a; it is now optional so the refine can reject both-absent.
+    steps: z.array(stepSchema).min(1).optional(),
+    nodes: z.array(nodeSchema).min(1).optional(),
+  })
+  .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {
+    message: "flow manifest must declare exactly one of steps[] or nodes[]",
+  });
 
 const formFieldSchema = z.object({
   name: z.string().min(1),
@@ -139,3 +288,7 @@ export type FlowYamlV1 = z.infer<typeof flowYamlV1Schema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;
 export type Step = z.infer<typeof stepSchema>;
 export type FormSchema = z.infer<typeof formSchemaSchema>;
+export type NodeDef = z.infer<typeof nodeSchema>;
+export type GateDef = z.infer<typeof gateSchema>;
+export type WorkspacePolicy = z.infer<typeof workspacePolicySchema>;
+export type HumanDecision = z.infer<typeof humanDecisionSchema>;

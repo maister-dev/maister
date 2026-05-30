@@ -411,6 +411,129 @@ export const stepRuns = pgTable(
   }),
 );
 
+// --- M11a: Flow graph v1 execution ledger (ADR-023 / ADR-024) -------------
+
+// Append-only per-node-attempt ledger written by the graph runner. `attempt`
+// auto-increments per (run, node); rework never mutates a prior row. Linear
+// `steps[]` flows compile to nodes and write here too; `step_runs` is retained
+// for legacy reads (templating highest-attempt-wins union).
+export const nodeAttempts = pgTable(
+  "node_attempts",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    nodeType: text("node_type", {
+      enum: ["ai_coding", "cli", "check", "judge", "human"],
+    }).notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    // PascalCase node-lifecycle vocabulary: extends step_runs (adds
+    // Reworked/Stale, omits Skipped). Distinct from gate_results.status.
+    status: text("status", {
+      enum: [
+        "Pending",
+        "Running",
+        "Succeeded",
+        "Failed",
+        "NeedsInput",
+        "Reworked",
+        "Stale",
+      ],
+    })
+      .notNull()
+      .default("Pending"),
+    decision: text("decision"),
+    workspacePolicy: text("workspace_policy", {
+      enum: ["keep", "rewind-to-node-checkpoint", "fresh-attempt"],
+    }),
+    reworkFromNode: text("rework_from_node"),
+    acpSessionId: text("acp_session_id"),
+    stdout: text("stdout"),
+    vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
+    exitCode: integer("exit_code"),
+    errorCode: text("error_code"),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    uniqRunNodeAttempt: unique("node_attempts_run_node_attempt_uq").on(
+      t.runId,
+      t.nodeId,
+      t.attempt,
+    ),
+    idxRun: index("node_attempts_run_idx").on(t.runId),
+  }),
+);
+
+// Structured AI/skill gate verdict (ADR-024). Stored in gate_results.verdict.
+export type GateVerdict = {
+  verdict: string;
+  confidence?: number;
+  reasons?: string[];
+  recommendedAction?: string;
+};
+
+// One row per gate execution. lowercase status (gate-verdict vocabulary,
+// distinct from node_attempts.status PascalCase). M11a executes
+// command_check/ai_judgment/human_review (+ skill_check best-effort);
+// artifact_required -> skipped, external_check -> pending (deferred).
+export const gateResults = pgTable(
+  "gate_results",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id")
+      .notNull()
+      .references(() => nodeAttempts.id, { onDelete: "cascade" }),
+    gateId: text("gate_id").notNull(),
+    kind: text("kind", {
+      enum: [
+        "command_check",
+        "skill_check",
+        "ai_judgment",
+        "artifact_required",
+        "external_check",
+        "human_review",
+      ],
+    }).notNull(),
+    mode: text("mode", { enum: ["blocking", "advisory"] })
+      .notNull()
+      .default("blocking"),
+    status: text("status", {
+      enum: [
+        "pending",
+        "running",
+        "passed",
+        "failed",
+        "stale",
+        "skipped",
+        "overridden",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    verdict: jsonb("verdict").$type<GateVerdict>(),
+    inputArtifactRefs: jsonb("input_artifact_refs").$type<string[]>(),
+    outputArtifactRef: text("output_artifact_ref"),
+    staleFrom: jsonb("stale_from").$type<string[]>(),
+    overriddenBy: text("overridden_by"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxRun: index("gate_results_run_idx").on(t.runId),
+    idxNodeAttempt: index("gate_results_node_attempt_idx").on(t.nodeAttemptId),
+  }),
+);
+
 export const hitlRequests = pgTable(
   "hitl_requests",
   {
@@ -423,6 +546,11 @@ export const hitlRequests = pgTable(
     schema: jsonb("schema"),
     prompt: text("prompt").notNull(),
     response: jsonb("response"),
+    // M11a (ADR-024): review-decision fields claimed from response.decision for
+    // a graph human_review HITL, validated against schema's allow-list.
+    decision: text("decision"),
+    workspacePolicy: text("workspace_policy"),
+    reworkTarget: text("rework_target"),
     respondedAt: timestamp("responded_at", {
       withTimezone: true,
       mode: "date",
@@ -488,3 +616,9 @@ export type RunStatus = Run["status"];
 export type Workspace = typeof workspaces.$inferSelect;
 export type HitlRequest = typeof hitlRequests.$inferSelect;
 export type StepRun = typeof stepRuns.$inferSelect;
+export type NodeAttempt = typeof nodeAttempts.$inferSelect;
+export type NodeAttemptStatus = NodeAttempt["status"];
+export type NodeAttemptType = NodeAttempt["nodeType"];
+export type GateResult = typeof gateResults.$inferSelect;
+export type GateResultStatus = GateResult["status"];
+export type GateKind = GateResult["kind"];

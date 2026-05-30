@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { stringify as stringifyYaml } from "yaml";
 
 import {
+  SETTINGS_NOT_ENFORCED_WARN,
   loadFlowManifest,
   loadProjectConfig,
   validateFormSchemaVersion,
@@ -231,6 +233,163 @@ describe("loadFlowManifest", () => {
 
     expect(msg).toMatch(/invalid mustache template/);
     expect(msg).toContain("plan");
+  });
+});
+
+type GraphManifest = {
+  schemaVersion: number;
+  name: string;
+  compat: { engine_min: string };
+  nodes: Array<Record<string, unknown>>;
+};
+
+function baseGraphManifest(): GraphManifest {
+  return {
+    schemaVersion: 1,
+    name: "aif",
+    compat: { engine_min: "1.1.0" },
+    nodes: [
+      {
+        id: "implement",
+        type: "ai_coding",
+        action: { prompt: "/aif-implement {{ task.prompt }}" },
+        transitions: { success: "checks" },
+      },
+      {
+        id: "checks",
+        type: "check",
+        action: { command: "pnpm test" },
+        pre_finish: {
+          gates: [
+            {
+              id: "test",
+              kind: "command_check",
+              mode: "blocking",
+              command: "pnpm test",
+            },
+          ],
+        },
+        transitions: { success: "review" },
+      },
+      {
+        id: "review",
+        type: "human",
+        finish: { human: { decisions: ["approve", "rework"] } },
+        transitions: { approve: "done", rework: "implement" },
+        rework: {
+          allowedTargets: ["implement"],
+          workspacePolicies: ["keep"],
+          maxLoops: 3,
+          commentsVar: "review_comments",
+        },
+      },
+    ],
+  };
+}
+
+async function writeGraph(
+  name: string,
+  mutate: (m: GraphManifest) => void = () => {},
+): Promise<string> {
+  const m = structuredClone(baseGraphManifest());
+
+  mutate(m);
+
+  return writeFixture(name, stringifyYaml(m));
+}
+
+describe("loadFlowManifest — graph (nodes[])", () => {
+  it("loads a valid graph manifest", async () => {
+    const manifest = await loadFlowManifest(await writeGraph("graph.yaml"));
+
+    expect(manifest.name).toBe("aif");
+    expect(manifest.nodes).toHaveLength(3);
+    expect(manifest.steps).toBeUndefined();
+  });
+
+  it("rejects a graph flow that does not declare engine_min >= 1.1.0", async () => {
+    const path = await writeGraph("graph-old-engine.yaml", (m) => {
+      m.compat.engine_min = "1.0.0";
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects an unknown node id in a transition", async () => {
+    const path = await writeGraph("graph-unknown-target.yaml", (m) => {
+      (m.nodes[0].transitions as Record<string, string>).success = "ghost";
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects a human decision with no declared transition", async () => {
+    const path = await writeGraph("graph-undeclared-decision.yaml", (m) => {
+      m.nodes[2].transitions = { approve: "done" }; // drop rework transition
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects a cycle with no bounding rework.maxLoops", async () => {
+    const path = await writeGraph("graph-unbounded-cycle.yaml", (m) => {
+      delete m.nodes[2].rework; // review->implement back-edge now unbounded
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects duplicate node ids", async () => {
+    const path = await writeGraph("graph-dup-node.yaml", (m) => {
+      m.nodes.push({ ...m.nodes[0] });
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects duplicate gate ids across nodes", async () => {
+    const path = await writeGraph("graph-dup-gate.yaml", (m) => {
+      m.nodes[2].pre_finish = {
+        gates: [
+          {
+            id: "test",
+            kind: "command_check",
+            mode: "blocking",
+            command: "echo hi",
+          },
+        ],
+      };
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("preserves an opaque node settings block (no silent strip)", async () => {
+    const path = await writeGraph("graph-settings.yaml", (m) => {
+      m.nodes[0].settings = { mcps: ["github"], permissionMode: "ask" };
+    });
+    const manifest = await loadFlowManifest(path);
+    const node = manifest.nodes?.[0] as { settings?: Record<string, unknown> };
+
+    expect(node.settings).toEqual({ mcps: ["github"], permissionMode: "ask" });
+  });
+
+  it("exposes SETTINGS_NOT_ENFORCED_WARN as a named constant (P14)", () => {
+    expect(SETTINGS_NOT_ENFORCED_WARN).toBe(
+      "[flow] node settings parsed but not enforced until M11c",
+    );
   });
 });
 

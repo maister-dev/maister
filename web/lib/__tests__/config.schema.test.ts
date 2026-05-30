@@ -6,6 +6,7 @@ import {
   flowYamlV1Schema,
   formSchemaSchema,
   maisterYamlV2Schema,
+  nodeSchema,
   stepSchema,
 } from "@/lib/config.schema";
 
@@ -222,6 +223,120 @@ describe("flowYamlV1Schema", () => {
     };
 
     expect(() => flowYamlV1Schema.parse(bad)).toThrow();
+  });
+});
+
+const goldenGraphYaml = {
+  schemaVersion: 1,
+  name: "aif",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "/aif-implement {{ task.prompt }}" },
+      transitions: { success: "checks" },
+    },
+    {
+      id: "checks",
+      type: "check",
+      action: { command: "pnpm test" },
+      pre_finish: {
+        gates: [
+          {
+            id: "test",
+            kind: "command_check",
+            mode: "blocking",
+            command: "pnpm test",
+          },
+        ],
+      },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: { human: { decisions: ["approve", "rework"] } },
+      transitions: { approve: "done", rework: "implement" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+describe("flowYamlV1Schema — graph (nodes[])", () => {
+  it("accepts a golden graph manifest", () => {
+    expect(() => flowYamlV1Schema.parse(goldenGraphYaml)).not.toThrow();
+  });
+
+  it("rejects both steps[] and nodes[] present", () => {
+    expect(() =>
+      flowYamlV1Schema.parse({
+        ...goldenGraphYaml,
+        steps: goldenFlowYaml.steps,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects neither steps[] nor nodes[]", () => {
+    const { ...noWalker } = { schemaVersion: 1, name: "empty" };
+
+    expect(() => flowYamlV1Schema.parse(noWalker)).toThrow();
+  });
+
+  it("preserves an opaque node settings block (no silent strip)", () => {
+    const withSettings = {
+      ...goldenGraphYaml,
+      nodes: [
+        {
+          ...goldenGraphYaml.nodes[0],
+          settings: { mcps: ["github"], thinkingEffort: "high" },
+        },
+        ...goldenGraphYaml.nodes.slice(1),
+      ],
+    };
+    const parsed = flowYamlV1Schema.parse(withSettings) as {
+      nodes: Array<{ settings?: Record<string, unknown> }>;
+    };
+
+    expect(parsed.nodes[0].settings).toEqual({
+      mcps: ["github"],
+      thinkingEffort: "high",
+    });
+  });
+});
+
+describe("nodeSchema", () => {
+  it("rejects an unknown node type via discriminated union", () => {
+    expect(() =>
+      nodeSchema.parse({ id: "x", type: "merge", action: {} }),
+    ).toThrow();
+  });
+
+  it("ai_coding node requires action.prompt", () => {
+    expect(() =>
+      nodeSchema.parse({ id: "i", type: "ai_coding", action: {} }),
+    ).toThrow();
+  });
+
+  it("rejects an unsupported workspace policy in rework", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "review",
+        type: "human",
+        finish: { human: { decisions: ["rework"] } },
+        transitions: { rework: "i" },
+        rework: {
+          allowedTargets: ["i"],
+          workspacePolicies: ["teleport"],
+          maxLoops: 2,
+        },
+      }),
+    ).toThrow();
   });
 });
 

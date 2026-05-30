@@ -11,7 +11,13 @@ const log = pino({
 // `compat.engine_min`/`compat.engine_max` range; enablement is refused when the
 // running engine falls outside it (see ADR-021). Bump when the Flow runtime
 // contract changes in a way packages can depend on.
-export const MAISTER_ENGINE_VERSION = "1.0.0";
+// Bumped 1.0.0 -> 1.1.0 for Flow graph v1 (`nodes[]`); graph flows MUST declare
+// `compat.engine_min >= 1.1.0` (ADR-022).
+export const MAISTER_ENGINE_VERSION = "1.1.0";
+
+// Minimum engine version a graph (`nodes[]`) manifest must declare in
+// `compat.engine_min` (ADR-022). Enforced in `loadFlowManifest`.
+export const GRAPH_MIN_ENGINE_VERSION = "1.1.0";
 
 // Flow manifest `schemaVersion` values this engine can execute. Enablement of a
 // revision whose schemaVersion is not listed here is refused.
@@ -61,7 +67,10 @@ export function isEngineCompatible(
     const minTuple = parseSemver(min);
 
     if (!minTuple) {
-      return { compatible: false, reason: `engine_min "${min}" is not valid semver` };
+      return {
+        compatible: false,
+        reason: `engine_min "${min}" is not valid semver`,
+      };
     }
     if (compareSemver(engine, minTuple) < 0) {
       return {
@@ -75,7 +84,10 @@ export function isEngineCompatible(
     const maxTuple = parseSemver(max);
 
     if (!maxTuple) {
-      return { compatible: false, reason: `engine_max "${max}" is not valid semver` };
+      return {
+        compatible: false,
+        reason: `engine_max "${max}" is not valid semver`,
+      };
     }
     if (compareSemver(engine, maxTuple) > 0) {
       return {
@@ -91,6 +103,22 @@ export function isEngineCompatible(
 // Returns whether a Flow manifest schemaVersion is executable by this engine.
 export function isSchemaVersionSupported(schemaVersion: number): boolean {
   return SUPPORTED_FLOW_SCHEMA_VERSIONS.includes(schemaVersion);
+}
+
+// Returns whether a graph manifest's declared `compat.engine_min` meets the
+// graph floor (>= GRAPH_MIN_ENGINE_VERSION). Undefined or unparseable -> false
+// (a graph flow must declare a valid, sufficient engine_min — ADR-022).
+export function declaresGraphCapableEngineMin(
+  engineMin: string | undefined,
+): boolean {
+  if (engineMin === undefined) return false;
+
+  const declared = parseSemver(engineMin);
+  const floor = parseSemver(GRAPH_MIN_ENGINE_VERSION);
+
+  if (!declared || !floor) return false;
+
+  return compareSemver(declared, floor) >= 0;
 }
 
 log.info(
