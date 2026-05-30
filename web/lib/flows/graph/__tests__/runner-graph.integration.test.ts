@@ -191,6 +191,32 @@ const reviewFlow = {
   ],
 };
 
+// maxLoops: 1 → initial + 1 rework allowed; 2nd rework must exhaust the limit.
+const tightLoopFlow = {
+  schemaVersion: 1,
+  name: "g",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "work",
+      type: "cli",
+      action: { command: "echo work" },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: { human: { decisions: ["approve", "rework"] } },
+      transitions: { approve: "done", rework: "work" },
+      rework: {
+        allowedTargets: ["work"],
+        workspacePolicies: ["keep"],
+        maxLoops: 1,
+      },
+    },
+  ],
+};
+
 describe("runGraph — traversal + ledger", () => {
   it("walks a cli-node chain to Review writing append-only node_attempts", async () => {
     const seeded = await seedGraphRun(cliChain);
@@ -274,4 +300,39 @@ describe("runGraph — traversal + ledger", () => {
     run = await getRun(seeded.runId);
     expect(run.status).toBe("Review");
   });
+
+  it("maxLoops exhausted across multiple resumes → run Failed (Phase 5.6 / AC-3)", async () => {
+    // tightLoopFlow has maxLoops: 1 — one rework is allowed, the second
+    // exhausts the persisted-ledger bound and must fail the run.
+    const seeded = await seedGraphRun(tightLoopFlow);
+
+    // Pass 1: work → review (NeedsInput, attempt 1).
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    // Rework 1 (allowed — within maxLoops: 1): review attempt 1 → Reworked,
+    // work reruns, review attempt 2 → NeedsInput.
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    const afterFirstRework = await getAttempts(seeded.runId);
+
+    expect(afterFirstRework.filter((a) => a.nodeId === "review")).toHaveLength(
+      2,
+    );
+    expect(
+      afterFirstRework.find((a) => a.nodeId === "review" && a.attempt === 1)
+        ?.status,
+    ).toBe("Reworked");
+
+    // Rework 2 (exceeds maxLoops: 1 — the persisted ledger already has 2
+    // review attempts; entering review again would be attempt 3 → fail).
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const finalRun = await getRun(seeded.runId);
+
+    expect(finalRun.status).toBe("Failed");
+  }, 60_000);
 });

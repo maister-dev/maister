@@ -22,6 +22,7 @@ import { compileManifest, resolveTransition } from "./compile";
 import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
+  markDownstreamStale,
   markNodeFailed,
   markNodeNeedsInput,
   markNodeReworked,
@@ -30,6 +31,10 @@ import {
 } from "./ledger";
 
 import { atomicWriteJson } from "@/lib/atomic";
+import {
+  workspacePolicySchema,
+  type WorkspacePolicy,
+} from "@/lib/config.schema";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   isMaisterError,
@@ -55,6 +60,7 @@ type NodeResult = StepResult & {
   needsInput?: boolean;
   acpSessionId?: string;
   decision?: string;
+  workspacePolicy?: string;
 };
 
 function runDir(
@@ -121,6 +127,17 @@ async function runReviewHuman(
         ? raw
         : decisions[0];
 
+    const allowedPolicies = node.rework?.workspacePolicies ?? [];
+    const policyParsed = workspacePolicySchema.safeParse(
+      existing.workspacePolicy,
+    );
+    const workspacePolicy: WorkspacePolicy =
+      policyParsed.success &&
+      (allowedPolicies.length === 0 ||
+        allowedPolicies.includes(policyParsed.data))
+        ? policyParsed.data
+        : (allowedPolicies[0] ?? "keep");
+
     return {
       ok: true,
       stdout: "",
@@ -128,6 +145,7 @@ async function runReviewHuman(
       durationMs: Date.now() - startedAt,
       needsInput: false,
       decision,
+      workspacePolicy,
     };
   }
 
@@ -249,6 +267,38 @@ async function executeNodeAction(
   }
 }
 
+// Forward-reachable node ids from `startNodeId` in the graph, excluding the
+// start node itself. Used to compute which downstream nodes go stale on rework.
+function downstreamOf(
+  graph: ReturnType<typeof compileManifest>,
+  startNodeId: string,
+): string[] {
+  const visited = new Set<string>();
+  const queue: string[] = [startNodeId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const node = graph.nodes.get(current);
+
+    if (!node) continue;
+
+    for (const target of Object.values(node.transitions)) {
+      if (target && target !== "done" && !visited.has(target)) {
+        queue.push(target);
+      }
+    }
+  }
+
+  // Exclude the start node itself — it is the rework target, not downstream.
+  visited.delete(startNodeId);
+
+  return [...visited];
+}
+
 // Graph runner (M11a). Walks the compiled FlowGraph writing the append-only
 // node_attempts ledger, preserving the M8 resume-claim CAS, STEP_CHECKPOINTED
 // pause, slash-session cleanup, and promoteNextPending. Gate execution
@@ -345,8 +395,6 @@ export async function runGraph(
   let runErrorCode: MaisterErrorCode | null = null;
 
   let currentNodeId: string | null = resumeNodeId ?? graph.entry;
-  const visitsByNode = new Map<string, number>();
-  let totalExecutions = 0;
 
   try {
     while (currentNodeId !== null) {
@@ -359,20 +407,29 @@ export async function runGraph(
         );
       }
 
-      if (++totalExecutions > HARD_NODE_EXECUTION_CEILING) {
+      // Loop bounds derived from the persisted ledger so they hold across
+      // multiple runGraph invocations (human-paced rework resumes as fresh
+      // invocations that would reset any in-memory counter to 0).
+      const attempts = await getNodeAttemptsForRun(runId, db);
+
+      const totalExecutions = attempts.length;
+
+      if (totalExecutions >= HARD_NODE_EXECUTION_CEILING) {
         throw new MaisterError(
           "CONFIG",
           `graph exceeded hard node-execution ceiling (${HARD_NODE_EXECUTION_CEILING}) for run ${runId}`,
         );
       }
 
-      const visits = (visitsByNode.get(node.id) ?? 0) + 1;
-
-      visitsByNode.set(node.id, visits);
+      // Count persisted attempts for this node; the initial run is attempt 1,
+      // so maxLoops reworks → maxLoops + 1 total attempts allowed.
+      const nodeAttemptCount = attempts.filter(
+        (a) => a.nodeId === node.id,
+      ).length;
 
       // rework.maxLoops bounds re-entries of a rework-capable node
       // (initial visit + maxLoops reworks).
-      if (node.rework && visits > node.rework.maxLoops + 1) {
+      if (node.rework && nodeAttemptCount > node.rework.maxLoops) {
         throw new MaisterError(
           "CONFIG",
           `node "${node.id}" exceeded rework.maxLoops (${node.rework.maxLoops}) for run ${runId}`,
@@ -381,7 +438,6 @@ export async function runGraph(
 
       // Reuse an existing NeedsInput attempt when resuming this exact node;
       // otherwise append a fresh attempt (append-only ledger).
-      const attempts = await getNodeAttemptsForRun(runId, db);
       const lastForNode = [...attempts]
         .reverse()
         .find((a) => a.nodeId === node.id);
@@ -521,14 +577,42 @@ export async function runGraph(
         node.rework.allowedTargets.includes(target);
 
       if (isRework) {
+        // Record the operator's chosen workspacePolicy from the artifact (Issue
+        // 3 fix). Only `keep` executes in M11a; others are recorded + warned.
+        const policyParse = workspacePolicySchema.safeParse(
+          result.workspacePolicy,
+        );
+        const chosenPolicy: WorkspacePolicy = policyParse.success
+          ? policyParse.data
+          : "keep";
+
+        if (chosenPolicy !== "keep") {
+          log2.warn(
+            { nodeId: node.id, workspacePolicy: chosenPolicy },
+            "workspacePolicy other than 'keep' recorded but execution deferred to M11b — TODO(M11b)",
+          );
+        }
+
         await markNodeReworked(
           nodeAttemptId,
-          { decision: outcome, workspacePolicy: "keep" },
+          { decision: outcome, workspacePolicy: chosenPolicy },
           db,
         );
-        // TODO(M11a Phase 5): markDownstreamStale(runId, downstreamOf(target))
-        // so re-run gates go stale, plus validate the decision against the
-        // row's allow-list. Phase 3 has no gates yet; the pointer simply moves.
+
+        // Flip downstream nodes/gates stale so they rerun on the next attempt
+        // (Issue 2 fix / AC-3 staleness). `target` is the rework jump destination;
+        // everything forward-reachable from it (excluding itself) goes stale.
+        if (target) {
+          const downstream = downstreamOf(graph, target);
+
+          if (downstream.length > 0) {
+            await markDownstreamStale(runId, downstream, db);
+            log2.info(
+              { from: node.id, reworkTarget: target, downstream },
+              "rework: downstream nodes staled",
+            );
+          }
+        }
       } else {
         await markNodeSucceeded(
           nodeAttemptId,
