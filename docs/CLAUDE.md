@@ -81,6 +81,7 @@ cases, process flows. One file per domain.
 | [`flow-dsl.md`](flow-dsl.md) | Flow step DSL and runner behavior. |
 | [`flow-installer.md`](flow-installer.md) | Flow plugin install pipeline. |
 | [`flow-aif-plugin.md`](flow-aif-plugin.md) | Bundled `aif` Flow plugin. |
+| [`deployment.md`](deployment.md) | Production VPS install: systemd, Postgres, reverse proxy, git auth. |
 
 ## Rules
 

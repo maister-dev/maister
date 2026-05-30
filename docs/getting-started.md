@@ -66,6 +66,9 @@ spawn agent CLIs and operate on host git repos — see ADR-023):
 docker compose up -d postgres            # only Postgres runs in Docker
 ```
 
+For a production VPS install (systemd services, TLS reverse proxy, firewall),
+see [`deployment.md`](deployment.md).
+
 What you should see (M9+): the MAIster login page at `/login`. Sign in with
 the credentials from `pnpm db:seed`. Active routes:
 

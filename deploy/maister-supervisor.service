@@ -1,0 +1,30 @@
+# MAIster supervisor — ACP session daemon (host process; see ADR-023).
+# Install: sudo cp deploy/maister-supervisor.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now maister-supervisor
+[Unit]
+Description=MAIster supervisor (ACP session daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=maister
+Group=maister
+WorkingDirectory=/opt/maister
+EnvironmentFile=/etc/maister/maister.env
+# pnpm must be on PATH so node_modules/.bin (claude-agent-acp, codex-acp, tsx)
+# resolves for the spawned ACP adapters. Install Node 24 + corepack system-wide
+# (pnpm shim in /usr/local/bin). Adjust the repo node_modules/.bin path if needed.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/opt/maister/node_modules/.bin:/opt/maister/supervisor/node_modules/.bin
+ExecStart=/usr/bin/env pnpm --filter @maister/supervisor start
+Restart=always
+RestartSec=3
+# Graceful: supervisor SIGTERMs its agents (MAISTER_SHUTDOWN_GRACE_MS, ~15s) then
+# SIGKILLs (MAISTER_KILL_GRACE_MS, ~5s). NOTE: a restart drops the in-memory ACP
+# session registry — live runs orphan until startup reconciliation lands (M19).
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
