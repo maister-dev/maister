@@ -211,6 +211,26 @@ describe("gate execution", () => {
     expect(gates.find((g) => g.gateId === "ext")?.status).toBe("pending");
   });
 
+  it("persists gate-declared inputArtifacts to gate_results.input_artifact_refs", async () => {
+    const seeded = await seedGraphRun(
+      oneNode([
+        {
+          id: "fmt",
+          kind: "command_check",
+          mode: "blocking",
+          command: "true",
+          inputArtifacts: ["impl-diff", "test-report"],
+        },
+      ]),
+    );
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const gates = await getGates(seeded.runId);
+
+    expect(gates[0].inputArtifactRefs).toEqual(["impl-diff", "test-report"]);
+  });
+
   it("two blocking gates: a failing one fails the run, both verdicts recorded", async () => {
     const seeded = await seedGraphRun(
       oneNode([

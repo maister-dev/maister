@@ -59,18 +59,53 @@ function summarize(s: string | null | undefined): string {
     : s.slice(0, VERDICT_EVIDENCE_CAP);
 }
 
+// Extract every top-level brace-balanced `{...}` substring, string-aware (so
+// braces inside string literals don't break balancing). Linear O(n) — no
+// regex backtracking — and correctly captures objects with nested objects.
+function balancedJsonObjects(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+    } else if (c === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (c === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        out.push(s.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return out;
+}
+
 // Tolerant structured-verdict parser for ai_judgment / skill_check output:
-// find the last JSON object in the agent's text that carries a string
-// `verdict`. Returns null when none is found (caller records a `failed`
-// gate with the raw prose as evidence — never a thrown domain code, ADR-024).
+// find the LAST brace-balanced JSON object in the agent's text that carries a
+// string `verdict` (handles nested objects). Returns null when none is found
+// (caller records a `failed` gate with the raw prose as evidence — never a
+// thrown domain code, ADR-024).
 export function parseVerdict(output: string): GateVerdict | null {
-  const matches = output.match(/\{[\s\S]*?\}/g);
+  const candidates = balancedJsonObjects(output);
 
-  if (!matches) return null;
-
-  for (let i = matches.length - 1; i >= 0; i--) {
+  for (let i = candidates.length - 1; i >= 0; i--) {
     try {
-      const obj = JSON.parse(matches[i]) as Record<string, unknown>;
+      const obj = JSON.parse(candidates[i]) as Record<string, unknown>;
 
       if (obj && typeof obj === "object" && typeof obj.verdict === "string") {
         return {
@@ -87,7 +122,7 @@ export function parseVerdict(output: string): GateVerdict | null {
         };
       }
     } catch {
-      // not JSON — keep scanning earlier candidates
+      // not valid JSON — keep scanning earlier candidates
     }
   }
 
@@ -162,7 +197,10 @@ async function runOneGate(
     gateId: gate.id,
     kind: gate.kind,
     mode: gate.mode,
-    inputArtifacts: gate.inputArtifacts,
+    // createGateResult persists this to gate_results.input_artifact_refs — the
+    // key MUST be inputArtifactRefs (a variable spread bypasses TS excess-prop
+    // checks, so a wrong key would be silently dropped).
+    inputArtifactRefs: gate.inputArtifacts,
     staleFrom: gate.staleFrom,
     db: ctx.db,
   };
@@ -228,6 +266,11 @@ async function runOneGate(
       // skill_check runs a slash command (best-effort, no capability scoping —
       // TODO(M14)); ai_judgment runs a free prompt. Both default to a fresh
       // session for an isolated verdict (~$0.28 cache-creation cost, M0).
+      // M11a scopes gate agents as isolated new-session verdict turns expected
+      // to end_turn — they do NOT pause for HITL. If HITL-capable gate agents
+      // land later, branch on res.errorCode (STEP_CHECKPOINTED / NeedsInput)
+      // here instead of treating partial stdout as an unparseable verdict.
+      // TODO(post-M11a): handle gate-agent HITL/checkpoint.
       const prompt =
         gate.kind === "skill_check"
           ? (gate.command ?? (gate.skill ? `/${gate.skill}` : ""))

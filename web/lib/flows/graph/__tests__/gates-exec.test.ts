@@ -34,6 +34,24 @@ describe("parseVerdict", () => {
     expect(v?.reasons).toEqual(["1", "2"]);
     expect(v?.confidence).toBeUndefined();
   });
+
+  it("extracts a verdict object that contains a nested object (brace-balanced)", () => {
+    const out =
+      'verdict: {"verdict":"pass","meta":{"x":1,"y":{"z":2}},"confidence":0.5}';
+    const v = parseVerdict(out);
+
+    expect(v?.verdict).toBe("pass");
+    expect(v?.confidence).toBe(0.5);
+  });
+
+  it("ignores braces inside string literals", () => {
+    const v = parseVerdict(
+      '{"verdict":"fail","reasons":["use { and } carefully"]}',
+    );
+
+    expect(v?.verdict).toBe("fail");
+    expect(v?.reasons).toEqual(["use { and } carefully"]);
+  });
 });
 
 describe("isPassVerdict", () => {
