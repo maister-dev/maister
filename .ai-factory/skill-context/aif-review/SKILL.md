@@ -2,8 +2,9 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-05-28
+> Last updated: 2026-05-30
 > Based on: 2 analyzed patches + 1 adversarial-review pass-through (M7 / 2026-05-28)
+> + /aif-evolve patch analysis (M9-M10 docs-drift + auth-first, 2026-05-30)
 
 ## Rules
 
@@ -63,5 +64,21 @@ Also flag tests in the same diff: a regression test MUST exist that simulates a 
 ### When the diff adds a Zod regex/refine to one field, check sibling fields
 **Source**: 2026-05-26-12.53.md
 **Rule**: When reviewing a Zod schema where the diff adds a security regex / `.refine()` to one field, scan every sibling field of similar type in the same schema. Flag any sibling that flows into a filesystem / subprocess argv / SQL / HTML sink without an equivalent constraint. Same finding type as the first field — do not let partial-coverage waves through.
+
+### Review exit MUST re-derive every analytics/spec surface from the diff and treat drift as a must-fix
+**Source**: M7 adversarial review passes 3-4 (2026-05-28-20.01, 2026-05-28-20.32); M9 branch review (2026-05-29-15.38); M10 verify pass-through (2026-05-30)
+**Rule**: Before a review can exit clean, enumerate every analytics/spec surface the diff touches and reconcile EACH against the code at HEAD — never trust the doc's own status tag. The reconciliation set, by changed area:
+
+- **state machine / lifecycle change** → the matching `docs/system-analytics/*.md` `stateDiagram` AND its Expectations + Edge-cases bullets AND its refusal/precondition table must match the code's actual transitions and guards (M10: the analytics refusal table was a deny-list while the code was a stricter allow-list);
+- **DB schema change** → `docs/database-schema.md` AND the relevant `docs/db/*.md` `erDiagram` both updated (M10: the ERDs were left stale);
+- **HTTP/SSE wire change** → `docs/api/*.openapi.yaml` / `docs/api/async/*.asyncapi.yaml` paths, bodies, status codes, and example payloads;
+- **error-code / semantic change** → `docs/error-taxonomy.md`;
+- **a route target newly referenced by the UI** → a matching `page.tsx` (a link to a route is a contract).
+
+Per `docs/CLAUDE.md`'s "code wins" policy, analytics drift is a MUST-FIX in the SAME review, not a follow-up — "code lands, docs follow" is the exact pattern that produced consecutive M7 review rounds describing pre-Mx behavior. Also flag any spec section that describes behavior absent at HEAD unless it is explicitly tagged Designed Mx / Phase 2 (R6). The review summary MUST list each analytics surface checked (even "no change required"), mirroring the `/aif-verify` contract-surface enumeration on the review side.
+
+### Auth-first ordering — authenticate before any resource lookup, read routes included
+**Source**: M9 adversarial review rounds 2-3 (2026-05-29-13.52, 2026-05-29-14.38); M9 branch review (2026-05-29-15.38)
+**Rule**: For every route handler / server action in the diff, confirm the FIRST awaited operation is the session/active-session gate (`requireActiveSession` or equivalent, INCLUDING the forced-password-change gate) BEFORE any DB lookup of the named resource. A handler that reads `hitl_requests` / `runs` / `projects` before authenticating lets an unauthenticated or password-gated caller probe resource existence (a timing / error-shape oracle). This applies to READ routes (GET / stream) too, not only state-changing ones. Project-role authz then runs against a server-DERIVED `projectId` (from the resource row), never a body field. Flag ordering violations as a security finding, not a nit. (Three consecutive M9 review rounds re-found this on different routes — it is a systemic ordering bug, not a one-off.)
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)

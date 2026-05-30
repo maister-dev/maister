@@ -2,8 +2,9 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-05-28
+> Last updated: 2026-05-30
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
+> + M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30)
 
 ## Rules
 
@@ -128,5 +129,38 @@ Concrete checklist to apply at plan-write time:
 - [ ] Tests in the same plan MUST include at least one regression case asserting "after a simulated failure in the releasing-side code, the deferred-creating side received an explicit release call" (e.g. a spy on the cancel API verifies it was invoked).
 
 Reason: M7's first design specced `runner-agent.ts` to log-and-continue on DB-insert failure when handling a `session.permission_request` SSE event. The supervisor was holding a deferred ACP promise for that request; the runner-agent was the only consumer that could trigger its release (via the response route). On DB-insert failure, the deferred stayed pending until the 30-min keep-alive timeout — invisible to the user, who saw the run as `Running` with no actionable prompt. Codex flagged it as the third finding. The fix was to add `cancelPermission(sessionId, requestId, reason)` and call it from every catch path that breaks the happy-path persistence; the plan now enforces a regression test asserting no hidden deferred remains.
+
+### Plan MUST make test-runnability and per-phase suite-green explicit acceptance
+**Source**: M10 verify pass-through (2026-05-30)
+**Rule**: A plan that promises tests but never states they must EXECUTE and the suite must stay GREEN lets the implementation ship dead or stale tests under deadline pressure. Every plan whose phases add or change behavior MUST encode three test-integrity acceptance criteria:
+
+1. **Runnability.** Each promised test names the runner project that will execute it, and the plan requires confirming the runner's `include` glob actually matches the file (`vitest list` or equivalent). When a test lands in a new path family (e.g. `app/**/*.integration.test.ts` where only `lib/**` was globged before), the plan MUST include a task to extend the runner config in the same phase. Do not list a test as a deliverable without stating where it runs.
+2. **Per-phase green checkpoint.** Each phase's exit criteria include "full suite green (`pnpm test:unit && pnpm test:integration`)". A test the phase touches that is left red fails the phase. Pre-existing red or harness-limited tests surfaced by the phase MUST be handled by an explicit quarantine task (config `exclude` or `*.skip` with a reason + tracked follow-up), never by silently tolerating red or deleting the test.
+3. **Assertion migration is in-scope.** When a phase changes observable behavior existing tests assert (error text, resolved paths, addressing), updating those assertions is a task IN that phase, not a follow-up. The plan must name the existing tests that will need migration.
+
+The plan's "migrate the existing suite" task (when present) MUST enumerate each existing test file by path AND the specific assertions/fixtures that the behavior change invalidates — a bare "migrate existing tests" line reliably gets trimmed and leaves stale red tests. `/aif-verify` re-derives this list from the diff as a cross-check.
+
+Reason: M10's T7.3 said "migrate the existing suite" and promised lifecycle/two-phase/RBAC/trust-boundary tests, but the trust-boundary test was committed under a path no runner globbed (never ran), three loader assertions went stale against the new behavior, and the promised lifecycle/integration tests were never written — none of which blocked a phase because no phase had a runnability + green gate.
+
+### Plan MUST front-load a complete, internally consistent analytics/design spec before any code phase
+**Source**: M7 adversarial review passes 3-4 (2026-05-28-20.01, 2026-05-28-20.32); M10 verify pass-through (2026-05-30)
+**Rule**: Analytics is an INPUT to implementation, not a trailing sync task. For any milestone or feature that changes a state machine, a wire/API surface, a DB schema, or a process flow, the plan MUST place a docs-first/analytics phase (a "Phase 0") BEFORE any code phase, and that phase's exit criteria MUST require the analytics artifacts to be COMPLETE and INTERNALLY CONSISTENT so implementation can follow them as the single source of truth. The Phase-0 exit checklist MUST cover, for every domain the milestone touches:
+
+- **system-analytics doc** per `docs/CLAUDE.md` R5 (Purpose, Domain entities, State machine, Process flows, Expectations, Edge cases, Linked artifacts) — with EVERY state transition AND every refusal/precondition row enumerated, stated exactly as the code will gate (an allow-list vs deny-list must be written the way it will be implemented);
+- **the ERD, both artifacts**: `docs/database-schema.md` narrative AND the relevant `docs/db/*.md` Mermaid `erDiagram`, for every new table/column/index (updating one is not updating the other);
+- **API/event specs**: `docs/api/*.openapi.yaml` and `docs/api/async/*.asyncapi.yaml` for every route/event the milestone adds (paths, bodies, status codes, example payloads);
+- **implementation-status tags** (Implemented / Designed / Phase 2 per `docs/CLAUDE.md` R6) on every described piece, so no spec section describes code that will not exist at the phase's HEAD.
+
+A plan that schedules "docs as a final as-built sync" after the code phases is the drift pattern that produced repeated "specs still describe pre-Mx behavior" review rounds. (M10 verify: the analytics launch-refusal table described a deny-list while the shipped code used a stricter allow-list, and the `docs/db/*.md` ERDs were never updated — both because the analytics work was treated as a trailing sync rather than a leading source of truth.)
+
+### Plan MUST physically separate trust from execution for any fetch-then-execute of third-party content
+**Source**: M10 second adversarial review (2026-05-30-13.03)
+**Rule**: Any feature whose code path fetches/installs external content (clone a repo, download a package, pull a plugin) and later EXECUTES code from it (`setup.sh`, `postinstall`, hooks, plugin entrypoints) MUST be planned so that:
+
+1. The steps are ordered **fetch/install → establish trust → execute** — never fetch-then-execute in one breath.
+2. The execution call lives in a function PHYSICALLY SEPARATE from the fetch/install function, so execution cannot be invoked before a trust decision (the install function must not be able to run the hook).
+3. Execution is gated on an explicit trust state persisted in the store (`trusted_by_policy` or operator-confirmed), never on "we just installed it".
+
+Plan acceptance criteria MUST name, for each executable hook the feature ships: WHERE it runs and WHAT trust gate precedes that exact line. Mandatory regression: install an untrusted source carrying a `setup.sh` → assert the script did NOT run (no side effect / sentinel absent) until an explicit trust + enable. (M10: `installRevision` ran `bash setup.sh` from a possibly-untrusted source during install — arbitrary code execution before any trust decision.)
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
