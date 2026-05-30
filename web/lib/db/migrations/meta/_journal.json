@@ -50,6 +50,13 @@
       "when": 1780135164887,
       "tag": "0006_rapid_siren",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780139959190,
+      "tag": "0007_fast_misty_knight",
+      "breakpoints": true
     }
   ]
 }

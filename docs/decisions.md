@@ -712,7 +712,7 @@ that ships capabilities/gates/artifacts *inside* a package.
   pinned revision through upgrade/rollback/disable.
 - `removeRevision` is refused while any run references the revision or it is an
   enabled revision (`CONFLICT`); automatic GC stays M19.
-- A schema migration (`0006`) plus a TS backfill (`backfill-flow-revisions`,
+- A schema migration (`0007`) plus a TS backfill (`backfill-flow-revisions`,
   digests need sha256 of canonical JSON) is required; existing installs are
   grandfathered as `trusted_by_policy` + `Enabled`.
 - One new env var (`MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`). No new

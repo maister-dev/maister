@@ -101,7 +101,7 @@ db:migrate         # apply migrations against $DB_URL
 db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
 db:studio          # drizzle-kit studio
 backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
-                         # existing flows rows after applying migration 0006
+                         # existing flows rows after applying migration 0007
                          # (idempotent; run once after upgrading to M10)
 ```
 

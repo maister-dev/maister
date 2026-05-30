@@ -218,7 +218,7 @@ manifest + install path from that pinned revision.
   — multi-revision model, trust policy, compatibility scope, microsoft/apm evaluation.
 - Roadmap: [`../../.ai-factory/ROADMAP.md`](../../.ai-factory/ROADMAP.md) M10.
 - DB schema: [`../database-schema.md`](../database-schema.md) (`flow_revisions`,
-  `flows.*`, `runs.flow_revision_id`), migration `0006`.
+  `flows.*`, `runs.flow_revision_id`), migration `0007`.
 - Flow DSL: [`../flow-dsl.md`](../flow-dsl.md) (manifest contract fields).
 - Configuration: [`../configuration.md`](../configuration.md)
   (`MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`).

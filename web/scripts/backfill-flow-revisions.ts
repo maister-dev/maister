@@ -27,7 +27,7 @@ const log = pino({
 // every existing flows row, points the project enablement pointer at it, and
 // links historical runs by (flow_ref_id, flow_revision). Idempotent: safe to
 // re-run. SQL cannot compute the sha256 manifest digest over canonical JSON, so
-// this runs as a TS step AFTER the DDL migration 0006.
+// this runs as a TS step AFTER the DDL migration 0007.
 
 type ContractFields = {
   capabilities?: string[];
