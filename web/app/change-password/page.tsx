@@ -13,6 +13,7 @@ export default async function ChangePasswordPage(): Promise<ReactElement> {
   const user = await getSessionUser();
 
   if (!user) redirect("/login");
+  if (user.accountStatus !== "active") redirect("/login");
   if (!user.mustChangePassword) redirect("/");
 
   const t = await getTranslations("changePassword");

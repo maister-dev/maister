@@ -26,6 +26,10 @@ export default async function AppLayout({
 }): Promise<ReactElement> {
   const sessionUser = await getSessionUser();
 
+  if (sessionUser && sessionUser.accountStatus !== "active") {
+    redirect("/login");
+  }
+
   // Force a password change before any app access (seeded admin / admin-reset).
   if (sessionUser?.mustChangePassword) {
     redirect("/change-password");

@@ -18,6 +18,11 @@ info:
       board. Requires project membership at `member` or above.
     - `/api/auth/{...nextauth}` (M9) — Auth.js v5 credentials handler.
       See [Authentication & RBAC](../configuration.md#authentication--rbac).
+    - `POST /api/auth/register` — public registration. Creates a
+      `pending` member account; an admin must activate it before sign-in.
+    - `GET /api/admin/users` and `/api/admin/users/{userId}/*` —
+      admin-only user activation, disable/re-enable, role change, and password
+      reset. Returns no password hashes.
     - `POST /api/runs` (M5+) — launch a run from a Backlog task; precondition
       checks, executor resolution, worktree create, scheduler claim. Requires
       project membership at `member` or above (`launchRun`).
@@ -41,7 +46,8 @@ info:
     Insufficient role returns `403 UNAUTHORIZED`. An authenticated account
     with a pending forced password change (seeded admin, admin-forced reset)
     is rejected on every role-gated route with `403 PASSWORD_CHANGE_REQUIRED`
-    until it sets a new password. The `security` field below
+    until it sets a new password. A valid session for a non-active account is
+    rejected with `403 ACCOUNT_INACTIVE`. The `security` field below
     is left empty because Auth.js sessions are cookie-based and not
     expressible as an OpenAPI security scheme without a custom extension.
 
@@ -65,6 +71,8 @@ tags:
     description: Project registration and task creation.
   - name: auth
     description: Auth.js v5 session management.
+  - name: admin
+    description: Global admin account management.
   - name: runs
     description: Run launch, status, and event streaming.
   - name: hitl
@@ -274,7 +282,8 @@ paths:
         on every authorization check (the cached JWT role is not trusted; a
         deleted user invalidates the session). The single bootstrap admin is
         seeded by migration `0005` (`admin@maister.local`, `must_change_password
-        = true`); public registration always creates `member`.
+        = true`); public registration creates `member` with
+        `account_status=pending`.
       operationId: authPost
       parameters:
         - name: nextauth
@@ -299,6 +308,212 @@ paths:
           description: Redirect after sign-in / sign-out.
         "401":
           description: Invalid credentials.
+
+  /api/auth/register:
+    post:
+      tags: [auth]
+      summary: Register a pending user account
+      description: |
+        Public registration route. Body-controlled fields are `name`, `email`,
+        and `password`; the server lowercases email, hashes the password, and
+        creates `users.role = "member"` with `account_status = "pending"`.
+        The route does not sign the user in. Admin activation through
+        `/api/admin/users/{userId}/status` is required before credentials
+        sign-in succeeds.
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterUserBody" }
+      responses:
+        "201":
+          description: Pending account created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegisterUserResponse" }
+        "409":
+          description: Email already registered (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/users:
+    get:
+      tags: [admin]
+      summary: List users for admin management
+      description: |
+        Admin-only (`requireGlobalRole("admin")`). Query identifiers are
+        filters only: `status` and `q` are body/query-controlled and do not
+        authorize access. The current admin comes from auth context. Response
+        excludes `password_hash`.
+      operationId: listAdminUsers
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, active, disabled]
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Users returned without password hashes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminUser" }
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: Not an active global admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/users/{userId}/status:
+    patch:
+      tags: [admin]
+      summary: Activate or disable a user
+      description: |
+        Admin-only. `userId` is a URL parameter. Current admin is auth-context.
+        Body-controlled `status` may be `active` or `disabled`. The route
+        prevents self-disable and disabling the last active admin.
+      operationId: setUserStatus
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminSetStatusBody" }
+      responses:
+        "200":
+          description: Status updated.
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: Not an active global admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Invariant violation (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/users/{userId}/role:
+    patch:
+      tags: [admin]
+      summary: Change a user's global role
+      description: |
+        Admin-only. `userId` is a URL parameter. Body-controlled `role` may be
+        `viewer`, `member`, or `admin`. The route prevents self-demotion and
+        removing the last active admin.
+      operationId: setUserRole
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminSetRoleBody" }
+      responses:
+        "200":
+          description: Role updated.
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: Not an active global admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Invariant violation (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/users/{userId}/password-reset:
+    post:
+      tags: [admin]
+      summary: Reset a user's password
+      description: |
+        Admin-only. `userId` is a URL parameter. Body-controlled `password` is
+        bcrypt-hashed server-side. `mustChangePassword` can force the user
+        through `/change-password` on next sign-in.
+      operationId: resetUserPassword
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminPasswordResetBody" }
+      responses:
+        "200":
+          description: Password updated.
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: Not an active global admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Target user does not exist (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
   /api/runs:
     post:
@@ -679,6 +894,57 @@ components:
             override chain at tier 2 (between run-launcher override and
             per-flow override). Any other executor ID returns `422
             CONFIG`.
+    RegisterUserBody:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12 }
+    RegisterUserResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending]
+    AdminUser:
+      type: object
+      required: [id, email, role, status, mustChangePassword, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string, nullable: true }
+        email: { type: string, format: email }
+        role:
+          type: string
+          enum: [viewer, member, admin]
+        status:
+          type: string
+          enum: [pending, active, disabled]
+        mustChangePassword: { type: boolean }
+        statusUpdatedAt: { type: string, format: date-time, nullable: true }
+        statusUpdatedBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    AdminSetStatusBody:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, disabled]
+    AdminSetRoleBody:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [viewer, member, admin]
+    AdminPasswordResetBody:
+      type: object
+      required: [password, mustChangePassword]
+      properties:
+        password: { type: string, minLength: 12 }
+        mustChangePassword: { type: boolean }
     PostRunBody:
       type: object
       required: [taskId]
@@ -757,7 +1023,9 @@ components:
             - FLOW_INSTALL
             - ACP_PROTOCOL
             - CHECKPOINT
+            - STEP_CHECKPOINTED
             - UNAUTHENTICATED
             - UNAUTHORIZED
             - PASSWORD_CHANGE_REQUIRED
+            - ACCOUNT_INACTIVE
         message: { type: string }

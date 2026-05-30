@@ -63,6 +63,7 @@ async function seedUser(
     id,
     email: `${id}@test.com`,
     role,
+    accountStatus: "active",
     passwordHash: "x",
   });
 }
@@ -106,6 +107,19 @@ describe("authz is DB-authoritative on role (integration)", () => {
     const resolved = await getSessionUser();
 
     expect(resolved?.mustChangePassword).toBe(true);
+  });
+
+  it("denies disabled users even when an old session still exists", async () => {
+    await seedUser("u-disabled", "admin");
+    await db
+      .update(schema.users)
+      .set({ accountStatus: "disabled" })
+      .where(eq(schema.users.id, "u-disabled"));
+    sessionRef.value = { user: { id: "u-disabled", role: "admin" } };
+
+    await expect(requireGlobalRole("admin")).rejects.toMatchObject({
+      code: "ACCOUNT_INACTIVE",
+    });
   });
 });
 

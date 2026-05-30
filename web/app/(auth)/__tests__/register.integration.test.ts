@@ -5,11 +5,13 @@ import {
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { register } from "@/app/(auth)/actions";
+import { POST as registerRoutePost } from "@/app/api/auth/register/route";
 import { verifyPassword } from "@/lib/password";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -48,6 +50,18 @@ afterAll(async () => {
   await container?.stop();
 });
 
+function registerRequest(input: {
+  email: string;
+  name: string;
+  password: string;
+}): NextRequest {
+  return new NextRequest("http://localhost/api/auth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 describe("register action (integration)", () => {
   it("migration seeds exactly one bootstrap admin with must_change_password", async () => {
     const admins = await db
@@ -57,6 +71,7 @@ describe("register action (integration)", () => {
 
     expect(admins).toHaveLength(1);
     expect(admins[0].email).toBe("admin@maister.local");
+    expect(admins[0].accountStatus).toBe("active");
     expect(admins[0].mustChangePassword).toBe(true);
   });
 
@@ -67,7 +82,7 @@ describe("register action (integration)", () => {
       password: "SecurePassword123",
     });
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: true, status: "pending" });
 
     const rows = await db
       .select()
@@ -76,6 +91,7 @@ describe("register action (integration)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].role).toBe("member");
+    expect(rows[0].accountStatus).toBe("pending");
     expect(rows[0].mustChangePassword).toBe(false);
 
     // The bootstrap admin remains the only admin.
@@ -85,6 +101,28 @@ describe("register action (integration)", () => {
       .where(eq(schema.users.role, "admin"));
 
     expect(admins).toHaveLength(1);
+  });
+
+  it("public register API returns only pending status", async () => {
+    const response = await registerRoutePost(
+      registerRequest({
+        name: "Route User",
+        email: "route-user@test.com",
+        password: "SecurePassword123",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({ status: "pending" });
+
+    const rows = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.email, "route-user@test.com"));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].role).toBe("member");
+    expect(rows[0].accountStatus).toBe("pending");
   });
 
   it("second user becomes member", async () => {
@@ -109,6 +147,7 @@ describe("register action (integration)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].role).toBe("member");
+    expect(rows[0].accountStatus).toBe("pending");
   });
 
   it("duplicate email returns error", async () => {

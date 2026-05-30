@@ -8,15 +8,20 @@ project or run actions. The domain boundary ends at project-specific
 authorization decisions; project membership semantics live in
 [`projects.md`](projects.md) and the DB schema.
 
-Status: **Implemented (M9+)** — credentials auth, DB-authoritative roles,
-forced password change, the signed-in user menu, personal settings, normal
-password changes, and sign-out are wired in `web/`.
+Status: **Implemented (M9+)** — credentials auth, admin-approved account
+activation, DB-authoritative roles/status, forced password change, the signed-in
+user menu, personal settings, normal password changes, admin password reset, and
+sign-out are wired in `web/`.
 
 ## Domain entities
 
 - **User** — authenticated person persisted in `users`; owns display name,
-  email, password hash, global role, and `must_change_password`.
+  email, password hash, global role, `account_status`, and
+  `must_change_password`.
   See [`../database-schema.md#users`](../database-schema.md#users).
+- **Account status** — `users.account_status` with lifecycle
+  `pending -> active -> disabled`. Only `active` can sign in or pass protected
+  API gates.
 - **Auth session** — Auth.js JWT-backed browser session; server code treats
   the JWT as an identity pointer and re-reads the user row before authority
   decisions.
@@ -36,16 +41,44 @@ password changes, and sign-out are wired in `web/`.
 ```mermaid
 stateDiagram-v2
     [*] --> SignedOut
-    SignedOut --> PasswordChangeRequired: credentials sign-in<br/>must_change_password=true
-    SignedOut --> Active: credentials sign-in<br/>must_change_password=false
+    SignedOut --> PendingApproval: public registration<br/>account_status=pending
+    PendingApproval --> Active: admin activates account
+    Active --> Disabled: admin disables account
+    Disabled --> Active: admin re-enables account
+    SignedOut --> PasswordChangeRequired: credentials sign-in<br/>active + must_change_password=true
+    SignedOut --> Active: credentials sign-in<br/>active + must_change_password=false
     PasswordChangeRequired --> Active: POST /change-password<br/>sets password_hash<br/>must_change_password=false
     Active --> Active: POST /account<br/>updates users.name
     Active --> Active: POST /account/password<br/>updates password_hash
+    Active --> PasswordChangeRequired: admin resets password<br/>must_change_password=true
     Active --> SignedOut: user menu sign out
     Active --> SignedOut: user row deleted<br/>JWT refresh returns null
 ```
 
 ## Process flows
+
+### Public registration and admin activation (Implemented)
+
+```mermaid
+sequenceDiagram
+    actor U as New user
+    actor A as Admin
+    participant UI as Register form
+    participant API as POST /api/auth/register
+    participant DB as Postgres
+    participant AU as /admin/users
+
+    U->>UI: submit name + email + password
+    UI->>API: create account request
+    API->>DB: INSERT users role=member, account_status=pending
+    API-->>UI: 201 {status:"pending"}
+    UI-->>U: waiting for admin approval
+    A->>AU: open user management
+    AU->>DB: SELECT users without password_hash
+    A->>AU: activate user
+    AU->>DB: UPDATE users SET account_status=active
+    U->>UI: sign in with credentials
+```
 
 ### Credentials sign-in and DB-authoritative session (Implemented)
 
@@ -62,13 +95,19 @@ sequenceDiagram
     A->>DB: SELECT users WHERE email=lower(email)
     DB-->>A: user row
     A->>A: verify bcrypt password
-    A-->>UI: set session JWT {id, role, mustChangePassword}
-    UI-->>U: redirect into app
-    L->>DB: SELECT live users row by session.user.id
-    alt must_change_password=true
-        L-->>U: redirect /change-password
-    else active account
-        L-->>U: render app shell + user menu
+    alt account_status=pending
+        A-->>UI: reject with pending approval message
+    else account_status=disabled
+        A-->>UI: reject with disabled-account message
+    else account_status=active
+        A-->>UI: set session JWT {id, role, mustChangePassword}
+        UI-->>U: redirect into app
+        L->>DB: SELECT live users row by session.user.id
+        alt must_change_password=true
+            L-->>U: redirect /change-password
+        else active account
+            L-->>U: render app shell + user menu
+        end
     end
 ```
 
@@ -136,6 +175,29 @@ sequenceDiagram
     SA-->>U: redirect /
 ```
 
+### Admin user management (Implemented)
+
+```mermaid
+sequenceDiagram
+    actor A as Admin
+    participant UI as /admin/users
+    participant API as /api/admin/users
+    participant AZ as requireGlobalRole(admin)
+    participant DB as Postgres
+
+    A->>UI: open user management
+    UI->>API: GET /api/admin/users?status=...
+    API->>AZ: require active global admin
+    AZ->>DB: SELECT live admin row
+    API->>DB: SELECT users without password_hash
+    API-->>UI: users
+    A->>UI: activate, disable, role change, or password reset
+    UI->>API: single-purpose mutation route
+    API->>AZ: require active global admin
+    API->>DB: enforce no self-demotion/self-disable<br/>and last active admin invariant
+    API->>DB: UPDATE users
+```
+
 ## Expectations
 
 - Every protected app page MUST load the live `users` row before rendering
@@ -144,9 +206,18 @@ sequenceDiagram
   `requireActiveSession()` through the authz helpers before reading protected
   project or run resources.
 - JWT `role` and `mustChangePassword` claims MUST NOT be treated as authority;
-  server authz MUST re-read `users.role` and `users.must_change_password`.
-- Public registration MUST create `users.role = 'member'`; only the bootstrap
-  migration or an existing admin path may create a global admin.
+  server authz MUST re-read `users.role`, `users.account_status`, and
+  `users.must_change_password`.
+- Public registration MUST create `users.role = 'member'` and
+  `users.account_status = 'pending'`; only the bootstrap migration or an
+  existing admin path may create a global admin.
+- Credentials sign-in MUST reject `pending` and `disabled` users after password
+  verification and surface a specific UI message instead of auto-signing in.
+- Role-gated APIs MUST reject old sessions for non-active users with
+  `ACCOUNT_INACTIVE`.
+- Admin user management MUST NOT return `users.password_hash`.
+- Admin mutations MUST NOT allow self-disable, self-demotion, or removing the
+  last active global admin.
 - A user with `users.must_change_password = true` MUST be redirected to
   `/change-password` by the app layout and blocked from role-gated APIs with
   `PASSWORD_CHANGE_REQUIRED`.
@@ -165,6 +236,12 @@ sequenceDiagram
 
 - **No valid session** -> `MaisterError("UNAUTHENTICATED", ...)`; the UI
   redirects to `/login`. See [`../error-taxonomy.md`](../error-taxonomy.md).
+- **Valid credentials but `account_status=pending`** -> sign-in is rejected
+  with a pending-approval message; no session is created.
+- **Valid credentials but `account_status=disabled`** -> sign-in is rejected
+  with a disabled-account message; no session is created.
+- **Old session after account disable** -> role-gated APIs reject with
+  `ACCOUNT_INACTIVE` before project/run data is read.
 - **Valid session but insufficient global or project role** ->
   `MaisterError("UNAUTHORIZED", ...)`; do not reveal protected resource
   details.
@@ -190,8 +267,10 @@ sequenceDiagram
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) §Auth.js routes
   and authentication notes.
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
-  (`UNAUTHENTICATED`, `UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`).
+  (`UNAUTHENTICATED`, `UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`,
+  `ACCOUNT_INACTIVE`).
 - Source: `web/auth.ts`, `web/auth.config.ts`, `web/lib/authz.ts`,
+  `web/lib/users.ts`, `web/app/api/admin/users/route.ts`,
   `web/app/(app)/layout.tsx`, `web/components/chrome/user-menu.tsx`,
   `web/app/(app)/account/actions.ts`,
   `web/app/change-password/actions.ts`.

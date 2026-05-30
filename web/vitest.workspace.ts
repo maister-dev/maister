@@ -32,6 +32,7 @@ export default defineWorkspace([
       name: "integration",
       include: [
         "lib/**/*.integration.test.ts",
+        "app/**/register.integration.test.ts",
         "app/api/runs/**/*.integration.test.ts",
       ],
       environment: "node",

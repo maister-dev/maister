@@ -11,7 +11,7 @@ import { z } from "zod";
 import { authConfig } from "@/auth.config";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { verifyPassword } from "@/lib/password";
+import { verifyCredentialAccount } from "@/lib/users";
 
 const log = pino({ name: "auth", level: process.env.LOG_LEVEL ?? "info" });
 
@@ -63,6 +63,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
           .select({
             role: users.role,
             mustChangePassword: users.mustChangePassword,
+            accountStatus: users.accountStatus,
           })
           .from(users)
           .where(eq(users.id, token.id));
@@ -99,39 +100,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
           return null;
         }
 
-        const email = parsed.data.email.toLowerCase();
-        const rows = await db()
-          .select()
-          .from(users)
-          .where(eq(users.email, email));
-        const user = rows[0];
+        const result = await verifyCredentialAccount({
+          email: parsed.data.email,
+          password: parsed.data.password,
+        });
 
-        if (!user?.passwordHash) {
-          log.warn({ email }, "sign-in failed: unknown user or no password");
+        if (!result.ok) {
+          log.warn(
+            { email: parsed.data.email.toLowerCase(), reason: result.reason },
+            "sign-in failed",
+          );
 
           return null;
         }
 
-        const ok = await verifyPassword(
-          parsed.data.password,
-          user.passwordHash,
+        log.info(
+          { email: result.user.email, role: result.user.role },
+          "sign-in ok",
         );
 
-        if (!ok) {
-          log.warn({ email }, "sign-in failed: bad password");
-
-          return null;
-        }
-
-        log.info({ email, role: user.role }, "sign-in ok");
-
         return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-          role: user.role,
-          mustChangePassword: user.mustChangePassword,
+          id: result.user.id,
+          email: result.user.email,
+          name: result.user.name,
+          image: result.user.image,
+          role: result.user.role,
+          mustChangePassword: result.user.mustChangePassword,
         };
       },
     }),

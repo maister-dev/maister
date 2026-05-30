@@ -10,26 +10,44 @@ import {
   unique,
 } from "drizzle-orm/pg-core";
 
-export const users = pgTable("users", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  name: text("name"),
-  email: text("email").notNull().unique(),
-  emailVerified: timestamp("email_verified", {
-    withTimezone: true,
-    mode: "date",
+export const users = pgTable(
+  "users",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name"),
+    email: text("email").notNull().unique(),
+    emailVerified: timestamp("email_verified", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    image: text("image"),
+    passwordHash: text("password_hash"),
+    role: text("role", { enum: ["admin", "member", "viewer"] })
+      .notNull()
+      .default("member"),
+    accountStatus: text("account_status", {
+      enum: ["pending", "active", "disabled"],
+    })
+      .notNull()
+      .default("pending"),
+    accountStatusUpdatedAt: timestamp("account_status_updated_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    accountStatusUpdatedBy: text("account_status_updated_by"),
+    mustChangePassword: boolean("must_change_password")
+      .notNull()
+      .default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxAccountStatus: index("users_account_status_idx").on(t.accountStatus),
   }),
-  image: text("image"),
-  passwordHash: text("password_hash"),
-  role: text("role", { enum: ["admin", "member", "viewer"] })
-    .notNull()
-    .default("member"),
-  mustChangePassword: boolean("must_change_password").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-});
+);
 
 export const accounts = pgTable(
   "accounts",
@@ -359,6 +377,7 @@ export const projectMembers = pgTable(
 );
 
 export type User = typeof users.$inferSelect;
+export type AccountStatus = User["accountStatus"];
 export type Account = typeof accounts.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type VerificationToken = typeof verificationTokens.$inferSelect;

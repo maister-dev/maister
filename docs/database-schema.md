@@ -19,7 +19,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 
 | Table | Purpose | Cascades from |
 | ----- | ------- | ------------- |
-| `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`. | (root) |
+| `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`; `account_status` controls login eligibility. | (root) |
 | `accounts` | Auth.js OAuth account links (Drizzle adapter contract). | `users.id` |
 | `sessions` | Auth.js session tokens. | `users.id` |
 | `verification_tokens` | Auth.js email-verification tokens. PK `(identifier, token)`. | (root) |
@@ -46,6 +46,9 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
   image?,
   passwordHash?,                  // bcrypt hash; null for OAuth-only users
   role: 'admin' | 'member' | 'viewer',   // DEFAULT 'member'
+  accountStatus: 'pending' | 'active' | 'disabled', // DEFAULT 'pending'
+  accountStatusUpdatedAt?,
+  accountStatusUpdatedBy?,
   mustChangePassword: boolean,    // DEFAULT false; true forces a password change
   createdAt
 }
@@ -53,8 +56,12 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 
 `role` is the **global role** used by `requireGlobalRole()` in `lib/authz.ts`.
 The single bootstrap admin is seeded by **migration `0005`**
-(`admin@maister.local`, `role = 'admin'`, `must_change_password = true`); public
-registration always creates `role = 'member'`. `requireGlobalRole()` /
+(`admin@maister.local`, `role = 'admin'`, `must_change_password = true`), then
+migration `0006` marks existing users `account_status = 'active'`. Public
+registration creates `role = 'member'` and `account_status = 'pending'`; a
+global admin must activate the row before sign-in succeeds. `disabled` users
+cannot sign in and role-gated APIs reject old sessions with `ACCOUNT_INACTIVE`.
+`requireGlobalRole()` /
 `requireProjectRole()` re-read this column from the DB on every check — the
 cached JWT role is never trusted. Global admins are treated as implicit owners
 of every project (no `project_members` row required).
@@ -409,6 +416,7 @@ Created via Drizzle:
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |
+| `users` | `users_account_status_idx` | `(accountStatus)` | Admin queue and status-filtered user management |
 | `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
 | `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
 | `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |

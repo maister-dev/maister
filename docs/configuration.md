@@ -370,15 +370,21 @@ every deployment has exactly one bootstrap admin after `pnpm db:migrate`. The
 row carries `must_change_password = true`, so the well-known default password
 **must be changed on first login** before any app access. `pnpm db:seed` is
 idempotent with this (it reuses the existing admin by email). **Public
-registration never grants admin** — `register()` always creates `member`; this
-closes the concurrent-first-user admin-minting race. Promote additional admins
-by editing `users.role` (an admin UI for this is Phase 2).
+registration never grants admin** — registration creates `member` with
+`account_status = pending`; this closes the concurrent-first-user admin-minting
+race and requires an existing admin to activate the account.
+
+**Admin user management.** Global admins use `/admin/users` and the
+`/api/admin/users` REST routes to activate pending registrations, disable or
+re-enable accounts, change global roles, and reset passwords. Password reset can
+set `must_change_password = true`, forcing the user through `/change-password`
+on next sign-in.
 
 **DB-authoritative authorization.** `lib/authz.ts` re-reads the live `users.role`
-from the database on every check (`getSessionUser` → `requireGlobalRole` /
-`requireProjectRole`); the cached JWT role is **never** trusted for an
-authorization decision. A demoted or deleted user loses authority on their next
-request, not at JWT expiry.
+and `users.account_status` from the database on every check (`getSessionUser` →
+`requireGlobalRole` / `requireProjectRole`); the cached JWT role is **never**
+trusted for an authorization decision. A demoted, disabled, or deleted user
+loses authority on their next request, not at JWT expiry.
 
 **Forced password change fails closed on APIs too.** The `(app)` layout redirects
 `must_change_password` users to `/change-password`, AND every role-gated API
@@ -394,7 +400,7 @@ permissive so the change-password flow itself can run.
 
 | Role | Capabilities |
 | ---- | ------------ |
-| `admin` | Register projects, invite users, is implicit `owner` of every project. |
+| `admin` | Register projects, approve/disable users, change global roles, reset user passwords, is implicit `owner` of every project. |
 | `member` | Default. Can be added to projects; cannot register new projects. |
 | `viewer` | Read-only access to projects they are explicitly added to. |
 

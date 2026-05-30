@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type { GlobalRole, ProjectRole } from "@/lib/db/schema";
+import type { AccountStatus, GlobalRole, ProjectRole } from "@/lib/db/schema";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
@@ -22,6 +22,7 @@ function db(): NodePgDatabase<typeof schema> {
 
 export interface SessionUser {
   id: string;
+  accountStatus: AccountStatus;
   role: GlobalRole;
   mustChangePassword: boolean;
   email?: string | null;
@@ -57,6 +58,7 @@ async function loadUser(id: string) {
     .select({
       id: users.id,
       role: users.role,
+      accountStatus: users.accountStatus,
       email: users.email,
       name: users.name,
       mustChangePassword: users.mustChangePassword,
@@ -90,6 +92,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   return {
     id: row.id,
     role: row.role,
+    accountStatus: row.accountStatus,
     mustChangePassword: row.mustChangePassword,
     email: row.email,
     name: row.name,
@@ -117,6 +120,17 @@ export async function requireSession(): Promise<SessionUser> {
  */
 export async function requireActiveSession(): Promise<SessionUser> {
   const user = await requireSession();
+
+  if (user.accountStatus !== "active") {
+    log.warn(
+      { userId: user.id, status: user.accountStatus },
+      "denied: inactive account",
+    );
+    throw new MaisterError(
+      "ACCOUNT_INACTIVE",
+      "Account is not active. Ask an admin to approve or re-enable it.",
+    );
+  }
 
   if (user.mustChangePassword) {
     log.warn({ userId: user.id }, "denied: password change required");
@@ -210,6 +224,7 @@ export function httpStatusForAuthz(code: string): number | null {
   if (code === "UNAUTHENTICATED") return 401;
   if (code === "UNAUTHORIZED") return 403;
   if (code === "PASSWORD_CHANGE_REQUIRED") return 403;
+  if (code === "ACCOUNT_INACTIVE") return 403;
 
   return null;
 }

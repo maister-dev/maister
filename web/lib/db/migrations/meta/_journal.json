@@ -43,6 +43,13 @@
       "when": 1780039322797,
       "tag": "0005_smart_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780135164887,
+      "tag": "0006_rapid_siren",
+      "breakpoints": true
     }
   ]
 }

@@ -24,9 +24,9 @@ throw new MaisterError("CONFIG", "DB_URL env is required");
 
 ## Codes
 
-Fifteen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
-`UNAUTHORIZED`, and `PASSWORD_CHANGE_REQUIRED`), all defined as a string
-union in `web/lib/errors.ts`.
+Sixteen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
+`UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`, and `ACCOUNT_INACTIVE`), all
+defined as a string union in `web/lib/errors.ts`.
 
 | Code | Meaning | Where thrown | UI action |
 | ---- | ------- | ------------ | --------- |
@@ -45,6 +45,7 @@ union in `web/lib/errors.ts`.
 | `UNAUTHENTICATED` | No valid session — request arrived without a cookie or with an expired/invalid session token. Maps to **HTTP 401**. | `lib/authz.ts:requireSession()`. Also thrown by `requireGlobalRole()` and `requireProjectRole()` when no session exists. | Redirect to sign-in page. Never show partial data. |
 | `UNAUTHORIZED` | Session is valid but the caller's role (global or project) is below the required minimum. Maps to **HTTP 403**. | `lib/authz.ts:requireGlobalRole()`, `requireProjectRole()`, `requireProjectAction()`. | Show "Access denied" with the required role; do not expose the project/resource name to the caller. |
 | `PASSWORD_CHANGE_REQUIRED` | Session is valid but the account still has `users.must_change_password = true` (seeded admin / admin-forced reset). Maps to **HTTP 403**. Fails closed on every role-gated API. | `lib/authz.ts:requireActiveSession()` (called by `requireGlobalRole()` / `requireProjectRole()`). `requireSession()` / `getSessionUser()` stay permissive so the change-password flow itself works. | Route the user to `/change-password`; block all other actions until cleared. |
+| `ACCOUNT_INACTIVE` | Session is valid but `users.account_status != 'active'` (pending approval or disabled after an old session was issued). Maps to **HTTP 403**. Credentials sign-in also rejects pending/disabled accounts before session creation. | `lib/authz.ts:requireActiveSession()`; credentials preflight in `web/app/(auth)/actions.ts` and provider verification in `web/auth.ts`. | Show pending-approval or disabled-account guidance; block protected app/API actions until an admin activates or re-enables the account. |
 
 ## Construction
 

@@ -101,6 +101,7 @@ beforeAll(async () => {
     id: "u-member-a",
     email: "member-a@test.com",
     role: "member",
+    accountStatus: "active",
     passwordHash: "x",
   });
   // A member whose account still requires a forced password change.
@@ -108,6 +109,7 @@ beforeAll(async () => {
     id: "u-mustchange",
     email: "mustchange@test.com",
     role: "member",
+    accountStatus: "active",
     passwordHash: "x",
     mustChangePassword: true,
   });

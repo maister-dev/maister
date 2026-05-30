@@ -2,7 +2,7 @@
 
 import type { ReactElement, SubmitEvent } from "react";
 
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -94,27 +94,27 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
   const [regError, setRegError] = useState<
     "duplicate" | "weak" | "invalid" | "generic" | undefined
   >(undefined);
+  const [registeredPending, setRegisteredPending] = useState(false);
   const [regPending, setRegPending] = useState(false);
 
   const [loginState, loginAction, loginPending] = useActionState(
     authenticate,
     undefined,
   );
-  const fallbackSignInRef = useRef<HTMLFormElement>(null);
-  const fallbackEmailRef = useRef<HTMLInputElement>(null);
-  const fallbackPwdRef = useRef<HTMLInputElement>(null);
 
   const strength = strengthOf(pwdValue);
   const isLogin = mode === "login";
 
   const errorKey = (
-    code: "invalid" | "weak" | "duplicate" | "generic",
+    code: "invalid" | "weak" | "duplicate" | "generic" | "pending" | "disabled",
   ): string => {
     const map = {
       invalid: "errorInvalid",
       weak: "errorWeak",
       duplicate: "errorDuplicate",
       generic: "errorGeneric",
+      pending: "errorPending",
+      disabled: "errorDisabled",
     } as const;
 
     return t(map[code]);
@@ -123,6 +123,7 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
   const handleRegisterSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     setRegError(undefined);
+    setRegisteredPending(false);
     setRegPending(true);
 
     const form = event.currentTarget;
@@ -140,11 +141,10 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
       return;
     }
 
-    if (fallbackEmailRef.current && fallbackPwdRef.current) {
-      fallbackEmailRef.current.value = email;
-      fallbackPwdRef.current.value = password;
-      fallbackSignInRef.current?.requestSubmit();
-    }
+    form.reset();
+    setPwdValue("");
+    setRegPending(false);
+    setRegisteredPending(true);
   };
 
   return (
@@ -216,7 +216,6 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
       {isLogin ? (
         <form
           key="auth-login"
-          ref={fallbackSignInRef}
           action={loginAction}
           className="flex flex-col gap-3.5"
         >
@@ -240,7 +239,6 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
                 </svg>
               </span>
               <input
-                ref={fallbackEmailRef}
                 required
                 autoComplete="email"
                 className={inputBase}
@@ -279,7 +277,6 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
                 </svg>
               </span>
               <input
-                ref={fallbackPwdRef}
                 required
                 autoComplete="current-password"
                 className={inputBase}
@@ -333,6 +330,12 @@ export function AuthCard({ redirectTo }: AuthCardProps): ReactElement {
           className="flex flex-col gap-3.5"
           onSubmit={handleRegisterSubmit}
         >
+          {registeredPending ? (
+            <p className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2.5 text-[12.5px] leading-[1.5] text-amber">
+              {t("registerPending")}
+            </p>
+          ) : null}
+
           <div className="flex flex-col gap-1.5">
             <label className={fieldLabel} htmlFor="rg-name">
               {t("fullName")}

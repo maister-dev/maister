@@ -148,9 +148,11 @@ part of this milestone.
 - The board's "In Delivery" stage is an approximation computed in
   `web/lib/board.ts` from recently-merged run status — not a persisted
   board column.
-- User management UI (invite, role change, remove member) is not
+- Admin user management is limited to global users: `/admin/users` can
+  activate pending registrations, disable/re-enable accounts, change global
+  roles, and reset passwords. Project member invite/remove flows are still not
   implemented; `project_members` rows are written only by `POST /api/projects`
-  (owner) and `pnpm db:seed` (admin).
+  (owner) and existing seed/test flows.
 
 ## Scripts
 

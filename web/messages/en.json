@@ -62,6 +62,9 @@
     "errorDuplicate": "An account with this email already exists.",
     "errorWeak": "Password must be at least 12 characters.",
     "errorGeneric": "Something went wrong. Try again.",
+    "errorPending": "This account is waiting for admin approval.",
+    "errorDisabled": "This account is disabled. Ask an admin to re-enable it.",
+    "registerPending": "Account created. An admin must activate it before you can sign in.",
     "strength0": "Use 12+ characters with a mix of letters, numbers and symbols",
     "strength1": "Add more characters — at least 12.",
     "strength2": "OK · add a digit or symbol for stronger.",
@@ -89,6 +92,7 @@
     "label": "User menu",
     "settings": "Personal settings",
     "password": "Change password",
+    "adminUsers": "User management",
     "signOut": "Sign out",
     "role": {
       "admin": "admin",
@@ -266,6 +270,35 @@
     "passwordWeak": "Password must be at least 12 characters.",
     "passwordMismatch": "The two passwords do not match.",
     "passwordError": "Could not update the password. Try again.",
+    "role": {
+      "admin": "admin",
+      "member": "member",
+      "viewer": "viewer"
+    }
+  },
+  "adminUsers": {
+    "eyebrow": "Admin",
+    "title": "User management",
+    "sub": "Approve new registrations, adjust global roles, disable access, and reset passwords.",
+    "tableTitle": "Users",
+    "tableSub": "Pending users cannot sign in until an admin activates them.",
+    "filterAll": "All users",
+    "user": "User",
+    "statusLabel": "Status",
+    "roleLabel": "Role",
+    "password": "Password",
+    "created": "Created",
+    "actions": "Actions",
+    "passwordPlaceholder": "Temporary password",
+    "forceChange": "Force password change",
+    "resetPassword": "Reset password",
+    "activate": "Activate",
+    "disable": "Disable",
+    "status": {
+      "pending": "pending",
+      "active": "active",
+      "disabled": "disabled"
+    },
     "role": {
       "admin": "admin",
       "member": "member",

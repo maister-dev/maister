@@ -37,6 +37,9 @@ erDiagram
         text image
         text password_hash
         text role "admin|member|viewer"
+        text account_status "pending|active|disabled"
+        timestamp account_status_updated_at
+        text account_status_updated_by
         boolean must_change_password
         timestamp created_at
     }
@@ -195,6 +198,7 @@ metadata. See [`../database-schema.md#planned-roadmap-persistence`](../database-
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `users` | implicit | `email` UNIQUE | Auth lookup by email. |
+| `users` | `users_account_status_idx` | `(account_status)` | Admin approval queue and status filtering. |
 | `accounts` | implicit PK | `(provider, provider_account_id)` | Auth.js adapter dedup. |
 | `sessions` | implicit PK | `session_token` | Session lookup. |
 | `verification_tokens` | implicit PK | `(identifier, token)` | Token lookup. |

@@ -40,6 +40,10 @@ export async function changePassword(
     return { error: "unauthenticated" };
   }
 
+  if (user.accountStatus !== "active") {
+    return { error: "unauthenticated" };
+  }
+
   const password = String(formData.get("password") ?? "");
   const confirm = String(formData.get("confirm") ?? "");
 

@@ -6,9 +6,10 @@ MAIster serves a solo technical owner who runs several software projects and
 already uses coding agents. The user wants one control plane for project state,
 Flow launches, HITL, reviews, and promotions instead of many terminals.
 
-Phase 2 can add small-team collaboration. Enterprise governance, RBAC,
-permission-bound project membership, and large organization rollout stay
-outside the current target.
+The current target includes credentials auth, admin-approved account
+activation, global roles, and project membership checks. Phase 2 can add
+small-team collaboration workflows. Enterprise governance and large
+organization rollout stay outside the current target.
 
 ## Product Model
 
