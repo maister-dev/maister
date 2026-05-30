@@ -115,7 +115,12 @@ HITL lifecycle:
 - The response route never flips `runs.status` back to `Running`; the
   runner owns `NeedsInput -> Running`.
 - The idle checkpoint path (`NeedsInput -> NeedsInputIdle -> --resume`) is
-  designed, not implemented.
+  implemented (M8): the web keep-alive sweeper idles `NeedsInput` rows past
+  `keepalive_until`, the supervisor's real `POST /sessions/:id/checkpoint`
+  cancels open permission deferreds and SIGTERMs the agent, and a stored HITL
+  response respawns via `--resume <acp-session-id>`. The resume round-trip is
+  exercised in CI via a mock ACP adapter; live-agent resume was verified in
+  the M0 spike, not yet in CI.
 
 **Do not** introduce `fs.watch`, `chokidar`, or polling for state
 transitions. The live path is ACP notifications (kernel-level fd events
