@@ -24,81 +24,7 @@
 
 - [x] **M9. Web UI core: registry + portfolio + board + auth + RU i18n** — shipped 2026-05-29. Replaced HeroUI template stubs with a themed login page, portfolio home, projects list, Add-Project form, and per-project board (Backlog / Prepare / In Delivery / In Review columns). Auth.js v5 credentials-only authentication with Drizzle adapter; global roles (`admin | member | viewer`) and per-project roles (`owner | admin | member | viewer`) enforced by `lib/authz.ts`; middleware protects all `(app)` routes. EN+RU via next-intl with cookie-based locale switching. Forest design-token system (light/dark via next-themes `class`). New tables: `users`, `accounts`, `sessions`, `verification_tokens`, `project_members`; new column `tasks.stage`; migration `0004_petite_gamora.sql`. New routes `POST /api/projects` (admin-only) and `POST /api/projects/{slug}/tasks` (member+); existing routes `POST /api/runs`, `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`, and `GET /api/runs/{runId}/stream` gained RBAC guards.
 
-- [ ] **M10. Flow package lifecycle and distribution UX** — promote Flows from
-  "git repos the loader can clone" to managed delivery packages with visible
-  install, trust, compatibility, upgrade, rollback, deprecation, and project
-  adoption lifecycle. Current M4 proves the loader; this milestone makes Flow
-  packages operable by a product user and safe for all later graph/capability/
-  gate features.
-
-  **Expectation: package identity.** A Flow package has stable `flow_ref_id`,
-  source, resolved immutable revision, version label, manifest digest,
-  schema version, compatibility range, package status, trust status, setup
-  status, and installed-at metadata. Tags are user-facing pins; resolved SHAs
-  are runtime truth. Installed revisions are immutable and never overwritten.
-
-  **Expectation: lifecycle states.** MAIster tracks package revisions through
-  `Discovered | Installing | Installed | Enabled | UpdateAvailable |
-  Deprecated | Disabled | Failed | Removed`. A project can enable one current
-  revision per Flow id while older revisions remain available for in-flight
-  runs and rollback. Removing a revision is blocked while any run still
-  references it.
-
-  **Expectation: package surface in UI.** Project settings include a Flow
-  Packages page. The user can see installed packages, current revision,
-  available update, compatibility warnings, required capabilities, shipped
-  skills/agents, setup scripts, declared artifacts/gates, projects using the
-  package, and active runs pinned to old revisions. Install and upgrade are
-  explicit review actions, not silent side effects of reading `maister.yaml`.
-
-  **Expectation: install and trust review.** Installing a package fetches
-  metadata first, validates `flow.yaml`, computes digests, shows source,
-  version, resolved revision, setup script presence, declared capabilities,
-  MCP/tool/skill requests, gates, artifacts, and risk labels. Internal/local
-  sources may be trusted by policy; third-party sources require explicit trust
-  confirmation before setup or enablement.
-
-  **Expectation: upgrade and rollback.** Upgrading installs a new immutable
-  revision beside the old one, runs compatibility validation, and offers a
-  project-level switch. New runs use the enabled revision; existing runs keep
-  their snapshotted revision. Rollback switches the project back to an older
-  installed revision without mutating completed or active run history.
-
-  **Expectation: package contract.** A Flow package declares its node schema,
-  artifact kinds, gate kinds, required capability ids, shipped skills/agents,
-  external operation needs, setup hooks, optional migrations, and supported
-  MAIster engine/API version range. MAIster refuses enablement when the package
-  requires unsupported engine, adapter, gate, artifact, capability, or external
-  API features.
-
-  **Expectation: setup and migration safety.** Setup scripts are revision-scoped
-  and idempotent. They run only after trust confirmation and before enablement.
-  Future package migrations are explicit, project-scoped, logged, and reversible
-  when the package declares a rollback step. No setup or migration runs during
-  ordinary task launch.
-
-  **Acceptance criteria:**
-  - Flow package revisions are persisted separately from project Flow enablement
-    so multiple revisions of the same Flow can coexist.
-  - Installing a package records source, version label, resolved revision,
-    manifest digest, installed path, compatibility result, trust status, setup
-    status, and declared contract summary.
-  - Project settings can install, enable, disable, upgrade, rollback, and mark a
-    Flow package as trusted/untrusted where policy allows.
-  - Launch snapshots the enabled package revision and refuses if the package is
-    disabled, failed, untrusted, incompatible, or missing setup.
-  - In-flight and completed runs continue to resolve their original package
-    revision after upgrade, rollback, or disable.
-  - Upgrade preview shows added/removed/changed nodes, artifacts, gates,
-    capabilities, setup hooks, external operation requirements, and manifest
-    schema changes.
-  - Removing a package revision is refused while any run references it; GC may
-    remove only unreferenced disabled/failed revisions.
-  - Package install/upgrade failures surface as `FLOW_INSTALL` with source,
-    version, stage, command, exit status, and captured output.
-  - Deferred explicitly: public marketplace, ratings/reputation, automatic
-    malicious-code scanning, signed packages, org-wide policy, dependency
-    solver for Flow packages, and automatic package update rollout.
+- [x] **M10. Flow package lifecycle and distribution UX** — shipped 2026-05-30. Promotes Flows from "git repos the loader clones" (M4) to managed, multi-revision delivery packages. New `flow_revisions` table (`web/lib/db/schema.ts`): global, immutable, content-addressed by `(flow_ref_id, resolved_revision)`, carrying `source`, `versionLabel`, `resolvedRevision` (git SHA), `manifestDigest`, full `manifest` jsonb, `schemaVersion`, `engineMin`/`engineMax`, declared `contract` jsonb, `installedPath`, `setupStatus` (`not_required|pending|done|failed`), `packageStatus` (`Discovered|Installing|Installed|Failed|Removed`), `installedAt`. `flows` gains `enabled_revision_id` FK (project enablement pointer, kept separate from the revision rows), `trustStatus` (`untrusted|trusted|trusted_by_policy`), `enablementState` (`Installed|Enabled|UpdateAvailable|Deprecated|Disabled|Failed`); additive migration `0007_fast_misty_knight.sql` (renumbered from 0006 after rebase onto main, `fc00c5d`). Two-phase install in `web/lib/flows.ts` (`ensureRevisionIntentRow` → finalize): intent row `Installing` → `Installed`, with digest/manifest/contract populated only after `flow.yaml` validation; revision-aware loader + trust policy in `web/lib/flows/trust.ts` + `engine-version.ts`. Lifecycle service `web/lib/flows/lifecycle.ts`: `enableRevision` (atomic enabled-pointer switch under row lock), `upgradeFlow` (→ `UpdateAvailable`), `rollbackFlow` (delegates to enable), `disableFlow`, `removeRevision` (refuses with `CONFLICT` while any `runs.flow_revision_id` or `flows.enabled_revision_id` references it), and `UpgradePreview` diffing steps/gates/artifacts/capabilities/external-ops plus schema/setup changes. Launch preconditions in `web/app/api/runs/route.ts` refuse (`PRECONDITION` 409) when no enabled revision, `enablementState` not in `{Enabled, UpdateAvailable}`, `trustStatus = untrusted`, revision not `Installed`, `setupStatus` `pending|failed`, or schema/engine incompatible; launch then snapshots `flowRevisionId`, and `web/lib/flows/runner.ts` resolves the pinned revision's manifest/path so upgrade/rollback/disable never corrupt in-flight or completed runs. Settings UI `web/components/board/panels/flow-packages-panel.tsx` + `package-actions.tsx` (admin-gated install/enable/disable/upgrade/upgrade-preview/rollback/trust/remove) over `web/app/api/projects/[slug]/flow-packages/*` routes and `web/lib/queries/flow-packages.ts`; EN+RU i18n. `FLOW_INSTALL` errors are stage-tagged (`clone|resolve-revision|validate-manifest|intent|finalize`) with source, version, exit status, and captured stderr. Adversarial-review pass fixed setup-runs-only-after-trust, atomic enable/remove races, and setup-failure → `Failed`. Docs: ADR-021 (`docs/decisions.md`) + `docs/system-analytics/flow-packages.md`. Tests: revision-coexistence upgrade (v1.0.0 → v1.1.0), launch/trust precondition + remove-guard cases, plus the app integration suite. **Deferred follow-ups**: `Deprecated` enablement-state UI wiring, the `Discovered` external-tooling state, `Failed` enablement-state not yet actively set, and automatic GC of unreferenced `Removed` revisions (→ M19).
 
 - [ ] **M11. Flow graph maturity: node lifecycle, typed settings, rework, and human takeover** — add the execution-model foundation that must exist before the HITL UI becomes product-grade. Replace the current "ordered steps plus recorded `on_reject.goto_step`" mental model with a validated Flow graph v1 that still preserves simple linear Flows as the easy case.
 
@@ -537,3 +463,4 @@
 | M7. ACP integration + SSE bridge | 2026-05-28 |
 | M8. Worker lifecycle: keep-alive + checkpoint + resume | 2026-05-29 |
 | M9. Web UI core: registry + portfolio + board + auth + RU i18n | 2026-05-29 |
+| M10. Flow package lifecycle and distribution UX | 2026-05-30 |
