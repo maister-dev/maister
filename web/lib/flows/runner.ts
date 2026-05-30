@@ -1,13 +1,7 @@
 import "server-only";
 
-import type {
-  Executor as ExecutorRow,
-  Flow as FlowRow,
-  Run as RunRow,
-  Task as TaskRow,
-  Workspace as WorkspaceRow,
-} from "@/lib/db/schema";
-import type { FlowYamlV1, Step } from "@/lib/config.schema";
+import type { Run as RunRow } from "@/lib/db/schema";
+import type { Step } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
 import { and, eq } from "drizzle-orm";
@@ -26,8 +20,16 @@ import {
   markStepRunning,
   markStepSucceeded,
 } from "./step-runs";
+import {
+  asError,
+  cleanupSlashSession,
+  loadRun,
+  type Db,
+  type LoadedRun,
+  type RunFlowOptions,
+} from "./graph/runner-core";
+import { runGraph } from "./graph/runner-graph";
 
-import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   isMaisterError,
@@ -36,162 +38,16 @@ import {
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
-import { systemCachePath } from "@/lib/flow-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, flowRevisions, flows, projects, runs, tasks, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const { runs } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
-type Db = any;
-
-export type RunFlowOptions = {
-  db?: Db;
-  runtimeRoot?: string;
-  supervisorApi?: SupervisorApi;
-};
-
-type LoadedRun = {
-  run: RunRow;
-  task: TaskRow;
-  flow: FlowRow;
-  manifest: FlowYamlV1;
-  executor: ExecutorRow;
-  workspace: WorkspaceRow;
-  projectSlug: string;
-  flowInstallPath: string;
-};
-
-function asError(err: unknown): Error {
-  return err instanceof Error ? err : new Error(String(err));
-}
-
-async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
-  const runRows: RunRow[] = await db
-    .select()
-    .from(runs)
-    .where(eq(runs.id, runId));
-  const run = runRows[0];
-
-  if (!run) {
-    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
-  }
-
-  const taskRows: TaskRow[] = await db
-    .select()
-    .from(tasks)
-    .where(eq(tasks.id, run.taskId));
-  const task = taskRows[0];
-
-  if (!task) {
-    throw new MaisterError("PRECONDITION", `task not found for run ${runId}`);
-  }
-
-  const flowRows: FlowRow[] = await db
-    .select()
-    .from(flows)
-    .where(eq(flows.id, run.flowId));
-  const flow = flowRows[0];
-
-  if (!flow) {
-    throw new MaisterError("PRECONDITION", `flow not found for run ${runId}`);
-  }
-
-  const executorRows: ExecutorRow[] = await db
-    .select()
-    .from(executors)
-    .where(eq(executors.id, run.executorId));
-  const executor = executorRows[0];
-
-  if (!executor) {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `executor not found for run ${runId}`,
-    );
-  }
-
-  const projectRows: Array<{ slug: string }> = await db
-    .select({ slug: projects.slug })
-    .from(projects)
-    .where(eq(projects.id, run.projectId));
-  const projectSlug = projectRows[0]?.slug;
-
-  if (!projectSlug) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `project not found for run ${runId}`,
-    );
-  }
-
-  const workspaceRows: WorkspaceRow[] = await db
-    .select()
-    .from(workspaces)
-    .where(eq(workspaces.runId, runId));
-  const workspace = workspaceRows[0];
-
-  if (!workspace) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `workspace not found for run ${runId}`,
-    );
-  }
-  if (workspace.removedAt) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `workspace already removed for run ${runId}`,
-    );
-  }
-
-  // Resolve the manifest + bundle path from the IMMUTABLE pinned revision
-  // (M10, ADR-021). `runs.flow_revision_id` points at the flow_revisions row
-  // snapshotted at launch, so an upgrade/rollback that re-points the project's
-  // enabled revision (and rewrites the denormalized `flows.manifest` cache)
-  // cannot corrupt an in-flight run. Pre-migration rows have a null
-  // flow_revision_id and fall back to the legacy convention
-  // (`flows.manifest` + `systemCachePath(flowRefId, flow_revision)`).
-  let manifest = flow.manifest as FlowYamlV1;
-  let flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
-
-  if (run.flowRevisionId) {
-    const revisionRows: Array<{
-      manifest: unknown;
-      installedPath: string;
-    }> = await db
-      .select({
-        manifest: flowRevisions.manifest,
-        installedPath: flowRevisions.installedPath,
-      })
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, run.flowRevisionId));
-    const revision = revisionRows[0];
-
-    if (!revision) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `pinned flow revision ${run.flowRevisionId} not found for run ${runId}`,
-      );
-    }
-
-    manifest = revision.manifest as FlowYamlV1;
-    flowInstallPath = revision.installedPath;
-  }
-
-  return {
-    run,
-    task,
-    flow,
-    manifest,
-    executor,
-    workspace,
-    projectSlug,
-    flowInstallPath,
-  };
-}
+export type { RunFlowOptions } from "./graph/runner-core";
 
 async function executeStep(
   step: Step,
@@ -297,6 +153,21 @@ export async function runFlow(
   } catch (err) {
     log2.error({ err: (err as Error).message }, "runFlow loadRun failed");
     throw err;
+  }
+
+  // M11a: a graph manifest (`nodes[]`) runs through the graph runner, which
+  // writes the append-only node_attempts ledger + gates + rework. Linear
+  // `steps[]` flows stay on the proven linear path below (writing step_runs);
+  // both feed the highest-attempt-wins templating union. A pre-M11a NeedsInput
+  // run is always a steps[] flow, so it resumes here unchanged (no seed needed).
+  if (loaded.manifest.nodes && loaded.manifest.nodes.length > 0) {
+    await runGraph(loaded, {
+      db,
+      runtimeRoot,
+      supervisorApi: opts.supervisorApi,
+    });
+
+    return;
   }
 
   if (loaded.run.status !== "Running" && loaded.run.status !== "NeedsInput") {
@@ -593,7 +464,7 @@ export async function runFlow(
     log2.info({}, "runFlow paused on NeedsInput");
     await cleanupSlashSession(
       sessionState,
-      opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
+      opts.supervisorApi?.deleteSession,
       log2,
     );
 
@@ -607,7 +478,7 @@ export async function runFlow(
     );
     await cleanupSlashSession(
       sessionState,
-      opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
+      opts.supervisorApi?.deleteSession,
       log2,
     );
     try {
@@ -661,7 +532,7 @@ export async function runFlow(
 
   await cleanupSlashSession(
     sessionState,
-    opts.supervisorApi?.deleteSession ?? defaultDeleteSession,
+    opts.supervisorApi?.deleteSession,
     log2,
   );
 
@@ -684,27 +555,6 @@ export async function runFlow(
     log2.error(
       { err: (err as Error).message },
       "promoteNextPending failed (non-fatal)",
-    );
-  }
-}
-
-async function cleanupSlashSession(
-  sessionState: AcpSessionState,
-  deleteSession: (sessionId: string) => Promise<void>,
-  logger: typeof log,
-): Promise<void> {
-  if (sessionState.currentSessionId === null) return;
-
-  const sessionId = sessionState.currentSessionId;
-
-  sessionState.currentSessionId = null;
-  try {
-    await deleteSession(sessionId);
-    logger.info({ sessionId }, "slash-in-existing session deleted on terminal");
-  } catch (err) {
-    logger.warn(
-      { err: (err as Error).message, sessionId },
-      "deleteSession failed during cleanup (non-fatal)",
     );
   }
 }

@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   Executor as ExecutorRow,
+  NodeAttempt as NodeAttemptRow,
   Run as RunRow,
   StepRun as StepRunRow,
   Task as TaskRow,
@@ -111,11 +112,45 @@ function reduceStepRuns(
   return out;
 }
 
+// M11a (ADR-023): templating highest-attempt-wins union. The step_runs map is
+// the base (legacy rows); node_attempts (graph runner) overlay it and WIN per
+// id (a graph run has no step_runs; a legacy run has no node_attempts — so they
+// are disjoint in practice, but the union is correct for any mix).
+function reduceLedger(
+  stepRuns: StepRunRow[],
+  nodeAttempts: NodeAttemptRow[],
+  cap: number,
+): FlowContext["steps"] {
+  const out = reduceStepRuns(stepRuns, cap);
+
+  const byNode = new Map<string, NodeAttemptRow>();
+
+  for (const na of nodeAttempts) {
+    const existing = byNode.get(na.nodeId);
+
+    if (!existing || na.attempt > existing.attempt) byNode.set(na.nodeId, na);
+  }
+
+  for (const [nodeId, na] of byNode.entries()) {
+    out[nodeId] = {
+      output: truncateOutput(na.stdout, cap),
+      vars: (na.vars ?? {}) as Record<string, unknown>,
+      exitCode: na.exitCode ?? undefined,
+    };
+  }
+
+  return out;
+}
+
 export type BuildContextArgs = {
   task: Pick<TaskRow, "id" | "title" | "prompt" | "attemptNumber">;
   run: Pick<RunRow, "id">;
   executor: Pick<ExecutorRow, "id" | "agent" | "model" | "router">;
   stepRuns: StepRunRow[];
+  // M11a: graph runner passes node_attempts; they overlay step_runs in the
+  // highest-attempt-wins union (ADR-023). Optional so linear callers are
+  // unchanged.
+  nodeAttempts?: NodeAttemptRow[];
   projectSlug: string;
   envWhitelist?: RegExp[];
   envSource?: Record<string, string | undefined>;
@@ -156,7 +191,7 @@ export function buildContext(args: BuildContextArgs): FlowContext {
       model: args.executor.model,
       router: args.executor.router ?? undefined,
     },
-    steps: reduceStepRuns(args.stepRuns, cap),
+    steps: reduceLedger(args.stepRuns, args.nodeAttempts ?? [], cap),
     env,
   };
 }

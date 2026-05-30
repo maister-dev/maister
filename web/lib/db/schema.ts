@@ -425,8 +425,11 @@ export const nodeAttempts = pgTable(
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
     nodeId: text("node_id").notNull(),
+    // `guard` is an internal compiled-linear node type (a legacy `guard` step
+    // compiles to a guard node); manifest `nodes[]` use the other five. The DB
+    // column is plain text (no CHECK), so this enum is TS-level only.
     nodeType: text("node_type", {
-      enum: ["ai_coding", "cli", "check", "judge", "human"],
+      enum: ["ai_coding", "cli", "check", "judge", "human", "guard"],
     }).notNull(),
     attempt: integer("attempt").notNull().default(1),
     // PascalCase node-lifecycle vocabulary: extends step_runs (adds
