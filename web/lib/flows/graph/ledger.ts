@@ -41,6 +41,10 @@ function truncate(s: string | undefined | null): string | null {
 }
 
 // Next append-only attempt number for a (run, node): max(attempt) + 1, or 1.
+// Computed in app code: M11a runs are single-writer (one runGraph invocation per
+// run at a time — the resume CAS guarantees it), so there is no concurrent
+// append for the same (run, node). The UNIQUE (run_id, node_id, attempt)
+// constraint is the backstop if that assumption is ever broken.
 export async function nextAttemptFor(
   runId: string,
   nodeId: string,
@@ -98,19 +102,18 @@ export async function appendNodeAttempt(args: {
   return { id, attempt };
 }
 
+// Status-only transition (mirrors the linear markStepRunning). The per-attempt
+// acpSessionId is recorded by markNodeSucceeded when the action returns one, so
+// re-entering/resuming an attempt never clobbers a previously recorded id.
 export async function markNodeRunning(
   nodeAttemptId: string,
-  args: { acpSessionId?: string } = {},
   db?: Db,
 ): Promise<void> {
   const d = db ?? getDb();
 
   await d
     .update(nodeAttempts)
-    .set({
-      status: "Running" as NodeAttemptStatus,
-      acpSessionId: args.acpSessionId ?? null,
-    })
+    .set({ status: "Running" as NodeAttemptStatus })
     .where(eq(nodeAttempts.id, nodeAttemptId));
 
   log.debug({ nodeAttemptId, status: "Running" }, "node-attempt transition");
@@ -124,6 +127,7 @@ export async function markNodeSucceeded(
     exitCode?: number;
     decision?: string;
     workspacePolicy?: WorkspacePolicy;
+    acpSessionId?: string;
   } = {},
   db?: Db,
 ): Promise<void> {
@@ -138,6 +142,7 @@ export async function markNodeSucceeded(
       exitCode: args.exitCode ?? null,
       decision: args.decision ?? null,
       workspacePolicy: args.workspacePolicy ?? null,
+      acpSessionId: args.acpSessionId ?? null,
       endedAt: new Date(),
     })
     .where(eq(nodeAttempts.id, nodeAttemptId));
@@ -274,6 +279,10 @@ export async function markDownstreamStale(
       staledNodes += 1;
     }
 
+    // Gate staling fires for the latest attempt regardless of that attempt's
+    // own status (not only when it was Succeeded): a `passed` gate verdict on a
+    // node whose upstream was reworked is invalidated evidence and MUST go
+    // stale so it reruns, even if the node attempt itself is mid-flight.
     const res = await d
       .update(gateResults)
       .set({ status: "stale" })

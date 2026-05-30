@@ -117,7 +117,11 @@ describe("node_attempts ledger (append-only)", () => {
     });
 
     expect(a1.attempt).toBe(1);
-    await markNodeSucceeded(a1.id, { stdout: "first", vars: { x: 1 } }, db);
+    await markNodeSucceeded(
+      a1.id,
+      { stdout: "first", vars: { x: 1 }, acpSessionId: "sess-1" },
+      db,
+    );
 
     // Second attempt for the same node — append-only, attempt 2.
     expect(await nextAttemptFor(runId, "implement", db)).toBe(2);
@@ -142,6 +146,7 @@ describe("node_attempts ledger (append-only)", () => {
 
     expect(first?.stdout).toBe("first");
     expect(first?.status).toBe("Succeeded");
+    expect(first?.acpSessionId).toBe("sess-1");
 
     const latest = latestAttemptByNode(rows);
 

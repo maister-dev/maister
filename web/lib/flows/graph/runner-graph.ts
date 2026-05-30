@@ -327,23 +327,6 @@ export async function runGraph(
     loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
   const resumeNodeId = isResume ? (loaded.run.currentStepId as string) : null;
 
-  // Fail closed if the resume node pointer is not in the (pinned) graph.
-  if (isResume && resumeNodeId !== null && !graph.nodes.has(resumeNodeId)) {
-    log2.error(
-      { currentStepId: resumeNodeId, flowRevision: loaded.run.flowRevision },
-      "stale resume pointer — node id not in compiled graph; failing closed",
-    );
-    await db
-      .update(runs)
-      .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
-      .where(eq(runs.id, runId));
-
-    throw new MaisterError(
-      "CONFIG",
-      `currentStepId="${resumeNodeId}" not found in graph for run ${runId}`,
-    );
-  }
-
   if (isResume) {
     // Atomic resume claim (ported from runFlow): only ONE concurrent runGraph
     // call may flip this NeedsInput row to Running and continue.
@@ -381,6 +364,25 @@ export async function runGraph(
     }
 
     loaded.run.status = "Running";
+
+    // Fail closed AFTER the claim (matches the linear runner ordering): only
+    // the claim winner writes Crashed if the resume pointer is stale (node id
+    // not in the pinned graph — bundle drift / hand-edited SHA dir).
+    if (resumeNodeId !== null && !graph.nodes.has(resumeNodeId)) {
+      log2.error(
+        { currentStepId: resumeNodeId, flowRevision: loaded.run.flowRevision },
+        "stale resume pointer — node id not in compiled graph; failing closed",
+      );
+      await db
+        .update(runs)
+        .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
+        .where(eq(runs.id, runId));
+
+      throw new MaisterError(
+        "CONFIG",
+        `currentStepId="${resumeNodeId}" not found in graph for run ${runId}`,
+      );
+    }
   }
 
   const worktreePath = loaded.workspace.worktreePath;
@@ -469,7 +471,7 @@ export async function runGraph(
         .update(runs)
         .set({ currentStepId: node.id })
         .where(eq(runs.id, runId));
-      await markNodeRunning(nodeAttemptId, {}, db);
+      await markNodeRunning(nodeAttemptId, db);
 
       const context = buildContext({
         task: loaded.task,
@@ -621,6 +623,7 @@ export async function runGraph(
             vars: result.vars,
             exitCode: result.exitCode,
             decision: outcome === "success" ? undefined : outcome,
+            acpSessionId: result.acpSessionId,
           },
           db,
         );

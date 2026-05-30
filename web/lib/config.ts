@@ -337,6 +337,12 @@ function validateGraphManifest(
   const nodeIds = new Set<string>();
 
   for (const n of nodes) {
+    if (n.id === TERMINAL_TRANSITION_TARGET) {
+      throw new MaisterError(
+        "CONFIG",
+        `node id "${TERMINAL_TRANSITION_TARGET}" is reserved as the terminal transition target in ${flowYamlPath}`,
+      );
+    }
     if (nodeIds.has(n.id)) {
       throw new MaisterError(
         "CONFIG",
@@ -381,7 +387,9 @@ function validateGraphManifest(
     }
 
     for (const decision of n.finish?.human?.decisions ?? []) {
-      if (!n.transitions || !(decision in n.transitions)) {
+      // Object.hasOwn (not `in`) so a decision literally named `toString` /
+      // `constructor` / `valueOf` cannot pass via an inherited prototype key.
+      if (!n.transitions || !Object.hasOwn(n.transitions, decision)) {
         throw new MaisterError(
           "CONFIG",
           `node "${n.id}" human decision "${decision}" has no declared transition in ${flowYamlPath}`,
@@ -395,6 +403,10 @@ function validateGraphManifest(
     }
 
     for (const req of n.input?.requires ?? []) {
+      // Only `steps.<id>.…` templating refs name a node and are checked here.
+      // A bare string (e.g. "plan-summary") is a typed-artifact name, validated
+      // by the M12 artifact graph — not a node id — so it is intentionally not
+      // checked against nodeIds in M11a.
       if (typeof req !== "string") continue;
       const m = /^steps\.([^.]+)\./.exec(req);
 

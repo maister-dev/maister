@@ -376,6 +376,50 @@ describe("loadFlowManifest — graph (nodes[])", () => {
     });
   });
 
+  it("rejects a node id reserved as the terminal target ('done')", async () => {
+    const path = await writeGraph("graph-done-node.yaml", (m) => {
+      m.nodes[0].id = "done";
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects a human decision that only matches an inherited prototype key", async () => {
+    // "toString" is `in` Object.prototype but is NOT an own transition key —
+    // must still be rejected (Object.hasOwn, not `in`).
+    const path = await writeGraph("graph-proto-decision.yaml", (m) => {
+      (
+        m.nodes[2].finish as { human: { decisions: string[] } }
+      ).human.decisions = ["approve", "toString"];
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("rejects an unknown node id in input.requires (steps.<id> form)", async () => {
+    const path = await writeGraph("graph-requires-ghost.yaml", (m) => {
+      m.nodes[0].input = { requires: ["steps.ghost.output"] };
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("accepts a known node id in input.requires (steps.<id> form)", async () => {
+    const path = await writeGraph("graph-requires-known.yaml", (m) => {
+      m.nodes[1].input = {
+        requires: ["steps.implement.output", "some-artifact"],
+      };
+    });
+
+    await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+  });
+
   it("preserves an opaque node settings block (no silent strip)", async () => {
     const path = await writeGraph("graph-settings.yaml", (m) => {
       m.nodes[0].settings = { mcps: ["github"], permissionMode: "ask" };
