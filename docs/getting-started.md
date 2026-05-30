@@ -59,11 +59,11 @@ pnpm --filter @maister/supervisor dev    # http://localhost:7777
 pnpm --filter maister-web dev            # http://localhost:3000
 ```
 
-Or use Docker Compose for both plus Postgres in one command:
+Only Postgres is containerized; `web` and `supervisor` run on the host (they
+spawn agent CLIs and operate on host git repos — see ADR-023):
 
 ```bash
-docker compose up -d
-docker compose logs -f                   # follow web + supervisor + postgres
+docker compose up -d postgres            # only Postgres runs in Docker
 ```
 
 What you should see (M9+): the MAIster login page at `/login`. Sign in with

@@ -1,92 +1,18 @@
 name: ${COMPOSE_PROJECT_NAME:-maister}
 
+# Only Postgres is containerized. `web` and `supervisor` run on the host via
+# pnpm (they spawn agent CLIs, need host agent auth, and operate on host git
+# repos / worktrees) — see ADR-023 and `CLAUDE.md` "How to run".
 services:
-  app:
-    build:
-      context: .
-      target: production
-    image: ${MAISTER_IMAGE:-maister/app:dev}
-    environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      DB_URL: ${DB_URL:-postgres://maister:maister@postgres:5432/maister}
-      MAISTER_MAX_CONCURRENT_RUNS: ${MAISTER_MAX_CONCURRENT_RUNS:-1}
-      # M10 Flow package trust policy (web tier resolves trust at install time).
-      MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES: ${MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES:-}
-      MAISTER_SUPERVISOR_URL: ${MAISTER_SUPERVISOR_URL:-http://supervisor:7777}
-      # M8 keep-alive + sweeper config — both supervisor and web need these.
-      MAISTER_KEEPALIVE_MINUTES: ${MAISTER_KEEPALIVE_MINUTES:-30}
-      MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS: ${MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS:-30}
-      MAISTER_NEEDSINPUTIDLE_TTL_HOURS: ${MAISTER_NEEDSINPUTIDLE_TTL_HOURS:-24}
-      MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS: ${MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS:-60}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      # Auth.js (NextAuth v5) — AUTH_SECRET is required; AUTH_URL optional.
-      AUTH_SECRET: ${AUTH_SECRET}
-      AUTH_URL: ${AUTH_URL:-}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-    volumes:
-      - maister_runtime:/app/.maister
-      - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
-    depends_on:
-      postgres:
-        condition: service_healthy
-      supervisor:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  supervisor:
-    build:
-      context: .
-      target: production
-    image: ${MAISTER_IMAGE:-maister/app:dev}
-    command: ["pnpm", "--filter", "@maister/supervisor", "start"]
-    environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      MAISTER_SUPERVISOR_PORT: ${MAISTER_SUPERVISOR_PORT:-7777}
-      MAISTER_RUNTIME_ROOT: /app
-      MAISTER_HEARTBEAT_INTERVAL_MS: ${MAISTER_HEARTBEAT_INTERVAL_MS:-5000}
-      MAISTER_KILL_GRACE_MS: ${MAISTER_KILL_GRACE_MS:-5000}
-      MAISTER_SHUTDOWN_GRACE_MS: ${MAISTER_SHUTDOWN_GRACE_MS:-15000}
-      MAISTER_KEEPALIVE_MINUTES: ${MAISTER_KEEPALIVE_MINUTES:-30}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      # CCR (Claude Code Router) — consumed by router=ccr executors. The
-      # daemon spawns lazily on the first router=ccr session. Token is
-      # required ONLY when at least one executor uses router=ccr and
-      # does not pin its own token in executor.env; absent token surfaces
-      # as 503 EXECUTOR_UNAVAILABLE at spawn time (documented contract).
-      MAISTER_CCR_AUTH_TOKEN: ${MAISTER_CCR_AUTH_TOKEN}
-      MAISTER_CCR_CONFIG_PATH: ${MAISTER_CCR_CONFIG_PATH:-/app/.ccr/config.json}
-    volumes:
-      - maister_runtime:/app/.maister
-      - ${MAISTER_REPOS_HOST_PATH:-${HOME}/.maister}:/repos
-      # CCR config file — operator-managed on the host, mounted read-only.
-      # Default host path is ~/.claude-code-router (standard CCR location).
-      # If the host directory does not exist, Docker auto-creates an empty
-      # mount; the supervisor's pre-flight then surfaces 503 with the
-      # docs pointer (intended contract, not a bug).
-      - ${MAISTER_CCR_CONFIG_HOST_PATH:-${HOME}/.claude-code-router}:/app/.ccr:ro
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:7777/sessions').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-maister}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maister}
       POSTGRES_DB: ${POSTGRES_DB:-maister}
+    ports:
+      # Host-run web + supervisor connect over loopback (DB_URL=…@localhost:5432).
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -99,4 +25,3 @@ services:
 
 volumes:
   postgres_data:
-  maister_runtime:
