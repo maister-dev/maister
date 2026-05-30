@@ -457,7 +457,7 @@
 
 - [ ] **M20. Dogfood + external validation** — register MAIster repo in itself, ship ≥1 non-trivial PR through the **aif Flow plugin** against own backlog (validates aif-as-plugin end-to-end, Flow package lifecycle, review-driven rework, manual takeover, evidence graph review, role-owned assignments, capability registry, gate readiness, external operations API/MCP facade, and retry loop on a real task). Then onboard 3 installations on external repos using either `aif` or `superpowers` plugins, ≥1 PR shipped end-to-end on each within T+21d after dogfood. 0/3 → thesis not validated, reassess wedge.
 
-- [ ] **M21. Project repo onboarding (URL clone + configurable roots)** — accept a git `repo_url` at registration and clone it (**model B**: host git credentials, no secrets stored in MAIster) for GitHub / GitLab / Gitea-family (incl. GitVerse) hosts, while keeping the existing local-`repo_path` mode (existing repos are never re-cloned). Config-schema union (`repo_url?` | `repo_path?`, `repo_path` derived), `projects.repo_url` + `projects.provider` columns, provider autodetect tag, two configurable roots `MAISTER_REPOS_ROOT` (`~/.maister/repos`) + `MAISTER_WORKTREES_ROOT` (`~/.maister/worktrees`), clone-if-missing in `POST /api/projects`, Add-Project URL field. Provider-specific PR/push and managed per-project credentials (model C) stay with M18. Independent of the M11–M20 ordering — can land anytime. See ADR-025.
+- [x] **M21. Project repo onboarding (URL clone + configurable roots)** — shipped 2026-05-31 via `fix/integration-test-seeds`. Accept a git `repo_url` at registration and clone it (**model B**: host git credentials, no secrets stored in MAIster) for GitHub / GitLab / Gitea-family (incl. GitVerse) hosts, while keeping the existing local-`repo_path` mode (existing repos are never re-cloned). Config-schema union (`repo_url?` | `repo_path?`, `repo_path` derived), `projects.repo_url` + `projects.provider` columns, provider autodetect tag, two configurable roots `MAISTER_REPOS_ROOT` (`~/.maister/repos`) + `MAISTER_WORKTREES_ROOT` (`~/.maister/worktrees`), clone-if-missing in `POST /api/projects`, Add-Project URL field. Provider-specific PR/push and managed per-project credentials (model C) stay with M18. Independent of the M11–M20 ordering — can land anytime. See ADR-025.
 
 ## Completed
 
@@ -474,3 +474,4 @@
 | M8. Worker lifecycle: keep-alive + checkpoint + resume | 2026-05-29 |
 | M9. Web UI core: registry + portfolio + board + auth + RU i18n | 2026-05-29 |
 | M10. Flow package lifecycle and distribution UX | 2026-05-30 |
+| M21. Project repo onboarding (URL clone + configurable roots) | 2026-05-31 |

@@ -140,9 +140,10 @@ part of this milestone.
 
 - PRs and MCPs board tabs exist in the UI as placeholders; there is no
   backend for them.
-- The `projects` table does not have `lang`, `repo_url`, `description`,
-  `tags`, or `mcps` columns — those design ideas are omitted from the
-  schema until a migration is added.
+- The `projects` table now has `repo_url` and `provider` columns
+  (ADR-025). It still does not have `lang`, `description`, `tags`, or
+  `mcps` columns — those design ideas remain omitted from the schema
+  until a migration is added.
 - The settings panel (`/projects/[slug]/settings`) is read-only; there is
   no settings-write API route in M9.
 - The board's "In Delivery" stage is an approximation computed in

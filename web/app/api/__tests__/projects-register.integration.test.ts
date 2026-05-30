@@ -65,17 +65,30 @@ vi.mock("@/lib/flows", () => ({
   installFlowPlugin: (...args: unknown[]) => installFlowPlugin(...(args as [])),
 }));
 
+// This saga test is about flow-install rollback, not source resolution; mock
+// resolveProjectSource so no real git clone/init runs. clonedByUs:false means
+// the route's clone-cleanup path never fires.
+vi.mock("@/lib/repo-source", () => ({
+  resolveProjectSource: vi.fn(async () => ({
+    dir: "/repos/saga-proj",
+    repoUrl: null,
+    provider: null,
+    gitStatus: "no-remote",
+    clonedByUs: false,
+  })),
+}));
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => db,
 }));
 
 let POST: typeof import("@/app/api/projects/route").POST;
 
-function request(dir: string): NextRequest {
+function request(): NextRequest {
   return new NextRequest("http://localhost/api/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ dir }),
+    body: JSON.stringify({ target: "saga-proj" }),
   });
 }
 
@@ -116,7 +129,7 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
       new MaisterError("FLOW_INSTALL", "clone failed"),
     );
 
-    const res = await POST(request("/repos/saga-proj"));
+    const res = await POST(request());
 
     expect(res.status).toBe(502);
     const body = await res.json();
@@ -137,7 +150,7 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
   it("allows an identical retry to succeed (no leftover 409)", async () => {
     installFlowPlugin.mockResolvedValue(undefined);
 
-    const res = await POST(request("/repos/saga-proj"));
+    const res = await POST(request());
 
     expect(res.status).toBe(201);
     const body = await res.json();

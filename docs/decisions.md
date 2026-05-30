@@ -922,6 +922,14 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
 
 ---
 
+## Doc defects (TODO)
+
+- **`docs/system-analytics/hitl.md:119` Mermaid block #5 fails to parse**
+  (`Note over R:` after a `sequenceDiagram` participant line — `pnpm
+  validate:docs:all`). Pre-existing; out of scope for the ADR-025 docs pass.
+
+---
+
 ## Template for New Decisions
 
 ```markdown

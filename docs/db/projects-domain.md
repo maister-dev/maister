@@ -15,7 +15,9 @@ erDiagram
         text id PK
         text slug UK "kebab-case derived from name"
         text name
-        text repo_path UK "absolute filesystem path"
+        text repo_path UK "resolved on-disk dir"
+        text repo_url "nullable origin URL (ADR-025)"
+        text provider "nullable: github|gitlab|gitea|gitverse|generic"
         text main_branch "current column; product default_branch"
         text branch_prefix "default 'maister/'"
         text maister_yaml_path "where the manifest was loaded from"
@@ -65,6 +67,10 @@ erDiagram
 
 ## Notes
 
+- `projects.repo_url` and `projects.provider` are nullable metadata
+  captured at register time ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)):
+  the clone source / existing `origin`, and the auto-detected host tag.
+  `repo_path` is the resolved on-disk dir, not read from `maister.yaml`.
 - `projects.default_executor_id` is a deferred FK validated at the app
   layer (it references `executors.id` from the same project, which
   doesn't exist yet at INSERT time of `projects`).

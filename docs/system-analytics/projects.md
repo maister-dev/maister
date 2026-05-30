@@ -3,10 +3,13 @@
 ## Purpose
 
 A **project** is a single registered git repository that MAIster
-operates on. Registration loads `maister.yaml` v2, installs the Flow
-plugins it references, and creates rows in `projects`, `executors`,
-and `flows`. The domain boundary covers project lifecycle (register,
-archive) and the immediate fanout that lifecycle triggers.
+operates on. Registration resolves the project source — a git URL to
+clone OR an existing local directory ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
+[`git-integration.md`](git-integration.md)) — then loads `maister.yaml`
+v2, installs the Flow plugins it references, and creates rows in
+`projects`, `executors`, and `flows`. The domain boundary covers project
+lifecycle (register, archive) and the immediate fanout that lifecycle
+triggers.
 
 ## Domain entities
 
@@ -19,17 +22,24 @@ archive) and the immediate fanout that lifecycle triggers.
   the MAIster flow cache and symlinks them into the project's `.maister/`
   subtree; planned M10 separates immutable package revisions from project
   enablement. See [`flow-packages.md`](flow-packages.md) and [`flows.md`](flows.md).
+- **`repo_url`** — nullable origin URL captured at register time (the clone
+  source, or the existing repo's `origin`). Provider metadata, not a gate.
+- **`provider`** — nullable auto-detected host tag
+  (`github | gitlab | gitea | gitverse | generic`). See
+  [`git-integration.md`](git-integration.md).
 
 Identifiers:
 
 - `slug` — kebab-case, derived from `project.name`. UNIQUE.
-- `repo_path` — absolute filesystem path. UNIQUE.
+- `repo_path` — the **resolved on-disk directory** (clone target or the
+  existing local dir), not read from `maister.yaml`. UNIQUE NOT NULL.
+  `maister.yaml`'s `project.repo_path` is now optional and ignored.
 
 ## State machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Registered: POST /api/projects<br/>(maister.yaml loaded + flows installed)
+    [*] --> Registered: POST /api/projects (clone | existing | git-init)<br/>(source resolved + maister.yaml loaded + flows installed)
     Registered --> Registered: edit maister.yaml<br/>(re-validate, no row change)
     Registered --> Archived: DELETE /api/projects/[slug]<br/>(soft archive)
     Archived --> Registered: unarchive<br/>(Phase 2)
@@ -48,18 +58,76 @@ is wired yet (Phase 2).
 
 ## Process flows
 
+### Resolve project source (Implemented)
+
+The union resolved before any config load. `repoUrl` → clone into
+`MAISTER_REPOS_ROOT` (refuse if the target dir already exists; supply a
+`target` override). Otherwise an existing local dir → `git init` when it
+is not yet a repo, then read its `origin` remote.
+
+```mermaid
+sequenceDiagram
+    actor U as Operator
+    participant W as Web tier
+    participant RS as lib/repo-source
+    participant FS as Filesystem
+    participant GIT as git (host)
+
+    U->>W: POST /api/projects { repoUrl | target }
+    W->>RS: resolveProjectSource(body)
+    RS->>GIT: git --version (assertGitAvailable)
+    alt repoUrl given (clone mode)
+        RS->>RS: deriveRepoName / resolveDir(reposRoot, target?)
+        RS->>FS: stat(dir)
+        alt target dir already exists
+            RS-->>W: throw MaisterError(PRECONDITION)
+            W-->>U: 409 PRECONDITION (supply target override)
+        end
+        RS->>GIT: git clone <repoUrl> dir<br/>(GIT_TERMINAL_PROMPT=0, BatchMode=yes)
+        alt clone fails
+            RS->>FS: rm cloned dir
+            RS-->>W: throw MaisterError(PRECONDITION)<br/>(URL credential-redacted)
+            W-->>U: 409 PRECONDITION
+        end
+        RS-->>W: { dir, repoUrl, provider, gitStatus:"remote", clonedByUs:true }
+    else existing-local mode (target only)
+        RS->>FS: stat(dir)
+        alt dir not found
+            RS-->>W: throw MaisterError(PRECONDITION)
+            W-->>U: 409 PRECONDITION
+        end
+        alt dir is not a git repo
+            RS-->>W: { dir, repoUrl:null, provider:null,<br/>gitStatus:"initialized", clonedByUs:false }<br/>(NO mutation — git init deferred to W)
+        else dir is a git repo
+            RS->>GIT: git remote get-url origin
+            RS-->>W: { dir, repoUrl, provider,<br/>gitStatus: "remote" | "no-remote", clonedByUs:false }
+        end
+    end
+```
+
+Status: **Implemented** — `web/lib/repo-source.ts:resolveProjectSource`,
+called by `web/app/api/projects/route.ts` before `loadProjectConfig`.
+`resolveProjectSource` never mutates an existing local dir; for a non-git dir
+it returns `gitStatus:"initialized"` and the route runs `git init` only as the
+LAST registration step (after the manifest validates and the project is
+committed), reverting the created `.git` on any failure. On a clone we created,
+a downstream register failure removes the clone (the route's outer compensation).
+
 ### Register a project (Implemented M9)
 
 ```mermaid
 sequenceDiagram
     actor U as Operator
     participant W as Web tier
+    participant RS as lib/repo-source
     participant CFG as lib/config
     participant FL as lib/flows
     participant DB as Postgres
     participant FS as Filesystem
 
-    U->>W: POST /api/projects { dir }
+    U->>W: POST /api/projects { repoUrl | target }
+    W->>RS: resolveProjectSource(body)
+    RS-->>W: { dir, repoUrl, provider, gitStatus }
     W->>CFG: loadProjectConfig(dir + /maister.yaml)
     CFG->>FS: readFile maister.yaml
     CFG->>CFG: zod parse + cross-ref checks
@@ -72,7 +140,7 @@ sequenceDiagram
         DB-->>W: existing row
         W-->>U: 409 CONFLICT (slug/repo_path taken)
     end
-    W->>DB: BEGIN tx: INSERT project + executors + owner membership
+    W->>DB: BEGIN tx: INSERT project (+ repo_url, provider) + executors + owner membership
     alt unique violation (concurrent duplicate)
         DB-->>W: 23505
         W-->>U: 409 CONFLICT
@@ -90,7 +158,7 @@ sequenceDiagram
             W-->>U: 502 FLOW_INSTALL<br/>fully rolled back, retryable
         end
     end
-    W-->>U: 201 { slug, projectId }
+    W-->>U: 201 { slug, projectId, gitStatus }
 ```
 
 ### Auto-discovery on startup (Designed)
@@ -120,10 +188,22 @@ flowchart TD
 
 - `projects.slug` and `projects.repo_path` are globally UNIQUE; uniqueness is
   enforced at the DB layer and survives soft archival.
+- `projects.repo_path` is the resolved on-disk dir and stays UNIQUE NOT NULL;
+  `projects.repo_url` and `projects.provider` are nullable metadata only and
+  never gate registration.
+- A clone whose target dir already exists is refused with `PRECONDITION`, and
+  MAIster stores no git provider secrets — auth is host-credential only
+  ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)).
 - Archived projects (`archived_at IS NOT NULL`) keep their `repo_path`
   reserved against new registrations per ADR-019.
 - Project registration is atomic: `projects` + all `executors[]` + all
-  `flows[]` insert in one transaction, or nothing does.
+  `flows[]` insert in one transaction, or nothing does. The optional `git init`
+  of a non-git local dir runs only after the manifest validates and flows
+  install, and its `.git` is reverted on any failure — a failed registration
+  never mutates the operator's directory.
+- Concurrent `POST /api/projects` calls are serialized by a process-wide lock
+  (`withRegistrationLock`) so two registrations cannot race on the same derived
+  clone target (single-host control plane).
 - Every `default_executor` and every `flows[].executor_override` resolves
   to an entry in `executors[].id` at validation time; refuse with `CONFIG`
   otherwise.
@@ -150,6 +230,18 @@ flowchart TD
   duplicated id in the message.
 - **`default_executor` not in `executors[].id`** → `CONFIG`.
 - **`flows[].executor_override` not in `executors[].id`** → `CONFIG`.
+- **Clone fails (`git clone`)** → `PRECONDITION` (409). The dir MAIster
+  created is removed; the URL is credential-redacted in the error.
+- **Clone `target` path already exists** → `PRECONDITION` (409); supply a
+  `target` override to clone under a different name.
+- **`git init` on an existing local dir** → deferred to the LAST register step
+  (after manifest validation); leaves an **unborn HEAD**, so worktree creation
+  fails until the first commit (`gitStatus:"initialized"`). A failed
+  registration reverts the created `.git` (only the one MAIster created — never
+  a pre-existing repo's).
+- **Existing local dir with no `origin`** → `gitStatus:"no-remote"`,
+  `repo_url`/`provider` null; PR promotion is unavailable until a remote is
+  added.
 - **Slug collision on register** → `CONFLICT` (409).
 - **`repo_path` collision on register** → `CONFLICT` (409). Archived
   projects' `repo_path` stays reserved per ADR-019.
@@ -168,10 +260,14 @@ flowchart TD
 ## Linked artifacts
 
 - ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl),
-  [ADR-019 Project slug + repo_path uniqueness](../decisions.md#adr-019-project-slug--repo_path-uniqueness-soft-archival).
+  [ADR-019 Project slug + repo_path uniqueness](../decisions.md#adr-019-project-slug--repo_path-uniqueness-soft-archival),
+  [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md).
 - API: registration Route Handler (Designed) — see
   [`../architecture.md`](../architecture.md) §Component map.
 - Config reference: [`../configuration.md`](../configuration.md).
-- Source: `web/lib/config.ts`, `web/lib/config.schema.ts`,
-  `web/lib/db/schema.ts` (projects/executors/flows tables).
+- Related domains: [`instance-config.md`](instance-config.md) (roots),
+  [`git-integration.md`](git-integration.md) (provider + host credentials).
+- Source: `web/lib/repo-source.ts`, `web/lib/config.ts`,
+  `web/lib/config.schema.ts`, `web/lib/db/schema.ts`
+  (projects/executors/flows tables).

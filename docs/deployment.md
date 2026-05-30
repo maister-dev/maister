@@ -99,13 +99,17 @@ pnpm --filter maister-web db:seed        # initial admin user — see getting-st
 
 ## 5. Connect project repositories
 
-**Current model (Implemented):** a project points at an **existing local git
-repo** via `repo_path` in its `maister.yaml`. Clone the repo onto the host
-yourself, then register the project (UI Add-Project → path to the dir containing
-`maister.yaml`, or `MAISTER_PROJECTS_DIR` auto-discovery). MAIster's git work
-(worktree create/remove, flow-finish merge) is **local and provider-neutral** —
-it never contacts the provider. GitHub, GitLab, Gitea, and GitVerse are all just
-git.
+**Onboarding (Implemented, [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)):**
+a project source is a union — register a **git URL to clone** OR an **existing
+local dir**. With a `repoUrl`, MAIster clones into `MAISTER_REPOS_ROOT`
+(default `~/.maister/repos`); with a local path it uses the dir (and `git
+init`-s it if it is not yet a repo). Run worktrees live under
+`MAISTER_WORKTREES_ROOT` (default `~/.maister/worktrees`; the deprecated
+`MAISTER_WORKTREE_ROOT` is accepted as a fallback). Both roots are surfaced
+read-only on the admin `/settings` page. MAIster's git work (clone, worktree
+create/remove, flow-finish merge) is **local and provider-neutral** — it never
+contacts the provider beyond the clone/fetch. GitHub, GitLab, Gitea, and
+GitVerse are all just git.
 
 Provider authentication is the **operator's host git config** (it lets you clone
 the project repo, and lets MAIster clone **private Flow plugin sources**). Two
@@ -119,6 +123,12 @@ sudo -u maister ssh-keygen -t ed25519 -C "maister@vps" -f /home/maister/.ssh/id_
 sudo -u maister sh -c 'ssh-keyscan github.com gitlab.com gitverse.ru >> ~/.ssh/known_hosts'
 ```
 
+> **`known_hosts` seeding is mandatory for SSH clones.** MAIster runs git
+> non-interactively (`GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`), so an
+> **unknown host key fails fast** instead of prompting — the clone errors with
+> `PRECONDITION`. Run the `ssh-keyscan` line above for every provider host the
+> `maister` user will clone from before registering a `repoUrl`.
+
 **HTTPS + token** — use a Personal Access Token via a git credential helper
 (`git config --global credential.helper store|cache`).
 
@@ -130,12 +140,10 @@ Where to register the key / create the token:
 | GitLab | Preferences → SSH Keys | Preferences → Access Tokens |
 | Gitea / **GitVerse** | Settings → SSH / GPG Keys | Settings → Applications → Generate Token |
 
-> **Planned (M21, [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)):**
-> URL-based onboarding — paste a `repo_url` and MAIster clones it into
-> `MAISTER_REPOS_ROOT` (`~/.maister/repos`) using the same host credentials (no
-> secrets stored in MAIster), with worktrees under `MAISTER_WORKTREES_ROOT`
-> (`~/.maister/worktrees`) and provider auto-detection. Until then, use the
-> local-`repo_path` model above.
+URL-based onboarding uses the **same host credentials** — paste a `repoUrl`
+and MAIster clones it into `MAISTER_REPOS_ROOT` (no secrets stored in MAIster),
+auto-detecting the provider from the URL host. The SSH key / credential helper
+configured above is what authorizes that clone.
 
 ## 6. Agent credentials (headless)
 

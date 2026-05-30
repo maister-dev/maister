@@ -99,6 +99,8 @@ export const projects = pgTable("projects", {
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   repoPath: text("repo_path").notNull().unique(),
+  repoUrl: text("repo_url"),
+  provider: text("provider"),
   mainBranch: text("main_branch").notNull().default("main"),
   branchPrefix: text("branch_prefix").notNull().default("maister/"),
   maisterYamlPath: text("maister_yaml_path").notNull(),
@@ -315,9 +317,12 @@ export const runs = pgTable(
     // Pinned immutable package revision (M10, ADR-021). Nullable for
     // pre-migration legacy rows; new runs always set it and the runner reads
     // the manifest + install path from this revision, not from live flows.*.
-    flowRevisionId: text("flow_revision_id").references(() => flowRevisions.id, {
-      onDelete: "set null",
-    }),
+    flowRevisionId: text("flow_revision_id").references(
+      () => flowRevisions.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     checkpointAt: timestamp("checkpoint_at", {
       withTimezone: true,
       mode: "date",

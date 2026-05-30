@@ -23,7 +23,8 @@ export const projectBlockSchema = z.object({
     .refine(
       (p) => p.startsWith("/") && !p.split("/").includes(".."),
       "repo_path must be an absolute path with no '..' segment",
-    ),
+    )
+    .optional(),
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
 });
