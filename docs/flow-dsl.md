@@ -24,9 +24,9 @@ the flow) and a `type` chosen from:
 
 > **Status (M11a).** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
 > compile, the append-only `node_attempts` ledger, the review-driven rework
-> loop, and gate execution — is **Designed** in M11a and lands on the
-> `feature/m11a-flow-graph-lifecycle` branch; Phase 7 reconciliation flips these
-> tags to **Implemented**. Sub-parts owned by later milestones are tagged
+> loop, and gate execution — is **Implemented** in M11a, shipped on the
+> `feature/m11a-flow-graph-lifecycle` branch. Sub-parts owned by later
+> milestones are tagged
 > inline: the node `settings` block → **M11c (Designed)** (parsed as opaque
 > passthrough in M11a, enforced in M11c); manual takeover / `human_edit` /
 > `merge` nodes → **M11b (Designed)**; typed artifact instances
@@ -205,7 +205,7 @@ If a Flow requires strict enforcement and the selected executor can only receive
 the restriction as an instruction, MAIster refuses the node launch instead of
 silently weakening the capability boundary.
 
-**Review-driven rework — M11a (Designed).** Human review does not execute
+**Review-driven rework — M11a (Implemented).** Human review does not execute
 arbitrary `goto_step`. The Flow declares allowed decisions and targets; the
 reviewer chooses one allowed decision, adds structured instructions, and chooses
 an allowed workspace policy. The submitted decision is validated against the
@@ -224,11 +224,11 @@ returns the branch through the UI. The run ledger records owner, elapsed time,
 handoff branch, returned commits, returned diff, checkpoint refs, stale gate
 markers, and rerun results. Not executed in M11a (no `HumanWorking` run status).
 
-## Gate execution (M11a — Designed)
+## Gate execution (M11a — Implemented)
 
-> **Status (M11a).** Gate execution is **Designed** in M11a (per
-> [ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped));
-> Phase 7 flips it to **Implemented**. The gate STATUS lifecycle, structured
+> **Status (M11a).** Gate execution is **Implemented** in M11a (per
+> [ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)).
+> The gate STATUS lifecycle, structured
 > verdicts, blocking/advisory modes, staleness propagation, and
 > override-without-erasure live here, not in M15. M15 (below) keeps only the
 > readiness-policy DSL, verdict calibration, and `external_check` ingestion.

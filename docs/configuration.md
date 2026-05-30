@@ -289,7 +289,7 @@ Incompatibility surfaces as `CONFIG` (422). Semantic validation of the opaque
 contract lists is deferred to the milestone that introduces each concept (see
 [ADR-021](decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)).
 
-**M11a engine bump (Designed).** M11a bumps the `MAISTER_ENGINE_VERSION`
+**M11a engine bump (Implemented).** M11a bumps the `MAISTER_ENGINE_VERSION`
 constant `1.0.0 → 1.1.0` in `web/lib/flows/engine-version.ts`
 ([ADR-022](decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump)).
 This is a **code constant, not an env var** — there is no compose / `.env`

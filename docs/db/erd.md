@@ -1,9 +1,8 @@
 # Full database ERD
 
 All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
-`VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), plus the two **M11a — Designed**
-execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0008`;
-Phase 7 flips them to Implemented).
+`VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), plus the two **M11a (Implemented)**
+execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0008`).
 For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md).

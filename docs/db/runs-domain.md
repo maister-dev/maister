@@ -117,9 +117,9 @@ erDiagram
     }
 ```
 
-> **(M11a — Designed, migration `0008`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
-> land on the `feature/m11a-flow-graph-lifecycle` branch; Phase 7 flips their
-> status to Implemented. `node_attempts` is append-only (`step_runs` retained for
+> **(M11a — Implemented, migration `0008`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
+> shipped on the `feature/m11a-flow-graph-lifecycle` branch.
+> `node_attempts` is append-only (`step_runs` retained for
 > legacy reads). See
 > [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md) and
 > [ADR-023](../decisions.md#adr-023-append-only-node_attempts-run-ledger) /

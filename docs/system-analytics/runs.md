@@ -56,7 +56,7 @@ stateDiagram-v2
 Status names exactly match the `runs.status` enum in
 `web/lib/db/schema.ts`.
 
-### M11a graph rework loop (Designed)
+### M11a graph rework loop (Implemented)
 
 The M11a review-driven rework loop does **not** add a run status. It is a
 **node-pointer move inside `Running`**: a `review` node finishes `human` and the

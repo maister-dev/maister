@@ -1,8 +1,8 @@
 # Flow graph domain
 
-> **Status: Designed (M11a).** Everything in this file is the M11a Flow graph v1
-> execution model. It lands on the `feature/m11a-flow-graph-lifecycle` branch;
-> Phase 7 reconciliation flips the tags to **Implemented**. Sub-parts owned by
+> **Status: Implemented (M11a).** Everything in this file is the M11a Flow graph
+> v1 execution model, shipped on the `feature/m11a-flow-graph-lifecycle` branch.
+> Sub-parts owned by
 > later milestones are tagged inline: manual takeover / `human_edit` → **M11b**;
 > node `settings` enforcement → **M11c**; typed artifact instances + the
 > `artifact_required` gate → **M12**; `external_check` ingestion → **M16**;
@@ -297,7 +297,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`respond` review
   decision).
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md).
-- Source (Designed): `web/lib/config.schema.ts` (node/gate schema),
+- Source (Implemented): `web/lib/config.schema.ts` (node/gate schema),
   `web/lib/config.ts` (`loadFlowManifest`),
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`,
   `web/lib/flows/graph/ledger.ts`, `web/lib/flows/graph/gate-store.ts`,

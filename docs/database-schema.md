@@ -499,7 +499,7 @@ migrations; do not overload current JSON blobs until the implementation plan
 explicitly chooses that as a temporary bridge.
 
 > **M11a promotion.** `node_attempts` and `gate_results` are no longer "planned"
-> — they are **Designed in M11a** (migration `0008`) and documented as first-class
+> — they are **Implemented in M11a** (migration `0008`) and documented as first-class
 > tables above. They remain in the list below struck through for traceability;
 > the rest stay future work.
 
@@ -507,10 +507,10 @@ explicitly chooses that as a temporary bridge.
 | -------------- | ------------- | ------------- |
 | `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
 | `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
-| ~~`node_attempts`~~ → **M11a (Designed)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
+| ~~`node_attempts`~~ → **M11a (Implemented)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
 | `artifacts` | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews, and external reports. | `runs.id`, node/step attempt |
 | `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
-| ~~`gate_results`~~ → **M11a (Designed)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
+| ~~`gate_results`~~ → **M11a (Implemented)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
 | `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
 | `capability_records` | Project-visible registry for MCP servers, skills, tools, agent settings, env profiles, restrictions, and mappings. | `projects.id` |
 | `api_tokens` | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata. | `projects.id` |
