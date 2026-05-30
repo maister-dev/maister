@@ -279,7 +279,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
           : relativeTime(run.startedAt, now),
       plus: null,
       minus: null,
-      reworking: reworkingRunIds.has(run.runId),
+      reworking: cardStatus !== "done" && reworkingRunIds.has(run.runId),
     });
 
     if (

@@ -60,6 +60,8 @@ export async function Board({
 }: BoardProps): Promise<ReactElement> {
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
+  const tRun = await getTranslations("run");
+  const reworkingLabel = tRun("reworking");
   const launchDisabledReason =
     platformStatus.kind === "ready"
       ? undefined
@@ -138,7 +140,7 @@ export async function Board({
                   key={card.runId}
                   className="[[data-layout=swimlanes]_&]:w-[268px] [[data-layout=swimlanes]_&]:flex-none"
                 >
-                  <FlightCard card={card} />
+                  <FlightCard card={card} reworkingLabel={reworkingLabel} />
                 </div>
               ))}
               {column.total === 0 ? (

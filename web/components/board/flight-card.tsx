@@ -9,6 +9,7 @@ import clsx from "clsx";
 
 export interface FlightCardProps {
   card: FlightCardData;
+  reworkingLabel: string;
 }
 
 const STRIPE: Record<FlightCardData["status"], string> = {
@@ -37,7 +38,10 @@ function segClass(seg: SpineSegment, needs: boolean): string {
   return "bg-line";
 }
 
-export function FlightCard({ card }: FlightCardProps): ReactElement {
+export function FlightCard({
+  card,
+  reworkingLabel,
+}: FlightCardProps): ReactElement {
   const isDone = card.status === "done";
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
@@ -78,9 +82,9 @@ export function FlightCard({ card }: FlightCardProps): ReactElement {
         <div className="flex flex-none items-center gap-1.5">
           {card.reworking ? (
             <span
-              aria-label="reworking"
+              aria-label={reworkingLabel}
               className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
-              title="reworking"
+              title={reworkingLabel}
             >
               ↺
             </span>
