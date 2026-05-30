@@ -124,6 +124,24 @@ beforeAll(async () => {
       repoPath: `/repos/${slug}`,
       maisterYamlPath: `/repos/${slug}/maister.yaml`,
     });
+    // M10: a launchable flow package needs an enabled, trusted, Installed
+    // revision so the runs route passes flow-package preconditions and reaches
+    // the supervisor-readiness check.
+    const revisionId = `rev-${id}`;
+
+    await db.insert(schema.flowRevisions).values({
+      id: revisionId,
+      flowRefId: "bugfix",
+      source: "github.com/x/y",
+      versionLabel: "v1.0.0",
+      resolvedRevision: (id === "proj-a" ? "a" : "b").repeat(40),
+      manifestDigest: `digest-${id}`,
+      manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+      schemaVersion: 1,
+      installedPath: `/cache/${id}`,
+      setupStatus: "not_required",
+      packageStatus: "Installed",
+    });
     await db.insert(schema.flows).values({
       id: `flow-${id}`,
       projectId: id,
@@ -133,6 +151,9 @@ beforeAll(async () => {
       installedPath: `/cache/${id}`,
       manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
       schemaVersion: 1,
+      enabledRevisionId: revisionId,
+      enablementState: "Enabled",
+      trustStatus: "trusted_by_policy",
     });
   }
   await db.insert(schema.projectMembers).values({

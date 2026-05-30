@@ -82,12 +82,19 @@ beforeAll(async () => {
 
   // member of proj-a; outsider of neither.
   await db.insert(schema.users).values([
-    { id: "u-member", email: "m@test.com", role: "member", passwordHash: "x" },
+    {
+      id: "u-member",
+      email: "m@test.com",
+      role: "member",
+      passwordHash: "x",
+      accountStatus: "active",
+    },
     {
       id: "u-outsider",
       email: "o@test.com",
       role: "member",
       passwordHash: "x",
+      accountStatus: "active",
     },
     {
       id: "u-mustchange",
@@ -95,6 +102,7 @@ beforeAll(async () => {
       role: "member",
       passwordHash: "x",
       mustChangePassword: true,
+      accountStatus: "active",
     },
   ]);
   await db.insert(schema.projectMembers).values({
