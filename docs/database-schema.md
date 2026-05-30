@@ -30,8 +30,10 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
-| `step_runs` | Per-step execution records for the flow runner. | `runs.id` |
-| `hitl_requests` | HITL prompts emitted during a run. | `runs.id` |
+| `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
+| `node_attempts` | **(M11a — Designed, migration `0008`)** Append-only per-node-attempt ledger for the graph runner. | `runs.id` |
+| `gate_results` | **(M11a — Designed, migration `0008`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
+| `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
 
 ## `users`
 
@@ -360,6 +362,76 @@ for Mustache templating across steps).
 
 Cascade: `ON DELETE CASCADE` from `runs.id`.
 
+## `node_attempts`
+
+**(M11a — Designed, migration `0008`.)** Append-only ledger for the graph
+runner ([ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger)).
+One immutable row per node execution; `attempt` auto-increments per
+`(runId, nodeId)`. Linear `steps[]` flows compile to nodes and write here too;
+`step_runs` is retained for legacy reads only.
+
+```ts
+{
+  id, runId,
+  nodeId,                                   // node id in the compiled FlowGraph
+  nodeType: 'ai_coding' | 'cli' | 'check' | 'judge' | 'human',
+  attempt,                                  // auto-increment per (runId, nodeId)
+  status: 'Pending' | 'Running' | 'Succeeded'
+        | 'Failed' | 'NeedsInput' | 'Reworked' | 'Stale',
+                                            // PascalCase; extends step_runs vocab
+                                            // (adds Reworked/Stale, omits Skipped)
+  decision?,                                // human decision recorded on finish
+  workspacePolicy?,                         // 'keep' | 'rewind-to-node-checkpoint'
+                                            //   | 'fresh-attempt'
+  reworkFromNode?,                          // origin node when this attempt is a
+                                            //   rework re-entry
+  acpSessionId?,                            // ACP session id (agent/judge nodes)
+  stdout?,                                  // truncated to 1 MiB by the writer
+  vars (jsonb, DEFAULT '{}'),               // node output bag for templating
+  exitCode?, errorCode?,                    // one of MaisterErrorCode literals
+  startedAt, endedAt?
+}
+```
+
+UNIQUE constraint `(runId, nodeId, attempt)` — append-only; rework never mutates
+a prior row. Indexed on `(runId)` for the templating highest-attempt-wins union
+(`node_attempts` first, `step_runs` fallback). Cascade: `ON DELETE CASCADE` from
+`runs.id`.
+
+## `gate_results`
+
+**(M11a — Designed, migration `0008`.)** One row per gate execution
+([ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)).
+Holds the structured verdict and the full status lifecycle.
+
+```ts
+{
+  id, runId,
+  nodeAttemptId,                            // FK -> node_attempts.id (producer)
+  gateId,                                   // gate id within the node
+  kind: 'command_check' | 'skill_check' | 'ai_judgment'
+      | 'artifact_required' | 'external_check' | 'human_review',
+  mode: 'blocking' | 'advisory',
+  status: 'pending' | 'running' | 'passed' | 'failed'
+        | 'stale' | 'skipped' | 'overridden',
+                                            // lowercase; gate-verdict vocabulary
+  verdict (jsonb)?,                         // { verdict, confidence, reasons,
+                                            //   recommendedAction }
+  inputArtifactRefs (jsonb)?,               // referenced input artifact ids (M12)
+  outputArtifactRef?,                       // produced artifact id (M12)
+  staleFrom (jsonb)?,                       // node ids whose rework stales this
+  overriddenBy?,                            // hitl_requests.id of the override
+  createdAt, endedAt?
+}
+```
+
+`status` covers the full lifecycle; an override sets `overridden` + records
+`overriddenBy` but never deletes the prior verdict (override-without-erasure).
+An unparseable `ai_judgment` verdict is `status='failed'` with raw prose kept in
+`verdict` — **no new `MaisterError` code**
+([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)). Indexed on
+`(runId)` and `(nodeAttemptId)`. Cascade: `ON DELETE CASCADE` from `runs.id`.
+
 ## `hitl_requests`
 
 ```ts
@@ -371,9 +443,24 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
                                  //   { requestId, options, toolCall,
                                  //     supervisorSessionId }
   prompt, response (jsonb)?,
+  decision?,                     // (M11a — Designed) review decision claimed
+                                 //   from response.decision (e.g. approve|rework)
+  workspacePolicy?,              // (M11a — Designed) chosen rework workspace policy
+  reworkTarget?,                 // (M11a — Designed) resolved rework target node
   respondedAt?, createdAt
 }
 ```
+
+**(M11a — Designed.)** For a graph `human_review` HITL the runner enriches
+`schema` (jsonb) at creation with the manifest-derived allow-list
+`{ allowedDecisions, transitions, reworkTargets, workspacePolicies }`
+(server-state). The reviewer's `decision`/`comments`/`workspacePolicy` ride
+**inside** the existing `response` form payload; the respond route validates them
+against that allow-list and, on success, copies them into the new
+`decision`/`workspace_policy`/`rework_target` columns at claim time. The route
+body schema (`{ optionId?, response? }`) is unchanged — no new top-level body
+field. See [`api/web.openapi.yaml`](api/web.openapi.yaml) and
+[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
@@ -411,14 +498,19 @@ class tables in the current Drizzle schema. They should land as additive
 migrations; do not overload current JSON blobs until the implementation plan
 explicitly chooses that as a temporary bridge.
 
+> **M11a promotion.** `node_attempts` and `gate_results` are no longer "planned"
+> — they are **Designed in M11a** (migration `0008`) and documented as first-class
+> tables above. They remain in the list below struck through for traceability;
+> the rest stay future work.
+
 | Planned object | Why it exists | Likely parent |
 | -------------- | ------------- | ------------- |
 | `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
 | `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
-| `node_attempts` or expanded `step_runs` | Graph-node attempts, lifecycle section status, checkpoint refs, rerun/staleness state. | `runs.id` |
+| ~~`node_attempts`~~ → **M11a (Designed)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
 | `artifacts` | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews, and external reports. | `runs.id`, node/step attempt |
 | `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
-| `gate_results` | Flow-declared readiness decisions over artifacts, including command, skill, AI, external, artifact-required, and human gates. | `runs.id`, artifact |
+| ~~`gate_results`~~ → **M11a (Designed)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
 | `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
 | `capability_records` | Project-visible registry for MCP servers, skills, tools, agent settings, env profiles, restrictions, and mappings. | `projects.id` |
 | `api_tokens` | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata. | `projects.id` |
@@ -448,6 +540,9 @@ projects
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── step_runs       (FK runId,        cascade)
+  │           ├── node_attempts   (FK runId,        cascade)   ← M11a
+  │           │     └── gate_results (FK nodeAttemptId, cascade)
+  │           ├── gate_results    (FK runId,        cascade)   ← M11a (also direct)
   │           └── hitl_requests   (FK runId,        cascade)
   ├── runs               (FK projectId, cascade)  ← also direct
   └── workspaces         (FK projectId, cascade)  ← also direct
@@ -471,6 +566,10 @@ Created via Drizzle:
 | `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
 | `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |
 | `step_runs` | `step_runs_run_idx` | `(runId)` | Per-run step lookups (templating) |
+| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt) |
+| `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |
+| `gate_results` | `gate_results_run_idx` | `(runId)` | **(M11a)** Per-run gate lookups |
+| `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(M11a)** Gates for a node attempt |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,

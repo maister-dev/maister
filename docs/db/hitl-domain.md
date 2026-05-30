@@ -12,15 +12,25 @@ erDiagram
     HITL_REQUESTS {
         text id PK
         text run_id FK
-        text step_id "Flow step that raised it"
+        text step_id "Flow step / node that raised it"
         text kind "permission | form | human"
-        jsonb schema "form_schema or permission descriptor"
+        jsonb schema "form_schema or permission descriptor (+ review allow-list)"
         text prompt "human-readable rationale"
         jsonb response "operator's answer (NULL while open)"
+        text decision "M11a review decision (claimed from response.decision)"
+        text workspace_policy "M11a chosen rework workspace policy"
+        text rework_target "M11a resolved rework target node"
         timestamp responded_at "NULL while open"
         timestamp created_at
     }
 ```
+
+> **(M11a — Designed, migration `0008`.)** The `decision`, `workspace_policy`,
+> and `rework_target` columns are populated only for a graph `human_review`
+> HITL. The reviewer's choice rides inside the `response` form payload; the
+> respond route validates it against the manifest-derived allow-list stored in
+> `schema` at creation and copies the resolved values into these columns at claim
+> time. See [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md).
 
 ## In-jsonb shape — `schema` column
 
@@ -57,7 +67,7 @@ Shape varies by kind:
 | ---- | -------------- |
 | `permission` | `{ optionId: string }` |
 | `form` | An object whose keys match `schema.fields[].name`, with the matching `type`. |
-| `human` | Form-shaped object, optionally including review fields such as `{ rejected?: boolean, comments?: string }`. Rejection is audit data until the designed loopback path lands. |
+| `human` | Form-shaped object, optionally including review fields such as `{ rejected?: boolean, comments?: string }`. **(M11a — Designed)** a graph `human_review` payload carries `{ decision, comments?, workspacePolicy? }` validated against the row's `schema` allow-list and mirrored into the `decision`/`workspace_policy`/`rework_target` columns. |
 
 Free-form `additionalProperties` are tolerated (forward-compat).
 

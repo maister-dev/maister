@@ -47,6 +47,10 @@
 | [ADR-019](#adr-019-project-slug--repo_path-uniqueness-soft-archival) | Project slug + repo_path uniqueness, soft archival | Accepted | 2026-05-22 |
 | [ADR-020](#adr-020-fastify--pino-in-the-supervisor) | Fastify + pino in the supervisor | Accepted | 2026-05-25 |
 | [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility) | Flow package lifecycle: multi-revision, trust, and compatibility | Accepted | 2026-05-30 |
+| [ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump) | Flow graph manifest v1 (`nodes[]`) + engine version bump | Accepted | 2026-05-30 |
+| [ADR-027](#adr-027-append-only-node_attempts-run-ledger) | Append-only `node_attempts` run ledger | Accepted | 2026-05-30 |
+| [ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped) | Full-featured gate execution in M11a; M15 re-scoped | Accepted | 2026-05-30 |
+| [ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c) | Split M11 into M11a / M11b / M11c | Accepted | 2026-05-30 |
 
 ---
 
@@ -904,6 +908,192 @@ independent of M11/M12.
 - **Local `repo_path` only (status quo):** secure and simple but a manual clone step; kept as a supported mode, not the only one.
 - **MAIster-managed per-project credentials (model C):** per-project least privilege, but secret-at-rest, rotation, audit, and blast-radius make it a deliberate security design tied to M16/M18, not a registration add-on.
 - **Single unified `MAISTER_HOME` root:** rejected to avoid refactoring the hardcoded `~/.maister/flows` path; two explicit roots chosen instead.
+### ADR-026: Flow graph manifest v1 (`nodes[]`) + engine version bump
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl)'s
+step DSL is **strictly linear** — the runner walks `steps[]` in order and
+`on_reject.goto_step` is parsed and validated but never executed, so
+review-driven rework does not work. M11 needs a validated Flow **graph** with
+node lifecycle, gates, and a rework loop, without orphaning every installed Flow
+package (a `schemaVersion` bump re-pins everything) or breaking simple linear
+Flows.
+
+**Decision:** Keep the manifest at `schemaVersion: 1`. Add an **optional
+top-level `nodes[]`**, mutually exclusive with `steps[]` (zod `.refine`: exactly
+one present — which requires relaxing the currently-required
+`steps: z.array(...).min(1)` to optional). Node types are
+`ai_coding | cli | check | judge | human`, each with `input.requires?`,
+`output.produces?`, a type-specific `action`, `pre_finish.gates?`,
+`finish.human?`, `transitions` (decision→nodeId), and `rework?`
+(`allowedTargets[]`, `workspacePolicies[]`, `maxLoops`, `commentsVar`). Graph
+flows MUST declare `compat.engine_min: 1.1.0`. Bump the engine constant
+`MAISTER_ENGINE_VERSION` `1.0.0 → 1.1.0` in
+`web/lib/flows/engine-version.ts` — it is a **code constant, not an env var**
+(no compose/`.env` wiring). `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
+
+**Consequences:**
+
+- Linear `steps[]` flows are untouched and need no graph syntax; they compile to
+  default single-action nodes (see [ADR-027](#adr-027-append-only-node_attempts-run-ledger)).
+- A graph flow on an engine `< 1.1.0` is refused at enablement by the existing
+  [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
+  `compat.engine_min/max` check — no new gate needed.
+- No `schemaVersion` bump means no forced re-pin of installed packages.
+- The engine bump is a code constant: **no new env var, port, or deployment
+  touchpoint** in M11a.
+
+**Alternatives Considered:**
+
+- **Bump `schemaVersion` to 2:** orphans every installed Flow package and forces
+  a re-pin; the graph is additive, so the schema version need not move. Rejected.
+- **A separate graph-manifest file alongside `flow.yaml`:** two sources of truth
+  for one Flow. Rejected.
+
+---
+
+### ADR-027: Append-only `node_attempts` run ledger
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** The current `step_runs` table reuses the same row on resume and
+hard-codes `attempt = 1`, so there is no append-only execution history. A rework
+loop re-runs nodes; templating must resolve `steps.<id>.output` to the **latest**
+attempt; an audit trail must never be mutated. None of this is expressible by
+overwriting one row per step.
+
+**Decision:** Introduce a new **append-only `node_attempts`** table. `attempt`
+auto-increments per `(run_id, node_id)` with `UNIQUE (run_id, node_id,
+attempt)`. Linear `steps[]` flows compile to nodes and write `node_attempts`
+too. `step_runs` is **retained for back-compat reads and migration only** — the
+graph runner writes `node_attempts`, and templating
+`steps.<id>.output`/`.vars`/`.exitCode` reads from `node_attempts`
+(highest-attempt-wins), falling back to `step_runs` for legacy rows. A pre-M11a
+in-flight `NeedsInput` run that has `step_runs` rows but no `node_attempts` seeds
+its resume entry from the latest `step_runs` row for `current_step_id` (the
+compiled-linear node id ≡ the step id). `node_attempts.status` uses the PascalCase
+node-lifecycle vocabulary (`Pending | Running | Succeeded | Failed | NeedsInput |
+Reworked | Stale`).
+
+**Consequences:**
+
+- Every node execution is an immutable ledger row; rework never mutates prior
+  rows; the full attempt history is queryable.
+- `step_runs` enters gradual deprecation — legacy-read only, no new writes from
+  the graph runner.
+- Templating must union both tables (highest-attempt `node_attempts`, else
+  `step_runs`) during the deprecation window.
+- Adds migration `0008`; the change is additive (existing rows unaffected).
+
+**Alternatives Considered:**
+
+- **Add an `attempt` column to `step_runs` and mutate in place:** loses
+  immutability and makes highest-attempt-wins a row-overwrite race. Rejected.
+- **Drop `step_runs` entirely and backfill `node_attempts`:** breaks legacy
+  resume of in-flight runs and forces a heavier, riskier migration for marginal
+  benefit. Rejected — deprecate gradually instead.
+
+---
+
+### ADR-028: Full-featured gate execution in M11a; M15 re-scoped
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** Review-driven rework is only demonstrable if gates actually
+execute, go **stale** on rework, and **rerun** — a status lifecycle plus
+structured verdicts, not metric-only guards. The roadmap originally assigned
+gate *execution* to M15. The user directed (this session) that M11a ship
+**real, full-featured** gates within its dependency limits.
+
+**Decision:** A node's `pre_finish.gates` execute by kind, each recorded in a
+`gate_results` row. `command_check`, `ai_judgment`, and `human_review` **fully
+execute**. `skill_check` runs a slash command via an agent session
+(**best-effort, no capability scoping** until M14). `artifact_required` and
+`external_check` are **schema-valid and status-modelled but NOT executed** in
+M11a (they depend on M12 artifact instances and M16 ops ingestion respectively).
+The gate status lifecycle is
+`pending | running | passed | failed | stale | skipped | overridden` (lowercase,
+distinct from the PascalCase node lifecycle in
+[ADR-027](#adr-027-append-only-node_attempts-run-ledger)); modes are
+`blocking | advisory`; verdicts are structured
+(`{ verdict, confidence, reasons, recommendedAction }`); staleness propagates on
+rework; overrides never erase the original verdict. **No new `MaisterError`
+code** is added ([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed
+union) — an unparseable verdict is a `gate_results.status='failed'`, not a
+thrown code. Because M11a annexes the gate-execution engine, **M15 is re-scoped**
+to "readiness-policy DSL + verdict calibration + `external_check` ingestion
+ONLY"; the status lifecycle, structured verdicts, and override-without-erasure
+move to M11a.
+
+**Consequences:**
+
+- The rework loop can mark downstream gates `passed → stale` and force a rerun
+  before a node finishes again — the core M11a demo.
+- M11a `gate_results` **feed but do not gate promotion**; promotion-gating
+  (readiness policy) stays M15/M18.
+- Deferred kinds are explicitly stubbed (`artifact_required` → `skipped` +
+  `TODO(M12)`, `external_check` → `pending` + `TODO(M16)`), never silently
+  passed.
+- M15's roadmap entry must read as re-scoped, not as a duplicate/false-failure.
+
+**Alternatives Considered:**
+
+- **Defer all gate execution to M15:** review-driven rework could not demonstrate
+  `stale → rerun`, which is the entire point of M11a. Rejected.
+- **Execute `artifact_required`/`external_check` now:** requires the M12 artifact
+  graph and the M16 ops API, neither of which exists. Rejected — stub with a
+  visible WARN + TODO.
+
+---
+
+### ADR-029: Split M11 into M11a / M11b / M11c
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** Roadmap M11 ("Flow graph maturity") bundles the graph engine,
+ledger, rework, and gate execution together with manual human takeover, the rich
+run-detail timeline, typed node settings, and a runtime enforcement boundary —
+and its acceptance criteria reach into territory later milestones own (M12
+artifacts, M14 capabilities, M15 readiness policy, M18 promotion). Shipping it as
+one milestone is too large and entangles those dependencies.
+
+**Decision:** Split M11 into three sequential sub-milestones:
+
+- **M11a** — Flow graph v1 manifest + node lifecycle compile + append-only
+  `node_attempts` ledger + review-driven rework loop + full-featured gate
+  execution. Linear `steps[]` flows stay valid by compiling to single-action
+  nodes. Ships **first**.
+- **M11b** — manual takeover (local worktree handoff, consistent with
+  [ADR-011](#adr-011-workspace-lifecycle-via-git-worktree)) + the rich
+  run-detail timeline (current vs stale gates; attempts/decisions/handoffs/
+  returned commits) + a board `HumanWorking` surface.
+- **M11c** — node-specific **typed settings** + a runtime **enforcement
+  boundary** (refuse undeclared MCP/tool/skill/restriction), anticipating the
+  M14 capability registry.
+
+The roadmap is renumbered M11 → M11a/M11b/M11c via the roadmap owner
+(`/aif-roadmap`), distributing the 8 roadmap M11 criteria with **no clause
+dropped and none double-listed**: M11a owns its AC-1..AC-8; manual-takeover and
+the run-detail timeline (#4, #5, #7-takeover, #8-takeover) → M11b; node
+`settings` enforced and the settings-schema docs (#6, #8-settings) → M11c;
+unknown-**role** refs (#1-roles) → M13; unknown **MCP/tool/skill/agent/
+restriction** refs (#1) → M14; node-level **executor** refs (#1) → M11c.
+
+**Consequences:**
+
+- Each slice is independently shippable and reviewable; criteria stay distinct.
+- The graph engine is not blocked on manual takeover or the timeline UI.
+- Node-level enforcement lands after the engine proves out, alongside the M14
+  capability registry it depends on.
+
+**Alternatives Considered:**
+
+- **Ship M11 monolithically:** too large; entangles M12/M14/M15/M18
+  dependencies inside one milestone. Rejected.
+- **Split by layer (schema / DB / runner / UI):** each layer slice is
+  unshippable on its own and proves nothing end-to-end. Rejected — split by
+  capability instead.
 
 ---
 

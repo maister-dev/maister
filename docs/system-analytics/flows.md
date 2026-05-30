@@ -141,6 +141,15 @@ flowchart TD
     Done -- no --> End([Run complete])
 ```
 
+> **(M11a — Designed) graph rework supersedes `on_reject.goto_step`.** The linear
+> `on_reject.goto_step` loop above stays **recorded-but-unexecuted** for `steps[]`
+> flows. A graph (`nodes[]`) flow instead uses node `transitions` +
+> `finish.human.decisions`: a reviewer's declared `rework` decision marks
+> downstream gates **stale**, moves the node pointer to the rework target, opens
+> a new `node_attempts` row, and re-runs the validation path before reaching a
+> fresh review. The full rework loop is drawn in
+> [`flow-graph.md`](flow-graph.md).
+
 ### Executor override resolution
 
 The executor for an `agent` step is the highest-priority match:
@@ -218,10 +227,14 @@ flowchart LR
   Gates ship with the Flow plugin, while project config supplies reusable
   command profiles, skill mappings, capability profiles, env profiles, and
   default limits.
-- **(Planned)** Gate kinds are `command_check | skill_check | ai_judgment |
-  external_check | artifact_required | human_review`; each gate has
+- **(M11a — Designed)** Gate kinds are `command_check | skill_check |
+  ai_judgment | external_check | artifact_required | human_review`; each gate has
   `mode: blocking | advisory` and status `pending | running | passed |
-  failed | stale | skipped | overridden`.
+  failed | stale | skipped | overridden`. M11a **executes**
+  `command_check`/`ai_judgment`/`human_review` and `skill_check` (best-effort,
+  no capability scoping until M14); `artifact_required` → `skipped` + TODO(M12)
+  and `external_check` → `pending` + TODO(M16) are schema-valid but not executed.
+  See [`flow-graph.md`](flow-graph.md) §Gate execution.
 - **(Planned M16)** `external_check` gates are satisfied through the
   token-authenticated operations API or the thin MCP facade. Reports become
   typed gate artifacts and participate in readiness, staleness, review, and
@@ -229,9 +242,11 @@ flowchart LR
 - **(Planned)** Internal skill/command gates, such as `/aif-review` or
   project QA/checklist skills, run through the same capability materialization
   and artifact recording path as AI nodes when they use an agent session.
-- **(Planned)** Review and merge refuse when any required blocking gate is
-  missing, pending, running, failed, stale, or skipped. Overrides require a
-  declared human review decision and never delete failed evidence.
+- **(Planned M15/M18)** Review and merge refuse when any required blocking gate
+  is missing, pending, running, failed, stale, or skipped — M11a records
+  `gate_results` but does not gate promotion on them. **(M11a — Designed)**
+  Overrides require a declared `human_review` decision and never delete the
+  failed evidence (override-without-erasure).
 - Templating in `prompt` is Mustache-style and resolves session
   context, task fields, per-step output vars, and executor metadata.
 
@@ -260,7 +275,10 @@ flowchart LR
 
 ## Linked artifacts
 
-- ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl).
+- ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl),
+  [ADR-022 Graph manifest](../decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump),
+  [ADR-025 M11 split](../decisions.md#adr-025-split-m11-into-m11a--m11b--m11c).
+- Graph execution (M11a): [`flow-graph.md`](flow-graph.md).
 - Package lifecycle: [`flow-packages.md`](flow-packages.md).
 - Config reference: [`../configuration.md`](../configuration.md) §`flow.yaml v1`.
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md) (flows table).

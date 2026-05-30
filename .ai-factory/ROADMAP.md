@@ -26,72 +26,49 @@
 
 - [x] **M10. Flow package lifecycle and distribution UX** — shipped 2026-05-30. Promotes Flows from "git repos the loader clones" (M4) to managed, multi-revision delivery packages. New `flow_revisions` table (`web/lib/db/schema.ts`): global, immutable, content-addressed by `(flow_ref_id, resolved_revision)`, carrying `source`, `versionLabel`, `resolvedRevision` (git SHA), `manifestDigest`, full `manifest` jsonb, `schemaVersion`, `engineMin`/`engineMax`, declared `contract` jsonb, `installedPath`, `setupStatus` (`not_required|pending|done|failed`), `packageStatus` (`Discovered|Installing|Installed|Failed|Removed`), `installedAt`. `flows` gains `enabled_revision_id` FK (project enablement pointer, kept separate from the revision rows), `trustStatus` (`untrusted|trusted|trusted_by_policy`), `enablementState` (`Installed|Enabled|UpdateAvailable|Deprecated|Disabled|Failed`); additive migration `0007_fast_misty_knight.sql` (renumbered from 0006 after rebase onto main, `fc00c5d`). Two-phase install in `web/lib/flows.ts` (`ensureRevisionIntentRow` → finalize): intent row `Installing` → `Installed`, with digest/manifest/contract populated only after `flow.yaml` validation; revision-aware loader + trust policy in `web/lib/flows/trust.ts` + `engine-version.ts`. Lifecycle service `web/lib/flows/lifecycle.ts`: `enableRevision` (atomic enabled-pointer switch under row lock), `upgradeFlow` (→ `UpdateAvailable`), `rollbackFlow` (delegates to enable), `disableFlow`, `removeRevision` (refuses with `CONFLICT` while any `runs.flow_revision_id` or `flows.enabled_revision_id` references it), and `UpgradePreview` diffing steps/gates/artifacts/capabilities/external-ops plus schema/setup changes. Launch preconditions in `web/app/api/runs/route.ts` refuse (`PRECONDITION` 409) when no enabled revision, `enablementState` not in `{Enabled, UpdateAvailable}`, `trustStatus = untrusted`, revision not `Installed`, `setupStatus` `pending|failed`, or schema/engine incompatible; launch then snapshots `flowRevisionId`, and `web/lib/flows/runner.ts` resolves the pinned revision's manifest/path so upgrade/rollback/disable never corrupt in-flight or completed runs. Settings UI `web/components/board/panels/flow-packages-panel.tsx` + `package-actions.tsx` (admin-gated install/enable/disable/upgrade/upgrade-preview/rollback/trust/remove) over `web/app/api/projects/[slug]/flow-packages/*` routes and `web/lib/queries/flow-packages.ts`; EN+RU i18n. `FLOW_INSTALL` errors are stage-tagged (`clone|resolve-revision|validate-manifest|intent|finalize`) with source, version, exit status, and captured stderr. Adversarial-review pass fixed setup-runs-only-after-trust, atomic enable/remove races, and setup-failure → `Failed`. Docs: ADR-021 (`docs/decisions.md`) + `docs/system-analytics/flow-packages.md`. Tests: revision-coexistence upgrade (v1.0.0 → v1.1.0), launch/trust precondition + remove-guard cases, plus the app integration suite. **Deferred follow-ups**: `Deprecated` enablement-state UI wiring, the `Discovered` external-tooling state, `Failed` enablement-state not yet actively set, and automatic GC of unreferenced `Removed` revisions (→ M19).
 
-- [ ] **M11. Flow graph maturity: node lifecycle, typed settings, rework, and human takeover** — add the execution-model foundation that must exist before the HITL UI becomes product-grade. Replace the current "ordered steps plus recorded `on_reject.goto_step`" mental model with a validated Flow graph v1 that still preserves simple linear Flows as the easy case.
+- [ ] **M11a. Flow graph v1: node lifecycle, run ledger, review-driven rework, gates** — the execution-model foundation. Replace the strictly linear `steps[]` walker (with recorded-but-unexecuted `on_reject.goto_step`) with a validated Flow graph v1; linear Flows stay valid by compiling to single-action nodes. First slice of the split M11 ([ADR-025](decisions.md#adr-025-split-m11-into-m11a--m11b--m11c)). Manual takeover + timeline → M11b; typed node settings + enforcement → M11c.
 
-  **Expectation: node lifecycle model.** A Flow node has explicit sections for:
-  `input` (required artifacts, prior outputs, human answers, environment),
-  `action` (agent / cli / check / judge / human / human_edit / merge),
-  `pre_finish` (formatters, tests, AI judgments, artifact requirements),
-  `finish` (human review, approval, branch return, final acceptance),
-  `transitions` (success, failure, needs-input, reject, timeout), and
-  `rework` (allowed targets, workspace policy, loop limits, comments vars).
-  Existing `steps[]` Flows remain valid by compiling to a single-action node
-  with default input/pre-finish/finish sections.
+  **Expectation: node lifecycle compile.** A node has `input` / `action` (`ai_coding`/`cli`/`check`/`judge`/`human`) / `pre_finish` (gates) / `finish` (auto or human) / `transitions` / `rework`. An optional top-level `nodes[]` is mutually exclusive with `steps[]` (`schemaVersion: 1` unchanged; graph flows declare `compat.engine_min: 1.1.0`; engine const bumped `1.0.0→1.1.0`). Existing `steps[]` flows compile to single-action nodes with default `transitions.success → next` and no rework ([ADR-022](decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump)).
 
-  **Expectation: node-specific settings.** Every node type has a typed
-  `settings` section instead of ad-hoc fields. AI-coding nodes declare allowed
-  executors/agent definitions, model or thinking-effort constraints, allowed
-  MCP servers, allowed tools with agent-aware mappings, shipped skills,
-  workspace and artifact access rules, permission mode, cost/time limits, and
-  explicit restrictions. Human nodes declare project roles or assignees,
-  allowed decisions, whether further tracks/rework routes are allowed, whether
-  manual takeover is allowed, SLA/staleness hints, and return requirements.
-  CLI/check/judge nodes declare commands, timeout, environment policy,
-  artifact inputs/outputs, and failure classification.
+  **Expectation: append-only run ledger.** A new `node_attempts` table records every node execution as an immutable row (`attempt` auto-increments per `(run, node)`); rework never mutates prior rows. `step_runs` is retained for legacy reads; templating resolves highest-attempt-wins ([ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger)).
 
-  **Expectation: immutable run ledger.** Runtime stores every node attempt,
-  decision, input revision, artifact snapshot, checkpoint ref, branch handoff,
-  returned commit set, and stale/current gate marker. The current node pointer
-  may move backward or forward, but history is append-only.
+  **Expectation: review-driven rework.** Human review chooses a Flow-declared decision (not a raw `goto_step`) validated against a server-state allow-list; rework marks downstream gates stale, moves the node pointer back within `Running`, and reruns the validation path before a fresh review. Rework is a node-pointer move — **no `HumanWorking`** status in M11a.
 
-  **Expectation: review-driven rework.** Human review does not set arbitrary
-  raw `goto_step`. The Flow declares allowed decisions and targets; the
-  reviewer chooses one allowed decision, adds structured instructions, and
-  chooses an allowed workspace policy: keep changes, rewind to a node
-  checkpoint, or start a fresh attempt. On rework or manual return, downstream
-  gates/checks/judges from the handoff point become stale and must rerun before
-  merge.
-
-  **Expectation: manual takeover.** A human reviewer can claim a task from the
-  MAIster UI, receive a dedicated editable branch, work locally, commit and
-  push changes, then return the branch through the UI. While claimed, the task
-  board shows owner, elapsed time, branch, and pending return action. On return,
-  MAIster imports the commits, records a returned diff, marks downstream gates
-  stale, and resumes with the Flow-declared validation path.
+  **Expectation: full-featured gate execution** ([ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)). `command_check`/`ai_judgment`/`human_review` execute; `skill_check` runs best-effort (no capability scoping until M14); `artifact_required` (M12) and `external_check` (M16) are schema-valid + status-modelled but stubbed. Full status lifecycle (`pending|running|passed|failed|stale|skipped|overridden`), `blocking|advisory` modes, structured verdicts, staleness propagation, and override-without-erasure are real. Gate results **feed but do not gate promotion** (that is M15/M18).
 
   **Acceptance criteria:**
-  - Flow manifest validation rejects unknown node ids, unknown roles, unknown
-    MCP/tool references, unknown executor references, unsafe cycles without
-    loop limits, unsupported workspace policies, and human decisions that target
-    undeclared nodes.
-  - A simple linear v1 Flow still runs without authors learning graph syntax.
-  - A graph Flow can execute `plan -> implement -> checks -> judge -> review`,
-    reject from review back to `implement` with comments, rerun checks/judge,
-    then reach a fresh user review gate.
-  - Manual takeover can move a run into `HumanWorking`, expose the handoff
-    branch and owner on the board, import returned commits, show the returned
-    diff, and force downstream checks/judges/user-review to rerun.
-  - Run detail UI distinguishes current vs stale gates and shows all node
-    attempts, decisions, checkpoints, handoffs, returned commits, and rerun
-    results in one timeline.
-  - AI node settings are visible in the UI and enforced by runtime boundaries:
-    no undeclared MCP/tool/skill/restriction escape hatch is silently allowed.
-  - The bundled `aif` Flow is migrated to the new node lifecycle model and
-    demonstrates review-driven rework plus manual takeover.
-  - Docs cover the Flow graph schema, node settings schema, run ledger,
-    rework semantics, manual takeover semantics, and backwards compatibility.
-  - Architecture note: the run ledger is populated by the web-side **projector**
-    that consumes the supervisor event stream (`run.events.jsonl`) — see ADR-022.
+  - Linear back-compat: a `steps[]`-only manifest needs no graph syntax and runs to `Review` exactly as today.
+  - Graph validation rejects unknown node ids (in `transitions`/`rework.allowedTargets`/`staleFrom`/`input.requires`), duplicate node/gate ids, unknown gate kinds, cycles without `rework.maxLoops`, unsupported workspace policies, human decisions targeting undeclared transitions, both/neither of `steps`/`nodes`, and graph flows without `compat.engine_min ≥ 1.1.0`. (Unknown **role** refs → M13; MCP/tool/skill/agent/restriction refs → M14; node-level **executor** refs → M11c.)
+  - A graph Flow executes `plan → implement → checks → judge → review`, rejects from review back to `implement` with comments, marks `checks`/`judge` stale and reruns them, then reaches a fresh review gate.
+  - Gates execute with `blocking`/`advisory` modes, structured verdicts, the full status lifecycle, staleness propagation, and override-without-erasure.
+  - Every node execution is an immutable `node_attempts` row; rework never mutates prior rows; templating resolves highest-attempt-wins.
+  - A graph flow on an `untrusted` revision never runs a gate command/agent (launch refused first).
+  - The bundled `aif` Flow is migrated to `nodes[]` and demonstrates review-driven rework.
+  - Docs cover the graph schema, run ledger, rework semantics, and backwards compatibility.
+
+- [ ] **M11b. Manual takeover + run-detail timeline** — second slice of the split M11. Local-worktree human takeover (consistent with [ADR-011](decisions.md#adr-011-workspace-lifecycle-via-git-worktree)) plus the rich run-detail timeline. Depends on M11a.
+
+  **Expectation: manual takeover.** A reviewer claims a task from the MAIster UI, receives a dedicated editable branch, works locally, commits and pushes, then returns the branch through the UI. The run enters a `HumanWorking` surface; the board shows owner, elapsed time, branch, and pending return action. On return, MAIster imports the commits, records a returned diff, marks downstream gates stale, and resumes with the Flow-declared validation path. Workspace policies `rewind-to-node-checkpoint` / `fresh-attempt` (recorded in M11a) execute here.
+
+  **Expectation: run-detail timeline.** Run detail distinguishes current vs stale gates and shows all node attempts, decisions, checkpoints, handoffs, returned commits, and rerun results in one timeline.
+
+  **Acceptance criteria:**
+  - Manual takeover moves a run into `HumanWorking`, exposes the handoff branch and owner on the board, imports returned commits, shows the returned diff, and forces downstream checks/judges/user-review to rerun.
+  - Run detail UI distinguishes current vs stale gates and shows all node attempts, decisions, checkpoints, handoffs, returned commits, and rerun results in one timeline.
+  - The bundled `aif` Flow demonstrates manual takeover.
+  - Docs cover manual takeover semantics.
+
+- [ ] **M11c. Node typed settings + runtime enforcement boundary** — third slice of the split M11. Every node type gets a typed `settings` section, enforced at runtime; anticipates the M14 capability registry. Depends on M11a (which parses `settings` as an opaque passthrough with a one-time `SETTINGS_NOT_ENFORCED_WARN`).
+
+  **Expectation: node-specific settings.** AI-coding nodes declare allowed executors/agent definitions, model/thinking-effort constraints, MCP servers, tools (agent-aware mappings), shipped skills, workspace/artifact access, permission mode, cost/time limits, and explicit restrictions. Human nodes declare roles/assignees, allowed decisions, further-track/takeover permission, SLA/staleness hints, return requirements. CLI/check/judge nodes declare commands, timeout, env policy, artifact I/O, failure classification.
+
+  **Expectation: enforcement boundary.** Runtime refuses any undeclared MCP/tool/skill/restriction escape hatch; node-level **executor** refs are validated (config-state, resolvable via the M6 override chain without the M14 registry). Capability-registry refs (MCPs/tools/skills/agents/restrictions) are validated in M14.
+
+  **Acceptance criteria:**
+  - Manifest validation rejects unknown node-level executor refs.
+  - AI node settings are visible in the UI and enforced by runtime boundaries: no undeclared MCP/tool/skill/restriction escape hatch is silently allowed.
+  - The opaque `settings` passthrough from M11a is replaced by typed validation; `SETTINGS_NOT_ENFORCED_WARN` is removed.
+  - Docs cover the node settings schema.
 
 - [ ] **M12. Typed artifacts and evidence graph** — make Flow
   inputs/outputs first-class runtime objects, stored as typed metadata with
@@ -178,7 +155,7 @@
   release stale work, and the ledger records that transfer. Conflicting
   simultaneous responses or branch returns are rejected with a typed conflict.
   Returning a manual takeover updates the assignment, records artifacts through
-  M12, and resumes the M11 validation path.
+  M12, and resumes the M11a validation path.
 
   **Acceptance criteria:**
   - Flow validation rejects human nodes that reference unknown project roles.
@@ -201,7 +178,7 @@
 - [ ] **M14. Scoped capability materialization** — make node and session
   settings executable by giving MCP servers, skills, settings files, tools,
   agent definitions, restrictions, and Flow-shipped resources a project-visible
-  registry plus runner-owned materialization. This turns M11 node settings from
+  registry plus runner-owned materialization. This turns M11c node settings from
   descriptive YAML into enforceable runtime boundaries where the adapter
   supports enforcement.
 
@@ -279,58 +256,41 @@
     automated malicious-code scanning, container sandboxing, organization-wide
     capability policy, and cross-project capability promotion workflows.
 
-- [ ] **M15. Gate execution and readiness policy** — make readiness an explicit
-  Flow-distributed contract. Artifacts are evidence; gates are decisions over
-  evidence. A run can move forward, enter review, or merge only when its
-  Flow-declared blocking gates are current and passed or explicitly overridden.
+- [ ] **M15. Readiness policy and verdict calibration** — make readiness an
+  explicit Flow-distributed contract that decides when a run may promote.
+  **Re-scoped ([ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)):**
+  gate *execution* — the six gate kinds, the `pending|running|passed|failed|stale|skipped|overridden`
+  status lifecycle, `blocking|advisory` modes, structured verdicts, staleness
+  propagation, and override-without-erasure — moved to **M11a**. M15 keeps only
+  the readiness-policy DSL, verdict calibration, and `external_check` ingestion.
 
-  **Expectation: gate definitions ship with the Flow.** Flow nodes declare
-  gates in `pre_finish`, `finish`, and optional transition guards. Gate
-  definitions are part of the Flow plugin so they travel with the delivery
-  process. Project config can provide reusable command profiles, skill
-  mappings, capability profiles, env profiles, and default timeout/cost
-  overrides, but the Flow declares which gates are required.
+  **Expectation: readiness policy decides promotion.** A run can move forward,
+  enter review, or merge only when its Flow-declared blocking gates (executed in
+  M11a) are current and passed or explicitly overridden. Project config supplies
+  reusable command profiles, skill mappings, capability/env profiles, and default
+  timeout/cost overrides; the Flow declares which gates are required. In M11a
+  gate results are *recorded* but do not gate promotion; M15 adds the
+  promotion-gating readiness check.
 
-  **Expectation: gate kinds.** Initial gate kinds are `command_check`
-  (formatter/test/lint/typecheck/build/custom command), `skill_check`
-  (internal skill or slash command such as review/fix/qa/checklist),
-  `ai_judgment` (structured model verdict over artifacts/diff/logs),
-  `artifact_required` (required evidence exists and is current),
-  `external_check` (CI or another external system reports a typed result
-  through the operations API), and `human_review`
-  (approve/rework/takeover/override decision).
+  **Expectation: verdict calibration.** Confidence thresholds and pass/fail
+  policy per gate / Flow, so an `ai_judgment` verdict maps to a readiness state
+  consistently across Flows.
 
-  **Expectation: gate policy.** Every gate has `mode: blocking | advisory`,
-  owner node, input artifacts, produced artifact, timeout/cost limits,
-  capability profile, retry policy, and stale-from dependencies. Gate status is
-  `pending | running | passed | failed | stale | skipped | overridden`.
-
-  **Expectation: structured verdicts.** AI and skill gates must produce a typed
-  result, not only prose: verdict, confidence, reasons, checked artifacts,
-  recommended next action, and optional patch/rework instruction. Prose is
-  stored as evidence, but UI readiness reads the typed result.
-
-  **Expectation: override without erasure.** A human can override a failed,
-  skipped, or stale advisory/blocking gate only through a declared
-  `human_review` decision. Override records a human note artifact and audit
-  event; it never deletes failed evidence.
+  **Expectation: external_check ingestion.** `external_check` gates (schema-valid
+  and `pending` in M11a) are satisfied through the M16 operations API report
+  contract; M15 owns the readiness policy that consumes those reports and the
+  staleness rules over external commits.
 
   **Acceptance criteria:**
-  - Flow validation rejects unknown gate kinds, missing produced artifacts,
-    unsupported gate modes/statuses, unknown skill/command/capability refs, and
-    merge-required gates that are unreachable.
-  - Existing linear v1 guards migrate as advisory `command_check` or
-    `artifact_required` gates without breaking old Flows.
-  - Gate execution records an immutable gate result linked to input artifacts,
-    output artifact, node attempt, capability profile, and status.
-  - Rework, manual takeover return, new commits, or changed upstream artifacts
-    mark dependent gates stale.
-  - Review and merge refuse when any required blocking gate is missing,
-    pending, running, failed, stale, or skipped.
-  - Internal skill/command gates run through the same scoped capability
-    materialization rules as AI nodes when they use an agent session.
+  - Review and merge refuse when any required blocking gate is missing, pending,
+    running, failed, stale, or skipped (M11a records gate results; M15 enforces
+    the promotion gate).
   - Run detail and board cards show a readiness summary:
     `ready | blocked | stale | failed | waiting | overridden`.
+  - Verdict calibration maps `ai_judgment` confidence to a readiness state per
+    Flow-declared policy.
+  - `external_check` reports ingested via the M16 operations API satisfy or fail
+    the pending gate and participate in staleness.
   - Deferred explicitly: complex policy language, org-wide gate templates,
     deploy-environment gates, flaky-test intelligence, judge calibration lab,
     provider-specific CI apps, and external CI ingestion beyond the generic
@@ -399,7 +359,7 @@
     `confidence` + `criticality` and the escalate-to-human decision is a Flow
     gate, never the external actor's.
 
-- [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11's typed decisions, manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
+- [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11a's typed decisions, M11b's manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
 
 - [ ] **M18. Branch targeting, diff review, and manual promotion** — replace
   the narrow "merge to main" assumption with engineer-controlled branch

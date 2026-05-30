@@ -65,6 +65,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/identity-access.md`](system-analytics/identity-access.md) | Users, Auth.js sessions, RBAC gates, account settings. |
 | [`system-analytics/projects.md`](system-analytics/projects.md) | Project registration, Flow plugin install. |
 | [`system-analytics/flows.md`](system-analytics/flows.md) | Flow plugin packaging, step DSL, executor override. |
+| [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) | Flow graph v1: node lifecycle, `node_attempts` ledger, gate execution, staleness, review-driven rework (M11a). |
 | [`system-analytics/tasks.md`](system-analytics/tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
 | [`system-analytics/runs.md`](system-analytics/runs.md) | Run state machine, ACP keep-alive + checkpoint. |
 | [`system-analytics/executors.md`](system-analytics/executors.md) | Executor identity, model routing (env-router vs CCR). |

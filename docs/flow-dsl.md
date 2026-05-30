@@ -20,11 +20,31 @@ the flow) and a `type` chosen from:
 | `guard` | observational gate — writes metrics, never blocks today                   |
 | `human` | suspends the run, writes `needs-input.json`, inserts a `hitl_requests` row|
 
-## Planned M11: Flow graph node lifecycle
+## Flow graph node lifecycle (M11a — Designed)
 
-The current runner executes ordered `steps[]`. M11 keeps that path backwards
-compatible, but introduces Flow graph v1 as the product-grade execution model.
-Every legacy step compiles to a node with default lifecycle sections.
+> **Status (M11a).** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
+> compile, the append-only `node_attempts` ledger, the review-driven rework
+> loop, and gate execution — is **Designed** in M11a and lands on the
+> `feature/m11a-flow-graph-lifecycle` branch; Phase 7 reconciliation flips these
+> tags to **Implemented**. Sub-parts owned by later milestones are tagged
+> inline: the node `settings` block → **M11c (Designed)** (parsed as opaque
+> passthrough in M11a, enforced in M11c); manual takeover / `human_edit` /
+> `merge` nodes → **M11b (Designed)**; typed artifact instances
+> (`input.requires` / `output.produces`) → **M12**. Decisions:
+> [ADR-022](decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump),
+> [ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger),
+> [ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped),
+> [ADR-025](decisions.md#adr-025-split-m11-into-m11a--m11b--m11c). The node
+> lifecycle state machine, traversal, staleness, and rework loop are drawn in
+> [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
+
+The current runner executes ordered `steps[]`. M11a keeps that path backwards
+compatible and introduces Flow graph v1 as the product-grade execution model: a
+manifest declares an optional top-level `nodes[]` (mutually exclusive with
+`steps[]`), and the runner compiles **both** forms to a normalized node graph.
+Every legacy `steps[]` step compiles to a single-action node with default
+`transitions.success → next` and no rework, so linear Flows run exactly as
+before. Graph flows MUST declare `compat.engine_min: 1.1.0`.
 
 ```yaml
 nodes:
@@ -36,6 +56,9 @@ nodes:
         - steps.plan.output
         - artifact: plan-summary
           kind: generic_file
+    # settings: M11c (Designed) — in M11a this block is parsed as an opaque
+    # passthrough (preserved, not enforced) and emits SETTINGS_NOT_ENFORCED_WARN;
+    # typed validation + enforcement land in M11c.
     settings:
       executors: [codex-fast, claude-strong]
       thinkingEffort: high
@@ -104,13 +127,16 @@ nodes:
     transitions:
       approve: review
       rework: implement
-      takeover: human-edit
+      takeover: human-edit   # takeover decision + human-edit target: M11b (Designed)
     rework:
       allowedTargets: [implement]
+      # M11a executes `keep`; rewind-to-node-checkpoint / fresh-attempt are
+      # validated + recorded but execution is deferred to M11b.
       workspacePolicies: [keep, rewind-to-node-checkpoint, fresh-attempt]
       maxLoops: 3
       commentsVar: review_comments
 
+  # human_edit node (manual takeover): M11b (Designed) — not executed in M11a.
   - id: human-edit
     type: human_edit
     settings:
@@ -143,6 +169,13 @@ Lifecycle sections:
 | `transitions` | Maps declared outcomes to declared node ids. |
 | `rework` | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
 
+**Node `settings` — M11c (Designed).** In M11a the `settings` block is parsed
+as an opaque passthrough: it is preserved on the node (never silently stripped),
+records a one-time `SETTINGS_NOT_ENFORCED_WARN`, and is **not enforced**. Typed
+validation and the runtime enforcement boundary (refuse undeclared
+MCP/tool/skill/restriction) land in M11c, resolving registry refs through the
+M14 capability registry.
+
 Node-specific settings are intentionally first-class product configuration:
 AI-coding nodes constrain executors, agent definitions, MCP servers, tools,
 skills, thinking effort, permissions, workspace access, and limits. Human nodes
@@ -172,18 +205,72 @@ If a Flow requires strict enforcement and the selected executor can only receive
 the restriction as an instruction, MAIster refuses the node launch instead of
 silently weakening the capability boundary.
 
-Human review does not execute arbitrary `goto_step`. The Flow declares allowed
-decisions and targets; the reviewer chooses one allowed decision, adds
-structured instructions, and chooses an allowed workspace policy. Any rework or
-manual takeover return marks downstream gates, checks, AI judgments, and user
-review as stale. The run cannot merge until the Flow-declared validation path
-runs again and produces current results.
+**Review-driven rework — M11a (Designed).** Human review does not execute
+arbitrary `goto_step`. The Flow declares allowed decisions and targets; the
+reviewer chooses one allowed decision, adds structured instructions, and chooses
+an allowed workspace policy. The submitted decision is validated against the
+manifest-derived allow-list stored on the `hitl_requests` row at creation time
+(server-state, never body-trusted). Any rework return marks downstream gates,
+checks, and AI judgments **stale**; the run cannot reach a fresh review until
+the Flow-declared validation path reruns and produces current results. In a
+graph flow the legacy `human` step `on_reject.goto_step` is **superseded** by
+node `transitions` + `finish.human.decisions`; linear `steps[]` flows retain the
+documented (still-unexecuted) `on_reject.goto_step` behavior.
 
-Manual takeover is modeled as a human-edit node. A reviewer claims the task in
-MAIster, receives an editable branch, checks it out on the developer machine,
-commits and pushes changes, then returns the branch through the UI. The run
-ledger records owner, elapsed time, handoff branch, returned commits, returned
-diff, checkpoint refs, stale gate markers, and rerun results.
+**Manual takeover — M11b (Designed).** Manual takeover is modeled as a
+human-edit node. A reviewer claims the task in MAIster, receives an editable
+branch, checks it out on the developer machine, commits and pushes changes, then
+returns the branch through the UI. The run ledger records owner, elapsed time,
+handoff branch, returned commits, returned diff, checkpoint refs, stale gate
+markers, and rerun results. Not executed in M11a (no `HumanWorking` run status).
+
+## Gate execution (M11a — Designed)
+
+> **Status (M11a).** Gate execution is **Designed** in M11a (per
+> [ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped));
+> Phase 7 flips it to **Implemented**. The gate STATUS lifecycle, structured
+> verdicts, blocking/advisory modes, staleness propagation, and
+> override-without-erasure live here, not in M15. M15 (below) keeps only the
+> readiness-policy DSL, verdict calibration, and `external_check` ingestion.
+
+A node's `pre_finish.gates` run in declared order before the node can finish.
+Each gate writes a `gate_results` row. Gate kinds and their M11a execution
+status:
+
+| kind | purpose | M11a |
+| ---- | ------- | ---- |
+| `command_check` | Runs formatter, test, lint, typecheck, build, or custom command via `bash -c`; exit 0 = `passed`, else `failed`. | **Executes** |
+| `ai_judgment` | Produces a structured model verdict over the diff/logs/requirements via an agent session (defaults to `new-session`). | **Executes** |
+| `human_review` | Captures approve/rework decisions through the review HITL. | **Executes** |
+| `skill_check` | Runs an internal slash command (e.g. `/aif-review`) via an agent session. | **Executes (best-effort)** — no capability scoping until M14 |
+| `artifact_required` | Verifies required evidence exists and is current. | **Stubbed** → `skipped` + WARN + `TODO(M12)` (needs M12 artifact instances) |
+| `external_check` | Waits for CI / another system to report through the operations API. | **Stubbed** → `pending` + WARN + `TODO(M16)` (no ingestion endpoint until M16) |
+
+Every gate has `mode: blocking | advisory`, optional input artifacts, an
+optional produced artifact, stale-from dependencies, and a status:
+`pending | running | passed | failed | stale | skipped | overridden`. A
+`blocking` gate failure aborts the node finish (the run goes `Failed` unless a
+rework target is available); an `advisory` gate records its result and the node
+continues.
+
+AI and skill gates produce **structured verdicts**: `{ verdict, confidence,
+reasons, recommendedAction }`. Readable prose is still stored as evidence, but
+UI readiness reads the typed result. An unparseable verdict is recorded as
+`gate_results.status = 'failed'` with the raw prose kept as evidence — **no new
+`MaisterError` code** is thrown
+([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
+
+**Staleness.** When a reviewer reworks (manual-takeover return is M11b),
+`markDownstreamStale` flips dependent `gate_results` `passed → stale`; a stale
+blocking gate must rerun before the node can finish again.
+
+**Override without erasure.** A human override is allowed only through a declared
+`human_review` decision; it sets the gate `overridden` and records the deciding
+HITL, but it **never deletes** the original failed/stale verdict.
+
+> **M11a gates feed but do NOT gate promotion.** Writing a `gate_results` row
+> does not block merge in M11a. Promotion readiness (refusing merge on a missing/
+> failed/stale required gate) is the M15/M18 readiness policy described below.
 
 ## Planned M12: typed artifacts and evidence graph
 
@@ -208,38 +295,30 @@ benchmark datasets, rich preview sandboxing, cross-run artifact reuse, full
 payload-schema validation for every artifact kind, provider-specific CI apps,
 and CI ingestion beyond the generic external gate report contract.
 
-## Planned M15: gate execution and readiness
+## Planned M15: readiness policy and verdict calibration
+
+> **Re-scoped (ADR-024).** M11a annexed gate *execution* — the kinds, status
+> lifecycle, structured verdicts, blocking/advisory modes, staleness, and
+> override-without-erasure now live under **Gate execution (M11a)** above. M15
+> keeps only the readiness-policy DSL, verdict calibration, and `external_check`
+> ingestion.
 
 Flow plugins distribute readiness policy with the Flow. Project config supplies
 reusable command profiles, skill mappings, capabilities, env profiles, and
 default limits, but the Flow declares which gates are required for its delivery
-process.
-
-Initial gate kinds:
-
-| kind | purpose |
-| ---- | ------- |
-| `command_check` | Runs formatter, test, lint, typecheck, build, or custom command. |
-| `skill_check` | Runs an internal skill or slash command, such as review, QA, checklist, or fix verification. |
-| `ai_judgment` | Produces a structured model verdict over artifacts, diff, logs, or requirements. |
-| `external_check` | Waits for CI or another external system to report a typed result through the operations API. |
-| `artifact_required` | Verifies required evidence exists and is current. |
-| `human_review` | Captures approve/rework/takeover/override decisions. |
-
-Every gate has `mode: blocking | advisory`, input artifacts, produced artifact,
-timeout/cost limits, capability profile, retry policy, stale-from dependencies,
-and status: `pending`, `running`, `passed`, `failed`, `stale`, `skipped`, or
-`overridden`.
-
-AI and skill gates produce structured results: verdict, confidence, reasons,
-checked artifacts, recommended next action, and optional rework instruction.
-Readable prose is still stored as evidence, but UI readiness reads the typed
-result.
+process, and the readiness policy decides when a run may promote.
 
 Review and merge refuse when any required blocking gate is missing, pending,
-running, failed, stale, or skipped. Human override is allowed only through a
-declared `human_review` decision and must produce a human-note artifact; it
-does not delete the failed evidence.
+running, failed, stale, or skipped. **M11a records gate results but does not
+enforce this promotion-gating** — refusing a merge on an unsatisfied required
+gate is the M15/M18 readiness check. Human override stays a declared
+`human_review` decision that produces a human-note artifact and never deletes
+the failed evidence (override-without-erasure itself ships in M11a).
+
+Verdict calibration tunes confidence thresholds per gate / Flow. `external_check`
+ingestion — the report contract that lets CI or another external system satisfy
+a `pending` gate — is delivered with the M16 operations API (see Planned M16
+below); M15 owns the readiness policy that consumes it.
 
 ## Planned M16: external operations API and MCP facade
 
@@ -345,7 +424,11 @@ Inserts a `hitl_requests` row of `kind: "human"`, transitions the run to
 `NeedsInput`, and returns. The response route writes
 `input-<stepId>.json` after the HITL row is claimed, then schedules
 `runFlow`; the runner owns the `NeedsInput -> Running` transition.
-`on_reject.goto_step` is recorded but not yet executed by the runner.
+`on_reject.goto_step` is recorded but not executed by the runner for linear
+`steps[]` flows. In a graph flow (`nodes[]`) it is **superseded** by node
+`transitions` + `finish.human.decisions`, which drive the validated
+review-driven rework loop (M11a — see
+[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md)).
 
 ## Pre- and post-guards (observational)
 
@@ -380,13 +463,15 @@ Context paths available inside templates:
 | `executor.agent`                 | `claude \| codex`                          |
 | `executor.model`                 | `executors.model`                          |
 | `executor.router`                | `ccr` if set, else undefined               |
-| `steps.<id>.output`              | `step_runs.stdout`, truncated to 8 KiB     |
-| `steps.<id>.vars.<name>`         | `step_runs.vars` jsonb                     |
-| `steps.<id>.exitCode`            | `step_runs.exit_code`                      |
+| `steps.<id>.output`              | `node_attempts.stdout` (highest attempt), `step_runs.stdout` fallback, truncated to 8 KiB |
+| `steps.<id>.vars.<name>`         | `node_attempts.vars` jsonb (highest attempt), `step_runs.vars` fallback |
+| `steps.<id>.exitCode`            | `node_attempts.exit_code` (highest attempt), `step_runs.exit_code` fallback |
 | `env.<KEY>`                      | filtered process.env (see below)           |
 
-Highest-attempt-wins: when a step has been retried, `steps.<id>` resolves
-to the row with the highest `attempt`.
+Highest-attempt-wins: when a node has been retried (or reworked, M11a),
+`steps.<id>` resolves to the highest-`attempt` `node_attempts` row, falling back
+to `step_runs` for legacy runs that predate the ledger
+([ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger)).
 
 ## env whitelist + secret blocklist
 
@@ -444,6 +529,13 @@ Pending  ─tryStartRun─►  Running  ─runFlow─►  Review     (success)
 The designed checkpoint path adds `NeedsInput -> NeedsInputIdle ->
 Running` via `acp_session_id` resume. The checkpoint endpoint is still a
 deferred stub.
+
+In a graph flow (M11a — Designed) the review-driven rework loop is a **node-
+pointer move inside `Running`**, not a new run status: a `rework` decision on a
+review node sets the node pointer back to the rework target, marks downstream
+gates stale, and continues — there is no `HumanWorking` status in M11a (that is
+M11b). The full node lifecycle state machine lives in
+[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
 ## Example minimal `flow.yaml`
 

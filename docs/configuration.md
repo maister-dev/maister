@@ -289,6 +289,15 @@ Incompatibility surfaces as `CONFIG` (422). Semantic validation of the opaque
 contract lists is deferred to the milestone that introduces each concept (see
 [ADR-021](decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)).
 
+**M11a engine bump (Designed).** M11a bumps the `MAISTER_ENGINE_VERSION`
+constant `1.0.0 → 1.1.0` in `web/lib/flows/engine-version.ts`
+([ADR-022](decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump)).
+This is a **code constant, not an env var** — there is no compose / `.env`
+wiring for it. A Flow that uses the graph manifest (`nodes[]`) MUST declare
+`compat.engine_min: 1.1.0`, so an older engine refuses it through the same
+`engine_min..engine_max` check above. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays
+`[1]` (the graph is additive — no `schemaVersion` bump).
+
 ### Guard semantics
 
 `cost` / `time` / `regex` guard fields are parsed and evaluated as

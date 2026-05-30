@@ -634,6 +634,23 @@ paths:
           after the artifact write succeeds. A losing concurrent
           submission gets 409 BEFORE it can corrupt the artifact.
 
+        **(M11a — Designed) graph `human_review` decisions.** For a graph
+        review HITL the reviewer's `decision` / `comments` / `workspacePolicy`
+        ride **inside** the existing `response` form payload — there are NO new
+        top-level body fields (the body schema stays `{ optionId?, response? }`).
+        The route validates `response.decision` against `allowedDecisions`, the
+        resolved transition target against `transitions`, and (when reworking)
+        `response.workspacePolicy` against `workspacePolicies` and the target
+        against `reworkTargets` — all read from the manifest-derived allow-list
+        stored in `hitl_requests.schema` at creation (server-state, never
+        body-trusted). Validation happens BEFORE any artifact write or state
+        mutation; an undeclared/invalid decision returns 422 (`NEEDS_INPUT`)
+        with `respondedAt` still null and no `input-<stepId>.json` written. On
+        success the route copies the resolved values into the
+        `decision`/`workspace_policy`/`rework_target` columns; the graph runner
+        reads them on resume to drive the rework loop. No new `MaisterError`
+        code is introduced.
+
         On every success path the body returns `runStatus: "NeedsInput"`
         — the runner (not this route) is the single owner of the
         `NeedsInput → Running` transition.
@@ -667,6 +684,18 @@ paths:
                   response:
                     approved: true
                     comments: "lgtm"
+              review-rework:
+                summary: (M11a) Graph review — rework with comments
+                value:
+                  response:
+                    decision: "rework"
+                    comments: "Tighten the error handling in the parser."
+                    workspacePolicy: "keep"
+              review-approve:
+                summary: (M11a) Graph review — approve
+                value:
+                  response:
+                    decision: "approve"
       responses:
         "200":
           description: |
@@ -752,7 +781,11 @@ paths:
           description: |
             Response payload did not validate against the stored HITL
             schema (`NEEDS_INPUT`). `respondedAt` remains null — the
-            user can resubmit with a fixed payload.
+            user can resubmit with a fixed payload. **(M11a — Designed)**
+            also returned when a graph `human_review` `response.decision`
+            (or its resolved target / `workspacePolicy`) is not in the
+            allow-list stored in `hitl_requests.schema`; no artifact is
+            written and no state is mutated.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -1316,6 +1349,51 @@ components:
             present rejection as a loop-back action in M7; record
             rejection intent in the response payload for audit, but
             understand the runner will not branch on it until M8.
+
+            **(M11a — Designed) graph `human_review`:** for a review HITL the
+            `response` object additionally carries the review-decision
+            sub-schema (`ReviewDecisionResponse`) — `decision`, optional
+            `comments`, optional `workspacePolicy` — alongside any declared form
+            fields. These are validated against the manifest-derived allow-list
+            stored in `hitl_requests.schema` (`allowedDecisions`, `transitions`,
+            `reworkTargets`, `workspacePolicies`); an undeclared value → 422.
+            They remain part of the `response` payload — NOT new top-level body
+            fields.
+          anyOf:
+            - type: object
+              description: Structured form payload — keys match the row's form schema.
+              additionalProperties: true
+            - $ref: "#/components/schemas/ReviewDecisionResponse"
+    ReviewDecisionResponse:
+      type: object
+      description: |
+        (M11a — Designed) The review-decision fields a graph `human_review`
+        HITL carries INSIDE the `respond` route's `response` object. Validated
+        against the row's server-state allow-list in `hitl_requests.schema`;
+        mirrored into `hitl_requests.decision`/`workspace_policy`/`rework_target`
+        on success.
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          minLength: 1
+          description: |
+            Chosen decision; MUST be in the row's `schema.allowedDecisions`
+            (e.g. `approve`, `rework`). Its resolved `transitions[decision]`
+            MUST be a declared node.
+        comments:
+          type: string
+          description: |
+            Free-text review comments; injected into the rework target's
+            context via the node's `rework.commentsVar` when `decision` reworks.
+        workspacePolicy:
+          type: string
+          description: |
+            Required when `decision` triggers rework; MUST be in
+            `schema.workspacePolicies`. M11a executes `keep`;
+            `rewind-to-node-checkpoint` / `fresh-attempt` are recorded but their
+            execution is M11b.
+          enum: [keep, rewind-to-node-checkpoint, fresh-attempt]
     MaisterErrorBody:
       type: object
       required: [code, message]

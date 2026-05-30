@@ -17,7 +17,10 @@ erDiagram
     EXECUTORS ||--o{ RUNS : "spawned with"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS ||--|| WORKSPACES : "one worktree per run"
-    RUNS ||--o{ STEP_RUNS : "per-step record"
+    RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
+    RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
+    NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
 
     TASKS {
         text id PK
@@ -76,7 +79,51 @@ erDiagram
         timestamp started_at
         timestamp ended_at
     }
+
+    NODE_ATTEMPTS {
+        text id PK
+        text run_id FK
+        text node_id "node id in compiled FlowGraph"
+        text node_type "ai_coding|cli|check|judge|human"
+        integer attempt "auto-increment per (run,node)"
+        text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
+        text decision "human decision on finish"
+        text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
+        text rework_from_node "origin node on rework re-entry"
+        text acp_session_id
+        text stdout "truncated to 1 MiB"
+        jsonb vars "DEFAULT {}"
+        integer exit_code
+        text error_code "MaisterErrorCode literal"
+        timestamp started_at
+        timestamp ended_at
+    }
+
+    GATE_RESULTS {
+        text id PK
+        text run_id FK
+        text node_attempt_id FK
+        text gate_id "gate id within the node"
+        text kind "command_check|skill_check|ai_judgment|artifact_required|external_check|human_review"
+        text mode "blocking|advisory"
+        text status "pending|running|passed|failed|stale|skipped|overridden"
+        jsonb verdict "verdict|confidence|reasons|recommendedAction"
+        jsonb input_artifact_refs "M12 artifact ids"
+        text output_artifact_ref "M12 artifact id"
+        jsonb stale_from "node ids whose rework stales this"
+        text overridden_by "hitl_requests.id of override"
+        timestamp created_at
+        timestamp ended_at
+    }
 ```
+
+> **(M11a — Designed, migration `0008`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
+> land on the `feature/m11a-flow-graph-lifecycle` branch; Phase 7 flips their
+> status to Implemented. `node_attempts` is append-only (`step_runs` retained for
+> legacy reads). See
+> [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md) and
+> [ADR-023](../decisions.md#adr-023-append-only-node_attempts-run-ledger) /
+> [ADR-024](../decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped).
 
 ## Constraints
 
@@ -97,6 +144,14 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `step_runs_run_idx` on `(run_id)` — runner's getStepRunsForRun lookups
   to build `FlowContext.steps.<id>.*` for Mustache templating across
   steps.
+- **(M11a)** `node_attempts_run_step_attempt_uq` on `(run_id, node_id,
+  attempt)` — append-only one row per (run, node, attempt); rework never
+  mutates a prior row.
+- **(M11a)** `node_attempts_run_idx` on `(run_id)` — templating
+  highest-attempt-wins union (`node_attempts` first, `step_runs` fallback).
+- **(M11a)** `gate_results_run_idx` on `(run_id)` and
+  `gate_results_node_attempt_idx` on `(node_attempt_id)` — per-run and
+  per-node-attempt gate lookups.
 
 ## Status enum reference
 
@@ -137,10 +192,10 @@ full state diagram.
   column lands.
 - Planned M18 adds branch-target metadata to `workspaces` or the run ledger:
   base branch, base commit, target branch, and promotion mode.
-- Planned roadmap tables attach to runs for graph maturity: artifacts,
-  artifact edges, gate results, assignments, external operation events, and
-  richer node attempts. These are intentionally not drawn in the current ERD
-  until migrations exist.
+- **(M11a — Designed)** `node_attempts` and `gate_results` are now drawn above
+  (migration `0008`). The remaining graph-maturity tables — artifacts, artifact
+  edges, assignments, external operation events — are still future work and not
+  drawn until their migrations exist.
 
 ## Linked artifacts
 

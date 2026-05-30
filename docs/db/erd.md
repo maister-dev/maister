@@ -1,7 +1,9 @@
 # Full database ERD
 
-All 13 tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
-`VERIFICATION_TOKENS`, `PROJECT_MEMBERS`).
+All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
+`VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), plus the two **M11a — Designed**
+execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0008`;
+Phase 7 flips them to Implemented).
 For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md).
@@ -26,7 +28,10 @@ erDiagram
     FLOWS ||--o{ TASKS : "selected at create"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
-    RUNS ||--o{ STEP_RUNS : "per-step record"
+    RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
+    RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
+    NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
     RUNS ||--o{ HITL_REQUESTS : raises
 
     USERS {
@@ -174,14 +179,53 @@ erDiagram
         timestamp ended_at
     }
 
+    NODE_ATTEMPTS {
+        text id PK
+        text run_id FK
+        text node_id "node id in compiled FlowGraph"
+        text node_type "ai_coding|cli|check|judge|human"
+        integer attempt "auto-increment per (run,node)"
+        text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
+        text decision
+        text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
+        text rework_from_node
+        text acp_session_id
+        text stdout "truncated to 1 MiB"
+        jsonb vars "DEFAULT {}"
+        integer exit_code
+        text error_code
+        timestamp started_at
+        timestamp ended_at
+    }
+
+    GATE_RESULTS {
+        text id PK
+        text run_id FK
+        text node_attempt_id FK
+        text gate_id
+        text kind "command_check|skill_check|ai_judgment|artifact_required|external_check|human_review"
+        text mode "blocking|advisory"
+        text status "pending|running|passed|failed|stale|skipped|overridden"
+        jsonb verdict "verdict|confidence|reasons|recommendedAction"
+        jsonb input_artifact_refs
+        text output_artifact_ref
+        jsonb stale_from
+        text overridden_by
+        timestamp created_at
+        timestamp ended_at
+    }
+
     HITL_REQUESTS {
         text id PK
         text run_id FK
         text step_id
         text kind "permission|form|human"
-        jsonb schema "form_schema for form|human"
+        jsonb schema "form_schema (+ review allow-list for human_review)"
         text prompt
         jsonb response
+        text decision "M11a review decision"
+        text workspace_policy "M11a rework policy"
+        text rework_target "M11a resolved rework target"
         timestamp responded_at
         timestamp created_at
     }
@@ -189,11 +233,11 @@ erDiagram
 
 ## Planned roadmap extensions
 
-The current ERD intentionally shows only implemented tables. Roadmap M10-M18
-adds additive persistence for Flow package revisions and project enablement,
-graph node attempts, artifacts and artifact edges, gate results, assignments,
-capability records, API tokens, external operation events, and branch promotion
-metadata. See [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
+The ERD shows implemented tables plus the M11a-Designed `node_attempts` /
+`gate_results` (migration `0008`). The remaining roadmap M12-M18 additive
+persistence — artifacts and artifact edges, assignments, capability records, API
+tokens, external operation events, and branch promotion metadata — is not drawn
+until its migrations exist. See [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes
 
@@ -211,6 +255,10 @@ metadata. See [`../database-schema.md#planned-roadmap-persistence`](../database-
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
 | `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
 | `step_runs` | `step_runs_run_idx` | `(run_id)` | Per-run step lookups. |
+| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(run_id, node_id, attempt)` UNIQUE | **(M11a)** Append-only ledger uniqueness. |
+| `node_attempts` | `node_attempts_run_idx` | `(run_id)` | **(M11a)** Templating highest-attempt union. |
+| `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |
+| `gate_results` | `gate_results_node_attempt_idx` | `(node_attempt_id)` | **(M11a)** Gates for a node attempt. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
 | `projects` | implicit | `slug`, `repo_path` UNIQUE | Registration collisions. |
 | `executors` | `executors_project_ref_uq` | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace. |

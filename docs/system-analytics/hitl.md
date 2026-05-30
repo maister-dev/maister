@@ -38,7 +38,7 @@ enum | array`.
 | ---- | ------- | ----- | --------------- | ---- |
 | `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
 | `form` | Agent writes `needs-input.json` mid-step | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
-| `human` | Flow step `type: human` with `on_reject` | Yes (`form_schema`) | Designed (`on_reject.goto_step` not yet executed) | Artifact only |
+| `human` | Flow step `type: human` (linear) or `human_review` node finish (graph) | Yes (`form_schema`) | Linear: Designed (`on_reject.goto_step` not executed). Graph (M11a): **declared decisions** drive the rework loop | Artifact only |
 
 The decision tree:
 
@@ -132,9 +132,26 @@ sequenceDiagram
     W->>DB: Phase 3: set responded_at
     W-->>R: schedule runFlow
     R->>DB: claim NeedsInput -> Running
-    R->>R: continue next step; rejection is audit data
+    R->>R: continue next step (rejection is audit data)
     Note over R: Designed loop: on_reject.goto_step + comments_var<br/>will route to an earlier step when implemented.
 ```
+
+### Declared decisions vs raw `goto_step` (M11a — Designed)
+
+The legacy `human` step reroutes via a single `on_reject.goto_step` that the
+runner does not execute. A graph `human_review` node replaces that with
+**declared decisions**: the manifest declares `finish.human.decisions` (e.g.
+`approve`, `rework`) and a `transitions` map, and the runner stores the allowed
+sets (`allowedDecisions`, `transitions`, `reworkTargets`, `workspacePolicies`)
+in `hitl_requests.schema` at creation. The reviewer's `decision` /
+`comments` / `workspacePolicy` ride **inside** the `response` payload; the
+respond route validates them against that server-state allow-list **before** any
+mutation (undeclared → 422), persists the resolved values to the
+`decision`/`workspace_policy`/`rework_target` columns, and the graph runner reads
+them on resume to drive the rework loop. No body field names a filesystem path
+and no raw `goto_step` is accepted from the client. See
+[`flow-graph.md`](flow-graph.md) and
+[`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 
 ## Keep-alive activity tracking (Designed)
 
@@ -406,7 +423,8 @@ runner-agent enforcement is queued for a follow-up patch.
   `MAISTER_KEEPALIVE_MINUTES`.
 - API (external): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
   §`session.request_permission`.
-- Related: [`runs.md`](runs.md), [`flows.md`](flows.md).
+- Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
+  [`flow-graph.md`](flow-graph.md) (M11a review decisions).
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),
   `web/lib/atomic.ts` (`atomicWriteJson`),
   `web/lib/db/schema.ts` (hitl_requests table).

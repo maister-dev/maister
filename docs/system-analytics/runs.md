@@ -56,6 +56,27 @@ stateDiagram-v2
 Status names exactly match the `runs.status` enum in
 `web/lib/db/schema.ts`.
 
+### M11a graph rework loop (Designed)
+
+The M11a review-driven rework loop does **not** add a run status. It is a
+**node-pointer move inside `Running`**: a `review` node finishes `human` and the
+run enters `NeedsInput` (same as any HITL); when the reviewer's `rework`
+decision is resumed, the runner marks downstream gates stale, moves the node
+pointer back to the rework target, opens attempt N+1, and continues — all within
+`Running`. Three invariants hold so the run machine is not over-claimed:
+
+1. **No new status.** Rework is a pointer move within `Running`; there is **no
+   `HumanWorking`** status in M11a (that is M11b). The only HITL-driven status is
+   the existing `NeedsInput`/`NeedsInputIdle` pair.
+2. **`current_step_id` carries the node id.** `runs.current_step_id` now holds
+   the compiled-graph **node id** (≡ the step id for compiled-linear nodes). The
+   existing fail-closed resume check (unknown id in the pinned manifest →
+   `Crashed` + `MaisterError("CONFIG")`) applies unchanged to the compiled graph.
+3. **Gates feed, do not gate promotion.** M11a writes `gate_results` but they do
+   **not** block promotion. The promote sequence's "verify required gates" step
+   is the **M15/M18** readiness policy, not M11a — see the note on the happy-path
+   diagram below and [`flow-graph.md`](flow-graph.md).
+
 ## Process flows
 
 ### Happy path — launch to Review (Implemented), promote after Review (Designed)
@@ -108,6 +129,11 @@ sequenceDiagram
         W-->>U: 409 CONFLICT (Review)
     end
 ```
+
+> The "verify required gates" step above is the **M15/M18** readiness policy. In
+> **M11a** the graph runner *records* `gate_results` (pass/fail/stale/overridden)
+> but does **not** gate promotion on them — promotion-gating is out of M11a
+> scope. See [`flow-graph.md`](flow-graph.md).
 
 ### NeedsInput and designed keep-alive cycle
 
@@ -368,6 +394,6 @@ matching rows.
 - API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml).
 - Related: [`hitl.md`](hitl.md), [`workspaces.md`](workspaces.md),
-  [`tasks.md`](tasks.md).
+  [`tasks.md`](tasks.md), [`flow-graph.md`](flow-graph.md) (M11a rework loop).
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.
