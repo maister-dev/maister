@@ -96,7 +96,7 @@ host than the web tier.
 **Consequences:**
 
 - HMR / Next.js restarts no longer kill agents.
-- Two processes to operate. Docker Compose handles this for the current target.
+- Two processes to operate; both run on the host via `pnpm`, only Postgres is containerized — see ADR-023.
 - The wire contract between web and supervisor is HTTP + SSE — the only
   coupling surface, documented in `api/supervisor.openapi.yaml` and
   `api/async/supervisor-sse.asyncapi.yaml`.
@@ -736,6 +736,124 @@ that ships capabilities/gates/artifacts *inside* a package.
   for **M14 (scoped capability materialization)**, where a Flow's shipped
   skills/agents/MCP servers are actually installed — APM and the AGENTS.md /
   Agent Skills / MCP standards it builds on are candidates there.
+
+---
+
+### ADR-022: Structured run-data projection — `run.events.jsonl` is the event log, Postgres holds derived read-models
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** The UI needs a live timeline of agent tool calls and file
+changes, reviewers need queryable evidence, and analytics needs cross-run
+facts. Today the supervisor's ACP `session.update` payloads (`tool_call`,
+`tool_call_update` carrying `diff` content) are persisted only as raw lines in
+`run.events.jsonl` (ADR-007) — there is no structured, queryable projection.
+
+**Decision:** `run.events.jsonl` is the durable, append-only,
+`monotonicId`-ordered event log and the single replay source — it *is* the
+"queue". A **web-side projector** consumes the supervisor event stream and
+derives Postgres read-models: the M11 run ledger (node attempts, decisions,
+checkpoints) and M12 typed artifacts (`diff`, `log`, …). Writes are idempotent —
+`upsert` keyed on `(runId, monotonicId)` — and the projector persists a per-run
+cursor so it resumes by replay after a web restart. The supervisor is
+unchanged: it already owns the log; only the web tier projects. Postgres is the
+source of truth for structured state because the UI, RBAC, and analytics read
+it.
+
+**Consequences:**
+
+- One durable log, one queryable store; no new infrastructure to operate.
+- Projection is replayable and crash-safe via the `(runId, monotonicId)`
+  cursor — at-least-once delivery folded into idempotent upserts.
+- The projector lands with M11/M12 (the ledger/artifact schema it writes to);
+  this ADR fixes the shape, not the code (impl `Designed`).
+- Co-located / shared-filesystem topology assumed for v1 (see ADR-023); the
+  projector tails the same `.maister/` the supervisor writes.
+
+**Alternatives Considered:**
+
+- **Message broker (Kafka / Redis Streams / NATS):** disproportionate for a single-host, cap-3, solo-operator control plane; the jsonl log already is an ordered, durable, replayable queue.
+- **A second database on the supervisor:** a second source of truth that must be reconciled into web's Postgres anyway (UI / RBAC / analytics read there); the durable-local-buffer need it would serve is already met by the jsonl log.
+
+---
+
+### ADR-023: Run `web` + `supervisor` on the host; containerize only Postgres
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** The compose stack containerized `app`, `supervisor`, and
+`postgres`. But the supervisor spawns agent adapter binaries
+(`claude-agent-acp`, `codex-acp`) that need host-side agent credentials
+(`~/.claude`, `~/.codex`), the project repositories at arbitrary `repo_path`,
+`git worktree add` on the same filesystem as the parent repo, and ACP resume
+journals at `~/.claude/projects/<cwd>/<uuid>.jsonl`. The web tier likewise runs
+`git worktree`, diff, and promotion against host repos. Containerizing the
+agent-spawning layer forces named-volume gymnastics for `.maister/` and breaks
+agent auth and arbitrary repo paths.
+
+**Decision:** `app` and `supervisor` run as **host processes** via `pnpm`
+(as `CLAUDE.md` "How to run" already documents). Only **Postgres** is
+containerized, published on `127.0.0.1:5432` so the host processes connect over
+loopback. The co-located / shared-filesystem assumption (host `.maister/`) is
+the v1 topology ADR-022's projector relies on.
+
+**Consequences:**
+
+- `compose.yml` / `compose.override.yml` / `compose.production.yml` carry only
+  Postgres; web + supervisor start with `pnpm --filter …`.
+- `MAISTER_SUPERVISOR_URL` and `DB_URL` default to `localhost` for host-run.
+- Sandboxing untrusted agents belongs at the **agent process** level (Phase 2),
+  not at the supervisor; this ADR does not weaken that future option.
+- Multi-host / fully-containerized deployment is a Phase-2 revisit (would need
+  the supervisor to serve durable HTTP replay from jsonl — deferred).
+
+**Alternatives Considered:**
+
+- **Full containerization (prior compose):** breaks agent auth and arbitrary `repo_path`, and forces `.maister/` into a named volume detached from the host repos.
+- **Per-run Docker-in-Docker:** already rejected in ADR-002; higher operational overhead, not justified single-host.
+
+---
+
+### ADR-024: External operations surface — REST + thin MCP facade, project tokens, mandatory audit, HITL assessment & Flow-owned escalation
+
+**Date:** 2026-05-30
+**Status:** Accepted
+**Context:** MAIster needs a machine-facing surface so external systems (CI,
+local scripts, autonomous assistant agents) can create tasks, read the board
+and run readiness, and route/answer pending HITL requests — without
+piggybacking on the human Auth.js session. This must not become a second
+orchestration backend or bypass the run ledger.
+
+**Decision:** External clients integrate via **project-scoped API tokens** over
+a REST API, with a **thin MCP facade over the same service layer** (MCP is a
+facade — it never bypasses authorization, readiness, or ledger rules). **Every
+token-attributed action is written to an audit trail**: token id, actor label,
+scope, project, endpoint/tool, and result. HITL requests carry a standard
+assessment — `confidence` + `criticality` (+ optional `category`, `reasons`);
+`criticality` drives delivery *urgency* only, never who answers. The escalation
+decision — "does a human need to answer?" — is a **Flow gate by confidence**
+(M11 node settings / M15 gates), not the external actor's: an external actor is
+a conduit that delivers a request to a human and relays the human's answer.
+Granular token scopes are deferred — v1 issues a token that authorizes the full
+project API; the scope taxonomy (board-card create, HITL pull/respond,
+flow-completion notification, …) is defined once concrete external consumers
+exist. Refines ROADMAP M16; the assessment standard aligns with M15 structured
+verdicts and the typed taxonomy of ADR-008.
+
+**Consequences:**
+
+- An external agent can read the board and deliver/relay HITL answers; the
+  human (or the Flow) remains the decider.
+- Audit attribution is mandatory for every external call — no anonymous writes.
+- HITL gains `confidence` / `criticality` fields (small schema add, M15-aligned).
+- Impl is `Designed` (M16), largely independent of M11/M12 but sequenced after
+  the foundation.
+
+**Alternatives Considered:**
+
+- **External actor auto-answers human review gates:** defeats the gate's purpose; only confidence-thresholded auto-proceed *inside the Flow* is allowed.
+- **MCP as a second orchestration backend:** must be a thin facade over the same services and audit, or it forks the control plane.
+- **Granular scopes up front:** premature without concrete consumers; v1 grants full project API per token, scopes later.
 
 ---
 

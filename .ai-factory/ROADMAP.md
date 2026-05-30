@@ -90,6 +90,8 @@
     demonstrates review-driven rework plus manual takeover.
   - Docs cover the Flow graph schema, node settings schema, run ledger,
     rework semantics, manual takeover semantics, and backwards compatibility.
+  - Architecture note: the run ledger is populated by the web-side **projector**
+    that consumes the supervisor event stream (`run.events.jsonl`) — see ADR-022.
 
 - [ ] **M12. Typed artifacts and evidence graph** — make Flow
   inputs/outputs first-class runtime objects, stored as typed metadata with
@@ -144,6 +146,8 @@
     benchmark dataset management, rich preview sandboxing, cross-run artifact
     reuse, full payload-schema validation for every artifact, and external
     artifact ingestion beyond M16's generic gate report contract.
+  - Architecture note: artifact instances are written by the same web-side
+    **projector** that derives them from the supervisor event stream — see ADR-022.
 
 - [ ] **M13. Role-owned work queue and assignment UX** — make human work
   visible and claimable across board, inbox, run detail, and manual takeover.
@@ -390,6 +394,10 @@
   - Deferred explicitly: OAuth apps, user impersonation, full RBAC, generic
     outbound webhooks, provider-specific GitHub/GitLab/Jenkins apps, external
     board sync, and public-internet webhook hardening beyond token/HMAC.
+  - Architecture note (see ADR-024): v1 tokens grant the full project API
+    (granular scopes deferred); every token action is audited; HITL carries
+    `confidence` + `criticality` and the escalate-to-human decision is a Flow
+    gate, never the external actor's.
 
 - [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11's typed decisions, manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
 
