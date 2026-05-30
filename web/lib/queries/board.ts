@@ -4,13 +4,14 @@ import type { BoardColumn } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 
-const { executors, flows, runs, stepRuns, tasks, workspaces } = schema;
+const { executors, flows, nodeAttempts, runs, stepRuns, tasks, workspaces } =
+  schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -45,6 +46,9 @@ export interface FlightCard {
   time: string;
   plus: number | null;
   minus: number | null;
+  // M11a: the latest run has at least one Reworked node attempt (review-driven
+  // rework loop in flight). Minimal hint; the full timeline is M11b.
+  reworking: boolean;
 }
 
 export interface BoardColumnData {
@@ -208,6 +212,24 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     }
   }
 
+  // M11a: which latest runs have a Reworked node attempt (rework loop in
+  // flight). Cheap projection — just the runId of any Reworked row.
+  const reworkingRunIds = new Set<string>();
+
+  if (latestRunIds.length > 0) {
+    const reworkedRows: Array<{ runId: string }> = await client
+      .select({ runId: nodeAttempts.runId })
+      .from(nodeAttempts)
+      .where(
+        and(
+          inArray(nodeAttempts.runId, latestRunIds),
+          eq(nodeAttempts.status, "Reworked"),
+        ),
+      );
+
+    for (const r of reworkedRows) reworkingRunIds.add(r.runId);
+  }
+
   let backlogPos = 0;
   let merged7d = 0;
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -257,6 +279,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
           : relativeTime(run.startedAt, now),
       plus: null,
       minus: null,
+      reworking: reworkingRunIds.has(run.runId),
     });
 
     if (

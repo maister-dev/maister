@@ -75,14 +75,25 @@ export function FlightCard({ card }: FlightCardProps): ReactElement {
           />
           <span className="truncate">{card.branch}</span>
         </div>
-        <span
-          className={clsx(
-            "flex-none rounded-full border px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em]",
-            AGENT_PILL[card.agent],
-          )}
-        >
-          {card.agent}
-        </span>
+        <div className="flex flex-none items-center gap-1.5">
+          {card.reworking ? (
+            <span
+              aria-label="reworking"
+              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
+              title="reworking"
+            >
+              ↺
+            </span>
+          ) : null}
+          <span
+            className={clsx(
+              "rounded-full border px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em]",
+              AGENT_PILL[card.agent],
+            )}
+          >
+            {card.agent}
+          </span>
+        </div>
       </div>
 
       {!isDone ? (

@@ -257,7 +257,12 @@
     "submitting": "Отправка…",
     "errorInvalidJson": "Ответ должен быть корректным JSON.",
     "branch": "ветка",
-    "step": "шаг"
+    "step": "шаг",
+    "reviewComments": "Комментарии ревью",
+    "reviewCommentsPlaceholder": "Что нужно изменить? (необязательно)",
+    "decisionApprove": "Одобрить",
+    "decisionRework": "Вернуть на доработку",
+    "reworking": "Доработка"
   },
   "changePassword": {
     "title": "Смените пароль",

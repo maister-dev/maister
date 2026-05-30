@@ -8,6 +8,14 @@ import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+interface ReviewSchema {
+  review?: boolean;
+  allowedDecisions?: string[];
+  transitions?: Record<string, string>;
+  reworkTargets?: string[];
+  workspacePolicies?: string[];
+}
+
 export interface RunHitlResponseProps {
   runId: string;
   hitlRequestId: string;
@@ -31,6 +39,7 @@ export function RunHitlResponse({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [json, setJson] = useState("{}");
+  const [comments, setComments] = useState("");
 
   async function post(payload: Record<string, unknown>): Promise<void> {
     setBusy(true);
@@ -79,6 +88,82 @@ export function RunHitlResponse({
   }
 
   const disabled = busy || pending || !canAct;
+
+  // M11a graph review HITL: the row's schema declares the allow-list. Render
+  // declared decisions as buttons + a comments box; the decision rides INSIDE
+  // the `response` payload (validated server-side against the allow-list).
+  const reviewSchema =
+    schema && typeof schema === "object" && (schema as ReviewSchema).review
+      ? (schema as ReviewSchema)
+      : null;
+
+  if (reviewSchema) {
+    const decisions = reviewSchema.allowedDecisions ?? [];
+    const policies = reviewSchema.workspacePolicies ?? [];
+    const reworkTargets = reviewSchema.reworkTargets ?? [];
+    const transitions = reviewSchema.transitions ?? {};
+    const isReworkDecision = (d: string): boolean =>
+      Object.hasOwn(transitions, d) && reworkTargets.includes(transitions[d]);
+
+    const submitDecision = (decision: string): void => {
+      const response: Record<string, unknown> = { decision };
+      const trimmed = comments.trim();
+
+      if (trimmed) response.comments = trimmed;
+      if (isReworkDecision(decision)) {
+        response.workspacePolicy = policies[0] ?? "keep";
+      }
+
+      void post({ response });
+    };
+
+    const decisionLabel = (d: string): string =>
+      d === "approve"
+        ? t("decisionApprove")
+        : d === "rework"
+          ? t("decisionRework")
+          : d;
+
+    return (
+      <div className="flex flex-col gap-3">
+        <label
+          className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+          htmlFor="review-comments"
+        >
+          {t("reviewComments")}
+        </label>
+        <textarea
+          className="min-h-[90px] rounded-[10px] border border-line bg-paper p-3 text-[12.5px] text-ink outline-none focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)]"
+          id="review-comments"
+          placeholder={t("reviewCommentsPlaceholder")}
+          value={comments}
+          onChange={(e) => setComments(e.target.value)}
+        />
+        <div className="flex flex-wrap gap-2">
+          {decisions.map((d) => (
+            <button
+              key={d}
+              className={clsx(
+                "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
+                isReworkDecision(d)
+                  ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
+                  : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                disabled && "opacity-60",
+              )}
+              disabled={disabled}
+              type="button"
+              onClick={() => submitDecision(d)}
+            >
+              {decisionLabel(d)}
+            </button>
+          ))}
+        </div>
+        {error ? (
+          <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
+        ) : null}
+      </div>
+    );
+  }
 
   if (kind === "permission") {
     return (

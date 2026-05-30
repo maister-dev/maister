@@ -257,7 +257,12 @@
     "submitting": "Submitting…",
     "errorInvalidJson": "Response must be valid JSON.",
     "branch": "branch",
-    "step": "step"
+    "step": "step",
+    "reviewComments": "Review comments",
+    "reviewCommentsPlaceholder": "What needs to change? (optional)",
+    "decisionApprove": "Approve",
+    "decisionRework": "Request rework",
+    "reworking": "Reworking"
   },
   "changePassword": {
     "title": "Change your password",
