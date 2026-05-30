@@ -4,7 +4,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { rm } from "node:fs/promises";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -14,7 +14,7 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
-import { ensureSymlink, installRevision } from "@/lib/flows";
+import { ensureSymlink, installRevision, runRevisionSetup } from "@/lib/flows";
 import { projectFlowSymlinkPath } from "@/lib/flow-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
@@ -121,12 +121,9 @@ function assertEnableable(flow: FlowEnablementRow, rev: RevisionRow): void {
       `flow "${flow.flowRefId}" is untrusted — confirm trust before enabling`,
     );
   }
-  if (rev.setupStatus === "pending" || rev.setupStatus === "failed") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `revision ${rev.id} setup is ${rev.setupStatus}`,
-    );
-  }
+  // Note: `setupStatus === "pending"` is NOT refused here — enableRevision runs
+  // setup.sh now that trust is confirmed. A FAILED setup is reflected as
+  // packageStatus='Failed', already caught by the check above.
   if (!isSchemaVersionSupported(rev.schemaVersion)) {
     throw new MaisterError(
       "CONFIG",
@@ -195,23 +192,61 @@ export async function enableRevision(args: {
 
   assertEnableable(flow, rev);
 
+  // Trust is now confirmed (flow.trustStatus != untrusted via assertEnableable).
+  // Run the deferred setup.sh for an untrusted-then-trusted revision before
+  // enabling. A setup failure marks the revision Failed and refuses enable.
+  if (rev.setupStatus === "pending") {
+    const setupStatus = await runRevisionSetup({
+      db,
+      revisionId: rev.id,
+      installedPath: rev.installedPath,
+      signal: undefined,
+    });
+
+    if (setupStatus === "failed") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `revision ${rev.id} setup.sh failed — package marked Failed`,
+      );
+    }
+  }
+
   const manifest = rev.manifest;
 
-  await db
-    .update(flows)
-    .set({
-      enabledRevisionId: rev.id,
-      enablementState: "Enabled",
-      source: rev.source,
-      version: rev.versionLabel,
-      revision: rev.resolvedRevision,
-      installedPath: rev.installedPath,
-      manifest,
-      schemaVersion: rev.schemaVersion,
-      recommendedExecutorId: manifest.recommended_executor ?? null,
-      updatedAt: new Date(),
-    })
-    .where(eq(flows.id, flow.id));
+  // Atomic switch (Codex finding #2): lock the revision row and re-verify it is
+  // still Installed under the lock, so a concurrent removeRevision (which also
+  // locks the row) cannot leave the project enabled to a Removed revision.
+  await db.transaction(async (tx: Db) => {
+    const locked = await tx
+      .select({ packageStatus: flowRevisions.packageStatus })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, rev.id))
+      .for("update");
+    const current = locked[0]?.packageStatus;
+
+    if (current !== "Installed") {
+      throw new MaisterError(
+        "CONFLICT",
+        `revision ${rev.id} is ${current ?? "missing"}, cannot enable`,
+      );
+    }
+
+    await tx
+      .update(flows)
+      .set({
+        enabledRevisionId: rev.id,
+        enablementState: "Enabled",
+        source: rev.source,
+        version: rev.versionLabel,
+        revision: rev.resolvedRevision,
+        installedPath: rev.installedPath,
+        manifest,
+        schemaVersion: rev.schemaVersion,
+        recommendedExecutorId: manifest.recommended_executor ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(flows.id, flow.id));
+  });
 
   await repointSymlink(db, args.projectId, args.flowRefId, rev.installedPath);
 
@@ -357,6 +392,7 @@ export async function removeRevision(args: {
   db?: Db;
 }): Promise<void> {
   const db = args.db ?? getDb();
+  // Validate source-scope + flow binding and capture the cache path up front.
   const rev = await loadRevisionForFlow(
     db,
     args.flowRefId,
@@ -364,37 +400,72 @@ export async function removeRevision(args: {
     args.expectedSource,
   );
 
-  const refRuns = await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.flowRevisionId, args.revisionId))
-    .limit(1);
+  // Atomic remove (Codex finding #2): lock the revision row, re-check the
+  // referencing-run and enabled-anywhere guards UNDER the lock, then CAS the
+  // status to Removed. enableRevision locks the same row, so the two are
+  // mutually exclusive — a concurrent enable cannot read the revision as
+  // Installed and then race the deletion.
+  await db.transaction(async (tx: Db) => {
+    const locked = await tx
+      .select({ packageStatus: flowRevisions.packageStatus })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, args.revisionId))
+      .for("update");
 
-  if (refRuns.length > 0) {
-    throw new MaisterError(
-      "CONFLICT",
-      `revision ${args.revisionId} is still referenced by at least one run`,
-    );
-  }
+    if ((locked[0]?.packageStatus ?? "Removed") === "Removed") {
+      throw new MaisterError(
+        "CONFLICT",
+        `revision ${args.revisionId} is already removed`,
+      );
+    }
 
-  const enabledBy = await db
-    .select({ id: flows.id })
-    .from(flows)
-    .where(eq(flows.enabledRevisionId, args.revisionId))
-    .limit(1);
+    const refRuns = await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.flowRevisionId, args.revisionId))
+      .limit(1);
 
-  if (enabledBy.length > 0) {
-    throw new MaisterError(
-      "CONFLICT",
-      `revision ${args.revisionId} is the enabled revision of a project`,
-    );
-  }
+    if (refRuns.length > 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `revision ${args.revisionId} is still referenced by at least one run`,
+      );
+    }
 
-  await db
-    .update(flowRevisions)
-    .set({ packageStatus: "Removed" })
-    .where(eq(flowRevisions.id, args.revisionId));
+    const enabledBy = await tx
+      .select({ id: flows.id })
+      .from(flows)
+      .where(eq(flows.enabledRevisionId, args.revisionId))
+      .limit(1);
 
+    if (enabledBy.length > 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `revision ${args.revisionId} is the enabled revision of a project`,
+      );
+    }
+
+    const updated = await tx
+      .update(flowRevisions)
+      .set({ packageStatus: "Removed" })
+      .where(
+        and(
+          eq(flowRevisions.id, args.revisionId),
+          ne(flowRevisions.packageStatus, "Removed"),
+        ),
+      )
+      .returning({ id: flowRevisions.id });
+
+    if (updated.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `revision ${args.revisionId} could not be removed (concurrent change)`,
+      );
+    }
+  });
+
+  // Cache deletion AFTER the row is committed Removed — safe because the
+  // referencing/enabled guards held under the lock.
   await rm(rev.installedPath, { recursive: true, force: true }).catch((err) =>
     log.warn(
       { installedPath: rev.installedPath, err: (err as Error).message },

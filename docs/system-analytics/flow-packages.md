@@ -47,11 +47,17 @@ Global revision lifecycle (`flow_revisions.package_status`):
 stateDiagram-v2
     [*] --> Discovered: source/version declared
     Discovered --> Installing: install requested (intent row, two-phase)
-    Installing --> Installed: clone + validate + digest (AFTER-side marker)
-    Installing --> Failed: clone/setup/validation failed
+    Installing --> Installed: clone + validate + digest (AFTER-side marker; setup deferred)
+    Installing --> Failed: clone/validation failed
+    Installed --> Failed: setup.sh failed (run later, at trust+enable)
     Installed --> Removed: removeRevision (no run references + not enabled anywhere)
     Failed --> Removed
 ```
+
+`setup.sh` is NEVER executed during install (it is arbitrary package code from a
+possibly-untrusted source). It runs only after trust is established — at the
+trusted-by-policy auto-enable, or at the explicit enable step — and a non-zero
+exit transitions the revision `Installed -> Failed`.
 
 Project enablement lifecycle (`flows.enablement_state`, per project):
 
@@ -88,21 +94,26 @@ sequenceDiagram
     UI->>W: source + version label
     W->>G: shallow clone, resolve SHA / digest
     W->>DB: INSERT revision<br/>package_status=Installing (intent, two-phase)
-    W->>G: finalize clone + symlink + setup.sh
+    W->>G: finalize clone + symlink (NO setup.sh — deferred)
     W->>CFG: validate flow.yaml + package contract
     CFG-->>W: manifest + digest + contract summary
     alt success
-        W->>DB: UPDATE package_status=Installed<br/>(AFTER-side marker) + setup_status + digest + contract
-    else failure
+        W->>DB: UPDATE package_status=Installed<br/>setup_status=pending|not_required + digest + contract
+    else clone/validate failure
         W->>DB: UPDATE package_status=Failed
         W-->>UI: FLOW_INSTALL {source,version,stage,command,exitStatus,output}
     end
     W-->>UI: show source, revision, digest,<br/>setup, capabilities, gates, risks
     U->>UI: Trust and enable
     UI->>W: enable revision for project
-    W->>DB: trust + compatibility + setup status check
-    W->>DB: UPDATE project enablement pointer
-    W-->>UI: package enabled for new runs
+    W->>DB: trust + compatibility + schema check
+    W->>G: run setup.sh (trust confirmed)
+    alt setup ok
+        W->>DB: setup_status=done, lock revision, UPDATE enablement pointer
+    else setup failed
+        W->>DB: package_status=Failed, refuse enable (PRECONDITION)
+    end
+    W-->>UI: package enabled (or setup-failed) for new runs
 ```
 
 ### Launch with pinned package revision
@@ -186,8 +197,10 @@ manifest + install path from that pinned revision.
 - **Clone/fetch fails** -> `FLOW_INSTALL` with source, version, stage, exit
   status, and captured output.
 - **Manifest invalid** -> `CONFIG`; package revision cannot be enabled.
-- **Setup script exits non-zero** -> `FLOW_INSTALL`; revision remains failed
-  or installed-but-not-enabled according to stage.
+- **Setup script exits non-zero** -> the revision transitions to
+  `package_status='Failed'` (`setup_status='failed'`) and enable is refused with
+  `PRECONDITION`. Setup runs only after trust (auto-enable for trusted-by-policy,
+  or the explicit enable step), never during install.
 - **Resolved revision differs for the same tag** -> install as a new immutable
   revision; do not overwrite the old revision.
 - **Package requires unsupported MAIster engine/API/capability** -> revision

@@ -203,6 +203,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         `enabled revision not found for flow "${flow.flowRefId}"`,
       );
     }
+    // Refuse a broken enabled pointer: a revision that was removed (or failed)
+    // out from under the enablement pointer must not reach runner startup
+    // (Codex finding #2 — concurrent removeRevision vs enable).
+    if (revision.packageStatus !== "Installed") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" enabled revision is ${revision.packageStatus}, not Installed`,
+      );
+    }
     if (
       revision.setupStatus === "pending" ||
       revision.setupStatus === "failed"

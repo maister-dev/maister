@@ -97,7 +97,9 @@ export type InstalledRevision = {
   resolvedRevision: string;
   installedPath: string;
   manifest: FlowYamlV1;
-  setupStatus: "not_required" | "done" | "failed";
+  // "pending" => setup.sh exists but was deferred (untrusted install); it runs
+  // later, only after trust is confirmed, via runRevisionSetup.
+  setupStatus: "not_required" | "pending" | "done" | "failed";
 };
 
 function asError(err: unknown): Error {
@@ -256,9 +258,10 @@ export async function ensureSymlink(opts: {
 
 const SETUP_DONE_SENTINEL = ".maister-setup-done";
 
-// Returns the resulting setup_status. Setup failures do NOT abort the install
-// (POC trusts internal sources, and the failure is surfaced via setup_status,
-// which the launch precondition refuses on).
+// Low-level setup.sh runner. NEVER call this from the install path — it
+// executes arbitrary package code and must only run once trust is established
+// (see runRevisionSetup). Returns the resulting setup_status; a non-zero exit
+// returns "failed" (the caller marks the revision Failed).
 async function runSetupSh(opts: {
   target: string;
   signal?: AbortSignal;
@@ -625,7 +628,18 @@ export async function installRevision(opts: {
       source,
       version,
     );
-    const setupStatus = await runSetupSh({ target, signal });
+
+    // SECURITY (ADR-021): NEVER execute a package's setup.sh during install —
+    // that would run arbitrary code from a possibly-untrusted source on the web
+    // host before any trust decision. The revision records setupStatus
+    // `not_required` (no setup.sh) or `pending` (deferred). setup.sh runs later,
+    // only after trust is confirmed, via runRevisionSetup (called by the
+    // trusted-by-policy auto-enable path or the explicit enable step).
+    const setupStatus: InstalledRevision["setupStatus"] = (await pathExists(
+      join(target, "setup.sh"),
+    ))
+      ? "pending"
+      : "not_required";
 
     await db
       .update(flowRevisions)
@@ -643,7 +657,7 @@ export async function installRevision(opts: {
 
     log.info(
       { flowId, revisionId, resolvedRevision, target, setupStatus },
-      "flow revision install complete",
+      "flow revision install complete (setup deferred until trust+enable)",
     );
 
     return {
@@ -671,6 +685,38 @@ export async function installRevision(opts: {
       cause: err,
     });
   }
+}
+
+// Execute a revision's setup.sh AFTER trust is confirmed (ADR-021). Idempotent
+// via the once-only sentinel. On success -> setupStatus='done'; on failure ->
+// setupStatus='failed' AND packageStatus='Failed' (a failed setup is not a
+// usable Installed revision — Codex finding #3). Callers MUST have established
+// trust first (trusted_by_policy at install, or explicit project trust at the
+// enable step) — installRevision never runs setup.
+export async function runRevisionSetup(opts: {
+  // FIXME(any): dual drizzle-orm peer-dep variants.
+  db?: any;
+  revisionId: string;
+  installedPath: string;
+  signal?: AbortSignal;
+}): Promise<"not_required" | "done" | "failed"> {
+  const db = opts.db ?? getDb();
+  const setupStatus = await runSetupSh({
+    target: opts.installedPath,
+    signal: opts.signal,
+  });
+
+  await db
+    .update(flowRevisions)
+    .set({
+      setupStatus,
+      ...(setupStatus === "failed" ? { packageStatus: "Failed" } : {}),
+    })
+    .where(eq(flowRevisions.id, opts.revisionId));
+
+  log.info({ revisionId: opts.revisionId, setupStatus }, "revision setup run");
+
+  return setupStatus;
 }
 
 async function upsertFlowEnablementRow(opts: {
@@ -756,8 +802,30 @@ async function installFlowPluginImpl(
   const trustStatus = resolveTrust(source);
   // Trusted-by-policy sources auto-enable to preserve the one-shot register UX;
   // untrusted sources install but stay Installed until explicit trust + enable.
-  const enablementState: "Enabled" | "Installed" =
-    trustStatus === "trusted_by_policy" ? "Enabled" : "Installed";
+  // Setup.sh runs HERE (trust already established by policy) before enabling,
+  // never during installRevision — untrusted sources never reach this branch.
+  let enablementState: "Enabled" | "Installed" = "Installed";
+
+  if (trustStatus === "trusted_by_policy") {
+    const setupStatus =
+      rev.setupStatus === "pending"
+        ? await runRevisionSetup({
+            db,
+            revisionId: rev.revisionId,
+            installedPath: rev.installedPath,
+            signal,
+          })
+        : rev.setupStatus;
+
+    if (setupStatus === "failed") {
+      log.warn(
+        { flowId, revisionId: rev.revisionId },
+        "trusted-by-policy setup.sh failed; leaving package Installed (not enabled)",
+      );
+    } else {
+      enablementState = "Enabled";
+    }
+  }
 
   // The project symlink tracks the enabled revision's cache directory.
   const symlinkPath = projectFlowSymlinkPath(
