@@ -411,6 +411,52 @@ async function diffRangeTruncated(
   });
 }
 
+export type WorktreeStatusArgs = {
+  worktreePath: string;
+};
+
+// Read-only `git status --porcelain=v1 --untracked-files=all`. Returns the raw
+// porcelain output; empty string means a clean worktree (no staged, unstaged,
+// or untracked changes). Mirrors logRange/diffRange validation + CONFLICT-on-
+// git-failure convention. Used by the takeover return route to refuse a return
+// whose uncommitted tracked edits / untracked files would otherwise be silently
+// dropped from the commit-ref-only `base..branch` log/diff.
+export async function statusPorcelain(
+  args: WorktreeStatusArgs,
+): Promise<string> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+
+  log.debug({ worktreePath: wt }, "statusPorcelain");
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        wt,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--end-of-options",
+      ],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+
+    return stdout;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git status failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
 export type ResolveBaseRefArgs = {
   worktreePath: string;
   branch: string;

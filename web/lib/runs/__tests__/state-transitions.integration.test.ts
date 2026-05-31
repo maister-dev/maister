@@ -15,6 +15,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { getActiveTakeover } from "@/lib/flows/graph/ledger";
 import {
   bumpKeepalive,
   crashResumedRun,
@@ -29,7 +30,7 @@ import {
 } from "@/lib/runs/state-transitions";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, projects, runs, tasks, users } = schema;
+const { executors, flows, nodeAttempts, projects, runs, tasks, users } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -401,6 +402,31 @@ describe("state-transitions — releaseHumanWorking (release, no changes)", () =
     const r = await releaseHumanWorking(runId, { db });
 
     expect(r.ok).toBe(false);
+  }, 60_000);
+
+  it("release-closes-takeover-ledger-row: getActiveTakeover === null after release", async () => {
+    const runId = await seedRun("HumanWorking", { currentStepId: "review" });
+
+    await db.insert(nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "review",
+      nodeType: "human",
+      attempt: 1,
+      status: "NeedsInput",
+      ownerUserId,
+    });
+
+    // Before: the takeover row is active.
+    expect(await getActiveTakeover(runId, db)).not.toBeNull();
+
+    const r = await releaseHumanWorking(runId, { db });
+
+    expect(r.ok).toBe(true);
+    expect((await readRun(runId)).status).toBe("NeedsInput");
+    // After: the takeover ledger row was closed in the SAME transaction — no
+    // active handoff lingers on the released run.
+    expect(await getActiveTakeover(runId, db)).toBeNull();
   }, 60_000);
 });
 

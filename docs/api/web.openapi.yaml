@@ -942,6 +942,8 @@ paths:
         | ------------- | ---- | ---------------- | ----- |
         | Run not `HumanWorking` (already returned / wrong state) | 409 `PRECONDITION` | unchanged | terminal — no re-import |
         | Session user ≠ `owner_user_id` | 403 `UNAUTHORIZED` | unchanged | not retryable by this actor |
+        | Worktree dirty (uncommitted tracked edits or untracked files, `git status --porcelain` non-empty) | 409 `CONFLICT` | stays `HumanWorking`; NO ledger write; NO status flip | retryable after the operator commits or discards the changes |
+        | Empty return (`base..branch` has zero commits) | 409 `CONFLICT` | stays `HumanWorking`; NO ledger write; NO status flip | retryable after the operator commits, or release instead |
         | `git log`/`git diff`/`merge-base` fails (worktree gone, git error) | 409 `CONFLICT` | stays `HumanWorking`; NO ledger write; NO status flip | retryable after operator fixes the worktree |
         | `markDownstreamStale` / ledger write throws mid-side-effect | 503 `EXECUTOR_UNAVAILABLE` | stays `HumanWorking`; partial write guarded by transaction; status NOT flipped | retryable — `FOR UPDATE` re-read still finds `HumanWorking` |
         | Graph-runner resume kickoff fails AFTER the status flip | 200 (return recorded) | `Running` | if the process dies after the AFTER-side flip but before the runner attaches, the run is recovered on startup by the takeover-return recovery sweep (idempotent re-dispatch) — see `manual-takeover.md` |
@@ -1004,6 +1006,12 @@ paths:
             One of (`MaisterErrorBody`):
             - run is not `HumanWorking` (already returned / wrong state)
               (`PRECONDITION`);
+            - the worktree has uncommitted tracked edits or untracked files
+              (`git status --porcelain` non-empty) (`CONFLICT`) — no ledger write,
+              no status flip; retryable after the operator commits or discards;
+            - the return is empty (`base..branch` has zero commits) (`CONFLICT`) —
+              no ledger write, no status flip; retryable after the operator commits
+              or releases instead;
             - a `git log`/`git diff`/`merge-base` op failed against the worktree
               (`CONFLICT`) — no ledger write, no status flip; retryable.
           content:

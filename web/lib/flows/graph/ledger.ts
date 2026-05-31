@@ -307,6 +307,35 @@ export async function recordTakeoverReturn(args: {
   );
 }
 
+// Close the active (un-returned) takeover row for a run WITHOUT recording a
+// return: set ended_at so getActiveTakeover (owner_user_id IS NOT NULL AND
+// ended_at IS NULL) no longer reports an open handoff. Used by the
+// release/abandon path (a HumanWorking run released without changes), where no
+// git log/diff is recorded — distinct from recordTakeoverReturn, which also
+// writes base_ref/returned_commits/returned_diff. No-op when none is active.
+export async function endActiveTakeover(runId: string, db?: Db): Promise<void> {
+  const d = db ?? getDb();
+  const active = await getActiveTakeover(runId, d);
+
+  if (!active) return;
+
+  await d
+    .update(nodeAttempts)
+    .set({ endedAt: new Date() })
+    .where(eq(nodeAttempts.id, active.id));
+
+  log.debug(
+    {
+      nodeAttemptId: active.id,
+      runId,
+      nodeId: active.nodeId,
+      attempt: active.attempt,
+      ownerUserId: active.ownerUserId,
+    },
+    "takeover ended without return — node-attempt closed",
+  );
+}
+
 // The active (un-returned) takeover for a run: the latest node_attempts row
 // with owner_user_id set and ended_at still null. Returns null when none.
 export async function getActiveTakeover(

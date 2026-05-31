@@ -181,6 +181,14 @@ linear run renders an empty-but-valid timeline (no crash).
 - Return is a two-phase commit: the AFTER-side marker
   (`status='Running'` + takeover `ended_at`) is set ONLY after `git log`/`git
   diff` + `recordTakeoverReturn` + `markDownstreamStale` all succeed.
+- A dirty worktree on return (`git status --porcelain=v1 --untracked-files=all`
+  non-empty — uncommitted tracked edits OR untracked files) is rejected 409
+  `CONFLICT` BEFORE any ledger write, because the recorded `base..branch`
+  log/diff captures committed work ONLY; the run stays `HumanWorking`, retryable
+  after the operator commits or discards.
+- An empty return (`base..branch` has zero commits) is rejected 409 `CONFLICT`
+  BEFORE any ledger write — the route NEVER records an empty return; the run
+  stays `HumanWorking`, retryable after the operator commits (or releases).
 - A git-op failure (`logRange`/`diffRange`/`resolveBaseRef`) on return leaves the
   run `HumanWorking` with NO ledger write and NO status flip (409 `CONFLICT`,
   retryable); a ledger/staleness write throwing mid-side-effect → 503
@@ -213,6 +221,14 @@ linear run renders an empty-but-valid timeline (no crash).
   because the abandon CAS guard excludes `HumanWorking`; then `promoteNextPending`
   frees the held slot. An already-terminal run loses the abandon CAS →
   `PRECONDITION` (409).
+- **Dirty worktree on return** (uncommitted tracked edits OR untracked files —
+  `git status --porcelain=v1 --untracked-files=all` non-empty) → `CONFLICT`
+  (409); no ledger write, no status flip. The commit-ref-only `base..branch`
+  log/diff would silently drop the work, so the route refuses; retryable after
+  the operator commits or discards.
+- **Empty return** (`base..branch` has zero commits) → `CONFLICT` (409); the
+  route records NO empty return, no status flip, retryable after the operator
+  commits or releases instead.
 - **`git log`/`git diff`/`merge-base` fails** (worktree removed, git error) →
   `CONFLICT` (409); no ledger write, no status flip, retryable after the operator
   restores the worktree.

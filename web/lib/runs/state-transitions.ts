@@ -323,19 +323,33 @@ export async function markReturnedToRunning(
 
 // M11b (ADR-030): HumanWorking → NeedsInput on release-without-changes. The
 // reviewer claimed the run but made no edits; the original review HITL
-// re-opens. Status-guarded; a non-HumanWorking row loses → {ok:false}.
+// re-opens. Status-guarded; a non-HumanWorking row loses → {ok:false}. The
+// status flip and the takeover ledger close commit in ONE transaction so a
+// released/abandoned run never lingers with an open handoff
+// (getActiveTakeover): release OR the abandon path (which calls this first)
+// leaves NO active takeover.
 export async function releaseHumanWorking(
   runId: string,
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "NeedsInput" })
-    .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
-    .returning({ id: runs.id });
+  const { endActiveTakeover } = await import("@/lib/flows/graph/ledger");
 
-  if (rows.length === 0) {
+  const released: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({ status: "NeedsInput" })
+      .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
+      .returning({ id: runs.id });
+
+    if (rows.length === 0) return false;
+
+    await endActiveTakeover(runId, tx);
+
+    return true;
+  });
+
+  if (!released) {
     log.warn(
       { runId, from: "HumanWorking", to: "NeedsInput" },
       "releaseHumanWorking: status-guard mismatch",

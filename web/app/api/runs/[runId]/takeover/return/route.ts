@@ -18,7 +18,12 @@ import { loadRun } from "@/lib/flows/graph/runner-core";
 import { runFlow } from "@/lib/flows/runner";
 import { loadProjectMainBranch } from "@/lib/runs/takeover-context";
 import { markReturnedToRunning } from "@/lib/runs/state-transitions";
-import { diffRange, logRange, resolveBaseRef } from "@/lib/worktree";
+import {
+  diffRange,
+  logRange,
+  resolveBaseRef,
+  statusPorcelain,
+} from "@/lib/worktree";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -178,13 +183,39 @@ export async function POST(
     // A git failure leaves the run HumanWorking with NO ledger write, NO status
     // flip → 409 CONFLICT (worktree.ts throws CONFLICT on git failure). This is
     // BEFORE any ledger mutation so the failure table's "git op fails" row holds.
+    //
+    // The recorded return is the COMMIT-ref-only `base..branch` log/diff:
+    // uncommitted tracked edits + untracked files are NOT captured. Refuse a
+    // dirty worktree (the reviewer would silently lose work + get misleading
+    // evidence) and refuse an empty (zero-commit) return BEFORE any ledger
+    // write, so both stay in the "no state change, retryable" failure class.
+    const porcelain = await statusPorcelain({ worktreePath });
+
+    if (porcelain.trim().length > 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${runId} worktree has uncommitted changes — commit or discard before returning`,
+      );
+    }
+
     const mainBranch = await loadProjectMainBranch(run.projectId, db);
     const baseRef = await resolveBaseRef({ worktreePath, branch, mainBranch });
     const returnedCommits = await logRange({ worktreePath, baseRef, branch });
     const returnedDiff = await diffRange({ worktreePath, baseRef, branch });
 
+    const commitCountPre = returnedCommits
+      .split("\n")
+      .filter((l) => l.length > 0).length;
+
+    if (commitCountPre === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${runId} has no commits to return — release or commit first`,
+      );
+    }
+
     log.info(
-      { runId, nodeId, baseRef },
+      { runId, nodeId, baseRef, commitCount: commitCountPre },
       "takeover return phase 2a — git log/diff captured",
     );
 
@@ -278,12 +309,8 @@ export async function POST(
         ),
     );
 
-    const commitCount = returnedCommits
-      .split("\n")
-      .filter((l) => l.length > 0).length;
-
     return NextResponse.json(
-      { ok: true, runStatus: "Running", returnedCommitCount: commitCount },
+      { ok: true, runStatus: "Running", returnedCommitCount: commitCountPre },
       { status: 200 },
     );
   } catch (err) {

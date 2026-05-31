@@ -106,6 +106,7 @@ const getActiveTakeoverSpy = vi.fn(async () => ({
 const resolveBaseRefSpy = vi.fn(async () => "basesha");
 const logRangeSpy = vi.fn(async () => "abc def Commit one\n");
 const diffRangeSpy = vi.fn(async () => "diff --git a b\n");
+const statusPorcelainSpy = vi.fn(async () => "");
 const runFlowSpy = vi.fn(async () => undefined);
 
 // A db whose transaction passes the same fake through. The claim/return
@@ -175,6 +176,7 @@ vi.mock("@/lib/worktree", () => ({
   resolveBaseRef: (...a: unknown[]) => resolveBaseRefSpy(...(a as [])),
   logRange: (...a: unknown[]) => logRangeSpy(...(a as [])),
   diffRange: (...a: unknown[]) => diffRangeSpy(...(a as [])),
+  statusPorcelain: (...a: unknown[]) => statusPorcelainSpy(...(a as [])),
 }));
 
 vi.mock("@/lib/flows/runner", () => ({
@@ -239,6 +241,8 @@ beforeEach(() => {
   logRangeSpy.mockResolvedValue("abc def Commit one\n");
   diffRangeSpy.mockReset();
   diffRangeSpy.mockResolvedValue("diff --git a b\n");
+  statusPorcelainSpy.mockReset();
+  statusPorcelainSpy.mockResolvedValue("");
   runFlowSpy.mockReset();
   runFlowSpy.mockResolvedValue(undefined);
   vi.mocked(requireActiveSession).mockReset();

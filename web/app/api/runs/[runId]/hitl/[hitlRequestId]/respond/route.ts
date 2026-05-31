@@ -33,6 +33,16 @@ const log = pino({
 
 const TERMINAL_RUN_STATUS = new Set(["Failed", "Crashed", "Done", "Abandoned"]);
 
+// A form/human (incl. graph human_review) HITL is genuinely pending ONLY while
+// the run awaits the response — NeedsInput or its idle checkpoint
+// NeedsInputIdle. Any other status (notably HumanWorking, where a manual
+// takeover is active) means the original review HITL is no longer the live
+// question: accepting it would store a pre-takeover decision whose step-keyed
+// input-<stepId>.json artifact the post-return rerun could replay over the
+// human's edits, bypassing fresh review. The runner still owns NeedsInput →
+// Running (M11b contract) — this guard never flips status.
+const PENDING_FORM_RUN_STATUS = new Set(["NeedsInput", "NeedsInputIdle"]);
+
 const bodySchema = z.object({
   optionId: z.string().min(1).optional(),
   response: z.unknown().optional(),
@@ -721,6 +731,12 @@ async function handleFormHumanResponse(
         `run is terminal (${lockedRun.status}); cannot respond`,
       );
     }
+    // Idempotent recovery (already-delivered / same-payload re-claim) is exempt
+    // from the pending-status guard below: those responses were already
+    // accepted while the run was pending, and the runner may since have flipped
+    // NeedsInput → Running (it owns that transition, M11b). The guard fires only
+    // on the FRESH-write branch — a never-delivered response is rejected unless
+    // the run is genuinely awaiting it, closing the HumanWorking replay hole.
     if (lockedHitl.respondedAt) {
       if (payloadsEqual(lockedHitl.response, response)) {
         return {
@@ -745,6 +761,17 @@ async function handleFormHumanResponse(
         storedResponse: lockedHitl.response,
         runStatus: lockedRun.status as string,
       } as const;
+    }
+
+    // Fresh response: accept ONLY when the run is genuinely awaiting it
+    // (NeedsInput / NeedsInputIdle). HumanWorking (a manual takeover is active)
+    // and every other non-pending status reject here so a pre-takeover decision
+    // never gets stored + replayed by the post-return rerun.
+    if (!PENDING_FORM_RUN_STATUS.has(lockedRun.status)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `run is not awaiting this response (status=${lockedRun.status}); cannot respond`,
+      );
     }
 
     await tx
