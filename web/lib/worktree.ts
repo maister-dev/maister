@@ -1,6 +1,6 @@
 import "server-only";
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -35,6 +35,17 @@ const branchNameSchema = z
   .regex(/^[A-Za-z0-9_./-]+$/, "branch must match /^[A-Za-z0-9_./-]+$/")
   .refine((b) => !b.includes(".."), "branch must not contain '..'")
   .refine((b) => !b.endsWith(".lock"), "branch must not end with .lock");
+
+const refSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9_./-]+$/, "ref must match /^[A-Za-z0-9_./-]+$/")
+  .refine((r) => !r.includes(".."), "ref must not contain '..'")
+  .refine((r) => !r.startsWith("-"), "ref must not start with '-'");
+
+const DIFF_TRUNCATED_MARKER =
+  "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n";
 
 function validate<T>(
   schema: z.ZodType<T>,
@@ -247,6 +258,206 @@ export async function listWorktrees(
     throw new MaisterError(
       "CONFLICT",
       `git worktree list failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type LogRangeArgs = {
+  worktreePath: string;
+  baseRef: string;
+  branch: string;
+};
+
+export async function logRange(args: LogRangeArgs): Promise<string> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const base = validate(refSchema, args.baseRef, "baseRef");
+  const br = validate(branchNameSchema, args.branch, "branch");
+
+  log.debug({ worktreePath: wt, baseRef: base, branch: br }, "logRange");
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        wt,
+        "log",
+        "--oneline",
+        "--no-color",
+        "--end-of-options",
+        `${base}..${br}`,
+      ],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+
+    const commitCount = stdout.split("\n").filter((l) => l.length > 0).length;
+
+    log.info({ worktreePath: wt, commitCount }, "logRange done");
+
+    return stdout;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git log ${base}..${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type DiffRangeArgs = {
+  worktreePath: string;
+  baseRef: string;
+  branch: string;
+};
+
+export async function diffRange(args: DiffRangeArgs): Promise<string> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const base = validate(refSchema, args.baseRef, "baseRef");
+  const br = validate(branchNameSchema, args.branch, "branch");
+
+  log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffRange");
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", wt, "diff", "--no-color", "--end-of-options", `${base}..${br}`],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+
+    return stdout;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    if (
+      e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+      /maxBuffer length exceeded/i.test(e.message ?? "")
+    ) {
+      log.info(
+        { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER },
+        "diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
+      );
+
+      return await diffRangeTruncated(wt, base, br);
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff ${base}..${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+async function diffRangeTruncated(
+  wt: string,
+  base: string,
+  br: string,
+): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(
+      "git",
+      ["-C", wt, "diff", "--no-color", "--end-of-options", `${base}..${br}`],
+      { signal: AbortSignal.timeout(GIT_TIMEOUT_MS) },
+    );
+
+    let bytes = 0;
+    let text = "";
+    const decoder = new TextDecoder();
+    let done = false;
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (done) return;
+      const remaining = EXEC_MAX_BUFFER - bytes;
+
+      if (chunk.length >= remaining) {
+        text += decoder.decode(chunk.subarray(0, remaining), { stream: true });
+        text += decoder.decode();
+        done = true;
+        child.kill("SIGKILL");
+        resolve(text + DIFF_TRUNCATED_MARKER);
+
+        return;
+      }
+      text += decoder.decode(chunk, { stream: true });
+      bytes += chunk.length;
+    });
+
+    child.stdout.on("end", () => {
+      if (done) return;
+      done = true;
+      resolve(text + decoder.decode());
+    });
+
+    child.on("error", (err) => {
+      if (done) return;
+      done = true;
+      reject(
+        new MaisterError(
+          "CONFLICT",
+          `git diff ${base}..${br} failed: ${err.message}`,
+          { cause: asError(err) },
+        ),
+      );
+    });
+  });
+}
+
+export type ResolveBaseRefArgs = {
+  worktreePath: string;
+  branch: string;
+  mainBranch: string;
+};
+
+export async function resolveBaseRef(
+  args: ResolveBaseRefArgs,
+): Promise<string> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const br = validate(branchNameSchema, args.branch, "branch");
+  const main = validate(branchNameSchema, args.mainBranch, "mainBranch");
+
+  log.debug(
+    { worktreePath: wt, branch: br, mainBranch: main },
+    "resolveBaseRef",
+  );
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", wt, "merge-base", "--end-of-options", main, br],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+
+    const sha = stdout.trim();
+
+    if (!sha) {
+      throw new MaisterError(
+        "CONFLICT",
+        `git merge-base ${main} ${br} returned no base ref`,
+      );
+    }
+
+    log.info({ worktreePath: wt, baseRef: sha }, "resolveBaseRef done");
+
+    return sha;
+  } catch (err) {
+    if (err instanceof MaisterError) throw err;
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git merge-base ${main} ${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
       { cause: asError(err) },
     );
   }
