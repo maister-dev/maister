@@ -7,15 +7,12 @@ info:
     sessions and spawns adapter binaries `claude-agent-acp` / `codex-acp`).
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
-    **Milestone status: M5.** The lifecycle
+    **Implemented contract.** The lifecycle
     (`POST` / `DELETE` `/sessions`, `GET /sessions`,
-    `GET /sessions/:id/stream`) and the ACP prompt boundary
-    (`POST /sessions/:id/prompt`) are implemented end-to-end. The M5 prompt
-    surface drives the Flow DSL `agent` step from `web/lib/flows/runner-agent.ts`
-    via the supervisor's `ClientSideConnection`; permission requests
-    auto-allow with a warn log until M7 wires HITL.
-    `POST /sessions/:id/checkpoint` (M8) remains a stub;
-    `POST /sessions/:id/input` is implemented as of M7 (permission-only).
+    `GET /sessions/:id/stream`), ACP prompt boundary
+    (`POST /sessions/:id/prompt`), permission-only HITL input
+    (`POST /sessions/:id/input`), and checkpoint endpoint
+    (`POST /sessions/:id/checkpoint`) are implemented end-to-end.
 
     The SSE stream emitted by `GET /sessions/:id/stream` is described separately
     in `api/async/supervisor-sse.asyncapi.yaml`; as of M7 the stream
@@ -45,11 +42,11 @@ tags:
   - name: sessions
     description: ACP session lifecycle.
   - name: prompt
-    description: ACP prompt boundary (M5 Flow DSL agent step driver).
+    description: ACP prompt boundary for Flow and scratch agent turns.
   - name: stream
     description: Per-session event stream (SSE).
   - name: hitl
-    description: Human-in-the-loop input delivery (stubbed in M3, wired in M7).
+    description: Permission-only human-in-the-loop input delivery.
 paths:
   /health:
     get:
@@ -74,15 +71,16 @@ paths:
       description: |
         Spawns the adapter binary determined by `executor.agent`
         (`claude-agent-acp` for `claude`, `codex-acp` for `codex`), with
-        `cwd = worktreePath`. Returns after the OS `spawn` event fires;
-        everything after that is observable via the SSE stream.
+        `cwd = worktreePath`. Returns after the adapter process starts and the
+        ACP handshake returns an `acpSessionId`; everything after that is
+        observable via the SSE stream.
 
-        Designed capability launch fields are server-derived by the web tier:
-        `capabilityProfilePath` points at the run-scoped profile materialized in
-        the worktree/runtime area, and `adapterLaunch` carries only validated
-        env/arg additions for the selected adapter. The supervisor does not
-        resolve project policy or trust; it validates and passes these fields to
-        the spawned child.
+        Capability launch fields are server-derived by the web tier:
+        `capabilityProfilePath` points at the run-scoped profile snapshot
+        materialized in the worktree/runtime area, and `adapterLaunch` carries
+        only validated env/arg additions for the selected adapter. The
+        supervisor does not resolve project policy or trust; it validates and
+        passes these fields to the spawned child.
       operationId: createSession
       requestBody:
         required: true
@@ -522,10 +520,10 @@ components:
           minLength: 1
           maxLength: 4096
           description: |
-            Designed. Absolute filesystem path to the web-materialized,
-            run-scoped capability profile. Must start with `/` and must not
-            contain `..` segments. The supervisor passes it only through
-            validated `adapterLaunch` env/args; it does not inspect policy.
+            Absolute filesystem path to the web-materialized, run-scoped
+            capability profile. Must start with `/` and must not contain `..`
+            segments. The supervisor passes it only through validated
+            `adapterLaunch` env/args; it does not inspect policy.
         adapterLaunch:
           $ref: "#/components/schemas/AdapterLaunch"
         resumeSessionId:
@@ -541,7 +539,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Designed constrained launch additions produced by the web capability
+        Constrained launch additions produced by the web capability
         materializer. It cannot override the adapter binary, `cwd`, run id,
         project slug, worktree path, session id, or ACP session id.
       properties:
@@ -557,19 +555,19 @@ components:
             paths can win on collision.
         preArgs:
           type: array
-          maxItems: 64
+          maxItems: 32
           items:
             type: string
             minLength: 1
-            maxLength: 4096
+            maxLength: 1024
           description: Adapter arguments inserted before supervisor-managed args.
         postArgs:
           type: array
-          maxItems: 64
+          maxItems: 32
           items:
             type: string
             minLength: 1
-            maxLength: 4096
+            maxLength: 1024
           description: Adapter arguments appended after supervisor-managed args.
     StartSessionResponse:
       type: object

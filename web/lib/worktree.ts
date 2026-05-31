@@ -18,6 +18,7 @@ const log = pino({
 
 const GIT_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+const repoPromotionLocks = new Map<string, Promise<unknown>>();
 
 const absolutePathSchema = z
   .string()
@@ -33,16 +34,38 @@ const branchNameSchema = z
   .min(1)
   .max(255)
   .regex(/^[A-Za-z0-9_./-]+$/, "branch must match /^[A-Za-z0-9_./-]+$/")
+  .refine((b) => !b.startsWith("-"), "branch must not start with '-'")
   .refine((b) => !b.includes(".."), "branch must not contain '..'")
+  .refine((b) => !b.includes("@{"), "branch must not contain '@{'")
+  .refine((b) => !b.endsWith("/"), "branch must not end with '/'")
   .refine((b) => !b.endsWith(".lock"), "branch must not end with .lock");
 
-const refSchema = z
+const gitRefSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9_./-]+$/, "ref must match /^[A-Za-z0-9_./-]+$/")
+  .refine((r) => !r.startsWith("-"), "ref must not start with '-'")
+  .refine((r) => !r.includes(".."), "ref must not contain '..'")
+  .refine((r) => !r.includes("@{"), "ref must not contain '@{'")
+  .refine((r) => !r.endsWith("/"), "ref must not end with '/'")
+  .refine((r) => !r.endsWith(".lock"), "ref must not end with .lock");
+
+const mergeBaseRefSchema = z
   .string()
   .min(1)
   .max(255)
   .regex(/^[A-Za-z0-9_./-]+$/, "ref must match /^[A-Za-z0-9_./-]+$/")
   .refine((r) => !r.includes(".."), "ref must not contain '..'")
-  .refine((r) => !r.startsWith("-"), "ref must not start with '-'");
+  .refine((r) => !r.includes("@{"), "ref must not contain '@{'")
+  .refine((r) => !r.endsWith("/"), "ref must not end with '/'")
+  .refine((r) => !r.endsWith(".lock"), "ref must not end with .lock");
+
+const gitCommitSchema = z
+  .string()
+  .min(7)
+  .max(64)
+  .regex(/^[0-9a-fA-F]+$/, "commit must be hex");
 
 const DIFF_TRUNCATED_MARKER =
   "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n";
@@ -67,10 +90,48 @@ function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+async function runGit(
+  repo: string,
+  args: readonly string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync("git", ["-C", repo, ...args], {
+    signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+    maxBuffer: EXEC_MAX_BUFFER,
+  });
+}
+
+async function withRepoPromotionLock<T>(
+  repo: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = repoPromotionLocks.get(repo) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  let next: Promise<unknown>;
+
+  next = run
+    .catch(() => undefined)
+    .finally(() => {
+      if (repoPromotionLocks.get(repo) === next) {
+        repoPromotionLocks.delete(repo);
+      }
+    });
+
+  repoPromotionLocks.set(repo, next);
+
+  return run;
+}
+
+function errorText(err: unknown): string {
+  const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+  return (e.stderr ?? e.message ?? "").toString().trim();
+}
+
 export type AddWorktreeArgs = {
   projectRepoPath: string;
   branch: string;
   worktreePath: string;
+  startPoint?: string;
 };
 
 export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
@@ -81,26 +142,26 @@ export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
   );
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const br = validate(branchNameSchema, args.branch, "branch");
+  const startPoint =
+    args.startPoint === undefined
+      ? undefined
+      : validate(gitRefSchema, args.startPoint, "startPoint");
 
   log.info(
-    { projectRepoPath: repo, branch: br, worktreePath: wt },
+    { projectRepoPath: repo, branch: br, worktreePath: wt, startPoint },
     "addWorktree",
   );
 
   try {
-    const { stdout, stderr } = await execFileAsync(
-      "git",
-      ["-C", repo, "worktree", "add", "-b", br, wt],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
+    const gitArgs = ["worktree", "add", "-b", br, "--", wt];
+
+    if (startPoint) gitArgs.push(startPoint);
+
+    const { stdout, stderr } = await runGit(repo, gitArgs);
 
     log.debug({ stdout, stderr }, "addWorktree done");
   } catch (err) {
-    const e = err as NodeJS.ErrnoException & { stderr?: string };
-    const stderrText = (e.stderr ?? e.message ?? "").toString();
+    const stderrText = errorText(err);
 
     if (
       stderrText.includes("already exists") ||
@@ -115,9 +176,217 @@ export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
 
     throw new MaisterError(
       "CONFLICT",
-      `git worktree add failed: ${stderrText.trim() || e.message}`,
+      `git worktree add failed: ${stderrText || asError(err).message}`,
       { cause: asError(err) },
     );
+  }
+}
+
+export type ResolveBaseCommitArgs = {
+  projectRepoPath: string;
+  baseRef: string;
+};
+
+export async function resolveBaseCommit(
+  args: ResolveBaseCommitArgs,
+): Promise<string> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const baseRef = validate(gitRefSchema, args.baseRef, "baseRef");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${baseRef}^{commit}`,
+    ]);
+    const commit = stdout.trim();
+
+    return validate(gitCommitSchema, commit, "baseCommit").toLowerCase();
+  } catch (err) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `base ref does not resolve to a commit: ${baseRef}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type BranchRefArgs = {
+  projectRepoPath: string;
+  branch: string;
+};
+
+export async function branchExists(args: BranchRefArgs): Promise<boolean> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  try {
+    await runGit(repo, [
+      "show-ref",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branch}`,
+    ]);
+
+    return true;
+  } catch (err) {
+    const exitCode = (err as { code?: unknown }).code;
+
+    if (exitCode === 1) return false;
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git show-ref failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export async function listBranches(projectRepoPath: string): Promise<string[]> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "refs/heads",
+    ]);
+
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git branch list failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type DiffRunWorkspaceArgs = {
+  projectRepoPath: string;
+  baseCommit: string;
+  branch: string;
+};
+
+export async function diffRunWorkspace(
+  args: DiffRunWorkspaceArgs,
+): Promise<string> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const baseCommit = validate(gitCommitSchema, args.baseCommit, "baseCommit");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "diff",
+      "--no-ext-diff",
+      `${baseCommit}...${branch}`,
+    ]);
+
+    return stdout;
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type PromoteLocalMergeArgs = {
+  projectRepoPath: string;
+  sourceBranch: string;
+  targetBranch: string;
+};
+
+export async function promoteLocalMerge(
+  args: PromoteLocalMergeArgs,
+): Promise<string> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const sourceBranch = validate(branchNameSchema, args.sourceBranch, "source");
+  const targetBranch = validate(branchNameSchema, args.targetBranch, "target");
+
+  return withRepoPromotionLock(repo, async () => {
+    const previousBranch = await currentBranch(repo);
+
+    log.info(
+      { projectRepoPath: repo, sourceBranch, targetBranch },
+      "[FIX] promoteLocalMerge acquired repo promotion lock",
+    );
+
+    try {
+      await runGit(repo, ["switch", "--", targetBranch]);
+      await runGit(repo, ["merge", "--no-ff", "--no-edit", "--", sourceBranch]);
+
+      const { stdout } = await runGit(repo, ["rev-parse", "HEAD"]);
+
+      return stdout.trim();
+    } catch (err) {
+      await abortMerge(repo);
+      throw new MaisterError(
+        "CONFLICT",
+        `git merge failed: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    } finally {
+      if (previousBranch && previousBranch !== targetBranch) {
+        try {
+          await runGit(repo, ["switch", "--", previousBranch]);
+        } catch (err) {
+          log.warn(
+            {
+              projectRepoPath: repo,
+              previousBranch,
+              err: asError(err).message,
+            },
+            "failed to restore previous branch after promoteLocalMerge",
+          );
+        }
+      }
+    }
+  });
+}
+
+async function currentBranch(repo: string): Promise<string | null> {
+  try {
+    const { stdout } = await runGit(repo, [
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ]);
+    const branch = stdout.trim();
+
+    return branch === "HEAD" ? null : branch;
+  } catch {
+    return null;
+  }
+}
+
+async function abortMerge(repo: string): Promise<void> {
+  try {
+    await runGit(repo, ["merge", "--abort"]);
+  } catch {
+    // No merge in progress, or abort itself failed. The original merge error
+    // remains the actionable one for the caller.
   }
 }
 
@@ -171,6 +440,31 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
       { cause: asError(err) },
     );
   }
+}
+
+export type RemoveOwnedWorktreeArgs = RemoveWorktreeArgs & {
+  allowedRoot: string;
+};
+
+export async function removeOwnedWorktree(
+  args: RemoveOwnedWorktreeArgs,
+): Promise<void> {
+  const allowedRoot = validate(
+    absolutePathSchema,
+    args.allowedRoot,
+    "allowedRoot",
+  );
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const relative = path.relative(allowedRoot, wt);
+
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `worktreePath is outside allowed root: ${wt}`,
+    );
+  }
+
+  await removeWorktree(args);
 }
 
 export type WorktreeInfo = {
@@ -271,7 +565,7 @@ export type LogRangeArgs = {
 
 export async function logRange(args: LogRangeArgs): Promise<string> {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
-  const base = validate(refSchema, args.baseRef, "baseRef");
+  const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
 
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "logRange");
@@ -318,7 +612,7 @@ export type DiffRangeArgs = {
 
 export async function diffRange(args: DiffRangeArgs): Promise<string> {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
-  const base = validate(refSchema, args.baseRef, "baseRef");
+  const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
 
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffRange");
@@ -467,8 +761,8 @@ export async function resolveBaseRef(
   args: ResolveBaseRefArgs,
 ): Promise<string> {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
-  const br = validate(branchNameSchema, args.branch, "branch");
-  const main = validate(branchNameSchema, args.mainBranch, "mainBranch");
+  const br = validate(mergeBaseRefSchema, args.branch, "branch");
+  const main = validate(mergeBaseRefSchema, args.mainBranch, "mainBranch");
 
   log.debug(
     { worktreePath: wt, branch: br, mainBranch: main },

@@ -5,14 +5,18 @@ import { readFile } from "node:fs/promises";
 import Mustache from "mustache";
 import pino from "pino";
 import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 
 import {
   TERMINAL_TRANSITION_TARGET,
   flowYamlV1Schema,
   formSchemaSchema,
   maisterYamlV2Schema,
+  type CapabilityAgent,
+  type CapabilityKind,
   type FlowYamlV1,
   type MaisterYamlV2,
+  type McpCapabilityConfig,
   type NodeDef,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
@@ -29,6 +33,18 @@ const log = pino({ name: "config" });
 // symbol so M11c can assert its removal against the symbol, not a string (P14).
 export const SETTINGS_NOT_ENFORCED_WARN =
   "[flow] node settings parsed but not enforced until M11c";
+
+const platformMcpJsonSchema = z.object({
+  mcpServers: z.record(
+    z.string().min(1),
+    z.object({
+      command: z.string().min(1),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      disabled: z.boolean().optional(),
+    }),
+  ),
+});
 
 function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
@@ -127,7 +143,115 @@ export async function loadProjectConfig(
     }
   }
 
+  validateCapabilityIds(cfg, maisterYamlPath);
+
   return cfg;
+}
+
+function validateCapabilityIds(
+  cfg: MaisterYamlV2,
+  maisterYamlPath: string,
+): void {
+  const seen = new Set<string>();
+  const groups: ReadonlyArray<
+    readonly [CapabilityKind, readonly { id: string }[]]
+  > = [
+    ["mcp", cfg.capabilities.mcps],
+    ["skill", cfg.capabilities.skills],
+    ["rule", cfg.capabilities.rules],
+    ["restriction", cfg.capabilities.restrictions],
+    ["setting", cfg.capabilities.settings],
+    ["tool", cfg.capabilities.tools],
+  ];
+
+  for (const [kind, entries] of groups) {
+    for (const entry of entries) {
+      const key = `${kind}:${entry.id}`;
+
+      if (seen.has(key)) {
+        throw new MaisterError(
+          "CONFIG",
+          `Duplicate capability id "${entry.id}" in ${kind}s of ${maisterYamlPath}`,
+        );
+      }
+      seen.add(key);
+    }
+  }
+
+  log.debug(
+    {
+      path: maisterYamlPath,
+      capabilities: Object.fromEntries(
+        groups.map(([kind, entries]) => [kind, entries.length]),
+      ),
+    },
+    "maister.yaml capabilities parsed",
+  );
+}
+
+export async function loadPlatformMcpCapabilities(
+  mcpJsonPath: string,
+): Promise<Array<McpCapabilityConfig & { source: "platform" }>> {
+  let raw: string;
+
+  try {
+    raw = await readFile(mcpJsonPath, "utf8");
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `Cannot read MCP registry at ${mcpJsonPath}: ${asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  let data: unknown;
+
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `Invalid JSON in ${mcpJsonPath}: ${asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  const parsed = platformMcpJsonSchema.safeParse(data);
+
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("; ");
+
+    log.warn({ path: mcpJsonPath, issues }, "MCP registry validation failed");
+    throw new MaisterError(
+      "CONFIG",
+      `MCP registry schema errors in ${mcpJsonPath}: ${issues}`,
+    );
+  }
+
+  const defaultAgents: CapabilityAgent[] = ["claude", "codex"];
+  const capabilities = Object.entries(parsed.data.mcpServers)
+    .filter(([, server]) => server.disabled !== true)
+    .map(([id, server]) => ({
+      id,
+      kind: "mcp" as const,
+      label: id,
+      source: "platform" as const,
+      command: server.command,
+      args: server.args ?? [],
+      env: server.env,
+      agents: defaultAgents,
+      enforceability: "enforced" as const,
+      selected_by_default: true,
+    }));
+
+  log.debug(
+    { path: mcpJsonPath, mcpCount: capabilities.length },
+    "platform MCP registry loaded",
+  );
+
+  return capabilities;
 }
 
 export async function loadFlowManifest(

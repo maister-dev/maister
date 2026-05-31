@@ -243,6 +243,89 @@ export const flows = pgTable(
   }),
 );
 
+export type CapabilityKind =
+  | "mcp"
+  | "skill"
+  | "rule"
+  | "setting"
+  | "restriction"
+  | "tool"
+  | "agent_definition"
+  | "env_profile";
+export type CapabilitySource = "platform" | "project" | "flow-package";
+export type CapabilityEnforceability =
+  | "enforced"
+  | "instructed"
+  | "unsupported";
+export type CapabilityAgent = "claude" | "codex";
+export type CapabilityAgents =
+  | CapabilityAgent[]
+  | Partial<Record<CapabilityAgent, string>>;
+
+export const capabilityRecords = pgTable(
+  "capability_records",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    capabilityRefId: text("capability_ref_id").notNull(),
+    kind: text("kind", {
+      enum: [
+        "mcp",
+        "skill",
+        "rule",
+        "setting",
+        "restriction",
+        "tool",
+        "agent_definition",
+        "env_profile",
+      ],
+    }).notNull(),
+    label: text("label").notNull(),
+    source: text("source", {
+      enum: ["platform", "project", "flow-package"],
+    }).notNull(),
+    version: text("version"),
+    revision: text("revision"),
+    agents: jsonb("agents").$type<CapabilityAgents>().notNull(),
+    enforceability: text("enforceability", {
+      enum: ["enforced", "instructed", "unsupported"],
+    })
+      .notNull()
+      .default("instructed"),
+    selectedByDefault: boolean("selected_by_default").notNull().default(true),
+    selectable: boolean("selectable").notNull().default(true),
+    material: jsonb("material")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    disabledAt: timestamp("disabled_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqCapabilityRefPerProject: unique("capability_records_project_ref_uq").on(
+      t.projectId,
+      t.source,
+      t.kind,
+      t.capabilityRefId,
+    ),
+    idxProjectKindSelectable: index("capability_records_project_kind_idx").on(
+      t.projectId,
+      t.kind,
+      t.selectable,
+    ),
+  }),
+);
+
 export const tasks = pgTable(
   "tasks",
   {
@@ -283,19 +366,24 @@ export const tasks = pgTable(
   }),
 );
 
+export type RunKind = "flow" | "scratch";
+
 export const runs = pgTable(
   "runs",
   {
     id: text("id").primaryKey(),
-    taskId: text("task_id")
+    runKind: text("run_kind", { enum: ["flow", "scratch"] })
       .notNull()
-      .references(() => tasks.id, { onDelete: "cascade" }),
+      .default("flow"),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "cascade",
+    }),
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    flowId: text("flow_id")
-      .notNull()
-      .references(() => flows.id, { onDelete: "cascade" }),
+    flowId: text("flow_id").references(() => flows.id, {
+      onDelete: "cascade",
+    }),
     executorId: text("executor_id")
       .notNull()
       .references(() => executors.id, { onDelete: "cascade" }),
@@ -346,7 +434,13 @@ export const runs = pgTable(
       t.projectId,
       t.status,
     ),
+    idxProjectStatusKind: index("runs_project_status_kind_idx").on(
+      t.projectId,
+      t.status,
+      t.runKind,
+    ),
     idxTask: index("runs_task_idx").on(t.taskId),
+    idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
   }),
 );
 
@@ -366,6 +460,177 @@ export const workspaces = pgTable("workspaces", {
     .defaultNow(),
   removedAt: timestamp("removed_at", { withTimezone: true, mode: "date" }),
 });
+
+export type ScratchDialogStatus =
+  | "Starting"
+  | "WaitingForUser"
+  | "Running"
+  | "NeedsInput"
+  | "Review"
+  | "Crashed"
+  | "Done"
+  | "Abandoned";
+
+export type ScratchMessageRole = "user" | "assistant" | "tool" | "system";
+export type ScratchAttachmentKind = "issue_url" | "file_path" | "text_note";
+export type ScratchPlanMode = "off" | "plan-first";
+export type ScratchAdapterLaunch = {
+  env?: Record<string, string>;
+  preArgs?: string[];
+  postArgs?: string[];
+};
+
+export const scratchRuns = pgTable(
+  "scratch_runs",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name"),
+    initialPrompt: text("initial_prompt").notNull(),
+    planMode: text("plan_mode", { enum: ["off", "plan-first"] })
+      .notNull()
+      .default("off"),
+    linkedTaskId: text("linked_task_id").references(() => tasks.id, {
+      onDelete: "set null",
+    }),
+    linkedIssueUrl: text("linked_issue_url"),
+    baseBranch: text("base_branch").notNull(),
+    baseCommit: text("base_commit").notNull(),
+    targetBranch: text("target_branch"),
+    dialogStatus: text("dialog_status", {
+      enum: [
+        "Starting",
+        "WaitingForUser",
+        "Running",
+        "NeedsInput",
+        "Review",
+        "Crashed",
+        "Done",
+        "Abandoned",
+      ],
+    })
+      .notNull()
+      .default("Starting"),
+    supervisorSessionId: text("supervisor_session_id"),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    errorMetadata: jsonb("error_metadata").$type<Record<string, unknown>>(),
+    lastUserMessageAt: timestamp("last_user_message_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastAgentMessageAt: timestamp("last_agent_message_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProjectStatus: index("scratch_runs_project_status_idx").on(
+      t.projectId,
+      t.dialogStatus,
+    ),
+  }),
+);
+
+export const scratchMessages = pgTable(
+  "scratch_messages",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => scratchRuns.runId, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    role: text("role", {
+      enum: ["user", "assistant", "tool", "system"],
+    }).notNull(),
+    content: text("content").notNull(),
+    supervisorEventId: text("supervisor_event_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRunSequence: unique("scratch_messages_run_sequence_uq").on(
+      t.runId,
+      t.sequence,
+    ),
+  }),
+);
+
+export const scratchAttachments = pgTable(
+  "scratch_attachments",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => scratchRuns.runId, { onDelete: "cascade" }),
+    messageId: text("message_id").references(() => scratchMessages.id, {
+      onDelete: "cascade",
+    }),
+    kind: text("kind", {
+      enum: ["issue_url", "file_path", "text_note"],
+    }).notNull(),
+    label: text("label"),
+    value: text("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxRun: index("scratch_attachments_run_idx").on(t.runId),
+    idxMessage: index("scratch_attachments_message_idx").on(t.messageId),
+  }),
+);
+
+export const scratchCapabilityProfiles = pgTable(
+  "scratch_capability_profiles",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .unique()
+      .references(() => scratchRuns.runId, { onDelete: "cascade" }),
+    profileDigest: text("profile_digest").notNull(),
+    materializedPath: text("materialized_path").notNull(),
+    selectedMcpIds: jsonb("selected_mcp_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    selectedSkillIds: jsonb("selected_skill_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    selectedRuleIds: jsonb("selected_rule_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    restrictions: jsonb("restrictions")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    adapterLaunch: jsonb("adapter_launch")
+      .$type<ScratchAdapterLaunch>()
+      .notNull()
+      .default({}),
+    downgradeNotes: jsonb("downgrade_notes").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+);
 
 export const stepRuns = pgTable(
   "step_runs",
@@ -628,6 +893,11 @@ export type TaskStage = Task["stage"];
 export type Run = typeof runs.$inferSelect;
 export type RunStatus = Run["status"];
 export type Workspace = typeof workspaces.$inferSelect;
+export type ScratchRun = typeof scratchRuns.$inferSelect;
+export type ScratchMessage = typeof scratchMessages.$inferSelect;
+export type ScratchAttachment = typeof scratchAttachments.$inferSelect;
+export type ScratchCapabilityProfile =
+  typeof scratchCapabilityProfiles.$inferSelect;
 export type HitlRequest = typeof hitlRequests.$inferSelect;
 export type StepRun = typeof stepRuns.$inferSelect;
 export type NodeAttempt = typeof nodeAttempts.$inferSelect;

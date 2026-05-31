@@ -21,7 +21,7 @@
 - Treat the `runs` table as the source of truth for run state. The filesystem (`.maister/<project-slug>/runs/<run-id>/`) holds artifacts; the DB holds the state machine. The `tasks` table is the source of truth for board status (`Backlog | InFlight | Done | Abandoned`).
 - **`projects` table**: `slug` and `repo_path` are both UNIQUE columns. One repo = one project. Archival is soft via `archived_at`; never hard-delete a project row in the current target.
 - **`tasks` table**: `task ↔ run is 1:N` (one task can spawn many runs over its lifetime). Current schema uses `tasks.attempt_number` as a mutable high-water mark; designed run-attempt schema moves immutable attempts to `runs`.
-- State transitions for `runs.status` are explicit: `Pending → Running → NeedsInput → Running → Review → Done | Failed | Abandoned | Crashed`, with designed `NeedsInputIdle` checkpoint/resume. Reconcile on startup if the process state disagrees with the DB.
+- State transitions for `runs.status` are explicit: `Pending → Running → NeedsInput → NeedsInputIdle → Running → Review → Done | Failed | Abandoned | Crashed`, with implemented checkpoint/resume. Reconcile on startup if the process state disagrees with the DB.
 - State transitions for `tasks.status` (driven by the **latest** run):
   - new task → `Backlog`.
   - Launch click → task → `InFlight`. Stays `InFlight` while the latest run is `Pending | Running | NeedsInput | Review | Crashed`.

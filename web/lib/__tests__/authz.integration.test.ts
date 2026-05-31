@@ -15,10 +15,14 @@ import * as schemaModule from "@/lib/db/schema";
 // Copied from lib/authz.ts to avoid importing the module which depends on @/auth
 const PROJECT_ACTION_MIN = {
   readBoard: "viewer",
+  readScratchRun: "viewer",
   launchRun: "member",
+  operateScratchRun: "member",
+  promoteRun: "member",
   createTask: "member",
   answerHitl: "member",
   editSettings: "admin",
+  managePackages: "admin",
 } as const;
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -172,10 +176,14 @@ describe("authorization (integration)", () => {
 
   it("PROJECT_ACTION_MIN defines minimum roles for each action", () => {
     expect(PROJECT_ACTION_MIN.readBoard).toBe("viewer");
+    expect(PROJECT_ACTION_MIN.readScratchRun).toBe("viewer");
     expect(PROJECT_ACTION_MIN.launchRun).toBe("member");
+    expect(PROJECT_ACTION_MIN.operateScratchRun).toBe("member");
+    expect(PROJECT_ACTION_MIN.promoteRun).toBe("member");
     expect(PROJECT_ACTION_MIN.createTask).toBe("member");
     expect(PROJECT_ACTION_MIN.answerHitl).toBe("member");
     expect(PROJECT_ACTION_MIN.editSettings).toBe("admin");
+    expect(PROJECT_ACTION_MIN.managePackages).toBe("admin");
   });
 
   it("different users can have different roles on the same project", async () => {

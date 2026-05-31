@@ -21,6 +21,7 @@ let db: NodePgDatabase;
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 let getPortfolio: typeof import("@/lib/queries/portfolio").getPortfolio;
+let getRailWorkspaces: typeof import("@/lib/queries/portfolio").getRailWorkspaces;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -34,7 +35,9 @@ beforeAll(async () => {
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ getPortfolio } = await import("@/lib/queries/portfolio"));
+  ({ getPortfolio, getRailWorkspaces } = await import(
+    "@/lib/queries/portfolio"
+  ));
 }, 180_000);
 
 afterAll(async () => {
@@ -105,6 +108,20 @@ describe("portfolio queries (integration)", () => {
       installedPath: "/tmp/flows/test",
       manifest: { schemaVersion: 1, name: "Test Flow", steps: [] },
       schemaVersion: 1,
+    });
+
+    return id;
+  }
+
+  async function createExecutor(projectId: string): Promise<string> {
+    const id = randomUUID();
+
+    await db.insert(schema.executors).values({
+      id,
+      projectId,
+      executorRefId: `claude-${id.slice(0, 8)}`,
+      agent: "claude",
+      model: "claude-sonnet-4-6",
     });
 
     return id;
@@ -248,15 +265,7 @@ describe("portfolio queries (integration)", () => {
 
     await addProjectMember(user, project, "member");
 
-    const executorId = randomUUID();
-
-    await db.insert(schema.executors).values({
-      id: executorId,
-      projectId: project,
-      executorRefId: "claude-sonnet",
-      agent: "claude",
-      model: "claude-sonnet-4-6",
-    });
+    const executorId = await createExecutor(project);
 
     const taskId = await createTask(project, flow, "Needs Task");
     const runId = randomUUID();
@@ -294,26 +303,12 @@ describe("portfolio queries (integration)", () => {
   });
 
   it("counts a HumanWorking (claimed takeover) run as an active workspace", async () => {
-    // FIX #3: a claimed takeover (HumanWorking) holds a worktree + a cap slot,
-    // so it MUST surface in the cross-project portfolio active-workspace set and
-    // totals. The board (lib/board.ts) already counts HumanWorking; the
-    // portfolio read model omitted it (ACTIVE_RUN_STATUSES lacked HumanWorking)
-    // → the claimed run vanished from the home grid. This asserts parity.
     const user = await createUser("humanworking@test.com");
     const project = await createProject("HumanWorking Project");
     const flow = await createFlow(project);
+    const executorId = await createExecutor(project);
 
     await addProjectMember(user, project, "member");
-
-    const executorId = randomUUID();
-
-    await db.insert(schema.executors).values({
-      id: executorId,
-      projectId: project,
-      executorRefId: "claude-sonnet",
-      agent: "claude",
-      model: "claude-sonnet-4-6",
-    });
 
     const taskId = await createTask(project, flow, "Claimed Task");
     const runId = randomUUID();
@@ -347,12 +342,66 @@ describe("portfolio queries (integration)", () => {
     );
 
     expect(ws).toBeDefined();
-    // Mirrors the board's takeover treatment: agent pill = dev, status surfaced
-    // as a human-in-the-loop "needs" state.
     expect(ws?.agent).toBe("dev");
     expect(ws?.status).toBe("needs");
-
-    // The claimed run is counted in the cross-project total.
     expect(portfolio.totalActiveWorkspaces).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows scratch runs as active workspaces linked to the scratch dialog", async () => {
+    const user = await createUser("scratch@test.com");
+    const project = await createProject("Scratch Project");
+    const executorId = await createExecutor(project);
+
+    await addProjectMember(user, project, "member");
+
+    const runId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      runKind: "scratch",
+      projectId: project,
+      executorId,
+      status: "Crashed",
+      acpSessionId: "acp-resume-1",
+      flowVersion: "scratch",
+      flowRevision: "manual",
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: "maister/scratch/recover-me",
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/scratch",
+    });
+    await db.insert(schema.scratchRuns).values({
+      runId,
+      projectId: project,
+      name: "Recover me",
+      initialPrompt: "Investigate this",
+      baseBranch: "main",
+      baseCommit: "abc123",
+      dialogStatus: "Crashed",
+      createdByUserId: user,
+    });
+
+    const portfolio = await getPortfolio(user, "member");
+    const proj = portfolio.projects.find((p) => p.id === project);
+    const scratchWorkspace = proj?.activeWorkspaces.find(
+      (workspace) => workspace.runId === runId,
+    );
+    const rail = await getRailWorkspaces(user, "member");
+
+    expect(scratchWorkspace).toMatchObject({
+      runId,
+      runKind: "scratch",
+      href: `/scratch-runs/${runId}`,
+      scratchAction: "recover",
+      scratchDialogStatus: "Crashed",
+    });
+    expect(portfolio.totalActiveWorkspaces).toBeGreaterThanOrEqual(1);
+    expect(
+      rail.find((workspace) => workspace.href === `/scratch-runs/${runId}`),
+    ).toBeDefined();
   });
 });

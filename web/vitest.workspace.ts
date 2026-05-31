@@ -30,10 +30,7 @@ export default defineWorkspace([
     resolve: { alias },
     test: {
       name: "integration",
-      include: [
-        "lib/**/*.integration.test.ts",
-        "app/**/*.integration.test.ts",
-      ],
+      include: ["lib/**/*.integration.test.ts", "app/**/*.integration.test.ts"],
       environment: "node",
       testTimeout: 60_000,
       hookTimeout: 60_000,

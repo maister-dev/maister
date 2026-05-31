@@ -6,6 +6,7 @@ import {
   flowYamlV1Schema,
   formSchemaSchema,
   maisterYamlV2Schema,
+  maisterCapabilitiesSchema,
   nodeSchema,
   stepSchema,
 } from "@/lib/config.schema";
@@ -134,6 +135,50 @@ describe("maisterYamlV2Schema", () => {
     };
 
     expect(() => maisterYamlV2Schema.parse(bad)).toThrow();
+  });
+
+  it("parses scratch capability config with safe defaults", () => {
+    const parsed = maisterYamlV2Schema.parse({
+      ...goldenMaisterYaml,
+      capabilities: {
+        mcps: [{ id: "github", command: "github-mcp-server" }],
+        skills: [{ id: "aif-implement", path: ".agents/skills/aif" }],
+        rules: [{ id: "project-rules", content: "Use project rules" }],
+        restrictions: [{ id: "no-global-installs" }],
+        settings: [
+          {
+            id: "codex-default",
+            agent: "codex",
+            path: ".maister/codex/settings.json",
+          },
+        ],
+        tools: [{ id: "shell", enforceability: "unsupported" }],
+      },
+    });
+
+    expect(parsed.capabilities.mcps[0]).toMatchObject({
+      id: "github",
+      kind: "mcp",
+      source: "project",
+      agents: ["claude", "codex"],
+      enforceability: "enforced",
+      selected_by_default: true,
+    });
+    expect(parsed.capabilities.skills[0].enforceability).toBe("instructed");
+    expect(parsed.capabilities.settings[0].enforceability).toBe("enforced");
+  });
+});
+
+describe("maisterCapabilitiesSchema", () => {
+  it("defaults every capability group to an empty list", () => {
+    expect(maisterCapabilitiesSchema.parse({})).toEqual({
+      mcps: [],
+      skills: [],
+      rules: [],
+      restrictions: [],
+      settings: [],
+      tools: [],
+    });
   });
 });
 

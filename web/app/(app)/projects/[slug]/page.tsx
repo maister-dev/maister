@@ -1,6 +1,8 @@
 import type { ProjectTab } from "@/components/board/project-tabs";
+import type { PortfolioWorkspace } from "@/lib/queries/portfolio";
 import type { ReactElement } from "react";
 
+import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
@@ -73,6 +75,8 @@ export default async function ProjectBoardPage({
   const tNewTask = await getTranslations("newtask");
   const tCommon = await getTranslations("common");
   const tNav = await getTranslations("nav");
+  const tPortfolio = await getTranslations("portfolio");
+  const tScratch = await getTranslations("scratch");
 
   const [pageData, board, hitl, platformStatus] = await Promise.all([
     getProjectPageData(project),
@@ -115,6 +119,12 @@ export default async function ProjectBoardPage({
           </div>
           {canAct ? (
             <div className="flex gap-2">
+              <Link
+                className="inline-flex items-center rounded-md border border-line bg-ink px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-paper transition-colors hover:bg-ink-2"
+                href={`/scratch-runs/new?projectId=${project.id}`}
+              >
+                {tScratch("launch")}
+              </Link>
               <NewTaskModal
                 executors={pageData.executors}
                 flows={pageData.flows}
@@ -158,6 +168,18 @@ export default async function ProjectBoardPage({
           value={`${pageData.members.length}`}
         />
       </div>
+
+      <ProjectActiveWorkspaces
+        activeLabel={tPortfolio("activeCount", {
+          count: pageData.activeWorkspaces.length,
+        })}
+        activeWorkspaces={pageData.activeWorkspaces}
+        noneLabel={tPortfolio("noneActive")}
+        title={tPortfolio("workspaces")}
+        workspaceActionLabel={(action) =>
+          tPortfolio(`workspaceAction.${action}`)
+        }
+      />
 
       <ProjectTabs active={tab} boardCount={board.totalTasks} slug={slug} />
 
@@ -208,6 +230,70 @@ export default async function ProjectBoardPage({
       ) : null}
     </>
   );
+}
+
+function ProjectActiveWorkspaces({
+  activeWorkspaces,
+  title,
+  activeLabel,
+  noneLabel,
+  workspaceActionLabel,
+}: {
+  activeWorkspaces: PortfolioWorkspace[];
+  title: string;
+  activeLabel: string;
+  noneLabel: string;
+  workspaceActionLabel: (
+    action: Exclude<PortfolioWorkspace["scratchAction"], undefined>,
+  ) => string;
+}): ReactElement {
+  return (
+    <section className="mb-6 border-y border-line py-3">
+      <header className="mb-2 flex items-center justify-between font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
+        <span>{title}</span>
+        <span className="text-ink-2">
+          {activeWorkspaces.length > 0 ? activeLabel : noneLabel}
+        </span>
+      </header>
+      {activeWorkspaces.length > 0 ? (
+        <ul className="m-0 grid list-none grid-cols-1 gap-px overflow-hidden rounded-lg border border-line-soft bg-line-soft p-0 md:grid-cols-2 xl:grid-cols-3">
+          {activeWorkspaces.map((workspace) => (
+            <li key={workspace.runId} className="bg-paper">
+              <Link
+                className="grid grid-cols-[10px_1fr_auto_auto] items-center gap-2 px-3 py-2.5 font-mono text-[11px] transition-colors hover:bg-ivory"
+                href={workspace.href}
+              >
+                <span
+                  className={`h-[7px] w-[7px] rounded-full ${workspaceDot(workspace.status)}`}
+                />
+                <span className="truncate font-semibold tracking-[-0.005em] text-ink">
+                  {workspace.branch}
+                </span>
+                {workspace.runKind === "scratch" &&
+                workspace.scratchAction &&
+                workspace.scratchAction !== "none" ? (
+                  <span className="rounded-[3px] border border-amber-line bg-amber-soft px-1.5 py-px text-[9.5px] tracking-[0.02em] text-amber">
+                    {workspaceActionLabel(workspace.scratchAction)}
+                  </span>
+                ) : null}
+                <span className="text-[10px] tracking-[0.04em] text-mute-2">
+                  {workspace.time}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function workspaceDot(status: PortfolioWorkspace["status"]): string {
+  if (status === "needs") return "bg-amber";
+  if (status === "queued") return "bg-mute";
+  if (status === "done") return "bg-accent-3";
+
+  return "bg-accent-4";
 }
 
 function Count({

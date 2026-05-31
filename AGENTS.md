@@ -56,7 +56,6 @@ mAIster/
 ├── pnpm-lock.yaml              # Frozen lockfile (root)
 ├── Dockerfile                  # Single image; web/supervisor selected via command:
 ├── compose.yml                 # Base: app + supervisor + postgres
-├── compose.override.yml        # Dev: hot reload, ports 3000 / 7777 / 5432
 ├── compose.production.yml      # Prod hardening: read_only, cap_drop, tmpfs
 ├── docs/                       # Product & engineering documentation
 │   ├── VISION.md

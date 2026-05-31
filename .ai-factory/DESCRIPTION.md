@@ -8,11 +8,11 @@ ACP-driven agent execution, structured HITL, diff review, and merge.
 
 Current wedge: a **Web shell + ACP supervisor daemon + Flow plugin engine**
 spanning multi-project portfolio + multi-executor (claude + codex) +
-multi-workspace + hybrid HITL + per-project task board. MAIster orchestrates
-agents through the Zed-standard Agent Client Protocol (ACP); Flow plugins
-shipped as git-tagged bundles compose CLI tools, agent skills, and YAML-DSL
-steps. It does **not** build a new agent runtime — claude and codex are the
-runtimes; MAIster is the control plane around them.
+multi-workspace + manual scratch workspaces + hybrid HITL + per-project task
+board. MAIster orchestrates agents through the Zed-standard Agent Client
+Protocol (ACP); Flow plugins shipped as git-tagged bundles compose CLI tools,
+agent skills, and YAML-DSL steps. It does **not** build a new agent runtime —
+claude and codex are the runtimes; MAIster is the control plane around them.
 
 Audience: solo-technical CEO / CIO / staff-eng running multiple repos and AI
 coding agents in parallel and tired of babysitting consoles.
@@ -44,6 +44,10 @@ For the full vision, product model, architecture, and roadmap see
   workspace across all projects. Card = project · branch · status · last
   activity · executor · quick actions. Filters by project + status.
   "Needs you (N)" badge counts pending HITL across all projects.
+- **Scratch workspaces**: manual conversation-style coding-agent sessions
+  outside the task board. Launcher selects project, parent branch, scratch
+  branch/worktree name, executor, plan mode, attachments, and capability
+  profile. Scratch runs appear in active workspaces but keep `task_id = NULL`.
 - **Per-project task board**: 2 columns `Backlog | In Flight`. In Flight
   holds `Running | NeedsInput | NeedsInputIdle | Review | Crashed`. A
   Backlog card has a **Launch** button; click runs
@@ -65,7 +69,7 @@ For the full vision, product model, architecture, and roadmap see
 - **ACP-driven agent execution**: `supervisor/` daemon (separate Node
   process, HTTP+SSE IPC, may run on a different host) owns ACP sessions.
   One agent process per session. Spawned on Launch; permission HITL is
-  resolved live. Checkpoint/idle resume remains designed.
+  resolved live. Checkpoint/idle resume is implemented.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
   + artifact `input-<stepId>.json` for structured forms (JSON Schema) +
   `human` step type with review comments. `on_reject.goto_step` is
@@ -104,7 +108,7 @@ For the full vision, product model, architecture, and roadmap see
 |                  | `@agentclientprotocol/sdk`.                                       |
 |                  | One agent process (`claude`, `codex`) per active session via      |
 |                  | Node `child_process.spawn`. Permission HITL resolves live;         |
-|                  | checkpoint+respawn via `--resume <session-id>` is designed.       |
+|                  | checkpoint+respawn via `--resume <session-id>` is implemented.    |
 | Model routing    | CCR (Claude Code Router) bundled for `router: ccr` — z.ai GLM,    |
 |                  | MiniMax via Anthropic-API-compatible providers.                   |
 | Web ↔ supervisor | HTTP + SSE (supervisor may run on a different host)               |
@@ -136,7 +140,7 @@ MAIster is split into two Node processes:
   Drizzle DB access + SSE bridge to supervisor. No agent processes here.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per active session, heartbeat
-  watchdog, designed checkpoint + respawn via `--resume`, token-count →
+  watchdog, checkpoint + respawn via `--resume`, token-count →
   cost-on-disk. HTTP+SSE interface; can run on a different host than `web/`.
 
 Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
@@ -145,8 +149,8 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 1. **ACP-driven execution with hybrid HITL**: ACP notifications drive the
    live path; artifact presence (`needs-input.json`) drives the durable
    path. `NeedsInput` keep-alive ≤30 min, extended by web-console
-   activity; designed checkpoint path moves `NeedsInputIdle` →
-   respawn via `--resume`.
+   activity; the checkpoint path moves `NeedsInput` to `NeedsInputIdle`
+   and later respawns via `--resume`.
    No `fs.watch`, no `chokidar`, no polling for state transitions.
 2. **SSE pipe-to-disk**: every ACP `session/update` line streamed to per-
    step log file via `fs.createWriteStream` *in parallel* with SSE

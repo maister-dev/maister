@@ -308,11 +308,7 @@ describe("POST /sessions/:id/input permission round-trip", () => {
 
   it("second select on the same requestId returns 404 after first resolves", async () => {
     booted = await bootBare();
-    await registerFakeSession(
-      booted.registry,
-      booted.runtimeRoot,
-      "s-idem",
-    );
+    await registerFakeSession(booted.registry, booted.runtimeRoot, "s-idem");
     const requestId = "66666666-6666-6666-6666-666666666666";
     const d = deferredCapture();
 
@@ -385,16 +381,8 @@ describe("POST /sessions/:id/input permission round-trip", () => {
 
   it("posting a session A's requestId to session B returns 410 (ownership boundary — deferred not found in B's pending set)", async () => {
     booted = await bootBare();
-    await registerFakeSession(
-      booted.registry,
-      booted.runtimeRoot,
-      "owner-A",
-    );
-    await registerFakeSession(
-      booted.registry,
-      booted.runtimeRoot,
-      "owner-B",
-    );
+    await registerFakeSession(booted.registry, booted.runtimeRoot, "owner-A");
+    await registerFakeSession(booted.registry, booted.runtimeRoot, "owner-B");
     const reqIdA = "99999999-9999-9999-9999-999999999999";
     const dA = deferredCapture();
 

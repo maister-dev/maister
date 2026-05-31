@@ -9,10 +9,10 @@ The diagrams in this folder are the **visual** view. If they disagree
 with the Drizzle schema, the Drizzle schema wins — open a PR to fix
 the ERD.
 
-Designed scratch-run persistence is included in the run ERDs because the
-implementation plan updates the run/workspace contract before code lands.
-Roadmap persistence for artifacts, assignments, capability catalogs, API tokens,
-and external operation events remains tracked in
+Scratch-run persistence and the selectable capability catalog are included in
+the ERDs because migrations now back the run/workspace/capability contracts.
+Roadmap persistence for artifacts, assignments, API tokens, and external
+operation events remains tracked in
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence)
 until migrations exist.
 
@@ -20,9 +20,9 @@ until migrations exist.
 
 | File | Scope |
 | ---- | ----- |
-| [`erd.md`](erd.md) | Full ERD across implemented tables plus Designed scratch-run tables. |
+| [`erd.md`](erd.md) | Full ERD across implemented tables. |
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
-| [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + Designed scratch-run tables. |
+| [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + scratch-run tables. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + form-schema shape. |
 
 ## Cardinality notation

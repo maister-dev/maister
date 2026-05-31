@@ -129,7 +129,10 @@ function listenForEvent(
   });
 }
 
-async function awaitChildExit(child: ChildProcess, maxMs = 5_000): Promise<void> {
+async function awaitChildExit(
+  child: ChildProcess,
+  maxMs = 5_000,
+): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   await Promise.race([
     new Promise<void>((resolveP) => {
@@ -185,128 +188,124 @@ afterEach(async () => {
 });
 
 describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", () => {
-  it(
-    "journals a cancelled-with-reason permission and replays it on --resume",
-    async () => {
-      if (!booted) throw new Error("not booted");
-      const { url, registry, stateDir } = booted;
+  it("journals a cancelled-with-reason permission and replays it on --resume", async () => {
+    if (!booted) throw new Error("not booted");
+    const { url, registry, stateDir } = booted;
 
-      const first = await createSession(url);
+    const first = await createSession(url);
 
-      const entry1 = registry.get(first.sessionId);
+    const entry1 = registry.get(first.sessionId);
 
-      expect(entry1).toBeDefined();
+    expect(entry1).toBeDefined();
 
-      // Drive the first prompt in the background; it parks on requestPermission.
-      const prompt1 = fetch(`${url}/sessions/${first.sessionId}/prompt`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ stepId: "step-1", prompt: "do thing" }),
-      });
+    // Drive the first prompt in the background; it parks on requestPermission.
+    const prompt1 = fetch(`${url}/sessions/${first.sessionId}/prompt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stepId: "step-1", prompt: "do thing" }),
+    });
 
-      const permEvent = await listenForEvent(
-        registry,
-        first.sessionId,
-        (e) => e.type === "session.permission_request",
-      );
+    const permEvent = await listenForEvent(
+      registry,
+      first.sessionId,
+      (e) => e.type === "session.permission_request",
+    );
 
-      expect(permEvent.type).toBe("session.permission_request");
-      const requestId =
-        permEvent.type === "session.permission_request"
-          ? permEvent.requestId
-          : "";
+    expect(permEvent.type).toBe("session.permission_request");
+    const requestId =
+      permEvent.type === "session.permission_request"
+        ? permEvent.requestId
+        : "";
 
-      expect(requestId).toMatch(/[0-9a-f-]{36}/);
+    expect(requestId).toMatch(/[0-9a-f-]{36}/);
 
-      // SIMULATED CHECKPOINT step 1: cancel with reason="checkpoint".
-      // This is the exact call T4 will issue from the new
-      // POST /sessions/:id/checkpoint endpoint before SIGTERMing.
-      const cancelled = pendingPermissions.cancel(
-        first.sessionId,
-        requestId,
-        "checkpoint",
-      );
+    // SIMULATED CHECKPOINT step 1: cancel with reason="checkpoint".
+    // This is the exact call T4 will issue from the new
+    // POST /sessions/:id/checkpoint endpoint before SIGTERMing.
+    const cancelled = pendingPermissions.cancel(
+      first.sessionId,
+      requestId,
+      "checkpoint",
+    );
 
-      expect(cancelled).toBe(true);
+    expect(cancelled).toBe(true);
 
-      // The mock's prompt() observes outcome:"cancelled", emits an
-      // "agent_message_chunk", and resolves.
-      const r1 = await prompt1;
+    // The mock's prompt() observes outcome:"cancelled", emits an
+    // "agent_message_chunk", and resolves.
+    const r1 = await prompt1;
 
-      expect(r1.status).toBe(200);
+    expect(r1.status).toBe(200);
 
-      // Now SIMULATED CHECKPOINT step 2: SIGTERM the worker.
-      const delRes = await fetch(`${url}/sessions/${first.sessionId}`, {
-        method: "DELETE",
-      });
+    // Now SIMULATED CHECKPOINT step 2: SIGTERM the worker.
+    const delRes = await fetch(`${url}/sessions/${first.sessionId}`, {
+      method: "DELETE",
+    });
 
-      expect(delRes.status).toBe(204);
-      await awaitChildExit(entry1!.child as ChildProcess);
+    expect(delRes.status).toBe(204);
+    await awaitChildExit(entry1!.child as ChildProcess);
 
-      // Journal proof: the mock recorded the pending permission so a
-      // fresh --resume process can replay it.
-      const journalPath = join(stateDir, `${first.acpSessionId}.json`);
-      const journal = JSON.parse(await readFile(journalPath, "utf8"));
+    // Journal proof: the mock recorded the pending permission so a
+    // fresh --resume process can replay it.
+    const journalPath = join(stateDir, `${first.acpSessionId}.json`);
+    const journal = JSON.parse(await readFile(journalPath, "utf8"));
 
-      expect(journal.acpSessionId).toBe(first.acpSessionId);
-      expect(journal.pendingPermission).toBeDefined();
-      expect(journal.pendingPermission.toolCall.toolCallId).toBe("tc-1");
+    expect(journal.acpSessionId).toBe(first.acpSessionId);
+    expect(journal.pendingPermission).toBeDefined();
+    expect(journal.pendingPermission.toolCall.toolCallId).toBe("tc-1");
 
-      // Spawn a FRESH supervisor session with --resume <acpSessionId>.
-      // The supervisor's spawn.ts already wires this arg through.
-      const second = await createSession(url, first.acpSessionId);
+    // Spawn a FRESH supervisor session with --resume <acpSessionId>.
+    // The supervisor's spawn.ts already wires this arg through.
+    const second = await createSession(url, first.acpSessionId);
 
-      // The mock's newSession() returns the SAME acpSessionId because
-      // the journal is hydrated. This is the protocol invariant
-      // claude-agent-acp also preserves (verified M0 spike).
-      expect(second.acpSessionId).toBe(first.acpSessionId);
-      expect(second.sessionId).not.toBe(first.sessionId);
+    // The mock's newSession() returns the SAME acpSessionId because
+    // the journal is hydrated. This is the protocol invariant
+    // claude-agent-acp also preserves (verified M0 spike).
+    expect(second.acpSessionId).toBe(first.acpSessionId);
+    expect(second.sessionId).not.toBe(first.sessionId);
 
-      const prompt2 = fetch(`${url}/sessions/${second.sessionId}/prompt`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ stepId: "step-1", prompt: "resumed" }),
-      });
+    const prompt2 = fetch(`${url}/sessions/${second.sessionId}/prompt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stepId: "step-1", prompt: "resumed" }),
+    });
 
-      // The re-issued permission MUST carry the original toolCall.
-      const reissued = await listenForEvent(
-        registry,
-        second.sessionId,
-        (e) => e.type === "session.permission_request",
-      );
+    // The re-issued permission MUST carry the original toolCall.
+    const reissued = await listenForEvent(
+      registry,
+      second.sessionId,
+      (e) => e.type === "session.permission_request",
+    );
 
-      expect(reissued.type).toBe("session.permission_request");
-      if (reissued.type !== "session.permission_request") {
-        throw new Error("type narrowing failed");
-      }
-      expect((reissued.toolCall as { toolCallId?: string }).toolCallId).toBe(
-        "tc-1",
-      );
-      expect(reissued.requestId).not.toBe(requestId);
+    expect(reissued.type).toBe("session.permission_request");
+    if (reissued.type !== "session.permission_request") {
+      throw new Error("type narrowing failed");
+    }
+    expect((reissued.toolCall as { toolCallId?: string }).toolCallId).toBe(
+      "tc-1",
+    );
+    expect(reissued.requestId).not.toBe(requestId);
 
-      // Resolve the re-issued permission so prompt2 returns.
-      const inputRes = await fetch(`${url}/sessions/${second.sessionId}/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          kind: "permission",
-          action: "select",
-          requestId: reissued.requestId,
-          optionId: "allow",
-        }),
-      });
+    // Resolve the re-issued permission so prompt2 returns.
+    const inputRes = await fetch(`${url}/sessions/${second.sessionId}/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "permission",
+        action: "select",
+        requestId: reissued.requestId,
+        optionId: "allow",
+      }),
+    });
 
-      expect(inputRes.status).toBe(200);
+    expect(inputRes.status).toBe(200);
 
-      const r2 = await prompt2;
+    const r2 = await prompt2;
 
-      expect(r2.status).toBe(200);
+    expect(r2.status).toBe(200);
 
-      // Journal cleared (pendingPermission gone) after successful replay.
-      const journalAfter = JSON.parse(await readFile(journalPath, "utf8"));
+    // Journal cleared (pendingPermission gone) after successful replay.
+    const journalAfter = JSON.parse(await readFile(journalPath, "utf8"));
 
-      expect(journalAfter.pendingPermission).toBeUndefined();
-    },
-    20_000,
-  );
+    expect(journalAfter.pendingPermission).toBeUndefined();
+  }, 20_000);
 });

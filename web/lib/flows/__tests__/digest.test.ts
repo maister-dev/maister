@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-
 import type { FlowYamlV1 } from "@/lib/config.schema";
+
+import { describe, expect, it } from "vitest";
 
 import { manifestDigest } from "@/lib/flows/digest";
 

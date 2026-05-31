@@ -25,12 +25,12 @@ erDiagram
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
-    RUNS ||--o| SCRATCH_RUNS : "scratch metadata (Designed)"
-    TASKS ||--o{ SCRATCH_RUNS : "optional link (Designed)"
-    SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES : "dialog ledger (Designed)"
-    SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments (Designed)"
-    SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments (Designed)"
-    SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot (Designed)"
+    RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
+    TASKS ||--o{ SCRATCH_RUNS : "optional link"
+    SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES : "dialog ledger"
+    SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments"
+    SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments"
+    SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot"
 
     TASKS {
         text id PK
@@ -47,7 +47,7 @@ erDiagram
 
     RUNS {
         text id PK
-        text run_kind "flow|scratch (Designed; DEFAULT flow)"
+        text run_kind "flow|scratch (DEFAULT flow)"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
@@ -145,6 +145,9 @@ erDiagram
         text target_branch
         text dialog_status "Starting|WaitingForUser|Running|NeedsInput|Review|Crashed|Done|Abandoned"
         text supervisor_session_id
+        text error_code
+        text error_message
+        jsonb error_metadata
         text created_by_user_id FK
         timestamp last_user_message_at
         timestamp last_agent_message_at
@@ -215,24 +218,23 @@ erDiagram
 - `tasks_project_status_idx` on `(project_id, status)` — board queries.
 - `runs_project_status_idx` on `(project_id, status)` — portfolio
   queries and per-project In-Flight filters.
-- **Designed** `runs_project_status_kind_idx` on
+- `runs_project_status_kind_idx` on
   `(project_id, status, run_kind)` — active workspace queries that include both
   Flow and scratch runs while preserving kind filters.
 - `runs_task_idx` on `(task_id)` — latest-attempt lookups (`ORDER
 BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 `ORDER BY attempt_number DESC LIMIT 1` once `runs.attempt_number` lands).
-- **Designed** `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
+- `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
   attempt queries that explicitly filter `run_kind = 'flow'` and exclude
   scratch rows with nullable `task_id`.
-- **Designed** `scratch_runs_run_idx` on `(run_id)` and
-  `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — scratch
-  detail joins and active scratch workspace lists.
-- **Designed** `scratch_messages_run_sequence_idx` on `(run_id, sequence)`
-  UNIQUE — deterministic dialog replay.
-- **Designed** attachment indexes on `(run_id)` and `(message_id)` — run and
+- `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
+  scratch workspace lists. The primary key on `run_id` covers detail joins.
+- `scratch_messages_run_sequence_uq` on `(run_id, sequence)` UNIQUE —
+  deterministic dialog replay.
+- Attachment indexes on `(run_id)` and `(message_id)` — run and
   message attachment lookups.
-- **Designed** `scratch_capability_profiles_run_idx` on `(run_id)` UNIQUE —
-  run-scoped capability snapshot lookup.
+- `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot
+  lookup.
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.
 - `step_runs_run_step_attempt_uq` on `(run_id, step_id, attempt)` —
   one row per (run, step, attempt); guards future per-step retry.
@@ -277,7 +279,7 @@ Pending -> Running -> Review -> Done (promotion succeeds)
 See [`../system-analytics/runs.md`](../system-analytics/runs.md) for the
 full state diagram.
 
-**Scratch dialog status** (manual dialog axis, Designed):
+**Scratch dialog status** (manual dialog axis):
 
 ```
 Starting -> WaitingForUser <-> Running -> Review -> Done

@@ -72,7 +72,7 @@ export default async function AppLayout({
         <LeftRail
           activeSection="projects"
           inboxCount={inboxCount}
-          launchHref="/projects/new"
+          launchHref="/scratch-runs/new"
           platformStatus={platformStatus}
           userRole={sessionUser?.role}
           workspaces={railWorkspaces.map((ws) => ({

@@ -13,41 +13,45 @@ executor, worktree, HITL, diff, and cleanup contracts as normal runs.
 - **Run substrate** - `runs`, `workspaces`, supervisor sessions, HITL rows, and
   active workspace views are Implemented for Flow runs and extended here for
   scratch runs.
-- **Scratch run** - Designed. A `runs` row with `run_kind = "scratch"`, one
+- **Scratch run** - Implemented. A `runs` row with `run_kind = "scratch"`, one
   project, one executor, nullable `task_id`, nullable `flow_id`, nullable
   `flow_revision_id`, `flow_version = "scratch"`, and
   `flow_revision = "manual"`.
-- **Scratch workspace** - Designed. One `workspaces` row and one MAIster-created
+- **Scratch workspace** - Implemented. One `workspaces` row and one MAIster-created
   git worktree for the scratch run. The run stays outside the task board and
   appears in Portfolio and project active workspace lists.
-- **Scratch metadata** - Designed. `scratch_runs` row keyed by `run_id` with
+- **Scratch metadata** - Implemented. `scratch_runs` row keyed by `run_id` with
   `name`, `initial_prompt`, `plan_mode`, `linked_task_id`,
   `linked_issue_url`, `base_branch`, `base_commit`, `target_branch`,
   `dialog_status`, `supervisor_session_id`, `created_by_user_id`,
   `last_user_message_at`, and `last_agent_message_at`.
-- **Scratch message** - Designed. Append-only `scratch_messages` row with
+- **Scratch message** - Implemented. Append-only `scratch_messages` row with
   `run_id`, monotonic `sequence`, `role`, `content`, optional
   `supervisor_event_id`, and timestamps. Roles are `user | assistant | tool |
   system`.
-- **Scratch attachment** - Designed. Optional `scratch_attachments` row linked
+- **Scratch attachment** - Implemented. Optional `scratch_attachments` row linked
   to a scratch message or run. Initial kinds are `issue_url`, `file_path`, and
   `text_note`. Binary upload storage is Phase 2.
-- **Scratch capability profile** - Designed. Run-scoped selection of MCP
-  servers, skills, rules, agent settings, and restrictions resolved from
-  platform capability catalogs, project defaults, and installed Flow package
-  assets, then materialized for exactly one supervisor session.
-- **Platform MCP selection** - Designed. Checkbox dropdown in the scratch
+- **Scratch capability profile** - Implemented as a run-scoped snapshot plus
+  instruction handoff files. MCP servers, skills, rules, and restrictions are
+  resolved from the platform/project capability catalog and persisted with
+  downgrade notes. V1 materializes `profile.json` and `instructions.md` inside
+  the worktree and passes their paths through `adapterLaunch.env`; selected
+  MCPs and skills are not yet loaded through adapter-native mechanisms.
+  Adapter-specific MCP config, settings files, and skill loader wiring remain a
+  designed follow-up.
+- **Platform MCP selection** - Implemented. Checkbox dropdown in the scratch
   launcher. It lists MCP servers visible to the chosen project, defaults all
   project-enabled platform MCPs to selected, and omits unchecked servers from
   the run profile.
-- **Skill and rule selection** - Designed. Checkbox dropdowns in the scratch
+- **Skill and rule selection** - Implemented. Checkbox dropdowns in the scratch
   launcher. They list project rules, platform rules, project skills, and skills
   shipped by installed Flow packages. Defaults come from project capability
   policy.
-- **Plan mode** - Designed. Launch setting that tells the agent to produce and
+- **Plan mode** - Implemented. Launch setting that tells the agent to produce and
   wait on a plan before editing. In v1 this is prompt-level policy plus
   persisted capability metadata, not a hard tool sandbox.
-- **Active workspace card** - Designed. Portfolio and project workspace list
+- **Active workspace card** - Implemented. Portfolio active workspace list
   entry showing project, scratch name, branch, executor, status, last activity,
   and an Open dialog action.
 
@@ -63,6 +67,7 @@ stateDiagram-v2
     Running --> WaitingForUser: agent stopReason=end_turn
     Running --> NeedsInput: agent requests permission
     NeedsInput --> Running: operator responds
+    NeedsInput --> Crashed: permission deferred timeout
     Running --> Crashed: supervisor session crashes
 
     WaitingForUser --> Review: operator closes session<br/>with changes to inspect
@@ -79,7 +84,7 @@ stateDiagram-v2
     Abandoned --> [*]
 ```
 
-Scratch dialog status is Designed and lives on `scratch_runs.dialog_status`.
+Scratch dialog status is Implemented and lives on `scratch_runs.dialog_status`.
 `runs.status` remains the existing shared lifecycle:
 `Pending | Running | NeedsInput | NeedsInputIdle | Review | Crashed | Done |
 Abandoned | Failed`. The implementation MUST NOT add `WaitingForUser` to
@@ -96,14 +101,16 @@ Abandoned | Failed`. The implementation MUST NOT add `WaitingForUser` to
 | `Done` | `Done` | Scratch changes were promoted or explicitly completed. |
 | `Abandoned` | `Abandoned` | Scratch workspace was discarded. |
 
-Scratch v1 checks the same shared live-session cap as Flow launch before
-worktree, DB, or supervisor side effects. It does not enqueue `Pending` scratch
-runs. When the cap is full, launch returns a typed `CONFLICT` or
-`PRECONDITION` response and leaves no scratch artifacts behind.
+Scratch v1 pre-checks the same shared live-session cap as Flow launch before
+worktree, DB, or supervisor side effects, then re-checks the cap in the same DB
+transaction that inserts the `Running` scratch run. It does not enqueue
+`Pending` scratch runs. When the cap is full, launch returns a typed
+`CONFLICT` or `PRECONDITION` response and compensates any scratch artifacts
+created after a concurrent race.
 
 ## Process flows
 
-### Start scratch run (Designed)
+### Start scratch run (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -126,24 +133,24 @@ sequenceDiagram
     alt supervisor unavailable
         W-->>UI: 503 EXECUTOR_UNAVAILABLE
     end
-    W->>DB: check shared live-session cap
+    W->>DB: pre-check shared live-session cap
     alt cap full
-        W-->>UI: 409 CONFLICT or 412 PRECONDITION
+        W-->>UI: 409 CONFLICT or PRECONDITION
     end
     W->>FS: resolve selected base branch to base commit
     W->>FS: git worktree add -b scratch branch from base branch
     W->>FS: materialize run-scoped capability profile
-    W->>DB: insert runs + workspaces + scratch_runs + messages + attachments + capability snapshot
+    W->>DB: transactionally re-check cap + insert runs, workspaces, scratch metadata, messages, attachments, capability snapshot
     W->>SV: POST /sessions { runId, projectSlug, worktreePath, stepId:"dialog", executor, capabilityProfilePath }
     SV-->>W: 201 { sessionId, acpSessionId }
     W->>DB: store supervisor_session_id + acp_session_id
     W->>SV: POST /sessions/{sessionId}/prompt
-    W-->>UI: 201 { runId, dialogUrl }
+    W-->>UI: 201 { runId, dialogUrl, status }
     UI->>W: GET /api/scratch-runs/{runId}
     UI-->>U: Open scratch dialog
 ```
 
-### Dialog turn (Designed)
+### Dialog turn (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -160,18 +167,21 @@ sequenceDiagram
     W->>SV: POST /sessions/{sessionId}/prompt
     SV->>A: ACP prompt
     A-->>SV: session.update stream
-    SV-->>W: append run.events.jsonl
+    SV-->>W: session event stream
     W->>DB: append assistant/tool scratch_messages
-    W-->>UI: SSE updates
+    W-->>UI: 202 + persisted dialog state
     A-->>SV: prompt stopReason=end_turn
-    W->>DB: set dialog state WaitingForUser
+    W->>DB: set WaitingForUser only if still Running
 ```
 
 The web tier must reject a second user message while a prompt is already
 running for the same scratch run. The UI keeps the composer disabled until the
 current prompt reaches `end_turn`, HITL, crash, or cancellation.
+Prompt completion only transitions `Starting` or `Running` to
+`WaitingForUser`; event-derived `NeedsInput`, `Crashed`, and review states are
+preserved.
 
-### Permission HITL in scratch dialog (Designed)
+### Permission HITL in scratch dialog (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -193,7 +203,37 @@ sequenceDiagram
     W->>DB: set scratch dialog Running
 ```
 
-### Close, review, and promote (Designed)
+If the supervisor returns `HITL_TIMEOUT` while a scratch permission response is
+being delivered, the shared HITL route marks the Flow run `Failed` but marks a
+scratch run `Crashed` and stores `scratch_runs.error_code = HITL_TIMEOUT`.
+
+### Recover scratch session (Implemented)
+
+```mermaid
+sequenceDiagram
+    actor U as Operator
+    participant UI as Scratch dialog
+    participant W as Web tier
+    participant DB as Postgres
+    participant SV as Supervisor
+
+    U->>UI: Recover crashed scratch run
+    UI->>W: POST /api/scratch-runs/{runId}/recover {prompt}
+    W->>DB: load server-owned acp_session_id and workspace locators
+    alt live supervisor session still exists
+        W-->>UI: 200 { action: "open" }
+    else acp_session_id exists
+        W->>SV: POST /sessions { resumeSessionId }
+        SV-->>W: 201 { sessionId, acpSessionId }
+        W->>DB: store new supervisor_session_id
+        W->>SV: POST /sessions/{sessionId}/prompt
+        W-->>UI: 202 { action: "recover", dialogStatus }
+    else no resume handle
+        W-->>UI: 409 PRECONDITION
+    end
+```
+
+### Close, review, and promote (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -215,18 +255,18 @@ sequenceDiagram
     U->>UI: Promote or discard
     alt promote
         UI->>W: POST /api/runs/{runId}/promote
-        W->>FS: local merge or PR to target branch
+        W->>FS: local merge to target branch
         W->>DB: set status Done
     else discard
         UI->>W: POST /api/scratch-runs/{runId}/discard
-        W->>FS: git worktree remove --force
         W->>DB: set status Abandoned
+        W->>FS: best-effort git worktree remove --force
     end
 ```
 
 ## Structured events (Designed)
 
-Scratch runs use structured application logs and persisted run events so launch,
+Scratch runs use structured application logs and persisted messages so launch,
 dialog, and cleanup can be audited without reading free-form text. Each event
 MUST include `run_id`, `project_id`, `executor_id`, `run_kind = "scratch"`,
 `workspace_id` when available, and the authenticated actor id when the event is
@@ -290,7 +330,8 @@ MUST NOT log secret values.
   kind that does not match the schema.
 - **`CONFIG`** - selected MCP, skill, rule, or restriction is not visible to the
   selected project.
-- **`HITL_TIMEOUT`** - a permission request expires before the operator answers.
+- **`HITL_TIMEOUT`** - a permission request expires before the operator answers;
+  the scratch run transitions to `Crashed`.
 - **`CRASH`** - the supervisor session exits unexpectedly or the web tier cannot
   persist a permission request.
 - **`CONFLICT`** - promotion cannot merge the scratch branch into the target
@@ -309,5 +350,5 @@ MUST NOT log secret values.
 - Source areas: `web/app/api/runs/route.ts`,
   `web/app/api/runs/[runId]/stream/route.ts`, `web/lib/worktree.ts`,
   `web/lib/supervisor-client.ts`, `supervisor/src/http-api.ts`,
-  `supervisor/src/acp-client.ts`, planned capability-profile modules under
+  `supervisor/src/acp-client.ts`, and capability-profile modules under
   `web/lib/capabilities/`.

@@ -387,10 +387,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     // Idempotency: if the child is already gone, return 200 with the
     // current state. The sweeper may hit this branch when the
     // supervisor restarted between two ticks.
-    if (
-      entry.record.status === "exited" ||
-      entry.record.status === "crashed"
-    ) {
+    if (entry.record.status === "exited" || entry.record.status === "crashed") {
       checkpointLog.info(
         {
           sessionId,

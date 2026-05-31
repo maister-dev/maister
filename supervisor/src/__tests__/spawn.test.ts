@@ -138,6 +138,51 @@ describe("spawnSession", () => {
     expect(first.sessionId).toBe("uuid-abc-123");
   });
 
+  it("passes capability launch args and env to the adapter process", async () => {
+    const request = makeRequest({
+      runId: "run-cap",
+      capabilityProfilePath: `${process.cwd()}/.maister/capabilities/run-cap/profile.json`,
+      adapterLaunch: {
+        env: { MAISTER_TEST_PROFILE_ENV: "profile-ready" },
+        preArgs: ["--cap-pre"],
+        postArgs: ["--cap-post"],
+      },
+    });
+    const { child, emitter } = await spawnSession({
+      sessionId: "session-cap",
+      request,
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [
+        FIXTURE_PATH,
+        "--lines",
+        "0",
+        "--echo-env",
+        "MAISTER_TEST_PROFILE_ENV",
+      ],
+    });
+
+    expect(child.spawnargs).toContain("--cap-pre");
+    expect(child.spawnargs).toContain("--cap-post");
+
+    const eventsPromise = collectEvents(emitter);
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+
+    const events = await eventsPromise;
+    const envLine = events.find((e) => e.type === "session.line") as
+      | { line: string }
+      | undefined;
+
+    expect(envLine).toBeDefined();
+    expect(JSON.parse(envLine?.line ?? "{}")).toMatchObject({
+      type: "env",
+      name: "MAISTER_TEST_PROFILE_ENV",
+      value: "profile-ready",
+    });
+  });
+
   it("throws SupervisorError(SPAWN) when binary does not exist", async () => {
     const request = makeRequest();
 

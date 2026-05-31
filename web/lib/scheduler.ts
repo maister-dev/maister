@@ -5,6 +5,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -61,6 +62,63 @@ type Db = any;
 export type TryStartRunResult =
   | { started: true }
   | { started: false; queuePosition: number };
+
+export type ScratchCapacityDecision = {
+  allowed: boolean;
+  cap: number;
+  liveCount: number;
+};
+
+export function scratchCapacityDecision(
+  liveCount: number,
+  cap: number,
+): ScratchCapacityDecision {
+  return {
+    allowed: liveCount < cap,
+    cap,
+    liveCount,
+  };
+}
+
+export async function assertScratchCapacityAvailable(
+  opts: { db?: Db } = {},
+): Promise<ScratchCapacityDecision> {
+  const db = opts.db ?? getDb();
+
+  return db.transaction(async (tx: Db) =>
+    assertScratchCapacityAvailableInTransaction(tx),
+  );
+}
+
+export async function assertScratchCapacityAvailableInTransaction(
+  tx: Db,
+): Promise<ScratchCapacityDecision> {
+  const cap = capFromEnv();
+
+  await takeSchedulerLock(tx);
+
+  const liveRows: Array<{ count: number }> = await tx
+    .select({ count: count() })
+    .from(runs)
+    .where(inArray(runs.status, ["Running", "NeedsInput"]));
+
+  const liveCount = Number(liveRows[0]?.count ?? 0);
+  const decision = scratchCapacityDecision(liveCount, cap);
+
+  log.debug(
+    { liveCount: decision.liveCount, cap: decision.cap },
+    "scratch capacity cap-check",
+  );
+
+  if (!decision.allowed) {
+    throw new MaisterError(
+      "CONFLICT",
+      `scratch run capacity is full: liveCount=${liveCount}, cap=${cap}`,
+    );
+  }
+
+  return decision;
+}
 
 export async function tryStartRun(
   runId: string,

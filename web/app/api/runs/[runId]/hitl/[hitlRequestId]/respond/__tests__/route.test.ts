@@ -11,6 +11,7 @@ import {
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
   runs as runsTable,
+  scratchRuns as scratchRunsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
@@ -19,13 +20,14 @@ type Tables = {
   runs: Row[];
   hitl_requests: Row[];
   projects: Row[];
+  scratch_runs: Row[];
 };
 
 const dbState: {
   tables: Tables;
   updates: Array<{ table: string; set: Row }>;
 } = {
-  tables: { runs: [], hitl_requests: [], projects: [] },
+  tables: { runs: [], hitl_requests: [], projects: [], scratch_runs: [] },
   updates: [],
 };
 
@@ -33,6 +35,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === runsTable) return "runs";
   if (t === hitlRequestsTable) return "hitl_requests";
   if (t === projectsTable) return "projects";
+  if (t === scratchRunsTable) return "scratch_runs";
   throw new Error("unknown table");
 }
 
@@ -137,7 +140,12 @@ let runtimeRoot: string;
 beforeEach(async () => {
   runtimeRoot = await mkdtemp(join(tmpdir(), "hitl-resp-"));
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
-  dbState.tables = { runs: [], hitl_requests: [], projects: [] };
+  dbState.tables = {
+    runs: [],
+    hitl_requests: [],
+    projects: [],
+    scratch_runs: [],
+  };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();
   deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
@@ -159,6 +167,8 @@ function seedPermissionRow(
     respondedAt: Date | null;
     options: Array<{ optionId: string }>;
     response: Row | null;
+    runKind: "flow" | "scratch";
+    scratchDialogStatus: string;
   }> = {},
 ): { runId: string; hitlRequestId: string } {
   const runId = "run-perm";
@@ -167,9 +177,18 @@ function seedPermissionRow(
   dbState.tables.runs.push({
     id: runId,
     projectId: "proj-1",
+    runKind: overrides.runKind ?? "flow",
     status: overrides.runStatus ?? "NeedsInput",
     currentStepId: "plan",
   });
+  if (overrides.runKind === "scratch") {
+    dbState.tables.scratch_runs.push({
+      runId,
+      projectId: "proj-1",
+      dialogStatus: overrides.scratchDialogStatus ?? "NeedsInput",
+      supervisorSessionId: "sup-1",
+    });
+  }
   dbState.tables.projects.push({ id: "proj-1", slug: "demo" });
   dbState.tables.hitl_requests.push({
     id: hitlRequestId,
@@ -259,6 +278,18 @@ describe("HITL respond route — kind=permission", () => {
     expect(hitl.respondedAt).toBeInstanceOf(Date);
   });
 
+  it("scratch permission delivery returns the dialog to Running", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runKind: "scratch",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Running");
+    expect(dbState.tables.runs[0].status).toBe("Running");
+  });
+
   it("rejects optionId not in declared options with 400", async () => {
     const { runId, hitlRequestId } = seedPermissionRow({
       options: [{ optionId: "allow" }],
@@ -283,6 +314,26 @@ describe("HITL respond route — kind=permission", () => {
 
     expect(res.status).toBe(410);
     expect(dbState.tables.runs[0].status).toBe("Failed");
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
+  });
+
+  it("scratch HITL_TIMEOUT from supervisor → 410 + runs→Crashed + dialog Crashed", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runKind: "scratch",
+    });
+
+    deliverPermissionSpy.mockRejectedValueOnce(
+      new MaisterError("HITL_TIMEOUT", "expired"),
+    );
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(410);
+    expect(dbState.tables.runs[0].status).toBe("Crashed");
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Crashed",
+      errorCode: "HITL_TIMEOUT",
+    });
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
   });
 

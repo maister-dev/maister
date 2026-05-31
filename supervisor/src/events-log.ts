@@ -1,9 +1,6 @@
 import type { Logger } from "pino";
 
-import {
-  createWriteStream,
-  type WriteStream,
-} from "node:fs";
+import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 

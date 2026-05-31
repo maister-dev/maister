@@ -11,7 +11,7 @@ test.describe("authentication and redirects", () => {
     await page.goto("/login");
 
     await expect(page).toHaveURL(/\/login/);
-    await expect(page.locator("text=/sign in/i")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
   });
 
   test("login form has email and password fields", async ({ page }) => {

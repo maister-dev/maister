@@ -55,7 +55,7 @@ async function newProject(): Promise<string> {
 }
 
 function configWith(over: Partial<MaisterYamlV2> = {}): MaisterYamlV2 {
-  return {
+  const defaults: MaisterYamlV2 = {
     schemaVersion: 2,
     project: {
       name: "p",
@@ -68,8 +68,21 @@ function configWith(over: Partial<MaisterYamlV2> = {}): MaisterYamlV2 {
       { id: "codex-default", agent: "codex", model: "gpt-5-codex" },
     ],
     default_executor: "claude-sonnet",
+    capabilities: {
+      mcps: [],
+      skills: [],
+      rules: [],
+      restrictions: [],
+      settings: [],
+      tools: [],
+    },
     flows: [],
+  };
+
+  return {
+    ...defaults,
     ...over,
+    capabilities: over.capabilities ?? defaults.capabilities,
   };
 }
 

@@ -1,5 +1,8 @@
 import { createServer as createNetServer } from "node:net";
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import {
+  createServer as createHttpServer,
+  type Server as HttpServer,
+} from "node:http";
 import { fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
 import { Writable } from "node:stream";

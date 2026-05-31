@@ -8,6 +8,7 @@ import { stringify as stringifyYaml } from "yaml";
 import {
   SETTINGS_NOT_ENFORCED_WARN,
   loadFlowManifest,
+  loadPlatformMcpCapabilities,
   loadProjectConfig,
   validateFormSchemaVersion,
 } from "@/lib/config";
@@ -71,6 +72,7 @@ describe("loadProjectConfig", () => {
     expect(cfg.project.name).toBe("myapp");
     expect(cfg.executors).toHaveLength(3);
     expect(cfg.flows).toHaveLength(2);
+    expect(cfg.capabilities.mcps).toEqual([]);
   });
 
   it("rejects missing file with CONFIG MaisterError", async () => {
@@ -157,6 +159,60 @@ describe("loadProjectConfig", () => {
     const path = await writeFixture("dup-flow.yaml", dup);
 
     await expect(loadProjectConfig(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("loads capability groups and rejects duplicate ids inside a kind", async () => {
+    const yaml = `${goldenYaml}
+capabilities:
+  mcps:
+    - id: github
+      command: github-mcp-server
+    - id: github
+      command: github-mcp-server
+`;
+    const path = await writeFixture("dup-capability.yaml", yaml);
+
+    await expect(loadProjectConfig(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+});
+
+describe("loadPlatformMcpCapabilities", () => {
+  it("loads enabled MCP servers as default-selected platform capabilities", async () => {
+    const path = await writeFixture(
+      "mcp.json",
+      JSON.stringify({
+        mcpServers: {
+          github: {
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-github"],
+            env: { GITHUB_TOKEN: "${GITHUB_TOKEN}" },
+          },
+          disabled: { command: "noop", disabled: true },
+        },
+      }),
+    );
+
+    const capabilities = await loadPlatformMcpCapabilities(path);
+
+    expect(capabilities).toHaveLength(1);
+    expect(capabilities[0]).toMatchObject({
+      id: "github",
+      kind: "mcp",
+      source: "platform",
+      selected_by_default: true,
+      enforceability: "enforced",
+    });
+    expect(capabilities[0].env).toEqual({ GITHUB_TOKEN: "${GITHUB_TOKEN}" });
+  });
+
+  it("rejects malformed MCP registries as CONFIG", async () => {
+    const path = await writeFixture("bad-mcp.json", JSON.stringify({}));
+
+    await expect(loadPlatformMcpCapabilities(path)).rejects.toMatchObject({
       code: "CONFIG",
     });
   });

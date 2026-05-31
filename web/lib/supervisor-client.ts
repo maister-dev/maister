@@ -26,6 +26,12 @@ export type SupervisorExecutorInput = {
   router?: "ccr";
 };
 
+export type SupervisorAdapterLaunchInput = {
+  env?: Record<string, string>;
+  preArgs?: string[];
+  postArgs?: string[];
+};
+
 export type CreateSessionInput = {
   runId: string;
   projectSlug: string;
@@ -33,6 +39,8 @@ export type CreateSessionInput = {
   stepId: string;
   executor: SupervisorExecutorInput;
   resumeSessionId?: string;
+  capabilityProfilePath?: string;
+  adapterLaunch?: SupervisorAdapterLaunchInput;
 };
 
 export type CreateSessionResult = {
@@ -154,6 +162,7 @@ function baseUrl(): string {
 const KNOWN_SUPERVISOR_CODES: ReadonlySet<MaisterErrorCode> = new Set([
   "PRECONDITION",
   "SPAWN",
+  "NEEDS_INPUT",
   "EXECUTOR_UNAVAILABLE",
   "ACP_PROTOCOL",
   "CHECKPOINT",

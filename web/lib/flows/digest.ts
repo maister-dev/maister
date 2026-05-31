@@ -1,8 +1,8 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import type { FlowYamlV1 } from "@/lib/config.schema";
+
+import { createHash } from "node:crypto";
 
 // Stable, deterministic JSON serialization: object keys sorted recursively so
 // the digest is invariant under key reordering in the source YAML. Arrays keep

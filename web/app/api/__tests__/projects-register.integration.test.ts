@@ -47,6 +47,14 @@ const seedConfig = {
   ],
   default_executor: "claude-sonnet",
   flows: [{ id: "bugfix", source: "github.com/x/y", version: "v1.0.0" }],
+  capabilities: {
+    mcps: [],
+    skills: [],
+    rules: [],
+    restrictions: [],
+    settings: [],
+    tools: [],
+  },
 };
 
 vi.mock("@/lib/authz", () => ({
@@ -58,6 +66,7 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 vi.mock("@/lib/config", () => ({
+  loadPlatformMcpCapabilities: vi.fn(async () => []),
   loadProjectConfig: vi.fn(async () => seedConfig),
 }));
 

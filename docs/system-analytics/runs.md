@@ -115,7 +115,7 @@ machine:
 
 ## Process flows
 
-### Happy path — launch to Review (Implemented), promote after Review (Designed)
+### Happy path — launch to Review, promote after Review (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -148,7 +148,7 @@ sequenceDiagram
     A->>A: exit 0
     SV-->>W: SSE session.exited
     W->>DB: runs.status=Review
-    U->>W: GET /api/runs/[id]/diff (Designed)
+    U->>W: GET /api/runs/[id]/diff
     W-->>U: raw git diff
     U->>W: POST /api/runs/[id]/promote
     W->>DB: verify required gates current/pass/overridden
@@ -171,7 +171,7 @@ sequenceDiagram
 > but does **not** gate promotion on them — promotion-gating is out of M11a
 > scope. See [`flow-graph.md`](flow-graph.md).
 
-### NeedsInput and designed keep-alive cycle
+### NeedsInput and keep-alive cycle
 
 ```mermaid
 sequenceDiagram
@@ -199,10 +199,10 @@ sequenceDiagram
         W-->>R: schedule runFlow
     end
     R->>DB: claim NeedsInput -> Running
-    Note over R,SV: Designed idle path checkpoints to NeedsInputIdle<br/>and later resumes with acp_session_id.
+    Note over R,SV: Idle path checkpoints to NeedsInputIdle<br/>and later resumes with acp_session_id.
 ```
 
-### Crash recovery (Designed)
+### Crash recovery (Designed for Flow runs; scratch recovery implemented separately)
 
 ```mermaid
 flowchart TD
@@ -245,25 +245,19 @@ flowchart TD
   supervisor restart WITHOUT being classified `Crashed`: it is session-less
   by design and is excluded from the `runResumeRecoverySweep` SELECT
   (`status='NeedsInput' AND acpSessionId IS NOT NULL`) by construction.
-- **(Designed)** `NeedsInput` keep-alive window is
-  `MAISTER_KEEPALIVE_MINUTES` (default 30 min); every web-activity
-  event extends `keepalive_until` by that amount. Current code ships the
-  `runs.keepalive_until` column but never writes to it and exposes no
-  activity route.
-- **(Designed)** Idle past `keepalive_until` triggers graceful
-  checkpoint → run becomes `NeedsInputIdle` with
-  `runs.acp_session_id` retained as the resume handle. Supervisor
-  `POST /sessions/:id/checkpoint` still returns the deferred stub.
-- **(Designed)** `NeedsInputIdle` resume respawns the adapter with
+- `NeedsInput` keep-alive window is `MAISTER_KEEPALIVE_MINUTES`
+  (default 30 min); every web-activity event extends `keepalive_until`.
+- Idle past `keepalive_until` triggers graceful checkpoint → run becomes
+  `NeedsInputIdle` with `runs.acp_session_id` retained as the resume handle.
+- `NeedsInputIdle` resume respawns the adapter with
   `--resume <acp_session_id>` and incurs ~$0.28 cache-creation cost
   per respawn (operator-visible if surfaced).
-- **(Designed)** 24 h elapsed in `NeedsInputIdle` without operator
-  response → `Abandoned` with `HITL_TIMEOUT`. Depends on the
-  checkpoint path above; no timeout watcher exists.
-- **(Designed)** Run state survives Next.js restart AND
+- 24 h elapsed in `NeedsInputIdle` without operator response →
+  `Abandoned`. This sweeper transition does not raise `HITL_TIMEOUT`.
+- **(Designed)** Full Flow-run state survives Next.js restart AND
   supervisor restart; on boot, reconciliation classifies orphans as
   `Crashed` and offers Recover or Discard.
-- **(Designed)** Recover is offered ONLY when
+- **(Designed)** Flow-run Recover is offered ONLY when
   `runs.acp_session_id IS NOT NULL`; otherwise Discard is the sole
   option.
 - Every state transition is persisted to `runs` BEFORE the UI reflects
@@ -302,11 +296,12 @@ flowchart TD
   error observed across the step loop in a local `runErrorCode`
   carrier so the terminal write can branch
   `CRASH → Crashed | other failure → Failed | success → Review`.
-- **(Designed)** Promotion is the product action after Review. Initial modes
-  are `local_merge` and `pull_request`; both promote the MAIster run branch to
-  the selected target branch after readiness gates pass or are explicitly
-  overridden. No deploy or release management is implied.
-- **(Designed)** Local promotion uses `git merge --no-ff`; conflicts always
+- **(Implemented)** Promotion is the product action after Review. The current
+  implementation supports `local_merge`; `pull_request` is a designed mode and
+  returns `CONFIG` until repository-hosting integration is wired. Promotion
+  targets the selected target branch after readiness gates pass or are
+  explicitly overridden. No deploy or release management is implied.
+- **(Implemented)** Local promotion uses `git merge --no-ff`; conflicts always
   abort the merge, leave the run in `Review`, and create/keep a manual
   resolution path. The legacy `merge` route name is superseded by
   `POST /api/runs/[id]/promote` in the product contract.
@@ -320,14 +315,14 @@ flowchart TD
   permission denied, OOM at fork.
 - **`NEEDS_INPUT`** — soft validation/state code; UI keeps the HITL
   form open with field errors. Not a hard error.
-- **`HITL_TIMEOUT`** — live permission deferred expired or the
-  designed 24h `NeedsInputIdle` timeout fires.
+- **`HITL_TIMEOUT`** — live permission deferred expired before delivery.
+  The 24h `NeedsInputIdle` sweeper abandonment is not a `HITL_TIMEOUT`.
 - **`CRASH`** — heartbeat detected dead PID (`ESRCH` on
   `process.kill(pid, 0)`), or child emitted non-zero exit + signal
   without intentional shutdown.
 - **`CONFLICT`** — local promotion could not auto-merge the run branch into
   the selected target branch. Run stays `Review`.
-- **`CHECKPOINT`** — graceful checkpoint failed (designed path).
+- **`CHECKPOINT`** — graceful checkpoint or terminal resume failed.
   Worker stays live; UI surfaces "couldn't checkpoint — keep tab open"
   warning.
 - **`ACP_PROTOCOL`** — supervisor received a JSONL line it cannot

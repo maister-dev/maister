@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { GlobalRole, ProjectRole } from "@/lib/db/schema";
+import type {
+  GlobalRole,
+  ProjectRole,
+  RunKind,
+  ScratchDialogStatus,
+} from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -15,6 +20,7 @@ const {
   projectMembers,
   projects,
   runs,
+  scratchRuns,
   tasks,
   users,
   workspaces,
@@ -25,7 +31,7 @@ function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
 }
 
-const ACTIVE_RUN_STATUSES = [
+export const ACTIVE_RUN_STATUSES = [
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
@@ -40,6 +46,7 @@ const ACTIVE_RUN_STATUSES = [
 export type PortfolioStatus = "running" | "idle";
 export type AgentRole = "claude" | "codex" | "dev";
 export type WorkspaceStatus = "running" | "needs" | "queued" | "done";
+export type ScratchWorkspaceAction = "open" | "recover" | "discard" | "none";
 
 export interface PortfolioMember {
   initials: string;
@@ -49,10 +56,15 @@ export interface PortfolioMember {
 }
 
 export interface PortfolioWorkspace {
+  runId: string;
+  runKind: RunKind;
   branch: string;
   agent: AgentRole;
   status: WorkspaceStatus;
   time: string;
+  href: string;
+  scratchDialogStatus?: ScratchDialogStatus | null;
+  scratchAction?: ScratchWorkspaceAction;
 }
 
 export interface PortfolioRecentMerge {
@@ -93,7 +105,7 @@ export interface Portfolio {
   totalNeeds: number;
 }
 
-function relativeTime(from: Date, now: Date): string {
+export function relativeTime(from: Date, now: Date): string {
   const seconds = Math.max(
     0,
     Math.round((now.getTime() - from.getTime()) / 1000),
@@ -121,7 +133,7 @@ function initialsOf(name: string | null, email: string | null): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-function runStatusToWorkspace(status: string): WorkspaceStatus {
+export function runStatusToWorkspace(status: string): WorkspaceStatus {
   if (status === "Running") return "running";
   // HumanWorking is a human-in-the-loop claimed state; surface it like NeedsInput.
   if (
@@ -134,6 +146,24 @@ function runStatusToWorkspace(status: string): WorkspaceStatus {
   if (status === "Pending") return "queued";
 
   return "done";
+}
+
+export function scratchActionForWorkspace(input: {
+  runKind: RunKind;
+  runStatus: string;
+  dialogStatus: ScratchDialogStatus | null;
+  acpSessionId: string | null;
+}): ScratchWorkspaceAction {
+  if (input.runKind !== "scratch") return "none";
+  if (input.dialogStatus === "Review") return "open";
+  if (input.runStatus === "Crashed") {
+    return input.acpSessionId ? "recover" : "discard";
+  }
+  if (input.dialogStatus === "Done" || input.dialogStatus === "Abandoned") {
+    return "none";
+  }
+
+  return "open";
 }
 
 const ACCENTS: readonly (1 | 2 | 3 | 4)[] = [1, 3, 2, 4];
@@ -213,15 +243,20 @@ export async function getPortfolio(
 
     client
       .select({
+        runId: runs.id,
         projectId: runs.projectId,
         status: runs.status,
+        runKind: runs.runKind,
+        acpSessionId: runs.acpSessionId,
         agent: executors.agent,
         branch: workspaces.branch,
         startedAt: runs.startedAt,
+        scratchDialogStatus: scratchRuns.dialogStatus,
       })
       .from(runs)
       .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+      .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(
         and(
           inArray(runs.projectId, projectIds),
@@ -331,10 +366,24 @@ export async function getPortfolio(
       row.status === "HumanWorking" ? "dev" : (row.agent as AgentRole);
 
     list.push({
+      runId: row.runId,
+      runKind: row.runKind as RunKind,
       branch: row.branch,
       agent,
       status: runStatusToWorkspace(row.status),
       time: relativeTime(row.startedAt, now),
+      href:
+        row.runKind === "scratch"
+          ? `/scratch-runs/${row.runId}`
+          : `/runs/${row.runId}`,
+      scratchDialogStatus:
+        row.scratchDialogStatus as ScratchDialogStatus | null,
+      scratchAction: scratchActionForWorkspace({
+        runKind: row.runKind as RunKind,
+        runStatus: row.status,
+        dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+        acpSessionId: row.acpSessionId,
+      }),
     });
     workspacesByProject.set(row.projectId, list);
   }
@@ -443,6 +492,7 @@ export async function getRailWorkspaces(
       slug: projects.slug,
       agent: executors.agent,
       status: runs.status,
+      runKind: runs.runKind,
       startedAt: runs.startedAt,
       runId: runs.id,
     })
@@ -481,9 +531,12 @@ export async function getRailWorkspaces(
 
   return rows.map((row) => ({
     name: row.branch,
-    meta: `${row.slug} · ${row.agent}`,
+    meta: `${row.slug} · ${row.runKind === "scratch" ? "scratch" : row.agent}`,
     status: runStatusToWorkspace(row.status),
     time: relativeTime(row.startedAt, now),
-    href: `/runs/${row.runId}`,
+    href:
+      row.runKind === "scratch"
+        ? `/scratch-runs/${row.runId}`
+        : `/runs/${row.runId}`,
   }));
 }

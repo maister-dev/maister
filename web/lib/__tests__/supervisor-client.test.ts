@@ -79,6 +79,35 @@ describe("createSession", () => {
     );
   });
 
+  it("serializes capability launch fields into createSession", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({ sessionId: "s1", pid: 4242, acpSessionId: "acp-1" }),
+        { status: 201 },
+      ),
+    );
+
+    await createSession({
+      ...validInput,
+      capabilityProfilePath: "/repos/x/.maister/capabilities/run/profile.json",
+      adapterLaunch: {
+        env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
+        preArgs: ["--capability-profile"],
+      },
+    });
+
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+
+    expect(body).toMatchObject({
+      capabilityProfilePath: "/repos/x/.maister/capabilities/run/profile.json",
+      adapterLaunch: {
+        env: { MAISTER_CAPABILITY_PROFILE_PATH: "/repos/x/profile.json" },
+        preArgs: ["--capability-profile"],
+      },
+    });
+  });
+
   it("translates 409 PRECONDITION to MaisterError", async () => {
     mockOnce(
       new Response(JSON.stringify({ code: "PRECONDITION", message: "bad" }), {

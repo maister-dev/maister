@@ -804,8 +804,8 @@ the v1 topology ADR-022's projector relies on.
 
 **Consequences:**
 
-- `compose.yml` / `compose.override.yml` / `compose.production.yml` carry only
-  Postgres; web + supervisor start with `pnpm --filter …`.
+- `compose.yml` / `compose.production.yml` carry only Postgres; web +
+  supervisor start with `pnpm --filter …`.
 - `MAISTER_SUPERVISOR_URL` and `DB_URL` default to `localhost` for host-run.
 - Sandboxing untrusted agents belongs at the **agent process** level (Phase 2),
   not at the supervisor; this ADR does not weaken that future option.

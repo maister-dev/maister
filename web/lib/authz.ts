@@ -45,7 +45,10 @@ const PROJECT_ORDER: Record<ProjectRole, number> = {
 /** Minimum project role required per project-scoped action. */
 export const PROJECT_ACTION_MIN = {
   readBoard: "viewer",
+  readScratchRun: "viewer",
   launchRun: "member",
+  operateScratchRun: "member",
+  promoteRun: "member",
   createTask: "member",
   answerHitl: "member",
   editSettings: "admin",

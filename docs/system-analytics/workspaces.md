@@ -12,8 +12,9 @@ process restart.
 
 - **Workspace row** — `workspaces` table. One row per run.
 - **Worktree path** — absolute filesystem path, globally UNIQUE.
-- **Branch** — derived as `<branch_prefix><task-slug>-<attempt>` (e.g.
-  `maister/bugfix-login-button-3`).
+- **Branch** — derived by the launcher. Task runs use the project branch
+  prefix plus a task/run slug. Scratch runs may use a validated
+  operator-provided branch/workspace name.
 - **Base branch** — branch selected at launch; the run branch is created from
   this branch's launch-time commit.
 - **Target branch** — branch selected for promotion. Defaults to the base
@@ -45,7 +46,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### Create a worktree (Implemented; branch targeting Planned)
+### Create a worktree (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -56,7 +57,7 @@ sequenceDiagram
     W->>DB: read project (repo_path, branch_prefix, default_branch)
     W->>W: baseBranch = launch.baseBranch ?? default_branch
     W->>W: targetBranch = launch.targetBranch ?? baseBranch
-    W->>W: branchName = {branch_prefix}{task-slug}-{attempt}
+    W->>W: branchName = launch branch name<br/>(task-derived or scratch-provided)
     W->>W: worktreePath = .maister/{slug}/runs/{runId}/
     W->>FS: git -C {repo_path} rev-parse {baseBranch}
     W->>FS: git -C {repo_path} worktree add {worktreePath} -b {branchName} {baseBranch}
@@ -67,7 +68,7 @@ sequenceDiagram
     W->>DB: INSERT workspaces { run_id, project_id, branch, base_branch, base_commit, target_branch, worktree_path, parent_repo_path }
 ```
 
-### Promote on Review (Designed)
+### Promote on Review (Implemented local merge; PR designed)
 
 ```mermaid
 sequenceDiagram
@@ -83,8 +84,7 @@ sequenceDiagram
         W->>FS: git -C {repo_path} checkout {target_branch}
         W->>FS: git -C {repo_path} merge --no-ff {workspace.branch}
     else mode = pull_request
-        W->>FS: git -C {repo_path} push {remote} {workspace.branch}
-        W->>W: create/update PR {workspace.branch} -> {target_branch}
+        W-->>U: 422 CONFIG<br/>(PR hosting not wired)
     end
     alt promotion succeeds
         FS-->>W: exit 0
@@ -138,12 +138,13 @@ flowchart LR
   `.maister/<slug>/runs/<runId>/`; no cross-project bleed.
 - `workspaces.worktree_path` is globally UNIQUE across all projects;
   enforced at the DB layer.
-- Branch name pattern is exactly `<branch_prefix><task-slug>-<attempt>`
-  and is created with `git worktree add ... -b`.
-- **(Planned)** Launch can select `base_branch` and optional `target_branch`.
+- Branch names are validated before reaching `git worktree add ... -b`; task
+  runs are generated from server state and scratch runs may use a validated
+  launch-time name.
+- Launch can select `base_branch` and optional `target_branch`.
   `target_branch` defaults to `base_branch`; `base_branch` defaults to
   `project.default_branch`.
-- **(Planned)** Worktree creation records `base_branch`, `base_commit`,
+- Worktree creation records `base_branch`, `base_commit`,
   `branch`, `target_branch`, and promotion mode in the run ledger. Runs are not
   hard-coded to start from or promote to `main`.
 - Worktree creation runs preconditions (clean parent, branch free,
@@ -154,11 +155,11 @@ flowchart LR
 - Local promotion merge policy is `git merge --no-ff` ONLY; conflict always
   invokes `git merge --abort`, leaves the run in `Review`, and creates a
   manual-resolution assignment.
-- Pull-request promotion creates or updates one PR from run branch to target
-  branch and records the PR URL/number as artifacts and ledger events.
-- Reconciliation runs on every Next.js boot AND every supervisor boot,
-  comparing `runs`, `git worktree list`, and supervisor's live
-  sessions.
+- Pull-request promotion is designed. The implemented route currently returns
+  `CONFIG` for `pull_request` until repository-hosting integration is wired.
+- Full Flow reconciliation across Next.js boot, supervisor boot, git worktrees,
+  and live sessions is designed. Scratch recovery is implemented through the
+  explicit recover route for crashed scratch sessions.
 - GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
   GC failures log and continue without setting `removed_at`.
 - Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
@@ -194,4 +195,6 @@ flowchart LR
   [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table).
 - Related: [`runs.md`](runs.md), [`projects.md`](projects.md).
-- Source: planned `web/lib/worktree.ts`, `web/lib/reconcile.ts`.
+- Source: `web/lib/worktree.ts`; scratch recovery routes under
+  `web/app/api/scratch-runs/[runId]/recover/`. Full Flow reconciliation remains
+  designed.

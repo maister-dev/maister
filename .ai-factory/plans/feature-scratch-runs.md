@@ -358,7 +358,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 1: Persistence, Git Primitives, And Capability Schema
 
-- [ ] Task 6: Add Drizzle schema and migration.
+- [x] Task 6: Add Drizzle schema and migration.
   - Modify `web/lib/db/schema.ts`.
   - Add `runs.runKind` enum with values `flow | scratch`, default `flow`.
   - Make `runs.taskId`, `runs.flowId`, and `runs.flowRevisionId` nullable as
@@ -376,7 +376,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     `scratch-schema.integration.test.ts`; seed required FK rows instead of
     inserting invalid nulls for flow runs.
 
-- [ ] Task 7: Extend authz and domain invariants.
+- [x] Task 7: Extend authz and domain invariants.
   - Update `web/lib/authz.ts` only if existing actions are too coarse.
   - Minimum roles:
     viewer can read scratch workspace/dialog metadata;
@@ -389,7 +389,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Tests: authz integration for viewer/member/admin behavior and cross-project
     denial.
 
-- [ ] Task 8: Extend git/worktree helpers.
+- [x] Task 8: Extend git/worktree helpers.
   - Modify `web/lib/worktree.ts`.
   - Add safe base-ref validation and `git rev-parse --verify <baseRef>` helper.
   - Extend `addWorktree` to accept a server-validated `startPoint`.
@@ -402,7 +402,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     rejection, branch collision, diff base commit, merge conflict handling, and
     ownership-gated cleanup.
 
-- [ ] Task 9: Implement capability catalog schemas and config parsing.
+- [x] Task 9: Implement capability catalog schemas and config parsing.
   - Modify `web/lib/config.schema.ts`, `web/lib/config.ts`, and config tests.
   - Parse the v1 subset of `maister.yaml capabilities` needed by scratch runs:
     MCPs, skills, rules/restrictions, tools/settings if accepted by the support
@@ -417,7 +417,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Logging: DEBUG parsed counts by kind, INFO upsert summary, WARN ignored
     unsupported mappings, ERROR schema failures with YAML path.
 
-- [ ] Task 10: Add capability profile resolver and materializer.
+- [x] Task 10: Add capability profile resolver and materializer.
   - Create `web/lib/capabilities/catalog.ts`, `resolver.ts`,
     `materialize.ts`, `types.ts`, and tests.
   - Resolver input: project id, executor agent, selected MCP ids, selected skill
@@ -434,7 +434,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 2: Services, Supervisor Contract, And Launch
 
-- [ ] Task 11: Add scratch run service modules.
+- [x] Task 11: Add scratch run service modules.
   - Create `web/lib/scratch-runs/types.ts`, `state.ts`, `messages.ts`,
     `attachments.ts`, `launch.ts`, and `events.ts`.
   - Keep route handlers thin; put validation, state transitions, row locking,
@@ -447,7 +447,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     compensation, ERROR unexpected DB/supervisor failures with run/project ids.
   - Tests: pure helper unit tests and service invariant integration tests.
 
-- [ ] Task 12: Extend supervisor session contract for capability launch.
+- [x] Task 12: Extend supervisor session contract for capability launch.
   - Modify `supervisor/src/types.ts`, `supervisor/src/spawn.ts`,
     `supervisor/src/http-api.ts`, `web/lib/supervisor-client.ts`, and
     supervisor tests for the new launch-time capability fields from Task 4.
@@ -460,7 +460,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     expected args/env for Claude and Codex, unsupported combinations fail before
     child spawn.
 
-- [ ] Task 13: Implement scratch capacity gate.
+- [x] Task 13: Implement scratch capacity gate.
   - Extend `web/lib/scheduler.ts` with a helper that checks the same global live
     count under the scheduler lock without enqueueing scratch runs.
   - The helper must count `Running` and `NeedsInput` flow runs plus live scratch
@@ -469,7 +469,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Tests: cap full rejects scratch launch with no side effects; cap available
     allows launch; terminal/review scratch run frees capacity.
 
-- [ ] Task 14: Implement `POST /api/scratch-runs`.
+- [x] Task 14: Implement `POST /api/scratch-runs`.
   - Create `web/app/api/scratch-runs/route.ts`.
   - Auth first, then derive project, membership, executor, optional task, base
     commit, branch policy, and capability allow-list from server state.
@@ -487,7 +487,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     DB failure compensates worktree/materialization; prompt failure preserves
     retryable scratch row; body-controlled ids rejected.
 
-- [ ] Task 15: Implement launch-options route.
+- [x] Task 15: Implement launch-options route.
   - Create `web/app/api/scratch-runs/launch-options/route.ts`.
   - Return visible projects, selected project's branches, executors, default
     branch, default scratch branch suggestion, default-selected MCPs, skills,
@@ -498,7 +498,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 3: Dialog Runtime And Events
 
-- [ ] Task 16: Implement scratch read and message send routes.
+- [x] Task 16: Implement scratch read and message send routes.
   - Add `GET /api/scratch-runs/[runId]/route.ts`.
   - Add `POST /api/scratch-runs/[runId]/messages/route.ts`.
   - Under row lock, verify run kind scratch, project access, non-terminal state,
@@ -510,7 +510,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Tests: prompt locking, append-only sequence, unknown run, non-scratch
     rejection, cross-project auth rejection, supervisor 5xx retryable state.
 
-- [ ] Task 17: Project supervisor events into scratch messages.
+- [x] Task 17: Project supervisor events into scratch messages.
   - Extract/reuse the safe event-consumer behavior from
     `web/lib/flows/runner-agent.ts` into `web/lib/scratch-runs/events.ts` or a
     shared server-only module.
@@ -525,7 +525,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     `WaitingForUser`, permission to `NeedsInput`, crash to `Crashed`, and
     cancel-on-permission-persist-failure.
 
-- [ ] Task 18: Reuse or generalize HITL response for scratch.
+- [x] Task 18: Reuse or generalize HITL response for scratch.
   - Adapt `web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` to
     accept scratch runs by delegating to shared service functions.
   - Preserve the existing two-phase permission commit and idempotent retry
@@ -535,7 +535,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     conflict, supervisor 5xx retryable, terminal timeout, non-scratch behavior
     unchanged.
 
-- [ ] Task 19: Implement scratch stop and discard.
+- [x] Task 19: Implement scratch stop and discard.
   - Add `POST /api/scratch-runs/[runId]/stop/route.ts`.
   - Add `POST /api/scratch-runs/[runId]/discard/route.ts`.
   - Stop deletes the live supervisor session when present and transitions
@@ -549,7 +549,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 4: Diff, Promotion, Recovery, And Reconciliation
 
-- [ ] Task 20: Implement diff and promotion primitives/routes.
+- [x] Task 20: Implement diff and promotion primitives/routes.
   - Add shared git helpers from Task 8 to route-level services.
   - Add shared `GET /api/runs/[runId]/diff` and
     `POST /api/runs/[runId]/promote`.
@@ -560,7 +560,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Tests: diff command construction, target validation, conflict response,
     successful status transition, non-scratch compatibility if shared route.
 
-- [ ] Task 21: Implement scratch recovery and reconciliation.
+- [x] Task 21: Implement scratch recovery and reconciliation.
   - Update `web/lib/reconcile.ts`, `web/lib/runs/resume.ts`,
     `web/lib/runs/resume-recovery.ts`, or scratch-specific recovery modules.
   - Scratch runs with `acp_session_id` and missing live supervisor session can
@@ -573,7 +573,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 5: UI And UX
 
-- [ ] Task 22: Add scratch launcher UI.
+- [x] Task 22: Add scratch launcher UI.
   - Add entry points from Portfolio and project pages.
   - Create components under `web/components/scratch/` or route-local components
     under `web/app/(app)/scratch-runs/`.
@@ -584,7 +584,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
     explanatory in-app prose.
   - Tests: component tests for state/validation and API payload projection.
 
-- [ ] Task 23: Add scratch dialog page.
+- [x] Task 23: Add scratch dialog page.
   - Create `web/app/(app)/scratch-runs/[runId]/page.tsx`.
   - Main surface: chat-style coding-agent dialog with message list, composer,
     attachment affordances, permission cards, and workspace context bar.
@@ -595,7 +595,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Tests: message rendering, composer disabled states, permission card actions,
     capability profile display.
 
-- [ ] Task 24: Integrate scratch into active workspace views.
+- [x] Task 24: Integrate scratch into active workspace views.
   - Update `web/lib/queries/portfolio.ts`, portfolio components, project page
     queries/components, and active workspace counts.
   - Active workspace counts include scratch; backlog and task-board counts do
@@ -607,7 +607,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Tests: portfolio scratch visibility, project active workspace visibility,
     task-board absence, removed workspace exclusion.
 
-- [ ] Task 25: Add i18n and responsive polish.
+- [x] Task 25: Add i18n and responsive polish.
   - Update `web/messages/en.json` and `web/messages/ru.json`.
   - Cover launcher, dialog, statuses, capability selectors, attachment errors,
     capacity errors, HITL, stop/discard/promote/recover actions.
@@ -617,7 +617,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 6: Final Verification And Docs Sync
 
-- [ ] Task 26: Run full verification and reconcile docs to as-built behavior.
+- [x] Task 26: Run full verification and reconcile docs to as-built behavior.
   - Commands:
     - `git --no-pager diff --check`
     - `pnpm validate:docs`
@@ -633,6 +633,9 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Confirm any new test path family is discovered by Vitest list output.
   - Reconcile implementation against `docs/system-analytics/scratch-runs.md`,
     OpenAPI, AsyncAPI, DB docs, and error taxonomy.
+  - Implementation note: web unit/typecheck/lint, supervisor unit slice,
+    diff whitespace, and Mermaid docs validation passed. Web integration remains
+    a required exit gate and must be rerun green before merge.
   - Update `README.md` docs table only if scratch runs get a user-facing guide.
   - Update `.ai-factory/DESCRIPTION.md` and `AGENTS.md` only if current-scope
     or structure changed materially.

@@ -15,7 +15,7 @@ import { SessionRegistry } from "../registry";
 
 const FIXTURE_PATH = resolve(
   fileURLToPath(import.meta.url),
-  "../../../test/fixtures/fake-acp.mjs",
+  "../../../test/fixtures/mock-acp-lifecycle.mjs",
 );
 const silentLogger = pino({ level: "silent" });
 
@@ -70,7 +70,6 @@ async function createSession(
       projectSlug: "demo",
       worktreePath: process.cwd(),
       stepId: "step-1",
-      prompt: "",
       executor: {
         agent: "claude",
         model: "claude-sonnet-4-6",
@@ -86,6 +85,20 @@ async function createSession(
   const body = (await res.json()) as { sessionId: string };
 
   return body.sessionId;
+}
+
+async function sendPrompt(url: string, sessionId: string): Promise<void> {
+  const res = await fetch(`${url}/sessions/${sessionId}/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stepId: "step-1", prompt: "hello" }),
+  });
+
+  if (res.status !== 200) {
+    throw new Error(
+      `POST /sessions/${sessionId}/prompt failed: ${res.status} ${await res.text()}`,
+    );
+  }
 }
 
 async function collectSSE(
@@ -206,7 +219,10 @@ describe("supervisor lifecycle integration", () => {
     expect(empty.worktreePath).toBeUndefined();
     expect(empty.logPath).toBeUndefined();
 
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    const child = spawn(process.execPath, [
+      "-e",
+      "setInterval(() => {}, 1000)",
+    ]);
 
     registry.register(
       {
@@ -243,21 +259,28 @@ describe("supervisor lifecycle integration", () => {
   it("SSE stream emits N line events then session.exited (clean exit)", async () => {
     const { url } = await bootFor(["--lines", "3", "--emit-usage"]);
     const sessionId = await createSession(url);
-    const events = await collectSSE(`${url}/sessions/${sessionId}/stream`);
-    const lines = events.filter((e) => e.event === "session.line");
+    const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
+
+    await sendPrompt(url, sessionId);
+
+    const events = await eventPromise;
+    const lines = events.filter((e) => e.event === "session.update");
     const terminal = events.find((e) => e.event === "session.exited");
 
     expect(lines).toHaveLength(3);
     expect(terminal).toBeDefined();
-    expect(lines[0].id).toBe("1");
-    expect(lines[1].id).toBe("2");
-    expect(lines[2].id).toBe("3");
+    expect(Number(lines[0].id)).toBeLessThan(Number(lines[1].id));
+    expect(Number(lines[1].id)).toBeLessThan(Number(lines[2].id));
   });
 
   it("session.crashed when fixture exits non-zero", async () => {
     const { url } = await bootFor(["--lines", "1", "--exit-code", "1"]);
     const sessionId = await createSession(url);
-    const events = await collectSSE(`${url}/sessions/${sessionId}/stream`);
+    const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
+
+    await sendPrompt(url, sessionId);
+
+    const events = await eventPromise;
     const crashed = events.find((e) => e.event === "session.crashed");
 
     expect(crashed).toBeDefined();
@@ -324,8 +347,10 @@ describe("supervisor lifecycle integration", () => {
     const sessionId = await createSession(url, {
       executorEnv: { ANTHROPIC_AUTH_TOKEN: sentinel },
     });
+    const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
-    await collectSSE(`${url}/sessions/${sessionId}/stream`);
+    await sendPrompt(url, sessionId);
+    await eventPromise;
 
     const logPath = `${runtimeRoot}/.maister/demo/runs/run-int/step-1.log`;
     const logContents = await readFile(logPath, "utf8");

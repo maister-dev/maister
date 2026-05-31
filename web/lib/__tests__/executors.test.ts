@@ -86,7 +86,7 @@ function captureLogger(): { logger: pino.Logger; sink: { lines: string[] } } {
 }
 
 function baseConfig(over: Partial<MaisterYamlV2> = {}): MaisterYamlV2 {
-  return {
+  const defaults: MaisterYamlV2 = {
     schemaVersion: 2,
     project: {
       name: "p",
@@ -98,8 +98,21 @@ function baseConfig(over: Partial<MaisterYamlV2> = {}): MaisterYamlV2 {
       { id: "claude-sonnet", agent: "claude", model: "claude-sonnet-4-6" },
     ],
     default_executor: "claude-sonnet",
+    capabilities: {
+      mcps: [],
+      skills: [],
+      rules: [],
+      restrictions: [],
+      settings: [],
+      tools: [],
+    },
     flows: [],
+  };
+
+  return {
+    ...defaults,
     ...over,
+    capabilities: over.capabilities ?? defaults.capabilities,
   };
 }
 
@@ -277,6 +290,14 @@ describe("upsertExecutorsFromConfig (unit)", () => {
         { id: "claude-x", agent: "claude", model: "claude-sonnet-4-6" },
       ],
       default_executor: "nope-doesnt-exist",
+      capabilities: {
+        mcps: [],
+        skills: [],
+        rules: [],
+        restrictions: [],
+        settings: [],
+        tools: [],
+      },
       flows: [],
     };
 

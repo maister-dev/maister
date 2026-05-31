@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { eq, or } from "drizzle-orm";
@@ -10,7 +10,8 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { loadProjectConfig } from "@/lib/config";
+import { loadPlatformMcpCapabilities, loadProjectConfig } from "@/lib/config";
+import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -35,6 +36,25 @@ const log = pino({
   name: "api-projects",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+async function resolvePlatformMcpRegistryPath(): Promise<string> {
+  const candidates = [
+    path.resolve(process.cwd(), ".mcp.json"),
+    path.resolve(process.cwd(), "../.mcp.json"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+
+      return candidate;
+    } catch {
+      // Try the next conventional runtime cwd.
+    }
+  }
+
+  return candidates[0];
+}
 
 // `repoUrl`/`target` are body-controlled and flow into filesystem reads + git
 // clone. Deep path/URL validation lives in resolveProjectSource (sink-invariant
@@ -178,6 +198,9 @@ async function register(
   // Phase (a): load + validate maister.yaml. On failure → CONFIG (422),
   // NO db row written.
   const config = await loadProjectConfig(maisterYamlPath);
+  const platformMcps = await loadPlatformMcpCapabilities(
+    await resolvePlatformMcpRegistryPath(),
+  );
 
   const slug = deriveSlug(config.project.name);
   const repoPath = resolved.dir;
@@ -230,6 +253,13 @@ async function register(
       const { defaultExecutorId } = await upsertExecutorsFromConfig({
         projectId,
         config,
+        db: tx,
+      });
+
+      await upsertCapabilitiesFromConfig({
+        projectId,
+        config: config.capabilities,
+        platformMcps,
         db: tx,
       });
 

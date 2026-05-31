@@ -123,25 +123,27 @@ runs. The operator reviews package metadata in the UI first. New runs use the
 project's enabled package revision; active runs keep their snapshotted
 `runs.flow_revision`.
 
-### Capability registry for scratch runs and Flow profiles (Designed)
+### Capability registry for scratch runs and Flow profiles
 
 Scratch runs use the first implemented subset of the capability model:
-project-visible MCP servers, skills, rules, adapter settings, and restrictions
-can be selected in the scratch launcher and snapshotted into a run-scoped
-profile before the supervisor session starts. Flow graph node references use
-the same registry shape when capability-scoped execution lands. Public
-marketplace, organization policy, and cross-project promotion stay deferred.
+platform MCP servers from `.mcp.json` plus project-visible MCP servers, skills,
+rules, and restrictions from `maister.yaml`. These records are persisted to
+`capability_records` during project registration, selected in the scratch
+launcher, and snapshotted into a run-scoped profile before the supervisor
+session starts. Flow graph node references use the same registry shape when
+capability-scoped execution lands. Public marketplace, organization policy,
+adapter settings materialization, and cross-project promotion stay deferred.
 
 Each capability record has:
 
 | Field | Purpose |
 | ----- | ------- |
 | `id` | Stable name referenced by Flow node settings. |
-| `kind` | One of `mcp`, `skill`, `rule`, `tool`, `agent_definition`, `agent_settings`, `env_profile`, `restriction`. |
-| `source` | `project`, `flow`, `git`, `local`, or `system`. |
+| `kind` | One of `mcp`, `skill`, `rule`, `tool`, `setting`, `agent_definition`, `env_profile`, `restriction`. |
+| `source` | Launch source after normalization: `platform`, `project`, or `flow-package`. `maister.yaml` accepts `project`, `flow`, `git`, `local`, `system`, `platform`, and `flow-package`. |
 | `version` / `revision` | User pin and resolved immutable revision when external. |
 | `agents` | Supported executor agent ids, with optional concrete per-agent mapping. |
-| `trust` | Current install/trust status shown before first use. |
+| `selectable` | Whether the record can be selected for future launches; CLEAR disables old rows without deleting historic profile snapshots. |
 | `enforceability` | `enforced`, `instructed`, or `unsupported` for the selected executor. |
 
 Runtime must snapshot the resolved capability profile into the run ledger before
@@ -149,12 +151,13 @@ an AI node starts. If a node requires strict enforcement but the selected
 executor can only receive that capability as an instruction, launch fails rather
 than silently weakening the boundary.
 
-For scratch runs, the web tier owns scoped materialization. It writes or links
-only the selected MCP config, skills, rules, adapter settings, and restrictions
-into the run workspace/runtime area, persists the profile snapshot, then calls
-the supervisor with `capabilityProfilePath` and constrained `adapterLaunch`
-env/args. The supervisor does not read `maister.yaml` capability policy and does
-not decide trust.
+For scratch runs, the web tier owns scoped materialization. V1 writes
+`profile.json` and `instructions.md` into the run workspace/runtime area,
+persists the profile snapshot, then calls the supervisor with
+`capabilityProfilePath` and constrained `adapterLaunch.env` pointing at those
+files. The supervisor does not read `maister.yaml` capability policy and does
+not decide trust. Adapter-specific MCP config, settings files, and skill loader
+wiring are designed follow-up work.
 
 For a fresh per-node AI session, the Flow runner uses the same materializer. For
 a long-living ACP session, those files are session-wide: every AI node inside
@@ -162,15 +165,15 @@ the session must use the same resolved capability profile. A Flow that needs a
 different profile must declare a new session boundary, unless the adapter
 supports an explicit safe profile-swap operation.
 
-#### Adapter support matrix (Designed)
+#### Capability adapter support matrix (Implemented snapshot + designed native activation)
 
 | Capability kind | Claude | Codex | V1 contract |
 | --------------- | ------ | ----- | ----------- |
-| MCP | Adapter-specific MCP config path through `adapterLaunch`. | Adapter-specific MCP config path through `adapterLaunch`. | Enforced only when the selected adapter mapping exists; enforced unsupported entries are refused. |
-| Skill | Materialized files plus prompt references. | Materialized files plus prompt references. | Instructed-only until adapter-specific loading is verified; enforced unsupported entries are refused. |
-| Rule | Materialized rule files plus prompt policy. | Materialized rule files plus prompt policy. | Instructed-only in v1. |
-| Agent settings | Materialized settings file path. | Materialized settings file path. | Enforced only for MAIster-generated allow-listed settings. Unknown settings are refused. |
-| Restriction | Prompt policy and settings when available. | Prompt policy and settings when available. | Enforced unsupported restrictions are refused; optional unsupported restrictions are downgraded only when recorded in the profile. |
+| MCP | Persisted in `profile.json` and listed in `instructions.md`. | Persisted in `profile.json` and listed in `instructions.md`. | Snapshot + instruction handoff is implemented. Adapter-specific MCP config generation is designed, not implemented. Enforced unsupported entries are refused. |
+| Skill | Persisted in `profile.json` and listed in `instructions.md`. | Persisted in `profile.json` and listed in `instructions.md`. | Snapshot + instruction handoff is implemented. Adapter-native skill loading is designed, not implemented; enforced unsupported entries are refused. |
+| Rule | Persisted in `profile.json` and listed in `instructions.md`. | Persisted in `profile.json` and listed in `instructions.md`. | Instructed-only in V1. |
+| Agent settings | Not materialized in V1. | Not materialized in V1. | Designed follow-up. Unknown enforced settings are refused. |
+| Restriction | Persisted in `profile.json` and listed in `instructions.md`. | Persisted in `profile.json` and listed in `instructions.md`. | Enforced unsupported restrictions are refused; optional unsupported restrictions are downgraded only when recorded in the profile. |
 | Tool / agent definition / env profile | Not activated directly. | Not activated directly. | Refused as enforced capabilities in v1. Optional entries become instructed-only only when the profile records the downgrade. |
 
 ### Planned external operations configuration
@@ -461,8 +464,8 @@ Enforced by `lib/authz.ts:requireProjectRole()` / `requireProjectAction()`.
 | ---- | ---------- | ------------ |
 | `owner` | — | All actions including project archival. |
 | `admin` | `editSettings` | Edit project settings. |
-| `member` | `launchRun`, `createTask`, `answerHitl` | Launch runs, create tasks, respond to HITL. |
-| `viewer` | `readBoard` | Read the board and stream run events. |
+| `member` | `launchRun`, `operateScratchRun`, `promoteRun`, `createTask`, `answerHitl` | Launch Flow/scratch runs, operate scratch dialogs, promote run branches, create tasks, respond to HITL. |
+| `viewer` | `readBoard`, `readScratchRun` | Read the board, active workspace metadata, scratch dialogs, and stream run events. |
 
 Global `admin` users bypass the `project_members` table and are treated
 as `owner` on every project. Source: `web/lib/authz.ts`.

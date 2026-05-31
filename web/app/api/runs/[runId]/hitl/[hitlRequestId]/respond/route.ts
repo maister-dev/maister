@@ -21,17 +21,21 @@ import { runFlow } from "@/lib/flows/runner";
 import { deliverPermission } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, projects, runs } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { hitlRequests, projects, runs, scratchRuns } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-hitl",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const TERMINAL_RUN_STATUS = new Set(["Failed", "Crashed", "Done", "Abandoned"]);
+const TERMINAL_RUN_STATUS = new Set([
+  "Failed",
+  "Crashed",
+  "Done",
+  "Abandoned",
+  "Review",
+]);
 
 // A form/human (incl. graph human_review) HITL is genuinely pending ONLY while
 // the run awaits the response — NeedsInput or its idle checkpoint
@@ -259,6 +263,42 @@ type HandlerArgs = {
   startedAt: number;
 };
 
+async function markScratchPermissionDelivered(
+  db: any,
+  runRow: any,
+  runId: string,
+): Promise<void> {
+  if (runRow.runKind !== "scratch") return;
+
+  const now = new Date();
+
+  await db
+    .update(scratchRuns)
+    .set({ dialogStatus: "Running", updatedAt: now })
+    .where(eq(scratchRuns.runId, runId));
+  await db.update(runs).set({ status: "Running" }).where(eq(runs.id, runId));
+}
+
+async function markScratchPermissionTimedOut(
+  db: any,
+  runRow: any,
+  runId: string,
+): Promise<void> {
+  if (runRow.runKind !== "scratch") return;
+
+  const now = new Date();
+
+  await db
+    .update(scratchRuns)
+    .set({
+      dialogStatus: "Crashed",
+      errorCode: "HITL_TIMEOUT",
+      errorMessage: "permission window expired before response was delivered",
+      updatedAt: now,
+    })
+    .where(eq(scratchRuns.runId, runId));
+}
+
 type PermissionClaim =
   | { kind: "claimed"; runStatus: string }
   | { kind: "already-delivered"; runStatus: string }
@@ -267,7 +307,7 @@ type PermissionClaim =
 async function handlePermissionResponse(
   args: HandlerArgs,
 ): Promise<NextResponse> {
-  const { db, hitlRow, body, runId, hitlRequestId, startedAt } = args;
+  const { db, hitlRow, runRow, body, runId, hitlRequestId, startedAt } = args;
   const optionId = body.optionId;
 
   if (typeof optionId !== "string" || optionId.length === 0) {
@@ -510,6 +550,7 @@ async function handlePermissionResponse(
           isNull(hitlRequests.respondedAt),
         ),
       );
+    await markScratchPermissionDelivered(db, runRow, runId);
 
     log.info(
       {
@@ -555,7 +596,10 @@ async function handlePermissionResponse(
         }
         await tx
           .update(runs)
-          .set({ status: "Failed", endedAt: new Date() })
+          .set({
+            status: runRow.runKind === "scratch" ? "Crashed" : "Failed",
+            endedAt: new Date(),
+          })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
         await tx
           .update(hitlRequests)
@@ -605,6 +649,8 @@ async function handlePermissionResponse(
         );
       }
 
+      await markScratchPermissionTimedOut(db, runRow, runId);
+
       log.warn(
         {
           runId,
@@ -613,7 +659,9 @@ async function handlePermissionResponse(
           phase: "terminal-410",
           latencyMs: Date.now() - startedAt,
         },
-        "permission deferred expired — run transitioned to Failed",
+        runRow.runKind === "scratch"
+          ? "permission deferred expired — scratch run transitioned to Crashed"
+          : "permission deferred expired — run transitioned to Failed",
       );
 
       return NextResponse.json(

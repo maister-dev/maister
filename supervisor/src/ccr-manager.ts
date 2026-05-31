@@ -267,7 +267,10 @@ export function createCcrManager(
     // `.ai-factory/skill-context/aif-implement/SKILL.md` rule "Health
     // probes must validate target identity".
     const probeCtl = new AbortController();
-    let earlyExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+    let earlyExit: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    } | null = null;
 
     const earlyExitHandler = (
       code: number | null,
@@ -296,7 +299,10 @@ export function createCcrManager(
     // so callers can still cancel start-up.
     if (signal) {
       if (signal.aborted) probeCtl.abort();
-      else signal.addEventListener("abort", () => probeCtl.abort(), { once: true });
+      else
+        signal.addEventListener("abort", () => probeCtl.abort(), {
+          once: true,
+        });
     }
 
     try {
@@ -315,9 +321,10 @@ export function createCcrManager(
       } catch {
         /* ignore */
       }
-      const exitInfo = earlyExit as
-        | { code: number | null; signal: NodeJS.Signals | null }
-        | null;
+      const exitInfo = earlyExit as {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      } | null;
 
       if (exitInfo) {
         throw new SupervisorError(
@@ -423,7 +430,10 @@ export function createCcrManager(
     let escalated: NodeJS.Signals = sig;
 
     if (!exitedInTime) {
-      logger.warn({ pid: proc.pid, graceMs: timeoutMs }, "ccr SIGKILL after grace");
+      logger.warn(
+        { pid: proc.pid, graceMs: timeoutMs },
+        "ccr SIGKILL after grace",
+      );
       try {
         proc.kill("SIGKILL");
         escalated = "SIGKILL";

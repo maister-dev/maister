@@ -307,7 +307,9 @@ describe("ccr-manager (unit)", () => {
 
     expect((caught as { code: string }).code).toBe("EXECUTOR_UNAVAILABLE");
     expect((caught as Error).message).toMatch(/identity check failed/);
-    expect((caught as Error).message).toMatch(/another process appears to own the port/);
+    expect((caught as Error).message).toMatch(
+      /another process appears to own the port/,
+    );
     expect(mgr.getState()).toBe("failed");
     expect(child.killed).toBe(true);
   });

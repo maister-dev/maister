@@ -7,6 +7,7 @@
 //   --resume <id>       echo the resume marker as the first line
 //   --emit-usage        include a `usage` block in the last line
 //   --giant-bytes <N>   emit a single line of N raw bytes with NO trailing newline (overflow test)
+//   --echo-env <NAME>   emit the named environment variable as the first line
 const args = process.argv.slice(2);
 let lines = 3;
 let exitCode = 0;
@@ -14,6 +15,7 @@ let hang = false;
 let resume = null;
 let emitUsage = false;
 let giantBytes = 0;
+let echoEnv = null;
 
 for (let i = 0; i < args.length; i += 1) {
   const a = args[i];
@@ -29,6 +31,8 @@ for (let i = 0; i < args.length; i += 1) {
     emitUsage = true;
   } else if (a === "--giant-bytes") {
     giantBytes = Number.parseInt(args[++i], 10);
+  } else if (a === "--echo-env") {
+    echoEnv = args[++i];
   }
 }
 
@@ -43,6 +47,10 @@ function emit(obj) {
 
 if (resume) {
   emit({ type: "resumed", sessionId: resume });
+}
+
+if (echoEnv) {
+  emit({ type: "env", name: echoEnv, value: process.env[echoEnv] ?? null });
 }
 
 for (let i = 0; i < lines; i += 1) {

@@ -164,8 +164,7 @@ pnpm start    # next start (after build)
 pnpm lint     # eslint --fix
 ```
 
-No `typecheck` script yet — `tsc --noEmit` works (`noEmit: true` in tsconfig).
-Add a `typecheck` script the first time CI or a pre-commit hook needs it.
+`pnpm typecheck` runs `tsc --noEmit` (`noEmit: true` in tsconfig).
 
 ## Current code structure
 

@@ -216,36 +216,48 @@ export async function ProjectCard({
           <ul className="m-0 flex list-none flex-col gap-px overflow-hidden rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))] p-0">
             {project.activeWorkspaces.map((ws, idx) => (
               <li
-                key={`${ws.branch}-${idx}`}
-                className="grid cursor-pointer grid-cols-[10px_1fr_auto_auto] items-center gap-2 px-2.5 py-2 font-mono text-[11px] transition-colors [&+li]:border-t [&+li]:border-line-soft hover:bg-paper"
+                key={`${ws.runId}-${idx}`}
+                className="[&+li]:border-t [&+li]:border-line-soft"
               >
-                <span
-                  className={clsx(
-                    "h-[7px] w-[7px] rounded-full",
-                    wsDotByStatus[ws.status],
-                  )}
-                />
-                <span className="truncate font-semibold tracking-[-0.005em] text-ink">
-                  {ws.branch}
-                </span>
-                <span
-                  className={clsx(
-                    "rounded-[3px] border px-1.5 py-px text-[10px] tracking-[0.02em]",
-                    wsAgentChip[ws.agent] ?? "border-line bg-ivory text-mute",
-                  )}
+                <Link
+                  className="grid cursor-pointer grid-cols-[10px_1fr_auto_auto_auto] items-center gap-2 px-2.5 py-2 font-mono text-[11px] transition-colors hover:bg-paper"
+                  href={ws.href}
                 >
-                  {ws.agent}
-                </span>
-                <span
-                  className={clsx(
-                    "text-[10px] tracking-[0.04em]",
-                    ws.status === "needs"
-                      ? "font-bold text-amber"
-                      : "text-mute-2",
-                  )}
-                >
-                  {ws.time}
-                </span>
+                  <span
+                    className={clsx(
+                      "h-[7px] w-[7px] rounded-full",
+                      wsDotByStatus[ws.status],
+                    )}
+                  />
+                  <span className="truncate font-semibold tracking-[-0.005em] text-ink">
+                    {ws.branch}
+                  </span>
+                  {ws.runKind === "scratch" &&
+                  ws.scratchAction &&
+                  ws.scratchAction !== "none" ? (
+                    <span className="rounded-[3px] border border-amber-line bg-amber-soft px-1.5 py-px text-[9.5px] tracking-[0.02em] text-amber">
+                      {t(`workspaceAction.${ws.scratchAction}`)}
+                    </span>
+                  ) : null}
+                  <span
+                    className={clsx(
+                      "rounded-[3px] border px-1.5 py-px text-[10px] tracking-[0.02em]",
+                      wsAgentChip[ws.agent] ?? "border-line bg-ivory text-mute",
+                    )}
+                  >
+                    {ws.runKind === "scratch" ? "scratch" : ws.agent}
+                  </span>
+                  <span
+                    className={clsx(
+                      "text-[10px] tracking-[0.04em]",
+                      ws.status === "needs"
+                        ? "font-bold text-amber"
+                        : "text-mute-2",
+                    )}
+                  >
+                    {ws.time}
+                  </span>
+                </Link>
               </li>
             ))}
           </ul>

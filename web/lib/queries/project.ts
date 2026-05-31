@@ -1,14 +1,31 @@
 import "server-only";
 
-import type { Project } from "@/lib/db/schema";
+import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  ACTIVE_RUN_STATUSES,
+  type AgentRole,
+  type PortfolioWorkspace,
+  relativeTime,
+  runStatusToWorkspace,
+  scratchActionForWorkspace,
+} from "@/lib/queries/portfolio";
 
-const { executors, flows, projectMembers, projects, users } = schema;
+const {
+  executors,
+  flows,
+  projectMembers,
+  projects,
+  runs,
+  scratchRuns,
+  users,
+  workspaces,
+} = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -45,6 +62,7 @@ export interface ProjectPageData {
   flows: ProjectFlow[];
   executors: ProjectExecutor[];
   members: ProjectMemberView[];
+  activeWorkspaces: PortfolioWorkspace[];
   defaultAgent: ProjectAgent | null;
   defaultExecutorRef: string | null;
 }
@@ -95,42 +113,69 @@ export async function getProjectPageData(
 ): Promise<ProjectPageData> {
   const client = db();
 
-  const [flowRows, executorRows, memberRows] = await Promise.all([
-    client
-      .select({
-        id: flows.id,
-        ref: flows.flowRefId,
-        source: flows.source,
-        version: flows.version,
-        manifest: flows.manifest,
-        overrideId: flows.executorOverrideId,
-      })
-      .from(flows)
-      .where(eq(flows.projectId, project.id))
-      .orderBy(asc(flows.createdAt)),
+  const now = new Date();
+  const [flowRows, executorRows, memberRows, activeRunRows] = await Promise.all(
+    [
+      client
+        .select({
+          id: flows.id,
+          ref: flows.flowRefId,
+          source: flows.source,
+          version: flows.version,
+          manifest: flows.manifest,
+          overrideId: flows.executorOverrideId,
+        })
+        .from(flows)
+        .where(eq(flows.projectId, project.id))
+        .orderBy(asc(flows.createdAt)),
 
-    client
-      .select({
-        id: executors.id,
-        ref: executors.executorRefId,
-        agent: executors.agent,
-        model: executors.model,
-        router: executors.router,
-      })
-      .from(executors)
-      .where(eq(executors.projectId, project.id))
-      .orderBy(asc(executors.createdAt)),
+      client
+        .select({
+          id: executors.id,
+          ref: executors.executorRefId,
+          agent: executors.agent,
+          model: executors.model,
+          router: executors.router,
+        })
+        .from(executors)
+        .where(eq(executors.projectId, project.id))
+        .orderBy(asc(executors.createdAt)),
 
-    client
-      .select({
-        name: users.name,
-        email: users.email,
-        role: projectMembers.role,
-      })
-      .from(projectMembers)
-      .innerJoin(users, eq(users.id, projectMembers.userId))
-      .where(eq(projectMembers.projectId, project.id)),
-  ]);
+      client
+        .select({
+          name: users.name,
+          email: users.email,
+          role: projectMembers.role,
+        })
+        .from(projectMembers)
+        .innerJoin(users, eq(users.id, projectMembers.userId))
+        .where(eq(projectMembers.projectId, project.id)),
+
+      client
+        .select({
+          runId: runs.id,
+          status: runs.status,
+          runKind: runs.runKind,
+          acpSessionId: runs.acpSessionId,
+          agent: executors.agent,
+          branch: workspaces.branch,
+          startedAt: runs.startedAt,
+          scratchDialogStatus: scratchRuns.dialogStatus,
+        })
+        .from(runs)
+        .innerJoin(executors, eq(executors.id, runs.executorId))
+        .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+        .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+        .where(
+          and(
+            eq(runs.projectId, project.id),
+            inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+            isNull(workspaces.removedAt),
+          ),
+        )
+        .orderBy(desc(runs.startedAt)),
+    ],
+  );
 
   const refById = new Map(executorRows.map((e) => [e.id, e.ref]));
 
@@ -156,6 +201,25 @@ export async function getProjectPageData(
     name: m.name ?? m.email ?? "?",
     isAdmin: m.role === "owner" || m.role === "admin",
   }));
+  const activeWorkspaces: PortfolioWorkspace[] = activeRunRows.map((row) => ({
+    runId: row.runId,
+    runKind: row.runKind as RunKind,
+    branch: row.branch,
+    agent: row.agent as AgentRole,
+    status: runStatusToWorkspace(row.status),
+    time: relativeTime(row.startedAt, now),
+    href:
+      row.runKind === "scratch"
+        ? `/scratch-runs/${row.runId}`
+        : `/runs/${row.runId}`,
+    scratchDialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+    scratchAction: scratchActionForWorkspace({
+      runKind: row.runKind as RunKind,
+      runStatus: row.status,
+      dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+      acpSessionId: row.acpSessionId,
+    }),
+  }));
 
   const defaultExecutor = project.defaultExecutorId
     ? projectExecutors.find((e) => e.id === project.defaultExecutorId)
@@ -166,6 +230,7 @@ export async function getProjectPageData(
     flows: projectFlows,
     executors: projectExecutors,
     members,
+    activeWorkspaces,
     defaultAgent: defaultExecutor?.agent ?? null,
     defaultExecutorRef: defaultExecutor?.ref ?? null,
   };

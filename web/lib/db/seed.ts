@@ -98,6 +98,14 @@ async function main() {
         { id: "codex-default", agent: "codex", model: "gpt-5-codex" },
       ],
       default_executor: "claude-sonnet",
+      capabilities: {
+        mcps: [],
+        skills: [],
+        rules: [],
+        restrictions: [],
+        settings: [],
+        tools: [],
+      },
       flows: [
         {
           id: "bugfix",

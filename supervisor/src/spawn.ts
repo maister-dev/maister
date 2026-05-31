@@ -57,8 +57,7 @@ async function tailMaxMonotonicId(path: string): Promise<number> {
     // the read window did not start on a record boundary, so skip it
     // unless we read the whole file. Subsequent lines are always
     // complete records.
-    const startIndex =
-      readBytes < size && lines.length > 1 ? 1 : 0;
+    const startIndex = readBytes < size && lines.length > 1 ? 1 : 0;
 
     for (let i = startIndex; i < lines.length; i += 1) {
       try {
@@ -146,8 +145,16 @@ export async function spawnSession(
 
   const args: string[] = opts.preArgs ? [...opts.preArgs] : [];
 
+  if (request.adapterLaunch?.preArgs) {
+    args.push(...request.adapterLaunch.preArgs);
+  }
+
   if (request.resumeSessionId) {
     args.push("--resume", request.resumeSessionId);
+  }
+
+  if (request.adapterLaunch?.postArgs) {
+    args.push(...request.adapterLaunch.postArgs);
   }
 
   const ccrLayer: NodeJS.ProcessEnv = {};
@@ -182,6 +189,10 @@ export async function spawnSession(
     ...process.env,
     ...ccrLayer,
     ...(request.executor.env ?? {}),
+    ...(request.capabilityProfilePath
+      ? { MAISTER_CAPABILITY_PROFILE_PATH: request.capabilityProfilePath }
+      : {}),
+    ...(request.adapterLaunch?.env ?? {}),
   };
 
   logger.info(
@@ -196,6 +207,11 @@ export async function spawnSession(
       hasEnv: Boolean(
         request.executor.env && Object.keys(request.executor.env).length > 0,
       ),
+      hasAdapterEnv: Boolean(
+        request.adapterLaunch?.env &&
+          Object.keys(request.adapterLaunch.env).length > 0,
+      ),
+      hasCapabilityProfile: Boolean(request.capabilityProfilePath),
       eventsLogPath,
     },
     "spawn",

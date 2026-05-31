@@ -15,6 +15,103 @@ export const flowEntrySchema = z.object({
   executor_override: z.string().min(1).optional(),
 });
 
+export const capabilityAgentSchema = z.enum(["claude", "codex"]);
+
+export const capabilitySourceSchema = z.enum([
+  "platform",
+  "project",
+  "flow-package",
+  "flow",
+  "git",
+  "local",
+  "system",
+]);
+
+export const capabilityEnforceabilitySchema = z.enum([
+  "enforced",
+  "instructed",
+  "unsupported",
+]);
+
+export const capabilityKindSchema = z.enum([
+  "mcp",
+  "skill",
+  "rule",
+  "setting",
+  "restriction",
+  "tool",
+  "agent_definition",
+  "env_profile",
+]);
+
+const capabilityAgentsSchema = z
+  .union([
+    z.array(capabilityAgentSchema).min(1),
+    z.record(capabilityAgentSchema, z.string().min(1)),
+  ])
+  .default(["claude", "codex"]);
+
+const capabilityCommonSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1).optional(),
+  source: capabilitySourceSchema.default("project"),
+  version: z.string().min(1).optional(),
+  revision: z.string().min(1).optional(),
+  agents: capabilityAgentsSchema,
+  enforceability: capabilityEnforceabilitySchema.default("instructed"),
+  selected_by_default: z.boolean().default(true),
+});
+
+export const mcpCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("mcp").default("mcp"),
+  command: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+  enforceability: capabilityEnforceabilitySchema.default("enforced"),
+});
+
+export const skillCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("skill").default("skill"),
+  url: z.string().min(1).optional(),
+  path: z.string().min(1).optional(),
+  content: z.string().min(1).optional(),
+});
+
+export const ruleCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("rule").default("rule"),
+  path: z.string().min(1).optional(),
+  content: z.string().min(1).optional(),
+});
+
+export const restrictionCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("restriction").default("restriction"),
+  path: z.string().min(1).optional(),
+  content: z.string().min(1).optional(),
+});
+
+export const settingCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("setting").default("setting"),
+  agent: capabilityAgentSchema,
+  path: z.string().min(1),
+  enforceability: capabilityEnforceabilitySchema.default("enforced"),
+});
+
+export const toolCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("tool").default("tool"),
+});
+
+export const maisterCapabilitiesSchema = z
+  .object({
+    mcps: z.array(mcpCapabilitySchema).default([]),
+    skills: z.array(skillCapabilitySchema).default([]),
+    rules: z.array(ruleCapabilitySchema).default([]),
+    restrictions: z.array(restrictionCapabilitySchema).default([]),
+    settings: z.array(settingCapabilitySchema).default([]),
+    tools: z.array(toolCapabilitySchema).default([]),
+  })
+  .default({});
+
 export const projectBlockSchema = z.object({
   name: z.string().min(1),
   repo_path: z
@@ -34,6 +131,7 @@ export const maisterYamlV2Schema = z.object({
   project: projectBlockSchema,
   executors: z.array(executorSchema).min(1),
   default_executor: z.string().min(1),
+  capabilities: maisterCapabilitiesSchema,
   flows: z.array(flowEntrySchema),
 });
 
@@ -284,6 +382,23 @@ export const formSchemaSchema = z.object({
 export type MaisterYamlV2 = z.infer<typeof maisterYamlV2Schema>;
 export type ExecutorConfig = z.infer<typeof executorSchema>;
 export type FlowEntry = z.infer<typeof flowEntrySchema>;
+export type CapabilityAgent = z.infer<typeof capabilityAgentSchema>;
+export type CapabilitySource = z.infer<typeof capabilitySourceSchema>;
+export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
+export type CapabilityEnforceability = z.infer<
+  typeof capabilityEnforceabilitySchema
+>;
+export type McpCapabilityConfig = z.infer<typeof mcpCapabilitySchema>;
+export type SkillCapabilityConfig = z.infer<typeof skillCapabilitySchema>;
+export type RuleCapabilityConfig = z.infer<typeof ruleCapabilitySchema>;
+export type RestrictionCapabilityConfig = z.infer<
+  typeof restrictionCapabilitySchema
+>;
+export type SettingCapabilityConfig = z.infer<typeof settingCapabilitySchema>;
+export type ToolCapabilityConfig = z.infer<typeof toolCapabilitySchema>;
+export type MaisterCapabilitiesConfig = z.infer<
+  typeof maisterCapabilitiesSchema
+>;
 export type FlowYamlV1 = z.infer<typeof flowYamlV1Schema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;
 export type Step = z.infer<typeof stepSchema>;

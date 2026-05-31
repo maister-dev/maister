@@ -9,9 +9,10 @@ Implementation status legend: **Implemented** present in the current branch ·
 **Designed** accepted contract, not yet coded · **Phase 2** later scope.
 
 Current state: web foundation, DB schema, Flow installer/runner, executor
-resolution, scheduler, `POST /api/runs`, durable run SSE, and HITL response
-delivery are implemented. Project registration UI, diff/promotion routes,
-keep-alive checkpoint/resume, recovery, and GC remain designed.
+resolution, scheduler, `POST /api/runs`, durable run SSE, HITL response
+delivery, project registration, diff/promotion routes, keep-alive
+checkpoint/resume, and scratch-run recovery are implemented. GC remains
+designed.
 
 ## C4 Context — system and its world
 
@@ -146,7 +147,7 @@ C4Component
 
     Container_Boundary(supervisor, "Supervisor daemon") {
         Component(main, "main.ts", "Node entrypoint", "Fastify boot, pino logger, graceful shutdown.")
-        Component(http_api, "http-api.ts", "Fastify routes", "POST/DELETE /sessions, POST /sessions/:id/prompt, GET streams, checkpoint stub, permission input.")
+        Component(http_api, "http-api.ts", "Fastify routes", "POST/DELETE /sessions, POST /sessions/:id/prompt, GET streams, checkpoint, permission input.")
         Component(spawn, "spawn.ts", "child_process.spawn dispatch", "Picks binary by agent, builds env, line-buffers stdout, writes step .log.")
         Component(registry, "registry.ts", "In-memory Map", "Session records + per-session event ring buffer (1000 entries).")
         Component(heartbeat, "heartbeat.ts", "Lifecycle watcher", "exit/error -> session.exited/crashed; orphan-PID detection every interval.")
@@ -186,7 +187,7 @@ C4Component
 | Name | File | Purpose | Responsibilities | Dependencies |
 | ---- | ---- | ------- | ---------------- | ------------ |
 | `main` | `supervisor/src/main.ts` | Process entrypoint. | Read env, build Fastify + pino, wire components, listen, graceful shutdown. | `http-api`, `registry`, `heartbeat`. |
-| `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | Session lifecycle routes, prompt route, permission input route, checkpoint stub, SSE pipe with `Last-Event-ID` replay, error mapping. | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
+| `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | Session lifecycle routes, prompt route, permission input route, checkpoint route, SSE pipe with `Last-Event-ID` replay, error mapping. | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
 | `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, append `--resume <id>` when present, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. When `executor.router === "ccr"`, await `ccr-manager.ensureRunning()` and inject `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into childEnv beneath the explicit `executor.env` overlay. | `registry` (channel constant), `ccr-manager`, `types`. |
 | `ccr-manager` | `supervisor/src/ccr-manager.ts` | CCR daemon lifecycle controller. **Implemented.** | Singleton state machine (`idle | starting | ready | failed | stopping`). Lazy-start the bundled CCR proxy on demand. Parse host+port from `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`). Exponential-backoff `GET /` health check ≤10 s. Graceful shutdown on SIGTERM/SIGINT via existing `main.ts` handler. | `node:child_process`, `node:fs/promises`, `types`. |
 | `registry` | `supervisor/src/registry.ts` | In-memory session table. | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown. | `types`. |
@@ -248,26 +249,25 @@ C4Component
 | `app/api/runs/[runId]/stream` | `web/app/api/runs/[runId]/stream/route.ts` | Browser-facing durable run SSE. | `db`, `run.events.jsonl`. |
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond` | Route Handler | HITL response two-phase claim, permission delivery or atomic artifact write, runner wake-up. | `db`, `atomic`, `supervisor-client`, `flows/runner`. |
 
-## Component map — remaining designed pieces
+## Component map — remaining pieces
 
-These components remain planned or partially implemented:
+These components are implemented unless the status column says otherwise:
 
 | Component | File (planned) | Purpose | Status |
 | --------- | -------------- | ------- | ------ |
-| `lib/projects` | `web/lib/projects.ts` | Registry CRUD, slug derivation, slug + repo_path uniqueness, recursive `MAISTER_PROJECTS_DIR` discovery, Flow plugin install on register. | Designed |
+| `app/api/projects/route.ts` | Route Handler | Register projects from a local path or repo source, slug derivation, slug + repo_path uniqueness, Flow plugin install on register, owner membership. | Implemented |
 | `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Implemented |
 | `lib/executors` | `web/lib/executors.ts` | Pure `resolveExecutor()` 5-level chain (launcher → task → flow override → project default → flow recommended) + `upsertExecutorsFromConfig()` helper (writes `executors` + `flows.executor_override_id` in one transaction). CCR env construction lives in `supervisor/src/spawn.ts`, not here. | Implemented |
 | `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Implemented |
 | `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Implemented |
-| `lib/reconcile` | `web/lib/reconcile.ts` | Startup reconciliation: `runs` vs `git worktree list` vs supervisor live sessions. | Designed |
-| `app/api/projects/route.ts` | Route Handler | Register / archive projects. | Designed |
 | `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Designed |
 | `app/api/runs/route.ts` | Route Handler | Precondition + executor resolution (delegates to `lib/executors:resolveExecutor`, logs `resolvedFromTier`) + worktree add + supervisor `POST /sessions`. | Implemented |
 | `app/api/runs/[runId]/stream/route.ts` | Route Handler | SSE bridge tailing `run.events.jsonl`. | Implemented |
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
-| `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Designed |
-| `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Designed |
-| `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote run branch to target branch by `local_merge` or `pull_request`; local merge conflict → abort + Review/manual resolution. | Designed |
+| `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Implemented |
+| `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Implemented |
+| `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote run branch to target branch by implemented `local_merge`; `pull_request` returns `CONFIG` until repository-hosting integration is wired. Local merge conflict → abort + Review/manual resolution. | Implemented |
+| `app/api/scratch-runs/[runId]/recover/route.ts` | Route Handler | Recover a crashed scratch session through the stored ACP session id. | Implemented |
 
 ## Dependency rules
 
@@ -338,11 +338,12 @@ sequenceDiagram
     W->>DB: runs.status=Review, ended_at=now
 ```
 
-## Data flow — HITL keep-alive + resume (Partly implemented)
+## Data flow — HITL keep-alive + resume (Implemented)
 
 Permission HITL, form/human rows, atomic response artifacts, and runner-owned
 resume from `NeedsInput` are implemented. Keep-alive checkpoint to
-`NeedsInputIdle` remains designed.
+`NeedsInputIdle` is implemented through the web sweeper and supervisor
+checkpoint endpoint.
 
 ```mermaid
 stateDiagram-v2
@@ -361,7 +362,7 @@ stateDiagram-v2
     Crashed --> Running: user clicks Recover<br/>(--resume from acp_session_id)
     Crashed --> Abandoned: user clicks Discard
 
-    Review --> Done: user clicks Promote<br/>(local merge or PR succeeds)
+    Review --> Done: user clicks Promote<br/>(local merge succeeds)
     Review --> Review: conflict on local promotion<br/>(stays in Review)
 
     Done --> [*]
@@ -370,17 +371,16 @@ stateDiagram-v2
 
 ## Deployment
 
-Current deployment ships as Docker Compose on a single host. The two services
-(`web`, `supervisor`) plus Postgres are defined in `compose.yml`, with
-dev overrides in `compose.override.yml` and a hardened production
-overlay in `compose.production.yml`.
+Current deployment runs `web` and `supervisor` on the host and uses Docker
+Compose only for Postgres. `compose.yml` defines the local Postgres service;
+`compose.production.yml` is the hardened production overlay.
 
 ```mermaid
 flowchart LR
     subgraph host[Single host]
+        web[web<br/>Next.js<br/>:3000<br/>host process]
+        supervisor[supervisor<br/>Fastify<br/>:7777<br/>host process]
         subgraph compose[docker compose]
-            web[web<br/>Next.js<br/>:3000]
-            supervisor[supervisor<br/>Fastify<br/>:7777]
             pg[(postgres<br/>:5432)]
         end
         fs[(Host filesystem<br/>parent repos<br/>.maister/<br/>~/.maister/flows/)]

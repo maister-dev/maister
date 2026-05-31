@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { z } from "zod";
 
 export const ExecutorAgentSchema = z.enum(["claude", "codex"]);
@@ -22,31 +24,68 @@ const worktreePathSchema = z
     "worktreePath must be an absolute path with no '..' segments",
   );
 
-export const StartSessionRequestSchema = z.object({
-  runId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(SAFE_PATH_SEGMENT, "runId must match /^[A-Za-z0-9._-]+$/"),
-  projectSlug: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
-  worktreePath: worktreePathSchema,
-  stepId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
-  executor: ExecutorSchema,
-  resumeSessionId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(SAFE_PATH_SEGMENT, "resumeSessionId must match /^[A-Za-z0-9._-]+$/")
-    .optional(),
-});
+const launchArgSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .refine((v) => !v.includes("\0"), "launch arg must not contain null byte");
+
+export const AdapterLaunchSchema = z
+  .object({
+    env: z.record(z.string().min(1), z.string()).optional(),
+    preArgs: z.array(launchArgSchema).max(32).optional(),
+    postArgs: z.array(launchArgSchema).max(32).optional(),
+  })
+  .strict();
+
+export const StartSessionRequestSchema = z
+  .object({
+    runId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "runId must match /^[A-Za-z0-9._-]+$/"),
+    projectSlug: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
+    worktreePath: worktreePathSchema,
+    stepId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+    executor: ExecutorSchema,
+    resumeSessionId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(
+        SAFE_PATH_SEGMENT,
+        "resumeSessionId must match /^[A-Za-z0-9._-]+$/",
+      )
+      .optional(),
+    capabilityProfilePath: worktreePathSchema.optional(),
+    adapterLaunch: AdapterLaunchSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.capabilityProfilePath) return;
+
+    const relative = path.relative(
+      value.worktreePath,
+      value.capabilityProfilePath,
+    );
+
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilityProfilePath"],
+        message: "capabilityProfilePath must be inside worktreePath",
+      });
+    }
+  });
 
 export const SendPromptRequestSchema = z.object({
   stepId: z
@@ -60,6 +99,7 @@ export const SendPromptRequestSchema = z.object({
 export type ExecutorAgent = z.infer<typeof ExecutorAgentSchema>;
 export type ExecutorRouter = z.infer<typeof ExecutorRouterSchema>;
 export type Executor = z.infer<typeof ExecutorSchema>;
+export type AdapterLaunch = z.infer<typeof AdapterLaunchSchema>;
 export type StartSessionRequest = z.infer<typeof StartSessionRequestSchema>;
 export type SendPromptRequest = z.infer<typeof SendPromptRequestSchema>;
 

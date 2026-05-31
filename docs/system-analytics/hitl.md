@@ -210,15 +210,12 @@ idempotency marker** — never set before the git/ledger side-effect completes. 
 git-op failure in Phase 2 leaves the run `HumanWorking` with no ledger write and
 no status flip (409 `CONFLICT`, retryable).
 
-## Keep-alive activity tracking (Designed)
+## Keep-alive activity tracking
 
-The flow below describes the designed target state. Current code does
-not implement the activity route or checkpoint transition:
-`runs.keepalive_until` ships unused, no
-`POST /api/runs/[id]/activity` route exists, supervisor
-`POST /sessions/:id/checkpoint` still returns the deferred stub, and
-no `NeedsInput → NeedsInputIdle` transition fires today. The diagram is
-kept as the design contract for checkpoint/resume work.
+The flow below describes the implemented checkpoint/resume path:
+activity pings extend `runs.keepalive_until`, the sweeper checkpoints
+idle `NeedsInput` runs, and a later HITL response resumes the ACP session
+with `--resume <acp_session_id>`.
 
 While a run is in `NeedsInput`, the run-detail page is responsible for
 keeping the worker alive:
@@ -261,19 +258,17 @@ fields:
 - Every HITL request is persisted as a `hitl_requests` row before the
   run transitions to `NeedsInput`; UI never derives HITL state from
   supervisor in-memory state.
-- **(Designed)** A run in `NeedsInput` extends `keepalive_until` by
-  `MAISTER_KEEPALIVE_MINUTES` (default 30) on every operator activity
-  event (page open, focus, form change). Current code has neither the
-  `POST /api/runs/[id]/activity` route nor a writer for
-  `runs.keepalive_until`; the column ships unused.
-- **(Designed)** Idle past `keepalive_until` triggers checkpoint →
-  run becomes `NeedsInputIdle` with `acp_session_id` retained.
-  Supervisor `POST /sessions/:id/checkpoint` still returns the current
-  deferred compatibility response, so `NeedsInputIdle` is never reached
-  today.
-- **(Designed)** 24 h elapsed in `NeedsInputIdle` without response
-  → `HITL_TIMEOUT`, run `Abandoned`, task → `Backlog`. Depends on the
-  checkpoint path above; no timeout watcher exists.
+- **(Implemented)** A run in `NeedsInput` extends `keepalive_until` by
+  `MAISTER_KEEPALIVE_MINUTES` (default 30) on operator activity through
+  `POST /api/runs/[id]/activity`.
+- **(Implemented)** Idle past `keepalive_until` triggers checkpoint →
+  run becomes `NeedsInputIdle` with `acp_session_id` retained. Supervisor
+  `POST /sessions/:id/checkpoint` cancels pending permission deferreds
+  with reason `checkpoint`, terminates the live adapter session, and lets
+  the runner observe `session.exited.reason = "checkpoint"`.
+- **(Implemented)** 24 h elapsed in `NeedsInputIdle` without response →
+  run `Abandoned`, task → `Backlog`. This sweeper transition does not
+  raise `HITL_TIMEOUT`.
 - Every form payload includes `schemaVersion: integer`; mismatch with
   the Flow's declared version raises `CONFIG` with both versions
   named.
@@ -367,8 +362,8 @@ fields:
 
 ## Edge cases
 
-- **24h elapsed in `NeedsInputIdle`** → `HITL_TIMEOUT`. Run →
-  `Abandoned`, task → `Backlog`.
+- **24h elapsed in `NeedsInputIdle`** → run `Abandoned`, task →
+  `Backlog`. This is a sweeper state transition, not `HITL_TIMEOUT`.
 - **Form payload `schemaVersion` mismatch** → `CONFIG`. Worker stays
   in `NeedsInput`; operator sees a validation error in the form.
 - **Unsupported field type in `form_schema`** → `CONFIG` at Flow load

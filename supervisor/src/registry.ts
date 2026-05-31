@@ -82,10 +82,7 @@ export class SessionRegistry {
         entry.eventBuffer.shift();
       }
       entry.eventsLog?.append(event);
-      if (
-        event.type === "session.exited" ||
-        event.type === "session.crashed"
-      ) {
+      if (event.type === "session.exited" || event.type === "session.crashed") {
         pendingPermissions.purgeSession(record.sessionId);
         if (entry.eventsLog) {
           const closing = entry.eventsLog;

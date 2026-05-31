@@ -201,12 +201,16 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .from(runs)
     .innerJoin(executors, eq(executors.id, runs.executorId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .where(inArray(runs.taskId, taskIds))
+    .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, taskIds)))
     .orderBy(desc(runs.startedAt));
 
   const latestRunByTask = new Map<string, (typeof runRows)[number]>();
 
   for (const row of runRows) {
+    if (!row.taskId) {
+      continue;
+    }
+
     if (!latestRunByTask.has(row.taskId)) {
       latestRunByTask.set(row.taskId, row);
     }

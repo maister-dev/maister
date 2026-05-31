@@ -68,7 +68,7 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
   `@agentclientprotocol/codex-acp@0.0.44`, bundles
   `@openai/codex@^0.128.0`). Supervisor spawns one adapter process per
   active session via Node `child_process.spawn`. Permission HITL is
-  resolved live. Checkpoint/resume remains designed and uses the
+  resolved live. Checkpoint/resume is implemented and uses the
   adapter's session id with `--resume <session-id>`. Each respawn costs
   roughly `$0.28` cache_creation tokens.
 - **Model routing**: Two modes supported. **(a) env-router** — set
@@ -346,7 +346,7 @@ opencode / Aider executors.
   monotonic `id` for `lastEventId` reconnect.
 - **Agent process lifetime**: spawned and owned by `supervisor/`, NOT by
   Next.js. Permission HITL stays live through supervisor deferreds.
-  Checkpoint/idle resume is designed and uses `--resume <session-id>`.
+  Checkpoint/idle resume is implemented and uses `--resume <session-id>`.
 - **Server-only secrets**: API keys read from `.env` server-side (Next.js)
   or supervisor-side. Never logged, never streamed, never sent to client.
   Never embedded in ACP `session/update` payloads visible to the browser.

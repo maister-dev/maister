@@ -34,6 +34,7 @@ vi.mock("@/lib/db/client", () => ({
 // Imported after mocks are registered.
 let getSessionUser: typeof import("@/lib/authz").getSessionUser;
 let requireGlobalRole: typeof import("@/lib/authz").requireGlobalRole;
+let requireProjectAction: typeof import("@/lib/authz").requireProjectAction;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -47,7 +48,9 @@ beforeAll(async () => {
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ getSessionUser, requireGlobalRole } = await import("@/lib/authz"));
+  ({ getSessionUser, requireGlobalRole, requireProjectAction } = await import(
+    "@/lib/authz"
+  ));
 }, 180_000);
 
 afterAll(async () => {
@@ -65,6 +68,29 @@ async function seedUser(
     role,
     accountStatus: "active",
     passwordHash: "x",
+  });
+}
+
+async function seedProject(id: string): Promise<void> {
+  await db.insert(schema.projects).values({
+    id,
+    slug: id,
+    name: id,
+    repoPath: `/tmp/${id}`,
+    maisterYamlPath: `/tmp/${id}/maister.yaml`,
+  });
+}
+
+async function seedMembership(
+  userId: string,
+  projectId: string,
+  role: "owner" | "admin" | "member" | "viewer",
+): Promise<void> {
+  await db.insert(schema.projectMembers).values({
+    id: `${userId}-${projectId}`,
+    userId,
+    projectId,
+    role,
   });
 }
 
@@ -147,5 +173,63 @@ describe("must_change_password fails closed on role-gated APIs (integration)", (
       id: "u-forced",
       role: "admin",
     });
+  });
+});
+
+describe("scratch run project actions (integration)", () => {
+  it("allows viewers to read scratch metadata but not operate scratch runs", async () => {
+    await seedUser("scratch-viewer", "member");
+    await seedProject("scratch-project-view");
+    await seedMembership("scratch-viewer", "scratch-project-view", "viewer");
+    sessionRef.value = { user: { id: "scratch-viewer", role: "member" } };
+
+    await expect(
+      requireProjectAction("scratch-project-view", "readScratchRun"),
+    ).resolves.toMatchObject({ role: "viewer" });
+
+    await expect(
+      requireProjectAction("scratch-project-view", "operateScratchRun"),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("allows members to launch, operate, and promote scratch runs", async () => {
+    await seedUser("scratch-member", "member");
+    await seedProject("scratch-project-member");
+    await seedMembership("scratch-member", "scratch-project-member", "member");
+    sessionRef.value = { user: { id: "scratch-member", role: "member" } };
+
+    await expect(
+      requireProjectAction("scratch-project-member", "launchRun"),
+    ).resolves.toMatchObject({ role: "member" });
+    await expect(
+      requireProjectAction("scratch-project-member", "operateScratchRun"),
+    ).resolves.toMatchObject({ role: "member" });
+    await expect(
+      requireProjectAction("scratch-project-member", "promoteRun"),
+    ).resolves.toMatchObject({ role: "member" });
+  });
+
+  it("denies scratch action access across projects", async () => {
+    await seedUser("scratch-cross", "member");
+    await seedProject("scratch-project-a");
+    await seedProject("scratch-project-b");
+    await seedMembership("scratch-cross", "scratch-project-a", "member");
+    sessionRef.value = { user: { id: "scratch-cross", role: "member" } };
+
+    await expect(
+      requireProjectAction("scratch-project-b", "operateScratchRun"),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("treats global admins as project owners for promotion", async () => {
+    await seedUser("scratch-global-admin", "admin");
+    await seedProject("scratch-project-admin");
+    sessionRef.value = {
+      user: { id: "scratch-global-admin", role: "admin" },
+    };
+
+    await expect(
+      requireProjectAction("scratch-project-admin", "promoteRun"),
+    ).resolves.toMatchObject({ role: "owner" });
   });
 });

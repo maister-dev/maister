@@ -118,6 +118,37 @@ async function seedChain() {
   return { projectId, executorId, flowId, taskId, runId, workspaceId, hitlId };
 }
 
+async function seedScratchParents() {
+  const projectId = newId();
+  const executorId = newId();
+  const userId = newId();
+
+  await db.insert(schema.users).values({
+    id: userId,
+    email: `scratch-${userId.slice(0, 8)}@example.test`,
+    role: "member",
+    accountStatus: "active",
+  });
+
+  await db.insert(schema.projects).values({
+    id: projectId,
+    slug: `scratch-${projectId.slice(0, 8)}`,
+    name: "Scratch Test",
+    repoPath: `/tmp/scratch-${projectId.slice(0, 8)}`,
+    maisterYamlPath: "/tmp/m.yaml",
+  });
+
+  await db.insert(schema.executors).values({
+    id: executorId,
+    projectId,
+    executorRefId: "codex-default",
+    agent: "codex",
+    model: "gpt-5-codex",
+  });
+
+  return { projectId, executorId, userId };
+}
+
 async function countWhere(
   table: string,
   idCol: string,
@@ -141,6 +172,93 @@ describe("schema round-trip", () => {
     expect(await countWhere("runs", "id", ids.runId)).toBe(1);
     expect(await countWhere("workspaces", "id", ids.workspaceId)).toBe(1);
     expect(await countWhere("hitl_requests", "id", ids.hitlId)).toBe(1);
+  });
+
+  it("inserts scratch run rows with nullable task and flow links", async () => {
+    const { projectId, executorId, userId } = await seedScratchParents();
+    const runId = newId();
+    const workspaceId = newId();
+    const messageId = newId();
+    const attachmentId = newId();
+    const profileId = newId();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      runKind: "scratch",
+      projectId,
+      executorId,
+      status: "Running",
+      flowVersion: "scratch",
+      flowRevision: "manual",
+    });
+
+    await db.insert(schema.workspaces).values({
+      id: workspaceId,
+      runId,
+      projectId,
+      branch: "scratch/test",
+      worktreePath: `/tmp/scratch-wt-${workspaceId.slice(0, 8)}`,
+      parentRepoPath: `/tmp/scratch-${projectId.slice(0, 8)}`,
+    });
+
+    await db.insert(schema.scratchRuns).values({
+      runId,
+      projectId,
+      name: "Scratch test",
+      initialPrompt: "Explore the parser",
+      planMode: "plan-first",
+      baseBranch: "main",
+      baseCommit: "abc123",
+      targetBranch: "main",
+      dialogStatus: "WaitingForUser",
+      supervisorSessionId: newId(),
+      createdByUserId: userId,
+    });
+
+    await db.insert(schema.scratchMessages).values({
+      id: messageId,
+      runId,
+      sequence: 1,
+      role: "user",
+      content: "Explore the parser",
+    });
+
+    await db.insert(schema.scratchAttachments).values({
+      id: attachmentId,
+      runId,
+      messageId,
+      kind: "text_note",
+      value: "Focus on edge cases.",
+    });
+
+    await db.insert(schema.scratchCapabilityProfiles).values({
+      id: profileId,
+      runId,
+      profileDigest: "sha256:test",
+      materializedPath: `/tmp/scratch-wt-${workspaceId.slice(0, 8)}/.maister/capabilities/profile.json`,
+      selectedMcpIds: ["filesystem"],
+      selectedSkillIds: ["aif-implement"],
+      selectedRuleIds: ["project-base"],
+      restrictions: { mode: "instructed" },
+      adapterLaunch: { env: { MAISTER_CAPABILITY_PROFILE: "profile.json" } },
+    });
+
+    expect(await countWhere("runs", "id", runId)).toBe(1);
+    expect(await countWhere("scratch_runs", "run_id", runId)).toBe(1);
+    expect(await countWhere("scratch_messages", "id", messageId)).toBe(1);
+    expect(await countWhere("scratch_attachments", "id", attachmentId)).toBe(1);
+    expect(
+      await countWhere("scratch_capability_profiles", "id", profileId),
+    ).toBe(1);
+
+    await db.delete(schema.runs).where(sql`${schema.runs.id} = ${runId}`);
+
+    expect(await countWhere("scratch_runs", "run_id", runId)).toBe(0);
+    expect(await countWhere("scratch_messages", "id", messageId)).toBe(0);
+    expect(await countWhere("scratch_attachments", "id", attachmentId)).toBe(0);
+    expect(
+      await countWhere("scratch_capability_profiles", "id", profileId),
+    ).toBe(0);
   });
 });
 

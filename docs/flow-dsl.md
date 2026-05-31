@@ -558,9 +558,9 @@ Pending  ─tryStartRun─►  Running  ─runFlow─►  Review     (success)
                                                   └──► Running (runner-owned resume)
 ```
 
-The designed checkpoint path adds `NeedsInput -> NeedsInputIdle ->
-Running` via `acp_session_id` resume. The checkpoint endpoint is still a
-deferred stub.
+The checkpoint path adds `NeedsInput -> NeedsInputIdle -> Running` via
+`acp_session_id` resume; the supervisor checkpoint endpoint and web resume
+driver are implemented.
 
 In a graph flow (M11a — Designed) the review-driven rework loop is a **node-
 pointer move inside `Running`**, not a new run status: a `rework` decision on a
