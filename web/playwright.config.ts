@@ -28,14 +28,15 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: [/.*\.setup\.ts$/, /m11a-.*\.spec\.ts$/],
+      testIgnore: [/.*\.setup\.ts$/, /m11[ab]-.*\.spec\.ts$/],
     },
-    // M11a specs run as the seeded admin against the dedicated e2e DB.
+    // M11a/M11b specs run as the seeded admin against the dedicated e2e DB,
+    // each against its OWN per-spec seeded project/run/worktree fixture.
     {
       name: "authed",
       use: { ...devices["Desktop Chrome"], storageState: AUTH_FILE },
       dependencies: ["setup"],
-      testMatch: /m11a-.*\.spec\.ts$/,
+      testMatch: /m11[ab]-.*\.spec\.ts$/,
     },
   ],
   webServer: {

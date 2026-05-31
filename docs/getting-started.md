@@ -98,7 +98,7 @@ typecheck          # tsc --noEmit
 test               # vitest unit + integration
 test:unit          # unit only (fast)
 test:integration   # spins up Postgres via testcontainers (slower)
-test:e2e           # Playwright (scaffolded, no specs yet)
+test:e2e           # Playwright (authed M11a/M11b UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply migrations against $DB_URL
 db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
@@ -114,6 +114,19 @@ backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
 > it (grandfathered `Enabled` + `trusted_by_policy`), and links historical runs.
 > Set `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` (see
 > [configuration](configuration.md)) to auto-trust your internal Flow sources.
+
+> **`test:e2e` prerequisites (no manual setup):** `pnpm --filter maister-web
+> test:e2e` (or `cd web && pnpm test:e2e`) is self-provisioning. Its
+> `globalSetup` creates and migrates a **disposable** `maister_e2e` Postgres DB
+> (`E2E_DB_URL`, defaults to the local dev Postgres — never the dev DB), seeds
+> one per-spec fixture each, and Playwright's `webServer` boots `next dev` on
+> `E2E_PORT` (3100) against it. It needs **only a reachable Postgres** (`docker
+> compose up -d db`); no supervisor and no `git` config beyond a `git` binary.
+> The seed `git init`s a real parent repo + `git worktree add`s each authed
+> spec's run branch under `<repo>/.worktrees/`, so the M11b manual-takeover spec
+> exercises real `git log`/`git diff`/`merge-base` on return. If a prior run
+> left the `maister_e2e` DB half-migrated, drop it (`DROP DATABASE maister_e2e`)
+> and re-run — `globalSetup` recreates it clean.
 
 **Supervisor (`pnpm --filter @maister/supervisor …`):**
 
