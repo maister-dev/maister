@@ -352,6 +352,48 @@ export async function releaseHumanWorking(
   return { ok: true };
 }
 
+// M11b Phase 3.5 (Phase 0.10): user-facing run abandon. The abandon route
+// (web/app/api/runs/[runId]/abandon/route.ts) calls this after first running
+// releaseHumanWorking on a HumanWorking run, so the guard accepts the
+// non-terminal abandonable set. Status-guarded so a duplicate/concurrent
+// abandon on an already-terminal row loses → {ok:false} → 409. The caller runs
+// promoteNextPending after a successful abandon to free the slot.
+const ABANDONABLE_STATUSES = [
+  "Pending",
+  "Running",
+  "NeedsInput",
+  "NeedsInputIdle",
+  "Review",
+  "Crashed",
+] as const;
+
+export async function markAbandoned(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Abandoned", endedAt: new Date() })
+    .where(
+      and(eq(runs.id, runId), inArray(runs.status, [...ABANDONABLE_STATUSES])),
+    )
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, to: "Abandoned" },
+      "markAbandoned: status-guard mismatch — already terminal or gone",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info({ runId, to: "Abandoned" }, "run-state transition — abandoned");
+
+  return { ok: true };
+}
+
 // M8 D9 / T11: NeedsInput → Crashed when the runner-agent's
 // resume-prompt watchdog expires (the resumed session was supposed to
 // re-issue session.permission_request within

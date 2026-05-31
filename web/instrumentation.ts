@@ -16,15 +16,20 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   try {
-    const { runResumeRecoverySweep } = await import(
-      "@/lib/runs/resume-recovery"
-    );
+    const { runResumeRecoverySweep, runTakeoverReturnRecoverySweep } =
+      await import("@/lib/runs/resume-recovery");
 
     await runResumeRecoverySweep();
+
+    // M11b F3 (ADR-030 invariant 6): recover takeover-return runs stranded in
+    // `Running` (process died after the AFTER-side flip, before the runner
+    // attached) by an idempotent re-dispatch at runs.current_step_id. CAS-guarded
+    // → a live runner makes this a no-op.
+    await runTakeoverReturnRecoverySweep();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(
-      "[instrumentation] resume-recovery sweep failed (continuing boot):",
+      "[instrumentation] recovery sweeps failed (continuing boot):",
       err instanceof Error ? err.message : String(err),
     );
   }

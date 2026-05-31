@@ -19,6 +19,7 @@ import {
   bumpKeepalive,
   crashResumedRun,
   failResumedRun,
+  markAbandoned,
   markCheckpointed,
   markCheckpointedFromExit,
   markHumanWorking,
@@ -398,6 +399,42 @@ describe("state-transitions — releaseHumanWorking (release, no changes)", () =
     const runId = await seedRun("NeedsInput");
 
     const r = await releaseHumanWorking(runId, { db });
+
+    expect(r.ok).toBe(false);
+  }, 60_000);
+});
+
+// M11b Phase 3.5: markAbandoned CAS helper. Abandon is a non-terminal →
+// Abandoned transition guarded so a concurrent/duplicate abandon loses. The
+// abandon route runs releaseHumanWorking first for a HumanWorking run, so by
+// the time markAbandoned fires the row is NeedsInput; the guard accepts the
+// abandonable non-terminal set.
+describe("state-transitions — markAbandoned", () => {
+  it("abandon-humanworking-frees-slot: NeedsInput → Abandoned with endedAt set", async () => {
+    const runId = await seedRun("NeedsInput");
+
+    const r = await markAbandoned(runId, { db });
+
+    expect(r.ok).toBe(true);
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("Abandoned");
+    expect(row.endedAt).not.toBeNull();
+  }, 60_000);
+
+  it("abandons a Running run", async () => {
+    const runId = await seedRun("Running");
+
+    const r = await markAbandoned(runId, { db });
+
+    expect(r.ok).toBe(true);
+    expect((await readRun(runId)).status).toBe("Abandoned");
+  }, 60_000);
+
+  it("rejects a duplicate abandon (already terminal — status-guard mismatch)", async () => {
+    const runId = await seedRun("Done");
+
+    const r = await markAbandoned(runId, { db });
 
     expect(r.ok).toBe(false);
   }, 60_000);

@@ -10,7 +10,7 @@ import type { WorkspacePolicy } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -326,6 +326,55 @@ export async function getActiveTakeover(
   const active = rows.filter((r) => r.endedAt === null);
 
   return active.length > 0 ? active[active.length - 1] : null;
+}
+
+// M11b (ADR-030, F3): true when a `Running` run carries a RECORDED takeover
+// return whose re-entry resume has not yet progressed — i.e. the latest
+// takeover node_attempts row has `returned_diff` + `ended_at` set AND there is
+// no NON-takeover attempt for `reentryNodeId` started AFTER that takeover row.
+// This is the signal the graph runner's resume gate uses to resume a returned
+// `Running` run at `runs.current_step_id` (the transitions.takeover re-entry)
+// instead of from `graph.entry`. Mirrors the F3 startup sweep's predicate so
+// the live return-route resume and the recovery re-dispatch agree.
+export async function hasPendingTakeoverResume(
+  runId: string,
+  reentryNodeId: string,
+  db?: Db,
+): Promise<boolean> {
+  const d = db ?? getDb();
+
+  const takeoverRows: NodeAttempt[] = await d
+    .select()
+    .from(nodeAttempts)
+    .where(
+      and(eq(nodeAttempts.runId, runId), isNotNull(nodeAttempts.ownerUserId)),
+    )
+    .orderBy(asc(nodeAttempts.attempt));
+
+  const returned = takeoverRows.filter(
+    (r) => r.returnedDiff !== null && r.endedAt !== null,
+  );
+
+  if (returned.length === 0) return false;
+
+  const takeover = returned[returned.length - 1];
+
+  if (!takeover.startedAt) return false;
+
+  const freshReentry: Array<{ id: string }> = await d
+    .select({ id: nodeAttempts.id })
+    .from(nodeAttempts)
+    .where(
+      and(
+        eq(nodeAttempts.runId, runId),
+        eq(nodeAttempts.nodeId, reentryNodeId),
+        isNull(nodeAttempts.ownerUserId),
+        gt(nodeAttempts.startedAt, takeover.startedAt),
+      ),
+    )
+    .limit(1);
+
+  return freshReentry.length === 0;
 }
 
 export async function getNodeAttemptsForRun(

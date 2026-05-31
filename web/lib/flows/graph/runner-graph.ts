@@ -23,6 +23,7 @@ import { runNodeGates } from "./gates-exec";
 import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
+  hasPendingTakeoverResume,
   markDownstreamStale,
   markNodeFailed,
   markNodeNeedsInput,
@@ -70,6 +71,14 @@ function runDir(
   runId: string,
 ): string {
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
+}
+
+// `.for("update")` is a Postgres-only row lock; SQLite relies on its
+// single-writer lock so the bare SELECT is correct there.
+function isPostgres(): boolean {
+  const url = process.env.DB_URL ?? "";
+
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
 }
 
 async function tryReadInputArtifact(
@@ -270,7 +279,11 @@ async function executeNodeAction(
 
 // Forward-reachable node ids from `startNodeId` in the graph, excluding the
 // start node itself. Used to compute which downstream nodes go stale on rework.
-function downstreamOf(
+// M11b (ADR-030): exported so the takeover return route can stale
+// `[reentryNode, ...downstreamOf(graph, reentryNode)]` — the re-entry node is a
+// gate-bearing validation node and is added back explicitly because this helper
+// excludes its start node by design.
+export function downstreamOf(
   graph: ReturnType<typeof compileManifest>,
   startNodeId: string,
 ): string[] {
@@ -324,11 +337,33 @@ export async function runGraph(
   }
 
   const graph = compileManifest(loaded.manifest);
-  const isResume =
+  const isNeedsInputResume =
     loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+
+  // M11b (ADR-030, 3.3 CRITICAL): a takeover RETURN flips the run to `Running`
+  // (the AFTER-side marker) and parks `current_step_id` at the
+  // `transitions.takeover` re-entry. The runner MUST resume that node — NEVER
+  // `graph.entry`, which would re-execute the upstream agent and CLOBBER the
+  // human's local edits (ADR-030 item 4 / AC-4). It is detected here, not by a
+  // new run status (the closed enum), via the recorded-return ledger signal.
+  // The status flip to Running is NOT made by this path (it is already Running);
+  // the claim is guarded by a re-entry node_attempt append inside the FOR-UPDATE
+  // transaction, so a concurrent dispatch (the return route's queueMicrotask +
+  // the F3 startup sweep) loses the claim and no-ops.
+  const isTakeoverResume =
+    !isNeedsInputResume &&
+    loaded.run.status === "Running" &&
+    loaded.run.currentStepId !== null &&
+    (await hasPendingTakeoverResume(runId, loaded.run.currentStepId, db));
+
+  const isResume = isNeedsInputResume || isTakeoverResume;
   const resumeNodeId = isResume ? (loaded.run.currentStepId as string) : null;
 
-  if (isResume) {
+  // For a takeover resume, the claim winner appends the fresh re-entry attempt
+  // inside the claim transaction; the main loop reuses it (see resumingThisNode).
+  let claimedTakeoverAttemptId: string | null = null;
+
+  if (isNeedsInputResume) {
     // Atomic resume claim (ported from runFlow): only ONE concurrent runGraph
     // call may flip this NeedsInput row to Running and continue.
     const acquired = await db.transaction(async (tx: Db) => {
@@ -365,7 +400,80 @@ export async function runGraph(
     }
 
     loaded.run.status = "Running";
+  } else if (isTakeoverResume) {
+    // Takeover-return resume claim. Under a row lock, re-verify the recorded
+    // return is still un-resumed (no fresh re-entry attempt), then append the
+    // first re-entry attempt as the OBSERVABLE claim marker. A concurrent
+    // loser's FOR UPDATE blocks until commit, re-checks
+    // hasPendingTakeoverResume → now false (this attempt exists) → bails.
+    const result = await db.transaction(async (tx: Db) => {
+      const locked: RunRow[] = isPostgres()
+        ? await tx.select().from(runs).where(eq(runs.id, runId)).for("update")
+        : await tx.select().from(runs).where(eq(runs.id, runId));
+      const fresh = locked[0];
 
+      if (!fresh || fresh.status !== "Running") return null;
+      if (fresh.currentStepId !== resumeNodeId) return null;
+
+      const stillPending = await hasPendingTakeoverResume(
+        runId,
+        resumeNodeId as string,
+        tx,
+      );
+
+      if (!stillPending) return null;
+
+      const reentryNode = graph.nodes.get(resumeNodeId as string);
+
+      if (!reentryNode) return null;
+
+      const appended = await appendNodeAttempt({
+        runId,
+        nodeId: resumeNodeId as string,
+        nodeType: reentryNode.nodeType,
+        db: tx,
+      });
+
+      return appended.id;
+    });
+
+    if (!result) {
+      log2.info(
+        { currentStepId: resumeNodeId },
+        "runGraph takeover-return resume claim lost — another invocation owns this resume",
+      );
+
+      return;
+    }
+
+    claimedTakeoverAttemptId = result;
+    log2.info(
+      { currentStepId: resumeNodeId, nodeAttemptId: result },
+      "runGraph resuming returned takeover at transitions.takeover re-entry",
+    );
+  }
+
+  // M11b (ADR-030): a `Running` run that is NOT a fresh launch (it already has
+  // node_attempts) and was NOT claimed here as a resume is owned by ANOTHER
+  // live traversal — a concurrent re-dispatch (the return route's queueMicrotask
+  // + the F3 sweep both firing). It MUST NOT start a SECOND traversal from
+  // graph.entry, which would re-run the upstream agent and clobber the human's
+  // edits. Bail so the in-flight traversal remains the single writer. A genuine
+  // fresh launch is `Running` with zero attempts and proceeds from entry.
+  if (loaded.run.status === "Running" && !isResume) {
+    const existing = await getNodeAttemptsForRun(runId, db);
+
+    if (existing.length > 0) {
+      log2.info(
+        { attempts: existing.length },
+        "runGraph: Running run already in flight (has attempts) — another traversal owns it; no-op",
+      );
+
+      return;
+    }
+  }
+
+  if (isResume) {
     // Fail closed AFTER the claim (matches the linear runner ordering): only
     // the claim winner writes Crashed if the resume pointer is stale (node id
     // not in the pinned graph — bundle drift / hand-edited SHA dir).
@@ -456,7 +564,18 @@ export async function runGraph(
         node.id === resumeNodeId &&
         lastForNode?.status === "NeedsInput";
 
-      if (resumingThisNode && lastForNode) {
+      // M11b (ADR-030): the takeover-resume claim already appended the re-entry
+      // node's fresh attempt inside the claim transaction (the observable CAS
+      // marker). Reuse it on the first loop iteration so the resume rerun does
+      // not double-append; consume it once.
+      if (claimedTakeoverAttemptId && node.id === resumeNodeId) {
+        nodeAttemptId = claimedTakeoverAttemptId;
+        claimedTakeoverAttemptId = null;
+        log2.info(
+          { nodeAttemptId, nodeId: node.id },
+          "resuming returned takeover — reusing claimed re-entry attempt",
+        );
+      } else if (resumingThisNode && lastForNode) {
         nodeAttemptId = lastForNode.id;
         log2.info(
           { nodeAttemptId, nodeId: node.id },
