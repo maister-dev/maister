@@ -3,7 +3,7 @@ import "server-only";
 import type { Project } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -64,6 +64,21 @@ function stepCountOf(manifest: unknown): number {
   const steps = (manifest as { steps?: unknown }).steps;
 
   return Array.isArray(steps) ? steps.length : 0;
+}
+
+export interface ProjectOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/** All non-archived projects, for the admin user-list project filter. */
+export async function listProjectOptions(): Promise<ProjectOption[]> {
+  return db()
+    .select({ id: projects.id, name: projects.name, slug: projects.slug })
+    .from(projects)
+    .where(isNull(projects.archivedAt))
+    .orderBy(asc(projects.name));
 }
 
 export async function getProjectBySlug(slug: string): Promise<Project | null> {

@@ -1,104 +1,127 @@
 "use client";
 
-import type { GlobalRole } from "@/lib/db/schema";
+import type { AccountStatus, GlobalRole, ProjectRole } from "@/lib/db/schema";
 import type { ReactElement } from "react";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
-type AccountStatus = "pending" | "active" | "disabled";
+import { UserEditModal } from "@/components/admin/user-edit-modal";
+
+export interface AdminUserProjectRow {
+  id: string;
+  name: string;
+  role: ProjectRole;
+  slug: string;
+}
 
 export interface AdminUserRow {
-  createdAt: string;
   email: string;
   id: string;
+  lastLoginAt: string | null;
   mustChangePassword: boolean;
   name: string | null;
+  projects: AdminUserProjectRow[];
   role: GlobalRole;
   status: AccountStatus;
-  statusUpdatedAt: string | null;
-  statusUpdatedBy: string | null;
+}
+
+export interface ProjectOption {
+  id: string;
+  name: string;
+}
+
+export interface AdminUsersFilters {
+  projectId: string;
+  q: string;
+  role: GlobalRole | "all";
+  status: AccountStatus | "all";
 }
 
 export interface AdminUsersTableProps {
-  initialUsers: AdminUserRow[];
+  filters: AdminUsersFilters;
+  projectOptions: ProjectOption[];
+  users: AdminUserRow[];
 }
-
-const buttonClass =
-  "rounded-md border border-line bg-paper px-2.5 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink disabled:cursor-wait disabled:opacity-60";
 
 const inputClass =
   "min-h-[34px] rounded-md border border-line bg-paper px-2.5 font-mono text-[11px] text-ink outline-none focus:border-amber";
 
-async function requestJson(url: string, init: RequestInit): Promise<Response> {
-  return fetch(url, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init.headers ?? {}),
-    },
+const badgeBase =
+  "rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]";
+
+function formatLastLogin(iso: string | null, fallback: string): string {
+  if (!iso) return fallback;
+
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
   });
 }
 
 export function AdminUsersTable({
-  initialUsers,
+  filters,
+  projectOptions,
+  users,
 }: AdminUsersTableProps): ReactElement {
   const t = useTranslations("adminUsers");
-  const [users, setUsers] = useState(initialUsers);
-  const [filter, setFilter] = useState<AccountStatus | "all">("all");
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const [pending, startTransition] = useTransition();
 
-  const visibleUsers = useMemo(
-    () => users.filter((u) => filter === "all" || u.status === filter),
-    [filter, users],
-  );
+  // URL is the source of truth; these mirror it for snappy controls and are
+  // reconciled from props whenever the URL changes (filter apply, back/forward).
+  const [q, setQ] = useState(filters.q);
+  const [role, setRole] = useState(filters.role);
+  const [status, setStatus] = useState(filters.status);
+  const [projectId, setProjectId] = useState(filters.projectId);
+  const [editing, setEditing] = useState<AdminUserRow | null>(null);
 
-  const reload = async (): Promise<void> => {
-    const params = filter === "all" ? "" : `?status=${filter}`;
-    const res = await fetch(`/api/admin/users${params}`);
+  useEffect(() => {
+    setQ(filters.q);
+    setRole(filters.role);
+    setStatus(filters.status);
+    setProjectId(filters.projectId);
+  }, [filters.q, filters.role, filters.status, filters.projectId]);
 
-    if (!res.ok) {
-      throw new Error(`GET /api/admin/users failed: ${res.status}`);
-    }
+  // Write the COMPLETE filter set (these 4 are the only params) so a rapid
+  // dropdown-then-type can never drop a just-changed filter via a stale URL.
+  function syncUrl(next: AdminUsersFilters): void {
+    const params = new URLSearchParams();
 
-    const body = (await res.json()) as { users: AdminUserRow[] };
+    if (next.q.trim()) params.set("q", next.q.trim());
+    if (next.role !== "all") params.set("role", next.role);
+    if (next.status !== "all") params.set("status", next.status);
+    if (next.projectId !== "all") params.set("projectId", next.projectId);
 
-    setUsers(body.users);
-  };
+    const query = params.toString();
 
-  const mutate = async (
-    userId: string,
-    action: () => Promise<Response>,
-  ): Promise<boolean> => {
-    setBusyId(userId);
-    setError(null);
+    startTransition(() => {
+      router.replace(query ? `${pathname}?${query}` : pathname, {
+        scroll: false,
+      });
+    });
+  }
 
-    try {
-      const res = await action();
+  // Debounce typing → URL. Deps include every filter so the pending timer
+  // always captures the latest dropdown values; skip when q already matches
+  // the applied filter so reconciliation and our own writes don't ping-pong.
+  useEffect(() => {
+    if (q.trim() === filters.q) return;
 
-      if (!res.ok) {
-        const body = (await res.json()) as { message?: string };
+    const handle = setTimeout(
+      () => syncUrl({ projectId, q, role, status }),
+      300,
+    );
 
-        throw new Error(body.message ?? `Request failed: ${res.status}`);
-      }
-
-      await reload();
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-
-      return false;
-    } finally {
-      setBusyId(null);
-    }
-  };
+    return () => clearTimeout(handle);
+  }, [q, role, status, projectId, filters.q]);
 
   return (
     <section className="rounded-[14px] border border-line bg-paper shadow-[var(--shadow-sm)]">
-      <div className="flex flex-col gap-3 border-b border-line px-5 py-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 border-b border-line px-5 py-4">
         <div>
           <h2 className="m-0 text-[17px] font-semibold tracking-[-0.015em] text-ink">
             {t("tableTitle")}
@@ -107,109 +130,160 @@ export function AdminUsersTable({
             {t("tableSub")}
           </p>
         </div>
-        <select
-          className={inputClass}
-          value={filter}
-          onChange={(event) =>
-            setFilter(event.target.value as AccountStatus | "all")
-          }
-        >
-          <option value="all">{t("filterAll")}</option>
-          <option value="pending">{t("status.pending")}</option>
-          <option value="active">{t("status.active")}</option>
-          <option value="disabled">{t("status.disabled")}</option>
-        </select>
+
+        <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+          <input
+            aria-label={t("searchPlaceholder")}
+            autoComplete="off"
+            className={clsx(inputClass, "touch-manipulation md:w-[240px]")}
+            name="user-search"
+            placeholder={t("searchPlaceholder")}
+            spellCheck={false}
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <select
+            aria-label={t("filterRoleAll")}
+            className={inputClass}
+            value={role}
+            onChange={(e) => {
+              const next = e.target.value as GlobalRole | "all";
+
+              setRole(next);
+              syncUrl({ projectId, q, role: next, status });
+            }}
+          >
+            <option value="all">{t("filterRoleAll")}</option>
+            <option value="viewer">{t("role.viewer")}</option>
+            <option value="member">{t("role.member")}</option>
+            <option value="admin">{t("role.admin")}</option>
+          </select>
+          <select
+            aria-label={t("filterAll")}
+            className={inputClass}
+            value={status}
+            onChange={(e) => {
+              const next = e.target.value as AccountStatus | "all";
+
+              setStatus(next);
+              syncUrl({ projectId, q, role, status: next });
+            }}
+          >
+            <option value="all">{t("filterAll")}</option>
+            <option value="pending">{t("status.pending")}</option>
+            <option value="active">{t("status.active")}</option>
+            <option value="disabled">{t("status.disabled")}</option>
+          </select>
+          <select
+            aria-label={t("filterProjectAll")}
+            className={inputClass}
+            value={projectId}
+            onChange={(e) => {
+              const next = e.target.value;
+
+              setProjectId(next);
+              syncUrl({ projectId: next, q, role, status });
+            }}
+          >
+            <option value="all">{t("filterProjectAll")}</option>
+            {projectOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {error ? (
-        <div className="border-b border-line bg-[#fff3f0] px-5 py-3 text-[12.5px] text-[#b5332b]">
-          {error}
-        </div>
-      ) : null}
-
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-left">
+        <table
+          aria-busy={pending}
+          className={clsx(
+            "w-full min-w-[860px] border-collapse text-left transition-opacity",
+            pending && "opacity-60",
+          )}
+        >
           <thead className="border-b border-line bg-ivory">
             <tr className="font-mono text-[10px] uppercase tracking-[0.12em] text-mute">
               <th className="px-5 py-3">{t("user")}</th>
               <th className="px-4 py-3">{t("statusLabel")}</th>
               <th className="px-4 py-3">{t("roleLabel")}</th>
-              <th className="px-4 py-3">{t("password")}</th>
-              <th className="px-4 py-3">{t("created")}</th>
-              <th className="px-5 py-3">{t("actions")}</th>
+              <th className="px-4 py-3">{t("projectAccess")}</th>
+              <th className="px-4 py-3">{t("lastLogin")}</th>
+              <th className="px-5 py-3 text-right">{t("actions")}</th>
             </tr>
           </thead>
           <tbody>
-            {visibleUsers.map((user) => (
-              <UserRow
-                key={user.id}
-                busy={busyId === user.id}
-                mutate={mutate}
-                t={t}
-                user={user}
-              />
-            ))}
+            {users.length === 0 ? (
+              <tr>
+                <td
+                  className="px-5 py-8 text-center font-mono text-[11.5px] text-mute"
+                  colSpan={6}
+                >
+                  {t("noResults")}
+                </td>
+              </tr>
+            ) : (
+              users.map((user) => (
+                <UserRow
+                  key={user.id}
+                  editLabel={t("edit")}
+                  neverLabel={t("neverLoggedIn")}
+                  roleLabel={t(`role.${user.role}`)}
+                  statusLabel={t(`status.${user.status}`)}
+                  user={user}
+                  onEdit={() => setEditing(user)}
+                />
+              ))
+            )}
           </tbody>
         </table>
       </div>
+
+      {editing ? (
+        <UserEditModal
+          user={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => startTransition(() => router.refresh())}
+        />
+      ) : null}
     </section>
   );
 }
 
 function UserRow({
-  busy,
-  mutate,
-  t,
   user,
+  roleLabel,
+  statusLabel,
+  neverLabel,
+  editLabel,
+  onEdit,
 }: {
-  busy: boolean;
-  mutate: (userId: string, action: () => Promise<Response>) => Promise<boolean>;
-  t: ReturnType<typeof useTranslations>;
+  editLabel: string;
+  neverLabel: string;
+  onEdit: () => void;
+  roleLabel: string;
+  statusLabel: string;
   user: AdminUserRow;
 }): ReactElement {
-  const [password, setPassword] = useState("");
-  const [mustChangePassword, setMustChangePassword] = useState(true);
-
-  const setStatus = (status: "active" | "disabled") =>
-    mutate(user.id, () =>
-      requestJson(`/api/admin/users/${user.id}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      }),
-    );
-
-  const setRole = (role: GlobalRole) =>
-    mutate(user.id, () =>
-      requestJson(`/api/admin/users/${user.id}/role`, {
-        method: "PATCH",
-        body: JSON.stringify({ role }),
-      }),
-    );
-
-  const resetPassword = () =>
-    mutate(user.id, () =>
-      requestJson(`/api/admin/users/${user.id}/password-reset`, {
-        method: "POST",
-        body: JSON.stringify({ password, mustChangePassword }),
-      }),
-    ).then((ok) => {
-      if (ok) {
-        setPassword("");
-      }
-    });
+  const shownProjects = user.projects.slice(0, 3);
+  const overflow = user.projects.length - shownProjects.length;
 
   return (
-    <tr className="border-b border-line align-top last:border-b-0">
-      <td className="px-5 py-4">
-        <div className="font-semibold text-ink">{user.name ?? user.email}</div>
-        <div className="mt-1 font-mono text-[10.5px] tracking-[0.03em] text-mute">
+    <tr className="border-b border-line align-middle last:border-b-0">
+      <td className="px-5 py-3.5">
+        <div className="max-w-[280px] truncate font-semibold text-ink">
+          {user.name ?? user.email}
+        </div>
+        <div className="max-w-[280px] truncate font-mono text-[10.5px] tracking-[0.03em] text-mute">
           {user.email}
         </div>
       </td>
-      <td className="px-4 py-4">
+      <td className="px-4 py-3.5">
         <span
           className={clsx(
-            "rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]",
+            badgeBase,
             user.status === "active" &&
               "border-[color-mix(in_oklab,var(--good)_35%,var(--line))] bg-[color-mix(in_oklab,var(--good)_12%,transparent)] text-good",
             user.status === "pending" &&
@@ -217,75 +291,57 @@ function UserRow({
             user.status === "disabled" && "border-line bg-ivory text-mute",
           )}
         >
-          {t(`status.${user.status}`)}
+          {statusLabel}
         </span>
       </td>
-      <td className="px-4 py-4">
-        <select
-          className={inputClass}
-          disabled={busy}
-          value={user.role}
-          onChange={(event) => setRole(event.target.value as GlobalRole)}
+      <td className="px-4 py-3.5">
+        <span className={clsx(badgeBase, "border-line bg-ivory text-ink-2")}>
+          {roleLabel}
+        </span>
+      </td>
+      <td className="px-4 py-3.5">
+        {user.projects.length === 0 ? (
+          <span className="font-mono text-[11px] text-mute-2">—</span>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1">
+            {shownProjects.map((p) => (
+              <span
+                key={p.id}
+                className="rounded-md border border-line bg-ivory px-2 py-0.5 font-mono text-[10px] tracking-[0.02em] text-ink-2"
+                title={`${p.name} · ${p.role}`}
+              >
+                {p.slug}
+              </span>
+            ))}
+            {overflow > 0 ? (
+              <span
+                className="font-mono text-[10px] text-mute"
+                title={user.projects
+                  .slice(3)
+                  .map((p) => `${p.name} · ${p.role}`)
+                  .join("\n")}
+              >
+                +{overflow}
+              </span>
+            ) : null}
+          </div>
+        )}
+      </td>
+      <td
+        suppressHydrationWarning
+        className="px-4 py-3.5 font-mono text-[10.5px] tabular-nums text-mute"
+      >
+        {formatLastLogin(user.lastLoginAt, neverLabel)}
+      </td>
+      <td className="px-5 py-3.5 text-right">
+        <button
+          aria-label={`${editLabel} · ${user.name ?? user.email}`}
+          className="touch-manipulation rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink"
+          type="button"
+          onClick={onEdit}
         >
-          <option value="viewer">{t("role.viewer")}</option>
-          <option value="member">{t("role.member")}</option>
-          <option value="admin">{t("role.admin")}</option>
-        </select>
-      </td>
-      <td className="px-4 py-4">
-        <div className="flex min-w-[230px] flex-col gap-2">
-          <input
-            className={inputClass}
-            minLength={12}
-            placeholder={t("passwordPlaceholder")}
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <label className="flex items-center gap-2 text-[12px] text-mute">
-            <input
-              checked={mustChangePassword}
-              type="checkbox"
-              onChange={(event) => setMustChangePassword(event.target.checked)}
-            />
-            {t("forceChange")}
-          </label>
-          <button
-            className={buttonClass}
-            disabled={busy || password.length < 12}
-            type="button"
-            onClick={resetPassword}
-          >
-            {t("resetPassword")}
-          </button>
-        </div>
-      </td>
-      <td className="px-4 py-4 font-mono text-[10.5px] text-mute">
-        {new Date(user.createdAt).toLocaleDateString()}
-      </td>
-      <td className="px-5 py-4">
-        <div className="flex min-w-[170px] flex-wrap gap-2">
-          {user.status !== "active" ? (
-            <button
-              className={buttonClass}
-              disabled={busy}
-              type="button"
-              onClick={() => setStatus("active")}
-            >
-              {t("activate")}
-            </button>
-          ) : null}
-          {user.status !== "disabled" ? (
-            <button
-              className={buttonClass}
-              disabled={busy}
-              type="button"
-              onClick={() => setStatus("disabled")}
-            >
-              {t("disable")}
-            </button>
-          ) : null}
-        </div>
+          {editLabel}
+        </button>
       </td>
     </tr>
   );

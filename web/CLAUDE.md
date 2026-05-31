@@ -430,6 +430,45 @@ keeps long human reviews from being penalized for thinking time.
 - Route handlers: `app/api/<segment>/route.ts`, exporting `GET`/`POST` etc.
 - Server-only modules importing `node:*`/secrets: keep in `lib/` and never import from a Client Component.
 
+### Data-management page patterns (list / table / admin pages)
+
+Build these pages to this bar the **first time** — the explicit goal is to not
+rewrite page functionality later. Reference impl:
+`components/admin/users-table.tsx` + `components/admin/user-edit-modal.tsx` +
+`app/(app)/admin/users/page.tsx`.
+
+- **Tables are view-only.** No inline editing, row dropdowns, or row-level
+  mutate buttons. Rows display data only.
+- **Edit lives in a popup or a dedicated edit page**, never inline. Popup =
+  modal following `user-edit-modal.tsx`; heavier edits get their own route.
+- **Filter on the main fields** of the list (e.g. users: name search, role,
+  status, project access) — not just one field.
+- **Apply changes through ONE aggregating endpoint** (partial body in a single
+  server transaction), never a client-side fan-out of per-field calls + manual
+  compensation. See `lib/users.ts` `updateAdminUser` + `PATCH
+  /api/admin/users/[userId]`.
+- **Full-width** list/table pages: drop `mx-auto max-w-[...]`; rely on the
+  `main` px gutter for air, put a `min-w-[...]` on the table inside
+  `overflow-x-auto`, and use responsive `md:` breakpoints (mobile is a target).
+  **Forms stay narrow** (520–760px) — do not widen forms.
+- **URL-synchronized, deep-linkable state.** Filters, tabs, pagination, and
+  expanded/selected state belong in URL query params (anchors / `searchParams`,
+  or nuqs) so views are shareable, survive refresh, and respect back/forward —
+  not `useState`-only.
+- **Accessible interactions, built right:** modals get focus-trap + initial
+  focus + focus-restore via refs, Escape-to-close, body scroll lock,
+  `aria-labelledby`; form controls get `<label>`/`aria-label`; async
+  updates/errors get `role="alert"`/`aria-live`; locale dates use `Intl` +
+  `suppressHydrationWarning`. Use refs for focus/measurement, not to mask
+  re-renders.
+- **Role-driven nav + access:** admin-only areas live in the left sidebar
+  (`components/chrome/left-rail.tsx`), gated by role; the route still enforces
+  `requireGlobalRole`. The hidden nav item is convenience, never the
+  authorization boundary.
+- **Cursor:** enabled `<button>`/`[role=button]` get `cursor: pointer`
+  app-wide via the `@layer base` rule in `styles/globals.css` — don't add
+  per-button `cursor-pointer`.
+
 ## HeroUI integration notes
 
 - `@heroui/styles` is imported once in `styles/globals.css`. Don't re-import it in components.

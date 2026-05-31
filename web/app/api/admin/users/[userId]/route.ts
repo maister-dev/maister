@@ -6,16 +6,28 @@ import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { setUserRole } from "@/lib/users";
+import { updateAdminUser } from "@/lib/users";
 
 const log = pino({
-  name: "api-admin-user-role",
+  name: "api-admin-user",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const bodySchema = z.object({
-  role: z.enum(["viewer", "member", "admin"]),
-});
+const bodySchema = z
+  .object({
+    role: z.enum(["viewer", "member", "admin"]).optional(),
+    status: z.enum(["active", "disabled"]).optional(),
+    password: z.string().min(12).optional(),
+    mustChangePassword: z.boolean().optional(),
+  })
+  .refine(
+    (b) =>
+      b.role !== undefined ||
+      b.status !== undefined ||
+      b.password !== undefined ||
+      b.mustChangePassword !== undefined,
+    { message: "no fields to update" },
+  );
 
 type RouteParams = { params: Promise<{ userId: string }> };
 
@@ -47,7 +59,7 @@ function errorResponse(err: unknown, userId: string): NextResponse {
 
   log.error(
     { userId, err: err instanceof Error ? err.message : String(err) },
-    "role mutation unhandled error",
+    "user mutation unhandled error",
   );
 
   return NextResponse.json(
@@ -89,10 +101,13 @@ export async function PATCH(
   try {
     const admin = await requireGlobalRole("admin");
 
-    await setUserRole({
+    await updateAdminUser({
       adminUserId: admin.id,
       targetUserId: userId,
       role: parsed.data.role,
+      status: parsed.data.status,
+      password: parsed.data.password,
+      mustChangePassword: parsed.data.mustChangePassword,
     });
 
     return NextResponse.json({ ok: true });

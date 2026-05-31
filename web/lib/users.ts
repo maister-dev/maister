@@ -1,11 +1,11 @@
 import "server-only";
 
-import type { AccountStatus, GlobalRole, User } from "@/lib/db/schema";
+import type { AccountStatus, GlobalRole, ProjectRole } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
 
-import { and, count, desc, eq, ilike, or } from "drizzle-orm";
+import { and, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -14,7 +14,7 @@ import { MaisterError } from "@/lib/errors";
 import { hashPassword, verifyPassword } from "@/lib/password";
 
 const log = pino({ name: "users", level: process.env.LOG_LEVEL ?? "info" });
-const { users } = schema;
+const { projectMembers, projects, users } = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -43,12 +43,21 @@ export interface RegisteredPendingUser {
   status: "pending";
 }
 
+export interface AdminUserProject {
+  id: string;
+  name: string;
+  role: ProjectRole;
+  slug: string;
+}
+
 export interface AdminUserListItem {
   createdAt: Date;
   email: string;
   id: string;
+  lastLoginAt: Date | null;
   mustChangePassword: boolean;
   name: string | null;
+  projects: AdminUserProject[];
   role: GlobalRole;
   status: AccountStatus;
   statusUpdatedAt: Date | null;
@@ -67,60 +76,19 @@ export interface VerifyCredentialAccountInput {
 }
 
 export interface ListAdminUsersInput {
+  projectId?: string;
   q?: string;
+  role?: GlobalRole;
   status?: AccountStatus;
 }
 
-export interface SetUserStatusInput {
+export interface UpdateAdminUserInput {
   adminUserId: string;
-  status: "active" | "disabled";
+  mustChangePassword?: boolean;
+  password?: string;
+  role?: GlobalRole;
+  status?: "active" | "disabled";
   targetUserId: string;
-}
-
-export interface SetUserRoleInput {
-  adminUserId: string;
-  role: GlobalRole;
-  targetUserId: string;
-}
-
-export interface ResetUserPasswordInput {
-  adminUserId: string;
-  mustChangePassword: boolean;
-  password: string;
-  targetUserId: string;
-}
-
-async function loadUserById(id: string): Promise<User> {
-  const rows = await db().select().from(users).where(eq(users.id, id));
-  const user = rows[0];
-
-  if (!user) {
-    throw new MaisterError("PRECONDITION", `User not found: ${id}`);
-  }
-
-  return user;
-}
-
-async function countActiveAdmins(): Promise<number> {
-  const rows = await db()
-    .select({ value: count() })
-    .from(users)
-    .where(and(eq(users.role, "admin"), eq(users.accountStatus, "active")));
-
-  return Number(rows[0]?.value ?? 0);
-}
-
-async function assertAdminCanLoseAccess(target: User): Promise<void> {
-  if (target.role !== "admin" || target.accountStatus !== "active") return;
-
-  const activeAdmins = await countActiveAdmins();
-
-  if (activeAdmins <= 1) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "Cannot remove access from the last active admin",
-    );
-  }
 }
 
 export async function registerPendingUser(
@@ -186,6 +154,11 @@ export async function verifyCredentialAccount(
     };
   }
 
+  await db()
+    .update(users)
+    .set({ lastLoginAt: new Date() })
+    .where(eq(users.id, user.id));
+
   return {
     ok: true,
     user: {
@@ -202,17 +175,37 @@ export async function verifyCredentialAccount(
 export async function listAdminUsers(
   input: ListAdminUsersInput = {},
 ): Promise<AdminUserListItem[]> {
+  const client = db();
+
+  // Project filter answers "who is an EXPLICIT member of this project". Global
+  // admins are implicit owners of every project (see lib/authz) but are
+  // intentionally excluded here — the admin manages explicit memberships.
+  let memberIds: string[] | null = null;
+
+  if (input.projectId) {
+    const memberRows = await client
+      .select({ userId: projectMembers.userId })
+      .from(projectMembers)
+      .where(eq(projectMembers.projectId, input.projectId));
+
+    memberIds = memberRows.map((r) => r.userId);
+
+    if (memberIds.length === 0) return [];
+  }
+
   const filters = [
     input.status ? eq(users.accountStatus, input.status) : undefined,
+    input.role ? eq(users.role, input.role) : undefined,
     input.q
       ? or(
           ilike(users.email, `%${input.q}%`),
           ilike(users.name, `%${input.q}%`),
         )
       : undefined,
+    memberIds ? inArray(users.id, memberIds) : undefined,
   ].filter((f): f is NonNullable<typeof f> => Boolean(f));
 
-  const rows = await db()
+  const rows = await client
     .select({
       id: users.id,
       name: users.name,
@@ -220,6 +213,7 @@ export async function listAdminUsers(
       role: users.role,
       status: users.accountStatus,
       mustChangePassword: users.mustChangePassword,
+      lastLoginAt: users.lastLoginAt,
       statusUpdatedAt: users.accountStatusUpdatedAt,
       statusUpdatedBy: users.accountStatusUpdatedBy,
       createdAt: users.createdAt,
@@ -228,86 +222,124 @@ export async function listAdminUsers(
     .where(filters.length > 0 ? and(...filters) : undefined)
     .orderBy(desc(users.createdAt));
 
-  return rows;
+  if (rows.length === 0) return [];
+
+  const membershipRows = await client
+    .select({
+      userId: projectMembers.userId,
+      role: projectMembers.role,
+      id: projects.id,
+      name: projects.name,
+      slug: projects.slug,
+    })
+    .from(projectMembers)
+    .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+    .where(
+      inArray(
+        projectMembers.userId,
+        rows.map((r) => r.id),
+      ),
+    );
+
+  const byUser = new Map<string, AdminUserProject[]>();
+
+  for (const m of membershipRows) {
+    const list = byUser.get(m.userId) ?? [];
+
+    list.push({ id: m.id, name: m.name, slug: m.slug, role: m.role });
+    byUser.set(m.userId, list);
+  }
+
+  return rows.map((row) => ({ ...row, projects: byUser.get(row.id) ?? [] }));
 }
 
-export async function setUserStatus(input: SetUserStatusInput): Promise<void> {
-  if (input.adminUserId === input.targetUserId && input.status === "disabled") {
+/**
+ * Apply a partial admin edit (role / status / password) to one user in a single
+ * transaction. Replaces the former per-field routes so the edit popup makes ONE
+ * call. Self-protection + last-active-admin guards run inside the transaction so
+ * the admin-count check and the write cannot race.
+ */
+export async function updateAdminUser(
+  input: UpdateAdminUserInput,
+): Promise<void> {
+  const { adminUserId, targetUserId } = input;
+  const isSelf = adminUserId === targetUserId;
+
+  if (isSelf && input.status === "disabled") {
     throw new MaisterError("PRECONDITION", "Admins cannot disable themselves");
   }
 
-  const target = await loadUserById(input.targetUserId);
-
-  if (input.status === "disabled") {
-    await assertAdminCanLoseAccess(target);
-  }
-
-  await db()
-    .update(users)
-    .set({
-      accountStatus: input.status,
-      accountStatusUpdatedAt: new Date(),
-      accountStatusUpdatedBy: input.adminUserId,
-    })
-    .where(eq(users.id, input.targetUserId));
-
-  log.info(
-    {
-      adminUserId: input.adminUserId,
-      targetUserId: input.targetUserId,
-      status: input.status,
-    },
-    "admin changed user status",
-  );
-}
-
-export async function setUserRole(input: SetUserRoleInput): Promise<void> {
-  if (input.adminUserId === input.targetUserId && input.role !== "admin") {
+  if (isSelf && input.role !== undefined && input.role !== "admin") {
     throw new MaisterError("PRECONDITION", "Admins cannot demote themselves");
   }
 
-  const target = await loadUserById(input.targetUserId);
+  const passwordHash =
+    input.password !== undefined
+      ? await hashPassword(input.password)
+      : undefined;
 
-  if (input.role !== "admin") {
-    await assertAdminCanLoseAccess(target);
-  }
+  await db().transaction(async (tx) => {
+    const rows = await tx
+      .select({ role: users.role, accountStatus: users.accountStatus })
+      .from(users)
+      .where(eq(users.id, targetUserId));
+    const target = rows[0];
 
-  await db()
-    .update(users)
-    .set({ role: input.role })
-    .where(eq(users.id, input.targetUserId));
+    if (!target) {
+      throw new MaisterError("PRECONDITION", `User not found: ${targetUserId}`);
+    }
+
+    const isActiveAdmin =
+      target.role === "admin" && target.accountStatus === "active";
+    const losesAdmin =
+      isActiveAdmin &&
+      (input.status === "disabled" ||
+        (input.role !== undefined && input.role !== "admin"));
+
+    if (losesAdmin) {
+      const adminRows = await tx
+        .select({ value: count() })
+        .from(users)
+        .where(and(eq(users.role, "admin"), eq(users.accountStatus, "active")));
+
+      if (Number(adminRows[0]?.value ?? 0) <= 1) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "Cannot remove access from the last active admin",
+        );
+      }
+    }
+
+    const patch: Partial<typeof users.$inferInsert> = {};
+
+    if (input.role !== undefined) patch.role = input.role;
+
+    if (input.status !== undefined) {
+      patch.accountStatus = input.status;
+      patch.accountStatusUpdatedAt = new Date();
+      patch.accountStatusUpdatedBy = adminUserId;
+    }
+
+    if (passwordHash !== undefined) {
+      patch.passwordHash = passwordHash;
+      patch.mustChangePassword = input.mustChangePassword ?? false;
+    } else if (input.mustChangePassword !== undefined) {
+      patch.mustChangePassword = input.mustChangePassword;
+    }
+
+    if (Object.keys(patch).length === 0) return;
+
+    await tx.update(users).set(patch).where(eq(users.id, targetUserId));
+  });
 
   log.info(
     {
-      adminUserId: input.adminUserId,
-      targetUserId: input.targetUserId,
+      adminUserId,
+      targetUserId,
       role: input.role,
+      status: input.status,
+      passwordReset: input.password !== undefined,
     },
-    "admin changed user role",
-  );
-}
-
-export async function resetUserPassword(
-  input: ResetUserPasswordInput,
-): Promise<void> {
-  await loadUserById(input.targetUserId);
-
-  const passwordHash = await hashPassword(input.password);
-
-  await db()
-    .update(users)
-    .set({
-      passwordHash,
-      mustChangePassword: input.mustChangePassword,
-    })
-    .where(eq(users.id, input.targetUserId));
-
-  log.info(
-    {
-      adminUserId: input.adminUserId,
-      targetUserId: input.targetUserId,
-      mustChangePassword: input.mustChangePassword,
-    },
-    "admin reset user password",
+    "admin updated user",
   );
 }

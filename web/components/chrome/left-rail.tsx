@@ -1,3 +1,4 @@
+import type { GlobalRole } from "@/lib/db/schema";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement, ReactNode } from "react";
 
@@ -24,6 +25,7 @@ export interface LeftRailProps {
   inboxCount?: number;
   launchHref?: string;
   platformStatus: PlatformStatus;
+  userRole?: GlobalRole;
 }
 
 const navIcon = "h-3.5 w-3.5 shrink-0 text-mute";
@@ -61,6 +63,13 @@ const sectionIcons: Record<string, ReactNode> = {
       <path d="M8 1v3M8 12v3M15 8h-3M4 8H1M12.95 3.05l-2.12 2.12M5.17 10.83l-2.12 2.12M12.95 12.95l-2.12-2.12M5.17 5.17L3.05 3.05" />
     </>
   ),
+  users: (
+    <>
+      <circle cx="6" cy="6" r="2.4" />
+      <path d="M1.5 13.4c0-2.4 2-4.2 4.5-4.2s4.5 1.8 4.5 4.2" />
+      <path d="M10.8 5.3a2.2 2.2 0 0 1 0 4.1M14.5 13.4c0-1.8-1-3.2-2.6-3.8" />
+    </>
+  ),
 };
 
 const dotByStatus: Record<WorkspaceStatus, string> = {
@@ -76,6 +85,7 @@ export async function LeftRail({
   inboxCount = 0,
   launchHref,
   platformStatus,
+  userRole,
 }: LeftRailProps): Promise<ReactElement> {
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
@@ -101,6 +111,17 @@ export async function LeftRail({
       ready: false,
     },
   ];
+
+  // User management is admin-only and access-controlled at the route too; the
+  // hidden nav item is convenience, never the authorization boundary.
+  if (userRole === "admin") {
+    sections.push({
+      id: "users",
+      label: tNav("users"),
+      href: "/admin/users",
+      ready: true,
+    });
+  }
 
   return (
     <aside

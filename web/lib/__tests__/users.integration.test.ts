@@ -53,6 +53,14 @@ async function userByEmail(email: string): Promise<Record<string, any>> {
   return rows[0];
 }
 
+async function activate(targetUserId: string): Promise<void> {
+  await usersApi.updateAdminUser({
+    adminUserId: "usr_bootstrap_admin",
+    targetUserId,
+    status: "active",
+  });
+}
+
 describe("user lifecycle persistence (integration)", () => {
   it("migration marks the bootstrap admin active", async () => {
     const rows = await db.execute(
@@ -104,11 +112,7 @@ describe("user lifecycle persistence (integration)", () => {
 
     const row = await userByEmail("lifecycle@test.com");
 
-    await usersApi.setUserStatus({
-      adminUserId: "usr_bootstrap_admin",
-      targetUserId: row.id,
-      status: "active",
-    });
+    await activate(row.id);
 
     await expect(
       usersApi.verifyCredentialAccount({
@@ -117,7 +121,7 @@ describe("user lifecycle persistence (integration)", () => {
       }),
     ).resolves.toMatchObject({ ok: true });
 
-    await usersApi.setUserStatus({
+    await usersApi.updateAdminUser({
       adminUserId: "usr_bootstrap_admin",
       targetUserId: row.id,
       status: "disabled",
@@ -131,6 +135,35 @@ describe("user lifecycle persistence (integration)", () => {
     ).resolves.toEqual({ ok: false, reason: "disabled" });
   });
 
+  it("stamps lastLoginAt only on a successful credential login", async () => {
+    const created = await usersApi.registerPendingUser({
+      name: "Last Login",
+      email: "last-login@test.com",
+      password: "SecurePassword123",
+    });
+
+    let row = await userByEmail("last-login@test.com");
+
+    expect(row.lastLoginAt).toBeNull();
+
+    // Pending → verification fails → no stamp.
+    await usersApi.verifyCredentialAccount({
+      email: "last-login@test.com",
+      password: "SecurePassword123",
+    });
+    row = await userByEmail("last-login@test.com");
+    expect(row.lastLoginAt).toBeNull();
+
+    await activate(created.id);
+
+    await usersApi.verifyCredentialAccount({
+      email: "last-login@test.com",
+      password: "SecurePassword123",
+    });
+    row = await userByEmail("last-login@test.com");
+    expect(row.lastLoginAt).toBeInstanceOf(Date);
+  });
+
   it("status transitions update metadata and support re-enable", async () => {
     const created = await usersApi.registerPendingUser({
       name: "Status Metadata",
@@ -138,23 +171,15 @@ describe("user lifecycle persistence (integration)", () => {
       password: "SecurePassword123",
     });
 
-    await usersApi.setUserStatus({
-      adminUserId: "usr_bootstrap_admin",
-      targetUserId: created.id,
-      status: "active",
-    });
+    await activate(created.id);
 
-    await usersApi.setUserStatus({
+    await usersApi.updateAdminUser({
       adminUserId: "usr_bootstrap_admin",
       targetUserId: created.id,
       status: "disabled",
     });
 
-    await usersApi.setUserStatus({
-      adminUserId: "usr_bootstrap_admin",
-      targetUserId: created.id,
-      status: "active",
-    });
+    await activate(created.id);
 
     const row = await userByEmail("status-metadata@test.com");
 
@@ -165,7 +190,7 @@ describe("user lifecycle persistence (integration)", () => {
 });
 
 describe("admin user management invariants (integration)", () => {
-  it("lists users without password hashes and supports status filtering", async () => {
+  it("lists users without password hashes and exposes lastLoginAt + projects", async () => {
     await usersApi.registerPendingUser({
       name: "List Pending",
       email: "list-pending@test.com",
@@ -173,15 +198,65 @@ describe("admin user management invariants (integration)", () => {
     });
 
     const rows = await usersApi.listAdminUsers({ status: "pending" });
+    const listed = rows.find((u) => u.email === "list-pending@test.com");
 
-    expect(rows.some((u) => u.email === "list-pending@test.com")).toBe(true);
+    expect(listed).toBeDefined();
     expect(rows.every((u) => !("passwordHash" in u))).toBe(true);
     expect(rows.every((u) => u.status === "pending")).toBe(true);
+    expect(listed).toHaveProperty("lastLoginAt");
+    expect(listed?.projects).toEqual([]);
+  });
+
+  it("filters by global role", async () => {
+    const rows = await usersApi.listAdminUsers({ role: "admin" });
+
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows.every((u) => u.role === "admin")).toBe(true);
+    expect(rows.some((u) => u.email === "admin@maister.local")).toBe(true);
+  });
+
+  it("filters by explicit project membership and returns per-user projects", async () => {
+    const created = await usersApi.registerPendingUser({
+      name: "Project Member",
+      email: "proj-member@test.com",
+      password: "SecurePassword123",
+    });
+
+    await activate(created.id);
+
+    const projectId = "prj_filter_test";
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug: "filter-test",
+      name: "Filter Test",
+      repoPath: "/tmp/filter-test",
+      maisterYamlPath: "/tmp/filter-test/maister.yaml",
+    });
+    await db.insert(schema.projectMembers).values({
+      projectId,
+      userId: created.id,
+      role: "member",
+    });
+
+    const rows = await usersApi.listAdminUsers({ projectId });
+
+    expect(rows.map((u) => u.email)).toEqual(["proj-member@test.com"]);
+    // Global admins are NOT implicit matches of a per-project filter.
+    expect(rows.some((u) => u.email === "admin@maister.local")).toBe(false);
+    expect(rows[0].projects).toEqual([
+      {
+        id: projectId,
+        slug: "filter-test",
+        name: "Filter Test",
+        role: "member",
+      },
+    ]);
   });
 
   it("prevents self-disable and self-demotion", async () => {
     await expect(
-      usersApi.setUserStatus({
+      usersApi.updateAdminUser({
         adminUserId: "usr_bootstrap_admin",
         targetUserId: "usr_bootstrap_admin",
         status: "disabled",
@@ -189,7 +264,7 @@ describe("admin user management invariants (integration)", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 
     await expect(
-      usersApi.setUserRole({
+      usersApi.updateAdminUser({
         adminUserId: "usr_bootstrap_admin",
         targetUserId: "usr_bootstrap_admin",
         role: "member",
@@ -204,13 +279,9 @@ describe("admin user management invariants (integration)", () => {
       password: "SecurePassword123",
     });
 
-    await usersApi.setUserStatus({
-      adminUserId: "usr_bootstrap_admin",
-      targetUserId: created.id,
-      status: "active",
-    });
+    await activate(created.id);
 
-    await usersApi.setUserRole({
+    await usersApi.updateAdminUser({
       adminUserId: "usr_bootstrap_admin",
       targetUserId: created.id,
       role: "admin",
@@ -220,7 +291,7 @@ describe("admin user management invariants (integration)", () => {
 
     expect(row.role).toBe("admin");
 
-    await usersApi.setUserRole({
+    await usersApi.updateAdminUser({
       adminUserId: "usr_bootstrap_admin",
       targetUserId: created.id,
       role: "member",
@@ -231,7 +302,7 @@ describe("admin user management invariants (integration)", () => {
     expect(row.role).toBe("member");
 
     await expect(
-      usersApi.setUserRole({
+      usersApi.updateAdminUser({
         adminUserId: created.id,
         targetUserId: "usr_bootstrap_admin",
         role: "member",
@@ -239,22 +310,26 @@ describe("admin user management invariants (integration)", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
-  it("resets a user password and forces the next-login password gate", async () => {
+  it("applies role + status + password in a single call", async () => {
     const created = await usersApi.registerPendingUser({
-      name: "Reset Me",
-      email: "reset-me@test.com",
+      name: "Combined Edit",
+      email: "combined@test.com",
       password: "SecurePassword123",
     });
 
-    await usersApi.resetUserPassword({
+    await usersApi.updateAdminUser({
       adminUserId: "usr_bootstrap_admin",
       targetUserId: created.id,
+      role: "viewer",
+      status: "active",
       password: "TemporaryPassword123",
       mustChangePassword: true,
     });
 
-    const row = await userByEmail("reset-me@test.com");
+    const row = await userByEmail("combined@test.com");
 
+    expect(row.role).toBe("viewer");
+    expect(row.accountStatus).toBe("active");
     expect(row.mustChangePassword).toBe(true);
     await expect(
       verifyPassword("TemporaryPassword123", row.passwordHash),

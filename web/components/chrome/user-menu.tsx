@@ -51,9 +51,6 @@ export async function UserMenu({ user }: UserMenuProps): Promise<ReactElement> {
         <nav aria-label={t("label")} className="flex flex-col p-1.5">
           <MenuLink href="/account">{t("settings")}</MenuLink>
           <MenuLink href="/account/password">{t("password")}</MenuLink>
-          {user.role === "admin" ? (
-            <MenuLink href="/admin/users">{t("adminUsers")}</MenuLink>
-          ) : null}
         </nav>
 
         <form action={signOutUser} className="border-t border-line p-1.5">

@@ -74,6 +74,7 @@ export default async function AppLayout({
           inboxCount={inboxCount}
           launchHref="/projects/new"
           platformStatus={platformStatus}
+          userRole={sessionUser?.role}
           workspaces={railWorkspaces.map((ws) => ({
             ...ws,
             current: false,

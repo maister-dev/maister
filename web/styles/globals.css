@@ -162,6 +162,18 @@ samp {
   color: var(--ink);
 }
 
+/* Native <button> shows the arrow cursor by default (only <a> gets the hand).
+   Give every enabled button the pointer app-wide so we don't sprinkle
+   `cursor-pointer` on each one. In @layer base so `cursor-*` utilities still
+   override per-element; `:disabled` keeps the default arrow. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+}
+
 /* Repaint the UA autofill state with forest tokens. The inset box-shadow
    masks the browser's hardcoded bright fill; the 9999s transition outruns
    the autofill background flash. Autofill stays functional. */
