@@ -208,7 +208,9 @@ sequenceDiagram
 flowchart TD
     Start([startup or heartbeat tick]) --> Find[Find runs status=Running]
     Find --> Skip[HumanWorking rows skipped:<br/>session-less by design, hold a worktree<br/>recovery sweep SELECT filters status=NeedsInput]
-    Find --> Live{supervisor has live session?}
+    Find --> Tk{recorded takeover return AND<br/>re-entry gates still stale AND<br/>no re-entry checks attempt yet?}
+    Tk -- yes --> Redispatch[re-dispatch graph runner at current_step_id<br/>idempotent, M11a CAS-guarded resume<br/>NOT a naive Running to Crashed sweep]
+    Tk -- no --> Live{supervisor has live session?}
     Live -- yes --> OK[no action]
     Live -- no --> Cp{acp_session_id present?}
     Cp -- no --> Crash1[status=Crashed,no recovery path]
@@ -218,6 +220,14 @@ flowchart TD
     Resume --> Running[status=Running]
     User -- Discard --> Drop[remove worktree, status=Abandoned]
 ```
+
+> The **takeover-return** branch rescues a run stranded in `Running` when the
+> process died after the return's `HumanWorking → Running` flip but before the
+> runner attached. The re-dispatch is idempotent (M11a CAS-guarded resume): a
+> live runner makes it a no-op, a genuinely stale pointer fails closed to
+> `Crashed`. A naive "`Running` + no live session → `Crashed`" sweep is rejected —
+> it would false-positive on a session-less `command_check` gate running after the
+> return. See [`manual-takeover.md`](manual-takeover.md).
 
 ## Expectations
 

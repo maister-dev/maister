@@ -1181,6 +1181,18 @@ properties:
    precedes the git/ledger side-effect; the AFTER-side idempotency marker is the
    `status='Running'` flip plus the takeover row's `ended_at`, never set before
    the side-effect completes.
+6. **Durability of the return flip.** If the process dies after the AFTER-side
+   `HumanWorking → Running` flip but before the runner attaches, the run is
+   recovered on startup by an **idempotent takeover-return re-dispatch**, NOT left
+   stranded. The recovery candidate is a `Running` run whose latest ledger
+   activity is a recorded takeover return (takeover `node_attempts` row has
+   `returned_diff` / `ended_at` set, re-entry `gate_results` still `stale`) with no
+   subsequent re-entry (`checks`) attempt; the sweep re-dispatches the graph runner
+   at `runs.current_step_id` (the `transitions.takeover` re-entry). Safety rests on
+   M11a's CAS-guarded resume — a live runner makes it a no-op, a genuinely stale
+   pointer fails closed to `Crashed`. A naive "`Running` + no live session →
+   `Crashed`" sweep is **rejected**: it would false-positive on a session-less
+   `command_check` gate executing after the return.
 
 **Consequences:**
 

@@ -806,6 +806,9 @@ paths:
       tags: [takeover]
       summary: (M11b) Claim a run for manual takeover (local worktree handoff)
       description: |
+        (M11b — spec frozen in Phase 0 per SDD; route handler lands in Phase 3.
+        Reflects HEAD-after-M11b.)
+
         Claims a run parked at an M11a `human_review` node for a LOCAL worktree
         handoff (ADR-030). The run transitions `NeedsInput → HumanWorking` (a real
         `runs.status`). The EXISTING worktree path + run branch are exposed; NO new
@@ -890,6 +893,9 @@ paths:
       tags: [takeover]
       summary: (M11b) Return a manually-taken-over run for re-validation
       description: |
+        (M11b — spec frozen in Phase 0 per SDD; route handler lands in Phase 3.
+        Reflects HEAD-after-M11b.)
+
         Returns a `HumanWorking` run after the reviewer has committed locally in the
         exposed worktree (ADR-030). The route runs `git log <base>..<branch>` +
         `git diff <base>..<branch>` against the EXISTING worktree, records the
@@ -940,7 +946,7 @@ paths:
         | Session user ≠ `owner_user_id` | 403 `UNAUTHORIZED` | unchanged | not retryable by this actor |
         | `git log`/`git diff`/`merge-base` fails (worktree gone, git error) | 409 `CONFLICT` | stays `HumanWorking`; NO ledger write; NO status flip | retryable after operator fixes the worktree |
         | `markDownstreamStale` / ledger write throws mid-side-effect | 503 `EXECUTOR_UNAVAILABLE` | stays `HumanWorking`; partial write guarded by transaction; status NOT flipped | retryable — `FOR UPDATE` re-read still finds `HumanWorking` |
-        | Graph-runner resume kickoff fails AFTER the status flip | 200 (return recorded) | `Running` | resume retried by runner / reconcile |
+        | Graph-runner resume kickoff fails AFTER the status flip | 200 (return recorded) | `Running` | if the process dies after the AFTER-side flip but before the runner attaches, the run is recovered on startup by the takeover-return recovery sweep (idempotent re-dispatch) — see `manual-takeover.md` |
 
         No new `MaisterError` code (ADR-008 closed union).
       operationId: returnTakeover

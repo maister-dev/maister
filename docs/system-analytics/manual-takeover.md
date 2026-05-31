@@ -1,5 +1,9 @@
 # Manual takeover domain
 
+> **Status: spec frozen in M11b Phase 0 (SDD).** Claim/return routes land Phase 3;
+> `node_attempts` takeover columns + the `HumanWorking` status land Phase 2
+> (migration `0011`). Implementation-status tags below reflect HEAD-after-M11b.
+
 ## Purpose
 
 **Manual takeover** is a LOCAL worktree handoff (M11b — Implemented). A reviewer
@@ -215,6 +219,22 @@ linear run renders an empty-but-valid timeline (no crash).
 - **Ref/path injection** — `logRange`/`diffRange`/`resolveBaseRef` validate the
   branch (`branchNameSchema`), the worktree path (`absolutePathSchema`), and the
   base ref (`/^[A-Za-z0-9_./-]+$/`, no `..`); a bad ref → `CONFLICT`.
+- **Process dies AFTER the return flip but BEFORE the runner attaches** — the
+  return route flips `HumanWorking → Running` (the AFTER-side marker) and then
+  `queueMicrotask(runFlow)`; a crash in that window strands the run in `Running`
+  holding a cap slot, with no live runner. A startup **takeover-return recovery
+  candidate** is a run in `Running` whose most-recent ledger activity is a
+  RECORDED TAKEOVER RETURN (the takeover `node_attempts` row has `returned_diff`
+  set / `ended_at` set, and the re-entry node's `gate_results` are still `stale`)
+  AND that has NO subsequent re-entry (`checks`) `node_attempts` row — i.e. the
+  post-return resume never progressed. **Action: RE-DISPATCH the graph runner**
+  (resume at `runs.current_step_id` = the `transitions.takeover` re-entry). This
+  is SAFE because M11a's resume is CAS-guarded and therefore idempotent: if a
+  runner is already live the re-dispatch loses the claim and no-ops; if the resume
+  pointer is genuinely stale the existing fail-closed path
+  (`runner-graph.ts:379`) writes `Crashed`. A naive "`Running` + no live session
+  → `Crashed`" sweep is REJECTED — it would false-positive on a legitimately
+  session-less `command_check` gate executing after the return.
 
 ## Linked artifacts
 
