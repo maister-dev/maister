@@ -31,6 +31,10 @@ const ACTIVE_RUN_STATUSES = [
   "NeedsInputIdle",
   "Review",
   "Crashed",
+  // M11b (ADR-030): a claimed run (manual takeover) is session-less yet holds a
+  // worktree + a concurrency slot, so it counts as an active workspace —
+  // mirroring lib/board.ts (which buckets HumanWorking into the in-flight set).
+  "HumanWorking",
 ] as const;
 
 export type PortfolioStatus = "running" | "idle";
@@ -119,7 +123,14 @@ function initialsOf(name: string | null, email: string | null): string {
 
 function runStatusToWorkspace(status: string): WorkspaceStatus {
   if (status === "Running") return "running";
-  if (status === "NeedsInput" || status === "NeedsInputIdle") return "needs";
+  // HumanWorking is a human-in-the-loop claimed state; surface it like NeedsInput.
+  if (
+    status === "NeedsInput" ||
+    status === "NeedsInputIdle" ||
+    status === "HumanWorking"
+  ) {
+    return "needs";
+  }
   if (status === "Pending") return "queued";
 
   return "done";
@@ -314,9 +325,14 @@ export async function getPortfolio(
   for (const row of activeRunRows) {
     const list = workspacesByProject.get(row.projectId) ?? [];
 
+    // A claimed run is human-driven, not agent-driven — surface the `dev` pill
+    // instead of the run's executor agent (mirrors lib/board.ts takeover cards).
+    const agent: AgentRole =
+      row.status === "HumanWorking" ? "dev" : (row.agent as AgentRole);
+
     list.push({
       branch: row.branch,
-      agent: row.agent as AgentRole,
+      agent,
       status: runStatusToWorkspace(row.status),
       time: relativeTime(row.startedAt, now),
     });

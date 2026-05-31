@@ -1018,6 +1018,97 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/abandon:
+    post:
+      tags: [runs]
+      summary: (M11b) Abandon a run (user-initiated terminal stop)
+      description: |
+        (M11b — Implemented. Reflects HEAD-after-M11b.)
+
+        User-facing run abandon. Flips the run to the terminal `Abandoned`
+        status (`markAbandoned` sets `runs.status='Abandoned'` + `ended_at`) and
+        then promotes the next queued `Pending` run to free the slot
+        (`promoteNextPending`). The promote step is best-effort — a failure is
+        logged and swallowed, never surfaced to the caller (the abandon already
+        committed).
+
+        **`HumanWorking`-specific behavior.** A `HumanWorking` run is first
+        released back to `NeedsInput` (`releaseHumanWorking`, the
+        release-without-changes path) so the standard abandon transition fires
+        from a known non-terminal status — `markAbandoned`'s status guard does
+        NOT include `HumanWorking`. The original review HITL re-opening is moot
+        once the run is abandoned. Releasing the takeover claim before abandoning
+        also frees its held concurrency slot for `promoteNextPending`.
+
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`). Run-level abandon is NOT
+        task-level abandon — the task may auto-return to `Backlog` for a retry.
+
+        **Body is EMPTY.**
+
+        **Identifier trust (per-route).**
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | `projectId` | DB join from the run row | `server-state` |
+        | current `runs.status` | DB row, CAS-guarded by `markAbandoned` | `server-state` |
+
+        The abandon transition is a status-guarded CAS over the abandonable set
+        `{Pending, Running, NeedsInput, NeedsInputIdle, Review, Crashed}`
+        (`HumanWorking` is reached via the release path above). A row already in
+        a terminal status (`Done`/`Abandoned`/`Failed`) loses the CAS → 409
+        `PRECONDITION`.
+
+        No new `MaisterError` code (ADR-008 closed union): not-found → 404
+        `PRECONDITION`; non-abandonable status → 409 `PRECONDITION`.
+      operationId: abandonRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: |
+            Run abandoned. The run is now terminal `Abandoned`; the next queued
+            `Pending` run (if any) has been promoted to fill the freed slot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runStatus]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runStatus:
+                    type: string
+                    enum: [Abandoned]
+                    description: Terminal AFTER-side status.
+              examples:
+                abandoned:
+                  summary: Abandon succeeded
+                  value:
+                    ok: true
+                    runStatus: Abandoned
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            Run is not in an abandonable status — it is already terminal
+            (`Done`/`Abandoned`/`Failed`) and lost the status-guarded CAS
+            (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/activity:
     post:
       tags: [runs]

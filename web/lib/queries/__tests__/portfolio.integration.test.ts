@@ -292,4 +292,67 @@ describe("portfolio queries (integration)", () => {
     expect(proj?.need?.runId).toBe(runId);
     expect(proj?.need?.runId).not.toBe(proj?.slug);
   });
+
+  it("counts a HumanWorking (claimed takeover) run as an active workspace", async () => {
+    // FIX #3: a claimed takeover (HumanWorking) holds a worktree + a cap slot,
+    // so it MUST surface in the cross-project portfolio active-workspace set and
+    // totals. The board (lib/board.ts) already counts HumanWorking; the
+    // portfolio read model omitted it (ACTIVE_RUN_STATUSES lacked HumanWorking)
+    // → the claimed run vanished from the home grid. This asserts parity.
+    const user = await createUser("humanworking@test.com");
+    const project = await createProject("HumanWorking Project");
+    const flow = await createFlow(project);
+
+    await addProjectMember(user, project, "member");
+
+    const executorId = randomUUID();
+
+    await db.insert(schema.executors).values({
+      id: executorId,
+      projectId: project,
+      executorRefId: "claude-sonnet",
+      agent: "claude",
+      model: "claude-sonnet-4-6",
+    });
+
+    const taskId = await createTask(project, flow, "Claimed Task");
+    const runId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      taskId,
+      projectId: project,
+      flowId: flow,
+      executorId,
+      status: "HumanWorking",
+      flowVersion: "v1.0.0",
+      currentStepId: "review",
+      startedAt: new Date(),
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: "maister/claimed",
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/claimed",
+    });
+
+    const portfolio = await getPortfolio(user, "member");
+    const proj = portfolio.projects.find((p) => p.id === project);
+
+    expect(proj).toBeDefined();
+    const ws = proj?.activeWorkspaces.find(
+      (w) => w.branch === "maister/claimed",
+    );
+
+    expect(ws).toBeDefined();
+    // Mirrors the board's takeover treatment: agent pill = dev, status surfaced
+    // as a human-in-the-loop "needs" state.
+    expect(ws?.agent).toBe("dev");
+    expect(ws?.status).toBe("needs");
+
+    // The claimed run is counted in the cross-project total.
+    expect(portfolio.totalActiveWorkspaces).toBeGreaterThanOrEqual(1);
+  });
 });

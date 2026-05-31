@@ -415,47 +415,61 @@ describe("takeover claim (integration)", () => {
     await s.cleanup();
   }, 60_000);
 
-  it("concurrent-claim-409: two simultaneous claims, one wins one 409 CONFLICT", async () => {
-    const s = await seed({ runStatus: "NeedsInput" });
+  it("concurrent-claim-409: two simultaneous claims, loser is a documented 409 — NEVER 500", async () => {
+    // FIX #2: with claimTakeover (the unique-violating node_attempts INSERT)
+    // BEFORE the markHumanWorking CAS, two racing claims compute the same
+    // attempt=max+1 and BOTH insert → the loser's INSERT raises a raw Postgres
+    // duplicate-key (23505), which is NOT a MaisterError → 500. With the CAS
+    // ordered FIRST, only the winner reaches claimTakeover; the loser is caught
+    // by a typed MaisterError and returns a documented 409 — either CONFLICT
+    // (both passed the pre-tx status snapshot, loser lost the CAS) or
+    // PRECONDITION (the winner committed before the loser's pre-tx loadRun
+    // snapshot, so it sees HumanWorking and short-circuits). Both are correct;
+    // the regression guard is that the loser is NEVER 500. Run the race several
+    // times so a raw-23505 leak cannot pass by luck.
+    for (let i = 0; i < 5; i++) {
+      const s = await seed({ runStatus: "NeedsInput" });
 
-    const [a, b] = await Promise.all([
-      claimPOST(claimReq(s.runId), {
-        params: Promise.resolve({ runId: s.runId }),
-      }),
-      claimPOST(claimReq(s.runId), {
-        params: Promise.resolve({ runId: s.runId }),
-      }),
-    ]);
+      const [a, b] = await Promise.all([
+        claimPOST(claimReq(s.runId), {
+          params: Promise.resolve({ runId: s.runId }),
+        }),
+        claimPOST(claimReq(s.runId), {
+          params: Promise.resolve({ runId: s.runId }),
+        }),
+      ]);
 
-    const statuses = [a.status, b.status].sort();
+      const statuses = [a.status, b.status].sort();
 
-    expect(statuses).toEqual([200, 409]);
-    const loser = a.status === 409 ? a : b;
+      expect(statuses).toEqual([200, 409]);
+      const loser = a.status === 409 ? a : b;
 
-    // The loser is a documented 409: it lost EITHER the NeedsInput→HumanWorking
-    // CAS (CONFLICT) or — if the winner already committed before the loser's
-    // snapshot read — the status precondition (PRECONDITION). Both are correct
-    // concurrent-claim outcomes per the failure table; exactly one owner is
-    // recorded and the run is HumanWorking.
-    expect(["CONFLICT", "PRECONDITION"]).toContain((await loser.json()).code);
-    expect((await readRun(s.runId)).status).toBe("HumanWorking");
+      // The bug surfaced as a raw 500 from the duplicate-key INSERT; the fix
+      // makes the loser a typed 409 in {CONFLICT, PRECONDITION} — explicitly
+      // NOT 500.
+      const loserCode = (await loser.json()).code;
 
-    // Exactly one takeover owner row exists (no orphan from the lost claim's
-    // rolled-back transaction).
-    const owners = await db
-      .select()
-      .from(nodeAttempts)
-      .where(
-        and(
-          eq(nodeAttempts.runId, s.runId),
-          isNotNull(nodeAttempts.ownerUserId),
-        ),
-      );
+      expect(loser.status).toBe(409);
+      expect(["CONFLICT", "PRECONDITION"]).toContain(loserCode);
+      expect((await readRun(s.runId)).status).toBe("HumanWorking");
 
-    expect(owners).toHaveLength(1);
+      // Exactly one takeover owner row exists (the loser never reached the
+      // unique-violating INSERT, so there is no orphan and no rolled-back row).
+      const owners = await db
+        .select()
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.runId, s.runId),
+            isNotNull(nodeAttempts.ownerUserId),
+          ),
+        );
 
-    await s.cleanup();
-  }, 60_000);
+      expect(owners).toHaveLength(1);
+
+      await s.cleanup();
+    }
+  }, 120_000);
 
   it("claim-unauthorized-401-403: anon 401, non-member 403", async () => {
     const s = await seed({ runStatus: "NeedsInput" });
@@ -535,11 +549,124 @@ describe("takeover return — two-phase + failure table (integration)", () => {
     const run = await readRun(s.runId);
 
     expect(run.status).toBe("Running");
+    // The cursor is parked at the re-entry node (REENTRY_NODE) in the SAME
+    // committed state as status='Running' — there is no observable
+    // Running-with-old-cursor window (FIX #1: cursor write folded into the
+    // Phase-2b tx). If the cursor write were still outside the tx, this could
+    // momentarily read the REVIEW node here; the integration assertion pins the
+    // post-commit invariant.
+    expect(run.currentStepId).toBe(REENTRY_NODE);
     // The recorded return (AFTER-side marker side) is present.
     const ta = await activeTakeoverRow(s.runId);
 
     expect(ta.returnedDiff).not.toBeNull();
     expect(ta.endedAt).not.toBeNull();
+
+    await s.cleanup();
+  }, 60_000);
+
+  it("return-is-atomic-status-and-cursor: a failure at the cursor-write step rolls the WHOLE return back; clean retry succeeds", async () => {
+    const s = await seed({
+      runStatus: "HumanWorking",
+      withTakeoverAttempt: true,
+    });
+
+    // Seed a prior SUCCEEDED checks attempt with a PASSED gate so we can prove
+    // the staling is rolled back too.
+    const checksAttemptId = randomUUID();
+
+    await db.insert(nodeAttempts).values({
+      id: checksAttemptId,
+      runId: s.runId,
+      nodeId: REENTRY_NODE,
+      nodeType: "check",
+      attempt: 1,
+      status: "Succeeded",
+      endedAt: new Date(),
+    });
+    const gateId = randomUUID();
+
+    await db.insert(gateResults).values({
+      id: gateId,
+      runId: s.runId,
+      nodeAttemptId: checksAttemptId,
+      gateId: "lint",
+      kind: "command_check",
+      mode: "blocking",
+      status: "passed",
+      endedAt: new Date(),
+    });
+
+    await commitInWorktree(s.worktreePath, "f.txt", "x\n", "c1");
+
+    // Force a failure AT the cursor-write step: the real markReturnedToRunning
+    // runs (flips HumanWorking → Running INSIDE the Phase-2b tx) and THEN throws
+    // a non-MaisterError — simulating the cursor `update` blowing up after the
+    // CAS. If all four writes are atomic, the throw rolls back the Running flip,
+    // the ended takeover row, and the gate staling together → 503 + unchanged
+    // state. If the CAS/cursor writes were outside the tx (the bug), the run
+    // would be left Running with a stale cursor/gates and a stranded ledger.
+    const stateTransitions = await import("@/lib/runs/state-transitions");
+    const realFlip = stateTransitions.markReturnedToRunning;
+    const flipSpy = vi
+      .spyOn(stateTransitions, "markReturnedToRunning")
+      .mockImplementationOnce(async (runId, opts) => {
+        await realFlip(runId, opts);
+        throw new Error("simulated cursor-write failure");
+      });
+
+    const res = await returnPOST(returnReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    // Non-MaisterError inside the tx → 503 EXECUTOR_UNAVAILABLE, retryable.
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
+
+    // WHOLE return rolled back: run stays HumanWorking, cursor unchanged.
+    const run = await readRun(s.runId);
+
+    expect(run.status).toBe("HumanWorking");
+    expect(run.currentStepId).toBe(TAKEOVER_NODE);
+
+    // Takeover row NOT ended, no diff recorded.
+    const ta = await activeTakeoverRow(s.runId);
+
+    expect(ta.endedAt).toBeNull();
+    expect(ta.returnedDiff).toBeNull();
+
+    // Gates NOT staled.
+    const gate = (
+      await db.select().from(gateResults).where(eq(gateResults.id, gateId))
+    )[0];
+
+    expect(gate.status).toBe("passed");
+
+    // The runner must NOT have been queued on the failed (rolled-back) attempt.
+    expect(runFlowSpy).not.toHaveBeenCalled();
+
+    // Clean retry replays to success: 200, Running, cursor at the re-entry.
+    flipSpy.mockRestore();
+
+    const retry = await returnPOST(returnReq(s.runId), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).runStatus).toBe("Running");
+    const afterRetry = await readRun(s.runId);
+
+    expect(afterRetry.status).toBe("Running");
+    expect(afterRetry.currentStepId).toBe(REENTRY_NODE);
+    const taRetry = await activeTakeoverRow(s.runId);
+
+    expect(taRetry.endedAt).not.toBeNull();
+    expect(taRetry.returnedDiff).not.toBeNull();
+    const gateRetry = (
+      await db.select().from(gateResults).where(eq(gateResults.id, gateId))
+    )[0];
+
+    expect(gateRetry.status).toBe("stale");
 
     await s.cleanup();
   }, 60_000);

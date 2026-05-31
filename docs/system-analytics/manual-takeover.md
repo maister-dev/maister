@@ -208,6 +208,11 @@ linear run renders an empty-but-valid timeline (no crash).
 - **Return by a non-owner** → `UNAUTHORIZED` (403). Run stays `HumanWorking`.
 - **Return when already returned** (run now `Running`) → `PRECONDITION` (409),
   no re-import (idempotent terminal).
+- **Abandon of a `HumanWorking` run** (`POST /api/runs/{runId}/abandon`) →
+  `releaseHumanWorking` (`HumanWorking → NeedsInput`) precedes `markAbandoned`,
+  because the abandon CAS guard excludes `HumanWorking`; then `promoteNextPending`
+  frees the held slot. An already-terminal run loses the abandon CAS →
+  `PRECONDITION` (409).
 - **`git log`/`git diff`/`merge-base` fails** (worktree removed, git error) →
   `CONFLICT` (409); no ledger write, no status flip, retryable after the operator
   restores the worktree.
@@ -245,7 +250,8 @@ linear run renders an empty-but-valid timeline (no crash).
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-029 Split M11](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
-  (`/api/runs/{runId}/takeover/claim`, `.../takeover/return`).
+  (`/api/runs/{runId}/takeover/claim`, `.../takeover/return`,
+  `/api/runs/{runId}/abandon`).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (`node_attempts` takeover
   columns), [`../database-schema.md`](../database-schema.md).
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md),

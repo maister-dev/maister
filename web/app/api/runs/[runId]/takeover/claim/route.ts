@@ -131,21 +131,27 @@ export async function POST(
       );
     }
 
-    // Claim under one transaction: append the takeover node_attempts row and
-    // flip the run NeedsInput → HumanWorking (status-guarded CAS). A concurrent
-    // loser's CAS returns {ok:false} → 409 CONFLICT.
+    // Claim under one transaction. The status-guarded CAS (NeedsInput →
+    // HumanWorking) runs FIRST: only the CAS winner then appends the takeover
+    // node_attempts row. Ordering the CAS before claimTakeover is load-bearing —
+    // node_attempts has UNIQUE(run_id, node_id, attempt) and claimTakeover
+    // computes attempt=max+1, so two concurrent claims would compute the SAME
+    // attempt and the loser's INSERT would raise a raw Postgres duplicate-key
+    // (23505) — a non-MaisterError → 500. With the CAS first, the loser's CAS
+    // returns {ok:false} → deterministic 409 CONFLICT and it never reaches the
+    // unique-violating INSERT.
     const claimed: { ok: boolean } = await db.transaction(async (tx: Db) => {
-      await claimTakeover({ runId, nodeId, userId: user.id, db: tx });
       const cas = await markHumanWorking(runId, user.id, { db: tx });
 
       if (!cas.ok) {
-        // Roll back the appended takeover row by throwing — the transaction
-        // aborts, so no orphan owner row is left for the lost claim.
+        // Lost the CAS to a concurrent claim → abort with 409 CONFLICT.
         throw new MaisterError(
           "CONFLICT",
           `concurrent takeover claim won the CAS for run ${runId}`,
         );
       }
+
+      await claimTakeover({ runId, nodeId, userId: user.id, db: tx });
 
       return { ok: true };
     });

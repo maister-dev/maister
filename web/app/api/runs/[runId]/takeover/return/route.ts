@@ -188,15 +188,28 @@ export async function POST(
       "takeover return phase 2a — git log/diff captured",
     );
 
-    // ---- Phase 2b: ledger side-effect (single transaction) ----------------
-    // recordTakeoverReturn (ends the takeover row) and markDownstreamStale MUST
-    // be atomic: a bare two-statement sequence would leave the takeover row
-    // ended (endedAt!=null) if markDownstreamStale threw, so the 503 retry's
-    // Phase-1 getActiveTakeover (filters endedAt===null) would find nothing and
-    // the run would be permanently un-returnable. Wrapping both in one tx makes
-    // the throw roll the whole write back, so the retry replays cleanly. A throw
-    // here maps to 503 EXECUTOR_UNAVAILABLE and leaves the run HumanWorking (the
-    // AFTER-side flip has NOT happened).
+    // ---- Phase 2b: ledger + AFTER-side flip (single transaction) ----------
+    // All FOUR post-return writes commit atomically so there is NO observable
+    // intermediate state a crash or 503-retry could strand on:
+    //   1. recordTakeoverReturn   — end the takeover row (endedAt + diff).
+    //   2. markDownstreamStale    — stale the re-entry node + its gates.
+    //   3. markReturnedToRunning  — CAS HumanWorking → Running.
+    //   4. cursor write           — park current_step_id at the re-entry.
+    // Two crash windows the bare two-step (tx then bare 3+4) left open are now
+    // closed: (a) tx committed but the run never flipped Running → permanently
+    // stranded (getActiveTakeover filters endedAt IS NULL → null on retry, and
+    // the F3 sweep filters status='Running'); (b) flipped Running but cursor
+    // still at the REVIEW node → F3 re-dispatches at the wrong node. Folding 3+4
+    // into the same tx means whenever status is Running the cursor is correct.
+    // A non-MaisterError throw inside the tx → 503 EXECUTOR_UNAVAILABLE (run
+    // stays HumanWorking, tx rolled back, retryable). A MaisterError (the lost
+    // CAS) re-throws as 409 PRECONDITION.
+    //
+    // N2: the status-guarded CAS (HumanWorking → Running) — NOT the released
+    // Phase-1 FOR UPDATE lock — is the serialization point for concurrent
+    // duplicate returns: the Phase-1 lock is released when its tx commits, so a
+    // second request can pass Phase 1; the loser is caught here when the CAS
+    // finds the row already Running ({ok:false} → PRECONDITION → 409).
     try {
       await db.transaction(async (tx: Db) => {
         await recordTakeoverReturn({
@@ -215,6 +228,24 @@ export async function POST(
           [reentryNode, ...downstreamOf(graph, reentryNode)],
           tx,
         );
+
+        const flipped = await markReturnedToRunning(runId, { db: tx });
+
+        if (!flipped.ok) {
+          // Lost the AFTER-side CAS (a concurrent return already flipped it).
+          // Throwing a MaisterError rolls the whole tx back and re-throws as a
+          // 409 PRECONDITION (the side-effects of the winning return already
+          // committed; this duplicate is a no-op).
+          throw new MaisterError(
+            "PRECONDITION",
+            `run ${runId} was already returned by a concurrent request`,
+          );
+        }
+
+        await tx
+          .update(runs)
+          .set({ currentStepId: reentryNode })
+          .where(eq(runs.id, runId));
       });
     } catch (err) {
       if (isMaisterError(err)) throw err;
@@ -229,42 +260,14 @@ export async function POST(
 
     log.info(
       { runId, nodeId, reentryNode },
-      "takeover return phase 2b — return recorded + downstream staled",
+      "takeover return phase 2b — return recorded, downstream staled, flipped Running, parked at re-entry",
     );
 
-    // ---- Phase 3: AFTER-side marker + park at re-entry + resume ------------
-    // markReturnedToRunning is the idempotency marker (status='Running'). Set
-    // ONLY after Phase 2 fully succeeds. Park current_step_id at the re-entry so
-    // the runner resumes there (NOT graph.entry), then queue the resume. A
-    // process death between the flip and the runner attaching is recovered by
-    // the F3 startup sweep (runTakeoverReturnRecoverySweep).
-    //
-    // N2: this status-guarded CAS (HumanWorking → Running) — NOT the released
-    // Phase-1 FOR UPDATE lock — is the serialization point for concurrent
-    // duplicate returns: the Phase-1 lock is released when its tx commits, so a
-    // second request can pass Phase 1; the loser is caught here when the CAS
-    // finds the row already Running ({ok:false} → 409).
-    const flipped = await markReturnedToRunning(runId, { db });
-
-    if (!flipped.ok) {
-      // Lost the AFTER-side CAS (a concurrent return already flipped it). The
-      // side-effects are idempotent; treat as already-returned PRECONDITION.
-      throw new MaisterError(
-        "PRECONDITION",
-        `run ${runId} was already returned by a concurrent request`,
-      );
-    }
-
-    await db
-      .update(runs)
-      .set({ currentStepId: reentryNode })
-      .where(eq(runs.id, runId));
-
-    log.info(
-      { runId, reentryNode },
-      "takeover return phase 3 — flipped Running, parked at re-entry, queuing resume",
-    );
-
+    // ---- Phase 3: resume ---------------------------------------------------
+    // The post-return state is fully committed. Queue the live resume; a process
+    // death before it runs is recovered by the F3 startup sweep
+    // (runTakeoverReturnRecoverySweep), which reliably sees Running +
+    // current_step_id=reentry + stale re-entry gates.
     queueMicrotask(
       () =>
         void runFlow(runId).catch((err: unknown) =>
