@@ -20,6 +20,12 @@ process restart.
   branch but can differ for engineer-controlled workflows.
 - **Parent repo** — `projects.repo_path`. The worktree shares `.git`
   with the parent.
+- **Read-only range git ops (M11b — Implemented)** — `logRange`
+  (`git log <base>..<branch>`), `diffRange` (`git diff <base>..<branch>`), and
+  `resolveBaseRef` (`git merge-base <mainBranch> <branch>`) in
+  `web/lib/worktree.ts`, used by the manual-takeover return to capture the
+  human's commits + diff against the existing worktree. No merge, push, or
+  checkout-switch. See [`manual-takeover.md`](manual-takeover.md).
 
 ## Lifecycle state machine
 
@@ -157,6 +163,11 @@ flowchart LR
   GC failures log and continue without setting `removed_at`.
 - Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
   `removed_at` is set instead.
+- **(Implemented, M11b)** The manual-takeover return reads the EXISTING worktree
+  through read-only range ops (`logRange`/`diffRange`/`resolveBaseRef`) ONLY; it
+  creates NO new branch/target/PR and performs no push, merge, or
+  checkout-switch (the worktree is already on the run branch). A failed git op
+  raises `CONFLICT`. See [`manual-takeover.md`](manual-takeover.md).
 
 ## Edge cases
 

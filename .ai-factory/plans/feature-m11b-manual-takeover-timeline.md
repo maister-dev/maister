@@ -296,7 +296,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 | 0.7 | Promote `docs/flow-dsl.md` "Planned M11" manual-takeover paragraph (`flow-dsl.md:182-186`) → Implemented for the **M11b subset**; tag the typed `commit_set`/`diff` artifact half as **M12-Designed** and the `human_edit`/`merge` node types as **M18-Designed**. Note the run-detail timeline in the run domain. **(P9) ALSO fix `flow-dsl.md:107`: the canonical example currently wires `transitions.takeover → human-edit` (an M18 node type); change it so `takeover` routes to a real M11a validation node (`checks`) matching the M11b runtime, and annotate that the `human_edit` node TYPE remains M18-Designed.** | `docs/flow-dsl.md` | manual-takeover prose marked Implemented for the local-handoff subset; artifact-instance + node-type halves tagged deferred; `:107` example points `takeover → checks`, not `human-edit` |
 | 0.8 | **Contract-surface tracing table** (skill-context): map each changing surface → spec file (see below) | this plan + Phase 0 docs | every surface in the table has an owning task |
 | 0.9 | **(P10) Roadmap reconciliation** (delegate to roadmap owner). M11b inherits roadmap #4/#5/#7-takeover/#8-takeover. Roadmap criterion #4's Expectation prose says the reviewer "commit and **push** changes" — this contradicts ADR-011 (local handoff, no remote). Rewrite the #4 Expectation from "commit and push" to "commit changes **locally**". VERIFY (do not re-distribute) that M11b's inherited roadmap row matches the **authoritative three-way carve authored in the M11a plan** — every slice must run roadmap reconciliation, none silently skips it | `.ai-factory/ROADMAP.md` via `/aif-roadmap` | #4 prose says "commit locally"; M11b inherited row verified against M11a carve; ownership boundary respected |
-| 0.10 | **(P12) Pin the real run-abandon surface.** `web/app/api/runs/[runId]/` today contains only `activity`/`hitl`/`stream` — there is NO `abandon/` route. Locate the actual abandon mechanism (route handler vs server action) and name the exact file used by Phase 3.5; if abandon is not yet a route/action, this milestone ADDS it and Phase 3.5 wires `releaseHumanWorking` into that real path | this plan + the located file | the real abandon surface named (or "to be added in Phase 3.5"); Phase 3.5 file path is concrete, not `[runId]/...` |
+| 0.10 | **(P12) Pin the real run-abandon surface.** **FINDING (0.10): there is NO user-facing run-abandon surface today.** `web/app/api/runs/[runId]/` contains only `activity`/`hitl`/`stream` — no `abandon/` route. The ONLY code path that sets a *run* to `Abandoned` is the automated idle-TTL sweeper `runPass2` in `web/lib/runs/keepalive-sweeper.ts:254` (`NeedsInputIdle → Abandoned` on TTL). `markIntentAbandoned` in `web/lib/runs/resume-driver.ts:137` abandons an HITL *intent* (writes `hitl_requests` audit metadata), NOT the run status. `web/lib/runs/state-transitions.ts` has NO abandon helper. So **abandon is ADDED in M11b/Phase 3.5**, with these concrete paths: route handler `web/app/api/runs/[runId]/abandon/route.ts` (new) calling a new CAS helper `markAbandoned(runId)` in `web/lib/runs/state-transitions.ts` (new); for a `HumanWorking` run the route first calls `releaseHumanWorking(runId)` then the standard abandon transition, then `promoteNextPending` to free the slot. (`web/CLAUDE.md` already lists `POST /api/runs/[id]/abandon` as a planned-but-unbuilt route.) | this plan + the located file | the real abandon surface named (or "to be added in Phase 3.5"); Phase 3.5 file path is concrete, not `[runId]/...` |
 | 0.11 | **Spec→test traceability matrix (SDD).** Author the matrix below: every normative spec clause (each OpenAPI status code for both routes, each failure-classification row, each run-state transition, each per-route identifier-trust row) → the exact RED test (`file::name`) that proves it → owning AC → Verify item. The matrix is the gate that **mechanism == acceptance prose**; an unmapped clause or a clause whose mechanism contradicts its AC blocks Phase 1 | this plan (matrix table below) + Phase 0 specs | every normative clause has exactly one owning RED test; no clause unmapped; matrix cross-references resolve to AC + Verify ids |
 | 0.12 | **Spec-freeze (SDD forward rule).** Record that Phase 0 artifacts are frozen before Phase 1: any code-phase deviation updates the spec artifact FIRST, then the matrix/test, then code. Phase 7 owns the reverse (as-built) reconciliation and does not license skipping the forward rule mid-flight | this plan + Phase 0 docs | rule recorded; Phase 7 reconciliation cross-referenced as the as-built (not forward) pass |
 
@@ -332,6 +332,9 @@ Phases 1–6. No row may ship green until its mechanism matches its AC prose.
 | `claim` 409 `PRECONDITION` wrong run state / non-`human_review` node | `takeover.test.ts::claim-wrong-state-409` | AC-1 | V1 |
 | `claim` 409 `CONFLICT` concurrent claim (CAS lost) | `takeover.test.ts::concurrent-claim-409` | AC-1 | V1 |
 | `claim` 401/403 unauth / non-member (authz spec) | `takeover.test.ts::claim-unauthorized-401-403` | AC-1 | V1 |
+| `claim` 404 run not found / not visible (OpenAPI 0.6) | `takeover.test.ts::claim-run-not-found-404` | AC-1 | V1 |
+| `return` 401/403 unauth / non-owner (OpenAPI 0.6) | `takeover.test.ts::return-unauthorized-401-403` | AC-1 | V7 |
+| `return` 404 run not found / not visible (OpenAPI 0.6) | `takeover.test.ts::return-run-not-found-404` | AC-1 | V7 |
 | `return` 200 only AFTER side-effects commit (two-phase, AC-8) | `takeover.integration.test.ts::return-flips-Running-after-sideeffects` | AC-8 | V7 |
 | `return` 409 `PRECONDITION` not-`HumanWorking` (already returned) | `takeover.test.ts::return-not-HumanWorking-409` | AC-8 | V7 |
 | `return` 403 session user ≠ `owner_user_id` | `takeover.test.ts::non-owner-return-403` | AC-1 | V7 |
@@ -342,10 +345,42 @@ Phases 1–6. No row may ship green until its mechanism matches its AC prose.
 | runner resumes at `transitions.takeover` (`checks`), staled gates rerun → fresh `human_review` | `takeover.integration.test.ts::resume-reruns-staled-gates` | AC-4 | V4 |
 | `HumanWorking` holds a cap slot through BOTH predicates (`scheduler.ts:78`+`:160`) | `scheduler.integration.test.ts::humanworking-occupies-slot-both-paths` | AC-1 | V1 |
 | `HumanWorking` excluded from recovery sweep (survives restart, not `Crashed`) | `resume-recovery.test.ts::humanworking-survives-restart` | (ADR-030) | V1 |
+| Identifier trust: `return` accepts EMPTY body, ALL refs (worktreePath/branch/baseRef/owner) server-derived (no body-controlled ref) | `takeover.integration.test.ts::return-ignores-body-refs-uses-server-state` | AC-8 | V7 |
 | `logRange`/`diffRange`/`resolveBaseRef` + ref/path validation + diff truncation marker | `worktree-range.test.ts::*` | AC-3 | V3 |
 | Timeline current-vs-stale gates + handoff block (owner/elapsed/branch/commits/diff) | `run-timeline.integration.test.ts::*` + `run-timeline.test.ts::*` | AC-5 | V5/V6 |
 | Board: `HumanWorking` in-flight + owner/elapsed/branch/return, distinct from running | `board*.test.ts::*` + `flight-card*.test.ts::*` | AC-2 | V2 |
+| Transition `HumanWorking → NeedsInput` (release, no changes — review HITL re-opens) | `state-transitions.integration.test.ts::release-humanworking-returns-needsinput` | (ADR-030) | V1 |
+| Transition `HumanWorking → Abandoned` (abandon via Phase-3.5 surface, then `promoteNextPending`) | `state-transitions.integration.test.ts::abandon-humanworking-frees-slot` | (ADR-030) | V1 |
+| Failure-class row 5: resume kickoff fails AFTER status flip → 200, runner handles crash (no new mechanism — reuses M11a `runFlow` terminal precedence) | `web/lib/flows/__tests__/runner.*` (M11a, already green — no new RED) | AC-8 | V7 |
 | e2e: claim→board→commit→return→diff→stale→rerun→fresh-review | `m11b-takeover.spec.ts` | AC-1..6 | V9 |
+
+> **Matrix completeness note (0.11).** Every normative clause above has exactly
+> one owning row. Three clauses are owned outside the takeover route tests by
+> design: the `HumanWorking → NeedsInput` (release) and `HumanWorking → Abandoned`
+> (abandon) run-state transitions are proven by the **Phase-2 `state-transitions`
+> CAS-idempotency RED tests** (helpers `releaseHumanWorking` / `markAbandoned`),
+> not by a route contract test; and failure-class row 5 (resume kickoff fails
+> *after* the AFTER-side status flip → still 200) is **not a new mechanism** — it
+> reuses M11a's already-tested `runFlow` terminal-precedence path, so it carries
+> no new RED test. No clause is unmapped.
+
+### Spec-freeze (0.12 — recorded)
+
+**Phase 0 artifacts are FROZEN as of this gate** (ADR-030; `runs.md` / `hitl.md` /
+`manual-takeover.md`; the `RUNS.status` + `node_attempts` ERD in
+`database-schema.md` / `db/runs-domain.md` / `db/erd.md`; the two
+`web.openapi.yaml` takeover routes; `flow-dsl.md`; `ROADMAP.md` #4; and the
+matrix above). They were authored and validated (`pnpm validate:docs:all` →
+77/77 Mermaid blocks pass; `redocly lint web.openapi.yaml` → valid) before any
+Phase-1 code.
+
+**Forward rule (binding through Phases 1–6).** If a code phase needs to deviate
+from a frozen artifact, update **the spec artifact FIRST, then the matrix row +
+the RED test, then the code** — never the reverse. A code change whose mechanism
+contradicts its AC prose (the patch `2026-05-31-13.53` defect) is rejected at
+review. **Phase 7 owns the reverse, AS-BUILT reconciliation** (flip
+Implemented/Designed tags, re-derive contract surfaces from the diff); Phase 7's
+existence does NOT license skipping this forward rule mid-flight.
 
 ---
 

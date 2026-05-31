@@ -85,6 +85,8 @@ tags:
     description: Run launch, status, and event streaming.
   - name: hitl
     description: Human-in-the-loop response surface.
+  - name: takeover
+    description: Manual takeover — local worktree handoff (M11b, ADR-030).
   - name: flow-packages
     description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
 paths:
@@ -796,6 +798,219 @@ paths:
             write failed with I/O error. `respondedAt` remains null;
             response is durably stored so a retry replays the same
             value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/takeover/claim:
+    post:
+      tags: [takeover]
+      summary: (M11b) Claim a run for manual takeover (local worktree handoff)
+      description: |
+        Claims a run parked at an M11a `human_review` node for a LOCAL worktree
+        handoff (ADR-030). The run transitions `NeedsInput → HumanWorking` (a real
+        `runs.status`). The EXISTING worktree path + run branch are exposed; NO new
+        branch, target, PR, remote, or supervisor session is created — the reviewer
+        edits in place on the same host.
+
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`); role-restricted claim is M13.
+        The claim is a status-guarded CAS
+        (`UPDATE runs SET status='HumanWorking' WHERE id=:id AND status='NeedsInput'`);
+        a concurrent loser returns 409 `CONFLICT`. The current node must be a
+        `human_review` node whose pinned-manifest `finish.human.decisions` includes
+        `takeover`, else 409 `PRECONDITION`.
+
+        **Identifier trust (per-route).** No body-controlled field — the body is
+        empty:
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | `userId` (claim owner) | Auth.js session | `auth-context` |
+        | `projectId` | DB join from the run row | `server-state` |
+        | current `human_review` node id | `runs.current_step_id` | `server-state` |
+
+        No new `MaisterError` code (ADR-008 closed union): wrong state /
+        non-`human_review` node → `PRECONDITION`; concurrent claim → `CONFLICT`.
+      operationId: claimTakeover
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: |
+            Claim recorded. The run is now `HumanWorking`; the response carries the
+            checkout context (the EXISTING worktree path + run branch).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [worktreePath, branch, ownerUserId]
+                properties:
+                  worktreePath:
+                    type: string
+                    description: Existing `workspaces.worktree_path` (server-state).
+                  branch:
+                    type: string
+                    description: Existing `workspaces.branch` — the run branch (no new branch).
+                  ownerUserId:
+                    type: string
+                    description: The claiming user (`users.id` from the Auth.js session).
+              examples:
+                claimed:
+                  summary: Claim succeeded
+                  value:
+                    worktreePath: /repos/my-app/.maister/my-app/runs/abc/worktree
+                    branch: maister/task-42-attempt-1
+                    ownerUserId: 8f1c2e34-...
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            One of (`MaisterErrorBody`):
+            - run is not `NeedsInput`, or the current node is not a `human_review`
+              node offering the `takeover` decision (`PRECONDITION`);
+            - a concurrent claim won the CAS first (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/takeover/return:
+    post:
+      tags: [takeover]
+      summary: (M11b) Return a manually-taken-over run for re-validation
+      description: |
+        Returns a `HumanWorking` run after the reviewer has committed locally in the
+        exposed worktree (ADR-030). The route runs `git log <base>..<branch>` +
+        `git diff <base>..<branch>` against the EXISTING worktree, records the
+        returned commit set + raw diff on the takeover `node_attempts` row, marks the
+        validation re-entry node and its downstream STALE (M11a
+        `markDownstreamStale`), flips the run `HumanWorking → Running`, and resumes
+        the graph runner at the `human_review` node's `transitions.takeover` target
+        (a validation node — `checks`) so the staled gates rerun over the human's
+        commits and a fresh `human_review` gate is produced.
+
+        Requires the session user to equal the recorded `owner_user_id`
+        (owner-only in M11b; "take over stale work" by another user is M13).
+
+        **Body is EMPTY.** The worktree path, branch, base ref, and owner are ALL
+        derived server-side — the route NEVER accepts a body field naming a
+        filesystem path, branch, or ref.
+
+        **Identifier trust (per-route).**
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter | `url-param` |
+        | `userId` (must equal current owner) | Auth.js session | `auth-context` |
+        | `projectId`, `worktreePath`, `branch`, `mainBranch` | DB join run → workspace → project | `server-state` |
+        | `baseRef` | `resolveBaseRef` over server-state branch/mainBranch | `server-state` |
+
+        **Two-phase commit (downstream side-effect).**
+        1. **Phase 1 — intent read.** Under `SELECT … FOR UPDATE` on the run row,
+           assert `status='HumanWorking'` AND `owner_user_id = session.userId` AND
+           not terminal. No AFTER-side marker yet.
+        2. **Phase 2 — side-effect.** `resolveBaseRef` → `logRange` → `diffRange` →
+           write `returned_commits`/`returned_diff`/`base_ref` on the takeover
+           `node_attempts` row → `markDownstreamStale(runId, [reentryNode,
+           …downstreamOf(reentryNode)])` (re-entry node INCLUDED).
+        3. **Phase 3 — AFTER-side marker.** `markReturnedToRunning` (the
+           `status='Running'` flip + the takeover row's `ended_at`) is the
+           idempotency marker — set ONLY after Phase 2 fully succeeds. Then the
+           runner resume is queued.
+
+        A retry against an already-returned run (now `Running`/later) returns 409
+        `PRECONDITION`, never a re-import.
+
+        **Failure classification.**
+
+        | Failure class | HTTP | Run/ledger state | Retry |
+        | ------------- | ---- | ---------------- | ----- |
+        | Run not `HumanWorking` (already returned / wrong state) | 409 `PRECONDITION` | unchanged | terminal — no re-import |
+        | Session user ≠ `owner_user_id` | 403 `UNAUTHORIZED` | unchanged | not retryable by this actor |
+        | `git log`/`git diff`/`merge-base` fails (worktree gone, git error) | 409 `CONFLICT` | stays `HumanWorking`; NO ledger write; NO status flip | retryable after operator fixes the worktree |
+        | `markDownstreamStale` / ledger write throws mid-side-effect | 503 `EXECUTOR_UNAVAILABLE` | stays `HumanWorking`; partial write guarded by transaction; status NOT flipped | retryable — `FOR UPDATE` re-read still finds `HumanWorking` |
+        | Graph-runner resume kickoff fails AFTER the status flip | 200 (return recorded) | `Running` | resume retried by runner / reconcile |
+
+        No new `MaisterError` code (ADR-008 closed union).
+      operationId: returnTakeover
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: |
+            Return recorded. The takeover `node_attempts` row holds the returned
+            commits + raw diff + base ref; downstream gates are stale; the run is now
+            `Running` and the runner has been queued to rerun the validation path.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runStatus]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runStatus:
+                    type: string
+                    enum: [Running]
+                    description: |
+                      AFTER-side marker. The runner reruns the staled validation
+                      path and re-opens a fresh `human_review` HITL.
+                  returnedCommitCount:
+                    type: integer
+                    description: Number of commits in `git log <base>..<branch>` (display only).
+              examples:
+                returned:
+                  summary: Return succeeded
+                  value:
+                    ok: true
+                    runStatus: Running
+                    returnedCommitCount: 3
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            Session user is not the recorded takeover owner (`UNAUTHORIZED`), or the
+            account must change its password first (`PASSWORD_CHANGE_REQUIRED`). Run
+            unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            One of (`MaisterErrorBody`):
+            - run is not `HumanWorking` (already returned / wrong state)
+              (`PRECONDITION`);
+            - a `git log`/`git diff`/`merge-base` op failed against the worktree
+              (`CONFLICT`) — no ledger write, no status flip; retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Retryable failure (`EXECUTOR_UNAVAILABLE`): a ledger / staleness write
+            threw mid-side-effect. The run stays `HumanWorking` (status NOT flipped);
+            the `FOR UPDATE` re-read on retry finds it still `HumanWorking` and
+            replays.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

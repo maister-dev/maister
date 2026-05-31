@@ -51,6 +51,7 @@
 | [ADR-027](#adr-027-append-only-node_attempts-run-ledger) | Append-only `node_attempts` run ledger | Accepted | 2026-05-30 |
 | [ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped) | Full-featured gate execution in M11a; M15 re-scoped | Accepted | 2026-05-30 |
 | [ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c) | Split M11 into M11a / M11b / M11c | Accepted | 2026-05-30 |
+| [ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status) | Manual takeover as a local worktree handoff (`HumanWorking` status) | Accepted | 2026-05-31 |
 
 ---
 
@@ -1094,6 +1095,125 @@ restriction** refs (#1) → M14; node-level **executor** refs (#1) → M11c.
 - **Split by layer (schema / DB / runner / UI):** each layer slice is
   unshippable on its own and proves nothing end-to-end. Rejected — split by
   capability instead.
+
+---
+
+### ADR-030: Manual takeover as a local worktree handoff (`HumanWorking` status)
+
+**Date:** 2026-05-31
+**Status:** Accepted
+**Context:** M11b ([ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c)) ships
+**manual takeover** — a reviewer parked at an M11a `human_review` node takes the
+run over to edit it by hand, then returns it for re-validation. The run already
+owns an isolated worktree (`workspaces.worktree_path`) on a run branch
+(`workspaces.branch`) cut from the project default branch
+([ADR-011](#adr-011-workspace-lifecycle-via-git-worktree)). The open questions
+are: is "claimed by a human" a real run status or a pointer move inside
+`Running`; does takeover create a new branch/target; how are the human's commits
+recorded; how do downstream gates re-validate the human's work; and does any of
+this need a new `MaisterError` code. M11a's review-driven rework is a
+node-pointer move *within* `Running`
+([ADR-027](#adr-027-append-only-node_attempts-run-ledger)) — but a human holding
+a worktree open for hours is operationally unlike an in-flight agent run and must
+not look like one on the board, must hold a concurrency slot
+([ADR-009](#adr-009-global-concurrency-cap--3)), and must survive a process
+restart without being swept to `Crashed`.
+
+**Decision:** Manual takeover is a **LOCAL worktree handoff** with five locked
+properties:
+
+1. **`HumanWorking` is a real `runs.status` enum value** — distinct from the M11a
+   in-`Running` rework pointer move. A run enters `HumanWorking` on a takeover
+   **claim** (`NeedsInput → HumanWorking`) and leaves it on **return**
+   (`HumanWorking → Running`, the graph runner reruns the declared validation
+   path), on **release** without changes (`HumanWorking → NeedsInput`, the
+   original review HITL re-opens), or on **abandon** (`HumanWorking → Abandoned`).
+   It counts against the global concurrency cap
+   ([ADR-009](#adr-009-global-concurrency-cap--3)) exactly like
+   `Running`/`NeedsInput` — a claimed worktree holds a real slot — through both
+   scheduler cap-check predicates. It is **session-less by design** (the human
+   edits locally; no live ACP session) yet holds a worktree, so it is **excluded
+   from the startup recovery sweep** (which classifies only orphaned
+   `NeedsInput`-with-`acp_session_id` rows) and is therefore never mis-classified
+   `Crashed`.
+2. **The takeover branch IS the existing run branch** (`workspaces.branch`);
+   MAIster exposes the existing `worktree_path` + branch and the reviewer commits
+   in place on the same host. No new branch, target, base-branch selection, PR,
+   push, remote, or network git op — those are
+   **M18** ([ADR-011](#adr-011-workspace-lifecycle-via-git-worktree) local-handoff
+   spirit). The claim route returns `{ worktreePath, branch, ownerUserId }` so the
+   UI can show checkout context; nothing is created.
+3. **Return records commits + diff MINIMALLY as raw text in the ledger.** The
+   return route runs `git log <base>..<branch>` (oneline) and
+   `git diff <base>..<branch>` against the *existing* worktree (`<base>` is the
+   `merge-base` of the run branch and the project default branch) and stores the
+   raw output on the takeover `node_attempts` row (new columns
+   `returned_commits`, `returned_diff`, `base_ref`, `owner_user_id`). The full
+   typed `commit_set`/`diff` **artifact instances** + evidence-graph explorer are
+   **M12** — M11b creates no artifact rows.
+4. **On return, reuse M11a staleness.** The return path resolves the validation
+   re-entry node from the **current `human_review` node's `transitions.takeover`**
+   read off the run's pinned-revision manifest
+   ([ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility),
+   server-state, not a hard-coded id) — a gate-bearing validation node (`checks`),
+   never `implement` (would re-run the agent and clobber the human's edits) and
+   never `human_edit` (an M18 node type) — and stales **the re-entry node AND its
+   downstream**:
+   `markDownstreamStale(runId, [reentryNode, ...downstreamOf(graph, reentryNode)], db)`.
+   The explicit `reentryNode` inclusion is REQUIRED: the as-built `downstreamOf`
+   (module-private in `web/lib/flows/graph/runner-graph.ts` — M11b **exports** it)
+   **excludes its start node**, but the takeover re-entry is a gate-bearing node
+   whose prior PASS validated *pre-takeover* code and MUST flip stale so the
+   human's commits are re-validated. `markDownstreamStale(runId, nodeIds, db)` is
+   the 2-arg M11a helper in `web/lib/flows/graph/ledger.ts`. The graph runner then
+   resumes at the re-entry so those gates rerun over the human's commits — reusing
+   the M11a gate-execution engine and its `passed → stale → rerun` lifecycle
+   ([ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)) — and a
+   fresh `human_review` gate is produced. No new staleness machinery.
+5. **No new `MaisterError` code** ([ADR-008](#adr-008-typed-error-taxonomy-maistererror)
+   closed union). Takeover precondition failures map to existing codes:
+   not-claimable / wrong run state / non-`human_review` node → `PRECONDITION`
+   (409); concurrent claim (CAS lost) or conflicting return → `CONFLICT` (409);
+   git-op failure on return → `CONFLICT` (the `worktree.ts` convention for failed
+   git ops); a ledger/staleness write throwing mid-side-effect →
+   `EXECUTOR_UNAVAILABLE` (503, retryable). The **return** route is a two-phase
+   commit: a `SELECT … FOR UPDATE` intent read (assert `HumanWorking` + owner)
+   precedes the git/ledger side-effect; the AFTER-side idempotency marker is the
+   `status='Running'` flip plus the takeover row's `ended_at`, never set before
+   the side-effect completes.
+
+**Consequences:**
+
+- The board renders `HumanWorking` as a distinct takeover surface (owner, elapsed
+  time, branch, pending-return action) that is **not** a normal running card.
+- `HumanWorking` consumes one of the `MAISTER_MAX_CONCURRENT_RUNS` slots while a
+  human holds the worktree, so concurrency accounting stays honest.
+- The migration is **additive** (`0011`, on top of M11a's `0010`): one new
+  `runs.status` enum value (TS-level, the column is plain `text`) and four
+  nullable `node_attempts` columns populated only on takeover attempts.
+- Takeover spawns **no supervisor deferred** (no agent) — the only resource a
+  claim holds is the status + the slot; the release paths are
+  `releaseHumanWorking` (abandon/release) and `markReturnedToRunning` (return).
+- A mid-return git failure leaves the run `HumanWorking` with no ledger write and
+  no status flip (retryable), so the handoff never partial-commits.
+
+**Alternatives Considered:**
+
+- **Model takeover as an in-`Running` pointer move (like M11a rework):** a
+  human-held worktree is operationally distinct from an agent run — it needs its
+  own board surface, must hold a slot, and must survive restart differently.
+  Folding it into `Running` would mis-render the card and entangle the recovery
+  sweep. Rejected — a real `HumanWorking` status.
+- **Create a new takeover branch / target / PR on claim:** that is branch
+  targeting + promotion mode, owned by **M18**, and violates the ADR-011
+  local-handoff model. Rejected — the takeover branch IS the existing run branch.
+- **Record returned commits as typed `commit_set`/`diff` artifact instances now:**
+  requires the M12 artifact graph that does not exist. Rejected — store raw
+  `git log`/`git diff` text on the ledger row; typed artifacts are M12.
+- **Add a `TAKEOVER`/`HANDOFF` `MaisterError` code:** the closed union
+  ([ADR-008](#adr-008-typed-error-taxonomy-maistererror)) already covers every
+  takeover failure via `PRECONDITION`/`CONFLICT`/`EXECUTOR_UNAVAILABLE`. Rejected
+  — no new code.
 
 ---
 

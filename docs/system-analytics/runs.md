@@ -37,6 +37,11 @@ stateDiagram-v2
     NeedsInputIdle --> Running: user submits input<br/>(supervisor respawns --resume)
     NeedsInputIdle --> Abandoned: 24h elapsed<br/>without response
 
+    NeedsInput --> HumanWorking: takeover claim<br/>(human_review takeover decision)
+    HumanWorking --> Running: return<br/>(rerun validation path)
+    HumanWorking --> NeedsInput: release<br/>(no changes, review HITL re-opens)
+    HumanWorking --> Abandoned: abandon
+
     Running --> Review: agent exits 0
     Running --> Crashed: heartbeat dead<br/>no checkpoint
     Running --> Failed: agent exits non-zero<br/>(no recovery path)
@@ -76,6 +81,37 @@ pointer back to the rework target, opens attempt N+1, and continues — all with
    **not** block promotion. The promote sequence's "verify required gates" step
    is the **M15/M18** readiness policy, not M11a — see the note on the happy-path
    diagram below and [`flow-graph.md`](flow-graph.md).
+
+### M11b manual-takeover status `HumanWorking` (Implemented)
+
+Manual takeover ([ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status))
+adds the real `runs.status` value `HumanWorking`. A reviewer parked at a
+`human_review` node claims the run (`NeedsInput → HumanWorking`), edits the
+existing worktree in place on the same host, and returns it
+(`HumanWorking → Running`, the runner reruns the declared validation path) or
+releases it (`HumanWorking → NeedsInput`, the original review HITL re-opens) or
+abandons it (`HumanWorking → Abandoned`). Full domain detail lives in
+[`manual-takeover.md`](manual-takeover.md). Four invariants bind it to the run
+machine:
+
+1. **`HumanWorking` is a REAL run status**, unlike the M11a rework loop above
+   (a node-pointer move *within* `Running`). A claimed run leaves the
+   `Running`/`NeedsInput` machine and renders a distinct board surface.
+2. **It counts against the global cap exactly like `Running`/`NeedsInput`**
+   ([ADR-009](../decisions.md#adr-009-global-concurrency-cap--3)) — a claimed
+   worktree holds a real slot through **both** scheduler cap-check predicates
+   (`web/lib/scheduler.ts`, the initial-promote and under-advisory-lock-recheck
+   counts of `status IN ('Running','NeedsInput','HumanWorking')`).
+3. **The takeover branch IS `workspaces.branch`** — no new branch, target, base
+   selection, or PR is created (that is **M18**). The claim exposes the existing
+   `worktree_path` + branch only.
+4. **`HumanWorking` is session-less BY DESIGN** (the human edits locally; there
+   is no live ACP session) yet HOLDS a worktree, so it is **EXCLUDED from the
+   startup recovery sweep classification** and never mis-flagged `Crashed`. The
+   orphan→`Crashed` path is `runResumeRecoverySweep` in
+   `web/lib/runs/resume-recovery.ts` (there is no `reconcile.ts`), whose SELECT
+   filters `runs.status='NeedsInput' AND acpSessionId IS NOT NULL` — so
+   `HumanWorking` is excluded by construction.
 
 ## Process flows
 
@@ -171,6 +207,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     Start([startup or heartbeat tick]) --> Find[Find runs status=Running]
+    Find --> Skip[HumanWorking rows skipped:<br/>session-less by design, hold a worktree<br/>recovery sweep SELECT filters status=NeedsInput]
     Find --> Live{supervisor has live session?}
     Live -- yes --> OK[no action]
     Live -- no --> Cp{acp_session_id present?}
@@ -187,10 +224,17 @@ flowchart TD
 - `runs.status` values exactly match the enum in `web/lib/db/schema.ts`;
   no string-typed status outside the enum is permitted.
 - Every run owns exactly one workspace and at most one live ACP session
-  at any time.
+  at any time; **`HumanWorking` runs intentionally have no live session**
+  (the human edits the worktree locally — see
+  [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)).
 - Global concurrency cap = `MAISTER_MAX_CONCURRENT_RUNS` (default 3,
   hard cap); excess runs wait as `Pending` and auto-promote when a slot
-  frees.
+  frees. `HumanWorking` counts toward the cap exactly like
+  `Running`/`NeedsInput` — a claimed worktree holds a slot.
+- **(Implemented, M11b)** A `HumanWorking` run survives Next.js and
+  supervisor restart WITHOUT being classified `Crashed`: it is session-less
+  by design and is excluded from the `runResumeRecoverySweep` SELECT
+  (`status='NeedsInput' AND acpSessionId IS NOT NULL`) by construction.
 - **(Designed)** `NeedsInput` keep-alive window is
   `MAISTER_KEEPALIVE_MINUTES` (default 30 min); every web-activity
   event extends `keepalive_until` by that amount. Current code ships the

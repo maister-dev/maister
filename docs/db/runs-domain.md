@@ -21,6 +21,7 @@ erDiagram
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
 
     TASKS {
         text id PK
@@ -41,7 +42,7 @@ erDiagram
         text project_id FK
         text flow_id FK
         text executor_id FK
-        text status "Pending|Running|NeedsInput|NeedsInputIdle|Review|Crashed|Done|Abandoned|Failed"
+        text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (--resume)"
         text current_step_id "runner cursor"
         text flow_version "tag snapshot at launch"
@@ -90,6 +91,10 @@ erDiagram
         text decision "human decision on finish"
         text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
         text rework_from_node "origin node on rework re-entry"
+        text owner_user_id FK "M11b takeover owner (users.id, SET NULL)"
+        text base_ref "M11b merge-base SHA for returned range"
+        text returned_commits "M11b raw git log base..branch"
+        text returned_diff "M11b raw git diff base..branch"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"
@@ -124,6 +129,16 @@ erDiagram
 > [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md) and
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger) /
 > [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped).
+
+> **(M11b — Implemented, migration `0011`, additive to `0010`.)** The
+> `RUNS.status` enum gains `HumanWorking` (manual takeover claim), and
+> `NODE_ATTEMPTS` gains four nullable takeover columns — `owner_user_id`
+> (FK → `users.id`, `ON DELETE SET NULL`), `base_ref`, `returned_commits`,
+> `returned_diff` — populated ONLY on the takeover attempt of a `human_review`
+> node. Raw `git log`/`git diff` text is stored minimally; typed `commit_set`/
+> `diff` artifact instances are **M12**. See
+> [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
+> and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
 ## Constraints
 
@@ -171,6 +186,9 @@ task back to `Backlog`. Only explicit user `Discard` sends a task to
 ```
 Pending -> Running -> Review -> Done (promotion succeeds)
                   \-> NeedsInput <-> NeedsInputIdle -> Abandoned
+                  \-> NeedsInput -> HumanWorking -> Running (return, M11b)
+                                                \-> NeedsInput (release)
+                                                \-> Abandoned (abandon)
                   \-> Crashed -> Running (Recover)
                               \-> Abandoned (Discard)
                   \-> Failed

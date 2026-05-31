@@ -153,6 +153,63 @@ and no raw `goto_step` is accepted from the client. See
 [`flow-graph.md`](flow-graph.md) and
 [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 
+### `takeover` decision → manual handoff (M11b — Implemented)
+
+The `human_review` node's `takeover` decision is **not** an artifact-write HITL
+response like `approve`/`rework`. It drives a **run-state transition**
+(`NeedsInput → HumanWorking`) through a dedicated route pair —
+`POST /api/runs/{runId}/takeover/claim` and `.../takeover/return` — not through
+the `respond` route. The live `permission` / `form` / `human` (approve/rework)
+paths above are **unchanged**. Domain detail lives in
+[`manual-takeover.md`](manual-takeover.md);
+[ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)
+is the locked decision.
+
+The decision tree at a `human_review` finish:
+
+```mermaid
+flowchart TD
+    Review{human_review decision?} -- approve --> Approve[transitions.approve<br/>respond route, artifact write]
+    Review -- rework --> Rework[transitions.rework<br/>respond route, artifact write]
+    Review -- takeover --> Claim[POST takeover/claim<br/>state transition, NO artifact write]
+    Claim --> HW[runs.status = HumanWorking<br/>worktree path + branch exposed]
+    HW --> Edit[human edits worktree locally<br/>commits in place, no remote]
+    Edit --> Return[POST takeover/return]
+    Edit --> Release[release / abandon]
+    Return --> Rerun[resume at transitions.takeover = checks<br/>staled gates rerun then fresh review]
+    Release --> Back[runs.status = NeedsInput<br/>original review HITL re-opens]
+```
+
+The **return** path is a **two-phase commit** (mirrors the form/idle two-phase
+contract but against the worktree, not the supervisor): a Phase-1 claim intent,
+a Phase-2 git/ledger side-effect, then a Phase-3 AFTER-side marker.
+
+```mermaid
+sequenceDiagram
+    actor U as Owner
+    participant W as Web route
+    participant DB as Postgres
+    participant FS as Worktree
+    participant R as Runner
+
+    Note over W: Phase 1 - claim intent (no AFTER-side marker yet)
+    U->>W: POST /api/runs/{runId}/takeover/return (empty body)
+    W->>DB: SELECT ... FOR UPDATE assert status=HumanWorking AND owner=session.user
+    Note over W: Phase 2 - git + ledger side-effect
+    W->>FS: resolveBaseRef then git log base..branch then git diff base..branch
+    W->>DB: recordTakeoverReturn returned_commits / returned_diff / base_ref on takeover attempt
+    W->>DB: markDownstreamStale reentryNode + downstreamOf(reentryNode)
+    Note over W: Phase 3 - AFTER-side marker
+    W->>DB: markReturnedToRunning status=Running + takeover attempt ended_at
+    W-->>R: queueMicrotask runFlow resume at transitions.takeover (checks)
+    R->>DB: staled gates rerun over the human commits then fresh human_review
+```
+
+The `status='Running'` flip plus the takeover row's `ended_at` is the **AFTER-side
+idempotency marker** — never set before the git/ledger side-effect completes. A
+git-op failure in Phase 2 leaves the run `HumanWorking` with no ledger write and
+no status flip (409 `CONFLICT`, retryable).
+
 ## Keep-alive activity tracking (Designed)
 
 The flow below describes the designed target state. Current code does

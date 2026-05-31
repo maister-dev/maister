@@ -31,7 +31,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
 | `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
-| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. | `runs.id` |
+| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). | `runs.id`, `users.id` (takeover owner, M11b) |
 | `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
 | `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
 
@@ -289,6 +289,7 @@ queries.
 {
   id, taskId, projectId, flowId, executorId,
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
+        | 'HumanWorking'         // M11b manual-takeover claim (migration 0011)
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
   currentStepId?,                // id of the step the runner is on
@@ -385,6 +386,11 @@ One immutable row per node execution; `attempt` auto-increments per
                                             //   | 'fresh-attempt'
   reworkFromNode?,                          // origin node when this attempt is a
                                             //   rework re-entry
+  ownerUserId?,                             // M11b takeover owner (FK -> users.id,
+                                            //   ON DELETE SET NULL); takeover attempt only
+  baseRef?,                                 // M11b merge-base SHA of the returned range
+  returnedCommits?,                         // M11b raw `git log <base>..<branch>` text
+  returnedDiff?,                            // M11b raw `git diff <base>..<branch>` text
   acpSessionId?,                            // ACP session id (agent/judge nodes)
   stdout?,                                  // truncated to 1 MiB by the writer
   vars (jsonb, DEFAULT '{}'),               // node output bag for templating
@@ -397,6 +403,15 @@ UNIQUE constraint `(runId, nodeId, attempt)` — append-only; rework never mutat
 a prior row. Indexed on `(runId)` for the templating highest-attempt-wins union
 (`node_attempts` first, `step_runs` fallback). Cascade: `ON DELETE CASCADE` from
 `runs.id`.
+
+**(M11b — Implemented, migration `0011`, additive to `0010`.)** The four
+takeover columns — `ownerUserId` (FK → `users.id`, `ON DELETE SET NULL`),
+`baseRef`, `returnedCommits`, `returnedDiff` — are nullable and populated ONLY on
+the takeover attempt of a `human_review` node. Raw `git log`/`git diff` text is
+stored minimally; typed `commit_set`/`diff` artifact instances are **M12**. The
+index is unchanged (`node_attempts_run_idx` on `(runId)`). See
+[`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) and
+[ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
 ## `gate_results`
 
@@ -530,7 +545,8 @@ one statement:
 users
   ├── accounts           (FK userId, cascade)
   ├── sessions           (FK userId, cascade)
-  └── project_members    (FK userId, cascade)
+  ├── project_members    (FK userId, cascade)
+  └── node_attempts.owner_user_id (FK userId, SET NULL)  ← M11b takeover owner
 
 projects
   ├── project_members    (FK projectId, cascade)

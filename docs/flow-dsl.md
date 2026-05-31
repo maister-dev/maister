@@ -127,7 +127,11 @@ nodes:
     transitions:
       approve: review
       rework: implement
-      takeover: human-edit   # takeover decision + human-edit target: M11b (Designed)
+      takeover: checks       # M11b (Implemented): takeover returns to a real
+                             # validation node (`checks`) so the gates rerun over
+                             # the human's commits — NOT `implement` (would clobber
+                             # the human edits), NOT the `human_edit` node TYPE
+                             # below (that type is M18-Designed).
     rework:
       allowedTargets: [implement]
       # M11a executes `keep`; rewind-to-node-checkpoint / fresh-attempt are
@@ -136,7 +140,9 @@ nodes:
       maxLoops: 3
       commentsVar: review_comments
 
-  # human_edit node (manual takeover): M11b (Designed) — not executed in M11a.
+  # human_edit node TYPE: M18 (Designed) — not executed in M11a/M11b. M11b models
+  # manual takeover as a run-state transition (`HumanWorking`) off the existing
+  # `human_review` node, NOT as this node type. See ADR-030 and manual-takeover.md.
   - id: human-edit
     type: human_edit
     settings:
@@ -155,6 +161,12 @@ nodes:
           kind: diff
           requiredForReview: true
 ```
+
+> The `transitions` above reference upstream node ids (`review`, `checks`) that
+> are **gate-bearing validation nodes elided from this snippet for brevity** —
+> the snippet shows only the review and `human_edit` nodes. A complete graph
+> wires `… → checks → … → review`; `transitions.takeover: checks` therefore
+> re-enters that validation node so its gates rerun over the human's commits.
 
 Lifecycle sections:
 
@@ -217,12 +229,31 @@ graph flow the legacy `human` step `on_reject.goto_step` is **superseded** by
 node `transitions` + `finish.human.decisions`; linear `steps[]` flows retain the
 documented (still-unexecuted) `on_reject.goto_step` behavior.
 
-**Manual takeover — M11b (Designed).** Manual takeover is modeled as a
-human-edit node. A reviewer claims the task in MAIster, receives an editable
-branch, checks it out on the developer machine, commits and pushes changes, then
-returns the branch through the UI. The run ledger records owner, elapsed time,
-handoff branch, returned commits, returned diff, checkpoint refs, stale gate
-markers, and rerun results. Not executed in M11a (no `HumanWorking` run status).
+**Manual takeover — M11b local-handoff subset (Implemented).** Manual takeover is
+a LOCAL worktree handoff ([ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)),
+NOT a `human_edit` node type. It is a run-state transition off the existing
+`human_review` node: the reviewer's `takeover` decision drives
+`NeedsInput → HumanWorking` (a real `runs.status`), MAIster exposes the EXISTING
+worktree path + run branch (`workspaces.branch` — no new branch/target/PR/push/
+remote), the reviewer commits in place on the same host, and a UI **Return**
+records the returned commit set (`git log <base>..<branch>`) + raw diff
+(`git diff <base>..<branch>`) on the takeover `node_attempts` row, marks the
+`transitions.takeover` validation node (`checks`) + its downstream STALE (M11a
+`markDownstreamStale`), and resumes the runner so those gates rerun and a fresh
+`human_review` gate is produced. The run-detail **timeline** (the runs domain)
+renders owner, elapsed time, branch, returned commits, returned diff, stale-vs-
+current gates, and rerun results in one view. See
+[`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) and
+[`system-analytics/runs.md`](system-analytics/runs.md#m11b-manual-takeover-status-humanworking-implemented).
+
+Two halves remain deferred:
+
+- **Typed `commit_set` / `diff` artifact instances — M12 (Designed).** M11b
+  records raw `git log`/`git diff` TEXT in the ledger only; the typed artifact
+  instances + evidence-graph explorer land with the M12 artifact graph (below).
+- **`human_edit` / `merge` node TYPES — M18 (Designed).** The first-class
+  `human_edit` node type (shown in the example above) and the `merge` node type +
+  conflict-handoff promotion are M18; M11b implements neither.
 
 ## Gate execution (M11a — Implemented)
 
@@ -260,9 +291,10 @@ UI readiness reads the typed result. An unparseable verdict is recorded as
 `MaisterError` code** is thrown
 ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
 
-**Staleness.** When a reviewer reworks (manual-takeover return is M11b),
-`markDownstreamStale` flips dependent `gate_results` `passed → stale`; a stale
-blocking gate must rerun before the node can finish again.
+**Staleness.** When a reviewer reworks (or returns a manual takeover — M11b,
+Implemented), `markDownstreamStale` flips dependent `gate_results`
+`passed → stale`; a stale blocking gate must rerun before the node can finish
+again.
 
 **Override without erasure.** A human override is allowed only through a declared
 `human_review` decision; it sets the gate `overridden` and records the deciding
