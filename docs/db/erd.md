@@ -3,7 +3,7 @@
 All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 `VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), plus the two **M11a (Implemented)**
 execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`).
-**M11b (migration `0011`, additive; lands Phase 2)** adds the `HumanWorking` run
+**M11b (migration `0011`, additive)** adds the `HumanWorking` run
 status and the `NODE_ATTEMPTS` takeover columns (`owner_user_id`, `base_ref`,
 `returned_commits`, `returned_diff`).
 For partial views by domain, see
@@ -192,10 +192,10 @@ erDiagram
         text decision
         text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
         text rework_from_node
-        text owner_user_id FK "M11b 0011 Phase2 takeover owner (users.id SET NULL)"
-        text base_ref "M11b 0011 Phase2 merge-base SHA for returned range"
-        text returned_commits "M11b 0011 Phase2 raw git log base..branch"
-        text returned_diff "M11b 0011 Phase2 raw git diff base..branch"
+        text owner_user_id FK "M11b 0011 takeover owner (users.id SET NULL)"
+        text base_ref "M11b 0011 merge-base SHA for returned range"
+        text returned_commits "M11b 0011 raw git log base..branch"
+        text returned_diff "M11b 0011 raw git diff base..branch"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"

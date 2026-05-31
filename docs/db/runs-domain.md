@@ -91,10 +91,10 @@ erDiagram
         text decision "human decision on finish"
         text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
         text rework_from_node "origin node on rework re-entry"
-        text owner_user_id FK "M11b 0011 Phase2 takeover owner (users.id SET NULL)"
-        text base_ref "M11b 0011 Phase2 merge-base SHA for returned range"
-        text returned_commits "M11b 0011 Phase2 raw git log base..branch"
-        text returned_diff "M11b 0011 Phase2 raw git diff base..branch"
+        text owner_user_id FK "M11b 0011 takeover owner (users.id SET NULL)"
+        text base_ref "M11b 0011 merge-base SHA for returned range"
+        text returned_commits "M11b 0011 raw git log base..branch"
+        text returned_diff "M11b 0011 raw git diff base..branch"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"
@@ -130,7 +130,7 @@ erDiagram
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger) /
 > [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped).
 
-> **(M11b — migration `0011`, additive; lands Phase 2.)** The
+> **(M11b — migration `0011`, additive.)** The
 > `RUNS.status` enum gains `HumanWorking` (manual takeover claim), and
 > `NODE_ATTEMPTS` gains four nullable takeover columns — `owner_user_id`
 > (FK → `users.id`, `ON DELETE SET NULL`), `base_ref`, `returned_commits`,

@@ -1,8 +1,8 @@
 # Manual takeover domain
 
-> **Status: spec frozen in M11b Phase 0 (SDD).** Claim/return routes land Phase 3;
-> `node_attempts` takeover columns + the `HumanWorking` status land Phase 2
-> (migration `0011`). Implementation-status tags below reflect HEAD-after-M11b.
+> **Status: Implemented in M11b.** Claim/return routes, migration `0011`
+> (`node_attempts` takeover columns), and the `HumanWorking` status are all
+> shipped. Implementation-status tags below reflect HEAD-after-M11b.
 
 ## Purpose
 

@@ -806,8 +806,7 @@ paths:
       tags: [takeover]
       summary: (M11b) Claim a run for manual takeover (local worktree handoff)
       description: |
-        (M11b — spec frozen in Phase 0 per SDD; route handler lands in Phase 3.
-        Reflects HEAD-after-M11b.)
+        (M11b — Implemented. Reflects HEAD-after-M11b.)
 
         Claims a run parked at an M11a `human_review` node for a LOCAL worktree
         handoff (ADR-030). The run transitions `NeedsInput → HumanWorking` (a real
@@ -893,8 +892,7 @@ paths:
       tags: [takeover]
       summary: (M11b) Return a manually-taken-over run for re-validation
       description: |
-        (M11b — spec frozen in Phase 0 per SDD; route handler lands in Phase 3.
-        Reflects HEAD-after-M11b.)
+        (M11b — Implemented. Reflects HEAD-after-M11b.)
 
         Returns a `HumanWorking` run after the reviewer has committed locally in the
         exposed worktree (ADR-030). The route runs `git log <base>..<branch>` +

@@ -289,7 +289,7 @@ queries.
 {
   id, taskId, projectId, flowId, executorId,
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
-        | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive; lands Phase 2)
+        | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
   currentStepId?,                // id of the step the runner is on
@@ -404,7 +404,7 @@ a prior row. Indexed on `(runId)` for the templating highest-attempt-wins union
 (`node_attempts` first, `step_runs` fallback). Cascade: `ON DELETE CASCADE` from
 `runs.id`.
 
-**(M11b — migration `0011`, additive to `0010`; lands Phase 2.)** The four
+**(M11b — migration `0011`, additive to `0010`.)** The four
 takeover columns — `ownerUserId` (FK → `users.id`, `ON DELETE SET NULL`),
 `baseRef`, `returnedCommits`, `returnedDiff` — are nullable and populated ONLY on
 the takeover attempt of a `human_review` node. Raw `git log`/`git diff` text is
