@@ -102,7 +102,7 @@ export const flowCompatSchema = z.object({
   engine_max: z.string().min(1).optional(),
 });
 
-// --- M11a: Flow graph v1 (`nodes[]`) — ADR-022 ---------------------------
+// --- M11a: Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------
 // A graph manifest declares `nodes[]` instead of `steps[]` (mutually
 // exclusive). Cross-reference + cycle validation lives in `loadFlowManifest`
 // (`config.ts`); zod here covers shape only.
@@ -258,7 +258,7 @@ export const flowYamlV1Schema = z
     artifacts: z.array(z.string().min(1)).optional(),
     external_ops: z.array(z.string().min(1)).optional(),
     // Exactly one of `steps` (linear) or `nodes` (graph v1) is present —
-    // enforced by the .refine below (ADR-022). `steps` was required before
+    // enforced by the .refine below (ADR-026). `steps` was required before
     // M11a; it is now optional so the refine can reject both-absent.
     steps: z.array(stepSchema).min(1).optional(),
     nodes: z.array(nodeSchema).min(1).optional(),

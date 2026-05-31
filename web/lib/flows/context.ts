@@ -112,7 +112,7 @@ function reduceStepRuns(
   return out;
 }
 
-// M11a (ADR-023): templating highest-attempt-wins union. The step_runs map is
+// M11a (ADR-027): templating highest-attempt-wins union. The step_runs map is
 // the base (legacy rows); node_attempts (graph runner) overlay it and WIN per
 // id (a graph run has no step_runs; a legacy run has no node_attempts — so they
 // are disjoint in practice, but the union is correct for any mix).
@@ -148,7 +148,7 @@ export type BuildContextArgs = {
   executor: Pick<ExecutorRow, "id" | "agent" | "model" | "router">;
   stepRuns: StepRunRow[];
   // M11a: graph runner passes node_attempts; they overlay step_runs in the
-  // highest-attempt-wins union (ADR-023). Optional so linear callers are
+  // highest-attempt-wins union (ADR-027). Optional so linear callers are
   // unchanged.
   nodeAttempts?: NodeAttemptRow[];
   projectSlug: string;

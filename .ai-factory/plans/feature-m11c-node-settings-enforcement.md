@@ -7,7 +7,7 @@
 
 ## Context
 
-M11 ("Flow graph maturity") was split into **M11a / M11b / M11c** (ADR-025,
+M11 ("Flow graph maturity") was split into **M11a / M11b / M11c** (ADR-029,
 recorded in the M11a plan). M11a ships the graph manifest (`nodes[]`), the
 append-only `node_attempts` ledger, the rework loop, and full-featured gate
 execution. **Critically, M11a deliberately punts on node `settings`:** Phase 1
@@ -115,12 +115,12 @@ is gone, replaced by typed validation.
    never validates an MCP/tool/skill/agent/restriction *reference* against a
    registry (that is M14, roadmap #1). M11c validates settings *shape* and
    *enforcement intent* and refuses launch when a declared `strict` intent
-   exceeds the build's static enforcement capability. → **ADR-027**.
+   exceeds the build's static enforcement capability. → **ADR-031**.
 2. **Typed `settings` discriminated by node `type`.** `ai_coding` / `human` /
    `cli` / `check` / `judge` each get a distinct settings shape. The M11a opaque
    passthrough (`z.unknown()` recorded + WARN) is **replaced** by these typed
    schemas; the WARN is **removed**. A node MAY omit `settings` (back-compat:
-   compiled-linear nodes and minimal graph nodes carry no settings). → **ADR-027**.
+   compiled-linear nodes and minimal graph nodes carry no settings). → **ADR-031**.
 3. **Explicit declared `enforcement` per capability-bearing setting**
    (`strict | instruct | off`, default `instruct`). Enforcement is a
    *declaration by the flow author*, resolved against a **static per-agent
@@ -129,14 +129,14 @@ is gone, replaced by typed validation.
    needs M14 materialization to be strictly enforced is `instructed`, so
    `strict` on it correctly REFUSES rather than silently weakens. M14 flips
    entries `instructed → enforced` as materialization lands — the contract only
-   ever tightens. → **ADR-028**.
+   ever tightens. → **ADR-032**.
 4. **Refusal throws an EXISTING `MaisterError` code (ADR-008 closed union).**
    A `strict` declaration on a class MAIster cannot strictly enforce for the
    resolved executor's agent → `MaisterError("CONFIG")` when the flow/manifest
    is internally over-declaring (build cannot enforce this class at all), or
    `MaisterError("EXECUTOR_UNAVAILABLE")` when the class is enforceable for some
    agents but `unsupported` for the *resolved* executor's agent. **No new error
-   code.** → **ADR-028** + contract-surface trace row D.
+   code.** → **ADR-032** + contract-surface trace row D.
 5. **Enforcement attaches at LAUNCH precondition + node-action build, not at the
    supervisor wire.** The refusal runs in `web/app/api/runs/route.ts`
    precondition block (whole-manifest static check at launch) AND immediately
@@ -145,7 +145,7 @@ is gone, replaced by typed validation.
    so a per-node executor override (M14-era) cannot smuggle an unenforceable
    class past the launch check. The supervisor `spawn.ts` env construction is
    **unchanged in M11c** (the materialized env layer is M14); M11c only *gates*
-   whether the node is allowed to launch at all. → **ADR-028**.
+   whether the node is allowed to launch at all. → **ADR-032**.
 
 ## Settings
 
@@ -249,7 +249,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 
 | # | Task | Files | Acceptance |
 | - | ---- | ----- | ---------- |
-| 0.1 | ADR-027 (node typed settings schema; carve (b) M11c↔M14 boundary), ADR-028 (enforcement-boundary refusal: declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT` table, CONFIG/EXECUTOR_UNAVAILABLE mapping, attach points, NO new error code). **(P2) M11c owns ADR range 027–028** (as-built `decisions.md` ceiling = **ADR-025** — M11a landed 022–025; M11b = 026 before M11c per the M11a→M11b→M11c order). Drafted as 026/027, renumbered to clear the M11b collision; **read `decisions.md` HEAD before committing** since M11a/M11b land first | `docs/decisions.md` (append, index rows) | 2 ADRs `Accepted`, sequential (027, 028), template-conformant; both explicitly cite the M14 dependency and ADR-008 closed union |
+| 0.1 | ADR-031 (node typed settings schema; carve (b) M11c↔M14 boundary), ADR-032 (enforcement-boundary refusal: declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT` table, CONFIG/EXECUTOR_UNAVAILABLE mapping, attach points, NO new error code). **(P2) M11c owns ADR range 031–032** (as-built `decisions.md` ceiling = **ADR-029** — after the m11a rebase onto main, M11a landed 026–029 and M11b takes 030; **read `decisions.md` HEAD before committing** since M11a/M11b land first) | `docs/decisions.md` (append, index rows) | 2 ADRs `Accepted`, sequential (031, 032), template-conformant; both explicitly cite the M14 dependency and ADR-008 closed union |
 | 0.2 | Roadmap reconciliation (delegate to roadmap owner): confirm M11c inherits **roadmap #6 + #8-settings-docs**; confirm #1-MCP/tool/skill/agent/restriction-refs stays **M14**, #1-roles stays **M13**, **#1-node-settings-shape AND node-level executor refs (`settings.executors`) are M11c** (P1 — M11a's carve hands executor refs here) — **no clause dropped, none double-listed**. **(P8) Record criterion #6 as SPLIT: "settings visible in UI + launch-time REFUSAL boundary (M11c)" vs "materialized positive enforcement / `instructed→enforced` flip (M14)".** #6 must NOT be marked fully "done" after M11c while MCP/tool/skill are only refused-if-strict, never materially constrained until M14 | `.ai-factory/ROADMAP.md` via `/aif-roadmap` | M11c entry carries criterion #6 (refusal slice) + #8-settings; #6 split M11c/M14 recorded; the #1 split across M11c/M13/M14 recorded; ownership boundary respected (not hand-edited here) |
 | 0.3 | New/extended system-analytics doc: the **enforcement boundary** — per-node settings resolution, declared `enforcement` intent, static enforceability table, the launch-time refusal allow-list (per `docs/CLAUDE.md` R5: Purpose/Entities/State machine/Process flows/Expectations/Edge cases/Linked). MUST enumerate **every** refusal precondition exactly as code will gate (allow-list shape: "launch proceeds iff for every capability-bearing setting with `enforcement: strict`, `ENFORCEABILITY_BY_AGENT[agent][class] === 'enforced'`"). MUST state the invariant that M14 only ever flips `instructed→enforced` (contract tightens, never loosens). | `docs/system-analytics/flow-settings.md` (new) or a dedicated section in `flows.md` | refusal allow-list written the way it is implemented; CONFIG vs EXECUTOR_UNAVAILABLE branch enumerated; M14 hand-off stated |
 | 0.4 | Promote `docs/flow-dsl.md` node `settings` block from **M11c-Designed → Implemented (M11c subset)**; tag the M14 parts (registry resolution, agent-aware mapping, materialization) as **M14-Designed**; document the per-setting `enforcement` field + the refusal semantics; document back-compat (settings optional). MUST NOT imply M11c resolves capability refs or materializes anything. | `docs/flow-dsl.md` | node `settings` sections marked Implemented for the M11c subset; M14 parts tagged; `enforcement` field documented; "no materialization in M11c" stated |
@@ -266,7 +266,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 | Node-level settings validation rejections (enum/bound/executor-ref/decision-ref) | `docs/system-analytics/flow-settings.md` + `web/lib/config.ts` | 0.3 / Phase 1 |
 | Launch refusal → `CONFIG` / `EXECUTOR_UNAVAILABLE` (existing codes; richer message) | `docs/error-taxonomy.md` (extend existing code matrices with the new caller; NO new code) + `web/app/api/runs/route.ts` + `runner-graph.ts` | 0.3 / Phase 0.9 / Phase 3 |
 | Run-detail settings-visibility view (server-rendered; no new HTTP route) | `docs/system-analytics/flow-settings.md` UI section (no OpenAPI change — server component reads the pinned manifest) | 0.3 / Phase 4 |
-| (conditional) resolved-settings snapshot column on `node_attempts`/`runs` | migration `0010` (P3 — after M11b's `0009`) + `docs/database-schema.md` + `docs/db/runs-domain.md` | 0.6 / Phase 2 |
+| (conditional) resolved-settings snapshot column on `node_attempts`/`runs` | migration `0012` (P3 — after M11b's `0011`) + `docs/database-schema.md` + `docs/db/runs-domain.md` | 0.6 / Phase 2 |
 
 | 0.9 | Extend `docs/error-taxonomy.md`: add the M11c **settings-enforcement refusal** as a new *caller* under the EXISTING `CONFIG` and `EXECUTOR_UNAVAILABLE` matrices (no new code, ADR-008). State the branch rule: build-cannot-enforce-this-class-at-all → `CONFIG`; class-enforceable-for-some-agents-but-`unsupported`-for-resolved-agent → `EXECUTOR_UNAVAILABLE`. | `docs/error-taxonomy.md` | both matrices gain an M11c caller row; closed-union exhaustiveness note unchanged |
 
@@ -303,7 +303,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 2.1 | **Decide persistence (analytics-driven, Phase 0.6).** Default: settings are NOT persisted to a new column — the run pins `flowRevisionId` (M10) whose `manifest` jsonb already carries the node `settings`; the enforcement evaluator and the run-detail UI read settings from the pinned manifest. If Phase 0.6 concludes a *resolved enforcement verdict snapshot* is needed for audit (which classes were `enforced/instructed/refused` at launch), add `node_attempts.enforcement_snapshot jsonb` (M11a table) in migration **`0010`** (P3 — `0008`=M11a < `0009`=M11b < `0010`=M11c-if-needed; NOT `0009`, which M11b owns). | `web/lib/db/schema.ts`, `web/lib/db/migrations/0010_*.sql` (only if needed) | EITHER an explicit "no schema change — settings read from pinned manifest" note + zero migration, OR additive `0010` with both ERD artifacts updated (0.6) |
+| 2.1 | **Decide persistence (analytics-driven, Phase 0.6).** Default: settings are NOT persisted to a new column — the run pins `flowRevisionId` (M10) whose `manifest` jsonb already carries the node `settings`; the enforcement evaluator and the run-detail UI read settings from the pinned manifest. If Phase 0.6 concludes a *resolved enforcement verdict snapshot* is needed for audit (which classes were `enforced/instructed/refused` at launch), add `node_attempts.enforcement_snapshot jsonb` (M11a table) in migration **`0012`** (P3 — `0010`=M11a < `0011`=M11b < `0012`=M11c-if-needed; NOT `0011`, which M11b owns). | `web/lib/db/schema.ts`, `web/lib/db/migrations/0012_*.sql` (only if needed) | EITHER an explicit "no schema change — settings read from pinned manifest" note + zero migration, OR additive `0012` with both ERD artifacts updated (0.6) |
 | 2.2 | If 2.1 adds a column: type export (`NodeAttempt` extended) + drizzle peer-dep `as any` cast pattern matching existing usage | `web/lib/db/schema.ts` | — |
 
 > **DB symmetry note (skill-context):** no YAML→DB *removable* settings field is
@@ -452,7 +452,7 @@ Run locally: `pnpm --filter maister-web test:unit`,
    сломал бы back-compat.)
 5. **Снапшот вердиктов в ledger.** Нужен ли `node_attempts.enforcement_snapshot
    jsonb` для аудита (что было enforced/instructed/refused на момент launch),
-   или достаточно читать из pinned-манифеста (без миграции 0010)?
+   или достаточно читать из pinned-манифеста (без миграции 0012)?
 6. **Разнос критерия #1.** node-settings-shape → M11c; MCP/tool/skill/agent/
    restriction-refs → M14; roles → M13. M11c НЕ дублирует M14/M13. Согласен,
    чтобы критерии оставались distinct?
@@ -460,6 +460,6 @@ Run locally: `pnpm --filter maister-web test:unit`,
    (ADR open question). Норм, или хочешь хотя бы time-limit enforcement уже
    сейчас?
 8. ✅ **M11a реализован** (HEAD = M11a, не M10): `nodes[]`/`node_attempts`/
-   graph-runner/`SETTINGS_NOT_ENFORCED_WARN` на месте, ceiling ADR-025 / mig 0008.
-   Остаётся подтвердить: M11b мёржится до старта M11c (ADR-026 + mig 0009 → тогда
-   M11c = 027-028 + 0010-if-needed; иначе M11c сдвигается на 026/0009).
+   graph-runner/`SETTINGS_NOT_ENFORCED_WARN` на месте, ceiling ADR-029 / mig 0010.
+   Остаётся подтвердить: M11b мёржится до старта M11c (ADR-030 + mig 0011 → тогда
+   M11c = 031-032 + 0012-if-needed).

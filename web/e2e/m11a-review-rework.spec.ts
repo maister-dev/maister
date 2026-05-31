@@ -1,4 +1,4 @@
-// M11a (ADR-024): graph review HITL → rework decision, end-to-end through the
+// M11a (ADR-028): graph review HITL → rework decision, end-to-end through the
 // real UI + respond route. The fixture (e2e/_seed/seed-e2e.ts) parks a run in
 // NeedsInput with a `human` review HITL whose schema declares the
 // approve/rework allow-list.

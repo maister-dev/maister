@@ -2,7 +2,7 @@
 
 All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 `VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), plus the two **M11a (Implemented)**
-execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0008`).
+execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`).
 For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md).
@@ -233,7 +233,7 @@ erDiagram
 ## Planned roadmap extensions
 
 The ERD shows implemented tables plus the M11a-Designed `node_attempts` /
-`gate_results` (migration `0008`). The remaining roadmap M12-M18 additive
+`gate_results` (migration `0010`). The remaining roadmap M12-M18 additive
 persistence — artifacts and artifact edges, assignments, capability records, API
 tokens, external operation events, and branch promotion metadata — is not drawn
 until its migrations exist. See [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).

@@ -99,7 +99,7 @@ function balancedJsonObjects(s: string): string[] {
 // find the LAST brace-balanced JSON object in the agent's text that carries a
 // string `verdict` (handles nested objects). Returns null when none is found
 // (caller records a `failed` gate with the raw prose as evidence — never a
-// thrown domain code, ADR-024).
+// thrown domain code, ADR-028).
 export function parseVerdict(output: string): GateVerdict | null {
   const candidates = balancedJsonObjects(output);
 
@@ -137,7 +137,7 @@ export function isPassVerdict(verdict: string): boolean {
 // row per gate. A `blocking` gate that fails aborts the node finish (caller
 // fails the run); an `advisory` gate records its verdict and the node
 // continues. Deferred kinds (artifact_required, external_check) are recorded as
-// skipped/pending — never silently passed. (ADR-024)
+// skipped/pending — never silently passed. (ADR-028)
 export async function runNodeGates(
   node: CompiledNode,
   nodeAttemptId: string,
@@ -311,7 +311,7 @@ async function runOneGate(
 
       if (!verdict) {
         // Unparseable verdict is a `failed` gate with raw prose as evidence —
-        // NOT a thrown MaisterError code (ADR-008 closed union / ADR-024).
+        // NOT a thrown MaisterError code (ADR-008 closed union / ADR-028).
         await markGateFailed(
           id,
           { verdict: "unparseable", reasons: [summarize(res.stdout)] },

@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 // Playwright global setup for the authenticated/seeded e2e suite. Runs once
 // before any test: provisions the dedicated e2e database, applies the schema
-// migrations (incl. M11a 0008_m11a_graph_ledger), and plants the review→rework
+// migrations (incl. M11a 0010_m11a_graph_ledger), and plants the review→rework
 // fixture. Auth (storageState) is handled separately by e2e/auth.setup.ts so
 // it runs after the webServer is ready.
 import { execSync } from "node:child_process";

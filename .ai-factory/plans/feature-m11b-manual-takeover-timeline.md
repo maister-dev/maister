@@ -6,7 +6,7 @@
 
 ## Context
 
-M11 ("Flow graph maturity") was split into **M11a / M11b / M11c** (ADR-025,
+M11 ("Flow graph maturity") was split into **M11a / M11b / M11c** (ADR-029,
 landed by the M11a plan). M11a ships the execution-model foundation: Flow graph
 v1 manifest + node lifecycle compile + append-only `node_attempts` ledger +
 review-driven rework loop + full-featured gate execution
@@ -73,19 +73,19 @@ handoff, returned commit, and rerun result.
    graph runner reruns the declared validation path) or on release/abandon
    (→ back to `NeedsInput` or `Abandoned`). It counts against the global
    concurrency cap (ADR-009) exactly like `Running`/`NeedsInput`, because a
-   claimed worktree holds a real slot. → **ADR-026**.
+   claimed worktree holds a real slot. → **ADR-030**.
 2. **Manual takeover is a LOCAL worktree handoff** (ADR-011-consistent). The
    takeover branch **IS the existing run branch** (`workspaces.branch`); no new
    target/PR/base-branch selection (that is M18). MAIster exposes the existing
    `worktree_path` + branch; the reviewer commits in place on the same host.
-   No git push, no remote, no network op. → **ADR-026**.
+   No git push, no remote, no network op. → **ADR-030**.
 3. **Return records commits + diff MINIMALLY as raw text in the ledger.** The
    return route runs `git log <base>..<branch>` (oneline) and
    `git diff <base>..<branch>` against the *existing* worktree, stores the raw
    output in the takeover `node_attempts` row's `vars` jsonb (and/or dedicated
    columns added in Phase 2). The full typed `commit_set`/`diff` *artifact
    instances* + evidence-graph explorer are **M12** — M11b does not create
-   artifact rows. → **ADR-026**.
+   artifact rows. → **ADR-030**.
 4. **On return, reuse M11a staleness.** The return path resolves the validation
    re-entry node from the **current `human_review` node's `transitions.takeover`**
    (NOT a hard-coded id) and stales **the re-entry node AND its downstream** —
@@ -100,12 +100,12 @@ handoff, returned commit, and rerun result.
    `web/lib/flows/graph/ledger.ts`. This flips the re-entry + downstream
    `node_attempts`→`Stale` + their `gate_results`→`stale`, then the graph runner
    resumes at the re-entry so those gates rerun over the human's commits and a
-   fresh `human_review` gate is produced. No new staleness machinery. → **ADR-026**.
+   fresh `human_review` gate is produced. No new staleness machinery. → **ADR-030**.
 5. **No new `MaisterError` code** (ADR-008 closed union). Takeover precondition
    failures map to existing codes: not-claimable / wrong-state → `PRECONDITION`
    (409); concurrent claim or conflicting return → `CONFLICT` (409); git op
    failure on return → `CONFLICT` (the `worktree.ts` convention for failed git
-   ops). → **ADR-026**.
+   ops). → **ADR-030**.
 
 ## Settings
 
@@ -124,7 +124,7 @@ This milestone is executed **spec-first then test-first**. Two disciplines bind
 every phase; both are gates, not suggestions.
 
 **SDD — the spec is the frozen contract.** Phase 0 produces the normative
-artifacts (ADR-026, the run/HITL/manual-takeover analytics, `web.openapi.yaml`
+artifacts (ADR-030, the run/HITL/manual-takeover analytics, `web.openapi.yaml`
 for the two routes, the ERD, the failure-classification table, and the
 per-route identifier-trust tables). These are **frozen before Phase 1**. Task
 **0.11** authors a **spec→test traceability matrix** that maps every normative
@@ -195,7 +195,7 @@ consumed directly by M11b:
 - The migrated `aif` flow on `nodes[]` reaching a `human_review` node.
 
 Phase ordering below puts the M11a-consumption surface (Phase 0 design +
-Phase 2 schema additive to M11a's `0008`) first, then the worktree git ops
+Phase 2 schema additive to M11a's `0010`) first, then the worktree git ops
 (Phase 1, the one piece M11b owns end-to-end and can build in parallel), then
 the takeover state machine + routes that need the ledger.
 
@@ -287,11 +287,11 @@ artifact below exists, cross-references resolve, and implementation-status tags
 
 | # | Task | Files | Acceptance |
 | - | ---- | ----- | ---------- |
-| 0.1 | ADR-026 (manual-takeover local worktree handoff: `HumanWorking` real status, existing run branch, raw `git log`/`git diff` recorded, reuse M11a staleness, no new MaisterError code) | `docs/decisions.md` (append, index row) | 1 ADR `Accepted`, sequential after ADR-025 (M11a), template-conformant; cites ADR-006/008/009/011/018/021/024/025 |
+| 0.1 | ADR-030 (manual-takeover local worktree handoff: `HumanWorking` real status, existing run branch, raw `git log`/`git diff` recorded, reuse M11a staleness, no new MaisterError code) | `docs/decisions.md` (append, index row) | 1 ADR `Accepted`, sequential after ADR-029 (M11a), template-conformant; cites ADR-006/008/009/011/018/021/028/029 |
 | 0.2 | Update run state machine for `HumanWorking`: add the enum state + transitions `NeedsInput→HumanWorking` (claim), `HumanWorking→Running` (return → rerun validation path), `HumanWorking→NeedsInput` (release without changes), `HumanWorking→Abandoned` (abandon). **MUST state three invariants:** (1) `HumanWorking` is a REAL run status (unlike M11a rework, which is a node-pointer move within `Running`); (2) `HumanWorking` counts against the global cap exactly like `Running`/`NeedsInput` (ADR-009) — a claimed worktree holds a slot; (3) the takeover branch IS `workspaces.branch` (no new branch/target — M18); **(4) (P6) `HumanWorking` is session-less BY DESIGN (the human edits locally, no live ACP session) yet HOLDS a worktree — so it MUST be EXCLUDED from the startup recovery sweep classification — as-built that orphan→`Crashed` path is `runResumeRecoverySweep` in `web/lib/runs/resume-recovery.ts` (there is NO `reconcile.ts`), whose SELECT filters `status='NeedsInput'`, so `HumanWorking` is excluded by construction; and the "at most one live ACP session" invariant in `runs.md` must be amended to "`HumanWorking` runs intentionally have no live session"** | `docs/system-analytics/runs.md` | new state drawn in the `stateDiagram-v2`; recovery flowchart confirms `HumanWorking` is excluded; "at most one live ACP session" invariant updated; status names match `runs.status` enum exactly |
 | 0.3 | Update HITL flow for the `takeover` decision: the `human_review` HITL's `takeover` decision drives `NeedsInput→HumanWorking` (a state transition, not an artifact write); on **return**, the validation re-entry mirrors the M11a rework re-entry but is triggered by the takeover return, not a reviewer `rework` decision. Mark the live HITL `permission/form/human` paths unchanged | `docs/system-analytics/hitl.md` | takeover decision tree + return sequence drawn; states the return path is two-phase (claim intent → git/ledger side-effect → AFTER-side marker) |
 | 0.4 | New system-analytics doc: manual-takeover domain (per `docs/CLAUDE.md` R5 — Purpose / Domain entities / State machine / Process flows / Expectations / Edge cases / Linked). Cover claim, the exposed worktree contract, return (`git log`/`git diff` capture), downstream staleness, rerun, and the run-detail timeline read model | `docs/system-analytics/manual-takeover.md` (new) | every claim/return precondition + transition enumerated **exactly as code will gate** (allow-list shape); timeline read model (current-vs-stale) specified |
-| 0.5 | ERD: `node_attempts` takeover columns (`owner_user_id`, `returned_commits`, `returned_diff`, `base_ref`) and the `HumanWorking` run status; document that M11b's migration is `0009` (additive to M11a's `0008`) (BOTH artifacts) | `docs/database-schema.md` + `docs/db/runs-domain.md` (+ `docs/db/erd.md`) | narrative AND Mermaid `erDiagram` both updated; M11a `node_attempts` table shown with the new columns appended |
+| 0.5 | ERD: `node_attempts` takeover columns (`owner_user_id`, `returned_commits`, `returned_diff`, `base_ref`) and the `HumanWorking` run status; document that M11b's migration is `0011` (additive to M11a's `0010`) (BOTH artifacts) | `docs/database-schema.md` + `docs/db/runs-domain.md` (+ `docs/db/erd.md`) | narrative AND Mermaid `erDiagram` both updated; M11a `node_attempts` table shown with the new columns appended |
 | 0.6 | API contract: new routes `POST /api/runs/{runId}/takeover/claim` and `POST /api/runs/{runId}/takeover/return`. Document method, path, request body (claim: empty; return: empty — `git log`/`git diff` run server-side against the pinned worktree, NO body-controlled refs), status codes (claim: 200 / 401 / 403 / 404 / 409; return: 200 / 401 / 403 / 404 / 409 / 503), and the per-route identifier-trust table. Document the two-phase return commit + failure-classification | `docs/api/web.openapi.yaml` | both routes present with bodies, statuses, example payloads; identifier-trust table inline in prose; return route documents idempotency marker on AFTER side |
 | 0.7 | Promote `docs/flow-dsl.md` "Planned M11" manual-takeover paragraph (`flow-dsl.md:182-186`) → Implemented for the **M11b subset**; tag the typed `commit_set`/`diff` artifact half as **M12-Designed** and the `human_edit`/`merge` node types as **M18-Designed**. Note the run-detail timeline in the run domain. **(P9) ALSO fix `flow-dsl.md:107`: the canonical example currently wires `transitions.takeover → human-edit` (an M18 node type); change it so `takeover` routes to a real M11a validation node (`checks`) matching the M11b runtime, and annotate that the `human_edit` node TYPE remains M18-Designed.** | `docs/flow-dsl.md` | manual-takeover prose marked Implemented for the local-handoff subset; artifact-instance + node-type halves tagged deferred; `:107` example points `takeover → checks`, not `human-edit` |
 | 0.8 | **Contract-surface tracing table** (skill-context): map each changing surface → spec file (see below) | this plan + Phase 0 docs | every surface in the table has an owning task |
@@ -307,7 +307,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 | New `POST /api/runs/{runId}/takeover/claim` route (path, method, statuses, body, two-phase semantics) | `docs/api/web.openapi.yaml` + this route prose |
 | New `POST /api/runs/{runId}/takeover/return` route (path, method, statuses, body, two-phase + failure table) | `docs/api/web.openapi.yaml` + this route prose |
 | New `runs.status` value `HumanWorking` (enum change) | `web/lib/db/schema.ts` + `docs/database-schema.md` + `docs/db/runs-domain.md` + `docs/system-analytics/runs.md` |
-| New `node_attempts` columns (`owner_user_id`, `returned_commits`, `returned_diff`, `base_ref`) | migration `0009` + `docs/database-schema.md` + `docs/db/runs-domain.md` ERD |
+| New `node_attempts` columns (`owner_user_id`, `returned_commits`, `returned_diff`, `base_ref`) | migration `0011` + `docs/database-schema.md` + `docs/db/runs-domain.md` ERD |
 | New `worktree.ts` read-only git ops (`logRange`, `diffRange`) — internal lib, not a wire surface | `docs/system-analytics/manual-takeover.md` + `docs/system-analytics/workspaces.md` (note the new ops) |
 | Run-detail timeline read model (current-vs-stale gates, attempts, handoffs) | `docs/system-analytics/manual-takeover.md` + `docs/system-analytics/runs.md` |
 | (none — see note) M11b adds **NO new `MaisterError` code** (closed union, ADR-008) | `docs/error-taxonomy.md` unchanged; takeover precondition → `PRECONDITION`/`CONFLICT`; git-op failure → `CONFLICT` |
@@ -341,7 +341,7 @@ Phases 1–6. No row may ship green until its mechanism matches its AC prose.
 | `return` stales `[reentryNode, …downstreamOf]` incl. re-entry's prior gate | `takeover.integration.test.ts::return-stales-reentry-and-downstream` | AC-4 | V4 |
 | runner resumes at `transitions.takeover` (`checks`), staled gates rerun → fresh `human_review` | `takeover.integration.test.ts::resume-reruns-staled-gates` | AC-4 | V4 |
 | `HumanWorking` holds a cap slot through BOTH predicates (`scheduler.ts:78`+`:160`) | `scheduler.integration.test.ts::humanworking-occupies-slot-both-paths` | AC-1 | V1 |
-| `HumanWorking` excluded from recovery sweep (survives restart, not `Crashed`) | `resume-recovery.test.ts::humanworking-survives-restart` | (ADR-026) | V1 |
+| `HumanWorking` excluded from recovery sweep (survives restart, not `Crashed`) | `resume-recovery.test.ts::humanworking-survives-restart` | (ADR-030) | V1 |
 | `logRange`/`diffRange`/`resolveBaseRef` + ref/path validation + diff truncation marker | `worktree-range.test.ts::*` | AC-3 | V3 |
 | Timeline current-vs-stale gates + handoff block (owner/elapsed/branch/commits/diff) | `run-timeline.integration.test.ts::*` + `run-timeline.test.ts::*` | AC-5 | V5/V6 |
 | Board: `HumanWorking` in-flight + owner/elapsed/branch/return, distinct from running | `board*.test.ts::*` + `flight-card*.test.ts::*` | AC-2 | V2 |
@@ -372,15 +372,15 @@ push, no checkout-switch (the worktree is already on the run branch).
 
 ---
 
-## Phase 2 — DB migration `0009`: `HumanWorking` status + `node_attempts` takeover columns
+## Phase 2 — DB migration `0011`: `HumanWorking` status + `node_attempts` takeover columns
 
-Additive to M11a's `0008`. Depends on M11a's `node_attempts` table existing.
+Additive to M11a's `0010`. Depends on M11a's `node_attempts` table existing.
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
 | 2.0 (RED) | Author the failing tests for ALL Phase-2 **behavior** before the helpers exist: (a) ledger `claimTakeover`/`recordTakeoverReturn`/`getActiveTakeover` append + read; (b) CAS `markHumanWorking`/`markReturnedToRunning`/`releaseHumanWorking` status-guard idempotency (concurrent loser → `{ok:false}` → 409); (c) scheduler counts `HumanWorking` through BOTH the initial-promote (`scheduler.ts:78`) AND under-lock-recheck (`:160`) predicates; (d) a `HumanWorking` run **survives a simulated restart** without flipping `Crashed`. **Integration seeds MUST insert a real `flows` row and thread a non-null `flowId` into `tasks`/`runs` (NOT-NULL + FK since `0000`, patch 14.34); unique fixture ids per test (no shared mutable rows).** Run and **watch all fail** | `web/lib/runs/__tests__/state-transitions.integration.test.ts` (extend), `web/lib/__tests__/scheduler.integration.test.ts` (extend), `web/lib/flows/graph/__tests__/ledger.test.ts`, `web/lib/runs/__tests__/resume-recovery.test.ts` | RED verified; seeds non-null `flowId`; per-test isolation; owns matrix rows `humanworking-occupies-slot-both-paths` + `humanworking-survives-restart` |
-| 2.1 (schema) | Add `HumanWorking` to the `runs.status` enum union in the Drizzle schema; the Postgres column is `text` (enum constraint enforced in TS), so the migration is a metadata-only change — confirm `drizzle-kit generate` emits an additive `0009` (no destructive alter). Update `RunStatus` type consumers | `web/lib/db/schema.ts`, `web/lib/db/migrations/0009_*.sql` | `RunStatus` includes `HumanWorking`; migration additive; existing rows unaffected |
-| 2.2 (schema) | Add takeover columns to M11a's `node_attempts`: `owner_user_id text` (FK → `users.id`, `ON DELETE SET NULL`), `base_ref text`, `returned_commits text`, `returned_diff text` (raw git output; nullable — only the takeover attempt rows populate them). Index unchanged (already `(run_id)`) | `web/lib/db/schema.ts`, migration `0009` | columns additive; only takeover attempts populate them; FK to users |
+| 2.1 (schema) | Add `HumanWorking` to the `runs.status` enum union in the Drizzle schema; the Postgres column is `text` (enum constraint enforced in TS), so the migration is a metadata-only change — confirm `drizzle-kit generate` emits an additive `0011` (no destructive alter). Update `RunStatus` type consumers | `web/lib/db/schema.ts`, `web/lib/db/migrations/0011_*.sql` | `RunStatus` includes `HumanWorking`; migration additive; existing rows unaffected |
+| 2.2 (schema) | Add takeover columns to M11a's `node_attempts`: `owner_user_id text` (FK → `users.id`, `ON DELETE SET NULL`), `base_ref text`, `returned_commits text`, `returned_diff text` (raw git output; nullable — only the takeover attempt rows populate them). Index unchanged (already `(run_id)`) | `web/lib/db/schema.ts`, migration `0011` | columns additive; only takeover attempts populate them; FK to users |
 | 2.3 (GREEN) | Takeover ledger helpers extending M11a's `web/lib/flows/graph/ledger.ts`: `claimTakeover({ runId, nodeId, userId })` (append a `node_attempts` row of the human node with `status='NeedsInput'`-equivalent takeover marker + `owner_user_id`), `recordTakeoverReturn({ runId, nodeId, baseRef, returnedCommits, returnedDiff })`, `getActiveTakeover(runId)` | `web/lib/flows/graph/ledger.ts` (extend) | DEBUG log per transition incl. attempt number + owner; helpers reuse `nextAttemptFor` |
 | 2.4 (GREEN) | Run state-transition helpers (mirror M8 `web/lib/runs/state-transitions.ts` CAS pattern): `markHumanWorking(runId, userId)` (`UPDATE runs SET status='HumanWorking' WHERE id=:id AND status='NeedsInput'`), `markReturnedToRunning(runId)` (`… status='Running' WHERE id=:id AND status='HumanWorking'`), `releaseHumanWorking(runId)` (`… status='NeedsInput' WHERE id=:id AND status='HumanWorking'`) — all status-guarded for idempotency | `web/lib/runs/state-transitions.ts` (extend) | each helper returns `{ok}`; concurrent claim loses the CAS → `{ok:false}` → 409; no direct `runs.status` writes outside helpers |
 | 2.5 (GREEN) | Scheduler cap: add `HumanWorking` to the cap predicate (ADR-009 — a claimed worktree holds a slot). **(P6) Update BOTH sites in `web/lib/scheduler.ts` — the initial-promote predicate (`scheduler.ts:78`) AND the under-advisory-lock recheck predicate (`scheduler.ts:160`); as-built both read `inArray(runs.status, ["Running", "NeedsInput"])` → add `"HumanWorking"`.** | `web/lib/scheduler.ts` | both predicates include `HumanWorking`; unit test asserts a `HumanWorking` run occupies a slot through BOTH the initial-promote and under-lock-recheck paths |
@@ -516,7 +516,7 @@ Build the timeline on the existing minimal run-detail page. Reads M11a
 **(P5b/P5c)** The M11a auth+seed harness now EXISTS as-built and M11b REUSES it,
 but its shape differs from the original M11a-plan wording — reconcile to reality:
 `web/playwright.config.ts` has `globalSetup` (provisions + seeds the e2e DB,
-applies migrations through `0008`), a `setup` project (`web/e2e/auth.setup.ts`)
+applies migrations through `0010`), a `setup` project (`web/e2e/auth.setup.ts`)
 that signs in the seeded admin and persists `storageState` to the auth file, and
 an `authed` project (`storageState`) whose `testMatch` is **`/m11a-.*\.spec\.ts$/`
 ONLY** (chromium `testIgnore`s the same pattern). The seed
@@ -571,7 +571,7 @@ not a conditional.
 
 1. **Phase 0** → `docs(m11b): manual-takeover ADR + analytics + ERD + openapi + flow-dsl + spec→test matrix`
 2. **Phase 1** → `feat(m11b): worktree logRange/diffRange/resolveBaseRef git ops`
-3. **Phase 2** → `feat(m11b): HumanWorking status + node_attempts takeover columns migration 0009`
+3. **Phase 2** → `feat(m11b): HumanWorking status + node_attempts takeover columns migration 0011`
 4. **Phase 3** → `feat(m11b): takeover claim + two-phase return routes + runner resume`
 5. **Phase 4** → `feat(m11b): run-detail timeline (current vs stale gates, attempts, handoffs)`
 6. **Phase 5** → `feat(m11b): board takeover surface + i18n + aif takeover demo`
@@ -637,8 +637,8 @@ Run locally: `pnpm --filter maister-web test:unit`,
    Достаточно для M11b, или нужен хотя бы diff-stat (+N/−M)?
 7. **Что показывать как "owner" на карточке** — `users.name` или `email`?
    (RBAC у нас есть, имя может быть null.)
-8. ✅ **РЕШЕНО** — M11a закоммитил `0008_m11a_graph_ledger.sql` (ceiling=0008),
-   ADR ceiling=025. M11b забирает `0009` + ADR-026 — оба свободны. Конфликта нет.
+8. ✅ **РЕШЕНО** — M11a закоммитил `0010_m11a_graph_ledger.sql` (ceiling=0010),
+   ADR ceiling=029. M11b забирает `0011` + ADR-030 — оба свободны. Конфликта нет.
 9. **Контракт-тесты (3.0a):** ассертить против самого `web.openapi.yaml`
    программно (грузим YAML → сверяем статусы/тела), или ручные unit-тесты,
    зеркалящие спеку? Программный путь дороже, но ловит дрейф спек↔код напрямую.

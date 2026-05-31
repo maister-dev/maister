@@ -100,7 +100,7 @@ export function assertHitlResponse(response: unknown, schema: unknown): void {
   }
 }
 
-// --- M11a: graph review-decision validation (ADR-024 / Phase 5) ------------
+// --- M11a: graph review-decision validation (ADR-028 / Phase 5) ------------
 // A graph `human_review` HITL stores `{ review: true, allowedDecisions,
 // transitions, reworkTargets, workspacePolicies }` (server-state derived from
 // the pinned manifest at creation). The reviewer's decision rides INSIDE the

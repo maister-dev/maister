@@ -119,7 +119,7 @@ export async function markGateSkipped(
   await transition(id, "skipped", verdict ? { verdict } : {}, db);
 }
 
-// Override-without-erasure (ADR-024): records the deciding HITL in
+// Override-without-erasure (ADR-028): records the deciding HITL in
 // `overridden_by` and sets status `overridden`, but NEVER clears the prior
 // `verdict` — the failed/stale evidence is retained.
 export async function markGateOverridden(

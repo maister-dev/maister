@@ -411,7 +411,7 @@ export const stepRuns = pgTable(
   }),
 );
 
-// --- M11a: Flow graph v1 execution ledger (ADR-023 / ADR-024) -------------
+// --- M11a: Flow graph v1 execution ledger (ADR-027 / ADR-028) -------------
 
 // Append-only per-node-attempt ledger written by the graph runner. `attempt`
 // auto-increments per (run, node); rework never mutates a prior row. Linear
@@ -472,7 +472,7 @@ export const nodeAttempts = pgTable(
   }),
 );
 
-// Structured AI/skill gate verdict (ADR-024). Stored in gate_results.verdict.
+// Structured AI/skill gate verdict (ADR-028). Stored in gate_results.verdict.
 export type GateVerdict = {
   verdict: string;
   confidence?: number;
@@ -549,7 +549,7 @@ export const hitlRequests = pgTable(
     schema: jsonb("schema"),
     prompt: text("prompt").notNull(),
     response: jsonb("response"),
-    // M11a (ADR-024): review-decision fields claimed from response.decision for
+    // M11a (ADR-028): review-decision fields claimed from response.decision for
     // a graph human_review HITL, validated against schema's allow-list.
     decision: text("decision"),
     workspacePolicy: text("workspace_policy"),

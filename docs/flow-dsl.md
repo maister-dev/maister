@@ -31,10 +31,10 @@ the flow) and a `type` chosen from:
 > passthrough in M11a, enforced in M11c); manual takeover / `human_edit` /
 > `merge` nodes → **M11b (Designed)**; typed artifact instances
 > (`input.requires` / `output.produces`) → **M12**. Decisions:
-> [ADR-022](decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump),
-> [ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger),
-> [ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped),
-> [ADR-025](decisions.md#adr-025-split-m11-into-m11a--m11b--m11c). The node
+> [ADR-026](decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
+> [ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger),
+> [ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
+> [ADR-029](decisions.md#adr-029-split-m11-into-m11a--m11b--m11c). The node
 > lifecycle state machine, traversal, staleness, and rework loop are drawn in
 > [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
@@ -227,7 +227,7 @@ markers, and rerun results. Not executed in M11a (no `HumanWorking` run status).
 ## Gate execution (M11a — Implemented)
 
 > **Status (M11a).** Gate execution is **Implemented** in M11a (per
-> [ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)).
+> [ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)).
 > The gate STATUS lifecycle, structured
 > verdicts, blocking/advisory modes, staleness propagation, and
 > override-without-erasure live here, not in M15. M15 (below) keeps only the
@@ -297,7 +297,7 @@ and CI ingestion beyond the generic external gate report contract.
 
 ## Planned M15: readiness policy and verdict calibration
 
-> **Re-scoped (ADR-024).** M11a annexed gate *execution* — the kinds, status
+> **Re-scoped (ADR-028).** M11a annexed gate *execution* — the kinds, status
 > lifecycle, structured verdicts, blocking/advisory modes, staleness, and
 > override-without-erasure now live under **Gate execution (M11a)** above. M15
 > keeps only the readiness-policy DSL, verdict calibration, and `external_check`
@@ -471,7 +471,7 @@ Context paths available inside templates:
 Highest-attempt-wins: when a node has been retried (or reworked, M11a),
 `steps.<id>` resolves to the highest-`attempt` `node_attempts` row, falling back
 to `step_runs` for legacy runs that predate the ledger
-([ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger)).
+([ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger)).
 
 ## env whitelist + secret blocklist
 

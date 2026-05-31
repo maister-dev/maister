@@ -276,8 +276,8 @@ flowchart LR
 ## Linked artifacts
 
 - ADRs: [ADR-010 Flow Engine v2](../decisions.md#adr-010-flow-engine-v2-plugin-packaging--step-dsl),
-  [ADR-022 Graph manifest](../decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump),
-  [ADR-025 M11 split](../decisions.md#adr-025-split-m11-into-m11a--m11b--m11c).
+  [ADR-026 Graph manifest](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
+  [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
 - Graph execution (M11a): [`flow-graph.md`](flow-graph.md).
 - Package lifecycle: [`flow-packages.md`](flow-packages.md).
 - Config reference: [`../configuration.md`](../configuration.md) §`flow.yaml v1`.

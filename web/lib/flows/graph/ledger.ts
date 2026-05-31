@@ -255,7 +255,7 @@ export function latestAttemptByNode(
 // On a rework jump, flip the LATEST attempt of each downstream node
 // `Succeeded -> Stale` and any `passed` gate_results attached to those attempts
 // `-> stale`. Targets only the highest attempt per node so prior (historical)
-// attempts stay immutable (append-only ledger, ADR-023).
+// attempts stay immutable (append-only ledger, ADR-027).
 export async function markDownstreamStale(
   runId: string,
   downstreamNodeIds: string[],

@@ -62,14 +62,14 @@ in an immutable per-attempt ledger. Backwards compatibility: the minimal linear
    flows MUST declare `compat.engine_min: 1.1.0`. Bump
    `MAISTER_ENGINE_VERSION` const `1.0.0 → 1.1.0` (it is a code constant in
    `web/lib/flows/engine-version.ts:14`, **not** an env var — no compose wiring).
-   `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`. → **ADR-022**.
+   `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`. → **ADR-026**.
 2. **Run ledger = new append-only `node_attempts` table.** `attempt`
    auto-increments per `(run_id, node_id)`. Linear `steps[]` flows compile to
    nodes and write `node_attempts` too. `step_runs` is **retained for
    back-compat reads/migration only** — the graph runner writes `node_attempts`
    and templating `steps.<id>.output` / `steps.<id>.vars` reads from
    `node_attempts` (highest-attempt-wins), falling back to `step_runs` for
-   legacy rows. → **ADR-023**.
+   legacy rows. → **ADR-027**.
 3. **Gates are real and full-featured** (user directive) within dependency
    limits: `command_check` + `ai_judgment` + `human_review` fully execute;
    `skill_check` runs a slash command via an agent session (best-effort, no
@@ -78,16 +78,16 @@ in an immutable per-attempt ledger. Backwards compatibility: the minimal linear
    dependencies). Gate status lifecycle
    `pending|running|passed|failed|stale|skipped|overridden`, modes
    `blocking|advisory`, structured verdicts, staleness propagation, and
-   override-without-erasure are all real. → **ADR-024**. **(P4) Because M11a
+   override-without-erasure are all real. → **ADR-028**. **(P4) Because M11a
    takes the gate-EXECUTION engine that the roadmap originally assigned to M15,
-   ADR-024 MUST record M15 as re-scoped to "readiness-policy DSL + verdict
+   ADR-028 MUST record M15 as re-scoped to "readiness-policy DSL + verdict
    calibration + `external_check` ingestion ONLY" — the status lifecycle +
    structured verdicts + override-without-erasure move to M11a. This is a
    recorded DECISION (the user accepted M11a open-Q#5), not an open question.**
 4. **Manual takeover = local worktree handoff** (ADR-011 consistent: no remote
    required). **Recorded now, built in M11b.** No `HumanWorking` run status in
    M11a.
-5. **M11 split** recorded as **ADR-025**; roadmap renumbered M11 → M11a/M11b/M11c
+5. **M11 split** recorded as **ADR-029**; roadmap renumbered M11 → M11a/M11b/M11c
    via the roadmap owner (`/aif-roadmap`), not edited directly by this command.
 
 ## Settings
@@ -177,7 +177,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 
 | # | Task | Files | Acceptance |
 | - | ---- | ----- | ---------- |
-| 0.1 | ADR-022 (graph manifest + engine bump), ADR-023 (node_attempts ledger), ADR-024 (full-featured gates + deferred kinds), ADR-025 (M11 split M11a/b/c) | `docs/decisions.md` (append, index rows) | 4 ADRs `Accepted`, sequential, template-conformant |
+| 0.1 | ADR-026 (graph manifest + engine bump), ADR-027 (node_attempts ledger), ADR-028 (full-featured gates + deferred kinds), ADR-029 (M11 split M11a/b/c) | `docs/decisions.md` (append, index rows) | 4 ADRs `Accepted`, sequential, template-conformant |
 | 0.2 | Roadmap renumber M11 → M11a/M11b/M11c (delegate to roadmap owner) — distribute the 8 roadmap criteria **exactly per the "Acceptance Criteria (M11a)" carve above** (M11a owns AC-1..AC-8; #4/#5/#7-takeover/#8-takeover → M11b; #6/#8-settings → M11c; #1-roles → M13; #1-MCP/tool/skill/agent/restriction → M14; **#1 node-level executor refs → M11c**). **(P4) ALSO re-scope roadmap M15 in the same renumber**: M11a annexes the gate-EXECUTION engine, so M15 becomes "readiness-policy DSL + verdict calibration + `external_check` ingestion ONLY" — record this so M15 does not read as a duplicate/false-failure. | `.ai-factory/ROADMAP.md` via `/aif-roadmap` | M11a/b/c entries carry the carved criteria with **no clause dropped and none double-listed**; M15 re-scope recorded; **ownership boundary respected** (not hand-edited here) |
 | 0.3 | New system-analytics doc: node lifecycle state machine, graph traversal, gate execution, staleness, rework loop (per `docs/CLAUDE.md` R5 — Purpose/Entities/State machine/Process flows/Expectations/Edge cases/Linked). **(P7) MUST include a status-casing + mapping note:** `node_attempts.status` is PascalCase (`Pending\|Running\|Succeeded\|Failed\|NeedsInput\|Reworked\|Stale`, extending `step_runs` vocab — it ADDS `Reworked`/`Stale`, OMITS `Skipped`) while `gate_results.status` is lowercase (`pending\|…\|overridden`, the M15 gate vocabulary). State this dual-casing is **intentional** (node lifecycle vs gate verdict are distinct domains) and give the legacy `step_runs`→`node_attempts` value mapping used by the templating highest-attempt-wins union | `docs/system-analytics/flow-graph.md` (new) | Every node-attempt transition + every gate refusal/precondition enumerated **exactly as code will gate** (allow-list shape); dual-casing + step_runs mapping stated |
 | 0.4 | Update run state machine (rework loop: review→rework target, NeedsInput re-entry), HITL decision flow (declared decisions vs raw goto_step) | `docs/system-analytics/runs.md`, `docs/system-analytics/hitl.md`, `docs/system-analytics/flows.md` | rework path drawn; `on_reject.goto_step` marked superseded-by-`transitions`. **MUST also state three invariants** so the analytics don't over-claim: (1) rework is a **node-pointer move within `Running`**, NOT a new run status (no `HumanWorking` in M11a); (2) `runs.current_step_id` now carries the **node id** (≡ step id for compiled-linear) and the existing fail-closed check applies to the compiled graph; (3) M11a `gate_results` **feed but do not gate promotion** — the `runs.md` promote sequence's "verify required gates" is M15/M18 scope, not M11a |
@@ -191,7 +191,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 | Surface | Spec file |
 | ------- | --------- |
 | `respond` route body gains `decision`/`comments`/`workspacePolicy` (load-bearing) | `docs/api/web.openapi.yaml` + this route prose |
-| New `node_attempts`, `gate_results` tables; `hitl_requests` columns | migration `0008` + `docs/database-schema.md` + `docs/db/runs-domain.md` ERD |
+| New `node_attempts`, `gate_results` tables; `hitl_requests` columns | migration `0010` + `docs/database-schema.md` + `docs/db/runs-domain.md` ERD |
 | New manifest `nodes[]` + node/gate types/fields | `docs/flow-dsl.md` + `web/lib/config.schema.ts` |
 | (none — see D) M11a adds **NO new `MaisterError` code** (closed union, ADR-008) | `docs/error-taxonomy.md` unchanged; gate verdict-parse failure = `gate_results.status='failed'`, not a thrown code |
 | `MAISTER_ENGINE_VERSION` const bump (NOT an env var) | `docs/configuration.md` engine-version note + `docs/flow-dsl.md` |
@@ -215,13 +215,13 @@ artifact below exists, cross-references resolve, and implementation-status tags
 
 ---
 
-## Phase 2 — DB migration `0008` + ledger + gate-result helpers
+## Phase 2 — DB migration `0010` + ledger + gate-result helpers
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 2.1 | `node_attempts` table: `id`, `run_id` FK, `node_id`, `node_type`, `attempt` (auto-increment per run+node), `status` (`Pending\|Running\|Succeeded\|Failed\|NeedsInput\|Reworked\|Stale`), `decision?`, `workspace_policy?`, `rework_from_node?`, `acp_session_id?`, `stdout?`, `vars jsonb`, `exit_code?`, `error_code?`, `started_at`, `ended_at?`; UNIQUE `(run_id, node_id, attempt)`; index `(run_id)` | `web/lib/db/schema.ts`, `web/lib/db/migrations/0008_*.sql` | append-only; migration additive; `pnpm drizzle-kit` generates 0008 |
-| 2.2 | `gate_results` table: `id`, `run_id` FK, `node_attempt_id` FK, `gate_id`, `kind`, `mode`, `status` (`pending\|running\|passed\|failed\|stale\|skipped\|overridden`), `verdict jsonb` (structured: verdict/confidence/reasons/recommendedAction), `input_artifact_refs jsonb`, `output_artifact_ref?`, `stale_from jsonb`, `overridden_by?`, `created_at`, `ended_at?`; index `(run_id)`, `(node_attempt_id)` | `web/lib/db/schema.ts`, migration `0008` | covers full status lifecycle |
-| 2.3 | `hitl_requests` columns for review decisions: `decision text?`, `workspace_policy text?`, `rework_target text?`; enrich `schema` jsonb at creation with manifest-derived `allowedDecisions`/`transitions`/`reworkTargets`/`workspacePolicies` (server-state for validation) | `web/lib/db/schema.ts`, migration `0008` | additive; existing rows unaffected |
+| 2.1 | `node_attempts` table: `id`, `run_id` FK, `node_id`, `node_type`, `attempt` (auto-increment per run+node), `status` (`Pending\|Running\|Succeeded\|Failed\|NeedsInput\|Reworked\|Stale`), `decision?`, `workspace_policy?`, `rework_from_node?`, `acp_session_id?`, `stdout?`, `vars jsonb`, `exit_code?`, `error_code?`, `started_at`, `ended_at?`; UNIQUE `(run_id, node_id, attempt)`; index `(run_id)` | `web/lib/db/schema.ts`, `web/lib/db/migrations/0010_*.sql` | append-only; migration additive; `pnpm drizzle-kit` generates 0010 |
+| 2.2 | `gate_results` table: `id`, `run_id` FK, `node_attempt_id` FK, `gate_id`, `kind`, `mode`, `status` (`pending\|running\|passed\|failed\|stale\|skipped\|overridden`), `verdict jsonb` (structured: verdict/confidence/reasons/recommendedAction), `input_artifact_refs jsonb`, `output_artifact_ref?`, `stale_from jsonb`, `overridden_by?`, `created_at`, `ended_at?`; index `(run_id)`, `(node_attempt_id)` | `web/lib/db/schema.ts`, migration `0010` | covers full status lifecycle |
+| 2.3 | `hitl_requests` columns for review decisions: `decision text?`, `workspace_policy text?`, `rework_target text?`; enrich `schema` jsonb at creation with manifest-derived `allowedDecisions`/`transitions`/`reworkTargets`/`workspacePolicies` (server-state for validation) | `web/lib/db/schema.ts`, migration `0010` | additive; existing rows unaffected |
 | 2.4 | Ledger helpers: `appendNodeAttempt`, `markNodeRunning/Succeeded/Failed/NeedsInput/Reworked`, `getNodeAttemptsForRun`, `nextAttemptFor(run,node)`, `markDownstreamStale(run, fromNode, graph)` (sets `node_attempts.status='Stale'` + dependent `gate_results.status='stale'`) | `web/lib/flows/graph/ledger.ts` (new) | DEBUG log on each transition incl. attempt number |
 | 2.5 | Gate-result helpers: `createGateResult`, `markGatePassed/Failed/Stale/Skipped/Overridden`, structured-verdict writer | `web/lib/flows/graph/gate-store.ts` (new) | verdict jsonb shape asserted in tests |
 | 2.6 | Type exports (`NodeAttempt`, `GateResult`) + drizzle peer-dep `as any` cast pattern matching existing `runner.ts:42` | `web/lib/db/schema.ts` | — |
@@ -389,7 +389,7 @@ Run locally: `pnpm --filter maister-web test:unit`,
 2. **`skill_check` без скоупинга** в M11a (полный capability-скоупинг = M14) — приемлемо как "best-effort"?
 3. **`artifact_required` / `external_check`**: в M11a только схема+статус, без исполнения (M12 / M16). Норм, или один из них нужен исполняемым уже сейчас?
 4. **workspacePolicy**: в M11a реально работает только `keep`; `rewind-to-checkpoint`/`fresh-attempt` — записываются, но исполнение в M11b. Ок?
-5. ✅ **РЕШЕНО (user: «все так»)** — Гейты "full-featured" vs M15: M11a забирает исполнение гейтов; M15 ре-скоупится в "readiness-policy DSL + калибровка вердиктов + ingestion external_check". Зафиксировано в ADR-024 + Phase 0.2 roadmap-renumber + Phase 0.7 flow-dsl (P4).
+5. ✅ **РЕШЕНО (user: «все так»)** — Гейты "full-featured" vs M15: M11a забирает исполнение гейтов; M15 ре-скоупится в "readiness-policy DSL + калибровка вердиктов + ingestion external_check". Зафиксировано в ADR-028 + Phase 0.2 roadmap-renumber + Phase 0.7 flow-dsl (P4).
 6. **`node_attempts` заменяет `step_runs`** для graph-флоу (step_runs только legacy-чтение). Не против постепенной депрекации step_runs?
 7. **Разнос критерия #1 роадмапа**: валидация ролей → M13, MCP/tool/skill/node-executor → M14 (в M11a НЕ дублируем — иначе пересечение с M13/M14). Согласен с такой передачей, чтобы критерии были distinct?
 8. **`settings` в M11a**: парсим как opaque passthrough + WARN (без enforcement до M11c) — ок, или лучше жёстко reject `settings` в M11a?

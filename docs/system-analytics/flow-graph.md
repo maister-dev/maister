@@ -7,10 +7,10 @@
 > node `settings` enforcement → **M11c**; typed artifact instances + the
 > `artifact_required` gate → **M12**; `external_check` ingestion → **M16**;
 > promotion-gating readiness policy → **M15**. Decisions:
-> [ADR-022](../decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump),
-> [ADR-023](../decisions.md#adr-023-append-only-node_attempts-run-ledger),
-> [ADR-024](../decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped),
-> [ADR-025](../decisions.md#adr-025-split-m11-into-m11a--m11b--m11c).
+> [ADR-026](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
+> [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
+> [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
+> [ADR-029](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
 
 ## Purpose
 
@@ -76,7 +76,7 @@ stateDiagram-v2
 ## State machine — gate result (verdict axis)
 
 A gate result is lowercase — the M15 gate-verdict vocabulary
-([ADR-024](../decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)).
+([ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)).
 
 ```mermaid
 stateDiagram-v2
@@ -112,7 +112,7 @@ un-confusable in code and queries:
 a *gate* is, via `gate_results.status = 'skipped'`).
 
 **Legacy `step_runs` → `node_attempts` mapping** (templating
-highest-attempt-wins union, [ADR-023](../decisions.md#adr-023-append-only-node_attempts-run-ledger)):
+highest-attempt-wins union, [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger)):
 the five overlapping values map **identically** (`Pending→Pending`,
 `Running→Running`, `Succeeded→Succeeded`, `Failed→Failed`,
 `NeedsInput→NeedsInput`). `step_runs.Skipped` has no `node_attempts` counterpart;
@@ -284,10 +284,10 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 ## Linked artifacts
 
 - ADRs:
-  [ADR-022 Graph manifest](../decisions.md#adr-022-flow-graph-manifest-v1-nodes--engine-version-bump),
-  [ADR-023 node_attempts ledger](../decisions.md#adr-023-append-only-node_attempts-run-ledger),
-  [ADR-024 Gate execution](../decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped),
-  [ADR-025 M11 split](../decisions.md#adr-025-split-m11-into-m11a--m11b--m11c).
+  [ADR-026 Graph manifest](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
+  [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
+  [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
+  [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   narrative [`../database-schema.md`](../database-schema.md).
 - DSL: [`../flow-dsl.md`](../flow-dsl.md) §Flow graph node lifecycle, §Gate

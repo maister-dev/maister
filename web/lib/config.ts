@@ -262,7 +262,7 @@ function nodeActionTemplate(node: NodeDef): string | undefined {
 // Detects a cycle in the transition graph that is NOT bounded by a `rework`
 // block. A cycle is "safe" only if at least one node on it declares `rework`
 // (which forces a `maxLoops`). Returns the offending cycle node-id path, or
-// null when every cycle is bounded (ADR-022 / AC-2).
+// null when every cycle is bounded (ADR-026 / AC-2).
 function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const adj = new Map<string, string[]>();
@@ -317,7 +317,7 @@ function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
 }
 
 // Cross-reference + cycle + engine validation for a graph (`nodes[]`) manifest
-// (ADR-022). zod has already validated node/gate shape; this enforces the
+// (ADR-026). zod has already validated node/gate shape; this enforces the
 // graph-level invariants that zod cannot express.
 function validateGraphManifest(
   manifest: FlowYamlV1,

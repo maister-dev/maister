@@ -117,13 +117,13 @@ erDiagram
     }
 ```
 
-> **(M11a — Implemented, migration `0008`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
+> **(M11a — Implemented, migration `0010`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
 > shipped on the `feature/m11a-flow-graph-lifecycle` branch.
 > `node_attempts` is append-only (`step_runs` retained for
 > legacy reads). See
 > [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md) and
-> [ADR-023](../decisions.md#adr-023-append-only-node_attempts-run-ledger) /
-> [ADR-024](../decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped).
+> [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger) /
+> [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped).
 
 ## Constraints
 
@@ -193,7 +193,7 @@ full state diagram.
 - Planned M18 adds branch-target metadata to `workspaces` or the run ledger:
   base branch, base commit, target branch, and promotion mode.
 - **(M11a — Designed)** `node_attempts` and `gate_results` are now drawn above
-  (migration `0008`). The remaining graph-maturity tables — artifacts, artifact
+  (migration `0010`). The remaining graph-maturity tables — artifacts, artifact
   edges, assignments, external operation events — are still future work and not
   drawn until their migrations exist.
 

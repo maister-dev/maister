@@ -31,8 +31,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
 | `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
-| `node_attempts` | **(M11a — Designed, migration `0008`)** Append-only per-node-attempt ledger for the graph runner. | `runs.id` |
-| `gate_results` | **(M11a — Designed, migration `0008`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
+| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. | `runs.id` |
+| `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
 | `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
 
 ## `users`
@@ -364,8 +364,8 @@ Cascade: `ON DELETE CASCADE` from `runs.id`.
 
 ## `node_attempts`
 
-**(M11a — Designed, migration `0008`.)** Append-only ledger for the graph
-runner ([ADR-023](decisions.md#adr-023-append-only-node_attempts-run-ledger)).
+**(M11a — Designed, migration `0010`.)** Append-only ledger for the graph
+runner ([ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger)).
 One immutable row per node execution; `attempt` auto-increments per
 `(runId, nodeId)`. Linear `steps[]` flows compile to nodes and write here too;
 `step_runs` is retained for legacy reads only.
@@ -400,8 +400,8 @@ a prior row. Indexed on `(runId)` for the templating highest-attempt-wins union
 
 ## `gate_results`
 
-**(M11a — Designed, migration `0008`.)** One row per gate execution
-([ADR-024](decisions.md#adr-024-full-featured-gate-execution-in-m11a-m15-re-scoped)).
+**(M11a — Designed, migration `0010`.)** One row per gate execution
+([ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)).
 Holds the structured verdict and the full status lifecycle.
 
 ```ts
@@ -499,7 +499,7 @@ migrations; do not overload current JSON blobs until the implementation plan
 explicitly chooses that as a temporary bridge.
 
 > **M11a promotion.** `node_attempts` and `gate_results` are no longer "planned"
-> — they are **Implemented in M11a** (migration `0008`) and documented as first-class
+> — they are **Implemented in M11a** (migration `0010`) and documented as first-class
 > tables above. They remain in the list below struck through for traceability;
 > the rest stay future work.
 

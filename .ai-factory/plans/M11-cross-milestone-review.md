@@ -1,5 +1,18 @@
 # M11 split (M11a / M11b / M11c) — cross-milestone review
 
+> **⚠️ SUPERSEDED (numbering) — 2026-05-31.** This review was written against
+> `decisions.md` HEAD = **ADR-021** / migration **0007** (pre-M11a). M11a then
+> shipped and the branch was **rebased onto `main`**, which had concurrently
+> taken ADR-022–025 (run-data projection, host-run topology, external-ops
+> surface, repo onboarding) and migration slot 0008 — and a later main commit took
+> migration `0009` (admin user management). m11a was therefore
+> renumbered and the whole M11 allocation shifted. **Authoritative post-rebase
+> allocation:** M11a = **ADR-026–029 / migration `0010`** (shipped on main);
+> M11b takes **ADR-030 / migration `0011`**; M11c takes **ADR-031–032 /
+> migration `0012`** (the `feature-m11b` / `feature-m11c` plans are renumbered
+> accordingly). The numbers in the collision analysis below are the **pre-rebase**
+> figures, retained as a historical record — do not treat them as current.
+
 > Consolidated synthesis of four adversarial verification lenses against the three
 > plans. Grounded against HEAD: `decisions.md` ceiling = **ADR-021**, migrations
 > ceiling = **0007**, no `HumanWorking` in `runs.status`, no `web/lib/flows/graph/`

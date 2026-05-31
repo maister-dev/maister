@@ -984,7 +984,7 @@ Reworked | Stale`).
   the graph runner.
 - Templating must union both tables (highest-attempt `node_attempts`, else
   `step_runs`) during the deprecation window.
-- Adds migration `0008`; the change is additive (existing rows unaffected).
+- Adds migration `0010`; the change is additive (existing rows unaffected).
 
 **Alternatives Considered:**
 

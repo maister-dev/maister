@@ -572,7 +572,7 @@ export async function runGraph(
       }
 
       // Run pre_finish.gates after the action succeeds, before the node
-      // finishes (ADR-024). Each gate writes a gate_results row for THIS
+      // finishes (ADR-028). Each gate writes a gate_results row for THIS
       // attempt, so a re-run node (after rework) re-executes its gates — the
       // prior attempt's gates were flipped stale by markDownstreamStale. A
       // blocking gate failure aborts the finish: the node goes Failed -> run

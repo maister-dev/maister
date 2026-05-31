@@ -260,7 +260,7 @@ describe("gate_results store", () => {
     expect(rows[0].verdict).toEqual(verdict);
     expect(rows[0].status).toBe("passed");
 
-    // Override retains the original verdict (no erasure, ADR-024).
+    // Override retains the original verdict (no erasure, ADR-028).
     await markGateOverridden(gate.id, "hitl-123", db);
     rows = await getGateResultsForNodeAttempt(na.id, db);
 

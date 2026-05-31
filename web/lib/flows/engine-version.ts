@@ -12,11 +12,11 @@ const log = pino({
 // running engine falls outside it (see ADR-021). Bump when the Flow runtime
 // contract changes in a way packages can depend on.
 // Bumped 1.0.0 -> 1.1.0 for Flow graph v1 (`nodes[]`); graph flows MUST declare
-// `compat.engine_min >= 1.1.0` (ADR-022).
+// `compat.engine_min >= 1.1.0` (ADR-026).
 export const MAISTER_ENGINE_VERSION = "1.1.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
-// `compat.engine_min` (ADR-022). Enforced in `loadFlowManifest`.
+// `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.
 export const GRAPH_MIN_ENGINE_VERSION = "1.1.0";
 
 // Flow manifest `schemaVersion` values this engine can execute. Enablement of a
@@ -107,7 +107,7 @@ export function isSchemaVersionSupported(schemaVersion: number): boolean {
 
 // Returns whether a graph manifest's declared `compat.engine_min` meets the
 // graph floor (>= GRAPH_MIN_ENGINE_VERSION). Undefined or unparseable -> false
-// (a graph flow must declare a valid, sufficient engine_min — ADR-022).
+// (a graph flow must declare a valid, sufficient engine_min — ADR-026).
 export function declaresGraphCapableEngineMin(
   engineMin: string | undefined,
 ): boolean {

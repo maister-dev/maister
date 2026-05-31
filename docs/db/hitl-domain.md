@@ -25,7 +25,7 @@ erDiagram
     }
 ```
 
-> **(M11a — Designed, migration `0008`.)** The `decision`, `workspace_policy`,
+> **(M11a — Designed, migration `0010`.)** The `decision`, `workspace_policy`,
 > and `rework_target` columns are populated only for a graph `human_review`
 > HITL. The reviewer's choice rides inside the `response` form payload; the
 > respond route validates it against the manifest-derived allow-list stored in
