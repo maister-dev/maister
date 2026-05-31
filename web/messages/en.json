@@ -262,7 +262,22 @@
     "reviewCommentsPlaceholder": "What needs to change? (optional)",
     "decisionApprove": "Approve",
     "decisionRework": "Request rework",
-    "reworking": "Reworking"
+    "reworking": "Reworking",
+    "timelineTitle": "Timeline",
+    "timelineEmpty": "No node attempts yet.",
+    "staleGate": "stale",
+    "currentGate": "current",
+    "rerunRequired": "rerun required",
+    "handoff": "Manual takeover",
+    "claimedBy": "claimed by",
+    "elapsed": "since",
+    "returnedCommits": "Returned commits",
+    "returnedDiff": "Returned diff",
+    "takeOver": "Take over",
+    "return": "Return",
+    "returnNotOwner": "Only the reviewer who claimed this run can return it.",
+    "checkoutContext": "Check out locally",
+    "copy": "Copy"
   },
   "changePassword": {
     "title": "Change your password",

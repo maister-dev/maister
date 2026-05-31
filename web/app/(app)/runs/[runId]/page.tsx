@@ -5,10 +5,23 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
+import { RunTakeoverActions } from "@/components/board/run-takeover-actions";
+import {
+  RunTimeline,
+  type TimelineEntry,
+  type TimelineLabels,
+} from "@/components/board/run-timeline";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
-import { getRunDetail } from "@/lib/queries/run";
+import { getRunDetail, getRunTimeline } from "@/lib/queries/run";
 
 type RouteParams = { params: Promise<{ runId: string }> };
+
+function offersTakeover(schema: unknown): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  const s = schema as { review?: boolean; allowedDecisions?: string[] };
+
+  return Boolean(s.review) && (s.allowedDecisions ?? []).includes("takeover");
+}
 
 export default async function RunDetailPage({
   params,
@@ -33,6 +46,34 @@ export default async function RunDetailPage({
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   const t = await getTranslations("run");
+
+  const timeline = await getRunTimeline(runId);
+
+  const canClaim =
+    detail.status === "NeedsInput" &&
+    offersTakeover(detail.pendingHitl?.schema);
+  const isHumanWorking = detail.status === "HumanWorking";
+
+  const timelineLabels: TimelineLabels = {
+    title: t("timelineTitle"),
+    staleGate: t("staleGate"),
+    currentGate: t("currentGate"),
+    rerunRequired: t("rerunRequired"),
+    handoff: t("handoff"),
+    claimedBy: t("claimedBy"),
+    elapsed: t("elapsed"),
+    returnedCommits: t("returnedCommits"),
+    returnedDiff: t("returnedDiff"),
+    empty: t("timelineEmpty"),
+    decisionLabel: (d) =>
+      d === "approve"
+        ? t("decisionApprove")
+        : d === "rework"
+          ? t("decisionRework")
+          : d === "takeover"
+            ? t("takeOver")
+            : d,
+  };
 
   return (
     <div className="mx-auto max-w-[760px]">
@@ -79,12 +120,45 @@ export default async function RunDetailPage({
             runId={detail.runId}
             schema={detail.pendingHitl.schema}
           />
+          {canClaim ? (
+            <div className="mt-4 border-t border-dashed border-amber-line pt-4">
+              <RunTakeoverActions
+                branch={detail.branch}
+                canAct={canAct}
+                isOwner={false}
+                mode="claimable"
+                runId={detail.runId}
+                worktreePath={detail.worktreePath}
+              />
+            </div>
+          ) : null}
         </section>
       ) : (
         <p className="rounded-[14px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute">
           {t("noPending")}
         </p>
       )}
+
+      {isHumanWorking ? (
+        <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
+          <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
+            {t("handoff")}
+          </h2>
+          <RunTakeoverActions
+            branch={detail.branch}
+            canAct={canAct}
+            isOwner={detail.takeoverOwnerUserId === user.id}
+            mode="working"
+            runId={detail.runId}
+            worktreePath={detail.worktreePath}
+          />
+        </section>
+      ) : null}
+
+      <RunTimeline
+        entries={timeline.entries as TimelineEntry[]}
+        labels={timelineLabels}
+      />
     </div>
   );
 }

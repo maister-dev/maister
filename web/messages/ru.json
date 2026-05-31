@@ -262,7 +262,22 @@
     "reviewCommentsPlaceholder": "Что нужно изменить? (необязательно)",
     "decisionApprove": "Одобрить",
     "decisionRework": "Вернуть на доработку",
-    "reworking": "Доработка"
+    "reworking": "Доработка",
+    "timelineTitle": "Хронология",
+    "timelineEmpty": "Пока нет попыток по узлам.",
+    "staleGate": "устарел",
+    "currentGate": "актуальный",
+    "rerunRequired": "нужен перезапуск",
+    "handoff": "Ручной перехват",
+    "claimedBy": "перехватил",
+    "elapsed": "с",
+    "returnedCommits": "Возвращённые коммиты",
+    "returnedDiff": "Возвращённый дифф",
+    "takeOver": "Перехватить",
+    "return": "Вернуть",
+    "returnNotOwner": "Вернуть запуск может только перехвативший его ревьюер.",
+    "checkoutContext": "Локальный чекаут",
+    "copy": "Копировать"
   },
   "changePassword": {
     "title": "Смените пароль",
