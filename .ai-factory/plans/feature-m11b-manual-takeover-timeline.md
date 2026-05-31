@@ -22,7 +22,7 @@ Today the run-detail page (`web/app/(app)/runs/[runId]/page.tsx`) is minimal —
 header + a single pending-HITL panel sourced from `getRunDetail`
 (`web/lib/queries/run.ts`). There is no timeline, no notion of current-vs-stale
 gates on the page, no concept of a human claiming a run to work on it locally,
-and the run status enum (`web/lib/db/schema.ts:296`) has no `HumanWorking`
+and the `runs.status` enum union (`web/lib/db/schema.ts`, `runs` table) has no `HumanWorking`
 state. `web/lib/worktree.ts` exposes only `addWorktree` / `removeWorktree` /
 `listWorktrees` — no `git log`, no `git diff`, no checkout helpers — so the
 worktree handoff has no plumbing yet.
@@ -34,7 +34,7 @@ project's parent repo. M11b exposes that *existing* path + branch to the
 reviewer, who checks out / edits / commits **in place on the same host**. A
 "return" action through the UI records the returned commit set
 (`git log <base>..<branch>`) and the returned raw diff (`git diff <base>..<branch>`),
-marks all downstream checks/judges/user-review **STALE** (reusing M11a's
+marks the validation re-entry node and everything after it **STALE** (reusing M11a's
 `markDownstreamStale` + `gate_results` staleness), and forces a rerun before
 merge. While claimed, the board card must show **owner, elapsed time, branch,
 and a pending-return action**, and must NOT look like a normal running task.
@@ -86,10 +86,20 @@ handoff, returned commit, and rerun result.
    columns added in Phase 2). The full typed `commit_set`/`diff` *artifact
    instances* + evidence-graph explorer are **M12** — M11b does not create
    artifact rows. → **ADR-026**.
-4. **On return, reuse M11a staleness.** The return path calls the M11a
-   `markDownstreamStale(run, fromNode, graph)` helper to flip downstream
-   `node_attempts`→`Stale` + dependent `gate_results`→`stale`, then resumes the
-   graph runner at the declared validation re-entry so those gates rerun and a
+4. **On return, reuse M11a staleness.** The return path resolves the validation
+   re-entry node from the **current `human_review` node's `transitions.takeover`**
+   (NOT a hard-coded id) and stales **the re-entry node AND its downstream** —
+   `markDownstreamStale(runId, [reentryNode, ...downstreamOf(graph, reentryNode)], db)`.
+   The explicit `reentryNode` inclusion is REQUIRED: the as-built `downstreamOf`
+   **excludes its start node** (in rework the start is the rework target — a
+   gate-free ai_coding node that simply re-runs), but the takeover re-entry is a
+   **gate-bearing** validation node whose prior PASS validated *pre-takeover*
+   code and MUST flip stale so the human's commits are re-validated. `downstreamOf`
+   is module-private in `web/lib/flows/graph/runner-graph.ts` — M11b **exports**
+   it; `markDownstreamStale(runId, nodeIds, db)` is 2-arg as-built in
+   `web/lib/flows/graph/ledger.ts`. This flips the re-entry + downstream
+   `node_attempts`→`Stale` + their `gate_results`→`stale`, then the graph runner
+   resumes at the re-entry so those gates rerun over the human's commits and a
    fresh `human_review` gate is produced. No new staleness machinery. → **ADR-026**.
 5. **No new `MaisterError` code** (ADR-008 closed union). Takeover precondition
    failures map to existing codes: not-claimable / wrong-state → `PRECONDITION`
@@ -107,6 +117,52 @@ handoff, returned commit, and rerun result.
 - **Docs:** mandatory checkpoint (route through `/aif-docs`). Docs are
   **Phase 0** (analytics-first per skill-context), reconciled as-built before
   completion.
+
+## Development methodology (SDD + TDD)
+
+This milestone is executed **spec-first then test-first**. Two disciplines bind
+every phase; both are gates, not suggestions.
+
+**SDD — the spec is the frozen contract.** Phase 0 produces the normative
+artifacts (ADR-026, the run/HITL/manual-takeover analytics, `web.openapi.yaml`
+for the two routes, the ERD, the failure-classification table, and the
+per-route identifier-trust tables). These are **frozen before Phase 1**. Task
+**0.11** authors a **spec→test traceability matrix** that maps every normative
+clause (each OpenAPI status code, each failure-class row, each run-state
+transition, each identifier-trust row) → the exact RED test that proves it → AC
+→ Verify item. The matrix is the structural guard against a *mechanism that
+contradicts its own acceptance prose* — the exact defect an adversarial review
+caught in this plan once (patch `2026-05-31-13.53`: the staleness mechanism
+disagreed with AC-4/Verify-#4). **Forward rule (0.12):** if a code phase needs
+to deviate, update the spec artifact FIRST, then the matrix/test, then code —
+never the reverse. (Phase 7 reconciles the *as-built* direction at the end; that
+does not license skipping the forward rule mid-flight.)
+
+**TDD — no production code without a failing test first (Iron Law).** Every code
+task in Phases 1–5 follows **red → green → refactor**. Each phase opens with a
+`(RED)` task: write the test, run it, and **watch it fail for the right reason**
+(feature missing, not a typo). The RED task **blocks** its `(GREEN)` impl
+task(s); refactor only while green. Pure-config artifacts (Drizzle schema, SQL
+migrations, i18n message catalogs, the `flow.yaml` manifest) are the documented
+TDD exception — tagged `(schema)` / `(i18n)` / `(manifest)` — but their
+*behavioral consequences* (a new enum value counting toward the cap, a new
+status surviving recovery) are still driven by a RED test.
+
+**Test hygiene (folded from patches `2026-05-31-14.34` / `-13.53`):**
+
+1. **Real `flows` row in every integration seed.** `tasks.flow_id` /
+   `runs.flow_id` are `NOT NULL` + FK since migration `0000`. Any seed that
+   inserts a `tasks`/`runs` row MUST insert a real `flows` row first and thread
+   the non-null `flowId` — a `flowId: null` seed is a bug even when TypeScript
+   accepts it (loosely-typed `drizzle(pool)` does not enforce insert nullability).
+2. **Per-test / per-worker fixture isolation.** Unique ids per test (or
+   `beforeEach` cleanup); never share a mutable row a unique constraint can
+   collide on. E2e seeds are keyed by Playwright worker-index / spec-slug under
+   `fullyParallel` so `m11a/m11b/m11c` authed specs cannot race.
+3. **Verify gate runs bare.** Never pipe vitest/playwright through
+   `tail`/`head`/`grep` when asserting pass/fail — the pipeline reports the last
+   stage's exit code (a green `| tail` over a red suite is the worst false-green).
+   Use `set -o pipefail` and check the bare exit status.
 
 ## Roadmap Linkage
 
@@ -127,7 +183,12 @@ consumed directly by M11b:
 - `gate_results` table + gate-store helpers + the
   `pending|running|passed|failed|stale|skipped|overridden` lifecycle —
   `web/lib/flows/graph/gate-store.ts`.
-- `markDownstreamStale(run, fromNode, graph)` — `web/lib/flows/graph/ledger.ts`.
+- `markDownstreamStale(runId, nodeIds, db)` — `web/lib/flows/graph/ledger.ts`
+  (2-arg as-built). The caller computes the set via `downstreamOf(graph, node)`
+  (module-private in `web/lib/flows/graph/runner-graph.ts` — M11b exports it),
+  which **excludes the start node**, so the takeover return passes
+  `[reentryNode, ...downstreamOf(graph, reentryNode)]` to also stale the
+  gate-bearing re-entry node.
 - Graph compiler + runner (`web/lib/flows/graph/compile.ts`,
   `runner-graph.ts`) with the resume/CAS claim machinery and `runs.current_step_id`
   carrying the node id.
@@ -163,8 +224,9 @@ Verification item that proves it. The M11a plan already carved roadmap #1/#2/#3
   raw diff in the takeover `node_attempts` ledger row (minimal raw text; typed
   artifacts = M12). → Verify #3, #5.
 - **AC-4 (roadmap #4) — Return marks downstream stale + forces rerun.** On
-  return, downstream checks/judges/user-review go `stale` (M11a
-  `markDownstreamStale` + `gate_results`) and **must rerun** before merge; the
+  return, the re-entry node and everything after it (`checks`/`judge`/`review`)
+  go `stale` (M11a `markDownstreamStale` + `gate_results`, re-entry node
+  included) and **must rerun** before merge; the
   graph runner resumes at the declared validation re-entry and produces a fresh
   `human_review` gate. → Verify #4, #6.
 - **AC-5 (roadmap #5) — Single run-detail timeline.** The run-detail page renders
@@ -226,7 +288,7 @@ artifact below exists, cross-references resolve, and implementation-status tags
 | # | Task | Files | Acceptance |
 | - | ---- | ----- | ---------- |
 | 0.1 | ADR-026 (manual-takeover local worktree handoff: `HumanWorking` real status, existing run branch, raw `git log`/`git diff` recorded, reuse M11a staleness, no new MaisterError code) | `docs/decisions.md` (append, index row) | 1 ADR `Accepted`, sequential after ADR-025 (M11a), template-conformant; cites ADR-006/008/009/011/018/021/024/025 |
-| 0.2 | Update run state machine for `HumanWorking`: add the enum state + transitions `NeedsInput→HumanWorking` (claim), `HumanWorking→Running` (return → rerun validation path), `HumanWorking→NeedsInput` (release without changes), `HumanWorking→Abandoned` (abandon). **MUST state three invariants:** (1) `HumanWorking` is a REAL run status (unlike M11a rework, which is a node-pointer move within `Running`); (2) `HumanWorking` counts against the global cap exactly like `Running`/`NeedsInput` (ADR-009) — a claimed worktree holds a slot; (3) the takeover branch IS `workspaces.branch` (no new branch/target — M18); **(4) (P6) `HumanWorking` is session-less BY DESIGN (the human edits locally, no live ACP session) yet HOLDS a worktree — so it MUST be EXCLUDED from the reconcile orphan→`Crashed` classification, and the "at most one live ACP session" invariant in `runs.md` must be amended to "`HumanWorking` runs intentionally have no live session"** | `docs/system-analytics/runs.md` | new state drawn in the `stateDiagram-v2`; reconcile flowchart amended to skip `HumanWorking`; "at most one live ACP session" invariant updated; status names match `runs.status` enum exactly |
+| 0.2 | Update run state machine for `HumanWorking`: add the enum state + transitions `NeedsInput→HumanWorking` (claim), `HumanWorking→Running` (return → rerun validation path), `HumanWorking→NeedsInput` (release without changes), `HumanWorking→Abandoned` (abandon). **MUST state three invariants:** (1) `HumanWorking` is a REAL run status (unlike M11a rework, which is a node-pointer move within `Running`); (2) `HumanWorking` counts against the global cap exactly like `Running`/`NeedsInput` (ADR-009) — a claimed worktree holds a slot; (3) the takeover branch IS `workspaces.branch` (no new branch/target — M18); **(4) (P6) `HumanWorking` is session-less BY DESIGN (the human edits locally, no live ACP session) yet HOLDS a worktree — so it MUST be EXCLUDED from the startup recovery sweep classification — as-built that orphan→`Crashed` path is `runResumeRecoverySweep` in `web/lib/runs/resume-recovery.ts` (there is NO `reconcile.ts`), whose SELECT filters `status='NeedsInput'`, so `HumanWorking` is excluded by construction; and the "at most one live ACP session" invariant in `runs.md` must be amended to "`HumanWorking` runs intentionally have no live session"** | `docs/system-analytics/runs.md` | new state drawn in the `stateDiagram-v2`; recovery flowchart confirms `HumanWorking` is excluded; "at most one live ACP session" invariant updated; status names match `runs.status` enum exactly |
 | 0.3 | Update HITL flow for the `takeover` decision: the `human_review` HITL's `takeover` decision drives `NeedsInput→HumanWorking` (a state transition, not an artifact write); on **return**, the validation re-entry mirrors the M11a rework re-entry but is triggered by the takeover return, not a reviewer `rework` decision. Mark the live HITL `permission/form/human` paths unchanged | `docs/system-analytics/hitl.md` | takeover decision tree + return sequence drawn; states the return path is two-phase (claim intent → git/ledger side-effect → AFTER-side marker) |
 | 0.4 | New system-analytics doc: manual-takeover domain (per `docs/CLAUDE.md` R5 — Purpose / Domain entities / State machine / Process flows / Expectations / Edge cases / Linked). Cover claim, the exposed worktree contract, return (`git log`/`git diff` capture), downstream staleness, rerun, and the run-detail timeline read model | `docs/system-analytics/manual-takeover.md` (new) | every claim/return precondition + transition enumerated **exactly as code will gate** (allow-list shape); timeline read model (current-vs-stale) specified |
 | 0.5 | ERD: `node_attempts` takeover columns (`owner_user_id`, `returned_commits`, `returned_diff`, `base_ref`) and the `HumanWorking` run status; document that M11b's migration is `0009` (additive to M11a's `0008`) (BOTH artifacts) | `docs/database-schema.md` + `docs/db/runs-domain.md` (+ `docs/db/erd.md`) | narrative AND Mermaid `erDiagram` both updated; M11a `node_attempts` table shown with the new columns appended |
@@ -235,6 +297,8 @@ artifact below exists, cross-references resolve, and implementation-status tags
 | 0.8 | **Contract-surface tracing table** (skill-context): map each changing surface → spec file (see below) | this plan + Phase 0 docs | every surface in the table has an owning task |
 | 0.9 | **(P10) Roadmap reconciliation** (delegate to roadmap owner). M11b inherits roadmap #4/#5/#7-takeover/#8-takeover. Roadmap criterion #4's Expectation prose says the reviewer "commit and **push** changes" — this contradicts ADR-011 (local handoff, no remote). Rewrite the #4 Expectation from "commit and push" to "commit changes **locally**". VERIFY (do not re-distribute) that M11b's inherited roadmap row matches the **authoritative three-way carve authored in the M11a plan** — every slice must run roadmap reconciliation, none silently skips it | `.ai-factory/ROADMAP.md` via `/aif-roadmap` | #4 prose says "commit locally"; M11b inherited row verified against M11a carve; ownership boundary respected |
 | 0.10 | **(P12) Pin the real run-abandon surface.** `web/app/api/runs/[runId]/` today contains only `activity`/`hitl`/`stream` — there is NO `abandon/` route. Locate the actual abandon mechanism (route handler vs server action) and name the exact file used by Phase 3.5; if abandon is not yet a route/action, this milestone ADDS it and Phase 3.5 wires `releaseHumanWorking` into that real path | this plan + the located file | the real abandon surface named (or "to be added in Phase 3.5"); Phase 3.5 file path is concrete, not `[runId]/...` |
+| 0.11 | **Spec→test traceability matrix (SDD).** Author the matrix below: every normative spec clause (each OpenAPI status code for both routes, each failure-classification row, each run-state transition, each per-route identifier-trust row) → the exact RED test (`file::name`) that proves it → owning AC → Verify item. The matrix is the gate that **mechanism == acceptance prose**; an unmapped clause or a clause whose mechanism contradicts its AC blocks Phase 1 | this plan (matrix table below) + Phase 0 specs | every normative clause has exactly one owning RED test; no clause unmapped; matrix cross-references resolve to AC + Verify ids |
+| 0.12 | **Spec-freeze (SDD forward rule).** Record that Phase 0 artifacts are frozen before Phase 1: any code-phase deviation updates the spec artifact FIRST, then the matrix/test, then code. Phase 7 owns the reverse (as-built) reconciliation and does not license skipping the forward rule mid-flight | this plan + Phase 0 docs | rule recorded; Phase 7 reconciliation cross-referenced as the as-built (not forward) pass |
 
 **Contract surfaces this milestone touches (skill-context trace):**
 
@@ -256,6 +320,33 @@ artifact below exists, cross-references resolve, and implementation-status tags
 > `Dockerfile`/`compose.*`/`.env.example` change is required**. This is stated
 > explicitly per the skill-context deployment rule: nothing to wire.
 
+### Spec→test traceability matrix (SDD — authored in 0.11, frozen before Phase 1)
+
+Each normative clause maps to the RED test that proves it, the owning AC, and the
+Verify item. `file::name` is the canonical test id used by the `(RED)` tasks in
+Phases 1–6. No row may ship green until its mechanism matches its AC prose.
+
+| Normative clause (spec source) | RED test (`file::name`) | AC | Verify |
+| ------------------------------ | ----------------------- | -- | ------ |
+| `claim` 200 + body `{worktreePath,branch,ownerUserId}` (OpenAPI 0.6) | `takeover.test.ts::claim-from-NeedsInput-returns-200-context` | AC-1 | V1 |
+| `claim` 409 `PRECONDITION` wrong run state / non-`human_review` node | `takeover.test.ts::claim-wrong-state-409` | AC-1 | V1 |
+| `claim` 409 `CONFLICT` concurrent claim (CAS lost) | `takeover.test.ts::concurrent-claim-409` | AC-1 | V1 |
+| `claim` 401/403 unauth / non-member (authz spec) | `takeover.test.ts::claim-unauthorized-401-403` | AC-1 | V1 |
+| `return` 200 only AFTER side-effects commit (two-phase, AC-8) | `takeover.integration.test.ts::return-flips-Running-after-sideeffects` | AC-8 | V7 |
+| `return` 409 `PRECONDITION` not-`HumanWorking` (already returned) | `takeover.test.ts::return-not-HumanWorking-409` | AC-8 | V7 |
+| `return` 403 session user ≠ `owner_user_id` | `takeover.test.ts::non-owner-return-403` | AC-1 | V7 |
+| `return` 409 `CONFLICT` git op fails → no statechange, no ledger write | `takeover.integration.test.ts::git-failure-no-statechange` | AC-8 | V7 |
+| `return` 503 `EXECUTOR_UNAVAILABLE` ledger throw mid-side-effect → stays `HumanWorking` | `takeover.integration.test.ts::ledger-throw-503-stays-humanworking` | AC-8 | V7 |
+| `return` records `returned_commits`+`returned_diff`+`base_ref` on takeover attempt | `takeover.integration.test.ts::return-records-commits-and-diff` | AC-3 | V3 |
+| `return` stales `[reentryNode, …downstreamOf]` incl. re-entry's prior gate | `takeover.integration.test.ts::return-stales-reentry-and-downstream` | AC-4 | V4 |
+| runner resumes at `transitions.takeover` (`checks`), staled gates rerun → fresh `human_review` | `takeover.integration.test.ts::resume-reruns-staled-gates` | AC-4 | V4 |
+| `HumanWorking` holds a cap slot through BOTH predicates (`scheduler.ts:78`+`:160`) | `scheduler.integration.test.ts::humanworking-occupies-slot-both-paths` | AC-1 | V1 |
+| `HumanWorking` excluded from recovery sweep (survives restart, not `Crashed`) | `resume-recovery.test.ts::humanworking-survives-restart` | (ADR-026) | V1 |
+| `logRange`/`diffRange`/`resolveBaseRef` + ref/path validation + diff truncation marker | `worktree-range.test.ts::*` | AC-3 | V3 |
+| Timeline current-vs-stale gates + handoff block (owner/elapsed/branch/commits/diff) | `run-timeline.integration.test.ts::*` + `run-timeline.test.ts::*` | AC-5 | V5/V6 |
+| Board: `HumanWorking` in-flight + owner/elapsed/branch/return, distinct from running | `board*.test.ts::*` + `flight-card*.test.ts::*` | AC-2 | V2 |
+| e2e: claim→board→commit→return→diff→stale→rerun→fresh-review | `m11b-takeover.spec.ts` | AC-1..6 | V9 |
+
 ---
 
 ## Phase 1 — `worktree.ts` git ops for the handoff (M11b-owned, no M11a dependency)
@@ -267,11 +358,11 @@ push, no checkout-switch (the worktree is already on the run branch).
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 1.1 | `logRange({ worktreePath, baseRef, branch })` → runs `git -C <worktreePath> log --oneline --no-color <baseRef>..<branch>`, returns the raw stdout text (commit oneline list). Reuse the existing `execFileAsync` + `AbortSignal.timeout(GIT_TIMEOUT_MS)` + `EXEC_MAX_BUFFER` plumbing and the `branchNameSchema`/`absolutePathSchema` validators; `baseRef` validated by a ref schema (`/^[A-Za-z0-9_./-]+$/`, no `..`) | `web/lib/worktree.ts` | DEBUG log on invocation; git failure → `MaisterError("CONFLICT", …)` (matching the file's convention); INFO on success with commit count |
-| 1.2 | `diffRange({ worktreePath, baseRef, branch })` → runs `git -C <worktreePath> diff --no-color <baseRef>..<branch>`, returns raw unified diff text (bounded by `EXEC_MAX_BUFFER`; on overflow truncate with a marker, do not throw) | `web/lib/worktree.ts` | DEBUG log; same error convention; truncation marker asserted in test |
-| 1.3 | `resolveBaseRef({ worktreePath, branch, mainBranch })` → resolves the merge-base for the range: `git -C <worktreePath> merge-base <mainBranch> <branch>` (the run branch was cut from the project default branch per ADR-011). Returns the base SHA used as `<baseRef>` for 1.1/1.2 | `web/lib/worktree.ts` | base SHA returned; missing/ambiguous → `CONFLICT` |
-| 1.4 | Export `LogRangeArgs`, `DiffRangeArgs` types | `web/lib/worktree.ts` | consumed by the return route |
-| 1.5 | Tests: unit-cover `logRange`/`diffRange`/`resolveBaseRef` against a temp git repo fixture (real `git init` + commits in `os.tmpdir()`); assert ref/path validation rejects `..` and bad branch names; assert diff-truncation marker on an oversized diff | `web/lib/__tests__/worktree.test.ts` (extend) OR `web/lib/__tests__/worktree-range.test.ts` (new) | runner project `unit`, glob `lib/**/*.test.ts` (existing) matches; `vitest list` shows the file |
+| 1.0 (RED) | New `web/lib/__tests__/worktree-range.test.ts` (**verified: no `worktree` test file exists today** → new file, not extend) against a temp git fixture (real `git init` + commits in `os.tmpdir()`): assert `logRange`/`diffRange`/`resolveBaseRef` happy path; ref/path validation **rejects `..` and bad branch names**; diff **truncation marker** on an oversized diff. Run `vitest run --project unit worktree-range` and **watch every case fail** (functions absent) | `web/lib/__tests__/worktree-range.test.ts` (new) | RED verified — fails because feature missing, not a typo; `vitest list` shows the file under `unit` (glob `lib/**/*.test.ts`) |
+| 1.1 (GREEN) | `logRange({ worktreePath, baseRef, branch })` → runs `git -C <worktreePath> log --oneline --no-color <baseRef>..<branch>`, returns the raw stdout text (commit oneline list). Reuse the existing `execFileAsync` + `AbortSignal.timeout(GIT_TIMEOUT_MS)` + `EXEC_MAX_BUFFER` plumbing and the `branchNameSchema`/`absolutePathSchema` validators; `baseRef` validated by a ref schema (`/^[A-Za-z0-9_./-]+$/`, no `..`) | `web/lib/worktree.ts` | DEBUG log on invocation; git failure → `MaisterError("CONFLICT", …)` (matching the file's convention); INFO on success with commit count; 1.0's `logRange` cases GREEN |
+| 1.2 (GREEN) | `diffRange({ worktreePath, baseRef, branch })` → runs `git -C <worktreePath> diff --no-color <baseRef>..<branch>`, returns raw unified diff text (bounded by `EXEC_MAX_BUFFER`; on overflow truncate with a marker, do not throw) | `web/lib/worktree.ts` | DEBUG log; same error convention; 1.0's truncation-marker case GREEN |
+| 1.3 (GREEN) | `resolveBaseRef({ worktreePath, branch, mainBranch })` → resolves the merge-base for the range: `git -C <worktreePath> merge-base <mainBranch> <branch>` (the run branch was cut from the project default branch per ADR-011). Returns the base SHA used as `<baseRef>` for 1.1/1.2 | `web/lib/worktree.ts` | base SHA returned; missing/ambiguous → `CONFLICT`; 1.0 case GREEN |
+| 1.4 (GREEN) | Export `LogRangeArgs`, `DiffRangeArgs` types | `web/lib/worktree.ts` | consumed by the return route; full file GREEN, suite still green |
 
 > **Trust-before-execute note (skill-context):** these ops do NOT fetch/install
 > third-party content — they read git state from an already-trusted, already-on-disk
@@ -287,13 +378,14 @@ Additive to M11a's `0008`. Depends on M11a's `node_attempts` table existing.
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 2.1 | Add `HumanWorking` to the `runs.status` enum union in the Drizzle schema; the Postgres column is `text` (enum constraint enforced in TS), so the migration is a metadata-only change — confirm `drizzle-kit generate` emits an additive `0009` (no destructive alter). Update `RunStatus` type consumers | `web/lib/db/schema.ts`, `web/lib/db/migrations/0009_*.sql` | `RunStatus` includes `HumanWorking`; migration additive; existing rows unaffected |
-| 2.2 | Add takeover columns to M11a's `node_attempts`: `owner_user_id text` (FK → `users.id`, `ON DELETE SET NULL`), `base_ref text`, `returned_commits text`, `returned_diff text` (raw git output; nullable — only the takeover attempt rows populate them). Index unchanged (already `(run_id)`) | `web/lib/db/schema.ts`, migration `0009` | columns additive; only takeover attempts populate them; FK to users |
-| 2.3 | Takeover ledger helpers extending M11a's `web/lib/flows/graph/ledger.ts`: `claimTakeover({ runId, nodeId, userId })` (append a `node_attempts` row of the human node with `status='NeedsInput'`-equivalent takeover marker + `owner_user_id`), `recordTakeoverReturn({ runId, nodeId, baseRef, returnedCommits, returnedDiff })`, `getActiveTakeover(runId)` | `web/lib/flows/graph/ledger.ts` (extend) | DEBUG log per transition incl. attempt number + owner; helpers reuse `nextAttemptFor` |
-| 2.4 | Run state-transition helpers (mirror M8 `web/lib/runs/state-transitions.ts` CAS pattern): `markHumanWorking(runId, userId)` (`UPDATE runs SET status='HumanWorking' WHERE id=:id AND status='NeedsInput'`), `markReturnedToRunning(runId)` (`… status='Running' WHERE id=:id AND status='HumanWorking'`), `releaseHumanWorking(runId)` (`… status='NeedsInput' WHERE id=:id AND status='HumanWorking'`) — all status-guarded for idempotency | `web/lib/runs/state-transitions.ts` (extend) | each helper returns `{ok}`; concurrent claim loses the CAS → `{ok:false}` → 409; no direct `runs.status` writes outside helpers |
-| 2.5 | Scheduler cap: `HumanWorking` counts in `count(status IN ('Running','NeedsInput','HumanWorking'))` (ADR-009 — a claimed worktree holds a slot). **(P6) Enumerate and update BOTH cap predicates in `web/lib/scheduler.ts` — the initial-promote predicate AND the under-advisory-lock recheck predicate (resolve by symbol; there are two `count(... IN (...))` sites, not one).** | `web/lib/scheduler.ts` | both predicates include `HumanWorking`; unit test asserts a `HumanWorking` run occupies a slot through BOTH the initial-promote and under-lock-recheck paths |
-| 2.6 | **(P6) Reconcile + sweeper enumeration for `HumanWorking`.** Update `web/lib/reconcile.ts` so a `HumanWorking` run (session-less by contract, holds a worktree) is NOT classified orphan→`Crashed` on startup; confirm the keepalive sweeper SELECTs (`web/lib/runs/keepalive-sweeper.ts`) do not sweep `HumanWorking` (it has no `keepalive_until` / is not `NeedsInputIdle`). Regression: a `HumanWorking` run survives a simulated restart WITHOUT flipping to `Crashed` | `web/lib/reconcile.ts`, `web/lib/runs/keepalive-sweeper.ts` | reconcile skips `HumanWorking`; regression green |
-| 2.7 | Type export refresh (`RunStatus`, `NodeAttempt` with new columns) + drizzle peer-dep `as any` cast pattern matching M11a/`runner.ts` | `web/lib/db/schema.ts` | — |
+| 2.0 (RED) | Author the failing tests for ALL Phase-2 **behavior** before the helpers exist: (a) ledger `claimTakeover`/`recordTakeoverReturn`/`getActiveTakeover` append + read; (b) CAS `markHumanWorking`/`markReturnedToRunning`/`releaseHumanWorking` status-guard idempotency (concurrent loser → `{ok:false}` → 409); (c) scheduler counts `HumanWorking` through BOTH the initial-promote (`scheduler.ts:78`) AND under-lock-recheck (`:160`) predicates; (d) a `HumanWorking` run **survives a simulated restart** without flipping `Crashed`. **Integration seeds MUST insert a real `flows` row and thread a non-null `flowId` into `tasks`/`runs` (NOT-NULL + FK since `0000`, patch 14.34); unique fixture ids per test (no shared mutable rows).** Run and **watch all fail** | `web/lib/runs/__tests__/state-transitions.integration.test.ts` (extend), `web/lib/__tests__/scheduler.integration.test.ts` (extend), `web/lib/flows/graph/__tests__/ledger.test.ts`, `web/lib/runs/__tests__/resume-recovery.test.ts` | RED verified; seeds non-null `flowId`; per-test isolation; owns matrix rows `humanworking-occupies-slot-both-paths` + `humanworking-survives-restart` |
+| 2.1 (schema) | Add `HumanWorking` to the `runs.status` enum union in the Drizzle schema; the Postgres column is `text` (enum constraint enforced in TS), so the migration is a metadata-only change — confirm `drizzle-kit generate` emits an additive `0009` (no destructive alter). Update `RunStatus` type consumers | `web/lib/db/schema.ts`, `web/lib/db/migrations/0009_*.sql` | `RunStatus` includes `HumanWorking`; migration additive; existing rows unaffected |
+| 2.2 (schema) | Add takeover columns to M11a's `node_attempts`: `owner_user_id text` (FK → `users.id`, `ON DELETE SET NULL`), `base_ref text`, `returned_commits text`, `returned_diff text` (raw git output; nullable — only the takeover attempt rows populate them). Index unchanged (already `(run_id)`) | `web/lib/db/schema.ts`, migration `0009` | columns additive; only takeover attempts populate them; FK to users |
+| 2.3 (GREEN) | Takeover ledger helpers extending M11a's `web/lib/flows/graph/ledger.ts`: `claimTakeover({ runId, nodeId, userId })` (append a `node_attempts` row of the human node with `status='NeedsInput'`-equivalent takeover marker + `owner_user_id`), `recordTakeoverReturn({ runId, nodeId, baseRef, returnedCommits, returnedDiff })`, `getActiveTakeover(runId)` | `web/lib/flows/graph/ledger.ts` (extend) | DEBUG log per transition incl. attempt number + owner; helpers reuse `nextAttemptFor` |
+| 2.4 (GREEN) | Run state-transition helpers (mirror M8 `web/lib/runs/state-transitions.ts` CAS pattern): `markHumanWorking(runId, userId)` (`UPDATE runs SET status='HumanWorking' WHERE id=:id AND status='NeedsInput'`), `markReturnedToRunning(runId)` (`… status='Running' WHERE id=:id AND status='HumanWorking'`), `releaseHumanWorking(runId)` (`… status='NeedsInput' WHERE id=:id AND status='HumanWorking'`) — all status-guarded for idempotency | `web/lib/runs/state-transitions.ts` (extend) | each helper returns `{ok}`; concurrent claim loses the CAS → `{ok:false}` → 409; no direct `runs.status` writes outside helpers |
+| 2.5 (GREEN) | Scheduler cap: add `HumanWorking` to the cap predicate (ADR-009 — a claimed worktree holds a slot). **(P6) Update BOTH sites in `web/lib/scheduler.ts` — the initial-promote predicate (`scheduler.ts:78`) AND the under-advisory-lock recheck predicate (`scheduler.ts:160`); as-built both read `inArray(runs.status, ["Running", "NeedsInput"])` → add `"HumanWorking"`.** | `web/lib/scheduler.ts` | both predicates include `HumanWorking`; unit test asserts a `HumanWorking` run occupies a slot through BOTH the initial-promote and under-lock-recheck paths |
+| 2.6 (GREEN) | **(P6) Recovery + sweeper enumeration for `HumanWorking`.** Verify `web/lib/runs/resume-recovery.ts` (`runResumeRecoverySweep`, as-built selects `status='NeedsInput' AND acpSessionId IS NOT NULL`) does NOT classify a `HumanWorking` run (session-less by contract, holds a worktree) orphan→`Crashed` on startup — excluded by construction, but add an explicit guard + test; confirm the keepalive sweeper SELECTs (`web/lib/runs/keepalive-sweeper.ts`) do not sweep `HumanWorking` (it has no `keepalive_until` / is not `NeedsInputIdle`). Regression: a `HumanWorking` run survives a simulated restart WITHOUT flipping to `Crashed` | `web/lib/runs/resume-recovery.ts`, `web/lib/runs/keepalive-sweeper.ts` | recovery skips `HumanWorking`; regression green |
+| 2.7 (types) | Type export refresh (`RunStatus`, `NodeAttempt` with new columns) + drizzle peer-dep `as any` cast pattern matching M11a/`runner.ts` | `web/lib/db/schema.ts` | — |
 
 > **DB symmetry note (skill-context):** no YAML→DB removable field is persisted
 > in M11b (takeover columns are runtime-derived, not config-sourced), so the
@@ -367,12 +459,13 @@ skill-context:
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 3.1 | `POST /api/runs/{runId}/takeover/claim`: `requireActiveSession` + `requireProjectAction(projectId, 'answerHitl')` (project member+; role-restriction is M13); load run+workspace; assert `status='NeedsInput'` AND the current node is a `human_review` node whose manifest `finish.human.decisions` includes `takeover` (server-state from the pinned revision manifest); `claimTakeover` + `markHumanWorking` under one transaction; return 200 with `{ worktreePath, branch, ownerUserId }` so the UI can show checkout context | `web/app/api/runs/[runId]/takeover/claim/route.ts` (new) | INFO log `takeover claimed` with run/node/owner; CAS-lost concurrent claim → 409 `CONFLICT`; wrong state → 409 `PRECONDITION` |
-| 3.2 | `POST /api/runs/{runId}/takeover/return`: the two-phase commit above. Phase 1 `FOR UPDATE` intent read; Phase 2 `resolveBaseRef`→`logRange`→`diffRange`→`recordTakeoverReturn`→`markDownstreamStale(run, takeoverNode, graph)`; Phase 3 `markReturnedToRunning` + `queueMicrotask(runFlow)` resume at the declared validation re-entry | `web/app/api/runs/[runId]/takeover/return/route.ts` (new) | INFO per phase; failure-classification table honored exactly; returns 200 only after the AFTER-side status flip |
-| 3.3 | Graph-runner resume after return: the runner resumes from `runs.current_step_id` (the takeover node), follows the node's `transitions.takeover` target (the declared validation re-entry — **`checks`** per P9, NOT `implement`); the staled downstream gates rerun over the human's commits before the next `human_review` HITL. Reuse M11a's resume/CAS machinery — NO new runner entry point, just a `HumanWorking`-aware resume gate alongside the existing `NeedsInput` resume gate | `web/lib/flows/graph/runner-graph.ts` (extend) | resume continues at the takeover node's `transitions.takeover` target; staled gates show `running`→fresh verdict; rerun recorded as new `node_attempts` rows |
-| 3.4 | **Deferred-release (skill-context):** the claim/return routes create NO supervisor deferred (takeover does not spawn an agent — the human works locally). State this explicitly. The ONLY resource the claim holds is the `HumanWorking` status + the slot; the release path is `releaseHumanWorking` on abandon and `markReturnedToRunning` on return. Add a regression: a simulated mid-return git failure leaves the run `HumanWorking` (slot still held, no orphaned status) and NO partial ledger write | tests | spy/assert: on `diffRange` throw, run stays `HumanWorking`, `returned_diff` null, `markDownstreamStale` NOT called |
-| 3.5 | Wire release/abandon into the run-abandon path **pinned by Phase 0.10** (P12 — not the placeholder `[runId]/...`; today there is no `abandon/` route): a `HumanWorking` run can be abandoned → `releaseHumanWorking` then the standard abandon transition; document that release-without-changes returns to `NeedsInput` (the original review HITL is re-opened) | the abandon surface named in 0.10, `web/lib/runs/state-transitions.ts` | abandon of `HumanWorking` works; release returns to `NeedsInput`; slot freed via `promoteNextPending` on terminal |
-| 3.6 | Tests: claim-from-NeedsInput-succeeds; claim-wrong-state-409; concurrent-claim-409; return-records-commits+diff; return-marks-downstream-stale; return-resumes-runner; return-when-not-HumanWorking-409; non-owner-return-403; git-failure-on-return-409-no-statechange (two-phase) | `web/app/api/runs/__tests__/takeover.test.ts` (unit), `web/app/api/runs/[runId]/takeover/__tests__/takeover.integration.test.ts` (integration) | see runnability note below; per-phase suite green |
+| 3.0a (RED — SDD contract) | OpenAPI-derived contract tests: both routes return EXACTLY the documented status codes/bodies (claim 200 + `{worktreePath,branch,ownerUserId}` / 401 / 403 / 404 / 409; return 200 / 401 / 403 / 404 / 409 / 503). Mirror the in-memory db-mock harness of the existing `respond` route test (`app/api/runs/[runId]/hitl/[hitlRequestId]/respond/__tests__/route.test.ts`). Run and **watch fail** (routes absent) | `web/app/api/runs/__tests__/takeover.test.ts` (new, unit) | RED verified; one assertion per documented status code; `vitest list` shows it under `unit` (glob `app/**/__tests__/**/*.test.ts`) |
+| 3.0b (RED — behavior + failure table) | One failing test per matrix row: `claim-from-NeedsInput-returns-200-context`; `claim-wrong-state-409`; `concurrent-claim-409`; `claim-unauthorized-401-403`; `return-records-commits-and-diff`; `return-stales-reentry-and-downstream` (re-entry's prior gate flips `stale` BEFORE the rerun creates fresh attempts); `resume-reruns-staled-gates`; `return-not-HumanWorking-409`; `non-owner-return-403`; `git-failure-no-statechange` (run stays `HumanWorking`, `returned_diff` null, `markDownstreamStale` NOT called); `ledger-throw-503-stays-humanworking`; `return-flips-Running-after-sideeffects` (two-phase ordering). **Integration seeds: real `flows` row + non-null `flowId`; unique fixture per test.** Run and **watch all fail** | `web/app/api/runs/[runId]/takeover/__tests__/takeover.integration.test.ts` (new, integration) | RED verified; honors the full failure-classification table; matrix `return`/`resume` rows owned here |
+| 3.1 (GREEN) | `POST /api/runs/{runId}/takeover/claim`: `requireActiveSession` + `requireProjectAction(projectId, 'answerHitl')` (project member+; role-restriction is M13); load run+workspace; assert `status='NeedsInput'` AND the current node is a `human_review` node whose manifest `finish.human.decisions` includes `takeover` (server-state from the pinned revision manifest); `claimTakeover` + `markHumanWorking` under one transaction; return 200 with `{ worktreePath, branch, ownerUserId }` so the UI can show checkout context | `web/app/api/runs/[runId]/takeover/claim/route.ts` (new) | INFO log `takeover claimed` with run/node/owner; CAS-lost concurrent claim → 409 `CONFLICT`; wrong state → 409 `PRECONDITION`; 3.0a/3.0b claim cases GREEN |
+| 3.2 (GREEN) | `POST /api/runs/{runId}/takeover/return`: the two-phase commit above. Phase 1 `FOR UPDATE` intent read; Phase 2 `resolveBaseRef`→`logRange`→`diffRange`→`recordTakeoverReturn`→ resolve `reentryNode` = the `human_review` node's `transitions.takeover` target →`markDownstreamStale(runId, [reentryNode, ...downstreamOf(graph, reentryNode)], db)` (include the re-entry node — `downstreamOf` excludes it; staleness recorded BEFORE the status flip, so the AFTER-side marker stays the `Running` flip); Phase 3 `markReturnedToRunning` + `queueMicrotask(runFlow)` resume at the declared validation re-entry | `web/app/api/runs/[runId]/takeover/return/route.ts` (new), `web/lib/flows/graph/runner-graph.ts` (**export** `downstreamOf`, today module-private at `runner-graph.ts:273`) | INFO per phase; failure-classification table honored exactly; returns 200 only after the AFTER-side status flip; 3.0b `return`/two-phase cases GREEN |
+| 3.3 (GREEN) | Graph-runner resume after return: the runner resumes from `runs.current_step_id` (the takeover node), follows the node's `transitions.takeover` target (the declared validation re-entry — **`checks`** per P9, NOT `implement`); the staled downstream gates rerun over the human's commits before the next `human_review` HITL. Reuse M11a's resume/CAS machinery — NO new runner entry point, just a `HumanWorking`-aware resume gate alongside the existing `NeedsInput` resume gate | `web/lib/flows/graph/runner-graph.ts` (extend) | resume continues at the takeover node's `transitions.takeover` target; the re-entry node's PRIOR `gate_results` flip `stale` BEFORE the rerun creates fresh attempts; staled gates show `running`→fresh verdict; rerun recorded as new `node_attempts` rows; 3.0b `resume-reruns-staled-gates` GREEN |
+| 3.4 (note) | **Deferred-release (skill-context):** the claim/return routes create NO supervisor deferred (takeover does not spawn an agent — the human works locally). State this explicitly. The ONLY resource the claim holds is the `HumanWorking` status + the slot; the release path is `releaseHumanWorking` on abandon and `markReturnedToRunning` on return. (The mid-return git-failure regression that proves no partial write is `git-failure-no-statechange` in 3.0b) | tests + this plan | architectural statement recorded; 3.0b `git-failure-no-statechange` GREEN: on `diffRange` throw, run stays `HumanWorking`, `returned_diff` null, `markDownstreamStale` NOT called |
+| 3.5 (GREEN) | Wire release/abandon into the run-abandon path **pinned by Phase 0.10** (P12 — not the placeholder `[runId]/...`; today there is no `abandon/` route): a `HumanWorking` run can be abandoned → `releaseHumanWorking` then the standard abandon transition; document that release-without-changes returns to `NeedsInput` (the original review HITL is re-opened) | the abandon surface named in 0.10, `web/lib/runs/state-transitions.ts` | abandon of `HumanWorking` works; release returns to `NeedsInput`; slot freed via `promoteNextPending` on terminal |
 
 **Test-runnability (skill-context):** The integration tests land under
 `app/**/*.integration.test.ts`, which the **existing** `integration` vitest
@@ -393,11 +486,11 @@ Build the timeline on the existing minimal run-detail page. Reads M11a
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 4.1 | Timeline read query: `getRunTimeline(runId)` returns ordered timeline entries from `node_attempts` (attempt N per node, with `decision`, `rework_from_node`, takeover `owner_user_id`/`returned_commits`/`returned_diff`/`base_ref`, `acp_session_id` checkpoint refs) joined to `gate_results` (each gate's `kind`/`mode`/`status`/`verdict`, with `status='stale'` flagged as **stale** vs current). Extend `web/lib/queries/run.ts` (do NOT fork a parallel module) | `web/lib/queries/run.ts` (extend `RunDetail` / add `getRunTimeline`) | one query, highest-attempt-wins ordering matches M11a templating; stale gates flagged; checkpoint refs surfaced |
-| 4.2 | Timeline component: render attempts chronologically; per node show its gates with a clear **current vs stale** visual (stale = struck/greyed + "rerun required" hint); show decisions (approve/rework/takeover), checkpoints, and **handoff blocks** (owner + elapsed + branch + returned commit list + returned diff in a `<pre>`, no syntax highlighting per M9 deferral); show rerun results as new attempt rows. HeroUI + forest tokens, mirror `flight-card.tsx` patterns | `web/components/board/run-timeline.tsx` (new) | renders all entry kinds; current/stale distinct; returned diff in `<pre>`; no regression to the existing pending-HITL panel |
-| 4.3 | Wire the timeline into the run-detail page below the pending-HITL panel; keep the existing header + pending-HITL section intact (surgical) | `web/app/(app)/runs/[runId]/page.tsx` (extend) | timeline renders for a graph run; minimal/legacy linear runs render an empty-but-valid timeline (no crash) |
-| 4.4 | Take-over / return UI affordances on the run-detail page: a **Take over** button when `status='NeedsInput'` on a `human_review` node with `takeover` decision (posts to `claim`); when `status='HumanWorking'`, show the checkout context (worktree path + branch, copy-able) + a **Return** button (posts to `return`) gated to the owner. Client component, mirrors `run-hitl-response.tsx` | `web/components/board/run-takeover-actions.tsx` (new), run-detail page | buttons appear only in the right states; owner-gating on Return; posts to the Phase 3 routes |
-| 4.5 | Tests: `getRunTimeline` returns current+stale entries + takeover handoff block (integration against M11a-seeded `node_attempts`/`gate_results`); timeline component renders stale vs current + handoff (component unit test) | `web/lib/queries/__tests__/run-timeline.integration.test.ts`, `web/components/board/__tests__/run-timeline.test.ts` | runner globs (`lib/**`, `components/**`) already match; per-phase green |
+| 4.0 (RED) | Failing tests for the timeline before the query/component exist: `getRunTimeline` returns current+stale entries + the takeover handoff block (integration against M11a-seeded `node_attempts`/`gate_results` — **real `flows` row, non-null `flowId`, unique fixture per test**); the timeline component renders stale-vs-current + handoff (component unit). Run and **watch fail** | `web/lib/queries/__tests__/run-timeline.integration.test.ts` (new), `web/components/board/__tests__/run-timeline.test.ts` (new) | RED verified; runner globs (`lib/**`, `components/**`) match; owns matrix `Timeline current-vs-stale …` row |
+| 4.1 (GREEN) | Timeline read query: `getRunTimeline(runId)` returns ordered timeline entries from `node_attempts` (attempt N per node, with `decision`, `rework_from_node`, takeover `owner_user_id`/`returned_commits`/`returned_diff`/`base_ref`, `acp_session_id` checkpoint refs) joined to `gate_results` (each gate's `kind`/`mode`/`status`/`verdict`, with `status='stale'` flagged as **stale** vs current). Extend `web/lib/queries/run.ts` (do NOT fork a parallel module) | `web/lib/queries/run.ts` (extend `RunDetail` / add `getRunTimeline`) | one query, highest-attempt-wins ordering matches M11a templating; stale gates flagged; checkpoint refs surfaced |
+| 4.2 (GREEN) | Timeline component: render attempts chronologically; per node show its gates with a clear **current vs stale** visual (stale = struck/greyed + "rerun required" hint); show decisions (approve/rework/takeover), checkpoints, and **handoff blocks** (owner + elapsed + branch + returned commit list + returned diff in a `<pre>`, no syntax highlighting per M9 deferral); show rerun results as new attempt rows. HeroUI + forest tokens, mirror `flight-card.tsx` patterns | `web/components/board/run-timeline.tsx` (new) | renders all entry kinds; current/stale distinct; returned diff in `<pre>`; no regression to the existing pending-HITL panel |
+| 4.3 (GREEN) | Wire the timeline into the run-detail page below the pending-HITL panel; keep the existing header + pending-HITL section intact (surgical) | `web/app/(app)/runs/[runId]/page.tsx` (extend) | timeline renders for a graph run; minimal/legacy linear runs render an empty-but-valid timeline (no crash) |
+| 4.4 (GREEN) | Take-over / return UI affordances on the run-detail page: a **Take over** button when `status='NeedsInput'` on a `human_review` node with `takeover` decision (posts to `claim`); when `status='HumanWorking'`, show the checkout context (worktree path + branch, copy-able) + a **Return** button (posts to `return`) gated to the owner. Client component, mirrors `run-hitl-response.tsx` | `web/components/board/run-takeover-actions.tsx` (new), run-detail page | buttons appear only in the right states; owner-gating on Return; posts to the Phase 3 routes |
 
 ---
 
@@ -405,12 +498,11 @@ Build the timeline on the existing minimal run-detail page. Reads M11a
 
 | # | Task | Files | Acceptance / logging |
 | - | ---- | ----- | -------------------- |
-| 5.1 | Board card status mapping: add a `humanworking` `CardStatus` (the existing `BoardAgent` already includes `"dev"` — reuse it as the takeover agent pill). `deriveStage` keeps `HumanWorking` in the in-flight bucket (treat like `NeedsInput`/`Running` for column placement — `InProduction`). The card must NOT look like a normal running task | `web/lib/board.ts`, `web/lib/queries/board.ts` | `HumanWorking` → in-flight column; new card status surfaced; unit test asserts placement |
-| 5.2 | Takeover board card surface: when a card is `humanworking`, render **owner, elapsed time (from the takeover `node_attempts.started_at`), branch, and a pending-Return action**; distinct styling (e.g. `dev` pill + a "claimed by <owner>" badge) from running cards | `web/components/board/flight-card.tsx` (extend), `web/lib/queries/board.ts` (surface owner + claimedAt) | owner/elapsed/branch/return-action all shown; visually distinct; no regression to running/needs cards |
-| 5.3 | i18n keys for takeover + timeline + return (EN + RU, ADR-014): `takeOver`, `return`, `claimedBy`, `elapsed`, `checkoutContext`, `returnedCommits`, `returnedDiff`, `staleGate`, `currentGate`, `rerunRequired`, `timelineTitle`, `handoff`, etc., in `run` + `board` namespaces | `web/messages/en.json`, `web/messages/ru.json` | both locales present; no hard-coded UI strings in the new components |
-| 5.4 | `aif` takeover demo: confirm the M11a-migrated `plugins/aif/flow.yaml` `human_review` node's `finish.human.decisions` + `transitions` include `takeover` → **`transitions.takeover: checks`** (P9 — re-validate gates over the human's commits; NOT `implement`, NOT `human_edit`). If M11a left it at `[approve, rework]` only, add `takeover` (manifest-only change; M11a schema already accepts it per `flow-dsl.md:104`) | `plugins/aif/flow.yaml` | manifest validates; `takeover` decision wired to `checks`; demonstrates AC-6 |
-| 5.5 | Migrate any existing board/run-detail tests whose assertions change: `web/lib/__tests__/board*.test.ts` (deriveStage now handles `HumanWorking`), `web/components/board/__tests__/flight-card*.test.ts` (new card status), `web/lib/queries/__tests__/run.test.ts` (RunDetail extended). Enumerate each by path | board/flight-card/run query tests | each named test updated in THIS phase (not deferred); per-phase suite green |
-
+| 5.0 (RED) | Failing tests before the board changes, AND migrate the existing tests whose assertions change (do not defer): `deriveStage` places `HumanWorking` in the in-flight bucket (`web/lib/__tests__/board*.test.ts`); `flight-card` renders the `humanworking` surface (owner/elapsed/branch/return) **distinct from running** and **no regression to the M11a `reworking` indicator** (`web/components/board/__tests__/flight-card*.test.ts`); `RunDetail` extended (`web/lib/queries/__tests__/run.test.ts`). Run and **watch the new assertions fail** | board / flight-card / run-query test files (enumerated above) | RED verified; each migrated test named here, not deferred; owns matrix `Board: HumanWorking …` row |
+| 5.1 (GREEN) | Board card status mapping: add a `humanworking` `CardStatus` (the existing `BoardAgent` already includes `"dev"` — reuse it as the takeover agent pill). `deriveStage` keeps `HumanWorking` in the in-flight bucket (treat like `NeedsInput`/`Running` for column placement — `InProduction`). The card must NOT look like a normal running task | `web/lib/board.ts`, `web/lib/queries/board.ts` | `HumanWorking` → in-flight column; new card status surfaced; unit test asserts placement |
+| 5.2 (GREEN) | Takeover board card surface: when a card is `humanworking`, render **owner, elapsed time (from the takeover `node_attempts.started_at`), branch, and a pending-Return action**; distinct styling (e.g. `dev` pill + a "claimed by <owner>" badge) from running cards | `web/components/board/flight-card.tsx` (extend), `web/lib/queries/board.ts` (surface owner + claimedAt) | owner/elapsed/branch/return-action all shown; visually distinct; no regression to running/needs cards or the **M11a `reworking` indicator** (already in `flight-card.tsx`/`board.ts` — extend, don't replace) |
+| 5.3 (i18n) | i18n keys for takeover + timeline + return (EN + RU, ADR-014): `takeOver`, `return`, `claimedBy`, `elapsed`, `checkoutContext`, `returnedCommits`, `returnedDiff`, `staleGate`, `currentGate`, `rerunRequired`, `timelineTitle`, `handoff`, etc., in `run` + `board` namespaces | `web/messages/en.json`, `web/messages/ru.json` | both locales present; no hard-coded UI strings in the new components |
+| 5.4 (manifest) | `aif` takeover demo: confirm the M11a-migrated `plugins/aif/flow.yaml` `human_review` node's `finish.human.decisions` + `transitions` include `takeover` → **`transitions.takeover: checks`** (P9 — re-validate gates over the human's commits; NOT `implement`, NOT `human_edit`). If M11a left it at `[approve, rework]` only, add `takeover` (manifest-only change; M11a schema already accepts it per `flow-dsl.md:104`) | `plugins/aif/flow.yaml` | manifest validates; `takeover` decision wired to `checks`; demonstrates AC-6 |
 > **(P15) Intermediate WARN note (informational, no structural change):** between
 > M11a and M11c the M11a `SETTINGS_NOT_ENFORCED_WARN` (`[flow] node settings
 > parsed but not enforced until M11c`) still fires on every `aif` load — M11b
@@ -421,25 +513,47 @@ Build the timeline on the existing minimal run-detail page. Reads M11a
 
 ## Phase 6 — Playwright e2e (claim → board surface → local commits → return → diff in timeline → stale → rerun → fresh review)
 
-**(P5b/P5c)** Playwright config + binary exist, but the **auth+seed harness is
-born in M11a Phase 6.6** (`global-setup.ts` storageState + the shared graph-run
-seed helper) because `playwright.config.ts` has no `webServer`/`globalSetup`/
-`storageState` and existing specs are unauthenticated `/login` smoke tests.
-M11b **REUSES** that harness — it does NOT re-scaffold. Task 6.0 below is a
-**mandatory** predecessor of 6.1, not a conditional.
+**(P5b/P5c)** The M11a auth+seed harness now EXISTS as-built and M11b REUSES it,
+but its shape differs from the original M11a-plan wording — reconcile to reality:
+`web/playwright.config.ts` has `globalSetup` (provisions + seeds the e2e DB,
+applies migrations through `0008`), a `setup` project (`web/e2e/auth.setup.ts`)
+that signs in the seeded admin and persists `storageState` to the auth file, and
+an `authed` project (`storageState`) whose `testMatch` is **`/m11a-.*\.spec\.ts$/`
+ONLY** (chromium `testIgnore`s the same pattern). The seed
+`web/e2e/_seed/seed-e2e.ts` **direct-inserts** (raw `pg`) a run parked at
+`NeedsInput` + a `human_review` HITL — it does NOT drive a run via the
+mock-acp-adapter, and it creates **no real on-disk git worktree** (only a
+`workspaces` row with a `worktree_path`). M11b therefore must (a) **extend the
+seed to provision a real git worktree** (see 6.0) and (b) **broaden the `authed`
+`testMatch` + chromium `testIgnore`** to pick up its `m11b-*` spec, and (c) **isolate the seed fixture per spec** under
+`fullyParallel` (see 6.0). Task 6.0 below is a **mandatory** predecessor of 6.1,
+not a conditional.
 
 | # | Task | Files | Acceptance |
 | - | ---- | ----- | ---------- |
-| 6.1 | E2e spec covering the full takeover loop: (a) seed a graph run paused at the `aif` `human_review` node (reuse the integration seed harness / a test fixture flow); (b) **claim** via the run-detail Take over button → run becomes `HumanWorking`; (c) assert the **board card** shows owner + branch + elapsed + pending-Return action and is visually distinct; (d) **simulate local commits** in the exposed worktree (the spec runs `git commit` in the worktree path via a Node child-process step — this is the "human edits locally" simulation, no remote); (e) **Return** via the UI; (f) assert the **returned diff** appears in the run-detail **timeline**; (g) assert downstream gates are marked **stale** then **rerun** (gate rows flip stale→running→fresh verdict); (h) assert the run reaches a **fresh review gate** (new `human_review` HITL) | `web/e2e/takeover.spec.ts` (new) | spec passes against `pnpm dev` + a seeded DB; covers claim→board→commit→return→diff→stale→rerun→fresh-review end-to-end |
-| 6.2 | Document the e2e prerequisites (running web tier + supervisor + seeded project/flow) in the spec header and `docs/getting-started.md` "Scripts" note for `pnpm --filter maister-web test:e2e` | `web/e2e/takeover.spec.ts`, `docs/getting-started.md` | prerequisites documented; spec self-describes its seed |
+| 6.1 | E2e spec covering the full takeover loop: (a) seed a graph run paused at the `aif` `human_review` node (reuse the integration seed harness / a test fixture flow); (b) **claim** via the run-detail Take over button → run becomes `HumanWorking`; (c) assert the **board card** shows owner + branch + elapsed + pending-Return action and is visually distinct; (d) **simulate local commits** in the exposed worktree (the spec runs `git commit` in the worktree path via a Node child-process step — this is the "human edits locally" simulation, no remote); (e) **Return** via the UI; (f) assert the **returned diff** appears in the run-detail **timeline**; (g) assert downstream gates are marked **stale** then **rerun** (gate rows flip stale→running→fresh verdict); (h) assert the run reaches a **fresh review gate** (new `human_review` HITL) | `web/e2e/m11b-takeover.spec.ts` (new) | spec passes against `pnpm dev` + a seeded DB; covers claim→board→commit→return→diff→stale→rerun→fresh-review end-to-end |
+| 6.2 | Document the e2e prerequisites (running web tier + supervisor + seeded project/flow) in the spec header and `docs/getting-started.md` "Scripts" note for `pnpm --filter maister-web test:e2e` | `web/e2e/m11b-takeover.spec.ts`, `docs/getting-started.md` | prerequisites documented; spec self-describes its seed |
 
-> **6.0 (MANDATORY predecessor of 6.1, P5c):** reuse the shared M11a Phase 6.6
-> auth+seed harness — import its `global-setup.ts` storageState and the `tsx`
-> seed helper that installs `aif`, creates a task, launches a run, and drives it
-> to the `human_review` node via the mock-acp-adapter. If M11a's harness is
-> somehow absent at implementation time, BUILD it here first. The e2e MUST NOT
-> ride on manual setup, and 6.1's acceptance is gated on a real green run, not a
-> skip.
+> **6.0 (MANDATORY predecessor of 6.1, P5b/P5c):** reuse the AS-BUILT M11a
+> harness — `web/e2e/global-setup.ts` (DB provision + seed + migrations), the
+> `setup` project / `web/e2e/auth.setup.ts` `storageState`, and
+> `web/e2e/_seed/seed-e2e.ts` (direct-insert of a parked `NeedsInput` run + a
+> `human_review` HITL). Two REQUIRED extensions M11a did not ship: (1)
+> **provision a real git worktree** — `git init` a parent repo, `git worktree
+> add` the run branch at the seeded `worktree_path`, and add a base commit, so
+> the return route's `resolveBaseRef`/`logRange`/`diffRange` and the spec's
+> "commit in the worktree" step operate on real git state (the as-built seed only
+> writes a `workspaces` DB row); (2) **register the spec** — name it
+> `web/e2e/m11b-takeover.spec.ts` and broaden the `authed` project `testMatch`
+> (and chromium `testIgnore`) from `/m11a-.*/` to `/m11[ab]-.*\.spec\.ts$/` so it
+> runs authenticated; (3) **isolate the fixture per spec (Codex F2)** —
+> `web/playwright.config.ts` is `fullyParallel: true` and the M11a global seed
+> creates exactly ONE shared parked run/workspace. Parameterize `seed-e2e.ts` by
+> a unique key (Playwright worker index / spec slug) so each authed spec seeds
+> its OWN project/run/worktree (distinct ids + `.worktrees/<slug>` path) and
+> claims/returns against its own run, never the shared M11a fixture — so
+> M11a/M11b/M11c authed specs cannot race or hide order-dependent regressions.
+> 6.1's acceptance is gated on a real green run, not a skip.
 
 ---
 
@@ -449,13 +563,13 @@ M11b **REUSES** that harness — it does NOT re-scaffold. Task 6.0 below is a
 | - | ---- | ----- | ---------- |
 | 7.1 | Reconcile Phase-0 docs against shipped code; flip implementation-status tags (manual-takeover local-handoff subset → Implemented; artifact-instance + node-type halves stay Designed/M12/M18); confirm contract-surface table fully satisfied | all Phase-0 docs | `/aif-verify` re-derives surfaces from the diff with no gaps |
 | 7.2 | Run `pnpm validate:docs` (Mermaid gate) + OpenAPI validator on `web.openapi.yaml` | docs | zero errors |
-| 7.3 | Full suite green; enumerate any quarantined (Docker-only) tests with reasons; run the Playwright spec | — | `pnpm test:unit && pnpm test:integration` green; `pnpm --filter maister-web test:e2e` green (Docker-gated cases noted) |
+| 7.3 | Full suite green; enumerate any quarantined (Docker-only) tests with reasons; run the Playwright spec. **Run every verify command BARE with `set -o pipefail` — never pipe vitest/playwright through `tail`/`head`/`grep` when asserting pass/fail (patch 14.34: a green `\| tail` over a red suite is a false-green); check the bare exit status** | — | `pnpm test:unit && pnpm test:integration` green; `pnpm --filter maister-web test:e2e` green (Docker-gated cases noted); no piped exit codes |
 
 ---
 
 ## Commit Plan (checkpoints every ~1 phase)
 
-1. **Phase 0** → `docs(m11b): manual-takeover ADR + analytics + ERD + openapi + flow-dsl`
+1. **Phase 0** → `docs(m11b): manual-takeover ADR + analytics + ERD + openapi + flow-dsl + spec→test matrix`
 2. **Phase 1** → `feat(m11b): worktree logRange/diffRange/resolveBaseRef git ops`
 3. **Phase 2** → `feat(m11b): HumanWorking status + node_attempts takeover columns migration 0009`
 4. **Phase 3** → `feat(m11b): takeover claim + two-phase return routes + runner resume`
@@ -477,7 +591,8 @@ M11b **REUSES** that harness — it does NOT re-scaffold. Task 6.0 below is a
    branch and stores `returned_commits` + `returned_diff` + `base_ref` on the
    takeover `node_attempts` row.
 4. **Downstream stale + rerun (criterion #4):** Return calls
-   `markDownstreamStale`; downstream `checks`/`judge`/`review` `gate_results`
+   `markDownstreamStale` with `[reentryNode, ...downstreamOf(reentryNode)]`; the
+   re-entry node + downstream (`checks`/`judge`/`review`) `gate_results`
    flip to `stale`, the runner resumes at the declared `transitions.takeover`
    re-entry, gates rerun, and a fresh `human_review` HITL is produced.
 5. **Returned diff in timeline (criterion #5):** the run-detail timeline shows
@@ -503,9 +618,9 @@ Run locally: `pnpm --filter maister-web test:unit`,
 
 ## Неразрешённые вопросы (ответь до старта)
 
-1. **M11a уже смержен?** M11b жёстко зависит от `node_attempts`, `gate_results`,
-   `markDownstreamStale`, graph-runner. Фазы 2-6 нельзя стартовать, пока M11a в
-   `main`/в ветке. Подтверждаешь, что M11a готов?
+1. ✅ **РЕШЕНО — M11a реализован** (ветка `feature/m11a-flow-graph-lifecycle`).
+   `node_attempts`, `gate_results`, `markDownstreamStale` (2-арг), `downstreamOf`,
+   graph-runner, `run-hitl-response.tsx` — все на месте. Фазы 2-6 разблокированы.
 2. **`HumanWorking` считается в cap (ADR-009)?** Я заложил
    `count(IN ('Running','NeedsInput','HumanWorking'))` — claimed worktree держит
    слот. Ок, или takeover должен быть вне cap (как resume)?
@@ -522,6 +637,10 @@ Run locally: `pnpm --filter maister-web test:unit`,
    Достаточно для M11b, или нужен хотя бы diff-stat (+N/−M)?
 7. **Что показывать как "owner" на карточке** — `users.name` или `email`?
    (RBAC у нас есть, имя может быть null.)
-8. **Миграция `0009` поверх `0008`:** если M11a ещё не закоммитил `0008`,
-   возможен конфликт нумерации (как было `0006→0007` при ребейзе). Делать
-   `0009` строго после мержа M11a?
+8. ✅ **РЕШЕНО** — M11a закоммитил `0008_m11a_graph_ledger.sql` (ceiling=0008),
+   ADR ceiling=025. M11b забирает `0009` + ADR-026 — оба свободны. Конфликта нет.
+9. **Контракт-тесты (3.0a):** ассертить против самого `web.openapi.yaml`
+   программно (грузим YAML → сверяем статусы/тела), или ручные unit-тесты,
+   зеркалящие спеку? Программный путь дороже, но ловит дрейф спек↔код напрямую.
+10. **Матрица spec→test (0.11):** держим в плане (как сейчас), или выносим в
+    отдельный `docs/`-артефакт, на который ссылается `/aif-verify` при as-built сверке?
