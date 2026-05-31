@@ -76,6 +76,13 @@ paths:
         (`claude-agent-acp` for `claude`, `codex-acp` for `codex`), with
         `cwd = worktreePath`. Returns after the OS `spawn` event fires;
         everything after that is observable via the SSE stream.
+
+        Designed capability launch fields are server-derived by the web tier:
+        `capabilityProfilePath` points at the run-scoped profile materialized in
+        the worktree/runtime area, and `adapterLaunch` carries only validated
+        env/arg additions for the selected adapter. The supervisor does not
+        resolve project policy or trust; it validates and passes these fields to
+        the spawned child.
       operationId: createSession
       requestBody:
         required: true
@@ -510,6 +517,17 @@ components:
             Flow step id. Step log lands at `<runId>/<stepId>.log`. Constrained
             to safe filesystem characters.
         executor: { $ref: "#/components/schemas/Executor" }
+        capabilityProfilePath:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: |
+            Designed. Absolute filesystem path to the web-materialized,
+            run-scoped capability profile. Must start with `/` and must not
+            contain `..` segments. The supervisor passes it only through
+            validated `adapterLaunch` env/args; it does not inspect policy.
+        adapterLaunch:
+          $ref: "#/components/schemas/AdapterLaunch"
         resumeSessionId:
           type: string
           minLength: 1
@@ -519,6 +537,40 @@ components:
             Optional. When set, the supervisor adds `--resume <id>` to the
             adapter's argv. M5 wires it through verbatim; M8 uses it as
             the checkpoint-resume handle.
+    AdapterLaunch:
+      type: object
+      additionalProperties: false
+      description: |
+        Designed constrained launch additions produced by the web capability
+        materializer. It cannot override the adapter binary, `cwd`, run id,
+        project slug, worktree path, session id, or ACP session id.
+      properties:
+        env:
+          type: object
+          maxProperties: 64
+          additionalProperties:
+            type: string
+            maxLength: 4096
+          description: |
+            Extra environment variables for the spawned adapter. Values are
+            never logged. Applied after `executor.env` so run-scoped materialized
+            paths can win on collision.
+        preArgs:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          description: Adapter arguments inserted before supervisor-managed args.
+        postArgs:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          description: Adapter arguments appended after supervisor-managed args.
     StartSessionResponse:
       type: object
       required: [sessionId, pid, acpSessionId]

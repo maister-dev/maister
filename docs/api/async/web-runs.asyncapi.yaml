@@ -32,6 +32,12 @@ info:
     Consumers SHOULD treat this stream as authoritative for run-level
     observability and use the supervisor SSE only when they need
     session-level liveness signals that the durable log does not carry.
+
+    Scratch runs (Designed) reuse this same browser route. The web tier
+    projects supervisor events and persisted scratch dialog rows into
+    scratch-specific messages on `/api/runs/{runId}/stream`; v1 does not add a
+    second browser SSE endpoint for dialog workspaces. Consumers distinguish the
+    projection by `type` and by the run row's `run_kind = "scratch"`.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -77,6 +83,8 @@ channels:
           - $ref: "#/components/messages/SessionExited"
           - $ref: "#/components/messages/SessionCrashed"
           - $ref: "#/components/messages/SessionStreamTimeout"
+          - $ref: "#/components/messages/ScratchDialogMessage"
+          - $ref: "#/components/messages/ScratchDialogStatus"
 components:
   messages:
     SessionLine:
@@ -114,6 +122,21 @@ components:
         with `Last-Event-ID` will resume from the durable file.
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionStreamTimeoutEvent" }
+    ScratchDialogMessage:
+      name: scratch.dialog_message
+      title: Designed scratch dialog message projection
+      summary: |
+        Web-side projection emitted after a scratch message is persisted from a
+        user send, assistant update, tool output, or system event.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/ScratchDialogMessageEvent" }
+    ScratchDialogStatus:
+      name: scratch.dialog_status
+      title: Designed scratch dialog status projection
+      summary: |
+        Web-side projection emitted when `scratch_runs.dialog_status` changes.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/ScratchDialogStatusEvent" }
   schemas:
     EventBase:
       type: object
@@ -148,3 +171,49 @@ components:
         reason:
           type: string
           description: Human-readable cause (e.g. "no events within keepalive window").
+    ScratchDialogMessageEvent:
+      type: object
+      required: [type, runId, messageId, sequence, role, content, createdAt]
+      properties:
+        type:
+          type: string
+          const: scratch.dialog_message
+        runId:
+          type: string
+          format: uuid
+        messageId:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          minimum: 1
+        role:
+          type: string
+          enum: [user, assistant, tool, system]
+        content:
+          type: string
+        supervisorEventId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    ScratchDialogStatusEvent:
+      type: object
+      required: [type, runId, dialogStatus, runStatus, changedAt]
+      properties:
+        type:
+          type: string
+          const: scratch.dialog_status
+        runId:
+          type: string
+          format: uuid
+        dialogStatus:
+          type: string
+          enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+        runStatus:
+          type: string
+          enum: [Running, NeedsInput, Review, Crashed, Done, Abandoned, Failed]
+        changedAt:
+          type: string
+          format: date-time

@@ -291,7 +291,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
 
 ### Phase 0: SDD Source Of Truth
 
-- [ ] Task 1: Finalize scratch-run analytics decisions.
+- [x] Task 1: Finalize scratch-run analytics decisions.
   - Update `docs/system-analytics/scratch-runs.md`.
   - Mark every element as Implemented, Designed, or Phase 2.
   - Lock the state mapping: `scratch_runs.dialog_status` carries
@@ -303,7 +303,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Acceptance: no ambiguous MAY where implementation requires MUST; state,
     scheduler, DB, and API descriptions agree.
 
-- [ ] Task 2: Update DB narrative and ERDs.
+- [x] Task 2: Update DB narrative and ERDs.
   - Update `docs/database-schema.md`, `docs/db/runs-domain.md`, and
     `docs/db/erd.md`.
   - Document `runs.run_kind`, nullable scratch behavior for `task_id`,
@@ -319,7 +319,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Acceptance: Mermaid ERDs render, narrative and ERD agree, and task board
     queries explicitly exclude scratch runs.
 
-- [ ] Task 3: Update Web API and event contracts.
+- [x] Task 3: Update Web API and event contracts.
   - Update `docs/api/web.openapi.yaml` for launch options, launch, read,
     messages, stop, discard, diff, promote, and HITL reuse.
   - Update `docs/api/async/web-runs.asyncapi.yaml` for scratch dialog
@@ -333,7 +333,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Acceptance: OpenAPI and analytics name the same routes, status codes, and
     no-side-effect launch gates.
 
-- [ ] Task 4: Update supervisor and capability contracts.
+- [x] Task 4: Update supervisor and capability contracts.
   - Extend `StartSessionRequest` with a server-derived
     `capabilityProfilePath` and a constrained `adapterLaunch` object for
     materializer-produced env/args.
@@ -347,7 +347,7 @@ Scratch permission response must reuse the existing two-phase HITL pattern:
   - Acceptance: docs state exactly which capability kinds are enforced,
     instructed-only, or refused in v1.
 
-- [ ] Task 5: Update product docs.
+- [x] Task 5: Update product docs.
   - Update `docs/PRODUCT_VIEW.md` and `docs/VISION.md` to include custom
     workspace runs as a manual intake surface.
   - Keep the Flow-over-prompt principle for task-board work intact.

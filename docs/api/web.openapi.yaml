@@ -34,6 +34,14 @@ info:
     - `POST /api/runs` (M5+) — launch a run from a Backlog task; precondition
       checks, executor resolution, worktree create, scheduler claim. Requires
       project membership at `member` or above (`launchRun`).
+    - Scratch runs (Designed) — `GET /api/scratch-runs/launch-options`,
+      `POST /api/scratch-runs`, `GET /api/scratch-runs/{runId}`,
+      `POST /api/scratch-runs/{runId}/messages`, `stop`, and `discard`.
+      These routes start and operate manual coding-agent dialog workspaces
+      outside the task board while reusing the supervisor and run event stream.
+    - Diff and promotion for run workspaces (Designed) —
+      `GET /api/runs/{runId}/diff` and `POST /api/runs/{runId}/promote`.
+      Scratch runs use these routes from Review state.
     - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
@@ -83,6 +91,8 @@ tags:
     description: Global admin account management.
   - name: runs
     description: Run launch, status, and event streaming.
+  - name: scratch-runs
+    description: Manual coding-agent dialog workspaces outside the task board.
   - name: hitl
     description: Human-in-the-loop response surface.
   - name: takeover
@@ -610,6 +620,314 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/scratch-runs/launch-options:
+    get:
+      tags: [scratch-runs]
+      summary: Designed — list scratch-run launch choices
+      description: |
+        Requires an active session. Returns only projects, executors, base
+        branches, and capabilities visible to the caller. Optional
+        `projectId` filters the response after membership is verified.
+        Response values are hints for the launcher; `POST /api/scratch-runs`
+        revalidates every identifier from server state.
+      operationId: getScratchRunLaunchOptions
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Launch options visible to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScratchLaunchOptionsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Filtered project not found or not visible.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/scratch-runs:
+    post:
+      tags: [scratch-runs]
+      summary: Designed — launch a manual scratch workspace
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("launchRun")`). Body-controlled identifiers are
+        limited to project, executor, optional linked task, branch choices,
+        attachments, and selected capability ids. The body MUST NOT include
+        `runId`, `projectSlug`, `worktreePath`, `stepId`,
+        `supervisorSessionId`, `acpSessionId`, or capability profile paths.
+
+        No-side-effect gates run before filesystem, DB, capability, or
+        supervisor side effects: auth/authz, project archived check, executor
+        ownership, optional task ownership, branch/base-ref safety, selected
+        capability visibility, supervisor readiness, and shared live-session
+        capacity. Scratch v1 rejects when capacity is full and does not queue.
+      operationId: postScratchRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostScratchRunBody" }
+      responses:
+        "201":
+          description: Scratch run created and initial prompt dispatched.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScratchRunResponse" }
+        "400":
+          description: Malformed body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Branch/worktree/capacity conflict (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "412":
+          description: Base branch, prompt, attachment, or project precondition failed (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid executor, task, branch, or capability selection (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/scratch-runs/{runId}:
+    get:
+      tags: [scratch-runs]
+      summary: Designed — read scratch dialog state
+      description: |
+        Requires project membership at `viewer` or above. `runId` comes from
+        the URL; project, workspace, supervisor session, ACP session, and
+        capability profile paths are derived from server state.
+      operationId: getScratchRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Scratch run detail, messages, attachments, and capability snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScratchRunDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Scratch run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/scratch-runs/{runId}/messages:
+    post:
+      tags: [scratch-runs]
+      summary: Designed — send a scratch dialog message
+      description: |
+        Requires project membership at `member` or above. The route appends the
+        next user message under a row lock, rejects concurrent prompts, then
+        calls supervisor `POST /sessions/{sessionId}/prompt`. The body carries
+        message content and attachment refs only. It MUST NOT include session
+        ids, project slug, worktree path, step id, or message sequence.
+      operationId: postScratchRunMessage
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostScratchMessageBody" }
+      responses:
+        "202":
+          description: Message accepted and prompt dispatch started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScratchMessageResponse" }
+        "400":
+          description: Malformed body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Scratch run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: A prompt is already running, the run is not scratch, or the dialog is not input-ready (`PRECONDITION` / `CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor prompt delivery failed retryably (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/scratch-runs/{runId}/stop:
+    post:
+      tags: [scratch-runs]
+      summary: Designed — stop live scratch supervisor session
+      operationId: stopScratchRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResult"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Scratch run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Scratch run is terminal or not stoppable (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/scratch-runs/{runId}/discard:
+    post:
+      tags: [scratch-runs]
+      summary: Designed — discard scratch workspace
+      description: |
+        Stops any live supervisor session, removes only the worktree and
+        artifacts proven to belong to this scratch run, and transitions the run
+        to `Abandoned`.
+      operationId: discardScratchRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResult"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Scratch run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Scratch run cannot be discarded in its current state (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/diff:
+    get:
+      tags: [runs]
+      summary: Designed — read workspace diff for a run
+      description: |
+        Requires project membership at `viewer` or above. Returns the diff
+        between the run workspace branch and its server-resolved base commit.
+        For scratch runs, base metadata comes from `scratch_runs`.
+      operationId: getRunDiff
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Workspace diff.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunDiffResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run or workspace not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Workspace has been removed or base metadata is unavailable (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/promote:
+    post:
+      tags: [runs]
+      summary: Designed — promote run branch to target branch
+      description: |
+        Requires project membership at `member` or above. Body controls only
+        promotion mode and optional target branch. Run id, workspace path,
+        source branch, base commit, and default target branch are derived from
+        server state.
+      operationId: promoteRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromoteRunBody" }
+      responses:
+        "200":
+          description: Promotion completed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromoteRunResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run or workspace not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Merge conflict, removed workspace, terminal state, or invalid promotion target (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:
       tags: [hitl]
@@ -618,6 +936,11 @@ paths:
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). The `projectId` is derived
         from the run row, never from the body.
+
+        Scratch runs reuse this endpoint for permission cards rendered inside
+        the scratch dialog. The URL `runId` and `hitlRequestId` identify the
+        pending request; supervisor session id, ACP request id, allowed options,
+        and scratch dialog state are read from server state.
 
         Single user-facing HITL endpoint. The handler dispatches on the
         stored `hitl_requests.kind`:
@@ -1635,6 +1958,231 @@ components:
           type: integer
           minimum: 1
           description: Present iff `status == "Pending"`.
+    ScratchCapabilityOption:
+      type: object
+      required: [id, label, kind, selectedByDefault, enforced]
+      properties:
+        id: { type: string, minLength: 1 }
+        label: { type: string, minLength: 1 }
+        kind:
+          type: string
+          enum: [mcp, skill, rule, setting, restriction]
+        selectedByDefault: { type: boolean }
+        enforced:
+          type: boolean
+          description: Enforced capabilities cannot be unchecked.
+        source:
+          type: string
+          enum: [platform, project, flow-package]
+    ScratchProjectOption:
+      type: object
+      required: [projectId, slug, name, defaultBaseBranch, defaultTargetBranch, executors, baseBranches, capabilities]
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        defaultBaseBranch: { type: string }
+        defaultTargetBranch: { type: string }
+        executors:
+          type: array
+          items:
+            type: object
+            required: [id, label, agent, model]
+            properties:
+              id: { type: string, format: uuid }
+              label: { type: string }
+              agent: { type: string, enum: [claude, codex] }
+              model: { type: string }
+        baseBranches:
+          type: array
+          items: { type: string }
+        capabilities:
+          type: array
+          items: { $ref: "#/components/schemas/ScratchCapabilityOption" }
+    ScratchLaunchOptionsResponse:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/ScratchProjectOption" }
+    ScratchCapabilitySelection:
+      type: object
+      description: |
+        Launch-time capability ids selected from `launch-options`. Unknown,
+        hidden, disabled, untrusted, or cross-project ids return `422 CONFIG`.
+      properties:
+        mcpIds:
+          type: array
+          items: { type: string, minLength: 1 }
+        skillIds:
+          type: array
+          items: { type: string, minLength: 1 }
+        ruleIds:
+          type: array
+          items: { type: string, minLength: 1 }
+        restrictionIds:
+          type: array
+          items: { type: string, minLength: 1 }
+    ScratchAttachmentInput:
+      type: object
+      required: [kind, value]
+      properties:
+        kind:
+          type: string
+          enum: [issue_url, file_path, text_note]
+        label:
+          type: string
+          maxLength: 200
+        value:
+          type: string
+          minLength: 1
+          maxLength: 20000
+    PostScratchRunBody:
+      type: object
+      required: [projectId, baseBranch, branchName, executorId, prompt, planMode]
+      additionalProperties: false
+      description: |
+        Designed scratch launch body. The schema intentionally excludes
+        `runId`, `projectSlug`, `worktreePath`, `stepId`,
+        `supervisorSessionId`, `acpSessionId`, and capability profile paths;
+        the server derives those values after authz and validation.
+      properties:
+        projectId: { type: string, format: uuid }
+        baseBranch: { type: string, minLength: 1, maxLength: 255 }
+        branchName: { type: string, minLength: 1, maxLength: 255 }
+        name: { type: string, maxLength: 200 }
+        executorId: { type: string, format: uuid }
+        planMode:
+          type: string
+          enum: [off, plan-first]
+        prompt: { type: string, minLength: 1, maxLength: 60000 }
+        linkedTaskId: { type: string, format: uuid }
+        linkedIssueUrl: { type: string, maxLength: 2048 }
+        attachments:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
+        capabilities:
+          $ref: "#/components/schemas/ScratchCapabilitySelection"
+    PostScratchMessageBody:
+      type: object
+      required: [content]
+      additionalProperties: false
+      description: |
+        Designed scratch message body. It excludes session ids, project slug,
+        worktree path, step id, and sequence; the server derives those values.
+      properties:
+        content: { type: string, minLength: 1, maxLength: 60000 }
+        attachments:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
+    ScratchMessage:
+      type: object
+      required: [id, runId, sequence, role, content, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        role: { type: string, enum: [user, assistant, tool, system] }
+        content: { type: string }
+        supervisorEventId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    ScratchRun:
+      type: object
+      required: [runId, projectId, runStatus, dialogStatus, branchName, baseBranch, baseCommit, targetBranch, planMode]
+      properties:
+        runId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        name: { type: string, nullable: true }
+        runStatus:
+          type: string
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, Review, Crashed, Done, Abandoned, Failed]
+        dialogStatus:
+          type: string
+          enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+        branchName: { type: string }
+        baseBranch: { type: string }
+        baseCommit: { type: string }
+        targetBranch: { type: string }
+        planMode: { type: string, enum: [off, plan-first] }
+        supervisorSessionId:
+          type: string
+          nullable: true
+          description: Returned only on internal/debug surfaces; normal UI derives actions server-side.
+    ScratchRunResponse:
+      type: object
+      required: [runId, dialogUrl, status]
+      properties:
+        runId: { type: string, format: uuid }
+        dialogUrl: { type: string }
+        status: { $ref: "#/components/schemas/ScratchRun" }
+    ScratchRunDetail:
+      type: object
+      required: [scratchRun, messages, attachments, capabilityProfile]
+      properties:
+        scratchRun: { $ref: "#/components/schemas/ScratchRun" }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/ScratchMessage" }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
+        capabilityProfile:
+          type: object
+          required: [profileDigest, selectedMcpIds, selectedSkillIds, selectedRuleIds]
+          properties:
+            profileDigest: { type: string }
+            selectedMcpIds:
+              type: array
+              items: { type: string }
+            selectedSkillIds:
+              type: array
+              items: { type: string }
+            selectedRuleIds:
+              type: array
+              items: { type: string }
+            downgradedOptionalCapabilityIds:
+              type: array
+              items: { type: string }
+    ScratchMessageResponse:
+      type: object
+      required: [ok, messageId, sequence, dialogStatus]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        messageId: { type: string, format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        dialogStatus: { type: string, enum: [Running] }
+    RunDiffResponse:
+      type: object
+      required: [runId, baseCommit, sourceBranch, targetBranch, diff]
+      properties:
+        runId: { type: string, format: uuid }
+        baseCommit: { type: string }
+        sourceBranch: { type: string }
+        targetBranch: { type: string }
+        diff: { type: string }
+    PromoteRunBody:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [local_merge, pull_request]
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 255
+    PromoteRunResponse:
+      type: object
+      required: [ok, mode]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        mode: { type: string, enum: [local_merge, pull_request] }
+        commit: { type: string, nullable: true }
+        pullRequestUrl: { type: string, nullable: true }
     HitlResponseBody:
       type: object
       description: |

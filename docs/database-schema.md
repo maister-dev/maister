@@ -9,9 +9,12 @@ ultra-light dev only — never as a production target.
 
 ## Tables
 
-Thirteen tables (M9 added five auth tables and `project_members`).
-App-generated `text` IDs (UUID v4). All timestamps stored as
-`timestamp with timezone` in UTC.
+The implemented schema contains auth, project, run, workspace, graph-runner,
+and HITL tables. Scratch-run persistence is Designed and will land as additive
+migrations: `runs.run_kind`, nullable scratch launch FKs, `scratch_runs`,
+`scratch_messages`, `scratch_attachments`, and
+`scratch_capability_profiles`. App-generated `text` IDs are UUID v4. All
+timestamps are stored as `timestamp with timezone` in UTC.
 
 Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 `accounts`, `sessions`, `verification_tokens`, `project_members`, and the
@@ -28,8 +31,12 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
 | `flows` | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement. | `projects.id` |
 | `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
-| `runs` | Execution attempts. `task ↔ runs` is 1:N (retry loop). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
+| `runs` | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"` (Designed). | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
+| `scratch_runs` | **Designed.** Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. | `runs.id`, `projects.id`, `users.id`, optional `tasks.id` |
+| `scratch_messages` | **Designed.** Append-only dialog message ledger with monotonic sequence per scratch run. | `scratch_runs.run_id` |
+| `scratch_attachments` | **Designed.** Text note, file path, or issue URL attachments attached to a scratch run or message. | `scratch_runs.run_id`, optional `scratch_messages.id` |
+| `scratch_capability_profiles` | **Designed.** Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path. | `scratch_runs.run_id` |
 | `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
 | `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). | `runs.id`, `users.id` (takeover owner, M11b) |
 | `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
@@ -287,35 +294,52 @@ queries.
 
 ```ts
 {
-  id, taskId, projectId, flowId, executorId,
+  id,
+  runKind: 'flow' | 'scratch',   // Designed. DEFAULT 'flow'
+  taskId?,                       // nullable for scratch runs
+  projectId,
+  flowId?,                       // nullable for scratch runs
+  executorId,
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for --resume <id>
   currentStepId?,                // id of the step the runner is on
-  flowVersion,                   // tag snapshot at launch — display
-  flowRevision,                  // git SHA snapshot at launch (display +
-                                 //   legacy fallback path).
+  flowVersion,                   // Flow tag snapshot; "scratch" sentinel for
+                                 //   scratch runs
+  flowRevision,                  // Flow git SHA snapshot; "manual" sentinel
+                                 //   for scratch runs
   flowRevisionId?,               // M10 FK -> flow_revisions.id (set null).
                                  //   The pinned immutable revision; the runner
                                  //   resolves manifest + installed_path from
                                  //   THIS row, so upgrade/rollback of the
                                  //   project's enabled revision never affects
                                  //   an in-flight run. Null on pre-migration
-                                 //   rows -> runner falls back to
-                                 //   flows.manifest + systemCachePath.
+                                 //   rows or scratch runs -> runner falls
+                                 //   back only for flow runs.
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
   startedAt, endedAt?
 }
 ```
 
-`currentStepId` is set by the runner before each step starts and
-cleared on terminal transitions (`Review` / `Failed`). It is the cheap
-signal for "where is this run right now" without joining `step_runs`.
+`runKind = 'flow'` is the default and preserves the current task-attempt
+contract. Task board queries must filter `runKind = 'flow'`; scratch runs are
+manual workspaces and must never appear as board attempts unless a later
+feature explicitly creates a board task.
 
-Indexed on `(projectId, status)` for portfolio/board queries and on
-`taskId` for latest-attempt lookups.
+`runKind = 'scratch'` rows may have `taskId`, `flowId`, and `flowRevisionId`
+set to `NULL`. They still keep non-null legacy display fields by writing
+`flowVersion = 'scratch'` and `flowRevision = 'manual'`.
+
+`currentStepId` is set by the Flow runner before each step starts and cleared
+on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in
+`scratch_runs.dialog_status`, not in `currentStepId`.
+
+Designed indexes: `(projectId, status, runKind)` for portfolio and active
+workspace queries, `(runKind, taskId)` for board/latest-attempt lookups that
+must exclude scratch runs, and the existing `(taskId)` lookup for compatibility
+until all callers move to the typed index.
 
 ## `workspaces`
 
@@ -331,6 +355,103 @@ One workspace per run. `worktreePath` is globally unique across the host.
 Planned M18 adds `baseBranch`, `baseCommit`, `targetBranch`, and
 `promotionMode` metadata so the run ledger can explain branch-targeted
 promotion without relying on naming conventions.
+
+Scratch-run v1 stores `baseBranch`, `baseCommit`, and `targetBranch` in
+`scratch_runs` because the branch semantics belong to the manual dialog
+workspace and are needed by diff, promote, discard, and recovery.
+
+## `scratch_runs` (Designed)
+
+```ts
+{
+  runId,                         // PK + FK -> runs.id
+  projectId,                     // FK -> projects.id
+  name?,
+  initialPrompt,
+  planMode: 'off' | 'plan-first',
+  linkedTaskId?,                 // optional FK -> tasks.id in same project
+  linkedIssueUrl?,
+  baseBranch,
+  baseCommit,                    // resolved server-side before worktree add
+  targetBranch,
+  dialogStatus: 'Starting' | 'WaitingForUser' | 'Running' | 'NeedsInput'
+              | 'Review' | 'Crashed' | 'Done' | 'Abandoned',
+  supervisorSessionId?,
+  createdByUserId,               // FK -> users.id
+  lastUserMessageAt?,
+  lastAgentMessageAt?,
+  createdAt,
+  updatedAt
+}
+```
+
+`dialogStatus` is the scratch-specific conversation axis. It carries
+`WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
+is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
+
+Indexes: `scratch_runs_run_idx` on `(runId)` for detail lookups, plus
+`scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for active
+workspace lists.
+
+## `scratch_messages` (Designed)
+
+```ts
+{
+  id,
+  runId,                         // FK -> scratch_runs.run_id
+  sequence,                      // monotonic per run
+  role: 'user' | 'assistant' | 'tool' | 'system',
+  content,
+  supervisorEventId?,
+  createdAt
+}
+```
+
+Messages are append-only. `UNIQUE (runId, sequence)` prevents duplicate dialog
+positions and supports deterministic replay. Index
+`scratch_messages_run_sequence_idx` on `(runId, sequence)` is required for
+dialog reads.
+
+## `scratch_attachments` (Designed)
+
+```ts
+{
+  id,
+  runId,                         // FK -> scratch_runs.run_id
+  messageId?,                    // optional FK -> scratch_messages.id
+  kind: 'issue_url' | 'file_path' | 'text_note',
+  label?,
+  value,
+  createdAt
+}
+```
+
+Attachments are metadata only in v1. Binary upload storage is Phase 2. Indexes:
+`scratch_attachments_run_idx` on `(runId)` and
+`scratch_attachments_message_idx` on `(messageId)`.
+
+## `scratch_capability_profiles` (Designed)
+
+```ts
+{
+  id,
+  runId,                         // UNIQUE FK -> scratch_runs.run_id
+  profileDigest,
+  materializedPath,
+  selectedMcpIds,                // jsonb string[]
+  selectedSkillIds,              // jsonb string[]
+  selectedRuleIds,               // jsonb string[]
+  restrictions,                  // jsonb
+  adapterLaunch,                 // jsonb args/env instructions for supervisor
+  downgradeNotes?,               // jsonb optional capability downgrades
+  createdAt
+}
+```
+
+The profile row is the launch-time snapshot. It is resolved from platform,
+project, and trusted Flow-package catalogs before the supervisor session starts.
+Index `scratch_capability_profiles_run_idx` on `(runId)` supports session
+recovery and detail views.
 
 ## `step_runs`
 
@@ -559,7 +680,12 @@ projects
   │           ├── node_attempts   (FK runId,        cascade)   ← M11a
   │           │     └── gate_results (FK nodeAttemptId, cascade)
   │           ├── gate_results    (FK runId,        cascade)   ← M11a (also direct)
-  │           └── hitl_requests   (FK runId,        cascade)
+  │           ├── hitl_requests   (FK runId,        cascade)
+  │           └── scratch_runs    (FK runId,        cascade)   ← Designed
+  │                 ├── scratch_messages            ← Designed
+  │                 │     └── scratch_attachments   ← Designed (optional message FK)
+  │                 ├── scratch_attachments         ← Designed (run FK)
+  │                 └── scratch_capability_profiles ← Designed
   ├── runs               (FK projectId, cascade)  ← also direct
   └── workspaces         (FK projectId, cascade)  ← also direct
 ```
@@ -581,6 +707,14 @@ Created via Drizzle:
 | `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
 | `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
 | `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |
+| `runs` | `runs_project_status_kind_idx` | `(projectId, status, runKind)` | **Designed.** Active workspace queries across Flow and scratch runs. |
+| `runs` | `runs_kind_task_idx` | `(runKind, taskId)` | **Designed.** Board/latest-attempt lookups that explicitly exclude scratch runs. |
+| `scratch_runs` | `scratch_runs_run_idx` | `(runId)` | **Designed.** Scratch detail and joins from `runs`. |
+| `scratch_runs` | `scratch_runs_project_status_idx` | `(projectId, dialogStatus)` | **Designed.** Project scratch workspace lists. |
+| `scratch_messages` | `scratch_messages_run_sequence_idx` | `(runId, sequence)` UNIQUE | **Designed.** Ordered dialog replay. |
+| `scratch_attachments` | `scratch_attachments_run_idx` | `(runId)` | **Designed.** Run-level attachment lookup. |
+| `scratch_attachments` | `scratch_attachments_message_idx` | `(messageId)` | **Designed.** Message attachment lookup. |
+| `scratch_capability_profiles` | `scratch_capability_profiles_run_idx` | `(runId)` UNIQUE | **Designed.** Capability snapshot lookup by run. |
 | `step_runs` | `step_runs_run_idx` | `(runId)` | Per-run step lookups (templating) |
 | `node_attempts` | `node_attempts_run_step_attempt_uq` | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt) |
 | `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |

@@ -1,9 +1,12 @@
 # Runs domain ERD
 
-Tables for the execution lifecycle: tasks (board), runs (attempts),
-workspaces (worktrees). See [`../system-analytics/tasks.md`](../system-analytics/tasks.md),
-[`../system-analytics/runs.md`](../system-analytics/runs.md), and
-[`../system-analytics/workspaces.md`](../system-analytics/workspaces.md)
+Tables for the execution lifecycle: tasks (board), runs (Flow attempts and
+scratch sessions), workspaces (worktrees), scratch dialog metadata, messages,
+attachments, and capability snapshots. See
+[`../system-analytics/tasks.md`](../system-analytics/tasks.md),
+[`../system-analytics/runs.md`](../system-analytics/runs.md),
+[`../system-analytics/workspaces.md`](../system-analytics/workspaces.md), and
+[`../system-analytics/scratch-runs.md`](../system-analytics/scratch-runs.md)
 for behavior.
 
 ```mermaid
@@ -22,6 +25,12 @@ erDiagram
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
+    RUNS ||--o| SCRATCH_RUNS : "scratch metadata (Designed)"
+    TASKS ||--o{ SCRATCH_RUNS : "optional link (Designed)"
+    SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES : "dialog ledger (Designed)"
+    SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments (Designed)"
+    SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments (Designed)"
+    SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot (Designed)"
 
     TASKS {
         text id PK
@@ -38,15 +47,17 @@ erDiagram
 
     RUNS {
         text id PK
-        text task_id FK
+        text run_kind "flow|scratch (Designed; DEFAULT flow)"
+        text task_id FK "nullable for scratch"
         text project_id FK
-        text flow_id FK
+        text flow_id FK "nullable for scratch"
         text executor_id FK
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (--resume)"
         text current_step_id "runner cursor"
-        text flow_version "tag snapshot at launch"
-        text flow_revision "git SHA snapshot at launch"
+        text flow_version "tag snapshot; scratch sentinel"
+        text flow_revision "git SHA snapshot; manual sentinel"
+        text flow_revision_id FK "nullable for scratch"
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp started_at
@@ -120,6 +131,60 @@ erDiagram
         timestamp created_at
         timestamp ended_at
     }
+
+    SCRATCH_RUNS {
+        text run_id PK
+        text project_id FK
+        text name
+        text initial_prompt
+        text plan_mode "off|plan-first"
+        text linked_task_id FK
+        text linked_issue_url
+        text base_branch
+        text base_commit
+        text target_branch
+        text dialog_status "Starting|WaitingForUser|Running|NeedsInput|Review|Crashed|Done|Abandoned"
+        text supervisor_session_id
+        text created_by_user_id FK
+        timestamp last_user_message_at
+        timestamp last_agent_message_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCRATCH_MESSAGES {
+        text id PK
+        text run_id FK
+        integer sequence "UNIQUE per run"
+        text role "user|assistant|tool|system"
+        text content
+        text supervisor_event_id
+        timestamp created_at
+    }
+
+    SCRATCH_ATTACHMENTS {
+        text id PK
+        text run_id FK
+        text message_id FK
+        text kind "issue_url|file_path|text_note"
+        text label
+        text value
+        timestamp created_at
+    }
+
+    SCRATCH_CAPABILITY_PROFILES {
+        text id PK
+        text run_id FK
+        text profile_digest
+        text materialized_path
+        jsonb selected_mcp_ids
+        jsonb selected_skill_ids
+        jsonb selected_rule_ids
+        jsonb restrictions
+        jsonb adapter_launch
+        jsonb downgrade_notes
+        timestamp created_at
+    }
 ```
 
 > **(M11a — Implemented, migration `0010`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
@@ -150,9 +215,24 @@ erDiagram
 - `tasks_project_status_idx` on `(project_id, status)` — board queries.
 - `runs_project_status_idx` on `(project_id, status)` — portfolio
   queries and per-project In-Flight filters.
+- **Designed** `runs_project_status_kind_idx` on
+  `(project_id, status, run_kind)` — active workspace queries that include both
+  Flow and scratch runs while preserving kind filters.
 - `runs_task_idx` on `(task_id)` — latest-attempt lookups (`ORDER
 BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 `ORDER BY attempt_number DESC LIMIT 1` once `runs.attempt_number` lands).
+- **Designed** `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
+  attempt queries that explicitly filter `run_kind = 'flow'` and exclude
+  scratch rows with nullable `task_id`.
+- **Designed** `scratch_runs_run_idx` on `(run_id)` and
+  `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — scratch
+  detail joins and active scratch workspace lists.
+- **Designed** `scratch_messages_run_sequence_idx` on `(run_id, sequence)`
+  UNIQUE — deterministic dialog replay.
+- **Designed** attachment indexes on `(run_id)` and `(message_id)` — run and
+  message attachment lookups.
+- **Designed** `scratch_capability_profiles_run_idx` on `(run_id)` UNIQUE —
+  run-scoped capability snapshot lookup.
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.
 - `step_runs_run_step_attempt_uq` on `(run_id, step_id, attempt)` —
   one row per (run, step, attempt); guards future per-step retry.
@@ -197,6 +277,20 @@ Pending -> Running -> Review -> Done (promotion succeeds)
 See [`../system-analytics/runs.md`](../system-analytics/runs.md) for the
 full state diagram.
 
+**Scratch dialog status** (manual dialog axis, Designed):
+
+```
+Starting -> WaitingForUser <-> Running -> Review -> Done
+                         \-> NeedsInput <-> Running
+                         \-> Crashed -> Running (Recover)
+                         \-> Abandoned
+```
+
+`WaitingForUser` exists only on `scratch_runs.dialog_status`. It maps to
+`runs.status = 'Running'` so idle live scratch sessions keep counting against
+the shared live-session cap. `NeedsInput` maps to `runs.status = 'NeedsInput'`
+only for explicit HITL or permission waits.
+
 ## Notes on cardinality
 
 - `RUNS ||--|| WORKSPACES` is one-to-one *at most* — the workspace
@@ -207,9 +301,16 @@ full state diagram.
 - `TASKS ||--o{ RUNS` — 1:N attempts. The "latest" run on a card is
   the row with `MAX(started_at)` for the task today; the designed
   run-attempt schema switches to `MAX(runs.attempt_number)` once that
-  column lands.
-- Planned M18 adds branch-target metadata to `workspaces` or the run ledger:
-  base branch, base commit, target branch, and promotion mode.
+  column lands. Board queries must filter `RUNS.run_kind = 'flow'`; scratch
+  runs are not task attempts.
+- `RUNS ||--o| SCRATCH_RUNS` — only `run_kind = 'scratch'` rows have scratch
+  metadata.
+- `SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES` — append-only dialog ledger with
+  monotonic sequence per run.
+- `SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES` — exactly one launch-time
+  profile snapshot per scratch run.
+- Scratch-run v1 stores branch-target metadata on `scratch_runs`: base branch,
+  base commit, and target branch.
 - **(M11a — Designed)** `node_attempts` and `gate_results` are now drawn above
   (migration `0010`). The remaining graph-maturity tables — artifacts, artifact
   edges, assignments, external operation events — are still future work and not

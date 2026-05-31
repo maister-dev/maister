@@ -123,20 +123,21 @@ runs. The operator reviews package metadata in the UI first. New runs use the
 project's enabled package revision; active runs keep their snapshotted
 `runs.flow_revision`.
 
-### Planned `capabilities` registry
+### Capability registry for scratch runs and Flow profiles (Designed)
 
-M14 adds a project-visible registry for names that Flow graph node settings can
-reference: MCP servers, skills, tools, agent definitions, agent settings files,
-environment profiles, and restrictions. The registry is intentionally
-project-scoped first. Public marketplace, organization policy, and cross-project
-promotion stay deferred.
+Scratch runs use the first implemented subset of the capability model:
+project-visible MCP servers, skills, rules, adapter settings, and restrictions
+can be selected in the scratch launcher and snapshotted into a run-scoped
+profile before the supervisor session starts. Flow graph node references use
+the same registry shape when capability-scoped execution lands. Public
+marketplace, organization policy, and cross-project promotion stay deferred.
 
 Each capability record has:
 
 | Field | Purpose |
 | ----- | ------- |
 | `id` | Stable name referenced by Flow node settings. |
-| `kind` | One of `mcp`, `skill`, `tool`, `agent_definition`, `agent_settings`, `env_profile`, `restriction`. |
+| `kind` | One of `mcp`, `skill`, `rule`, `tool`, `agent_definition`, `agent_settings`, `env_profile`, `restriction`. |
 | `source` | `project`, `flow`, `git`, `local`, or `system`. |
 | `version` / `revision` | User pin and resolved immutable revision when external. |
 | `agents` | Supported executor agent ids, with optional concrete per-agent mapping. |
@@ -148,14 +149,29 @@ an AI node starts. If a node requires strict enforcement but the selected
 executor can only receive that capability as an instruction, launch fails rather
 than silently weakening the boundary.
 
-The Flow runner also owns scoped materialization. For a fresh per-node AI
-session, it writes or links only that node's allowed skills, MCP config, adapter
-`settings.json` or equivalent settings file, environment profile, and tool
-restriction files before the node starts, then removes or restores them when the
-node ends. For a long-living ACP session, those files are session-wide: every AI
-node inside the session must use the same resolved capability profile. A Flow
-that needs a different profile must declare a new session boundary, unless the
-adapter supports an explicit safe profile-swap operation.
+For scratch runs, the web tier owns scoped materialization. It writes or links
+only the selected MCP config, skills, rules, adapter settings, and restrictions
+into the run workspace/runtime area, persists the profile snapshot, then calls
+the supervisor with `capabilityProfilePath` and constrained `adapterLaunch`
+env/args. The supervisor does not read `maister.yaml` capability policy and does
+not decide trust.
+
+For a fresh per-node AI session, the Flow runner uses the same materializer. For
+a long-living ACP session, those files are session-wide: every AI node inside
+the session must use the same resolved capability profile. A Flow that needs a
+different profile must declare a new session boundary, unless the adapter
+supports an explicit safe profile-swap operation.
+
+#### Adapter support matrix (Designed)
+
+| Capability kind | Claude | Codex | V1 contract |
+| --------------- | ------ | ----- | ----------- |
+| MCP | Adapter-specific MCP config path through `adapterLaunch`. | Adapter-specific MCP config path through `adapterLaunch`. | Enforced only when the selected adapter mapping exists; enforced unsupported entries are refused. |
+| Skill | Materialized files plus prompt references. | Materialized files plus prompt references. | Instructed-only until adapter-specific loading is verified; enforced unsupported entries are refused. |
+| Rule | Materialized rule files plus prompt policy. | Materialized rule files plus prompt policy. | Instructed-only in v1. |
+| Agent settings | Materialized settings file path. | Materialized settings file path. | Enforced only for MAIster-generated allow-listed settings. Unknown settings are refused. |
+| Restriction | Prompt policy and settings when available. | Prompt policy and settings when available. | Enforced unsupported restrictions are refused; optional unsupported restrictions are downgraded only when recorded in the profile. |
+| Tool / agent definition / env profile | Not activated directly. | Not activated directly. | Refused as enforced capabilities in v1. Optional entries become instructed-only only when the profile records the downgrade. |
 
 ### Planned external operations configuration
 

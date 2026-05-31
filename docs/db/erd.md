@@ -5,7 +5,8 @@ All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`).
 **M11b (migration `0011`, additive)** adds the `HumanWorking` run
 status and the `NODE_ATTEMPTS` takeover columns (`owner_user_id`, `base_ref`,
-`returned_commits`, `returned_diff`).
+`returned_commits`, `returned_diff`). Scratch-run persistence adds
+conversation-style workspace tables on top of the same run/workspace model.
 For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md).
@@ -36,6 +37,13 @@ erDiagram
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
     RUNS ||--o{ HITL_REQUESTS : raises
+    RUNS ||--o| SCRATCH_RUNS : "scratch metadata (Designed)"
+    TASKS ||--o{ SCRATCH_RUNS : "optional link (Designed)"
+    USERS ||--o{ SCRATCH_RUNS : "created by (Designed)"
+    SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES : "dialog ledger (Designed)"
+    SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments (Designed)"
+    SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments (Designed)"
+    SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot (Designed)"
 
     USERS {
         text id PK
@@ -139,15 +147,17 @@ erDiagram
 
     RUNS {
         text id PK
-        text task_id FK
+        text run_kind "flow|scratch (Designed; DEFAULT flow)"
+        text task_id FK "nullable for scratch"
         text project_id FK
-        text flow_id FK
+        text flow_id FK "nullable for scratch"
         text executor_id FK
         text status "Pending..Done"
         text acp_session_id "resume handle"
         text current_step_id "runner cursor"
-        text flow_version "snapshot at launch"
-        text flow_revision "snapshot at launch"
+        text flow_version "snapshot or scratch sentinel"
+        text flow_revision "snapshot or manual sentinel"
+        text flow_revision_id FK "nullable for scratch"
         timestamp checkpoint_at
         timestamp keepalive_until "30min sliding"
         timestamp started_at
@@ -236,15 +246,70 @@ erDiagram
         timestamp responded_at
         timestamp created_at
     }
+
+    SCRATCH_RUNS {
+        text run_id PK
+        text project_id FK
+        text name
+        text initial_prompt
+        text plan_mode "off|plan-first"
+        text linked_task_id FK
+        text linked_issue_url
+        text base_branch
+        text base_commit
+        text target_branch
+        text dialog_status "Starting|WaitingForUser|Running|NeedsInput|Review|Crashed|Done|Abandoned"
+        text supervisor_session_id
+        text created_by_user_id FK
+        timestamp last_user_message_at
+        timestamp last_agent_message_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCRATCH_MESSAGES {
+        text id PK
+        text run_id FK
+        integer sequence "UNIQUE per run"
+        text role "user|assistant|tool|system"
+        text content
+        text supervisor_event_id
+        timestamp created_at
+    }
+
+    SCRATCH_ATTACHMENTS {
+        text id PK
+        text run_id FK
+        text message_id FK
+        text kind "issue_url|file_path|text_note"
+        text label
+        text value
+        timestamp created_at
+    }
+
+    SCRATCH_CAPABILITY_PROFILES {
+        text id PK
+        text run_id FK
+        text profile_digest
+        text materialized_path
+        jsonb selected_mcp_ids
+        jsonb selected_skill_ids
+        jsonb selected_rule_ids
+        jsonb restrictions
+        jsonb adapter_launch
+        jsonb downgrade_notes
+        timestamp created_at
+    }
 ```
 
 ## Planned roadmap extensions
 
-The ERD shows implemented tables plus the M11a-Designed `node_attempts` /
-`gate_results` (migration `0010`). The remaining roadmap M12-M18 additive
-persistence — artifacts and artifact edges, assignments, capability records, API
-tokens, external operation events, and branch promotion metadata — is not drawn
-until its migrations exist. See [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
+The ERD shows implemented tables, M11a `node_attempts` / `gate_results`
+(migration `0010`), and Designed scratch-run persistence. The remaining roadmap
+M12-M18 additive persistence — artifacts and artifact edges, assignments,
+capability catalogs, API tokens, and external operation events — is not drawn
+until its migrations exist. See
+[`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes
 
@@ -261,6 +326,14 @@ until its migrations exist. See [`../database-schema.md#planned-roadmap-persiste
 | `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
 | `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
+| `runs` | `runs_project_status_kind_idx` | `(project_id, status, run_kind)` | **Designed.** Active workspace queries across Flow and scratch runs. |
+| `runs` | `runs_kind_task_idx` | `(run_kind, task_id)` | **Designed.** Board/latest-attempt lookups that explicitly exclude scratch runs. |
+| `scratch_runs` | `scratch_runs_run_idx` | `(run_id)` | **Designed.** Scratch detail joins. |
+| `scratch_runs` | `scratch_runs_project_status_idx` | `(project_id, dialog_status)` | **Designed.** Project scratch workspace lists. |
+| `scratch_messages` | `scratch_messages_run_sequence_idx` | `(run_id, sequence)` UNIQUE | **Designed.** Ordered dialog replay. |
+| `scratch_attachments` | `scratch_attachments_run_idx` | `(run_id)` | **Designed.** Run-level attachment lookup. |
+| `scratch_attachments` | `scratch_attachments_message_idx` | `(message_id)` | **Designed.** Message attachment lookup. |
+| `scratch_capability_profiles` | `scratch_capability_profiles_run_idx` | `(run_id)` UNIQUE | **Designed.** Capability snapshot lookup by run. |
 | `step_runs` | `step_runs_run_idx` | `(run_id)` | Per-run step lookups. |
 | `node_attempts` | `node_attempts_run_step_attempt_uq` | `(run_id, node_id, attempt)` UNIQUE | **(M11a)** Append-only ledger uniqueness. |
 | `node_attempts` | `node_attempts_run_idx` | `(run_id)` | **(M11a)** Templating highest-attempt union. |

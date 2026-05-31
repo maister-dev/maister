@@ -9,18 +9,20 @@ The diagrams in this folder are the **visual** view. If they disagree
 with the Drizzle schema, the Drizzle schema wins — open a PR to fix
 the ERD.
 
-Roadmap persistence for Flow package revisions, artifacts, gates,
-assignments, capability records, API tokens, and external operation events is
-tracked in [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence)
+Designed scratch-run persistence is included in the run ERDs because the
+implementation plan updates the run/workspace contract before code lands.
+Roadmap persistence for artifacts, assignments, capability catalogs, API tokens,
+and external operation events remains tracked in
+[`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence)
 until migrations exist.
 
 ## Files
 
 | File | Scope |
 | ---- | ----- |
-| [`erd.md`](erd.md) | Full ERD across all 8 tables — one diagram. |
+| [`erd.md`](erd.md) | Full ERD across implemented tables plus Designed scratch-run tables. |
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
-| [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces. |
+| [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + Designed scratch-run tables. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + form-schema shape. |
 
 ## Cardinality notation

@@ -4,7 +4,8 @@
 
 MAIster serves a solo technical owner who runs several software projects and
 already uses coding agents. The user wants one control plane for project state,
-Flow launches, HITL, reviews, and promotions instead of many terminals.
+Flow launches, manual scratch workspaces, HITL, reviews, and promotions instead
+of many terminals.
 
 The current target includes credentials auth, admin-approved account
 activation, global roles, and project membership checks. Phase 2 can add
@@ -14,7 +15,7 @@ organization rollout stay outside the current target.
 ## Product Model
 
 ```text
-Project -> Flow package -> Task -> External operation -> Run -> Branch target -> Workspace -> Flow node -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Promote
+Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Branch target -> Workspace -> Flow node / Dialog turn -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Promote
 ```
 
 - **Project** — a registered repo with `maister.yaml` v2.
@@ -34,7 +35,11 @@ Project -> Flow package -> Task -> External operation -> Run -> Branch target ->
   for one AI session scope. A one-node session can have a one-node profile; a
   long-living session uses one profile for every AI node inside it.
 - **Executor** — `{agent, model, env?, router?}`; claude and codex are current.
-- **Task** — backlog intent. One task may spawn many runs.
+- **Task** — backlog intent. One task may spawn many Flow runs.
+- **Scratch run** — manual coding-agent workspace started from a project,
+  base branch, scratch branch/name, executor, prompt, optional issue link, and
+  capability profile. It is an active workspace outside the task board unless
+  explicitly linked to a task.
 - **External operation** — audited project-scoped API or MCP action, such as
   creating a task, launching a run, attaching artifact metadata, reporting an
   external gate, or reading readiness.
@@ -43,8 +48,8 @@ Project -> Flow package -> Task -> External operation -> Run -> Branch target ->
 - **MCP facade** — thin agent-facing tools over the same operations API. MCP
   improves agent ergonomics but does not bypass token scopes, audit, readiness,
   or run ledger rules.
-- **Run** — one execution attempt with status, workspace, step records, and
-  HITL rows.
+- **Run** — one execution attempt or manual scratch session with status,
+  workspace, step/dialog records, and HITL rows.
 - **Branch target** — selected base branch, MAIster run branch, and target
   branch for PR/local merge promotion. Target defaults to base.
 - **Node attempt** — immutable record of one node execution, its inputs,
@@ -79,6 +84,7 @@ Project -> Flow package -> Task -> External operation -> Run -> Branch target ->
 | See portfolio state | Know which projects have running, blocked, crashed, and review-ready work. |
 | Manage delivery packages | Install, trust, enable, upgrade, rollback, disable, and inspect Flow packages without guessing which version a run used. |
 | Launch a controlled run | Turn a backlog task into an isolated worktree and Flow execution. |
+| Start a scratch workspace | Open a conversation-like coding-agent session for exploratory work without creating a task board card. |
 | Pick the right branch | Choose the base branch and target branch so work can happen on `main`, `develop`, release branches, or any engineer-selected branch. |
 | Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, skills, roles, restrictions, and rework paths. |
 | Trust what an AI session can touch | Know which skills, MCPs, tools, settings, env profiles, and restrictions were materialized, enforced, instructed, refused, and cleaned up for a node or long-living session. |
@@ -105,6 +111,10 @@ Project -> Flow package -> Task -> External operation -> Run -> Branch target ->
 - Task creation with Flow and optional executor override.
 - `POST /api/runs` launch path with scheduler, worktree creation, and
   background Flow runner.
+- Scratch run intake is a manual workspace surface outside the task board:
+  choose project, base branch, scratch branch/name, executor, plan mode,
+  optional issue/attachments, and run-scoped MCP/skill/rule profile; show it in
+  active workspace lists and open it as a coding-agent dialog.
 - ACP supervisor process with claude/codex adapter binaries.
 - Durable run SSE via `run.events.jsonl`.
 - HITL response route with row-level claim, atomic artifacts, permission
@@ -250,4 +260,7 @@ the resolved capability profile used by AI nodes, see a readiness summary that
 explains every blocking/stale/overridden gate, create at least one backlog task
 and report at least one external check through token-authenticated operations,
 use the thin MCP facade for the same task/readiness surface from an agent, and
-promote a clean run branch to the selected target branch.
+promote a clean run branch to the selected target branch. It should also start
+at least one scratch workspace outside the task board, show it in the active
+workspace list, preserve its dialog/capability snapshot, and discard or promote
+its branch through the same workspace review path.
