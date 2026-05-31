@@ -30,7 +30,7 @@ defined as a string union in `web/lib/errors.ts`.
 
 | Code | Meaning | Where thrown | UI action |
 | ---- | ------- | ------------ | --------- |
-| `PRECONDITION` | A precondition for an action is not met (dirty repo, branch taken, worktree path occupied, global concurrency cap hit). | `POST /api/runs` validation before spawn. | Show the specific blocker, link to fix. |
+| `PRECONDITION` | A precondition for an action is not met (dirty repo, branch taken, worktree path occupied, global concurrency cap hit; or repo onboarding (ADR-025): `git clone` failed, target directory missing, or the clone `target` path already exists). | `POST /api/runs` validation before spawn; `POST /api/projects` source resolution (clone / existing-local — `resolveProjectSource`). | Show the specific blocker, link to fix. |
 | `SPAWN` | Subprocess could not be launched (binary not on PATH, exec perm denied, OOM). | `supervisor/` when spawning `claude-agent-acp` or `codex-acp`. | "Executor failed to start" with stderr tail. |
 | `NEEDS_INPUT` | The run paused for human input (ACP `session/request_permission` or `needs-input.json` artifact). | Supervisor on ACP notification or artifact appearance. | Render HITL form / approve-deny prompt. |
 | `HITL_TIMEOUT` | Supervisor's pending-permission deferred expired (M7) — typically `MAISTER_KEEPALIVE_MINUTES` elapsed without a `/respond` ack. **NOT** raised for the `NeedsInputIdle → Abandoned` transition (M8) — that is a sweeper-driven state flip with no error surface, NOT a `HITL_TIMEOUT`. | Supervisor `POST /sessions/:id/input`, web `/respond` HITL_TIMEOUT branch. | Run → `Failed`; respond returns 410 terminal. |

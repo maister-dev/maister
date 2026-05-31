@@ -28,13 +28,14 @@ import {
 } from "@/lib/scheduler";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, projects, runs, tasks } = schema;
+const { executors, flows, projects, runs, tasks } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 let projectId: string;
 let executorId: string;
+let flowId: string;
 let originalCap: string | undefined;
 
 beforeAll(async () => {
@@ -67,6 +68,19 @@ beforeAll(async () => {
     executorRefId: "claude-sonnet",
     agent: "claude",
     model: "claude-sonnet-4-6",
+  });
+
+  flowId = randomUUID();
+
+  await db.insert(flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "bugfix",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/bugfix",
+    manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+    schemaVersion: 1,
   });
 
   originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
@@ -102,7 +116,7 @@ async function seedRun(
     projectId,
     title: "t",
     prompt: "p",
-    flowId: null,
+    flowId,
     status: "InFlight",
   });
 
@@ -110,7 +124,7 @@ async function seedRun(
     id: runId,
     taskId,
     projectId,
-    flowId: null,
+    flowId,
     executorId,
     status,
     flowVersion: fakeFlowVersion,

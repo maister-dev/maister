@@ -8,7 +8,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq, and } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 
@@ -43,6 +43,12 @@ beforeAll(async () => {
 afterAll(async () => {
   await pool?.end();
   await container?.stop();
+});
+
+beforeEach(async () => {
+  await db.delete(schema.projectMembers);
+  await db.delete(schema.projects);
+  await db.delete(schema.users);
 });
 
 describe("authorization (integration)", () => {

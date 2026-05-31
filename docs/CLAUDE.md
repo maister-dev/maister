@@ -70,6 +70,8 @@ cases, process flows. One file per domain.
 | [`system-analytics/executors.md`](system-analytics/executors.md) | Executor identity, model routing (env-router vs CCR). |
 | [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, promotion policy, reconciliation. |
 | [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
+| [`system-analytics/instance-config.md`](system-analytics/instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
+| [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
 
 ### Cross-cutting reference
 
@@ -81,6 +83,7 @@ cases, process flows. One file per domain.
 | [`flow-dsl.md`](flow-dsl.md) | Flow step DSL and runner behavior. |
 | [`flow-installer.md`](flow-installer.md) | Flow plugin install pipeline. |
 | [`flow-aif-plugin.md`](flow-aif-plugin.md) | Bundled `aif` Flow plugin. |
+| [`deployment.md`](deployment.md) | Production VPS install: systemd, Postgres, reverse proxy, git auth. |
 
 ## Rules
 

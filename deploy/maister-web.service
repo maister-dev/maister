@@ -1,0 +1,25 @@
+# MAIster web — Next.js control plane (host process; see ADR-023).
+# Requires a prior `pnpm --filter maister-web build` and `db:migrate` (see docs/deployment.md).
+# Install: sudo cp deploy/maister-web.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now maister-web
+[Unit]
+Description=MAIster web (Next.js control plane)
+After=network-online.target docker.service maister-supervisor.service
+Wants=network-online.target maister-supervisor.service
+
+[Service]
+Type=simple
+User=maister
+Group=maister
+WorkingDirectory=/opt/maister
+EnvironmentFile=/etc/maister/maister.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/opt/maister/node_modules/.bin:/opt/maister/web/node_modules/.bin
+# next start serves the prebuilt .next on :3000 (override with PORT=). Front it
+# with the reverse proxy in deploy/maister-web.nginx.conf for TLS.
+ExecStart=/usr/bin/env pnpm --filter maister-web start
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

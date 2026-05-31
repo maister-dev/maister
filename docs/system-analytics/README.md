@@ -29,6 +29,8 @@ Every file in this folder follows the structure defined in
 | Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, promotion policy, reconciliation on startup. |
 | HITL | [`hitl.md`](hitl.md) | Three HITL kinds (permission / form / human), keep-alive activity tracking. |
 | External operations | [`external-operations.md`](external-operations.md) | API tokens, external gate reports, and thin MCP facade for CI/scripts/agents. |
+| Instance configuration | [`instance-config.md`](instance-config.md) | Read-only host roots (`MAISTER_REPOS_ROOT`, `MAISTER_WORKTREES_ROOT`), host-tool status, admin `/settings`. |
+| Git integration | [`git-integration.md`](git-integration.md) | Provider detection, host-credential clone/init/remote, non-interactive git, URL redaction. |
 
 ## What this folder is NOT
 

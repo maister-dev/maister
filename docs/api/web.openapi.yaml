@@ -91,26 +91,34 @@ paths:
   /api/projects:
     post:
       tags: [projects]
-      summary: Register a project from a maister.yaml directory
+      summary: Register a project from a git URL or local directory
       description: |
-        Admin-only (`requireGlobalRole("admin")`). Validates `maister.yaml`
-        v2 at `{dir}/maister.yaml`, derives the project slug from
+        Admin-only (`requireGlobalRole("admin")`). Resolves the project
+        source via `resolveProjectSource` (ADR-025): a `repoUrl` is cloned
+        into `MAISTER_REPOS_ROOT` (refused with `PRECONDITION` if the target
+        dir already exists — pass `target` to override), otherwise an
+        existing local dir named by `target` is used (and `git init`-ed if it
+        is not yet a repo). It then validates `maister.yaml` v2 at
+        `{resolvedDir}/maister.yaml`, derives the project slug from
         `project.name` (kebab-case, server-side — never body-derived),
-        checks `slug` and `repo_path` uniqueness, persists `projects` +
-        `executors` rows, installs each Flow plugin listed in `flows[]`,
-        and inserts a `project_members` row for the caller with
-        `role = "owner"`.
+        checks `slug` and `repo_path` (the resolved on-disk dir) uniqueness,
+        persists `projects` (incl. nullable `repo_url` + `provider`) +
+        `executors` rows, installs each Flow plugin listed in `flows[]`, and
+        inserts a `project_members` row for the caller with `role = "owner"`.
 
         Phases and their error codes:
         1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` or
            `PASSWORD_CHANGE_REQUIRED` (403)
-        2. Load + validate `maister.yaml` — `CONFIG` (422)
-        3. Slug/repo_path collision check — `CONFLICT` (409)
-        4. DB write (project + executors + owner membership) in ONE
+        2. Resolve project source (clone / existing / git-init) —
+           `PRECONDITION` (409) on clone failure, missing dir, or a target
+           path collision
+        3. Load + validate `maister.yaml` — `CONFIG` (422)
+        4. Slug/repo_path collision check — `CONFLICT` (409)
+        5. DB write (project + executors + owner membership) in ONE
            transaction — `CONFIG` (422) on slug-derivation failure; a
            concurrent duplicate that races the collision check trips the
            unique constraint and is reported as `CONFLICT` (409).
-        5. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
+        6. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
            all-or-nothing: on any install failure the route fully
            compensates — deletes the `projects` row (FK cascade removes
            executors, flows, and the owner membership) and removes the
@@ -126,13 +134,24 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/PostProjectBody" }
             examples:
-              register-local:
-                summary: Register a local project
+              clone-from-url:
+                summary: Clone a repo from a git URL
                 value:
-                  dir: /repos/my-app
+                  repoUrl: https://github.com/org/my-app
+              clone-with-target-override:
+                summary: Clone, overriding the on-disk directory name
+                value:
+                  repoUrl: https://github.com/org/my-app
+                  target: my-app-fork
+              register-existing-local:
+                summary: Register an existing local directory
+                value:
+                  target: /repos/my-app
       responses:
         "201":
-          description: Project registered. Slug and ID returned.
+          description: |
+            Project registered. Slug, ID, and the resolved `gitStatus` are
+            returned.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PostProjectResponse" }
@@ -151,7 +170,9 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
-            `slug` or `repo_path` already registered (`CONFLICT`).
+            Either `slug` / `repo_path` already registered (`CONFLICT`), or
+            project-source resolution failed (`PRECONDITION`) — clone error,
+            missing directory, or a clone `target` path that already exists.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -768,7 +789,7 @@ paths:
         "204":
           description: Keep-alive bumped on a `Running` or `NeedsInput` row.
         "400":
-          description: `runId` is not a valid UUID v4.
+          description: "`runId` is not a valid UUID v4."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -1110,19 +1131,38 @@ components:
   schemas:
     PostProjectBody:
       type: object
-      required: [dir]
+      description: |
+        Project source union (ADR-025). Supply at least one of `repoUrl`
+        or `target`. With `repoUrl` and no `target`, MAIster clones into
+        `MAISTER_REPOS_ROOT` under a name derived from the URL; pass
+        `target` to override that name (or to register an existing local
+        directory when `repoUrl` is omitted). Deep path/URL validation runs
+        server-side before any filesystem access.
+      minProperties: 1
       properties:
-        dir:
+        repoUrl:
           type: string
           minLength: 1
+          maxLength: 2048
           description: |
-            Absolute path to the directory containing `maister.yaml`.
-            Must start with `/` and must not contain a `..` path
-            segment (validated server-side before any filesystem access).
+            Git URL to clone (https / http / ssh / scp `git@host:org/repo`
+            / file). Cloned non-interactively with the host's credentials —
+            MAIster stores no provider secrets. The URL is credential-redacted
+            in logs and errors. Omit to register an existing local directory.
+          example: https://github.com/org/my-app
+        target:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: |
+            With `repoUrl`: overrides the clone's on-disk directory name (a
+            single safe path segment, or an absolute path). Without `repoUrl`:
+            the existing local directory to register (absolute, no `..`
+            segment); `git init`-ed when it is not yet a git repo.
           example: /repos/my-app
     PostProjectResponse:
       type: object
-      required: [slug, projectId]
+      required: [slug, projectId, gitStatus]
       properties:
         slug:
           type: string
@@ -1132,6 +1172,14 @@ components:
         projectId:
           type: string
           format: uuid
+        gitStatus:
+          type: string
+          enum: [remote, no-remote, initialized]
+          description: |
+            Resolved source state: `remote` (cloned, or existing repo with an
+            `origin`), `no-remote` (existing repo without an `origin` — PR
+            promotion unavailable), or `initialized` (`git init` ran on a
+            non-repo dir — unborn HEAD, needs a first commit before runs).
     PostTaskBody:
       type: object
       required: [title, prompt, flowId]

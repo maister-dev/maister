@@ -1,7 +1,6 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { and, eq } from "drizzle-orm";
@@ -19,6 +18,7 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 import { runFlow } from "@/lib/flows/runner";
+import { worktreesRoot } from "@/lib/instance-config";
 import { tryStartRun } from "@/lib/scheduler";
 import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import { addWorktree, removeWorktree } from "@/lib/worktree";
@@ -84,10 +84,7 @@ function httpStatusForCode(code: string): number {
 }
 
 function resolveWorktreeRoot(): string {
-  return (
-    process.env.MAISTER_WORKTREE_ROOT ??
-    path.join(tmpdir(), "maister-worktrees")
-  );
+  return worktreesRoot();
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {

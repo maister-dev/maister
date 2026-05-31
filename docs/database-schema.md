@@ -139,7 +139,8 @@ as implicit `owner` of every project.
 ```ts
 {
   id, slug (UNIQUE), name,
-  repoPath (UNIQUE), mainBranch ('main'), branchPrefix ('maister/'),
+  repoPath (UNIQUE), repoUrl?, provider?,
+  mainBranch ('main'), branchPrefix ('maister/'),
   maisterYamlPath,
   defaultExecutorId,             // FK validated app-side (deferred)
   createdAt, archivedAt?
@@ -150,7 +151,10 @@ as implicit `owner` of every project.
 hard-delete in the current target. Archived `repo_path` stays reserved against
 collisions. `mainBranch` is the current column name; product docs now call this
 `default_branch` because branch-targeted runs use it as both default base and
-default target branch.
+default target branch. `repoUrl` and `provider` are nullable metadata captured
+at register time (clone source / existing `origin`, and auto-detected host tag)
+per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots);
+`repoPath` is the resolved on-disk dir, not read from `maister.yaml`.
 
 ## `executors`
 

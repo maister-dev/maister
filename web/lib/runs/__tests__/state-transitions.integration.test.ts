@@ -25,13 +25,14 @@ import {
 } from "@/lib/runs/state-transitions";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, projects, runs, tasks } = schema;
+const { executors, flows, projects, runs, tasks } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 let projectId: string;
 let executorId: string;
+let flowId: string;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -61,6 +62,19 @@ beforeAll(async () => {
     agent: "claude",
     model: "claude-sonnet-4-6",
   });
+
+  flowId = randomUUID();
+
+  await db.insert(flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "bugfix",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/bugfix",
+    manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+    schemaVersion: 1,
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -85,7 +99,7 @@ async function seedRun(
     projectId,
     title: "t",
     prompt: "p",
-    flowId: null,
+    flowId,
     status: "InFlight",
   });
 
@@ -93,7 +107,7 @@ async function seedRun(
     id: runId,
     taskId,
     projectId,
-    flowId: null,
+    flowId,
     executorId,
     status,
     flowVersion: "v1",

@@ -857,6 +857,56 @@ verdicts and the typed taxonomy of ADR-008.
 
 ---
 
+### ADR-025: Project repo onboarding — URL clone or local path, host-credential auth, configurable roots
+
+**Date:** 2026-05-31
+**Status:** Accepted
+**Context:** Project registration today requires a pre-existing local
+`repo_path` (`web/lib/config.schema.ts`); the operator must clone the repo onto
+the host first. For smoother onboarding (and the external-installation goal)
+MAIster should accept a git URL and clone it itself — for GitHub, GitLab, and
+Gitea-family hosts (incl. GitVerse) — while never becoming a holder of git
+provider secrets: the control plane already spawns code-modifying agents, so
+push-capable credentials at rest would widen the blast radius dramatically.
+
+**Decision:** Project source is a union: a registration-time **`repo_url`**
+(Add-Project field / CLI) OR an existing local **`repo_path`**. `maister.yaml`
+lives in the repo, so `repo_path` becomes optional/derived. Resolution: if the
+target directory exists, use it (no clone — existing repos are never
+re-cloned); otherwise `git clone <repo_url>` into `<MAISTER_REPOS_ROOT>/<slug>`,
+then read `<clone>/maister.yaml` and register. **Auth is host-credential only
+(model B):** clone/fetch/push run as the `maister` OS user using the host's
+`~/.ssh` keys or git credential helper — MAIster stores no provider secrets.
+Provider is auto-detected from the URL host into a metadata tag
+(`github | gitlab | gitea | gitverse | generic`; GitVerse is Gitea-family) used
+for future PR-mode (M18) and web links; cloning itself is provider-neutral. Two
+configurable roots (env now, settings UI later): `MAISTER_REPOS_ROOT`
+(default `~/.maister/repos`) and `MAISTER_WORKTREES_ROOT`
+(default `~/.maister/worktrees`); the Flow cache stays at `~/.maister/flows`.
+All git operations (worktree, flow-finish merge, optional commit) remain local,
+provider-neutral git against the resolved path. Scheduled as ROADMAP M21;
+independent of M11/M12.
+
+**Consequences:**
+
+- One onboarding path covers URL-clone and pre-existing local repos; existing
+  repos are never force-re-cloned.
+- Zero provider secrets at rest in MAIster — same trust model as today; the OS
+  owns the credentials. `known_hosts` must be seeded for SSH (deploy guide).
+- Per-project least-privilege credentials are NOT possible under model B (all
+  clones share the host identity); managed per-project credentials (model C) are
+  a separate, security-reviewed capability shared with M18 push/PR — deferred.
+- New `projects` columns (`repo_url`, `provider`) + a config-schema union; the
+  worktree path builder reads `MAISTER_WORKTREES_ROOT`.
+
+**Alternatives Considered:**
+
+- **Local `repo_path` only (status quo):** secure and simple but a manual clone step; kept as a supported mode, not the only one.
+- **MAIster-managed per-project credentials (model C):** per-project least privilege, but secret-at-rest, rotation, audit, and blast-radius make it a deliberate security design tied to M16/M18, not a registration add-on.
+- **Single unified `MAISTER_HOME` root:** rejected to avoid refactoring the hardcoded `~/.maister/flows` path; two explicit roots chosen instead.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.
@@ -869,6 +919,14 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
   is artifact-only; revisit if the standard ACP surface grows.
 - **Cost / time / regex guard *enforcement* (kill-on-cap).** Today it's
   metric-only. Revisit when Phase 2 data shows guard breaches are real.
+
+---
+
+## Doc defects (TODO)
+
+- **`docs/system-analytics/hitl.md:119` Mermaid block #5 fails to parse**
+  (`Note over R:` after a `sequenceDiagram` participant line — `pnpm
+  validate:docs:all`). Pre-existing; out of scope for the ADR-025 docs pass.
 
 ---
 

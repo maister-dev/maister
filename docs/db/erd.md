@@ -79,6 +79,8 @@ erDiagram
         text slug UK
         text name
         text repo_path UK
+        text repo_url "nullable; ADR-025"
+        text provider "nullable; ADR-025"
         text main_branch "current column; product default_branch"
         text branch_prefix
         text maister_yaml_path
