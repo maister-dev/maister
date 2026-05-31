@@ -11,6 +11,7 @@ import type { WorkspacePolicy } from "@/lib/config.schema";
 import { randomUUID } from "node:crypto";
 
 import { and, asc, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -390,15 +391,23 @@ export async function hasPendingTakeoverResume(
 
   if (!takeover.startedAt) return false;
 
+  // Compare started_at column-to-column in SQL so the takeover boundary keeps
+  // its full Postgres microsecond precision. Reading takeover.startedAt into a
+  // JS Date (schema mode:"date") truncates to milliseconds; when a pre-takeover
+  // re-entry attempt shares the takeover row's millisecond, that truncated
+  // bound spuriously matches it as "fresh", falsely reporting the resume
+  // already progressed — which strands the returned run (no dispatch claims it).
+  const takeoverRow = alias(nodeAttempts, "takeover_row");
   const freshReentry: Array<{ id: string }> = await d
     .select({ id: nodeAttempts.id })
     .from(nodeAttempts)
+    .innerJoin(takeoverRow, eq(takeoverRow.id, takeover.id))
     .where(
       and(
         eq(nodeAttempts.runId, runId),
         eq(nodeAttempts.nodeId, reentryNodeId),
         isNull(nodeAttempts.ownerUserId),
-        gt(nodeAttempts.startedAt, takeover.startedAt),
+        gt(nodeAttempts.startedAt, takeoverRow.startedAt),
       ),
     )
     .limit(1);

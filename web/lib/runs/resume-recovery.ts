@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { scheduleResumedSessionDrive } from "./resume-driver";
@@ -356,11 +357,13 @@ async function fetchStrandedTakeoverRuns(db: Db): Promise<string[]> {
   const rows: Array<{
     runId: string;
     currentStepId: string | null;
+    takeoverAttemptId: string;
     takeoverStartedAt: Date | null;
   }> = await db
     .select({
       runId: runs.id,
       currentStepId: runs.currentStepId,
+      takeoverAttemptId: nodeAttempts.id,
       takeoverStartedAt: nodeAttempts.startedAt,
     })
     .from(runs)
@@ -373,6 +376,8 @@ async function fetchStrandedTakeoverRuns(db: Db): Promise<string[]> {
         isNotNull(nodeAttempts.endedAt),
       ),
     );
+
+  const takeoverRow = alias(nodeAttempts, "takeover_row");
 
   const stranded: string[] = [];
 
@@ -404,16 +409,22 @@ async function fetchStrandedTakeoverRuns(db: Db): Promise<string[]> {
     // runner already re-attached; that run is NOT stranded. The temporal
     // guard is REQUIRED: the prior (pre-takeover) re-entry attempt whose gate
     // got staled also has a null owner, so a bare "no null-owner attempt"
-    // check would wrongly reject the candidate.
+    // check would wrongly reject the candidate. The comparison joins the
+    // takeover row so started_at is compared column-to-column at full Postgres
+    // microsecond precision — reading row.takeoverStartedAt (schema mode:"date")
+    // truncates to milliseconds, and a same-millisecond pre-takeover attempt
+    // would then spuriously match as "fresh", leaving a stranded run
+    // unrecovered.
     const freshReentry: Array<{ id: string }> = await db
       .select({ id: nodeAttempts.id })
       .from(nodeAttempts)
+      .innerJoin(takeoverRow, eq(takeoverRow.id, row.takeoverAttemptId))
       .where(
         and(
           eq(nodeAttempts.runId, row.runId),
           eq(nodeAttempts.nodeId, reentryNodeId),
           isNull(nodeAttempts.ownerUserId),
-          gt(nodeAttempts.startedAt, row.takeoverStartedAt),
+          gt(nodeAttempts.startedAt, takeoverRow.startedAt),
         ),
       )
       .limit(1);
