@@ -254,6 +254,104 @@ export async function rollbackResumedRun(
   return { ok: true };
 }
 
+// M11b D2 (ADR-030): NeedsInput → HumanWorking on a takeover claim. The
+// reviewer parked at a human_review node claims the run to edit its worktree
+// by hand. Status-guarded CAS: a concurrent claim loses and gets
+// {ok:false} → the route maps it to 409 CONFLICT. The owner is recorded on
+// the takeover node_attempts row (claimTakeover) — this helper only flips the
+// run status. HumanWorking holds a concurrency slot and is session-less.
+export async function markHumanWorking(
+  runId: string,
+  userId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "HumanWorking" })
+    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, userId, from: "NeedsInput", to: "HumanWorking" },
+      "markHumanWorking: status-guard mismatch — concurrent claim lost",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, userId, from: "NeedsInput", to: "HumanWorking" },
+    "run-state transition — takeover claimed",
+  );
+
+  return { ok: true };
+}
+
+// M11b (ADR-030): HumanWorking → Running on takeover return. The AFTER-side
+// idempotency marker of the two-phase return — set ONLY after git log/diff +
+// recordTakeoverReturn + markDownstreamStale all succeed. Status-guarded so a
+// duplicate return (already Running) loses → {ok:false} → 409 PRECONDITION.
+export async function markReturnedToRunning(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Running" })
+    .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "HumanWorking", to: "Running" },
+      "markReturnedToRunning: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "HumanWorking", to: "Running" },
+    "run-state transition — takeover returned, resuming validation path",
+  );
+
+  return { ok: true };
+}
+
+// M11b (ADR-030): HumanWorking → NeedsInput on release-without-changes. The
+// reviewer claimed the run but made no edits; the original review HITL
+// re-opens. Status-guarded; a non-HumanWorking row loses → {ok:false}.
+export async function releaseHumanWorking(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "NeedsInput" })
+    .where(and(eq(runs.id, runId), eq(runs.status, "HumanWorking")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "HumanWorking", to: "NeedsInput" },
+      "releaseHumanWorking: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "HumanWorking", to: "NeedsInput" },
+    "run-state transition — takeover released (no changes)",
+  );
+
+  return { ok: true };
+}
+
 // M8 D9 / T11: NeedsInput → Crashed when the runner-agent's
 // resume-prompt watchdog expires (the resumed session was supposed to
 // re-issue session.permission_request within

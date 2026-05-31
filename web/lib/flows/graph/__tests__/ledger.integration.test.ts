@@ -4,6 +4,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -14,12 +15,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as fullSchema from "@/lib/db/schema";
 import {
   appendNodeAttempt,
+  claimTakeover,
+  getActiveTakeover,
   getNodeAttemptsForRun,
   latestAttemptByNode,
   markDownstreamStale,
   markNodeReworked,
   markNodeSucceeded,
   nextAttemptFor,
+  recordTakeoverReturn,
 } from "@/lib/flows/graph/ledger";
 import {
   blockingGatesSatisfied,
@@ -302,5 +306,115 @@ describe("gate_results store", () => {
     await markGatePassed(g1.id, undefined, db);
 
     expect(await blockingGatesSatisfied(na.id, db)).toBe(true); // advisory ignored
+  });
+});
+
+// M11b Phase 2.3: takeover ledger helpers. claimTakeover appends the
+// human_review node's node_attempts row carrying owner_user_id;
+// recordTakeoverReturn writes the raw git log/diff + base ref on that row;
+// getActiveTakeover reads back the active (un-returned) takeover row.
+async function seedUser(): Promise<string> {
+  const userId = randomUUID();
+
+  await db.insert(schema.users).values({
+    id: userId,
+    email: `owner-${userId.slice(0, 8)}@maister.local`,
+    role: "member",
+  });
+
+  return userId;
+}
+
+describe("node_attempts takeover columns (M11b)", () => {
+  it("claimTakeover appends a human_review attempt with owner_user_id; getActiveTakeover reads it back", async () => {
+    const runId = await seedRun();
+    const userId = await seedUser();
+
+    const claim = await claimTakeover({
+      runId,
+      nodeId: "review",
+      userId,
+      db,
+    });
+
+    expect(claim.attempt).toBe(1);
+
+    const active = await getActiveTakeover(runId, db);
+
+    expect(active?.id).toBe(claim.id);
+    expect(active?.nodeId).toBe("review");
+    expect(active?.nodeType).toBe("human");
+    expect(active?.ownerUserId).toBe(userId);
+    // No return recorded yet: the takeover columns are still null.
+    expect(active?.returnedCommits).toBeNull();
+    expect(active?.returnedDiff).toBeNull();
+    expect(active?.baseRef).toBeNull();
+    expect(active?.endedAt).toBeNull();
+  });
+
+  it("recordTakeoverReturn writes returned_commits / returned_diff / base_ref on the takeover row + ends it", async () => {
+    const runId = await seedRun();
+    const userId = await seedUser();
+
+    const claim = await claimTakeover({
+      runId,
+      nodeId: "review",
+      userId,
+      db,
+    });
+
+    await recordTakeoverReturn({
+      runId,
+      nodeId: "review",
+      baseRef: "abc123",
+      returnedCommits: "abc123 fix the thing",
+      returnedDiff: "diff --git a/x b/x\n+changed",
+      db,
+    });
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === claim.id,
+    );
+
+    expect(row?.ownerUserId).toBe(userId);
+    expect(row?.baseRef).toBe("abc123");
+    expect(row?.returnedCommits).toBe("abc123 fix the thing");
+    expect(row?.returnedDiff).toBe("diff --git a/x b/x\n+changed");
+    expect(row?.endedAt).not.toBeNull();
+  });
+
+  it("getActiveTakeover returns null once the takeover row has been returned", async () => {
+    const runId = await seedRun();
+    const userId = await seedUser();
+
+    await claimTakeover({ runId, nodeId: "review", userId, db });
+    await recordTakeoverReturn({
+      runId,
+      nodeId: "review",
+      baseRef: "base",
+      returnedCommits: "c",
+      returnedDiff: "d",
+      db,
+    });
+
+    const active = await getActiveTakeover(runId, db);
+
+    expect(active).toBeNull();
+  });
+
+  it("owner_user_id FK SET NULL: deleting the owner nulls the column, leaving the audit row", async () => {
+    const runId = await seedRun();
+    const userId = await seedUser();
+
+    const claim = await claimTakeover({ runId, nodeId: "review", userId, db });
+
+    await db.delete(schema.users).where(eq(schema.users.id, userId));
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === claim.id,
+    );
+
+    expect(row).toBeDefined();
+    expect(row?.ownerUserId).toBeNull();
   });
 });

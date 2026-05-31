@@ -305,6 +305,7 @@ export const runs = pgTable(
         "Running",
         "NeedsInput",
         "NeedsInputIdle",
+        "HumanWorking",
         "Review",
         "Crashed",
         "Done",
@@ -457,6 +458,16 @@ export const nodeAttempts = pgTable(
     vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
     exitCode: integer("exit_code"),
     errorCode: text("error_code"),
+    // M11b (ADR-030): takeover columns — populated ONLY on the human_review
+    // node's takeover attempt. `owner_user_id` records the claiming user;
+    // `base_ref`/`returned_commits`/`returned_diff` capture the raw
+    // `git merge-base`/`git log`/`git diff` text on return. All nullable.
+    ownerUserId: text("owner_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    baseRef: text("base_ref"),
+    returnedCommits: text("returned_commits"),
+    returnedDiff: text("returned_diff"),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

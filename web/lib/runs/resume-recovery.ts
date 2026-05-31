@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { scheduleResumedSessionDrive } from "./resume-driver";
@@ -14,7 +14,8 @@ import {
 } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
+const { gateResults, hitlRequests, nodeAttempts, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -64,6 +65,13 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
   // run by construction (one HITL per current step), but ORDER BY
   // createdAt DESC + LIMIT 1 in the per-row sub-query is the safe
   // pattern.
+  //
+  // M11b (ADR-030 invariant 1): the status filter is `NeedsInput`, so a
+  // `HumanWorking` run is NEVER a candidate here — it is session-less by
+  // design yet holds a worktree, and must survive a restart without being
+  // classified `Crashed`. The exclusion is by construction; the
+  // takeover-return stranded-`Running` recovery is a SEPARATE sweep
+  // (runTakeoverReturnRecoverySweep) that re-dispatches rather than crashes.
   const rows: Array<{
     id: string;
     acpSessionId: string | null;
@@ -299,4 +307,173 @@ export async function runResumeRecoverySweep(
     rolledBack,
     skipped,
   };
+}
+
+// --- M11b F3 (ADR-030 invariant 6): takeover-return stranded-Running sweep --
+//
+// If the process dies AFTER the return route's AFTER-side `HumanWorking →
+// Running` flip but BEFORE `queueMicrotask(runFlow)` attaches, the run is
+// stranded in `Running` holding a cap slot with no live runner. This sweep
+// detects that state and RE-DISPATCHES the graph runner (resume at
+// `runs.current_step_id` — the `transitions.takeover` re-entry).
+//
+// A candidate is a `Running` run whose most-recent ledger activity is a
+// RECORDED takeover return — its takeover `node_attempts` row has
+// `returned_diff` AND `ended_at` set — whose re-entry node's `gate_results`
+// are still `stale`, AND which has NO re-entry (`current_step_id`)
+// `node_attempts` row created after the return (i.e. the resume never
+// progressed). Re-dispatch is SAFE because M11a's resume is CAS-guarded and
+// idempotent: a live runner makes the re-dispatch a no-op; a genuinely stale
+// pointer fails closed to `Crashed` (runner-graph.ts). A naive
+// "Running + no live session → Crashed" sweep is FORBIDDEN — it would
+// false-positive on a session-less `command_check` gate executing after the
+// return.
+
+export type TakeoverReturnRecoverySweepResult = {
+  candidatesFound: number;
+  reDispatched: number;
+};
+
+// FIXME(any): dual drizzle-orm peer-dep variants — runner entry signature.
+type RunFlowEntry = (runId: string, opts: { db?: Db }) => Promise<void>;
+
+export type TakeoverReturnRecoverySweepOptions = {
+  db?: Db;
+  // Override for tests — by default the real graph-runner entry (runFlow),
+  // the SAME entry the Phase-3 return route uses for queueMicrotask.
+  runFlow?: RunFlowEntry;
+};
+
+async function fetchStrandedTakeoverRuns(db: Db): Promise<string[]> {
+  // Running rows that carry a recorded takeover return on the node ledger.
+  // We read the takeover row's `started_at` (DB clock) as the temporal
+  // boundary for "is there a post-return re-entry attempt" — both that and
+  // the re-entry attempts' `started_at` come from Postgres `now()`, so the
+  // comparison is free of host-vs-DB clock skew (unlike `ended_at`, which a
+  // helper writes from the app's `new Date()`). The takeover claim+return
+  // always start after the pre-takeover re-entry attempt and before any
+  // genuine post-return re-entry attempt.
+  const rows: Array<{
+    runId: string;
+    currentStepId: string | null;
+    takeoverStartedAt: Date | null;
+  }> = await db
+    .select({
+      runId: runs.id,
+      currentStepId: runs.currentStepId,
+      takeoverStartedAt: nodeAttempts.startedAt,
+    })
+    .from(runs)
+    .innerJoin(nodeAttempts, eq(nodeAttempts.runId, runs.id))
+    .where(
+      and(
+        eq(runs.status, "Running"),
+        isNotNull(nodeAttempts.ownerUserId),
+        isNotNull(nodeAttempts.returnedDiff),
+        isNotNull(nodeAttempts.endedAt),
+      ),
+    );
+
+  const stranded: string[] = [];
+
+  for (const row of rows) {
+    const reentryNodeId = row.currentStepId;
+
+    if (!reentryNodeId || !row.takeoverStartedAt) continue;
+
+    // The re-entry node's gate_results must still be `stale` — the return
+    // staled them and the resume never re-ran them.
+    const staleGates: Array<{ id: string }> = await db
+      .select({ id: gateResults.id })
+      .from(gateResults)
+      .innerJoin(nodeAttempts, eq(gateResults.nodeAttemptId, nodeAttempts.id))
+      .where(
+        and(
+          eq(gateResults.runId, row.runId),
+          eq(nodeAttempts.nodeId, reentryNodeId),
+          eq(gateResults.status, "stale"),
+        ),
+      )
+      .limit(1);
+
+    if (staleGates.length === 0) continue;
+
+    // NO fresh re-entry attempt created AFTER the takeover → the resume never
+    // progressed past the return flip. A non-takeover (`owner_user_id IS
+    // NULL`) re-entry-node attempt started after the takeover row means the
+    // runner already re-attached; that run is NOT stranded. The temporal
+    // guard is REQUIRED: the prior (pre-takeover) re-entry attempt whose gate
+    // got staled also has a null owner, so a bare "no null-owner attempt"
+    // check would wrongly reject the candidate.
+    const freshReentry: Array<{ id: string }> = await db
+      .select({ id: nodeAttempts.id })
+      .from(nodeAttempts)
+      .where(
+        and(
+          eq(nodeAttempts.runId, row.runId),
+          eq(nodeAttempts.nodeId, reentryNodeId),
+          isNull(nodeAttempts.ownerUserId),
+          gt(nodeAttempts.startedAt, row.takeoverStartedAt),
+        ),
+      )
+      .limit(1);
+
+    if (freshReentry.length > 0) continue;
+
+    stranded.push(row.runId);
+  }
+
+  return stranded;
+}
+
+export async function runTakeoverReturnRecoverySweep(
+  opts: TakeoverReturnRecoverySweepOptions = {},
+): Promise<TakeoverReturnRecoverySweepResult> {
+  const db = opts.db ?? getDb();
+
+  const stranded = await fetchStrandedTakeoverRuns(db);
+
+  if (stranded.length === 0) {
+    log.info({}, "takeover-return recovery sweep: no stranded-Running rows");
+
+    return { candidatesFound: 0, reDispatched: 0 };
+  }
+
+  log.info(
+    { candidates: stranded.length },
+    "takeover-return recovery sweep: stranded-Running rows found — re-dispatching",
+  );
+
+  const runFlow: RunFlowEntry =
+    opts.runFlow ??
+    (async (runId, runOpts) => {
+      const mod = await import("@/lib/flows/runner");
+
+      await mod.runFlow(runId, runOpts);
+    });
+
+  let reDispatched = 0;
+
+  await runWithConcurrency(stranded, PER_PASS_CONCURRENCY, async (runId) => {
+    try {
+      await runFlow(runId, { db });
+      reDispatched += 1;
+      log.info(
+        { runId },
+        "takeover-return recovery: re-dispatched graph runner at current_step_id",
+      );
+    } catch (err) {
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "takeover-return recovery: re-dispatch threw (non-fatal — CAS guards idempotency)",
+      );
+    }
+  });
+
+  log.info(
+    { candidatesFound: stranded.length, reDispatched },
+    "takeover-return recovery sweep complete",
+  );
+
+  return { candidatesFound: stranded.length, reDispatched };
 }

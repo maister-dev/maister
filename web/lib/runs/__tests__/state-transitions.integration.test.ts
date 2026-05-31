@@ -21,11 +21,14 @@ import {
   failResumedRun,
   markCheckpointed,
   markCheckpointedFromExit,
+  markHumanWorking,
   markResumed,
+  markReturnedToRunning,
+  releaseHumanWorking,
 } from "@/lib/runs/state-transitions";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, projects, runs, tasks } = schema;
+const { executors, flows, projects, runs, tasks, users } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -33,6 +36,7 @@ let db: NodePgDatabase;
 let projectId: string;
 let executorId: string;
 let flowId: string;
+let ownerUserId: string;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -74,6 +78,14 @@ beforeAll(async () => {
     installedPath: "/tmp/flows/bugfix",
     manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
     schemaVersion: 1,
+  });
+
+  ownerUserId = randomUUID();
+
+  await db.insert(users).values({
+    id: ownerUserId,
+    email: "owner@maister.local",
+    role: "member",
   });
 }, 180_000);
 
@@ -297,6 +309,95 @@ describe("state-transitions — crashResumedRun", () => {
   it("rejects if row is no longer NeedsInput (e.g. operator already responded)", async () => {
     const runId = await seedRun("Running");
     const r = await crashResumedRun(runId, "resume-prompt-timeout", { db });
+
+    expect(r.ok).toBe(false);
+  }, 60_000);
+});
+
+// M11b Phase 2.4: takeover CAS helpers — status-guarded UPDATEs mirroring
+// the M8 pattern. markHumanWorking (NeedsInput→HumanWorking, claim),
+// markReturnedToRunning (HumanWorking→Running, return), releaseHumanWorking
+// (HumanWorking→NeedsInput, release-without-changes). Each is idempotent via
+// the WHERE-clause status guard; a concurrent loser gets {ok:false}.
+describe("state-transitions — markHumanWorking (claim)", () => {
+  it("NeedsInput → HumanWorking on the happy path", async () => {
+    const runId = await seedRun("NeedsInput");
+
+    const r = await markHumanWorking(runId, ownerUserId, { db });
+
+    expect(r.ok).toBe(true);
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("HumanWorking");
+  }, 60_000);
+
+  it("concurrent claim: only one CAS wins, the loser gets {ok:false} → 409", async () => {
+    const runId = await seedRun("NeedsInput");
+
+    const [a, b] = await Promise.all([
+      markHumanWorking(runId, ownerUserId, { db }),
+      markHumanWorking(runId, ownerUserId, { db }),
+    ]);
+
+    const winners = [a, b].filter((r) => r.ok).length;
+    const losers = [a, b].filter((r) => !r.ok).length;
+
+    expect(winners).toBe(1);
+    expect(losers).toBe(1);
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("HumanWorking");
+  }, 60_000);
+
+  it("rejects when the row is not NeedsInput (status-guard mismatch)", async () => {
+    const runId = await seedRun("Running");
+
+    const r = await markHumanWorking(runId, ownerUserId, { db });
+
+    expect(r.ok).toBe(false);
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("Running");
+  }, 60_000);
+});
+
+describe("state-transitions — markReturnedToRunning (return)", () => {
+  it("HumanWorking → Running on the happy path", async () => {
+    const runId = await seedRun("HumanWorking");
+
+    const r = await markReturnedToRunning(runId, { db });
+
+    expect(r.ok).toBe(true);
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("Running");
+  }, 60_000);
+
+  it("rejects when already returned (not HumanWorking) — idempotent terminal", async () => {
+    const runId = await seedRun("Running");
+
+    const r = await markReturnedToRunning(runId, { db });
+
+    expect(r.ok).toBe(false);
+  }, 60_000);
+});
+
+describe("state-transitions — releaseHumanWorking (release, no changes)", () => {
+  it("release-humanworking-returns-needsinput: HumanWorking → NeedsInput", async () => {
+    const runId = await seedRun("HumanWorking");
+
+    const r = await releaseHumanWorking(runId, { db });
+
+    expect(r.ok).toBe(true);
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("NeedsInput");
+  }, 60_000);
+
+  it("rejects when the row is not HumanWorking (status-guard mismatch)", async () => {
+    const runId = await seedRun("NeedsInput");
+
+    const r = await releaseHumanWorking(runId, { db });
 
     expect(r.ok).toBe(false);
   }, 60_000);

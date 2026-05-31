@@ -75,7 +75,7 @@ export async function tryStartRun(
     const liveRows: Array<{ count: number }> = await tx
       .select({ count: count() })
       .from(runs)
-      .where(inArray(runs.status, ["Running", "NeedsInput"]));
+      .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
 
     const liveCount = Number(liveRows[0]?.count ?? 0);
 
@@ -150,14 +150,14 @@ export async function promoteNextPending(
   const promotedRunId = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
-    // Recheck cap under the lock — a Running/NeedsInput run could
-    // have started between this terminal transition and the
+    // Recheck cap under the lock — a Running/NeedsInput/HumanWorking run
+    // could have started between this terminal transition and the
     // promote call (e.g. another tryStartRun acquired the lock
     // ahead of us), and we must respect the cap globally.
     const liveRows: Array<{ count: number }> = await tx
       .select({ count: count() })
       .from(runs)
-      .where(inArray(runs.status, ["Running", "NeedsInput"]));
+      .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
 
     const liveCount = Number(liveRows[0]?.count ?? 0);
 

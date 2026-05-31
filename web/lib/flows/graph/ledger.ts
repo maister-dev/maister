@@ -10,10 +10,11 @@ import type { WorkspacePolicy } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { MaisterError } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see step-runs.ts / schema
@@ -220,6 +221,111 @@ export async function markNodeReworked(
     { nodeAttemptId, status: "Reworked", decision: args.decision },
     "node-attempt transition",
   );
+}
+
+// --- M11b: manual-takeover ledger helpers (ADR-030) -----------------------
+
+// Claim a takeover for a human_review node: append a fresh node_attempts row
+// of that node carrying `owner_user_id`. Reuses nextAttemptFor (append-only,
+// single-writer per (run, node)). The takeover columns base_ref/
+// returned_commits/returned_diff stay null until the return is recorded.
+export async function claimTakeover(args: {
+  runId: string;
+  nodeId: string;
+  userId: string;
+  db?: Db;
+}): Promise<{ id: string; attempt: number }> {
+  const db = args.db ?? getDb();
+  const id = randomUUID();
+  const attempt = await nextAttemptFor(args.runId, args.nodeId, db);
+
+  await db.insert(nodeAttempts).values({
+    id,
+    runId: args.runId,
+    nodeId: args.nodeId,
+    nodeType: "human" as NodeAttemptType,
+    attempt,
+    status: "NeedsInput" as NodeAttemptStatus,
+    ownerUserId: args.userId,
+  });
+
+  log.debug(
+    {
+      nodeAttemptId: id,
+      runId: args.runId,
+      nodeId: args.nodeId,
+      attempt,
+      ownerUserId: args.userId,
+    },
+    "takeover claimed — node-attempt appended",
+  );
+
+  return { id, attempt };
+}
+
+// Record the return of a takeover: write the raw git log/diff + base ref on
+// the active takeover row and end it (ended_at). Targets the latest takeover
+// attempt for (run, node) — the row claimTakeover appended.
+export async function recordTakeoverReturn(args: {
+  runId: string;
+  nodeId: string;
+  baseRef: string;
+  returnedCommits: string;
+  returnedDiff: string;
+  db?: Db;
+}): Promise<void> {
+  const db = args.db ?? getDb();
+  const active = await getActiveTakeover(args.runId, db);
+
+  if (!active || active.nodeId !== args.nodeId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `no active takeover to return for run ${args.runId} node ${args.nodeId}`,
+    );
+  }
+
+  await db
+    .update(nodeAttempts)
+    .set({
+      baseRef: args.baseRef,
+      returnedCommits: truncate(args.returnedCommits),
+      returnedDiff: truncate(args.returnedDiff),
+      endedAt: new Date(),
+    })
+    .where(eq(nodeAttempts.id, active.id));
+
+  log.debug(
+    {
+      nodeAttemptId: active.id,
+      runId: args.runId,
+      nodeId: args.nodeId,
+      attempt: active.attempt,
+      ownerUserId: active.ownerUserId,
+      baseRef: args.baseRef,
+    },
+    "takeover returned — git log/diff recorded on node-attempt",
+  );
+}
+
+// The active (un-returned) takeover for a run: the latest node_attempts row
+// with owner_user_id set and ended_at still null. Returns null when none.
+export async function getActiveTakeover(
+  runId: string,
+  db?: Db,
+): Promise<NodeAttempt | null> {
+  const d = db ?? getDb();
+
+  const rows: NodeAttempt[] = await d
+    .select()
+    .from(nodeAttempts)
+    .where(
+      and(eq(nodeAttempts.runId, runId), isNotNull(nodeAttempts.ownerUserId)),
+    )
+    .orderBy(asc(nodeAttempts.attempt));
+
+  const active = rows.filter((r) => r.endedAt === null);
+
+  return active.length > 0 ? active[active.length - 1] : null;
 }
 
 export async function getNodeAttemptsForRun(

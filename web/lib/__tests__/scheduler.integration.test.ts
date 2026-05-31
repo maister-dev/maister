@@ -218,3 +218,44 @@ describe("scheduler — M8 cap semantics", () => {
     expect(r.promotedRunId).toBe(pendingRunId);
   }, 60_000);
 });
+
+// M11b Phase 2.5: HumanWorking counts toward the global cap (ADR-009 — a
+// claimed worktree holds a slot) through BOTH cap predicates: the
+// tryStartRun initial-promote count (scheduler.ts:78) AND the
+// promoteNextPending under-advisory-lock recheck (scheduler.ts:160).
+describe("scheduler — M11b HumanWorking cap semantics", () => {
+  it("humanworking-occupies-slot-both-paths: tryStartRun queues when 3 HumanWorking rows fill the cap (the :78 predicate)", async () => {
+    await seedRun("HumanWorking");
+    await seedRun("HumanWorking");
+    await seedRun("HumanWorking");
+
+    const pendingRunId = await seedRun("Pending");
+
+    const r = await tryStartRun(pendingRunId, { db });
+
+    expect(r.started).toBe(false);
+    if (r.started === false) {
+      expect(r.queuePosition).toBeGreaterThan(0);
+    }
+
+    const after = await db.select().from(runs).where(eq(runs.id, pendingRunId));
+
+    expect(after[0].status).toBe("Pending");
+  }, 60_000);
+
+  it("humanworking-occupies-slot-both-paths: promoteNextPending refuses to over-commit when HumanWorking fills the cap (the :160 recheck predicate)", async () => {
+    await seedRun("Running");
+    await seedRun("HumanWorking");
+    await seedRun("HumanWorking");
+
+    const pendingRunId = await seedRun("Pending");
+
+    const r = await promoteNextPending({ db });
+
+    expect(r.promotedRunId).toBeNull();
+
+    const after = await db.select().from(runs).where(eq(runs.id, pendingRunId));
+
+    expect(after[0].status).toBe("Pending");
+  }, 60_000);
+});

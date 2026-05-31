@@ -14,6 +14,12 @@ vi.mock("@/lib/db/schema", () => ({
   runs: TABLE_RUNS,
   flows: { _t: "flows" },
   stepRuns: { _t: "step_runs" },
+  // M11b: resume-recovery now also references these tags for the
+  // takeover-return stranded-Running sweep (runTakeoverReturnRecoverySweep).
+  // The Codex-fix-#2 sweep under test never touches them, but the
+  // module-level destructure errors if the mock omits them.
+  nodeAttempts: { _t: "node_attempts" },
+  gateResults: { _t: "gate_results" },
 }));
 
 vi.mock("@/lib/db/client", () => ({
