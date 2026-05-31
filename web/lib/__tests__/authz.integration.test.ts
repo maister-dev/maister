@@ -134,10 +134,10 @@ describe("authorization (integration)", () => {
   });
 
   it("project member roles follow the ordering: viewer < member < admin < owner", async () => {
-    const viewer = await createUser("viewer@test.com", "member");
-    const mem = await createUser("member@test.com", "member");
-    const admin = await createUser("admin@test.com", "member");
-    const owner = await createUser("owner@test.com", "member");
+    const viewer = await createUser("viewer-ordering@test.com", "member");
+    const mem = await createUser("member-ordering@test.com", "member");
+    const admin = await createUser("admin-ordering@test.com", "member");
+    const owner = await createUser("owner-ordering@test.com", "member");
     const projectId = await createProject();
 
     await addMember(viewer, projectId, "viewer");
