@@ -7,9 +7,17 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
+export interface FlightCardLabels {
+  reworking: string;
+  // M11b (ADR-030) takeover surface, `board`-namespace strings.
+  claimedBy: string;
+  takeoverReturn: string;
+  elapsed: string;
+}
+
 export interface FlightCardProps {
   card: FlightCardData;
-  reworkingLabel: string;
+  labels: FlightCardLabels;
 }
 
 const STRIPE: Record<FlightCardData["status"], string> = {
@@ -17,6 +25,9 @@ const STRIPE: Record<FlightCardData["status"], string> = {
   needs: "bg-amber",
   queued: "bg-mute-2",
   done: "bg-accent-4 opacity-50",
+  // M11b: a claimed run reuses the `dev`/accent-4 stripe but the card body
+  // makes it unmistakably a manual-takeover surface, not a normal running task.
+  humanworking: "bg-accent-3",
 };
 
 const AGENT_PILL: Record<FlightCardData["agent"], string> = {
@@ -38,13 +49,11 @@ function segClass(seg: SpineSegment, needs: boolean): string {
   return "bg-line";
 }
 
-export function FlightCard({
-  card,
-  reworkingLabel,
-}: FlightCardProps): ReactElement {
+export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
   const isDone = card.status === "done";
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
+  const isHumanWorking = card.status === "humanworking";
 
   return (
     <Link
@@ -52,9 +61,11 @@ export function FlightCard({
         "group/fc relative flex flex-col gap-2.5 overflow-hidden rounded-[10px] border px-3.5 pb-3 pt-3 transition-[transform,box-shadow,border-color] hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--accent-4)_40%,var(--line))] hover:shadow-[0_8px_22px_-12px_rgba(22,20,15,0.16)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber",
         isNeeds
           ? "border-amber-line bg-[linear-gradient(180deg,color-mix(in_oklab,var(--amber-soft)_30%,var(--paper))_0%,var(--paper)_60%)]"
-          : isDone
-            ? "border-line bg-[color-mix(in_oklab,var(--ivory)_40%,var(--paper))] opacity-85 hover:opacity-100"
-            : "border-line bg-paper",
+          : isHumanWorking
+            ? "border-[color-mix(in_oklab,var(--accent-3)_45%,var(--line))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--accent-3-soft)_35%,var(--paper))_0%,var(--paper)_60%)]"
+            : isDone
+              ? "border-line bg-[color-mix(in_oklab,var(--ivory)_40%,var(--paper))] opacity-85 hover:opacity-100"
+              : "border-line bg-paper",
       )}
       href={`/runs/${card.runId}`}
     >
@@ -74,7 +85,9 @@ export function FlightCard({
                 ? "bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]"
                 : isNeeds
                   ? "bg-amber"
-                  : "bg-mute-2",
+                  : isHumanWorking
+                    ? "bg-accent-3"
+                    : "bg-mute-2",
             )}
           />
           <span className="truncate">{card.branch}</span>
@@ -82,9 +95,9 @@ export function FlightCard({
         <div className="flex flex-none items-center gap-1.5">
           {card.reworking ? (
             <span
-              aria-label={reworkingLabel}
+              aria-label={labels.reworking}
               className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
-              title={reworkingLabel}
+              title={labels.reworking}
             >
               ↺
             </span>
@@ -100,7 +113,23 @@ export function FlightCard({
         </div>
       </div>
 
-      {!isDone ? (
+      {isHumanWorking ? (
+        <div className="flex flex-col gap-2 rounded-[7px] border border-[color-mix(in_oklab,var(--accent-3)_30%,var(--line))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--accent-3-soft)_40%,var(--paper))_0%,var(--paper)_100%)] px-2.5 py-2">
+          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] leading-[1.4] tracking-[0.005em] text-ink-2">
+            <span className="font-semibold text-accent-3">
+              {labels.claimedBy}
+            </span>
+            <span className="min-w-0 truncate font-bold text-ink">
+              {card.owner}
+            </span>
+          </span>
+          <span className="inline-flex w-fit items-center gap-1 rounded-[5px] border border-[color-mix(in_oklab,var(--accent-3)_40%,var(--line))] bg-paper px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-accent-3">
+            {labels.takeoverReturn} →
+          </span>
+        </div>
+      ) : null}
+
+      {!isDone && !isHumanWorking ? (
         <div
           className={clsx(
             "flex items-center gap-2 rounded-[7px] border px-2.5 py-2 font-mono text-[11px] leading-[1.4] tracking-[0.005em] text-ink-2",
@@ -123,7 +152,7 @@ export function FlightCard({
         </div>
       ) : null}
 
-      {!isDone ? (
+      {!isDone && !isHumanWorking ? (
         <div className="flex items-center gap-[5px] px-0.5 py-0.5">
           {card.spine.map((seg, idx) => (
             <span
@@ -159,10 +188,13 @@ export function FlightCard({
             "font-semibold",
             isNeeds
               ? "text-amber"
-              : isDone
-                ? "text-mute-2 before:font-bold before:text-accent-4 before:content-['✓_']"
-                : "text-mute-2",
+              : isHumanWorking
+                ? "text-accent-3 before:content-['⏱_']"
+                : isDone
+                  ? "text-mute-2 before:font-bold before:text-accent-4 before:content-['✓_']"
+                  : "text-mute-2",
           )}
+          title={isHumanWorking ? labels.elapsed : undefined}
         >
           {card.time}
         </span>

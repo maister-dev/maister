@@ -69,6 +69,9 @@ const IN_PRODUCTION_STATUSES: ReadonlySet<RunStatus> = new Set([
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
+  // M11b (ADR-030): a claimed run (manual takeover) holds a worktree and a
+  // concurrency slot — it stays in the in-flight bucket like Running/NeedsInput.
+  "HumanWorking",
 ]);
 
 export function deriveStage(input: DeriveStageInput): BoardColumn {

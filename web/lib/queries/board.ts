@@ -4,14 +4,22 @@ import type { BoardColumn } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 
-const { executors, flows, nodeAttempts, runs, stepRuns, tasks, workspaces } =
-  schema;
+const {
+  executors,
+  flows,
+  nodeAttempts,
+  runs,
+  stepRuns,
+  tasks,
+  users,
+  workspaces,
+} = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -19,7 +27,12 @@ function db(): NodePgDatabase<typeof schema> {
 }
 
 export type BoardAgent = "claude" | "codex" | "dev";
-export type CardStatus = "running" | "needs" | "queued" | "done";
+export type CardStatus =
+  | "running"
+  | "needs"
+  | "queued"
+  | "done"
+  | "humanworking";
 export type CardPriority = "high" | "med" | "low";
 
 export interface SpineSegment {
@@ -49,6 +62,9 @@ export interface FlightCard {
   // M11a: the latest run has at least one Reworked node attempt (review-driven
   // rework loop in flight). Minimal hint; the full timeline is M11b.
   reworking: boolean;
+  // M11b (ADR-030): for a `humanworking` card, the takeover owner
+  // (`users.name ?? users.email`). Null on every non-takeover card.
+  owner: string | null;
 }
 
 export interface BoardColumnData {
@@ -87,6 +103,7 @@ function relativeTime(from: Date, now: Date): string {
 }
 
 function runStatusToCard(status: RunStatus): CardStatus {
+  if (status === "HumanWorking") return "humanworking";
   if (status === "NeedsInput" || status === "NeedsInputIdle") return "needs";
   if (status === "Pending") return "queued";
   if (status === "Done") return "done";
@@ -230,6 +247,41 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     for (const r of reworkedRows) reworkingRunIds.add(r.runId);
   }
 
+  // M11b (ADR-030): the active takeover claim per latest run — owner + the
+  // claim time (the takeover node_attempts.started_at). Drives the
+  // `humanworking` card's "claimed by <owner>" badge and elapsed time. The
+  // open takeover row is the un-ended human attempt carrying an owner.
+  const takeoverByRun = new Map<string, { owner: string; claimedAt: Date }>();
+
+  if (latestRunIds.length > 0) {
+    const takeoverRows = await client
+      .select({
+        runId: nodeAttempts.runId,
+        startedAt: nodeAttempts.startedAt,
+        attempt: nodeAttempts.attempt,
+        ownerName: users.name,
+        ownerEmail: users.email,
+      })
+      .from(nodeAttempts)
+      .innerJoin(users, eq(users.id, nodeAttempts.ownerUserId))
+      .where(
+        and(
+          inArray(nodeAttempts.runId, latestRunIds),
+          eq(nodeAttempts.nodeType, "human"),
+          isNull(nodeAttempts.endedAt),
+        ),
+      )
+      .orderBy(desc(nodeAttempts.attempt));
+
+    for (const r of takeoverRows) {
+      if (takeoverByRun.has(r.runId)) continue;
+      takeoverByRun.set(r.runId, {
+        owner: r.ownerName ?? r.ownerEmail,
+        claimedAt: r.startedAt,
+      });
+    }
+  }
+
   let backlogPos = 0;
   let merged7d = 0;
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -263,23 +315,31 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       (s) => s.status === "Running" || s.status === "NeedsInput",
     );
     const cardStatus = runStatusToCard(run.status);
+    const takeover =
+      cardStatus === "humanworking"
+        ? (takeoverByRun.get(run.runId) ?? null)
+        : null;
 
     bucket.flight.push({
       taskId: task.taskId,
       runId: run.runId,
       branch: run.branch,
-      agent: run.agent,
+      agent: takeover ? "dev" : run.agent,
       status: cardStatus,
       stepLabel: current?.stepId ?? run.status.toLowerCase(),
       stepBody: current?.stepType ? `${current.stepType} step` : task.title,
       spine: buildSpine(steps),
-      time:
-        cardStatus === "done" && run.endedAt
+      // Elapsed: a takeover card counts from the claim time; a done card from
+      // its end time; everything else from the run start.
+      time: takeover
+        ? relativeTime(takeover.claimedAt, now)
+        : cardStatus === "done" && run.endedAt
           ? relativeTime(run.endedAt, now)
           : relativeTime(run.startedAt, now),
       plus: null,
       minus: null,
       reworking: cardStatus !== "done" && reworkingRunIds.has(run.runId),
+      owner: takeover?.owner ?? null,
     });
 
     if (

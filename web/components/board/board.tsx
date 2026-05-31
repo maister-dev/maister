@@ -61,7 +61,12 @@ export async function Board({
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
   const tRun = await getTranslations("run");
-  const reworkingLabel = tRun("reworking");
+  const flightLabels = {
+    reworking: tRun("reworking"),
+    claimedBy: t("claimedBy"),
+    takeoverReturn: t("return"),
+    elapsed: t("elapsed"),
+  };
   const launchDisabledReason =
     platformStatus.kind === "ready"
       ? undefined
@@ -140,7 +145,7 @@ export async function Board({
                   key={card.runId}
                   className="[[data-layout=swimlanes]_&]:w-[268px] [[data-layout=swimlanes]_&]:flex-none"
                 >
-                  <FlightCard card={card} reworkingLabel={reworkingLabel} />
+                  <FlightCard card={card} labels={flightLabels} />
                 </div>
               ))}
               {column.total === 0 ? (

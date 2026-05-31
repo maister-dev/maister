@@ -102,6 +102,13 @@ describe("InProduction run statuses", () => {
   it("NeedsInputIdle → InProduction", () => {
     expect(deriveStage(s("NeedsInputIdle"))).toBe("InProduction");
   });
+
+  // M11b (ADR-030): a claimed run is HumanWorking — a REAL run status that
+  // stays in the in-flight bucket (treated like Running/NeedsInput for column
+  // placement), not a normal running task visually.
+  it("HumanWorking → InProduction (in-flight, manual takeover)", () => {
+    expect(deriveStage(s("HumanWorking"))).toBe("InProduction");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -177,6 +184,7 @@ describe("totality — every combination returns a known column", () => {
     "Running",
     "NeedsInput",
     "NeedsInputIdle",
+    "HumanWorking",
     "Review",
     "Crashed",
     "Done",

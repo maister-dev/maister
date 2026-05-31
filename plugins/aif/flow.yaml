@@ -49,11 +49,16 @@ nodes:
     finish:
       human:
         role: maintainer
-        decisions: [approve, rework]
+        decisions: [approve, rework, takeover]
         commentsVar: review_comments
+    # M11b (ADR-030): `takeover` claims the run for a local worktree handoff;
+    # on Return the runner resumes at `checks` to re-validate the human's
+    # commits (NOT `implement`, which would clobber local edits; NOT the
+    # M18-Designed `human_edit` node type).
     transitions:
       approve: done
       rework: implement
+      takeover: checks
     rework:
       allowedTargets: [implement]
       workspacePolicies: [keep]
