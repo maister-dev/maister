@@ -32,7 +32,7 @@ function isPostgresDb(): boolean {
   return url.startsWith("postgres://") || url.startsWith("postgresql://");
 }
 
-async function takeSchedulerLock(tx: Db): Promise<void> {
+export async function takeSchedulerLock(tx: Db): Promise<void> {
   if (!isPostgresDb()) return;
 
   try {
@@ -206,6 +206,35 @@ export async function promoteNextPending(
 
   const cap = capFromEnv();
 
+  // M19 Phase 3: lazy dispatch defaults so the queued-resume loop closes for
+  // ALL callers (e.g. the discard route) without per-caller wiring. Dynamic
+  // imports break the runner/recover import cycle (scheduler is imported by
+  // both). Explicit opts.runFlow/opts.resumeRun (tests, abandon route) still win.
+  const runFlowFn =
+    opts.runFlow ??
+    ((id: string) => {
+      void import("@/lib/flows/runner")
+        .then((m) => m.runFlow(id))
+        .catch((err: unknown) => {
+          log.error(
+            { err: (err as Error).message, promotedRunId: id },
+            "promoteNextPending default runFlow dispatch threw",
+          );
+        });
+    });
+  const resumeFn =
+    opts.resumeRun ??
+    ((id: string) => {
+      void import("@/lib/runs/recover")
+        .then((m) => m.driveResume(id))
+        .catch((err: unknown) => {
+          log.error(
+            { err: (err as Error).message, promotedRunId: id },
+            "promoteNextPending default resumeRun dispatch threw",
+          );
+        });
+    });
+
   const promoted = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
@@ -260,13 +289,10 @@ export async function promoteNextPending(
   });
 
   if (promoted && promoted.isResume) {
-    log.info(
-      { runId: promoted.id },
-      "[scheduler] promoting queued resume",
-    );
+    log.info({ runId: promoted.id }, "[scheduler] promoting queued resume");
     queueMicrotask(() => {
       try {
-        opts.resumeRun?.(promoted.id);
+        resumeFn(promoted.id);
       } catch (err) {
         log.error(
           { err: (err as Error).message, promotedRunId: promoted.id },
@@ -274,11 +300,11 @@ export async function promoteNextPending(
         );
       }
     });
-  } else if (promoted && opts.runFlow) {
+  } else if (promoted) {
     log.info({ promotedRunId: promoted.id }, "promoteNextPending → promoting");
     queueMicrotask(() => {
       try {
-        opts.runFlow?.(promoted.id);
+        runFlowFn(promoted.id);
       } catch (err) {
         log.error(
           { err: (err as Error).message, promotedRunId: promoted.id },
@@ -286,7 +312,7 @@ export async function promoteNextPending(
         );
       }
     });
-  } else if (!promoted) {
+  } else {
     log.debug({}, "promoteNextPending → nothing to promote");
   }
 

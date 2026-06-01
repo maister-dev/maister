@@ -123,6 +123,18 @@ flowchart TD
     Sess -- yes --> Reatt[RE-ATTACH]
 ```
 
+### Operator Recover — agent resume (Implemented, M19)
+
+Operator-driven Recover (`POST /api/runs/{runId}/recover`) of a `Crashed`
+agent node continues the prior agent session via `--resume <acpSessionId>`
+(`createSession({ resumeSessionId })` + `scheduleResumedSessionDrive`) — the
+same mechanism M8 idle-resume uses, and the continuation is exercised in CI
+against the mock ACP adapter. Session-less gate/`cli`/`human` nodes carry no
+resumable session and are re-dispatched via `runFlow` instead. The durable
+`Crashed → Running` (or `Crashed → Pending` when the cap is full) flip commits
+before any supervisor side-effect, so a lost supervisor ack leaves the run
+`Running` for the reconciler, never double-spawns.
+
 ### Cron GC route (Designed, M19)
 
 `GET`/`POST /api/cron/gc` runs both sweeps on demand, guarded by a

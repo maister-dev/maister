@@ -18,6 +18,7 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { extractOptions } from "@/lib/queries/hitl";
 
@@ -81,47 +82,6 @@ export function isRunRecoverable(input: {
     input.acpSessionId !== null &&
     input.currentNodeKind === "ai_coding"
   );
-}
-
-// Resolve the node type of `currentStepId` from the run's pinned manifest
-// (`flow_revisions.manifest`, falling back to live `flows.manifest`), compiled
-// via the graph compiler. Legacy `steps[]` compile to single-action nodes. Null
-// when there is no current step, no resolvable manifest, or the step is absent.
-async function resolveCurrentNodeKind(
-  client: NodePgDatabase<typeof schema>,
-  input: {
-    flowRevisionId: string | null;
-    flowId: string | null;
-    currentStepId: string | null;
-  },
-): Promise<NodeAttemptType | null> {
-  if (!input.currentStepId) return null;
-
-  let manifest: FlowYamlV1 | null = null;
-
-  if (input.flowRevisionId) {
-    const revisionRows = await client
-      .select({ manifest: flowRevisions.manifest })
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, input.flowRevisionId));
-
-    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
-  }
-
-  if (!manifest && input.flowId) {
-    const flowRows = await client
-      .select({ manifest: flows.manifest })
-      .from(flows)
-      .where(eq(flows.id, input.flowId));
-
-    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
-  }
-
-  if (!manifest) return null;
-
-  const graph = compileManifest(manifest);
-
-  return graph.nodes.get(input.currentStepId)?.nodeType ?? null;
 }
 
 export async function getRunDetail(runId: string): Promise<RunDetail | null> {

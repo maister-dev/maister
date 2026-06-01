@@ -18,7 +18,15 @@ import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -26,6 +34,14 @@ import {
   releaseSlotOnIdle,
   tryStartRun,
 } from "@/lib/scheduler";
+
+// M19 Phase 3: promoteNextPending now lazily dispatches the promoted run
+// (runFlow for a fresh queue, driveResume for a checkpointed resume). Stub
+// both dispatch targets so the fire-and-forget background work never races
+// this suite's pool teardown — these tests assert promotion bookkeeping, not
+// the downstream launch.
+vi.mock("@/lib/flows/runner", () => ({ runFlow: vi.fn(async () => {}) }));
+vi.mock("@/lib/runs/recover", () => ({ driveResume: vi.fn(async () => {}) }));
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { executors, flows, projects, runs, tasks } = schema;

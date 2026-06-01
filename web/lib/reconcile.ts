@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
-import type { NodeAttemptType } from "@/lib/db/schema";
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
 import type { CrashReason } from "@/lib/runs/state-transitions";
 import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
@@ -12,7 +10,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { compileManifest } from "@/lib/flows/graph/compile";
+import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
 import {
   reconcileGraceSeconds,
   reconcileSweepIntervalSeconds,
@@ -25,7 +23,7 @@ import { listSessions } from "@/lib/supervisor-client";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { flowRevisions, flows, nodeAttempts, projects, runs, workspaces } =
+const { nodeAttempts, projects, runs, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -228,46 +226,6 @@ async function runWithConcurrency<T>(
     workers.push(worker());
   }
   await Promise.all(workers);
-}
-
-// Resolve the node type of `currentStepId` from the run's pinned manifest
-// (`flow_revisions.manifest`, falling back to live `flows.manifest`), compiled
-// via the graph compiler. Mirrors `resolveCurrentNodeKind` in queries/run.ts.
-async function resolveCurrentNodeKind(
-  db: Db,
-  input: {
-    flowRevisionId: string | null;
-    flowId: string | null;
-    currentStepId: string | null;
-  },
-): Promise<NodeAttemptType | null> {
-  if (!input.currentStepId) return null;
-
-  let manifest: FlowYamlV1 | null = null;
-
-  if (input.flowRevisionId) {
-    const revisionRows = await db
-      .select({ manifest: flowRevisions.manifest })
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, input.flowRevisionId));
-
-    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
-  }
-
-  if (!manifest && input.flowId) {
-    const flowRows = await db
-      .select({ manifest: flows.manifest })
-      .from(flows)
-      .where(eq(flows.id, input.flowId));
-
-    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
-  }
-
-  if (!manifest) return null;
-
-  return (
-    compileManifest(manifest).nodes.get(input.currentStepId)?.nodeType ?? null
-  );
 }
 
 // Latest node_attempts.started_at for a run (the grace anchor alongside
