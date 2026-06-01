@@ -175,6 +175,7 @@ export async function tryStartRun(
 export type PromoteNextPendingOptions = {
   db?: Db;
   runFlow?: (runId: string) => void;
+  resumeRun?: (runId: string) => void;
 };
 
 // M8 D2: NeedsInputIdle does NOT count toward the cap. When the keep-alive
@@ -205,7 +206,7 @@ export async function promoteNextPending(
 
   const cap = capFromEnv();
 
-  const promotedRunId = await db.transaction(async (tx: Db) => {
+  const promoted = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
     // Recheck cap under the lock — a Running/NeedsInput/HumanWorking run
@@ -228,43 +229,68 @@ export async function promoteNextPending(
       return null;
     }
 
-    const oldest: Array<{ id: string }> = await tx
-      .select({ id: runs.id })
+    // M19 Phase 1 (T1.B, Codex F2): fetch acp_session_id alongside the id so
+    // a checkpointed Pending row (queued after an idle-resume claim) is
+    // resumed via --resume rather than re-run from the start of the flow.
+    const oldest: Array<{ id: string; acpSessionId: string | null }> = await tx
+      .select({ id: runs.id, acpSessionId: runs.acpSessionId })
       .from(runs)
       .where(eq(runs.status, "Pending"))
       .orderBy(asc(runs.startedAt))
       .limit(1)
       .for("update", { skipLocked: true } as never);
 
-    const targetId = oldest[0]?.id;
+    const target = oldest[0];
 
-    if (!targetId) return null;
+    if (!target) return null;
+
+    const isResume = target.acpSessionId != null;
+    const now = new Date();
 
     await tx
       .update(runs)
-      .set({ status: "Running", startedAt: new Date() })
-      .where(and(eq(runs.id, targetId), eq(runs.status, "Pending")));
+      .set(
+        isResume
+          ? { status: "Running", startedAt: now, resumeStartedAt: now }
+          : { status: "Running", startedAt: now },
+      )
+      .where(and(eq(runs.id, target.id), eq(runs.status, "Pending")));
 
-    return targetId;
+    return { id: target.id, isResume };
   });
 
-  if (promotedRunId && opts.runFlow) {
-    log.info({ promotedRunId }, "promoteNextPending → promoting");
+  if (promoted && promoted.isResume) {
+    log.info(
+      { runId: promoted.id },
+      "[scheduler] promoting queued resume",
+    );
     queueMicrotask(() => {
       try {
-        opts.runFlow?.(promotedRunId);
+        opts.resumeRun?.(promoted.id);
       } catch (err) {
         log.error(
-          { err: (err as Error).message, promotedRunId },
+          { err: (err as Error).message, promotedRunId: promoted.id },
+          "promoteNextPending resumeRun dispatch failed",
+        );
+      }
+    });
+  } else if (promoted && opts.runFlow) {
+    log.info({ promotedRunId: promoted.id }, "promoteNextPending → promoting");
+    queueMicrotask(() => {
+      try {
+        opts.runFlow?.(promoted.id);
+      } catch (err) {
+        log.error(
+          { err: (err as Error).message, promotedRunId: promoted.id },
           "promoteNextPending runFlow dispatch failed",
         );
       }
     });
-  } else if (!promotedRunId) {
+  } else if (!promoted) {
     log.debug({}, "promoteNextPending → nothing to promote");
   }
 
-  return { promotedRunId: promotedRunId ?? null };
+  return { promotedRunId: promoted?.id ?? null };
 }
 
 // Helper exported so tests can compute cap without env mocking.

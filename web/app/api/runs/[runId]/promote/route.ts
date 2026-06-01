@@ -9,6 +9,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { gcAgeDays } from "@/lib/instance-config";
 import { branchExists, promoteLocalMerge } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -192,6 +193,13 @@ export async function POST(
     });
     const now = new Date();
 
+    // M19 Phase 1 (T1.C): parity with the Abandoned path — stamp the GC
+    // removal deadline (endedAt + gcAgeDays()) on the run's workspace in the
+    // SAME tx as the Done flip so a promoted run is GC-eligible.
+    const scheduledRemovalAt = new Date(
+      now.getTime() + gcAgeDays() * 86_400_000,
+    );
+
     await db.transaction(async (tx: Db) => {
       await tx
         .update(scratchRuns)
@@ -211,6 +219,10 @@ export async function POST(
           endedAt: now,
         })
         .where(eq(runs.id, runId));
+      await tx
+        .update(workspaces)
+        .set({ scheduledRemovalAt })
+        .where(eq(workspaces.runId, runId));
     });
 
     return NextResponse.json({

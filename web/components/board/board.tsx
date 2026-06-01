@@ -21,6 +21,7 @@ const STAGE_KEY: Record<BoardColumn, string> = {
   InProduction: "production",
   OnReview: "review",
   InDelivery: "delivery",
+  Crashed: "crashed",
   Done: "done",
 };
 
@@ -32,6 +33,9 @@ const STAGE_DOT: Record<BoardColumn, string> = {
     "bg-accent-4 shadow-[0_0_0_0_var(--accent-4)] animate-[pulse-dot_2.2s_ease-out_infinite]",
   OnReview: "bg-amber",
   InDelivery: "bg-accent-3",
+  // M19: full Crashed-column styling is Phase 5; minimal entry keeps the
+  // exhaustive Record typecheck-green.
+  Crashed: "bg-red-500",
   Done: "bg-accent-4 opacity-[0.45]",
 };
 
@@ -41,6 +45,7 @@ const COLUMN_ORDER: readonly BoardColumn[] = [
   "InProduction",
   "OnReview",
   "InDelivery",
+  "Crashed",
   "Done",
 ];
 
@@ -50,6 +55,7 @@ const COLUMN_LABEL: Record<BoardColumn, string> = {
   InProduction: "colProduction",
   OnReview: "colReview",
   InDelivery: "colDelivery",
+  Crashed: "colCrashed",
   Done: "colDone",
 };
 

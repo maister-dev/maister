@@ -26,6 +26,7 @@ const STRIPE: Record<FlightCardData["status"], string> = {
   running: "bg-accent-4",
   needs: "bg-amber",
   queued: "bg-mute-2",
+  crashed: "bg-red-500",
   done: "bg-accent-4 opacity-50",
   // M11b: a claimed run reuses the `dev`/accent-4 stripe but the card body
   // makes it unmistakably a manual-takeover surface, not a normal running task.

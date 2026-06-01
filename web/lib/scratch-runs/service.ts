@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireProjectAction } from "@/lib/authz";
@@ -418,10 +418,36 @@ export async function markScratchCrashed(args: {
   }
 
   await db.transaction(async (tx: Db) => {
-    await tx
+    // CAS-before-write: only flip a still-live scratch run to Crashed. The
+    // allow-list (never `!terminal`) lets the reconcile sweep crash a Running
+    // scratch run, while a duplicate call on an already-terminal row is a
+    // safe no-op that leaves the run record untouched. Only the CAS winner
+    // stamps the scratch metadata.
+    const rows = await tx
       .update(runs)
       .set({ status: "Crashed", endedAt, currentStepId: null })
-      .where(eq(runs.id, args.runId));
+      .where(
+        and(
+          eq(runs.id, args.runId),
+          inArray(runs.status, [
+            "Running",
+            "NeedsInput",
+            "NeedsInputIdle",
+            "HumanWorking",
+          ]),
+        ),
+      )
+      .returning({ id: runs.id });
+
+    if (rows.length === 0) {
+      log.warn(
+        { runId: args.runId, errorCode },
+        "markScratchCrashed: status-guard mismatch — already terminal or gone",
+      );
+
+      return;
+    }
+
     await tx
       .update(scratchRuns)
       .set(scratchUpdate)

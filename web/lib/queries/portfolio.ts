@@ -155,7 +155,17 @@ export function scratchActionForWorkspace(input: {
   dialogStatus: ScratchDialogStatus | null;
   acpSessionId: string | null;
 }): ScratchWorkspaceAction {
-  if (input.runKind !== "scratch") return "none";
+  // M19: a Crashed flow (graph) run gains the same recover/discard affordance
+  // scratch runs already had — `recover` when a checkpoint handle survives,
+  // else `discard`. Non-crashed flow runs surface no action (`none`). The
+  // session id is consumed here as a presence check only — never returned.
+  if (input.runKind !== "scratch") {
+    if (input.runStatus === "Crashed") {
+      return input.acpSessionId ? "recover" : "discard";
+    }
+
+    return "none";
+  }
   if (input.dialogStatus === "Review") return "open";
   if (input.runStatus === "Crashed") {
     return input.acpSessionId ? "recover" : "discard";

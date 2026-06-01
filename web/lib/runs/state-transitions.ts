@@ -7,9 +7,10 @@ import { nextKeepaliveAt } from "./keepalive-config";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { gcAgeDays } from "@/lib/instance-config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -386,15 +387,43 @@ export async function markAbandoned(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Abandoned", endedAt: new Date() })
-    .where(
-      and(eq(runs.id, runId), inArray(runs.status, [...ABANDONABLE_STATUSES])),
-    )
-    .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+  const abandoned: boolean = await db.transaction(async (tx: Db) => {
+    const endedAt = new Date();
+    const rows = await tx
+      .update(runs)
+      .set({ status: "Abandoned", endedAt })
+      .where(
+        and(
+          eq(runs.id, runId),
+          inArray(runs.status, [...ABANDONABLE_STATUSES]),
+        ),
+      )
+      .returning({ id: runs.id });
+
+    if (rows.length === 0) return false;
+
+    // M19 Phase 1 (T1.C): stamp the GC removal deadline on the run's
+    // workspace in the SAME tx so an abandoned run never lingers with a
+    // null scheduled_removal_at. Same endedAt instant the run row carries.
+    const scheduledRemovalAt = new Date(
+      endedAt.getTime() + gcAgeDays() * 86_400_000,
+    );
+
+    await tx
+      .update(workspaces)
+      .set({ scheduledRemovalAt })
+      .where(eq(workspaces.runId, runId));
+
+    log.debug(
+      { runId, at: scheduledRemovalAt },
+      "[scheduler] scheduled_removal_at stamped",
+    );
+
+    return true;
+  });
+
+  if (!abandoned) {
     log.warn(
       { runId, to: "Abandoned" },
       "markAbandoned: status-guard mismatch — already terminal or gone",
@@ -436,6 +465,55 @@ export async function crashResumedRun(
   log.warn(
     { runId, from: "NeedsInput", to: "Crashed", reason },
     "run-state transition — crashed during resume",
+  );
+
+  return { ok: true };
+}
+
+// M19 Phase 1 (T1.A): Running → Crashed when reconciliation/GC finds a
+// Running row whose worktree is gone, whose agent session has vanished, or
+// that sits parked on a CLI step that is not retry-safe. Mirrors
+// crashResumedRun's shape but guards on status='Running' and additionally
+// clears current_step_id + resume_started_at so the row reads as a clean
+// terminal crash. The caller (reconcile/GC) owns the promoteNextPending
+// follow-up — this helper only flips the run state (§3.3).
+export type CrashReason =
+  | "worktree-gone"
+  | "agent-session-gone"
+  | "cli-not-retry-safe";
+
+export async function crashRunningRun(
+  runId: string,
+  reason: CrashReason,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+
+  log.debug({ runId, reason }, "[state-transitions.crashRunningRun] entry");
+
+  const rows = await db
+    .update(runs)
+    .set({
+      status: "Crashed",
+      endedAt: new Date(),
+      currentStepId: null,
+      resumeStartedAt: null,
+    })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Running", to: "Crashed", reason },
+      "crashRunningRun: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Running", to: "Crashed", reason },
+    "run-state transition — crashed (reconcile/GC)",
   );
 
   return { ok: true };

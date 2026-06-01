@@ -22,11 +22,13 @@
  *    column.
  *
  * Precedence (highest wins):
- *   1. Terminal-failed run (Crashed/Failed/Abandoned) → Backlog (retry rule).
- *   2. Active run status (Pending/Running/NeedsInput/NeedsInputIdle/Review/Done).
- *   3. Task stage = Prepare.
- *   4. Task status = Done → Done.
- *   5. Default → Backlog.
+ *   1. Crashed run → Crashed (its own column; owes recover/discard, not a
+ *      silent retry — M19).
+ *   2. Terminal-failed run (Failed/Abandoned) → Backlog (retry rule).
+ *   3. Active run status (Pending/Running/NeedsInput/NeedsInputIdle/Review/Done).
+ *   4. Task stage = Prepare.
+ *   5. Task status = Done → Done.
+ *   6. Default → Backlog.
  */
 
 import type { Run, Task } from "@/lib/db/schema";
@@ -37,6 +39,7 @@ export type BoardColumn =
   | "InProduction"
   | "OnReview"
   | "InDelivery"
+  | "Crashed"
   | "Done";
 
 export const BOARD_COLUMNS: readonly BoardColumn[] = [
@@ -45,6 +48,7 @@ export const BOARD_COLUMNS: readonly BoardColumn[] = [
   "InProduction",
   "OnReview",
   "InDelivery",
+  "Crashed",
   "Done",
 ];
 
@@ -60,7 +64,6 @@ export interface DeriveStageInput {
 }
 
 const TERMINAL_FAILED_STATUSES: ReadonlySet<RunStatus> = new Set([
-  "Crashed",
   "Failed",
   "Abandoned",
 ]);
@@ -77,12 +80,19 @@ const IN_PRODUCTION_STATUSES: ReadonlySet<RunStatus> = new Set([
 export function deriveStage(input: DeriveStageInput): BoardColumn {
   const { taskStatus, taskStage, runStatus, workspaceRemoved } = input;
 
-  // 1. Terminal-failed run → task auto-returns to Backlog (retry rule).
+  // 1. Crashed run → its own column (owes recover/discard, M19). Checked
+  // BEFORE the terminal-failed Backlog rule so it does not silently retry.
+  if (runStatus === "Crashed") {
+    return "Crashed";
+  }
+
+  // 2. Terminal-failed run (Failed/Abandoned) → task auto-returns to Backlog
+  // (retry rule).
   if (runStatus !== null && TERMINAL_FAILED_STATUSES.has(runStatus)) {
     return "Backlog";
   }
 
-  // 2. Active run status drives the column.
+  // 3. Active run status drives the column.
   if (runStatus !== null) {
     if (runStatus === "Pending") {
       return "Prepare";
@@ -103,7 +113,7 @@ export function deriveStage(input: DeriveStageInput): BoardColumn {
     }
   }
 
-  // 3. No active run — fall back to task-level state.
+  // 4. No active run — fall back to task-level state.
 
   // Pre-launch spec phase.
   if (taskStage === "Prepare") {
@@ -136,7 +146,25 @@ export function columnLabelKey(col: BoardColumn): string {
       return "board.colReview";
     case "InDelivery":
       return "board.colDelivery";
+    case "Crashed":
+      return "board.colCrashed";
     case "Done":
       return "board.colDone";
   }
+}
+
+// The recover/discard affordance for a board card (M19). A DTO-projected enum
+// derived from `acpSessionId` presence — the raw session id NEVER reaches the
+// client. `recover` when a checkpoint handle survives, else `discard`; null on
+// every non-Crashed or non-flow card.
+export type CrashAction = "recover" | "discard";
+
+export function crashActionFor(input: {
+  runKind: Run["runKind"];
+  runStatus: RunStatus | null;
+  acpSessionId: string | null;
+}): CrashAction | null {
+  if (input.runKind !== "flow" || input.runStatus !== "Crashed") return null;
+
+  return input.acpSessionId !== null ? "recover" : "discard";
 }

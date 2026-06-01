@@ -33,6 +33,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     reworking: false,
     owner: null,
     refused: false,
+    crashAction: null,
     ...over,
   };
 }

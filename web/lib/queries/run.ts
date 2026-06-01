@@ -7,6 +7,7 @@ import type {
   GateVerdict,
   HitlRequest,
   NodeAttempt,
+  NodeAttemptType,
 } from "@/lib/db/schema";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
@@ -59,6 +60,68 @@ export interface RunDetail {
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
   takeoverOwnerUserId: string | null;
+  // M19: whether a Crashed run can be recovered via ACP `--resume`. True iff
+  // the run is `Crashed`, still holds an `acpSessionId` checkpoint handle, AND
+  // its current node is an agent node (`ai_coding`). DTO-projected boolean — the
+  // raw `acpSessionId` is NEVER surfaced to the client.
+  recoverable: boolean;
+}
+
+// Pure recoverability predicate (no db/clock) so it is fully unit-testable.
+// `currentNodeKind` is resolved by the caller from the run's pinned manifest
+// (compiled via `compileManifest`); session-less gate/cli/human nodes are not
+// agent nodes and are therefore not `--resume`-recoverable.
+export function isRunRecoverable(input: {
+  status: string;
+  acpSessionId: string | null;
+  currentNodeKind: NodeAttemptType | null;
+}): boolean {
+  return (
+    input.status === "Crashed" &&
+    input.acpSessionId !== null &&
+    input.currentNodeKind === "ai_coding"
+  );
+}
+
+// Resolve the node type of `currentStepId` from the run's pinned manifest
+// (`flow_revisions.manifest`, falling back to live `flows.manifest`), compiled
+// via the graph compiler. Legacy `steps[]` compile to single-action nodes. Null
+// when there is no current step, no resolvable manifest, or the step is absent.
+async function resolveCurrentNodeKind(
+  client: NodePgDatabase<typeof schema>,
+  input: {
+    flowRevisionId: string | null;
+    flowId: string | null;
+    currentStepId: string | null;
+  },
+): Promise<NodeAttemptType | null> {
+  if (!input.currentStepId) return null;
+
+  let manifest: FlowYamlV1 | null = null;
+
+  if (input.flowRevisionId) {
+    const revisionRows = await client
+      .select({ manifest: flowRevisions.manifest })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, input.flowRevisionId));
+
+    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+  }
+
+  if (!manifest && input.flowId) {
+    const flowRows = await client
+      .select({ manifest: flows.manifest })
+      .from(flows)
+      .where(eq(flows.id, input.flowId));
+
+    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+  }
+
+  if (!manifest) return null;
+
+  const graph = compileManifest(manifest);
+
+  return graph.nodes.get(input.currentStepId)?.nodeType ?? null;
 }
 
 export async function getRunDetail(runId: string): Promise<RunDetail | null> {
@@ -69,6 +132,9 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       projectId: runs.projectId,
       status: runs.status,
       currentStepId: runs.currentStepId,
+      acpSessionId: runs.acpSessionId,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
       projectSlug: projects.slug,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
@@ -82,6 +148,17 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
   const row = rows[0];
 
   if (!row) return null;
+
+  const currentNodeKind = await resolveCurrentNodeKind(client, {
+    flowRevisionId: row.flowRevisionId,
+    flowId: row.flowId,
+    currentStepId: row.currentStepId,
+  });
+  const recoverable = isRunRecoverable({
+    status: row.status,
+    acpSessionId: row.acpSessionId,
+    currentNodeKind,
+  });
 
   const activeTakeoverRows = await client
     .select({ ownerUserId: nodeAttempts.ownerUserId })
@@ -119,6 +196,7 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     worktreePath: row.worktreePath,
     agent: row.agent,
     takeoverOwnerUserId,
+    recoverable,
     pendingHitl: pending
       ? {
           hitlRequestId: pending.id,

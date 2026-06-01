@@ -431,6 +431,10 @@ export const runs = pgTable(
       .notNull()
       .defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+    resumeStartedAt: timestamp("resume_started_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -462,6 +466,12 @@ export const workspaces = pgTable("workspaces", {
     .notNull()
     .defaultNow(),
   removedAt: timestamp("removed_at", { withTimezone: true, mode: "date" }),
+  scheduledRemovalAt: timestamp("scheduled_removal_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  archivedBranch: text("archived_branch"),
+  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
 });
 
 export type ScratchDialogStatus =

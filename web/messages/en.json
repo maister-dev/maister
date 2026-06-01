@@ -251,6 +251,7 @@
     "colProduction": "In production",
     "colReview": "On review",
     "colDelivery": "In delivery",
+    "colCrashed": "Crashed",
     "colDone": "Done",
     "claimedBy": "claimed by",
     "return": "Return",

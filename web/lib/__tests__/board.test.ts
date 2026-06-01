@@ -138,12 +138,12 @@ describe("Done run — InDelivery vs Done", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Retry-loop rule: Crashed / Failed / Abandoned → Backlog
+// Crashed → its own column (M19); Failed / Abandoned → Backlog (retry rule)
 // ---------------------------------------------------------------------------
 
-describe("terminal-failed run → Backlog (retry rule)", () => {
-  it("Crashed → Backlog", () => {
-    expect(deriveStage(s("Crashed"))).toBe("Backlog");
+describe("Crashed → Crashed; Failed/Abandoned → Backlog (retry rule)", () => {
+  it("Crashed → Crashed", () => {
+    expect(deriveStage(s("Crashed"))).toBe("Crashed");
   });
 
   it("Failed → Backlog", () => {
@@ -154,7 +154,7 @@ describe("terminal-failed run → Backlog (retry rule)", () => {
     expect(deriveStage(s("Abandoned"))).toBe("Backlog");
   });
 
-  it("Crashed overrides Prepare taskStage → Backlog wins", () => {
+  it("Crashed overrides Prepare taskStage → Crashed wins", () => {
     expect(
       deriveStage({
         taskStatus: "InFlight",
@@ -162,7 +162,7 @@ describe("terminal-failed run → Backlog (retry rule)", () => {
         runStatus: "Crashed",
         workspaceRemoved: false,
       }),
-    ).toBe("Backlog");
+    ).toBe("Crashed");
   });
 });
 
@@ -226,6 +226,7 @@ describe("columnLabelKey", () => {
     expect(columnLabelKey("InProduction")).toBe("board.colProduction");
     expect(columnLabelKey("OnReview")).toBe("board.colReview");
     expect(columnLabelKey("InDelivery")).toBe("board.colDelivery");
+    expect(columnLabelKey("Crashed")).toBe("board.colCrashed");
     expect(columnLabelKey("Done")).toBe("board.colDone");
   });
 

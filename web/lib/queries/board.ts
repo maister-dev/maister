@@ -1,12 +1,12 @@
 import "server-only";
 
-import type { BoardColumn } from "@/lib/board";
+import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
-import { deriveStage } from "@/lib/board";
+import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 
@@ -32,6 +32,7 @@ export type CardStatus =
   | "needs"
   | "queued"
   | "done"
+  | "crashed"
   | "humanworking";
 export type CardPriority = "high" | "med" | "low";
 
@@ -69,6 +70,11 @@ export interface FlightCard {
   // enforcement_snapshot recorded a `refused` verdict (a strict intent the
   // resolved agent could not honor at launch). Links to the run-detail panel.
   refused: boolean;
+  // M19: the recover/discard affordance for a Crashed flow run. DTO-projected
+  // from `acpSessionId` presence (`recover` if a checkpoint survives, else
+  // `discard`); null on every non-Crashed card. The raw session id is NEVER
+  // surfaced to the client.
+  crashAction: CrashAction | null;
 }
 
 export interface BoardColumnData {
@@ -111,6 +117,7 @@ function runStatusToCard(status: RunStatus): CardStatus {
   if (status === "NeedsInput" || status === "NeedsInputIdle") return "needs";
   if (status === "Pending") return "queued";
   if (status === "Done") return "done";
+  if (status === "Crashed") return "crashed";
 
   return "running";
 }
@@ -176,6 +183,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     InProduction: emptyColumn("InProduction"),
     OnReview: emptyColumn("OnReview"),
     InDelivery: emptyColumn("InDelivery"),
+    Crashed: emptyColumn("Crashed"),
     Done: emptyColumn("Done"),
   };
 
@@ -196,6 +204,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       runId: runs.id,
       taskId: runs.taskId,
       status: runs.status,
+      acpSessionId: runs.acpSessionId,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       agent: executors.agent,
@@ -370,6 +379,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       reworking: cardStatus !== "done" && reworkingRunIds.has(run.runId),
       owner: takeover?.owner ?? null,
       refused: refusedRunIds.has(run.runId),
+      crashAction: crashActionFor({
+        runKind: "flow",
+        runStatus: run.status,
+        acpSessionId: run.acpSessionId,
+      }),
     });
 
     if (
