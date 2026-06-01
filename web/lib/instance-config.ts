@@ -27,6 +27,8 @@ export function runtimeRoot(): string {
 
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_GC_WARNING_DAYS = 2;
+const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
+const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 
 // M19 Phase 1 (T1.C): how long after a run's endedAt its Abandoned/Done
 // workspace is scheduled for removal. Env override, sane default, floor at 1.
@@ -50,6 +52,37 @@ export function gcWarningDays(): number {
   const parsed = Number.parseInt(raw, 10);
 
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_GC_WARNING_DAYS;
+
+  return parsed;
+}
+
+// M19 Phase 2 (T2.3): how often the periodic reconcile sweeper ticks. Env
+// override, sane default, floor at 1.
+export function reconcileSweepIntervalSeconds(): number {
+  const raw = process.env.MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS;
+
+  if (!raw) return DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS;
+  }
+
+  return parsed;
+}
+
+// M19 Phase 2 (T2.3): grace window before a no-live-session agent run is
+// crashed — protects launches/recovers still spinning up their ACP session.
+// Env override, sane default, floor at 1.
+export function reconcileGraceSeconds(): number {
+  const raw = process.env.MAISTER_RECONCILE_GRACE_SECONDS;
+
+  if (!raw) return DEFAULT_RECONCILE_GRACE_SECONDS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_RECONCILE_GRACE_SECONDS;
+  }
 
   return parsed;
 }

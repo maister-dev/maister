@@ -26,6 +26,13 @@ export async function register(): Promise<void> {
     // attached) by an idempotent re-dispatch at runs.current_step_id. CAS-guarded
     // → a live runner makes this a no-op.
     await runTakeoverReturnRecoverySweep();
+
+    // M19 Phase 2 (T2.3): startup reconcile — runs AFTER the two recovery
+    // sweeps so their candidate sets are already handled; the reconcile sweep
+    // excludes the takeover-return set to stay disjoint. Allow-list Running-only.
+    const { runReconcileSweep } = await import("@/lib/reconcile");
+
+    await runReconcileSweep();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(
@@ -39,4 +46,8 @@ export async function register(): Promise<void> {
   );
 
   startKeepaliveSweeper();
+
+  const { startReconcileSweeper } = await import("@/lib/reconcile");
+
+  startReconcileSweeper();
 }
