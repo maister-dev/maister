@@ -27,6 +27,7 @@ export function runtimeRoot(): string {
 
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_GC_WARNING_DAYS = 2;
+const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 
@@ -54,6 +55,27 @@ export function gcWarningDays(): number {
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_GC_WARNING_DAYS;
 
   return parsed;
+}
+
+// M19 Phase 4 (T4.5): how often the background GC sweeper ticks. Env override,
+// sane default, floor at 1. Mirrors gcAgeDays / reconcileSweepIntervalSeconds.
+export function gcSweepIntervalSeconds(): number {
+  const raw = process.env.MAISTER_GC_SWEEP_INTERVAL_SECONDS;
+
+  if (!raw) return DEFAULT_GC_SWEEP_INTERVAL_SECONDS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_GC_SWEEP_INTERVAL_SECONDS;
+  }
+
+  return parsed;
+}
+
+// M19 Phase 4 (T4.5): when true, GC preserve pushes the maister/archive/<runId>
+// branch to the remote. Only the exact value "true" enables it; default false.
+export function gcArchivePush(): boolean {
+  return process.env.MAISTER_GC_ARCHIVE_PUSH === "true";
 }
 
 // M19 Phase 2 (T2.3): how often the periodic reconcile sweeper ticks. Env

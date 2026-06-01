@@ -50,4 +50,8 @@ export async function register(): Promise<void> {
   const { startReconcileSweeper } = await import("@/lib/reconcile");
 
   startReconcileSweeper();
+
+  const { startGcSweeper } = await import("@/lib/gc/sweeper");
+
+  startGcSweeper();
 }

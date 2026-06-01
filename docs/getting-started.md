@@ -329,6 +329,25 @@ Behavior:
 Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
 [aif plugin](flow-aif-plugin.md).
 
+## GC cron
+
+A background GC sweeper runs in-process (every
+`MAISTER_GC_SWEEP_INTERVAL_SECONDS`, default 3600). For deployments that
+prefer an external scheduler, the same two sweeps (graceful workspace
+preserve-then-prune + Removed flow-revision cache cleanup) are exposed at
+`GET`/`POST /api/cron/gc`. Set `MAISTER_CRON_TOKEN` to a secret and pass it in
+the `X-Maister-Cron-Token` header:
+
+```bash
+curl -H "X-Maister-Cron-Token: $MAISTER_CRON_TOKEN" \
+  http://localhost:3000/api/cron/gc
+```
+
+An empty `MAISTER_CRON_TOKEN` disables the route (`503 cron disabled`); a wrong
+token returns `401`. On success it returns `200 { workspace, revision }` (or
+`207` if one sweep failed but the other ran). The token is a server-only secret
+— never commit a real value or log it.
+
 ## Project layout
 
 For the full structural map see [Agent Map](../AGENTS.md). The short version:
