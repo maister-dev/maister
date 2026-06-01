@@ -27,13 +27,6 @@ import {
 
 const log = pino({ name: "config" });
 
-// M11a: a node `settings` block is parsed as an opaque passthrough (preserved,
-// never stripped) but NOT enforced until M11c. `loadFlowManifest` emits this
-// WARN once per graph manifest that carries any `settings`. Exported as a named
-// symbol so M11c can assert its removal against the symbol, not a string (P14).
-export const SETTINGS_NOT_ENFORCED_WARN =
-  "[flow] node settings parsed but not enforced until M11c";
-
 const platformMcpJsonSchema = z.object({
   mcpServers: z.record(
     z.string().min(1),
@@ -256,6 +249,7 @@ export async function loadPlatformMcpCapabilities(
 
 export async function loadFlowManifest(
   flowYamlPath: string,
+  opts?: { executorIds?: readonly string[] | ReadonlySet<string> },
 ): Promise<FlowYamlV1> {
   let raw: string;
 
@@ -299,7 +293,7 @@ export async function loadFlowManifest(
 
   // M11a graph manifest (`nodes[]`): validate the graph, then return.
   if (manifest.nodes) {
-    validateGraphManifest(manifest, manifest.nodes, flowYamlPath);
+    validateGraphManifest(manifest, manifest.nodes, flowYamlPath, opts);
 
     return manifest;
   }
@@ -447,6 +441,7 @@ function validateGraphManifest(
   manifest: FlowYamlV1,
   nodes: NodeDef[],
   flowYamlPath: string,
+  opts?: { executorIds?: readonly string[] | ReadonlySet<string> },
 ): void {
   // Graph flows must declare a sufficient engine_min.
   if (!declaresGraphCapableEngineMin(manifest.compat?.engine_min)) {
@@ -483,11 +478,22 @@ function validateGraphManifest(
     );
   };
 
+  const executorIds =
+    opts?.executorIds === undefined
+      ? undefined
+      : opts.executorIds instanceof Set
+        ? opts.executorIds
+        : new Set(opts.executorIds);
+
   const gateIds = new Set<string>();
-  let settingsSeen = false;
+  let settingsNodeCount = 0;
+  const enforcementTally: Record<string, number> = {};
 
   for (const n of nodes) {
-    if (n.settings) settingsSeen = true;
+    if (n.settings) {
+      settingsNodeCount += 1;
+      validateNodeSettings(n, flowYamlPath, executorIds, enforcementTally);
+    }
 
     for (const g of n.pre_finish?.gates ?? []) {
       if (gateIds.has(g.id)) {
@@ -565,18 +571,57 @@ function validateGraphManifest(
     );
   }
 
-  if (settingsSeen) {
-    log.warn({ path: flowYamlPath }, SETTINGS_NOT_ENFORCED_WARN);
-  }
-
   log.info(
     {
       path: flowYamlPath,
       nodes: nodes.length,
       gates: gateIds.size,
+      settingsNodes: settingsNodeCount,
+      enforcementTally,
     },
     "flow.yaml graph manifest loaded",
   );
+}
+
+// M11c node-level settings validation (ADR-031/032). zod has already validated
+// the typed settings shape per node type; this enforces the intra-manifest /
+// server-state cross-references zod cannot express: executor refs (against the
+// project's executors[] set when provided), human decisions (against the node's
+// declared transitions). Capability-registry ref resolution is M14 (carve b).
+function validateNodeSettings(
+  n: NodeDef,
+  flowYamlPath: string,
+  executorIds: ReadonlySet<string> | undefined,
+  enforcementTally: Record<string, number>,
+): void {
+  if (executorIds && n.type === "ai_coding") {
+    for (const id of n.settings?.executors ?? []) {
+      if (!executorIds.has(id)) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${n.id}" settings.executors references unknown executor id "${id}" in ${flowYamlPath}`,
+        );
+      }
+    }
+  }
+
+  if (n.type === "human") {
+    for (const decision of n.settings?.decisions ?? []) {
+      if (!Object.hasOwn(n.transitions ?? {}, decision)) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${n.id}" settings.decisions entry "${decision}" has no matching transition in ${flowYamlPath}`,
+        );
+      }
+    }
+  }
+
+  if (
+    (n.type === "ai_coding" || n.type === "judge") &&
+    n.settings?.enforcement
+  ) {
+    enforcementTally[n.id] = Object.keys(n.settings.enforcement).length;
+  }
 }
 
 export function validateFormSchemaVersion(

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  aiCodingSettingsSchema,
+  cliCheckSettingsSchema,
   executorSchema,
   flowEntrySchema,
   flowYamlV1Schema,
   formSchemaSchema,
+  humanSettingsSchema,
+  judgeSettingsSchema,
   maisterYamlV2Schema,
   maisterCapabilitiesSchema,
   nodeSchema,
@@ -333,7 +337,10 @@ describe("flowYamlV1Schema — graph (nodes[])", () => {
     expect(() => flowYamlV1Schema.parse(noWalker)).toThrow();
   });
 
-  it("preserves an opaque node settings block (no silent strip)", () => {
+  // M11c: settings is now a TYPED per-node-type block (was an opaque passthrough
+  // in M11a). The typed ai_coding shape must round-trip known fields with their
+  // parsed types — replacing the M11a "opaque passthrough" assertion.
+  it("typed-parses a node settings block on an ai_coding node", () => {
     const withSettings = {
       ...goldenGraphYaml,
       nodes: [
@@ -348,10 +355,305 @@ describe("flowYamlV1Schema — graph (nodes[])", () => {
       nodes: Array<{ settings?: Record<string, unknown> }>;
     };
 
-    expect(parsed.nodes[0].settings).toEqual({
+    expect(parsed.nodes[0].settings).toMatchObject({
       mcps: ["github"],
       thinkingEffort: "high",
     });
+  });
+
+  // The opaque passthrough (`z.record(z.string(), z.unknown())`) accepted any
+  // key; the typed schema must NOT. A bogus unknown key on the settings block
+  // must be rejected (typed schemas reject unknown keys).
+  it("rejects an unknown key on a typed ai_coding settings block", () => {
+    const bad = {
+      ...goldenGraphYaml,
+      nodes: [
+        {
+          ...goldenGraphYaml.nodes[0],
+          settings: { mcps: ["github"], notARealSettingKey: true },
+        },
+        ...goldenGraphYaml.nodes.slice(1),
+      ],
+    };
+
+    expect(() => flowYamlV1Schema.parse(bad)).toThrow();
+  });
+});
+
+// --- M11c: typed per-node `settings` schemas (tasks 1.1–1.6) -----------------
+// These exercise the exported settings sub-schemas directly. They are RED until
+// the implementor adds the schemas + exports to config.schema.ts.
+
+describe("aiCodingSettingsSchema (M11c)", () => {
+  it("accepts a fully-populated ai_coding settings block", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({
+        executors: ["claude-sonnet", "codex-default"],
+        model: "claude-sonnet-4-6",
+        thinkingEffort: "high",
+        mcps: ["github", "postgres"],
+        tools: { claude: ["Read", "Edit"], codex: ["shell"] },
+        skills: ["aif-implement"],
+        settingsProfile: "default",
+        workspaceAccess: "write",
+        artifactAccess: ["plan-summary"],
+        permissionMode: "ask",
+        limits: { maxDurationMinutes: 30, maxCostUsd: 5 },
+        restrictions: ["no-global-installs"],
+        enforcement: {
+          mcps: "strict",
+          tools: "instruct",
+          skills: "off",
+          restrictions: "strict",
+          permissionMode: "instruct",
+          workspaceAccess: "strict",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts an empty ai_coding settings block (every field optional)", () => {
+    expect(() => aiCodingSettingsSchema.parse({})).not.toThrow();
+  });
+
+  it("rejects an unknown thinkingEffort enum value", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ thinkingEffort: "extreme" }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown permissionMode enum value", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ permissionMode: "yolo" }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown workspaceAccess enum value", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ workspaceAccess: "readwrite" }),
+    ).toThrow();
+  });
+
+  it("rejects malformed tools (array instead of {claude/codex} map)", () => {
+    expect(() => aiCodingSettingsSchema.parse({ tools: ["Read"] })).toThrow();
+  });
+
+  it("rejects an unknown agent key inside tools", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ tools: { cursor: ["Read"] } }),
+    ).toThrow();
+  });
+
+  it("rejects limits.maxDurationMinutes <= 0", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ limits: { maxDurationMinutes: 0 } }),
+    ).toThrow();
+    expect(() =>
+      aiCodingSettingsSchema.parse({ limits: { maxDurationMinutes: -5 } }),
+    ).toThrow();
+  });
+
+  it("rejects limits.maxCostUsd <= 0", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ limits: { maxCostUsd: 0 } }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown enforcement intent value", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({ enforcement: { mcps: "hard" } }),
+    ).toThrow();
+  });
+
+  it("accepts each valid enforcement intent (strict|instruct|off)", () => {
+    for (const intent of ["strict", "instruct", "off"]) {
+      expect(() =>
+        aiCodingSettingsSchema.parse({ enforcement: { mcps: intent } }),
+      ).not.toThrow();
+    }
+  });
+
+  it("defaults a present enforcement class to 'instruct'", () => {
+    // The plan: Enf = enum(strict|instruct|off) default 'instruct'. When an
+    // enforcement entry is present but unset, the schema applies the default.
+    // (Verified per-key: an explicitly-listed-but-defaulted key resolves to
+    // "instruct". If the implementor models defaults only at the field that the
+    // flow author writes, this asserts the documented default value.)
+    const parsed = aiCodingSettingsSchema.parse({
+      enforcement: { mcps: undefined },
+    }) as { enforcement?: { mcps?: string } };
+
+    expect(parsed.enforcement?.mcps).toBe("instruct");
+  });
+
+  it("rejects an unknown top-level key on the ai_coding settings block", () => {
+    expect(() => aiCodingSettingsSchema.parse({ bogusKey: 1 })).toThrow();
+  });
+});
+
+describe("humanSettingsSchema (M11c)", () => {
+  it("accepts a fully-populated human settings block", () => {
+    expect(() =>
+      humanSettingsSchema.parse({
+        roles: ["reviewer"],
+        assignees: ["alice@example.com"],
+        decisions: ["approve", "rework"],
+        allowFurtherTracks: true,
+        allowTakeover: false,
+        slaHours: 24,
+        stalenessHint: "review within a day",
+        returnRequires: ["review_comments"],
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts an empty human settings block", () => {
+    expect(() => humanSettingsSchema.parse({})).not.toThrow();
+  });
+
+  it("rejects slaHours <= 0", () => {
+    expect(() => humanSettingsSchema.parse({ slaHours: 0 })).toThrow();
+  });
+
+  it("rejects allowTakeover with a non-boolean", () => {
+    expect(() => humanSettingsSchema.parse({ allowTakeover: "yes" })).toThrow();
+  });
+
+  it("rejects capability fields (mcps) on a human settings block", () => {
+    // human carries decision/role shape only — no agent-capability fields.
+    expect(() => humanSettingsSchema.parse({ mcps: ["github"] })).toThrow();
+  });
+});
+
+describe("cliCheckSettingsSchema (M11c)", () => {
+  it("accepts a fully-populated cli/check settings block", () => {
+    expect(() =>
+      cliCheckSettingsSchema.parse({
+        command: "pnpm test",
+        timeoutMs: 60000,
+        environmentPolicy: "whitelist",
+        inputArtifacts: ["plan-summary"],
+        outputArtifacts: ["test-report"],
+        failureClass: "blocking",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts an empty cli/check settings block", () => {
+    expect(() => cliCheckSettingsSchema.parse({})).not.toThrow();
+  });
+
+  it("rejects an unknown environmentPolicy enum value", () => {
+    expect(() =>
+      cliCheckSettingsSchema.parse({ environmentPolicy: "sandbox" }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown failureClass enum value", () => {
+    expect(() =>
+      cliCheckSettingsSchema.parse({ failureClass: "fatal" }),
+    ).toThrow();
+  });
+
+  it("rejects timeoutMs <= 0", () => {
+    expect(() => cliCheckSettingsSchema.parse({ timeoutMs: 0 })).toThrow();
+  });
+
+  it("rejects capability fields (mcps/enforcement) on a cli/check block", () => {
+    // cli/check carry the command shape only — no capability classes, so no
+    // enforcement and no mcps.
+    expect(() => cliCheckSettingsSchema.parse({ mcps: ["github"] })).toThrow();
+    expect(() =>
+      cliCheckSettingsSchema.parse({ enforcement: { mcps: "strict" } }),
+    ).toThrow();
+  });
+});
+
+describe("judgeSettingsSchema (M11c)", () => {
+  it("accepts the capability-bearing judge shape", () => {
+    expect(() =>
+      judgeSettingsSchema.parse({
+        model: "claude-sonnet-4-6",
+        thinkingEffort: "medium",
+        mcps: ["github"],
+        tools: { claude: ["Read"] },
+        skills: ["aif-review"],
+        restrictions: ["no-network"],
+        permissionMode: "deny",
+        limits: { maxDurationMinutes: 10 },
+        enforcement: {
+          mcps: "strict",
+          tools: "instruct",
+          skills: "off",
+          restrictions: "strict",
+          permissionMode: "instruct",
+          workspaceAccess: "instruct",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts an empty judge settings block", () => {
+    expect(() => judgeSettingsSchema.parse({})).not.toThrow();
+  });
+
+  it("rejects an unknown permissionMode on the judge block", () => {
+    expect(() =>
+      judgeSettingsSchema.parse({ permissionMode: "maybe" }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown enforcement intent on the judge block", () => {
+    expect(() =>
+      judgeSettingsSchema.parse({ enforcement: { tools: "loose" } }),
+    ).toThrow();
+  });
+});
+
+describe("nodeSchema typed settings wiring (M11c)", () => {
+  it("rejects an unknown thinkingEffort inside an ai_coding node settings", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "i",
+        type: "ai_coding",
+        action: { prompt: "go" },
+        settings: { thinkingEffort: "ludicrous" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown failureClass inside a cli node settings", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "c",
+        type: "cli",
+        action: { command: "pnpm test" },
+        settings: { failureClass: "explode" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a capability enforcement block on a cli node settings", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "c",
+        type: "cli",
+        action: { command: "pnpm test" },
+        settings: { enforcement: { mcps: "strict" } },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a typed human settings block on a human node", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "review",
+        type: "human",
+        finish: { human: { decisions: ["approve"] } },
+        transitions: { approve: "done" },
+        settings: { roles: ["reviewer"], allowTakeover: true, slaHours: 24 },
+      }),
+    ).not.toThrow();
   });
 });
 

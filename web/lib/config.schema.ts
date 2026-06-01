@@ -284,15 +284,104 @@ const reworkSchema = z.object({
   commentsVar: z.string().min(1).optional(),
 });
 
-// Fields common to every node type.
+// --- M11c: typed per-node-type `settings` (replaces M11a opaque passthrough) ---
+// ADR-031/032. Each node `type` carries a distinct, strict settings shape;
+// unknown keys are rejected (M11a recorded them opaquely + WARNed). Capability-
+// bearing settings (ai_coding/judge) also carry a per-class `enforcement` intent
+// resolved at launch (M11c refusal boundary); enforcement defaults to `instruct`.
+
+export const enforcementModeSchema = z.enum(["strict", "instruct", "off"]);
+
+export const enforcementMapSchema = z
+  .object({
+    mcps: enforcementModeSchema.default("instruct"),
+    tools: enforcementModeSchema.default("instruct"),
+    skills: enforcementModeSchema.default("instruct"),
+    restrictions: enforcementModeSchema.default("instruct"),
+    permissionMode: enforcementModeSchema.default("instruct"),
+    workspaceAccess: enforcementModeSchema.default("instruct"),
+  })
+  .strict();
+
+const agentToolsSchema = z
+  .object({
+    claude: z.array(z.string().min(1)).optional(),
+    codex: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+const settingsLimitsSchema = z
+  .object({
+    maxDurationMinutes: z.number().positive().optional(),
+    maxCostUsd: z.number().positive().optional(),
+  })
+  .strict();
+
+const thinkingEffortSchema = z.enum(["low", "medium", "high"]);
+const permissionModeSchema = z.enum(["ask", "allow", "deny"]);
+
+export const aiCodingSettingsSchema = z
+  .object({
+    executors: z.array(z.string().min(1)).optional(),
+    model: z.string().min(1).optional(),
+    thinkingEffort: thinkingEffortSchema.optional(),
+    mcps: z.array(z.string().min(1)).optional(),
+    tools: agentToolsSchema.optional(),
+    skills: z.array(z.string().min(1)).optional(),
+    settingsProfile: z.string().min(1).optional(),
+    workspaceAccess: z.enum(["read", "write", "none"]).optional(),
+    artifactAccess: z.array(z.string().min(1)).optional(),
+    permissionMode: permissionModeSchema.optional(),
+    limits: settingsLimitsSchema.optional(),
+    restrictions: z.array(z.string().min(1)).optional(),
+    enforcement: enforcementMapSchema.optional(),
+  })
+  .strict();
+
+export const judgeSettingsSchema = z
+  .object({
+    mcps: z.array(z.string().min(1)).optional(),
+    tools: agentToolsSchema.optional(),
+    skills: z.array(z.string().min(1)).optional(),
+    restrictions: z.array(z.string().min(1)).optional(),
+    permissionMode: permissionModeSchema.optional(),
+    model: z.string().min(1).optional(),
+    thinkingEffort: thinkingEffortSchema.optional(),
+    limits: settingsLimitsSchema.optional(),
+    enforcement: enforcementMapSchema.optional(),
+  })
+  .strict();
+
+export const humanSettingsSchema = z
+  .object({
+    roles: z.array(z.string().min(1)).optional(),
+    assignees: z.array(z.string().min(1)).optional(),
+    decisions: z.array(z.string().min(1)).optional(),
+    allowFurtherTracks: z.boolean().optional(),
+    allowTakeover: z.boolean().optional(),
+    slaHours: z.number().positive().optional(),
+    stalenessHint: z.string().min(1).optional(),
+    returnRequires: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export const cliCheckSettingsSchema = z
+  .object({
+    command: z.string().min(1).optional(),
+    timeoutMs: z.number().positive().optional(),
+    environmentPolicy: z.enum(["inherit", "clean", "whitelist"]).optional(),
+    inputArtifacts: z.array(z.string().min(1)).optional(),
+    outputArtifacts: z.array(z.string().min(1)).optional(),
+    failureClass: z.enum(["blocking", "advisory", "retryable"]).optional(),
+  })
+  .strict();
+
+// Fields common to every node type. `settings` is NOT here — it is typed per
+// node-type member below (M11c).
 const nodeCommon = {
   id: z.string().min(1),
   input: nodeInputSchema.optional(),
   output: nodeOutputSchema.optional(),
-  // M11c/M14 capability fields. In M11a `settings` is an OPAQUE PASSTHROUGH —
-  // preserved (never stripped) but NOT enforced; `loadFlowManifest` emits
-  // SETTINGS_NOT_ENFORCED_WARN. Typed validation + enforcement = M11c.
-  settings: z.record(z.string(), z.unknown()).optional(),
   pre_finish: z.object({ gates: z.array(gateSchema).optional() }).optional(),
   finish: z
     .object({ human: finishHumanSchema.optional() })
@@ -307,30 +396,35 @@ const aiCodingNodeSchema = z.object({
   ...nodeCommon,
   type: z.literal("ai_coding"),
   action: z.object({ prompt: z.string().min(1) }).passthrough(),
+  settings: aiCodingSettingsSchema.optional(),
 });
 
 const judgeNodeSchema = z.object({
   ...nodeCommon,
   type: z.literal("judge"),
   action: z.object({ prompt: z.string().min(1) }).passthrough(),
+  settings: judgeSettingsSchema.optional(),
 });
 
 const cliNodeSchema = z.object({
   ...nodeCommon,
   type: z.literal("cli"),
   action: z.object({ command: z.string().min(1) }).passthrough(),
+  settings: cliCheckSettingsSchema.optional(),
 });
 
 const checkNodeSchema = z.object({
   ...nodeCommon,
   type: z.literal("check"),
   action: z.object({ command: z.string().min(1) }).passthrough(),
+  settings: cliCheckSettingsSchema.optional(),
 });
 
 const humanNodeSchema = z.object({
   ...nodeCommon,
   type: z.literal("human"),
   action: z.object({}).passthrough().optional(),
+  settings: humanSettingsSchema.optional(),
 });
 
 export const nodeSchema = z.discriminatedUnion("type", [
@@ -407,3 +501,9 @@ export type NodeDef = z.infer<typeof nodeSchema>;
 export type GateDef = z.infer<typeof gateSchema>;
 export type WorkspacePolicy = z.infer<typeof workspacePolicySchema>;
 export type HumanDecision = z.infer<typeof humanDecisionSchema>;
+export type EnforcementMode = z.infer<typeof enforcementModeSchema>;
+export type EnforcementMap = z.infer<typeof enforcementMapSchema>;
+export type AiCodingSettings = z.infer<typeof aiCodingSettingsSchema>;
+export type JudgeSettings = z.infer<typeof judgeSettingsSchema>;
+export type HumanSettings = z.infer<typeof humanSettingsSchema>;
+export type CliCheckSettings = z.infer<typeof cliCheckSettingsSchema>;

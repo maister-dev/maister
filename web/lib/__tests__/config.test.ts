@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 
 import {
-  SETTINGS_NOT_ENFORCED_WARN,
   loadFlowManifest,
   loadPlatformMcpCapabilities,
   loadProjectConfig,
@@ -476,20 +475,195 @@ describe("loadFlowManifest — graph (nodes[])", () => {
     await expect(loadFlowManifest(path)).resolves.toBeTruthy();
   });
 
-  it("preserves an opaque node settings block (no silent strip)", async () => {
+  // M11c: settings is now a TYPED parsed shape (was an opaque passthrough in
+  // M11a). loadFlowManifest returns the typed node settings, not a raw record.
+  it("returns a typed parsed node settings block", async () => {
     const path = await writeGraph("graph-settings.yaml", (m) => {
       m.nodes[0].settings = { mcps: ["github"], permissionMode: "ask" };
     });
     const manifest = await loadFlowManifest(path);
     const node = manifest.nodes?.[0] as { settings?: Record<string, unknown> };
 
-    expect(node.settings).toEqual({ mcps: ["github"], permissionMode: "ask" });
+    expect(node.settings).toMatchObject({
+      mcps: ["github"],
+      permissionMode: "ask",
+    });
   });
 
-  it("exposes SETTINGS_NOT_ENFORCED_WARN as a named constant (P14)", () => {
-    expect(SETTINGS_NOT_ENFORCED_WARN).toBe(
-      "[flow] node settings parsed but not enforced until M11c",
+  // P14: the SETTINGS_NOT_ENFORCED_WARN named symbol MUST be gone in M11c, and
+  // no "parsed but not enforced" warning may be emitted when loading a graph
+  // manifest that carries settings. We assert BOTH:
+  //  (a) the named export is removed from the @/lib/config module namespace, and
+  //  (b) no log line containing the sentinel substring is emitted on load.
+  // (a) is the non-brittle named-symbol-removed assertion; (b) is the
+  // behavioral guard. Pino is constructed module-internally, so (b) captures
+  // process.stdout writes for the duration of the load.
+  it("no longer exports SETTINGS_NOT_ENFORCED_WARN (P14, symbol removed)", async () => {
+    const mod = (await import("@/lib/config")) as Record<string, unknown>;
+
+    expect(mod.SETTINGS_NOT_ENFORCED_WARN).toBeUndefined();
+  });
+
+  it("emits no 'parsed but not enforced' warning when loading settings", async () => {
+    const path = await writeGraph("graph-settings-nowarn.yaml", (m) => {
+      m.nodes[0].settings = { mcps: ["github"], permissionMode: "ask" };
+    });
+
+    const captured: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+
+    // FIXME(any): patching process.stdout.write for the duration of the load
+    // to capture pino's module-internal logger output (no injectable logger
+    // seam on loadFlowManifest).
+    (process.stdout as { write: unknown }).write = ((
+      chunk: unknown,
+      ...rest: unknown[]
+    ) => {
+      captured.push(String(chunk));
+
+      return (orig as (...a: unknown[]) => boolean)(chunk, ...rest);
+    }) as typeof process.stdout.write;
+
+    try {
+      await loadFlowManifest(path);
+    } finally {
+      (process.stdout as { write: unknown }).write = orig;
+    }
+
+    expect(captured.join("")).not.toContain("parsed but not enforced");
+  });
+});
+
+// --- M11c task 1.6: node-level settings validation -------------------------
+// loadFlowManifest / validateGraphManifest reject settings invariants that zod
+// shape-validation cannot express. Each rejection MUST be MaisterError("CONFIG")
+// and SHOULD name the offending node id + field (asserted on code, not message
+// substring, per the skill-context named-code rule).
+//
+// SEAM ASSUMPTION (settings.executors[] cross-ref):
+//   loadFlowManifest(flowYamlPath) today takes ONLY a path — it has NO access to
+//   the project's executor ref set. The frozen spec (flow-settings.md) says
+//   settings.executors[] is "validated against the project's executor ref set
+//   (the same set the M6 chain uses)". The realistic seam is therefore an
+//   OPTIONAL executor-ref-set parameter threaded into loadFlowManifest /
+//   validateGraphManifest, applied only when the caller supplies it (launch /
+//   project-load know the set; the install-time loadManifestOrThrow does not, so
+//   it stays a pure shape+graph validation). The implementor MUST add this
+//   optional param; this test passes it as a second argument. If the implementor
+//   chooses a different signature (e.g. an options object), update the call here
+//   to match — the contract under test is "unknown executor ref -> CONFIG when
+//   the set is supplied", not the exact arg shape.
+
+async function expectGraphConfigError(
+  path: string,
+  // The optional executor-ref-set seam (see SEAM ASSUMPTION above).
+  executorRefIds?: string[],
+): Promise<void> {
+  let caught: unknown;
+
+  try {
+    // M11c seam: loadFlowManifest takes an optional { executorIds } options
+    // object (the launch/project-load callers supply the project's executor set;
+    // install-time callers omit it). The contract under test is "unknown
+    // executor ref -> CONFIG when the set is supplied".
+    await loadFlowManifest(
+      path,
+      executorRefIds ? { executorIds: executorRefIds } : undefined,
     );
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(isMaisterError(caught)).toBe(true);
+  expect((caught as { code: string }).code).toBe("CONFIG");
+}
+
+describe("loadFlowManifest — node settings validation (M11c)", () => {
+  it("rejects settings.executors referencing an unknown executor ref", async () => {
+    const path = await writeGraph("graph-bad-executor-ref.yaml", (m) => {
+      m.nodes[0].settings = { executors: ["ghost-executor"] };
+    });
+
+    // executor set is supplied (launch-time seam); "ghost-executor" is absent.
+    await expectGraphConfigError(path, ["claude-sonnet", "codex-default"]);
+  });
+
+  it("names the node id + field when an executor ref is unknown", async () => {
+    const path = await writeGraph("graph-bad-executor-ref-named.yaml", (m) => {
+      m.nodes[0].settings = { executors: ["ghost-executor"] };
+    });
+
+    let caught: unknown;
+
+    try {
+      await loadFlowManifest(path, { executorIds: ["claude-sonnet"] });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(isMaisterError(caught)).toBe(true);
+    const msg = caught instanceof Error ? caught.message : "";
+
+    // names the offending node id and the field/ref (not a brittle full match).
+    expect(msg).toContain("implement");
+    expect(msg).toContain("ghost-executor");
+  });
+
+  it("accepts settings.executors that are all in the supplied executor set", async () => {
+    const path = await writeGraph("graph-good-executor-ref.yaml", (m) => {
+      m.nodes[0].settings = { executors: ["claude-sonnet"] };
+    });
+
+    await expect(
+      loadFlowManifest(path, {
+        executorIds: ["claude-sonnet", "codex-default"],
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("rejects a human decision listed in settings.decisions but absent from transitions", async () => {
+    // The human node's settings.decisions[] must each map to a declared
+    // transition key (same invariant as finish.human.decisions, applied to the
+    // typed human settings shape).
+    const path = await writeGraph("graph-bad-decision.yaml", (m) => {
+      m.nodes[2].settings = { decisions: ["approve", "escalate"] };
+      // transitions only declare approve + rework; "escalate" is undeclared.
+    });
+
+    await expectGraphConfigError(path);
+  });
+
+  it("rejects an out-of-range limits.maxDurationMinutes via node validation", async () => {
+    // zod already rejects <= 0 at the schema level; this asserts the manifest
+    // loader surfaces it as CONFIG (not an uncaught ZodError) end-to-end.
+    const path = await writeGraph("graph-bad-limit.yaml", (m) => {
+      m.nodes[0].settings = { limits: { maxDurationMinutes: 0 } };
+    });
+
+    await expectGraphConfigError(path);
+  });
+
+  it("rejects an enforcement key on a cli node (no such capability class)", async () => {
+    const path = await writeGraph("graph-enforcement-on-cli.yaml", (m) => {
+      m.nodes[1].settings = { enforcement: { mcps: "strict" } };
+    });
+
+    await expectGraphConfigError(path);
+  });
+
+  it("accepts a graph with valid typed settings and no executor set supplied", async () => {
+    // When the caller omits the executor set (install-time loadManifestOrThrow),
+    // shape + graph validation still pass; only the executor cross-ref is
+    // skipped.
+    const path = await writeGraph("graph-settings-ok.yaml", (m) => {
+      m.nodes[0].settings = {
+        mcps: ["github"],
+        thinkingEffort: "high",
+        enforcement: { mcps: "instruct" },
+      };
+    });
+
+    await expect(loadFlowManifest(path)).resolves.toBeTruthy();
   });
 });
 
