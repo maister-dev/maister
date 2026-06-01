@@ -30,8 +30,14 @@ import {
   markNodeReworked,
   markNodeRunning,
   markNodeSucceeded,
+  setEnforcementSnapshot,
 } from "./ledger";
 
+import {
+  assertNodeLaunchable,
+  capabilityBearingSettings,
+  evaluateNodeEnforcement,
+} from "@/lib/flows/enforcement";
 import { atomicWriteJson } from "@/lib/atomic";
 import {
   workspacePolicySchema,
@@ -597,6 +603,47 @@ export async function runGraph(
         .set({ currentStepId: node.id })
         .where(eq(runs.id, runId));
       await markNodeRunning(nodeAttemptId, db);
+
+      // M11c (ADR-032): per-node enforcement gate. For capability-bearing
+      // (ai_coding/judge) nodes, record the resolved verdict snapshot on the
+      // attempt and REFUSE the node before any agent session is spawned when a
+      // strict intent cannot be honored by the resolved agent. The gate runs
+      // BEFORE executeNodeAction → no createSession, so no permission deferred
+      // can leak (3.6). The snapshot is written on BOTH paths (2.2).
+      if (node.nodeType === "ai_coding" || node.nodeType === "judge") {
+        const settings = capabilityBearingSettings(
+          node.nodeType,
+          node.settings,
+        );
+        const snapshot = evaluateNodeEnforcement(
+          settings,
+          loaded.executor.agent,
+        );
+
+        await setEnforcementSnapshot(nodeAttemptId, snapshot, db);
+
+        try {
+          assertNodeLaunchable(
+            { id: node.id, nodeType: node.nodeType, settings },
+            loaded.executor.agent,
+          );
+        } catch (err) {
+          const e = isMaisterError(err)
+            ? err
+            : new MaisterError("CRASH", asError(err).message, {
+                cause: asError(err),
+              });
+
+          log2.warn(
+            { nodeId: node.id, code: e.code },
+            "node refused by enforcement gate — Failed (no agent spawned)",
+          );
+          await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
+          failed = true;
+          runErrorCode = e.code;
+          break;
+        }
+      }
 
       const context = buildContext({
         task: loaded.task,

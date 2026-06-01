@@ -2,6 +2,7 @@ import "server-only";
 
 import type { MaisterErrorCode } from "@/lib/errors";
 import type {
+  EnforcementSnapshotEntry,
   NodeAttempt,
   NodeAttemptStatus,
   NodeAttemptType,
@@ -180,6 +181,27 @@ export async function markNodeFailed(
   log.info(
     { nodeAttemptId, status: "Failed", errorCode: args.errorCode },
     "node-attempt transition",
+  );
+}
+
+// M11c (ADR-032): persist the resolved per-capability-class enforcement
+// verdicts on the attempt. Written on BOTH the pass and refusal paths for
+// capability-bearing (ai_coding/judge) nodes; never a mutable YAML mirror.
+export async function setEnforcementSnapshot(
+  nodeAttemptId: string,
+  entries: EnforcementSnapshotEntry[],
+  db?: Db,
+): Promise<void> {
+  const d = db ?? getDb();
+
+  await d
+    .update(nodeAttempts)
+    .set({ enforcementSnapshot: entries })
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  log.debug(
+    { nodeAttemptId, classes: entries.length },
+    "node-attempt enforcement snapshot written",
   );
 }
 

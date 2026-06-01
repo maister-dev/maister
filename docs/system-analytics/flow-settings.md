@@ -166,7 +166,7 @@ flowchart TD
     B -->|trusted| C[enablement gate]
     C --> D[executor resolution: resolveExecutor -> agent]
     D --> E[for each ai_coding/judge node: assertNodeLaunchable node, agent]
-    E -->|any refused class| ER[refuse: 409 CONFIG / 503 EXECUTOR_UNAVAILABLE, no worktree/run]
+    E -->|any refused class| ER[refuse: 400 CONFIG / 503 EXECUTOR_UNAVAILABLE, no worktree/run]
     E -->|all clear| F[git worktree add + create run/workspace]
     F --> G[supervisor POST /sessions]
 ```
@@ -235,7 +235,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 ## Edge cases
 
 - **`strict` on a class the build can only instruct** → refused at launch,
-  `MaisterError("CONFIG")` (409). The M11c default for every class.
+  `MaisterError("CONFIG")` (400). The M11c default for every class.
 - **`strict` on a class enforced for one agent, unsupported for the resolved
   agent** → `MaisterError("EXECUTOR_UNAVAILABLE")` (503). M14-era / test-injected.
 - **`untrusted` revision with `enforcement: strict`** → refused on the M10 trust

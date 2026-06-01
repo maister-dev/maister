@@ -95,6 +95,43 @@ describe("compileManifest — graph nodes[]", () => {
     expect(review.finishHuman?.decisions).toEqual(["approve", "rework"]);
   });
 
+  // M11c task 3.0 — thread typed `settings` through CompiledNode so the
+  // per-node runtime gate reads it without re-parsing the manifest.
+  it("threads a node's typed `settings` onto the CompiledNode (ai_coding)", () => {
+    const settingsGraph: FlowYamlV1 = {
+      schemaVersion: 1,
+      name: "aif",
+      nodes: [
+        {
+          id: "implement",
+          type: "ai_coding",
+          action: { prompt: "/aif-implement" },
+          transitions: { success: "done" },
+          settings: {
+            tools: { claude: ["Edit"] },
+            enforcement: { mcps: "strict", tools: "instruct" },
+          },
+        },
+      ],
+    } as unknown as FlowYamlV1;
+
+    const g = compileManifest(settingsGraph);
+    const implement = g.nodes.get("implement")!;
+
+    expect(implement.settings).toBeDefined();
+    expect(implement.settings).toEqual({
+      tools: { claude: ["Edit"] },
+      enforcement: { mcps: "strict", tools: "instruct" },
+    });
+  });
+
+  it("leaves CompiledNode.settings undefined for a node without settings", () => {
+    const g = compileManifest(graph);
+
+    // `implement` in the shared `graph` fixture carries no settings.
+    expect(g.nodes.get("implement")!.settings).toBeUndefined();
+  });
+
   it("resolveTransition resolves a decision and treats 'done' as terminal", () => {
     const g = compileManifest(graph);
     const review = g.nodes.get("review")!;

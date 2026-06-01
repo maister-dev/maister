@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -14,9 +16,14 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { resolveExecutor } from "@/lib/executors";
 import {
+  assertNodeLaunchable,
+  capabilityBearingSettings,
+} from "@/lib/flows/enforcement";
+import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
+import { compileManifest } from "@/lib/flows/graph/compile";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
 import { tryStartRun } from "@/lib/scheduler";
@@ -276,6 +283,45 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
         `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
+      );
+    }
+
+    // M11c (ADR-032): static settings-enforcement gate. Refuse the launch
+    // BEFORE any worktree/run/workspace side-effect when any capability-bearing
+    // (ai_coding/judge) node in the pinned manifest declares a `strict`
+    // enforcement intent the resolved executor's agent cannot honor. The throw
+    // propagates to errorResponse → httpStatusForCode: CONFIG→400 (the build
+    // cannot enforce the class), EXECUTOR_UNAVAILABLE→503 (another agent could)
+    // — the FROZEN SPEC mapping (docs/system-analytics/flow-settings.md §launch
+    // -refusal). No worktree/run/workspace is created (we are before addWorktree).
+    {
+      const compiled = compileManifest(revision.manifest as FlowYamlV1);
+      let configuredNodes = 0;
+
+      for (const node of compiled.nodes.values()) {
+        if (node.nodeType !== "ai_coding" && node.nodeType !== "judge") {
+          continue;
+        }
+        configuredNodes += 1;
+        assertNodeLaunchable(
+          {
+            id: node.id,
+            nodeType: node.nodeType,
+            settings: capabilityBearingSettings(node.nodeType, node.settings),
+          },
+          executor.agent,
+        );
+      }
+
+      log.info(
+        {
+          taskId: task.id,
+          flowRefId: flow.flowRefId,
+          executorId: executor.id,
+          agent: executor.agent,
+          capabilityNodes: configuredNodes,
+        },
+        "POST /api/runs settings-enforcement gate passed",
       );
     }
 

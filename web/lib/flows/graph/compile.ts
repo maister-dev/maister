@@ -19,6 +19,10 @@ export type CompiledNode = {
   gates: GateDef[];
   rework?: NodeDef["rework"];
   finishHuman?: NonNullable<NodeDef["finish"]>["human"];
+  // M11c (ADR-032): the node's typed settings threaded onto the compiled node
+  // so the per-node enforcement gate reads it without re-parsing the manifest.
+  // Compiled-linear nodes carry no settings (undefined).
+  settings?: NodeDef["settings"];
 };
 
 export type FlowGraph = {
@@ -70,6 +74,7 @@ function compileGraph(graphNodes: NodeDef[]): FlowGraph {
       gates: node.pre_finish?.gates ?? [],
       rework: node.rework,
       finishHuman: node.finish?.human,
+      settings: node.settings,
     });
   }
 
