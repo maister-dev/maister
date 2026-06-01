@@ -2,8 +2,9 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-05-28
+> Last updated: 2026-06-01
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
+> + /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
 
 ## Rules
 
@@ -63,3 +64,17 @@ The verify report MUST contain an explicit "Failure-class regression coverage" s
 Reason: M7's first design described the three failure modes the Codex adversarial review found ONLY in the prose of the plan. None of the failure modes had a regression test, so an implementation following the prose could have shipped any of them. The fix added explicit test cases per failure class. The verify step's job is to make sure the test cases survived the implementation pass — they have a habit of being trimmed under deadline pressure. Re-derive the list from the plan + diff, not from the implementer's word.
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
+
+### "Logic exists + unit test passes" is NOT proof the behavior runs in production
+**Source**: 2026-06-01-12.16, 2026-06-01-13.16 (#3), 2026-06-01-01.29, 2026-05-31-14.34
+**Rule**: Before declaring verify pass, for every validation/branch the plan promises, PROVE it executes on the production path and that its test exercises the production path — a green test is not evidence by itself. Four concrete false-green gates:
+
+1. **Optional-parameter validation (tested-but-unwired).** If a check is gated behind an OPTIONAL parameter (`loadFlowManifest(..., opts.executorIds)`), grep ALL production call sites and confirm at least one supplies it. A unit test that passes the parameter itself proves nothing about production wiring — the rejection branch can be dead in prod while the test is green. Trace from the diff's call graph, not from the test. Relatedly: validation whose inputs are project-scoped must run at a project-scoped seam (launch / `POST /api/runs`), not a package-scoped seam (install); and a reference id must be validated against the correct id-space (`executors.executor_ref_id`, not the `executors.id` PK).
+
+2. **Parse-layer fidelity.** A schema-driven behavior test that builds its input from a hand-written object LITERAL bypasses the production Zod parse and any parse-time defaults — a false green for the deployed path. For schema-driven logic the test MUST feed real input through the production schema (`flowYamlV1Schema` → evaluator). Verify each such test actually parses; a literal-fed test is non-evidence.
+
+3. **Sweep / coverage counts.** A source-sweep or "all classes cleared" assertion that checks only a loose MINIMUM count lets a missing scope look covered. Require an EXACT configured-scope count AND at least one fixture per supported source/scope, so a future source addition cannot silently drop from CLEAR handling.
+
+4. **Never trust a piped exit code.** A verify command piped through `| tail` / `| grep` / `| head` reports the LAST stage's exit status (0), masking a failing vitest / lint / typecheck. Run the command BARE and check `$?`, or use `set -o pipefail`, before asserting pass/fail. A green-looking `| tail` is the worst false-green — it nearly shipped a 20-test-red integration suite as "exit 0". Also: a committed integration seed that inserts a FK/`NOT NULL` column as `null` (loose `drizzle(pool)` does not enforce it) makes a Docker-gated suite silently red — confirm the suite actually ran green, not merely "was present".
+
+The verify report MUST state, for each applicable gate, the production call site / parse path / exact count / bare-exit-code check it confirmed. A gate skipped is an automatic warning; a confirmed false-green (dead validation, literal-fed schema test, piped exit code hiding red) is a blocking finding.

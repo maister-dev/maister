@@ -2,9 +2,10 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-05-30
+> Last updated: 2026-06-01
 > Based on: 2 analyzed patches + 1 adversarial-review pass-through (M7 / 2026-05-28)
-> + /aif-evolve patch analysis (M9-M10 docs-drift + auth-first, 2026-05-30)
+> + /aif-evolve patch analysis (M9-M10 docs-drift + auth-first, 2026-05-30;
+> M11b/M11c adversarial-review batch, 2026-06-01)
 
 ## Rules
 
@@ -82,3 +83,30 @@ Per `docs/CLAUDE.md`'s "code wins" policy, analytics drift is a MUST-FIX in the 
 **Rule**: For every route handler / server action in the diff, confirm the FIRST awaited operation is the session/active-session gate (`requireActiveSession` or equivalent, INCLUDING the forced-password-change gate) BEFORE any DB lookup of the named resource. A handler that reads `hitl_requests` / `runs` / `projects` before authenticating lets an unauthenticated or password-gated caller probe resource existence (a timing / error-shape oracle). This applies to READ routes (GET / stream) too, not only state-changing ones. Project-role authz then runs against a server-DERIVED `projectId` (from the resource row), never a body field. Flag ordering violations as a security finding, not a nit. (Three consecutive M9 review rounds re-found this on different routes — it is a systemic ordering bug, not a one-off.)
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
+
+### Multi-write transition without one transaction / CAS-first ordering — flag as CRITICAL
+**Source**: 2026-05-31-22.46, 2026-05-31-23.49, 2026-06-01-12.55
+**Rule**: For every state-changing handler OR background sweep/watchdog in the diff that writes more than one row (status column + ledger/`node_attempts` row + cursor + artifact), walk it in execution order and check four things:
+
+1. **Atomicity + crash windows.** Are all the persistent writes inside ONE `db.transaction`/CAS? If not, is there a reachable PROCESS-DEATH partial state (crash between two independent commits) with no tested recovery path? A recovery sweep that filters on a single status only rescues states that reach it. Missing recovery for a reachable partial state → flag CRITICAL `#atomicity`.
+2. **Guard-before-side-effect (CAS first).** When a contention guard (status CAS) coexists with another write that has its OWN unique constraint, the CAS MUST run FIRST so only the winner performs the constrained insert. If the constrained insert runs before the CAS, a concurrent loser raises a raw Postgres `23505` that surfaces as 500 instead of the documented 409 → flag CRITICAL `#error-contract`.
+3. **Ledger clobber.** A background sweep that updates a ledger row with NO status predicate (`markNodeFailed(id, …)` not guarded by `WHERE status='Running' AND current_step_id=<node>`) can overwrite a concurrently-`Succeeded` attempt to `Failed` → flag `#ledger-clobber`.
+4. **Lie about terminal state / store split.** Anything marked terminal `Failed` BEFORE the underlying execution is confirmed stopped or absent (a retryable teardown error treated as "give up") → flag `#split-brain`. A release/abandon that flips `runs.status` but leaves the takeover `node_attempts` row open → flag `#store-split`.
+
+Require a REAL concurrency test (two racers) for the 409-vs-500 contract, not a single-threaded one. Severity stays CRITICAL even after a green per-phase gate — these are the exact edges per-phase reviews miss.
+
+### New run status / enum value / state-changing route not fanned out to ALL consumers — flag drift; deny-list guards are a finding
+**Source**: 2026-05-31-22.46 (#3/#4), 2026-05-31-23.49 (#1), 2026-06-01-12.55 (#3)
+**Rule**: When the diff adds a `runs.status` value, an enum case, or a state-changing route, grep the new value into EVERY consumer and flag the misses:
+
+- present in one read model but absent from another (board has it, portfolio/home does not — a claimed run vanishes from the home grid while holding a slot) → `#read-model-drift`;
+- absent from the scheduler/cap predicate or a recovery/idle sweep's candidate filter → `#consumer-miss`;
+- a state guard written as a deny-list of a coarse property (`!terminal`) rather than an allow-list of exact valid states (`status ∈ {NeedsInput, NeedsInputIdle}`) → flag as a security/correctness finding `#guard-denylist`: it silently admits the new status (M11b: `HumanWorking` slipped a `!terminal` HITL guard and let a stale pre-takeover decision be stored);
+- a new terminal transition that frees a concurrency slot but never calls `promoteNextPending`/`releaseSlotOnIdle` → `#stranded-queue`;
+- a new state-changing route shipped with no OpenAPI/AsyncAPI path → `#missing-contract`.
+
+These are not nits — a claimed run holding a slot invisibly and a guard admitting an un-vetted status are real availability/correctness defects.
+
+### Public response returns a DB row or a server-only handle — flag as #response-leak
+**Source**: 2026-05-30-13.38, 2026-05-31-23.58, 2026-06-01-01.29
+**Rule**: For every public route handler / server action response in the diff, flag `#response-leak` if it returns a DB row or a service object verbatim, OR includes any server-only operational field: `acp_session_id`, supervisor session id, adapter launch argv/env, materialized paths, worktree paths, internal cost handles. The expected fix is an explicit response-DTO projection at the boundary mirrored in `docs/api/web.openapi.yaml` + a test that asserts the EXACT shape (no extra keys) — never redaction-by-hope or "the service type is internal so it's fine". Also flag a public response whose documented shape does not match the route's actual return (duplicate OpenAPI 409 entries, a `capabilityProfile` schema that diverges from the handler) — a contract that lies is a review finding. (M11/scratch-runs leaked supervisor/materialization handles and shipped register routes returning richer-than-contracted bodies.)

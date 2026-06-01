@@ -2,9 +2,10 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-05-30
+> Last updated: 2026-06-01
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
-> + M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30)
+> + M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30,
+> 2026-06-01 — M11b/M11c adversarial-review batch)
 
 ## Rules
 
@@ -164,3 +165,31 @@ A plan that schedules "docs as a final as-built sync" after the code phases is t
 Plan acceptance criteria MUST name, for each executable hook the feature ships: WHERE it runs and WHAT trust gate precedes that exact line. Mandatory regression: install an untrusted source carrying a `setup.sh` → assert the script did NOT run (no side effect / sentinel absent) until an explicit trust + enable. (M10: `installRevision` ran `bash setup.sh` from a possibly-untrusted source during install — arbitrary code execution before any trust decision.)
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
+
+### Plan MUST make a multi-store state transition atomic and enumerate its crash-window recovery
+**Source**: 2026-05-31-22.46, 2026-05-31-23.49, 2026-06-01-12.55
+**Rule**: This GENERALIZES the existing "two-phase commit" rule (single DB write + one external side-effect) to a transition that performs N persistent writes across MORE THAN ONE store — e.g. `runs.status` column + a `node_attempts`/ledger row + the `current_step_id` cursor + an on-disk artifact. For every such transition the plan MUST require:
+
+1. **One transaction / one CAS-guarded claim for all the persistent writes.** Fold the ledger write, the status CAS, and the cursor repark into a SINGLE `db.transaction` so there is no committed intermediate state: either fully transitioned or fully not (and retryable). Git/external side-effects stay BEFORE the tx (a failure is a clean 409 with no ledger write); an async runner/resume stays AFTER the commit (a death there is recoverable by the sweep).
+2. **If full atomicity is impossible**, the plan MUST enumerate every CRASH WINDOW — process death BETWEEN each pair of independent commits, not just the exception paths — and give EACH reachable partial state an explicit, *tested* recovery path. A recovery sweep that filters on a single status (`status='Running'`) only rescues partial states that reach that status; the plan MUST name which partial states the sweep covers and which it does not.
+3. **A release / abandon / terminal transition MUST close EVERY store that represents the lifecycle** (status column + ledger row + artifact) in the same transaction — updating only `runs.status` while leaving an open `node_attempts` row makes `getActiveTakeover` report an active handoff on a released run.
+
+Reason: M11b's takeover *return* made two of four writes atomic and left the status flip + cursor repark as separate auto-commits; a crash between them stranded the run (`HumanWorking` with an ended ledger row had no rescuer; `Running` with the cursor still at the review node re-dispatched at the wrong node, skipping re-validation gates). M11c's duration-cap watchdog clobbered a concurrently-`Succeeded` attempt because the ledger write had no status predicate. "Two-phase commit" was reasoned about as exception-handling, never as process-crash windows.
+
+### Plan MUST fan a new run status / enum value / state-changing route out to ALL consumers, and require allow-list guards
+**Source**: 2026-05-31-22.46 (#3/#4), 2026-05-31-23.49 (#1), 2026-06-01-12.55 (#3)
+**Rule**: Adding a `runs.status` value, an enum case, or a state-changing route, the plan's acceptance MUST enumerate the FULL consumer set — not only the narrative docs the contract-surface rule already covers, but every CODE consumer:
+
+| Consumer class | What to update |
+| -------------- | -------------- |
+| Read models | EVERY one — board read model AND portfolio/home (cross-project) read model AND any rail/sidebar query. A status added to one read model but not another makes a claimed run vanish from the home grid while still holding a capacity slot. |
+| Scheduler / concurrency cap | the active-status predicate and the cap accounting. |
+| Recovery / idle sweeps | each sweep's candidate filter — does the new status belong in its WHERE clause? |
+| State / precondition guards | every state guard INCLUDING the HITL form/human-response guard. |
+| API spec | a new state-changing route gets an OpenAPI/AsyncAPI path in the SAME change. |
+
+Two hard requirements on the guards themselves:
+- **Allow-list exact states, never deny-list a coarse complement.** A guard written `if (terminal) reject` (deny-list) silently ADMITS every future non-terminal status — M11b's `HumanWorking` slipped past a `!terminal` HITL guard and let a reviewer store a stale pre-takeover approve. Specify guards as `status ∈ {NeedsInput, NeedsInputIdle}` (allow-list) so a new status is rejected by default until explicitly admitted.
+- **A new terminal transition that frees a concurrency slot MUST honor the slot-release contract** (`promoteNextPending` / `releaseSlotOnIdle`) — M11c's duration-cap kill freed a slot but never promoted the queue, stranding `Pending` runs.
+
+Reason: a new enum/route was propagated to the surfaces named in the plan's file list but not to *every* consumer (a second read model, the scheduler, the API spec, a coarse guard). The plan/file-list was the checklist and predated the later-added surfaces; the plan must require grepping the new value into every consumer class above.
