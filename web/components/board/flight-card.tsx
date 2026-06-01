@@ -13,6 +13,8 @@ export interface FlightCardLabels {
   claimedBy: string;
   takeoverReturn: string;
   elapsed: string;
+  // M11c (ADR-032) Phase 4.3: refused-at-launch settings indicator hint.
+  settingsRefused: string;
 }
 
 export interface FlightCardProps {
@@ -93,6 +95,15 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
           <span className="truncate">{card.branch}</span>
         </div>
         <div className="flex flex-none items-center gap-1.5">
+          {card.refused ? (
+            <span
+              aria-label={labels.settingsRefused}
+              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
+              title={labels.settingsRefused}
+            >
+              ⚠
+            </span>
+          ) : null}
           {card.reworking ? (
             <span
               aria-label={labels.reworking}

@@ -66,6 +66,7 @@ export async function Board({
     claimedBy: t("claimedBy"),
     takeoverReturn: t("return"),
     elapsed: t("elapsed"),
+    settingsRefused: tRun("settingsRefusedHint"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"

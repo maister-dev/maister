@@ -356,7 +356,20 @@
     "return": "Return",
     "returnNotOwner": "Only the reviewer who claimed this run can return it.",
     "checkoutContext": "Check out locally",
-    "copy": "Copy"
+    "copy": "Copy",
+    "settingsTitle": "Node settings",
+    "settingsVerdictEnforced": "Enforced",
+    "settingsVerdictInstructed": "Instructed",
+    "settingsVerdictRefused": "Refused",
+    "settingsClassMcps": "MCP servers",
+    "settingsClassTools": "Tools",
+    "settingsClassSkills": "Skills",
+    "settingsClassRestrictions": "Restrictions",
+    "settingsClassPermissionMode": "Permission mode",
+    "settingsClassWorkspaceAccess": "Workspace access",
+    "settingsNoConstraints": "No constrained capabilities",
+    "settingsRefusalReason": "Refused at launch",
+    "settingsRefusedHint": "Settings refused at launch"
   },
   "changePassword": {
     "title": "Change your password",

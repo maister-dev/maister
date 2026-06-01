@@ -1,11 +1,14 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
+  EnforcementSnapshotEntry,
   GateResult,
   GateVerdict,
   HitlRequest,
   NodeAttempt,
 } from "@/lib/db/schema";
+import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -13,10 +16,14 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { compileManifest } from "@/lib/flows/graph/compile";
+import { buildSettingsView } from "@/lib/flows/settings-view";
 import { extractOptions } from "@/lib/queries/hitl";
 
 const {
   executors,
+  flowRevisions,
+  flows,
   gateResults,
   hitlRequests,
   nodeAttempts,
@@ -258,4 +265,104 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
   }));
 
   return { entries };
+}
+
+// --- M11c: run-detail settings-visibility read model (ADR-032) ------------
+
+export interface RunSettings {
+  nodes: SettingsNodeView[];
+  // Present only when the run carries a recorded `refused` verdict — a strict
+  // intent the resolved agent could not honor at launch. Human-readable detail
+  // reconstructed from the first refused snapshot entry.
+  refusalReason: string | null;
+}
+
+function firstRefused(
+  snapshotByNode: Record<string, EnforcementSnapshotEntry[]>,
+): { nodeId: string; entry: EnforcementSnapshotEntry } | null {
+  for (const [nodeId, entries] of Object.entries(snapshotByNode)) {
+    const entry = entries.find((e) => e.verdict === "refused");
+
+    if (entry) return { nodeId, entry };
+  }
+
+  return null;
+}
+
+// The capability-class view for the run-detail panel: the pinned-manifest nodes
+// (via runs.flow_revision_id → flow_revisions.manifest), the resolved executor
+// agent, and the persisted node_attempts.enforcement_snapshot keyed by nodeId.
+// Carries only classes + verdicts — never executor env or any secret.
+export async function getRunSettings(
+  runId: string,
+): Promise<RunSettings | null> {
+  const client = db();
+
+  const rows = await client
+    .select({
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+      agent: executors.agent,
+    })
+    .from(runs)
+    .innerJoin(executors, eq(executors.id, runs.executorId))
+    .where(eq(runs.id, runId));
+  const row = rows[0];
+
+  if (!row) return null;
+
+  let manifest: FlowYamlV1 | null = null;
+
+  if (row.flowRevisionId) {
+    const revisionRows = await client
+      .select({ manifest: flowRevisions.manifest })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, row.flowRevisionId));
+
+    manifest = (revisionRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+  }
+
+  if (!manifest && row.flowId) {
+    const flowRows = await client
+      .select({ manifest: flows.manifest })
+      .from(flows)
+      .where(eq(flows.id, row.flowId));
+
+    manifest = (flowRows[0]?.manifest as FlowYamlV1 | undefined) ?? null;
+  }
+
+  if (!manifest) return null;
+
+  const attemptRows = await client
+    .select({
+      nodeId: nodeAttempts.nodeId,
+      enforcementSnapshot: nodeAttempts.enforcementSnapshot,
+    })
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.runId, runId))
+    .orderBy(asc(nodeAttempts.attempt));
+
+  const snapshotByNode: Record<string, EnforcementSnapshotEntry[]> = {};
+
+  for (const r of attemptRows) {
+    if (r.enforcementSnapshot) {
+      snapshotByNode[r.nodeId] = r.enforcementSnapshot;
+    }
+  }
+
+  const graph = compileManifest(manifest);
+  const nodes = [...graph.nodes.values()].map((n) => ({
+    id: n.id,
+    type: n.nodeType,
+    settings: n.settings,
+  }));
+
+  const view = buildSettingsView(nodes, row.agent, snapshotByNode);
+
+  const refused = firstRefused(snapshotByNode);
+  const refusalReason = refused
+    ? `node "${refused.nodeId}" declares ${refused.entry.declared} enforcement of "${refused.entry.class}" but the resolved agent can only ${refused.entry.capability} it`
+    : null;
+
+  return { nodes: view, refusalReason };
 }

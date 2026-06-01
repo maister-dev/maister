@@ -1,9 +1,14 @@
+import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
+import {
+  FlowSettingsPanel,
+  type FlowSettingsPanelLabels,
+} from "@/components/board/panels/flow-settings-panel";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
 import { RunTakeoverActions } from "@/components/board/run-takeover-actions";
 import {
@@ -12,7 +17,11 @@ import {
   type TimelineLabels,
 } from "@/components/board/run-timeline";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
-import { getRunDetail, getRunTimeline } from "@/lib/queries/run";
+import {
+  getRunDetail,
+  getRunSettings,
+  getRunTimeline,
+} from "@/lib/queries/run";
 
 type RouteParams = { params: Promise<{ runId: string }> };
 
@@ -48,6 +57,27 @@ export default async function RunDetailPage({
   const t = await getTranslations("run");
 
   const timeline = await getRunTimeline(runId);
+  const settings = await getRunSettings(runId);
+
+  const settingsClassLabel: Record<EnforcementSnapshotEntry["class"], string> =
+    {
+      mcps: t("settingsClassMcps"),
+      tools: t("settingsClassTools"),
+      skills: t("settingsClassSkills"),
+      restrictions: t("settingsClassRestrictions"),
+      permissionMode: t("settingsClassPermissionMode"),
+      workspaceAccess: t("settingsClassWorkspaceAccess"),
+    };
+
+  const settingsLabels: FlowSettingsPanelLabels = {
+    title: t("settingsTitle"),
+    verdictEnforced: t("settingsVerdictEnforced"),
+    verdictInstructed: t("settingsVerdictInstructed"),
+    verdictRefused: t("settingsVerdictRefused"),
+    noConstraints: t("settingsNoConstraints"),
+    refusalReason: t("settingsRefusalReason"),
+    classLabel: (cls) => settingsClassLabel[cls],
+  };
 
   const canClaim =
     detail.status === "NeedsInput" &&
@@ -159,6 +189,14 @@ export default async function RunDetailPage({
         entries={timeline.entries as TimelineEntry[]}
         labels={timelineLabels}
       />
+
+      {settings ? (
+        <FlowSettingsPanel
+          labels={settingsLabels}
+          nodes={settings.nodes}
+          refusalReason={settings.refusalReason}
+        />
+      ) : null}
     </div>
   );
 }

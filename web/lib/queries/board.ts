@@ -65,6 +65,10 @@ export interface FlightCard {
   // M11b (ADR-030): for a `humanworking` card, the takeover owner
   // (`users.name ?? users.email`). Null on every non-takeover card.
   owner: string | null;
+  // M11c (ADR-032) Phase 4.3: the latest run had a node attempt whose
+  // enforcement_snapshot recorded a `refused` verdict (a strict intent the
+  // resolved agent could not honor at launch). Links to the run-detail panel.
+  refused: boolean;
 }
 
 export interface BoardColumnData {
@@ -251,6 +255,27 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     for (const r of reworkedRows) reworkingRunIds.add(r.runId);
   }
 
+  // M11c (ADR-032): which latest runs carry a recorded `refused` enforcement
+  // verdict on any node attempt (a strict intent refused at launch). Cheap
+  // projection over the persisted enforcement_snapshot audit.
+  const refusedRunIds = new Set<string>();
+
+  if (latestRunIds.length > 0) {
+    const snapshotRows = await client
+      .select({
+        runId: nodeAttempts.runId,
+        enforcementSnapshot: nodeAttempts.enforcementSnapshot,
+      })
+      .from(nodeAttempts)
+      .where(inArray(nodeAttempts.runId, latestRunIds));
+
+    for (const r of snapshotRows) {
+      if (r.enforcementSnapshot?.some((e) => e.verdict === "refused")) {
+        refusedRunIds.add(r.runId);
+      }
+    }
+  }
+
   // M11b (ADR-030): the active takeover claim per latest run — owner + the
   // claim time (the takeover node_attempts.started_at). Drives the
   // `humanworking` card's "claimed by <owner>" badge and elapsed time. The
@@ -344,6 +369,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       minus: null,
       reworking: cardStatus !== "done" && reworkingRunIds.has(run.runId),
       owner: takeover?.owner ?? null,
+      refused: refusedRunIds.has(run.runId),
     });
 
     if (

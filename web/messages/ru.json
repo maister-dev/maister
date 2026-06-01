@@ -356,7 +356,20 @@
     "return": "Вернуть",
     "returnNotOwner": "Вернуть запуск может только перехвативший его ревьюер.",
     "checkoutContext": "Локальный чекаут",
-    "copy": "Копировать"
+    "copy": "Копировать",
+    "settingsTitle": "Настройки узла",
+    "settingsVerdictEnforced": "Принудительно",
+    "settingsVerdictInstructed": "Инструктивно",
+    "settingsVerdictRefused": "Отклонено",
+    "settingsClassMcps": "Серверы MCP",
+    "settingsClassTools": "Инструменты",
+    "settingsClassSkills": "Навыки",
+    "settingsClassRestrictions": "Ограничения",
+    "settingsClassPermissionMode": "Режим разрешений",
+    "settingsClassWorkspaceAccess": "Доступ к рабочему пространству",
+    "settingsNoConstraints": "Нет ограниченных возможностей",
+    "settingsRefusalReason": "Запуск отклонён",
+    "settingsRefusedHint": "Настройки отклонены при запуске"
   },
   "changePassword": {
     "title": "Смените пароль",

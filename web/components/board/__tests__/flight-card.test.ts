@@ -14,6 +14,7 @@ const labels: FlightCardLabels = {
   claimedBy: "claimed by",
   takeoverReturn: "Return",
   elapsed: "elapsed",
+  settingsRefused: "Settings refused at launch",
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -31,6 +32,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     minus: null,
     reworking: false,
     owner: null,
+    refused: false,
     ...over,
   };
 }
