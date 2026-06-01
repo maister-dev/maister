@@ -358,6 +358,7 @@
     "checkoutContext": "Локальный чекаут",
     "copy": "Копировать",
     "settingsTitle": "Настройки узла",
+    "settingsDeclaredIntentNote": "Заявленное намерение, показано для наглядности. В этой сборке настройки только фиксируются — они пока не применяются и не передаются агенту (материализация в M14).",
     "settingsVerdictEnforced": "Принудительно",
     "settingsVerdictInstructed": "Инструктивно",
     "settingsVerdictRefused": "Отклонено",

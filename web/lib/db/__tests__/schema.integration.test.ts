@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // `@/lib/db/schema` clash with the test-file's own drizzle copy. Runtime
 // works; we cast to `any` to silence the type-only conflict.
 import * as fullSchema from "@/lib/db/schema";
+import { setEnforcementSnapshot } from "@/lib/flows/graph/ledger";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -371,6 +372,52 @@ describe("node_attempts.enforcement_snapshot (M11c, migration 0013)", () => {
 
     expect(byId.get(withSnapshot)).toEqual(snapshot);
     expect(byId.get(withoutSnapshot)).toBeNull();
+  });
+
+  it("setEnforcementSnapshot is write-once — a resume re-eval never overwrites the original verdicts", async () => {
+    const ids = await seedChain();
+    const attemptId = newId();
+    const original = [
+      {
+        class: "mcps",
+        declared: "strict",
+        capability: "instructed",
+        verdict: "refused",
+      },
+    ];
+    const rewrite = [
+      {
+        class: "tools",
+        declared: "instruct",
+        capability: "instructed",
+        verdict: "instructed",
+      },
+    ];
+
+    await db.insert(schema.nodeAttempts).values({
+      id: attemptId,
+      runId: ids.runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+    });
+
+    // First write lands.
+    await setEnforcementSnapshot(attemptId, original as never, db as never);
+    // A NeedsInput resume reuses the attempt and re-runs the gate — the second
+    // write MUST be a no-op so the original first-attempt audit is preserved.
+    await setEnforcementSnapshot(attemptId, rewrite as never, db as never);
+
+    const rows = await db.execute(
+      sql.raw(
+        `select enforcement_snapshot from node_attempts where id = '${attemptId}'`,
+      ),
+    );
+
+    expect(
+      (rows.rows[0] as { enforcement_snapshot: unknown }).enforcement_snapshot,
+    ).toEqual(original);
   });
 });
 

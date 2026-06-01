@@ -194,14 +194,26 @@ export async function setEnforcementSnapshot(
 ): Promise<void> {
   const d = db ?? getDb();
 
-  await d
+  // Write-once: the snapshot records what was evaluated at the FIRST attempt
+  // (launch/refusal). A NeedsInput resume reuses the same attempt row and
+  // re-runs the gate, so the `IS NULL` guard preserves the original verdicts —
+  // a later re-evaluation (e.g. across a deploy that flips the static
+  // ENFORCEABILITY_BY_AGENT table) can never rewrite the audit. Append-only,
+  // never a mutable mirror.
+  const updated = await d
     .update(nodeAttempts)
     .set({ enforcementSnapshot: entries })
-    .where(eq(nodeAttempts.id, nodeAttemptId));
+    .where(
+      and(
+        eq(nodeAttempts.id, nodeAttemptId),
+        isNull(nodeAttempts.enforcementSnapshot),
+      ),
+    )
+    .returning({ id: nodeAttempts.id });
 
   log.debug(
-    { nodeAttemptId, classes: entries.length },
-    "node-attempt enforcement snapshot written",
+    { nodeAttemptId, classes: entries.length, written: updated.length > 0 },
+    "node-attempt enforcement snapshot (write-once)",
   );
 }
 

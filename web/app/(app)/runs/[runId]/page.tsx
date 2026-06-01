@@ -71,6 +71,7 @@ export default async function RunDetailPage({
 
   const settingsLabels: FlowSettingsPanelLabels = {
     title: t("settingsTitle"),
+    declaredIntentNote: t("settingsDeclaredIntentNote"),
     verdictEnforced: t("settingsVerdictEnforced"),
     verdictInstructed: t("settingsVerdictInstructed"),
     verdictRefused: t("settingsVerdictRefused"),

@@ -358,6 +358,7 @@
     "checkoutContext": "Check out locally",
     "copy": "Copy",
     "settingsTitle": "Node settings",
+    "settingsDeclaredIntentNote": "Declared intent, shown for visibility. In this build settings are recorded only — they are not yet enforced or delivered to the agent (materialized in M14).",
     "settingsVerdictEnforced": "Enforced",
     "settingsVerdictInstructed": "Instructed",
     "settingsVerdictRefused": "Refused",

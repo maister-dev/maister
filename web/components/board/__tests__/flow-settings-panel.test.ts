@@ -40,6 +40,7 @@ import {
 
 const labels: FlowSettingsPanelLabels = {
   title: "Settings enforcement",
+  declaredIntentNote: "Declared intent; not delivered to the agent (M14).",
   verdictEnforced: "enforced",
   verdictInstructed: "instructed",
   verdictRefused: "refused",

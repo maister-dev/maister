@@ -473,17 +473,19 @@ describe("aiCodingSettingsSchema (M11c)", () => {
     }
   });
 
-  it("defaults a present enforcement class to 'instruct'", () => {
-    // The plan: Enf = enum(strict|instruct|off) default 'instruct'. When an
-    // enforcement entry is present but unset, the schema applies the default.
-    // (Verified per-key: an explicitly-listed-but-defaulted key resolves to
-    // "instruct". If the implementor models defaults only at the field that the
-    // flow author writes, this asserts the documented default value.)
+  it("keeps the enforcement map SPARSE — unset classes are not defaulted at parse", () => {
+    // M11c bug fix: per-key `instruct` defaults are NOT injected at parse.
+    // A manifest declaring only `enforcement: { mcps: "strict" }` must parse to
+    // an enforcement map containing ONLY `mcps`; otherwise the audit snapshot
+    // and run-detail panel over-report the five classes the author never set.
+    // The `instruct` default is applied at EVALUATION (evaluateNodeEnforcement),
+    // not here.
     const parsed = aiCodingSettingsSchema.parse({
-      enforcement: { mcps: undefined },
-    }) as { enforcement?: { mcps?: string } };
+      enforcement: { mcps: "strict" },
+    }) as { enforcement?: Record<string, string | undefined> };
 
-    expect(parsed.enforcement?.mcps).toBe("instruct");
+    expect(parsed.enforcement?.mcps).toBe("strict");
+    expect(Object.keys(parsed.enforcement ?? {})).toEqual(["mcps"]);
   });
 
   it("rejects an unknown top-level key on the ai_coding settings block", () => {

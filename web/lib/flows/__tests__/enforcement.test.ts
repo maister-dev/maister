@@ -12,7 +12,33 @@ import {
   assertNodeLaunchable,
   type CapabilityClass,
 } from "@/lib/flows/enforcement";
+import { flowYamlV1Schema } from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors";
+
+// Parse node settings through the REAL manifest schema (the production path),
+// not a hand-built object literal — so the sparse-enforcement-map behavior is
+// exercised end-to-end. A bare object literal skips Zod and cannot catch a
+// regression that re-introduces per-key `instruct` defaults.
+function parsedAiCodingSettings(
+  settings: Record<string, unknown>,
+): AiCodingSettings | undefined {
+  const manifest = flowYamlV1Schema.parse({
+    schemaVersion: 1,
+    name: "g",
+    nodes: [
+      {
+        id: "implement",
+        type: "ai_coding",
+        action: { prompt: "/x" },
+        transitions: { success: "done" },
+        settings,
+      },
+    ],
+  });
+  const node = manifest.nodes?.[0];
+
+  return node && node.type === "ai_coding" ? node.settings : undefined;
+}
 
 // FROZEN SPEC encoding — docs/system-analytics/flow-settings.md (M11c) +
 // ADR-032. These tests are the executable mirror of the two frozen tables:
@@ -247,6 +273,37 @@ describe("evaluateNodeEnforcement — default declared intent", () => {
     expect(entry).toBeDefined();
     expect(entry!.declared).toBe("instruct");
     expect(entry!.verdict).toBe("instructed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. Production parse path — a sparse `enforcement` map parsed through the
+//     manifest schema must NOT expand into undeclared classes. This is the
+//     regression a bare-object-literal test cannot catch.
+// ---------------------------------------------------------------------------
+
+describe("evaluateNodeEnforcement — parsed-manifest sparse map", () => {
+  it("enforcement.mcps=strict (parsed) reports ONLY mcps, not six defaulted classes", () => {
+    const settings = parsedAiCodingSettings({
+      enforcement: { mcps: "strict" },
+    });
+
+    // The parse MUST keep the map sparse.
+    expect(Object.keys(settings?.enforcement ?? {})).toEqual(["mcps"]);
+
+    const result = evaluateNodeEnforcement(settings, "claude");
+
+    expect(result.map((e: EnforcementEntry) => e.class)).toEqual(["mcps"]);
+    expect(result[0].verdict).toBe("refused");
+  });
+
+  it("a data field with no enforcement entry (parsed) still defaults to instruct at evaluation", () => {
+    const settings = parsedAiCodingSettings({ skills: ["aif-implement"] });
+    const result = evaluateNodeEnforcement(settings, "claude");
+
+    expect(result.map((e: EnforcementEntry) => e.class)).toEqual(["skills"]);
+    expect(result[0].declared).toBe("instruct");
+    expect(result[0].verdict).toBe("instructed");
   });
 });
 

@@ -8,6 +8,9 @@ export type { SettingsNodeView } from "@/lib/flows/settings-view";
 
 export interface FlowSettingsPanelLabels {
   title: string;
+  // Honesty caption: verdicts are the flow author's DECLARED intent. M11c does
+  // not materialize settings — nothing here is delivered to the agent yet (M14).
+  declaredIntentNote: string;
   verdictEnforced: string;
   verdictInstructed: string;
   verdictRefused: string;
@@ -52,9 +55,13 @@ export function FlowSettingsPanel({
 }: FlowSettingsPanelProps): ReactElement {
   return (
     <section className="mt-8">
-      <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+      <h2 className="mb-1 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
         {labels.title}
       </h2>
+
+      <p className="mb-3 font-mono text-[10.5px] leading-[1.5] text-mute">
+        {labels.declaredIntentNote}
+      </p>
 
       {refusalReason ? (
         <div className="mb-3 rounded-[10px] border border-amber-line bg-amber-soft px-3.5 py-2.5 font-mono text-[11px] leading-[1.5] text-amber">

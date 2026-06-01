@@ -38,6 +38,7 @@ import ru from "@/messages/ru.json";
 
 const RUN_SETTINGS_KEYS = [
   "settingsTitle",
+  "settingsDeclaredIntentNote",
   "settingsVerdictEnforced",
   "settingsVerdictInstructed",
   "settingsVerdictRefused",

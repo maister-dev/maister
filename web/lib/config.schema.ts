@@ -292,14 +292,20 @@ const reworkSchema = z.object({
 
 export const enforcementModeSchema = z.enum(["strict", "instruct", "off"]);
 
+// Per-class enforcement INTENT. Kept SPARSE: only the classes the flow author
+// explicitly set survive the parse, so the audit snapshot and run-detail panel
+// never over-report intents the author never declared. The `instruct` default
+// is applied at EVALUATION (evaluateNodeEnforcement) for a class declared by its
+// data field with no explicit intent — NOT injected here as a per-key default
+// (that would make every sparse map claim all six classes).
 export const enforcementMapSchema = z
   .object({
-    mcps: enforcementModeSchema.default("instruct"),
-    tools: enforcementModeSchema.default("instruct"),
-    skills: enforcementModeSchema.default("instruct"),
-    restrictions: enforcementModeSchema.default("instruct"),
-    permissionMode: enforcementModeSchema.default("instruct"),
-    workspaceAccess: enforcementModeSchema.default("instruct"),
+    mcps: enforcementModeSchema.optional(),
+    tools: enforcementModeSchema.optional(),
+    skills: enforcementModeSchema.optional(),
+    restrictions: enforcementModeSchema.optional(),
+    permissionMode: enforcementModeSchema.optional(),
+    workspaceAccess: enforcementModeSchema.optional(),
   })
   .strict();
 
