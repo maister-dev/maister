@@ -248,7 +248,7 @@ Every phase exit requires (executable gate — run from repo root): `pnpm --filt
 <!-- Commit checkpoint: T5.1–T5.4 -->
 
 ### Final gate
-- [ ] `pnpm --filter maister-web typecheck` (0) · `pnpm --filter maister-web test:unit` · `pnpm --filter maister-web test:integration` · `pnpm --filter maister-web test:e2e` (M19 spec + prior specs) · `pnpm validate:docs:all` — all green · roadmap: tick M19 in `.ai-factory/ROADMAP.md` + Completed table (done by `/aif-verify`, not here).
+- [x] `pnpm --filter maister-web typecheck` (0) · `pnpm --filter maister-web test:unit` · `pnpm --filter maister-web test:integration` · `pnpm --filter maister-web test:e2e` (M19 spec + prior specs) · `pnpm validate:docs:all` — all green · roadmap: tick M19 in `.ai-factory/ROADMAP.md` + Completed table (done by `/aif-verify`, not here).
 
 ---
 
