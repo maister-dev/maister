@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { AiCodingSettings, FlowYamlV1 } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -11,6 +11,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { firstUnknownExecutorRef } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -295,6 +296,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // — the FROZEN SPEC mapping (docs/system-analytics/flow-settings.md §launch
     // -refusal). No worktree/run/workspace is created (we are before addWorktree).
     {
+      // Project executor *ref* id set (maister.yaml executor ids) for the
+      // node-level settings.executors[] cross-reference (AC-4). Resolved here
+      // because a flow package is generic across projects — the refs only have
+      // meaning against a concrete project's executors[]. Distinct id space from
+      // executors.id (the DB PK resolveExecutor returns).
+      const projectExecutorRows = await db
+        .select({ refId: executors.executorRefId })
+        .from(executors)
+        .where(eq(executors.projectId, project.id));
+      const executorRefIds = new Set<string>(
+        projectExecutorRows.map((r: { refId: string }) => r.refId),
+      );
+
       const compiled = compileManifest(revision.manifest as FlowYamlV1);
       let configuredNodes = 0;
 
@@ -303,12 +317,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           continue;
         }
         configuredNodes += 1;
+
+        const settings = capabilityBearingSettings(
+          node.nodeType,
+          node.settings,
+        );
+
+        // settings.executors exists only on ai_coding; reject any ref absent
+        // from the project's executors[] before any side-effect (CONFIG → 400).
+        if (node.nodeType === "ai_coding") {
+          const unknownRef = firstUnknownExecutorRef(
+            (settings as AiCodingSettings | undefined)?.executors,
+            executorRefIds,
+          );
+
+          if (unknownRef !== null) {
+            throw new MaisterError(
+              "CONFIG",
+              `node "${node.id}" settings.executors references unknown executor id "${unknownRef}" not registered for project ${project.slug}`,
+            );
+          }
+        }
+
         assertNodeLaunchable(
-          {
-            id: node.id,
-            nodeType: node.nodeType,
-            settings: capabilityBearingSettings(node.nodeType, node.settings),
-          },
+          { id: node.id, nodeType: node.nodeType, settings },
           executor.agent,
         );
       }
@@ -320,6 +352,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           executorId: executor.id,
           agent: executor.agent,
           capabilityNodes: configuredNodes,
+          projectExecutors: executorRefIds.size,
         },
         "POST /api/runs settings-enforcement gate passed",
       );

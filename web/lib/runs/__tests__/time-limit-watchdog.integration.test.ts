@@ -56,10 +56,22 @@ let db: NodePgDatabase;
 let projectId: string;
 let executorId: string;
 
-// A graph manifest with an ai_coding node carrying a 10-minute cap.
-function manifestWithCap(maxDurationMinutes?: number): unknown {
-  const settings =
-    maxDurationMinutes === undefined ? {} : { limits: { maxDurationMinutes } };
+// A graph manifest with an ai_coding node carrying the given limits (duration
+// cap, cost cap, both, or none).
+function manifestWithLimits(limits?: {
+  maxDurationMinutes?: number;
+  maxCostUsd?: number;
+}): unknown {
+  const inner: Record<string, number> = {};
+
+  if (limits?.maxDurationMinutes !== undefined) {
+    inner.maxDurationMinutes = limits.maxDurationMinutes;
+  }
+  if (limits?.maxCostUsd !== undefined) {
+    inner.maxCostUsd = limits.maxCostUsd;
+  }
+
+  const settings = Object.keys(inner).length === 0 ? {} : { limits: inner };
 
   return {
     schemaVersion: 1,
@@ -129,8 +141,9 @@ beforeEach(async () => {
 // live supervisor session record.
 async function seedRunningNode(opts: {
   maxDurationMinutes?: number;
+  maxCostUsd?: number;
   attemptStartedAt: Date;
-  acpSessionId: string;
+  acpSessionId: string | null;
 }): Promise<{ runId: string; supervisorSessionId: string }> {
   const flowId = randomUUID();
   const taskId = randomUUID();
@@ -144,7 +157,10 @@ async function seedRunningNode(opts: {
     source: "github.com/x/y",
     version: "v1.0.0",
     installedPath: "/tmp/flows/g",
-    manifest: manifestWithCap(opts.maxDurationMinutes),
+    manifest: manifestWithLimits({
+      maxDurationMinutes: opts.maxDurationMinutes,
+      maxCostUsd: opts.maxCostUsd,
+    }),
     schemaVersion: 1,
   });
   await db.insert(schema.tasks).values({
@@ -280,5 +296,50 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
 
     expect(deleteSessionSpy).not.toHaveBeenCalled();
     expect((await getRun(runId)).status).toBe("Running");
+  }, 60_000);
+
+  it("never kills on a cost cap alone — maxCostUsd is record-only", async () => {
+    const acp = "acp-cost";
+    const { runId, supervisorSessionId } = await seedRunningNode({
+      // Cost cap only, NO duration cap; ancient start so a duration cap WOULD
+      // have fired — proving cost never arms the watchdog.
+      maxCostUsd: 0.01,
+      attemptStartedAt: new Date(Date.now() - 24 * 3600_000),
+      acpSessionId: acp,
+    });
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(acp, supervisorSessionId),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect((await getRun(runId)).status).toBe("Running");
+    expect((await getAttempt(runId)).status).toBe("Running");
+  }, 60_000);
+
+  it("kills a capped node with no acp_session_id (deleteSession skipped, run still Failed)", async () => {
+    // A node that exceeded its duration cap but never reported an
+    // acp_session_id MUST still be terminated; deleteSession is best-effort and
+    // is skipped when no live session matches (regression guard for the
+    // acp_session_id candidate filter).
+    const { runId } = await seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: null,
+    });
+
+    listSessionsSpy.mockResolvedValue([]);
+
+    await runSweepTick({ db });
+
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect((await getRun(runId)).status).toBe("Failed");
+
+    const attempt = await getAttempt(runId);
+
+    expect(attempt.status).toBe("Failed");
+    expect(attempt.errorCode).not.toBeNull();
   }, 60_000);
 });

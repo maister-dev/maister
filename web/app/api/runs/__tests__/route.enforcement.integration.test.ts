@@ -130,10 +130,43 @@ const instructManifest = {
   ],
 };
 
+// settings.executors names a ref absent from the project's executors[] → AC-4
+// node-level validation must REFUSE the launch with CONFIG (400), no side-effect.
+const unknownExecutorManifest = {
+  schemaVersion: 1,
+  name: "UnknownExec",
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "/aif-implement" },
+      transitions: { success: "done" },
+      settings: { executors: ["ghost"] },
+    },
+  ],
+};
+
+// settings.executors resolves against the seeded executor ref ("claude-default")
+// → the AC-4 check must NOT false-positive; launch proceeds.
+const knownExecutorManifest = {
+  schemaVersion: 1,
+  name: "KnownExec",
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "/aif-implement" },
+      transitions: { success: "done" },
+      settings: { executors: ["claude-default"] },
+    },
+  ],
+};
+
 async function seedProjectWithManifest(
   id: string,
   slug: string,
   manifest: unknown,
+  opts: { trustStatus?: string } = {},
 ): Promise<void> {
   await db.insert(schema.projects).values({
     id,
@@ -169,7 +202,7 @@ async function seedProjectWithManifest(
     schemaVersion: 1,
     enabledRevisionId: revisionId,
     enablementState: "Enabled",
-    trustStatus: "trusted_by_policy",
+    trustStatus: opts.trustStatus ?? "trusted_by_policy",
   });
   await db.insert(schema.executors).values({
     id: `exec-${id}`,
@@ -226,6 +259,24 @@ beforeAll(async () => {
     "proj-instruct",
     "proj-instruct",
     instructManifest,
+  );
+  await seedProjectWithManifest(
+    "proj-badexec",
+    "proj-badexec",
+    unknownExecutorManifest,
+  );
+  await seedProjectWithManifest(
+    "proj-goodexec",
+    "proj-goodexec",
+    knownExecutorManifest,
+  );
+  await seedProjectWithManifest(
+    "proj-untrusted",
+    "proj-untrusted",
+    strictManifest,
+    {
+      trustStatus: "untrusted",
+    },
   );
 
   ({ POST } = await import("@/app/api/runs/route"));
@@ -317,5 +368,66 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
       .where(eq(schema.tasks.id, "task-proj-instruct"));
 
     expect(task[0].status).toBe("InFlight");
+  });
+
+  it("refuses a node whose settings.executors names an executor absent from the project with 400 CONFIG and NO side-effect (AC-4)", async () => {
+    const res = await POST(request("task-proj-badexec"));
+
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+
+    expect(body.code).toBe("CONFIG");
+    expect(body.message).toContain("ghost");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-badexec"));
+
+    expect(runs).toHaveLength(0);
+
+    const task = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, "task-proj-badexec"));
+
+    expect(task[0].status).toBe("Backlog");
+  });
+
+  it("does NOT false-positive a settings.executors ref that resolves against the project executors[] (202)", async () => {
+    const res = await POST(request("task-proj-goodexec"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+
+    const runRows = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-goodexec"));
+
+    expect(runRows).toHaveLength(1);
+  });
+
+  it("refuses an untrusted revision on the TRUST gate BEFORE the enforcement evaluator (PRECONDITION 409, not CONFIG)", async () => {
+    // The manifest carries enforcement.mcps:"strict" (would yield CONFIG at the
+    // enforcement gate), but trust runs first → the evaluator is never reached.
+    const res = await POST(request("task-proj-untrusted"));
+
+    expect(res.status).toBe(409);
+
+    const body = await res.json();
+
+    expect(body.code).toBe("PRECONDITION");
+    expect(body.code).not.toBe("CONFIG");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-untrusted"));
+
+    expect(runs).toHaveLength(0);
   });
 });

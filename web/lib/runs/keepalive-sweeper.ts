@@ -317,9 +317,11 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
         eq(runs.status, "Running"),
         eq(runs.runKind, "flow"),
         isNotNull(runs.currentStepId),
-        isNotNull(runs.acpSessionId),
       ),
     )
+    // No acp_session_id filter: a capped node that hangs before reporting a
+    // session id must still be killable. deleteSession is best-effort (skipped
+    // when no live session matches); the Failed transition fires regardless.
     .orderBy(asc(runs.startedAt))
     .limit(PER_TICK_LIMIT);
 

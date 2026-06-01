@@ -601,7 +601,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "400":
-          description: Malformed request body (`CONFIG`).
+          description: |
+            Bad request (`CONFIG`): a malformed request body, an unsupported
+            manifest `schemaVersion` / engine incompatibility, a node whose
+            `settings.executors[]` names an executor absent from the project's
+            `executors[]`, or a node whose `enforcement: strict` declares a
+            capability class the build cannot strictly enforce
+            (settings-enforcement refusal, M11c — see error-taxonomy.md).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

@@ -588,6 +588,24 @@ function validateGraphManifest(
 // server-state cross-references zod cannot express: executor refs (against the
 // project's executors[] set when provided), human decisions (against the node's
 // declared transitions). Capability-registry ref resolution is M14 (carve b).
+// Returns the first `settings.executors[]` ref id absent from the supplied
+// project executor ref-id set, or null when every ref resolves. Shared by the
+// manifest loader (parse-time, when a ref set is supplied) and the launch
+// precondition (POST /api/runs), where it is the authoritative gate: a flow
+// package is generic across projects, so `settings.executors` (maister.yaml
+// executor *ref* ids) can only be resolved against a concrete project's
+// executors[] at launch.
+export function firstUnknownExecutorRef(
+  settingsExecutors: readonly string[] | undefined,
+  executorRefIds: ReadonlySet<string>,
+): string | null {
+  for (const id of settingsExecutors ?? []) {
+    if (!executorRefIds.has(id)) return id;
+  }
+
+  return null;
+}
+
 function validateNodeSettings(
   n: NodeDef,
   flowYamlPath: string,
@@ -595,13 +613,16 @@ function validateNodeSettings(
   enforcementTally: Record<string, number>,
 ): void {
   if (executorIds && n.type === "ai_coding") {
-    for (const id of n.settings?.executors ?? []) {
-      if (!executorIds.has(id)) {
-        throw new MaisterError(
-          "CONFIG",
-          `node "${n.id}" settings.executors references unknown executor id "${id}" in ${flowYamlPath}`,
-        );
-      }
+    const unknownRef = firstUnknownExecutorRef(
+      n.settings?.executors,
+      executorIds,
+    );
+
+    if (unknownRef !== null) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${n.id}" settings.executors references unknown executor id "${unknownRef}" in ${flowYamlPath}`,
+      );
     }
   }
 

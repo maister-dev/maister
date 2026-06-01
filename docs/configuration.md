@@ -307,17 +307,25 @@ boundary) and the frozen enforcement spec in
 
 **`ai_coding` / `judge` settings** (agent-capability shape):
 
+`judge` carries the same capability shape MINUS `executors`, `settingsProfile`,
+`workspaceAccess`, and `artifactAccess` — those four are `ai_coding`-only (a
+judge spawns an agent session but declares no executor allow-list, settings
+profile, or workspace policy). The shared subset is `model`, `thinkingEffort`,
+`mcps`, `tools`, `skills`, `permissionMode`, `limits`, `restrictions`, and
+`enforcement`. `.strict()` parsing rejects any of the four `ai_coding`-only
+fields on a `judge` node.
+
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `executors` | `string[]` | Each id MUST exist in `maister.yaml` `executors[]` (validated at project load, M11c). |
+| `executors` | `string[]` | **`ai_coding` only.** Each id MUST exist in `maister.yaml` `executors[]` (validated at launch against the project's executors[], M11c). |
 | `model` | `string` | Free-form model override. |
 | `thinkingEffort` | `low \| medium \| high` | Unknown value rejected. |
 | `mcps` | `string[]` | Capability class. Registry resolution is M14 (Designed). |
 | `tools` | `{ claude?: string[]; codex?: string[] }` | Per-agent tool map; malformed map rejected. Capability class. |
 | `skills` | `string[]` | Capability class. Registry resolution is M14 (Designed). |
-| `settingsProfile` | `string` | Named settings profile reference. |
-| `workspaceAccess` | `read \| write \| none` | Capability class. |
-| `artifactAccess` | `string[]` | Artifact ids the node may read/write. |
+| `settingsProfile` | `string` | **`ai_coding` only.** Named settings profile reference. |
+| `workspaceAccess` | `read \| write \| none` | **`ai_coding` only.** Capability class. |
+| `artifactAccess` | `string[]` | **`ai_coding` only.** Artifact ids the node may read/write. |
 | `permissionMode` | `ask \| allow \| deny` | Capability class. Unknown value rejected. |
 | `limits` | `{ maxDurationMinutes?: number > 0; maxCostUsd?: number > 0 }` | Out-of-range rejected. `maxDurationMinutes` is the watchdog cap (below); `maxCostUsd` is record-only. |
 | `restrictions` | `string[]` | Capability class. Registry resolution is M14 (Designed). |
