@@ -1,0 +1,1 @@
+ALTER TABLE "node_attempts" ADD COLUMN "enforcement_snapshot" jsonb;

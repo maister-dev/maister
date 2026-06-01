@@ -679,6 +679,21 @@ export const stepRuns = pgTable(
 
 // --- M11a: Flow graph v1 execution ledger (ADR-027 / ADR-028) -------------
 
+// M11c (ADR-032): one resolved verdict per declared capability class, captured
+// in node_attempts.enforcement_snapshot at launch/first-attempt.
+export type EnforcementSnapshotEntry = {
+  class:
+    | "mcps"
+    | "tools"
+    | "skills"
+    | "restrictions"
+    | "permissionMode"
+    | "workspaceAccess";
+  declared: "strict" | "instruct" | "off";
+  capability: "enforced" | "instructed" | "unsupported";
+  verdict: "enforced" | "instructed" | "refused";
+};
+
 // Append-only per-node-attempt ledger written by the graph runner. `attempt`
 // auto-increments per (run, node); rework never mutates a prior row. Linear
 // `steps[]` flows compile to nodes and write here too; `step_runs` is retained
@@ -733,6 +748,13 @@ export const nodeAttempts = pgTable(
     baseRef: text("base_ref"),
     returnedCommits: text("returned_commits"),
     returnedDiff: text("returned_diff"),
+    // M11c (ADR-032): append-only audit of the resolved per-capability-class
+    // enforcement verdicts at launch/first-attempt. Written on BOTH the pass
+    // and refusal paths; never a mutable mirror of a YAML field. Nullable for
+    // pre-M11c rows and non-capability nodes (cli/check/human).
+    enforcementSnapshot: jsonb("enforcement_snapshot").$type<
+      EnforcementSnapshotEntry[]
+    >(),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

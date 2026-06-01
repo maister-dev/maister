@@ -317,6 +317,63 @@ describe("UNIQUE constraints", () => {
   });
 });
 
+describe("node_attempts.enforcement_snapshot (M11c, migration 0013)", () => {
+  it("round-trips the typed verdict array and defaults to null", async () => {
+    const ids = await seedChain();
+    const withSnapshot = newId();
+    const withoutSnapshot = newId();
+    const snapshot = [
+      {
+        class: "mcps",
+        declared: "strict",
+        capability: "instructed",
+        verdict: "refused",
+      },
+      {
+        class: "permissionMode",
+        declared: "instruct",
+        capability: "instructed",
+        verdict: "instructed",
+      },
+    ];
+
+    await db.insert(schema.nodeAttempts).values({
+      id: withSnapshot,
+      runId: ids.runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Failed",
+      errorCode: "CONFIG",
+      enforcementSnapshot: snapshot,
+    });
+
+    await db.insert(schema.nodeAttempts).values({
+      id: withoutSnapshot,
+      runId: ids.runId,
+      nodeId: "checks",
+      nodeType: "check",
+      attempt: 1,
+      status: "Succeeded",
+    });
+
+    const rows = await db.execute(
+      sql.raw(
+        `select id, enforcement_snapshot from node_attempts where run_id = '${ids.runId}' order by node_id`,
+      ),
+    );
+    const byId = new Map(
+      rows.rows.map((r) => [
+        (r as { id: string }).id,
+        (r as { enforcement_snapshot: unknown }).enforcement_snapshot,
+      ]),
+    );
+
+    expect(byId.get(withSnapshot)).toEqual(snapshot);
+    expect(byId.get(withoutSnapshot)).toBeNull();
+  });
+});
+
 describe("onDelete cascade", () => {
   it("removes runs + workspaces + tasks + hitl_requests when parent project is deleted", async () => {
     const ids = await seedChain();
