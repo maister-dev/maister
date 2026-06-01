@@ -1,4 +1,5 @@
 import type { GlobalRole } from "@/lib/db/schema";
+import type { RailWorkspaceGroup } from "@/lib/queries/portfolio";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement, ReactNode } from "react";
 
@@ -22,6 +23,7 @@ export interface RailWorkspace {
 export interface LeftRailProps {
   activeSection?: string;
   workspaces?: RailWorkspace[];
+  workspaceGroups?: RailWorkspaceGroup[];
   inboxCount?: number;
   launchHref?: string;
   platformStatus: PlatformStatus;
@@ -79,9 +81,22 @@ const dotByStatus: Record<WorkspaceStatus, string> = {
   done: "bg-accent-4 opacity-[0.55]",
 };
 
+const dotByTone: Record<
+  RailWorkspaceGroup["workspaces"][number]["statusTone"],
+  string
+> = {
+  running: "bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]",
+  waiting: "bg-amber",
+  needs: "bg-amber",
+  human: "bg-ink-2",
+  review: "bg-accent-2",
+  crashed: "bg-danger",
+};
+
 export async function LeftRail({
   activeSection = "projects",
   workspaces = [],
+  workspaceGroups = [],
   inboxCount = 0,
   launchHref,
   platformStatus,
@@ -89,6 +104,10 @@ export async function LeftRail({
 }: LeftRailProps): Promise<ReactElement> {
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
+  const activeCount =
+    workspaceGroups.length > 0
+      ? workspaceGroups.reduce((sum, group) => sum + group.activeCount, 0)
+      : workspaces.length;
 
   // `ready: false` sections are documented M9 deferrals (no route yet). They
   // render as non-navigating "coming soon" items so they never 404 — matching
@@ -195,53 +214,120 @@ export async function LeftRail({
           >
             {tPortfolio("seeAll")}{" "}
             <span className="rounded-full bg-ivory px-1.5 py-px text-[9.5px] tracking-normal text-ink-2">
-              {workspaces.length}
+              {activeCount}
             </span>{" "}
             →
           </button>
         </div>
-        <ul className="flex list-none flex-col gap-0.5 py-1">
-          {workspaces.map((ws) => (
-            <li key={`${ws.name}-${ws.meta}`}>
-              <Link
-                className={clsx(
-                  "relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors",
-                  ws.current ? "bg-amber-soft" : "hover:bg-ivory",
-                )}
-                href={ws.href ?? "#"}
-                title={`Open ${ws.name} · ${ws.meta}`}
-              >
-                {ws.current ? (
-                  <span className="absolute inset-y-2 left-0 w-0.5 rounded-sm bg-amber" />
-                ) : null}
-                <span
-                  className={clsx(
-                    "h-2 w-2 rounded-full",
-                    dotByStatus[ws.status],
-                  )}
-                />
-                <div className="flex min-w-0 flex-col gap-px">
-                  <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
-                    {ws.name}
-                  </code>
-                  <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
-                    {ws.meta}
+        {workspaceGroups.length > 0 ? (
+          <div className="flex flex-col gap-2 py-1">
+            {workspaceGroups.map((group) => (
+              <section key={group.projectId} className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5 px-2 py-1">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-ink-2">
+                    {group.projectName}
                   </span>
+                  <span className="rounded-full bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
+                    {group.activeCount}
+                  </span>
+                  <Link
+                    aria-label={tPortfolio("startScratchInProject", {
+                      project: group.projectName,
+                    })}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber"
+                    href={group.launchHref}
+                    title={tPortfolio("startScratchInProject", {
+                      project: group.projectName,
+                    })}
+                  >
+                    +
+                  </Link>
                 </div>
-                <span
+                <ul className="flex list-none flex-col gap-0.5">
+                  {group.workspaces.map((ws) => (
+                    <li key={ws.runId}>
+                      <Link
+                        className="relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors hover:bg-ivory"
+                        href={ws.href}
+                        title={`Open ${ws.name} · ${ws.executorLabel}`}
+                      >
+                        <span
+                          className={clsx(
+                            "h-2 w-2 rounded-full",
+                            dotByTone[ws.statusTone],
+                          )}
+                        />
+                        <div className="flex min-w-0 flex-col gap-px">
+                          <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
+                            {ws.name}
+                          </code>
+                          <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
+                            {ws.statusLabel} · {ws.runKind} · {ws.executorLabel}
+                            {ws.launchedBy ? ` · ${ws.launchedBy}` : ""}
+                          </span>
+                        </div>
+                        <span
+                          className={clsx(
+                            "font-mono text-[10px] tracking-[0.04em]",
+                            ws.statusTone === "needs" ||
+                              ws.statusTone === "waiting"
+                              ? "font-semibold text-amber"
+                              : "text-mute-2",
+                          )}
+                        >
+                          {ws.time}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <ul className="flex list-none flex-col gap-0.5 py-1">
+            {workspaces.map((ws) => (
+              <li key={`${ws.name}-${ws.meta}`}>
+                <Link
                   className={clsx(
-                    "font-mono text-[10px] tracking-[0.04em]",
-                    ws.status === "needs"
-                      ? "font-semibold text-amber"
-                      : "text-mute-2",
+                    "relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors",
+                    ws.current ? "bg-amber-soft" : "hover:bg-ivory",
                   )}
+                  href={ws.href ?? "#"}
+                  title={`Open ${ws.name} · ${ws.meta}`}
                 >
-                  {ws.time}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+                  {ws.current ? (
+                    <span className="absolute inset-y-2 left-0 w-0.5 rounded-sm bg-amber" />
+                  ) : null}
+                  <span
+                    className={clsx(
+                      "h-2 w-2 rounded-full",
+                      dotByStatus[ws.status],
+                    )}
+                  />
+                  <div className="flex min-w-0 flex-col gap-px">
+                    <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
+                      {ws.name}
+                    </code>
+                    <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
+                      {ws.meta}
+                    </span>
+                  </div>
+                  <span
+                    className={clsx(
+                      "font-mono text-[10px] tracking-[0.04em]",
+                      ws.status === "needs"
+                        ? "font-semibold text-amber"
+                        : "text-mute-2",
+                    )}
+                  >
+                    {ws.time}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <div className="flex flex-col gap-1.5 px-0.5 pb-0.5">

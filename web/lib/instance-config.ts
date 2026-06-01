@@ -21,6 +21,10 @@ export function worktreesRoot(): string {
   );
 }
 
+export function runtimeRoot(): string {
+  return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
+}
+
 export type HostTool = {
   name: string;
   available: boolean;

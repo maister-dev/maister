@@ -34,12 +34,14 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
   settings, environment profiles, and restrictions that the runner materializes
   for one AI session scope. A one-node session can have a one-node profile; a
   long-living session uses one profile for every AI node inside it.
-- **Executor** — `{agent, model, env?, router?}`; claude and codex are current.
+- **Executor** — configured ACP runner profile `{agent, model, env?, router?}`;
+  claude and codex adapters are current, and multiple profiles may share the
+  same adapter with different model/router/env settings.
 - **Task** — backlog intent. One task may spawn many Flow runs.
 - **Scratch run** — manual coding-agent workspace started from a project,
-  base branch, scratch branch/name, executor, prompt, optional issue link, and
-  capability profile. It is an active workspace outside the task board unless
-  explicitly linked to a task.
+  base branch, optional scratch branch/name, executor profile, work mode,
+  reasoning effort, prompt, optional issue/files, and capability profile. It is
+  an active workspace outside the task board unless explicitly linked to a task.
 - **External operation** — audited project-scoped API or MCP action, such as
   creating a task, launching a run, attaching artifact metadata, reporting an
   external gate, or reading readiness.
@@ -106,15 +108,17 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
   revisions must be visible, immutable, trust-reviewed, compatible with the
   MAIster engine, enabled per project, safely upgradeable/rollbackable, and
   preserved for in-flight runs.
-- Portfolio home with active workspaces and HITL count.
+- Portfolio home and left rail with project-grouped active workspaces, HITL
+  count, status labels, launched-by display, and a per-project scratch `+`.
 - Per-project board with `Backlog | In Flight`.
 - Task creation with Flow and optional executor override.
 - `POST /api/runs` launch path with scheduler, worktree creation, and
   background Flow runner.
-- Scratch run intake is a manual workspace surface outside the task board:
-  choose project, base branch, scratch branch/name, executor, plan mode,
-  optional issue/attachments, and run-scoped MCP/skill/rule profile; show it in
-  active workspace lists and open it as a coding-agent dialog.
+- Scratch run intake is a compact manual workspace surface outside the task
+  board: choose project, base branch, optional scratch branch/name, executor
+  profile, work mode, reasoning effort, optional issue/files, and run-scoped
+  platform/project/Flow-package MCP/skill/rule/agent-pack profile; show it in
+  project-grouped active workspace lists and open it as a coding-agent dialog.
 - ACP supervisor process with claude/codex adapter binaries.
 - Durable run SSE via `run.events.jsonl`.
 - HITL response route with row-level claim, atomic artifacts, permission

@@ -4,12 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession } from "@/lib/authz";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isMaisterError } from "@/lib/errors";
+import { parseScratchRequest } from "@/lib/scratch-runs/request";
 import { sendScratchUserMessage } from "@/lib/scratch-runs/service";
-import {
-  scratchMessageInputSchema,
-  type ScratchMessageInput,
-} from "@/lib/scratch-runs/types";
+import { scratchMessageInputSchema } from "@/lib/scratch-runs/types";
 
 const log = pino({
   name: "api-scratch-messages",
@@ -60,26 +58,37 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
-  let body: ScratchMessageInput;
 
   try {
-    body = scratchMessageInputSchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${err instanceof Error ? err.message : String(err)}`,
-      ),
+    const user = await requireActiveSession();
+    const parsed = await parseScratchRequest(req, scratchMessageInputSchema);
+
+    log.debug(
+      {
+        runId,
+        userId: user.id,
+        contentType: parsed.contentType,
+        fileCount: parsed.uploadedFiles.length,
+        metadataAttachmentCount: parsed.body.attachments.length,
+      },
+      "POST /api/scratch-runs/[runId]/messages parsed request",
     );
-  }
 
-  try {
-    await requireActiveSession();
-
-    const response = await sendScratchUserMessage({ runId, body });
+    const response = await sendScratchUserMessage({
+      runId,
+      body: parsed.body,
+      uploadedFiles: parsed.uploadedFiles,
+    });
 
     return NextResponse.json(response, { status: 202 });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "PRECONDITION") {
+      log.warn(
+        { runId, code: err.code, message: err.message },
+        "POST /api/scratch-runs/[runId]/messages rejected",
+      );
+    }
+
     return errorResponse(err);
   }
 }

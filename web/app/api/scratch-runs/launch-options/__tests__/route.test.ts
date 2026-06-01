@@ -86,6 +86,13 @@ beforeEach(async () => {
       model: "gpt-5",
       router: null,
     },
+    {
+      id: "44444444-4444-4444-8444-444444444444",
+      executorRefId: "codex-high",
+      agent: "codex",
+      model: "gpt-5-high",
+      router: "ccr",
+    },
   ];
   mocks.requireActiveSession.mockResolvedValue({
     id: "user-1",
@@ -139,6 +146,9 @@ describe("GET /api/scratch-runs/launch-options", () => {
     const body = (await res.json()) as {
       projects: Array<{ id: string }>;
       branches: string[];
+      executors: Array<{ id: string; displayLabel: string }>;
+      workModes: Array<{ id: string; selectedByDefault: boolean }>;
+      reasoningEfforts: Array<{ id: string; selectedByDefault: boolean }>;
       capabilities: {
         defaultSelectedMcpIds: string[];
         mcps: Array<{ id: string }>;
@@ -149,6 +159,26 @@ describe("GET /api/scratch-runs/launch-options", () => {
     expect(res.status).toBe(200);
     expect(body.projects.map((project) => project.id)).toEqual([projectA.id]);
     expect(body.branches).toEqual(["main", "release"]);
+    expect(body.executors.map((executor) => executor.id)).toEqual([
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+    ]);
+    expect(body.executors[1]?.displayLabel).toContain("codex-high");
+    expect(body.workModes.map((mode) => mode.id)).toEqual([
+      "auto",
+      "plan_first",
+      "manual_approval",
+    ]);
+    expect(body.reasoningEfforts.map((effort) => effort.id)).toEqual([
+      "low",
+      "high",
+      "extra",
+      "ultra",
+    ]);
+    expect(
+      body.reasoningEfforts.find((effort) => effort.id === "high")
+        ?.selectedByDefault,
+    ).toBe(true);
     expect(body.capabilities.defaultSelectedMcpIds).toEqual(["filesystem"]);
     expect(body.capabilities.mcps).toEqual([
       expect.objectContaining({ id: "filesystem" }),

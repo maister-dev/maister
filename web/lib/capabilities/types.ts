@@ -48,9 +48,12 @@ export type ResolvedCapabilityProfile = {
   projectId: string;
   executorAgent: "claude" | "codex";
   planMode: "off" | "plan-first";
+  workMode: "auto" | "plan_first" | "manual_approval";
+  reasoningEffort: "low" | "high" | "extra" | "ultra";
   selectedMcpIds: string[];
   selectedSkillIds: string[];
   selectedRuleIds: string[];
+  selectedAgentDefinitionIds: string[];
   selectedRestrictionIds: string[];
   enforced: CapabilityProfileEntry[];
   instructed: CapabilityProfileEntry[];

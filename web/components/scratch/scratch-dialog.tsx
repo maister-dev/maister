@@ -17,6 +17,7 @@ type ScratchDialogStatus =
   | "Abandoned";
 
 type AttachmentKind = "issue_url" | "file_path" | "text_note";
+type StoredAttachmentKind = AttachmentKind | "uploaded_file";
 
 type ScratchMessage = {
   id: string;
@@ -31,9 +32,14 @@ type ScratchAttachment = {
   id: string;
   runId: string;
   messageId: string | null;
-  kind: AttachmentKind;
+  kind: StoredAttachmentKind;
   label: string | null;
   value: string;
+  fileName: string | null;
+  mimeType: string | null;
+  byteSize: number | null;
+  sha256: string | null;
+  artifactRef: string | null;
 };
 
 type HitlOption = {
@@ -51,6 +57,8 @@ type ScratchDetail = {
   };
   scratch: {
     name: string | null;
+    workMode: "auto" | "plan_first" | "manual_approval";
+    reasoningEffort: "low" | "high" | "extra" | "ultra";
     planMode: "off" | "plan-first";
     linkedIssueUrl: string | null;
     baseBranch: string;
@@ -131,6 +139,14 @@ function canSend(status: ScratchDialogStatus): boolean {
 }
 
 function attachmentSummary(attachment: ScratchAttachment): string {
+  if (attachment.kind === "uploaded_file") {
+    const hash = attachment.sha256 ? attachment.sha256.slice(0, 10) : "";
+
+    return `${attachment.fileName ?? attachment.label ?? "file"} · ${
+      attachment.mimeType ?? "application/octet-stream"
+    } · ${attachment.byteSize ?? 0} bytes${hash ? ` · ${hash}` : ""}`;
+  }
+
   return attachment.label
     ? `${attachment.label}: ${attachment.value}`
     : attachment.value;
@@ -160,6 +176,7 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
   const [composerAttachments, setComposerAttachments] = useState<
     ComposerAttachment[]
   >([]);
+  const [composerFiles, setComposerFiles] = useState<File[]>([]);
 
   const loadDetail = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -219,6 +236,10 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
 
     return result;
   }, [detail?.attachments]);
+  const composerFileBytes = useMemo(
+    () => composerFiles.reduce((sum, file) => sum + file.size, 0),
+    [composerFiles],
+  );
   const globalAttachments =
     detail?.attachments.filter((attachment) => !attachment.messageId) ?? [];
   const status = detail?.scratch.dialogStatus ?? "Starting";
@@ -280,11 +301,26 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
       .filter((attachment) => attachment.value.length > 0);
 
     try {
-      const response = await fetch(`/api/scratch-runs/${runId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: content.trim(), attachments }),
-      });
+      const payload = { content: content.trim(), attachments };
+      const requestInit: RequestInit =
+        composerFiles.length > 0
+          ? (() => {
+              const formData = new FormData();
+
+              formData.set("payload", JSON.stringify(payload));
+              for (const file of composerFiles) formData.append("files", file);
+
+              return { method: "POST", body: formData };
+            })()
+          : {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            };
+      const response = await fetch(
+        `/api/scratch-runs/${runId}/messages`,
+        requestInit,
+      );
 
       if (!response.ok) {
         setError(errorText(await response.json().catch(() => null)));
@@ -294,6 +330,7 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
 
       setContent("");
       setComposerAttachments([]);
+      setComposerFiles([]);
       await loadDetail();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -391,7 +428,9 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
               <span>·</span>
               <span>{detail.scratch.baseBranch}</span>
               <span>·</span>
-              <span>{detail.scratch.planMode}</span>
+              <span>{detail.scratch.workMode}</span>
+              <span>·</span>
+              <span>{detail.scratch.reasoningEffort}</span>
             </div>
           </div>
           <span
@@ -516,6 +555,25 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
               ))}
             </div>
           ) : null}
+          <div className="mt-2">
+            <input
+              multiple
+              className={inputBase}
+              disabled={!canSend(status)}
+              type="file"
+              onChange={(event) =>
+                setComposerFiles(Array.from(event.currentTarget.files ?? []))
+              }
+            />
+            {composerFiles.length > 0 ? (
+              <div className="mt-1 font-mono text-[10.5px] text-mute">
+                {t("fileSummary", {
+                  count: composerFiles.length,
+                  bytes: composerFileBytes,
+                })}
+              </div>
+            ) : null}
+          </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
             <button
               className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"

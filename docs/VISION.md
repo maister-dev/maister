@@ -59,8 +59,9 @@ Prove the spine on **several real projects in parallel**:
 
 1. Register multiple projects via per-project `maister.yaml` (each with its own
    list of Flows).
-2. See all active workspaces across projects on one **Portfolio home**
-   (superset.sh-style grid).
+2. See active workspaces across projects in a project-grouped Portfolio/left-rail
+   surface with status labels, launched-by display, and a per-project scratch
+   `+` action.
 3. For each project, manage a **task board** with two columns:
    `Backlog | In Flight`.
 4. Create backlog tasks (title + prompt + Flow from project's `flows[]`).
@@ -68,9 +69,10 @@ Prove the spine on **several real projects in parallel**:
    worktree → Flow launched. Task moves to In Flight. Retry-friendly: a task
    may spawn many runs over its lifetime (1:N) — if a run fails or is
    abandoned, the task returns to Backlog with the Launch button re-enabled.
-6. Start a scratch workspace outside the task board by choosing project, base
-   branch, scratch branch/name, executor, plan mode, prompt, optional issue or
-   attachments, and run-scoped MCP/skill/rule profile.
+6. Start a scratch workspace outside the task board from a compact command box:
+   choose project, base branch, optional branch/name, executor profile, work
+   mode, reasoning effort, prompt, optional issue/files, and run-scoped
+   MCP/skill/rule/agent-pack profile.
 7. Run Claude Code or Codex headlessly inside the worktree through ACP.
 8. Show run progress, logs, dialog turns, and HITL in the Web UI through
    durable SSE.
@@ -95,7 +97,9 @@ It must make AI delivery controlled enough for daily work:
 - Manual scratch intake: a scratch run is a conversation-like active workspace
   outside the task board unless explicitly linked to a task, with the same
   supervisor, worktree, HITL, capability snapshot, diff, promote, and discard
-  accountability as Flow runs.
+  accountability as Flow runs. Scratch `WaitingForUser` is shown as its own
+  active workspace status even though the shared run lifecycle remains
+  `Running`.
 - Gate readiness: command checks, skill checks, AI judgments, external checks,
   required artifacts and human reviews all feed one readiness summary.
 - External operations: API tokens and a thin MCP facade let CI/scripts/agents

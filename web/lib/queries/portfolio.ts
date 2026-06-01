@@ -139,6 +139,7 @@ export function runStatusToWorkspace(status: string): WorkspaceStatus {
   if (
     status === "NeedsInput" ||
     status === "NeedsInputIdle" ||
+    status === "WaitingForUser" ||
     status === "HumanWorking"
   ) {
     return "needs";
@@ -479,27 +480,112 @@ export interface RailWorkspaceData {
   href?: string;
 }
 
-export async function getRailWorkspaces(
+export type RailWorkspaceTone =
+  | "running"
+  | "waiting"
+  | "needs"
+  | "human"
+  | "review"
+  | "crashed";
+
+export interface RailWorkspaceRow {
+  runId: string;
+  runKind: RunKind;
+  name: string;
+  branch: string;
+  executorLabel: string;
+  launchedBy: string | null;
+  statusLabel: string;
+  statusTone: RailWorkspaceTone;
+  time: string;
+  href: string;
+  latestActivityAt: Date;
+}
+
+export interface RailWorkspaceGroup {
+  projectId: string;
+  projectSlug: string;
+  projectName: string;
+  activeCount: number;
+  latestActivityAt: Date;
+  launchHref: string;
+  workspaces: RailWorkspaceRow[];
+}
+
+function railStatus(input: {
+  runStatus: string;
+  runKind: RunKind;
+  scratchDialogStatus: ScratchDialogStatus | null;
+}): { label: string; tone: RailWorkspaceTone } {
+  if (
+    input.runKind === "scratch" &&
+    input.scratchDialogStatus === "WaitingForUser"
+  ) {
+    return { label: "WaitingForUser", tone: "waiting" };
+  }
+  if (input.runStatus === "HumanWorking") {
+    return { label: "HumanWorking", tone: "human" };
+  }
+  if (
+    input.runStatus === "NeedsInput" ||
+    input.runStatus === "NeedsInputIdle"
+  ) {
+    return { label: input.runStatus, tone: "needs" };
+  }
+  if (input.runStatus === "Review") return { label: "Review", tone: "review" };
+  if (input.runStatus === "Crashed") {
+    return { label: "Crashed", tone: "crashed" };
+  }
+
+  return { label: "Running", tone: "running" };
+}
+
+function executorDisplay(row: {
+  agent: string;
+  model: string;
+  executorRefId: string;
+}): string {
+  return `${row.executorRefId} · ${row.agent} · ${row.model}`;
+}
+
+function creatorDisplay(
+  row: { name: string | null; email: string | null } | undefined,
+): string | null {
+  if (!row) return null;
+
+  return row.name ?? row.email ?? null;
+}
+
+export async function getRailWorkspaceGroups(
   userId: string,
   globalRole: GlobalRole,
-): Promise<RailWorkspaceData[]> {
+): Promise<RailWorkspaceGroup[]> {
   const now = new Date();
   const client = db();
 
   const base = client
     .select({
       branch: workspaces.branch,
+      projectId: projects.id,
       slug: projects.slug,
+      projectName: projects.name,
       agent: executors.agent,
+      model: executors.model,
+      executorRefId: executors.executorRefId,
       status: runs.status,
       runKind: runs.runKind,
+      createdByUserId: runs.createdByUserId,
       startedAt: runs.startedAt,
       runId: runs.id,
+      scratchName: scratchRuns.name,
+      scratchDialogStatus: scratchRuns.dialogStatus,
+      scratchCreatedByUserId: scratchRuns.createdByUserId,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .innerJoin(executors, eq(executors.id, runs.executorId))
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id));
+    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id));
 
   const rows =
     globalRole === "admin"
@@ -511,7 +597,6 @@ export async function getRailWorkspaces(
             ),
           )
           .orderBy(desc(runs.startedAt))
-          .limit(8)
       : await base
           .innerJoin(
             projectMembers,
@@ -526,17 +611,101 @@ export async function getRailWorkspaces(
               isNull(workspaces.removedAt),
             ),
           )
-          .orderBy(desc(runs.startedAt))
-          .limit(8);
+          .orderBy(desc(runs.startedAt));
 
-  return rows.map((row) => ({
-    name: row.branch,
-    meta: `${row.slug} · ${row.runKind === "scratch" ? "scratch" : row.agent}`,
-    status: runStatusToWorkspace(row.status),
-    time: relativeTime(row.startedAt, now),
-    href:
-      row.runKind === "scratch"
-        ? `/scratch-runs/${row.runId}`
-        : `/runs/${row.runId}`,
-  }));
+  const creatorIds = [
+    ...new Set(
+      rows
+        .map((row) => row.createdByUserId ?? row.scratchCreatedByUserId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const creatorRows =
+    creatorIds.length > 0
+      ? await client
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(inArray(users.id, creatorIds))
+      : [];
+  const creators = new Map(creatorRows.map((row) => [row.id, row]));
+  const groups = new Map<string, RailWorkspaceGroup>();
+
+  for (const row of rows) {
+    const status = railStatus({
+      runStatus: row.status,
+      runKind: row.runKind as RunKind,
+      scratchDialogStatus:
+        row.scratchDialogStatus as ScratchDialogStatus | null,
+    });
+    const creatorId = row.createdByUserId ?? row.scratchCreatedByUserId;
+    const workspace: RailWorkspaceRow = {
+      runId: row.runId,
+      runKind: row.runKind as RunKind,
+      name: row.scratchName ?? row.branch,
+      branch: row.branch,
+      executorLabel: executorDisplay(row),
+      launchedBy: creatorDisplay(
+        creatorId ? creators.get(creatorId) : undefined,
+      ),
+      statusLabel: status.label,
+      statusTone: status.tone,
+      time: relativeTime(row.startedAt, now),
+      href:
+        row.runKind === "scratch"
+          ? `/scratch-runs/${row.runId}`
+          : `/runs/${row.runId}`,
+      latestActivityAt: row.startedAt,
+    };
+    const group =
+      groups.get(row.projectId) ??
+      ({
+        projectId: row.projectId,
+        projectSlug: row.slug,
+        projectName: row.projectName,
+        activeCount: 0,
+        latestActivityAt: row.startedAt,
+        launchHref: `/scratch-runs/new?projectId=${row.projectId}`,
+        workspaces: [],
+      } satisfies RailWorkspaceGroup);
+
+    group.workspaces.push(workspace);
+    group.activeCount += 1;
+    if (row.startedAt > group.latestActivityAt) {
+      group.latestActivityAt = row.startedAt;
+    }
+    groups.set(row.projectId, group);
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      workspaces: group.workspaces.sort(
+        (a, b) => b.latestActivityAt.getTime() - a.latestActivityAt.getTime(),
+      ),
+    }))
+    .sort((a, b) => {
+      const timeDiff =
+        b.latestActivityAt.getTime() - a.latestActivityAt.getTime();
+
+      return timeDiff === 0
+        ? a.projectName.localeCompare(b.projectName)
+        : timeDiff;
+    });
+}
+
+export async function getRailWorkspaces(
+  userId: string,
+  globalRole: GlobalRole,
+): Promise<RailWorkspaceData[]> {
+  const groups = await getRailWorkspaceGroups(userId, globalRole);
+
+  return groups.flatMap((group) =>
+    group.workspaces.map((row) => ({
+      name: row.name,
+      meta: `${group.projectSlug} · ${row.runKind === "scratch" ? "scratch" : row.executorLabel}`,
+      status: runStatusToWorkspace(row.statusLabel),
+      time: row.time,
+      href: row.href,
+    })),
+  );
 }

@@ -40,14 +40,17 @@ For the full vision, product model, architecture, and roadmap see
   z.ai GLM / MiniMax through `claude`. Per-step override resolution: run
   launcher -> task override -> project per-flow override -> project
   default -> flow recommended.
-- **Portfolio home (superset.sh-style)**: single grid of every active
-  workspace across all projects. Card = project · branch · status · last
-  activity · executor · quick actions. Filters by project + status.
-  "Needs you (N)" badge counts pending HITL across all projects.
+- **Portfolio and active workspaces**: project-grouped active workspaces across
+  all visible projects. Each group shows project name, active count, a compact
+  scratch `+`, and rows with branch/name · status label/dot · kind/executor ·
+  launched-by · last activity. "Needs you (N)" badge counts pending HITL across
+  all projects.
 - **Scratch workspaces**: manual conversation-style coding-agent sessions
-  outside the task board. Launcher selects project, parent branch, scratch
-  branch/worktree name, executor, plan mode, attachments, and capability
-  profile. Scratch runs appear in active workspaces but keep `task_id = NULL`.
+  outside the task board. The compact launcher selects project, base branch,
+  optional scratch branch/workspace name, configured executor profile, work
+  mode, reasoning effort, metadata/binary attachments, and run-scoped
+  MCP/skill/rule/agent-pack capability profile. Scratch runs appear in
+  project-grouped active workspaces but keep `task_id = NULL`.
 - **Per-project task board**: 2 columns `Backlog | In Flight`. In Flight
   holds `Running | NeedsInput | NeedsInputIdle | Review | Crashed`. A
   Backlog card has a **Launch** button; click runs

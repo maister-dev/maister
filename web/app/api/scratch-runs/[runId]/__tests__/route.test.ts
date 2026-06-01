@@ -151,6 +151,23 @@ function seedScratchRun(): string {
       respondedAt: null,
     },
   ];
+  dbState.tables.scratch_attachments = [
+    {
+      id: "attachment-1",
+      runId,
+      messageId: "message-1",
+      kind: "uploaded_file",
+      label: "notes.txt",
+      value: ".maister/demo/runs/scratch-get-run/uploads/launch/notes.txt",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      byteSize: 5,
+      sha256: "a".repeat(64),
+      storagePath:
+        "/runtime/.maister/demo/runs/scratch-get-run/uploads/launch/notes.txt",
+      createdAt: new Date("2026-05-31T12:01:00.000Z"),
+    },
+  ];
 
   return runId;
 }
@@ -169,6 +186,7 @@ describe("GET /api/scratch-runs/[runId]", () => {
       run: Record<string, unknown>;
       scratch: Record<string, unknown>;
       workspace: Record<string, unknown>;
+      attachments: Array<Record<string, unknown>>;
     };
 
     expect(res.status).toBe(200);
@@ -198,5 +216,11 @@ describe("GET /api/scratch-runs/[runId]", () => {
     expect(body.capabilityProfile).not.toHaveProperty("adapterLaunch");
     expect(body.pendingHitl.schema).not.toHaveProperty("requestId");
     expect(body.pendingHitl.schema).not.toHaveProperty("supervisorSessionId");
+    expect(body.attachments[0]).toMatchObject({
+      kind: "uploaded_file",
+      artifactRef:
+        ".maister/demo/runs/scratch-get-run/uploads/launch/notes.txt",
+    });
+    expect(body.attachments[0]).not.toHaveProperty("storagePath");
   });
 });

@@ -4,12 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession } from "@/lib/authz";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isMaisterError } from "@/lib/errors";
+import { parseScratchRequest } from "@/lib/scratch-runs/request";
 import { launchScratchRun } from "@/lib/scratch-runs/service";
-import {
-  scratchLaunchInputSchema,
-  type ScratchLaunchInput,
-} from "@/lib/scratch-runs/types";
+import { scratchLaunchInputSchema } from "@/lib/scratch-runs/types";
 
 const log = pino({
   name: "api-scratch-runs",
@@ -54,25 +52,36 @@ function errorResponse(err: unknown): NextResponse {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  let body: ScratchLaunchInput;
-
-  try {
-    body = scratchLaunchInputSchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
-  }
-
   try {
     const user = await requireActiveSession();
-    const response = await launchScratchRun({ body, userId: user.id });
+    const parsed = await parseScratchRequest(req, scratchLaunchInputSchema);
+
+    log.debug(
+      {
+        userId: user.id,
+        projectId: parsed.body.projectId,
+        contentType: parsed.contentType,
+        fileCount: parsed.uploadedFiles.length,
+        metadataAttachmentCount: parsed.body.attachments.length,
+      },
+      "POST /api/scratch-runs parsed request",
+    );
+
+    const response = await launchScratchRun({
+      body: parsed.body,
+      uploadedFiles: parsed.uploadedFiles,
+      userId: user.id,
+    });
 
     return NextResponse.json(response, { status: 201 });
   } catch (err) {
+    if (isMaisterError(err) && err.code === "PRECONDITION") {
+      log.warn(
+        { code: err.code, message: err.message },
+        "POST /api/scratch-runs rejected",
+      );
+    }
+
     return errorResponse(err);
   }
 }

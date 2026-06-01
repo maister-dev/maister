@@ -5,26 +5,46 @@ import type {
   ScratchDialogStatus,
   ScratchMessageRole,
   ScratchPlanMode,
+  ScratchReasoningEffort,
+  ScratchWorkMode,
 } from "@/lib/db/schema";
 
 import { z } from "zod";
 
 export const scratchPlanModeSchema = z.enum(["off", "plan-first"]);
+export const scratchWorkModeSchema = z.enum([
+  "auto",
+  "plan_first",
+  "manual_approval",
+]);
+export const scratchReasoningEffortSchema = z.enum([
+  "low",
+  "high",
+  "extra",
+  "ultra",
+]);
 
 export const scratchAttachmentInputSchema = z.object({
   kind: z.enum(["issue_url", "file_path", "text_note"]),
   label: z.string().max(200).optional(),
   value: z.string().min(1).max(20_000),
 });
+const optionalNonEmptyString = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim().length === 0 ? undefined : value,
+  z.string().min(1).max(255).optional(),
+);
 
 export const scratchLaunchInputSchema = z
   .object({
     projectId: z.string().uuid(),
     baseBranch: z.string().min(1).max(255),
-    branchName: z.string().min(1).max(255),
+    branchName: optionalNonEmptyString,
     name: z.string().max(200).optional(),
     executorId: z.string().uuid(),
-    planMode: scratchPlanModeSchema,
+    workMode: scratchWorkModeSchema.optional(),
+    reasoningEffort: scratchReasoningEffortSchema.default("high"),
+    planMode: scratchPlanModeSchema.optional(),
     prompt: z.string().min(1).max(60_000),
     linkedTaskId: z.string().uuid().optional(),
     linkedIssueUrl: z.string().url().max(2048).optional(),
@@ -34,6 +54,7 @@ export const scratchLaunchInputSchema = z
         mcpIds: z.array(z.string().min(1)).optional(),
         skillIds: z.array(z.string().min(1)).optional(),
         ruleIds: z.array(z.string().min(1)).optional(),
+        agentDefinitionIds: z.array(z.string().min(1)).optional(),
         restrictionIds: z.array(z.string().min(1)).optional(),
       })
       .optional(),
@@ -48,9 +69,25 @@ export const scratchMessageInputSchema = z
   .strict();
 
 export type ScratchAttachmentInput = {
-  kind: ScratchAttachmentKind;
+  kind: Exclude<ScratchAttachmentKind, "uploaded_file">;
   label?: string;
   value: string;
+};
+export type ScratchUploadedFileInput = {
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  bytes: Uint8Array;
+};
+export type StoredScratchAttachment = {
+  kind: ScratchAttachmentKind;
+  label: string | null;
+  value: string;
+  fileName: string | null;
+  mimeType: string | null;
+  byteSize: number | null;
+  sha256: string | null;
+  storagePath: string | null;
 };
 
 export type ScratchLaunchInput = z.infer<typeof scratchLaunchInputSchema>;
@@ -72,5 +109,7 @@ export type ScratchRunState = {
 
 export type PromptPolicy = {
   planMode: ScratchPlanMode;
+  workMode?: ScratchWorkMode;
+  reasoningEffort?: ScratchReasoningEffort;
   prompt: string;
 };

@@ -6,7 +6,7 @@ import { LeftRail } from "@/components/chrome/left-rail";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
 import { getSessionUser } from "@/lib/authz";
-import { getRailWorkspaces } from "@/lib/queries/portfolio";
+import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 
 function initialsOf(name: string | null, email: string | null): string {
@@ -35,8 +35,8 @@ export default async function AppLayout({
     redirect("/change-password");
   }
 
-  const [railWorkspaces, platformStatus] = await Promise.all([
-    sessionUser ? getRailWorkspaces(sessionUser.id, sessionUser.role) : [],
+  const [railWorkspaceGroups, platformStatus] = await Promise.all([
+    sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
     getPlatformStatus(),
   ]);
 
@@ -52,9 +52,14 @@ export default async function AppLayout({
       }
     : undefined;
 
-  const inboxCount = railWorkspaces.filter(
-    (ws) => ws.status === "needs",
-  ).length;
+  const inboxCount = railWorkspaceGroups.reduce(
+    (sum, group) =>
+      sum +
+      group.workspaces.filter(
+        (ws) => ws.statusTone === "needs" || ws.statusTone === "waiting",
+      ).length,
+    0,
+  );
 
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-14">
@@ -75,10 +80,7 @@ export default async function AppLayout({
           launchHref="/scratch-runs/new"
           platformStatus={platformStatus}
           userRole={sessionUser?.role}
-          workspaces={railWorkspaces.map((ws) => ({
-            ...ws,
-            current: false,
-          }))}
+          workspaceGroups={railWorkspaceGroups}
         />
         <main className="min-w-0 px-4 pb-12 pt-7 md:px-9">{children}</main>
       </div>

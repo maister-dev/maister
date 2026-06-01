@@ -181,6 +181,7 @@ describe("schema round-trip", () => {
     const workspaceId = newId();
     const messageId = newId();
     const attachmentId = newId();
+    const uploadedAttachmentId = newId();
     const profileId = newId();
 
     await db.insert(schema.runs).values({
@@ -231,6 +232,19 @@ describe("schema round-trip", () => {
       kind: "text_note",
       value: "Focus on edge cases.",
     });
+    await db.insert(schema.scratchAttachments).values({
+      id: uploadedAttachmentId,
+      runId,
+      messageId,
+      kind: "uploaded_file",
+      label: "notes.txt",
+      value: `.maister/scratch-${projectId.slice(0, 8)}/runs/${runId}/uploads/launch/notes.txt`,
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      byteSize: 5,
+      sha256: "a".repeat(64),
+      storagePath: `/tmp/scratch-${projectId.slice(0, 8)}/.maister/runs/${runId}/uploads/launch/notes.txt`,
+    });
 
     await db.insert(schema.scratchCapabilityProfiles).values({
       id: profileId,
@@ -249,6 +263,9 @@ describe("schema round-trip", () => {
     expect(await countWhere("scratch_messages", "id", messageId)).toBe(1);
     expect(await countWhere("scratch_attachments", "id", attachmentId)).toBe(1);
     expect(
+      await countWhere("scratch_attachments", "id", uploadedAttachmentId),
+    ).toBe(1);
+    expect(
       await countWhere("scratch_capability_profiles", "id", profileId),
     ).toBe(1);
 
@@ -257,6 +274,9 @@ describe("schema round-trip", () => {
     expect(await countWhere("scratch_runs", "run_id", runId)).toBe(0);
     expect(await countWhere("scratch_messages", "id", messageId)).toBe(0);
     expect(await countWhere("scratch_attachments", "id", attachmentId)).toBe(0);
+    expect(
+      await countWhere("scratch_attachments", "id", uploadedAttachmentId),
+    ).toBe(0);
     expect(
       await countWhere("scratch_capability_profiles", "id", profileId),
     ).toBe(0);

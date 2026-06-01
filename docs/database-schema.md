@@ -349,6 +349,7 @@ queries.
                                  //   an in-flight run. Null on pre-migration
                                  //   rows or scratch runs -> runner falls
                                  //   back only for flow runs.
+  createdByUserId?,              // nullable FK -> users.id; launch/audit owner
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
   startedAt, endedAt?
@@ -367,6 +368,10 @@ set to `NULL`. They still keep non-null legacy display fields by writing
 `currentStepId` is set by the Flow runner before each step starts and cleared
 on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in
 `scratch_runs.dialog_status`, not in `currentStepId`.
+
+`createdByUserId` is nullable for legacy rows. New Flow and scratch launches
+write the authenticated caller for active-workspace launched-by display and
+audit; v1 authorization remains project-role based, not owner-exclusive.
 
 Indexes: `(projectId, status, runKind)` for portfolio and active
 workspace queries, `(runKind, taskId)` for board/latest-attempt lookups that
@@ -400,6 +405,8 @@ workspace and are needed by diff, promote, discard, and recovery.
   projectId,                     // FK -> projects.id
   name?,
   initialPrompt,
+  workMode: 'auto' | 'plan_first' | 'manual_approval',
+  reasoningEffort: 'low' | 'high' | 'extra' | 'ultra',
   planMode: 'off' | 'plan-first',
   linkedTaskId?,                 // optional FK -> tasks.id in same project
   linkedIssueUrl?,
@@ -423,6 +430,11 @@ workspace and are needed by diff, promote, discard, and recovery.
 `dialogStatus` is the scratch-specific conversation axis. It carries
 `WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
 is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
+
+`workMode` and `reasoningEffort` are launch-policy metadata passed into the
+scratch prompt/profile. `planMode` stays for compatibility with existing
+plan-first behavior and is derived from `workMode`: `plan_first` maps to
+`plan-first`; all other work modes map to `off`.
 
 Index: `scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for
 active workspace lists. The primary key on `runId` covers detail joins from
@@ -453,14 +465,25 @@ deterministic replay.
   id,
   runId,                         // FK -> scratch_runs.run_id
   messageId?,                    // optional FK -> scratch_messages.id
-  kind: 'issue_url' | 'file_path' | 'text_note',
+  kind: 'issue_url' | 'file_path' | 'text_note' | 'uploaded_file',
   label?,
-  value,
+  value,                         // metadata value or rootless artifact ref
+  fileName?,                     // uploaded_file display filename
+  mimeType?,
+  byteSize?,
+  sha256?,
+  storagePath?,                  // canonical server-local path, never public
   createdAt
 }
 ```
 
-Attachments are metadata only in v1. Binary upload storage is Phase 2. Indexes:
+Metadata attachment kinds keep their current `value` semantics: issue URL,
+repository file path, or free-form note. `uploaded_file` rows store `value` as
+a stable rootless artifact reference such as
+`.maister/<projectSlug>/runs/<runId>/uploads/<scope>/<safeName>`. `storagePath`
+is the canonical server-local path used by privileged server code and the local
+agent prompt; public API DTOs expose display metadata plus the rootless artifact
+reference and must not expose absolute filesystem roots. Indexes:
 `scratch_attachments_run_idx` on `(runId)` and
 `scratch_attachments_message_idx` on `(messageId)`.
 

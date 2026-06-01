@@ -5,8 +5,8 @@
 A **workspace** is the git worktree where a run executes. Every run
 gets a fresh worktree under `.maister/<slug>/runs/<runId>/`, isolated
 from other concurrent runs on the same project. Workspace lifecycle
-covers creation, promotion, archival, and reconciliation on host or
-process restart.
+covers creation, active workspace visibility, promotion, archival, and
+reconciliation on host or process restart.
 
 ## Domain entities
 
@@ -21,6 +21,12 @@ process restart.
   branch but can differ for engineer-controlled workflows.
 - **Parent repo** — `projects.repo_path`. The worktree shares `.git`
   with the parent.
+- **Active workspace group** — Implemented. The left rail groups active Flow
+  and scratch workspaces by project. Each group shows project name, active
+  count, latest activity, and a project-scoped scratch `+` action.
+- **Active workspace row** — Implemented. A visible run/workspace row with
+  branch or scratch name, run kind, executor profile, launched-by user, status
+  label, status dot, relative time, and run/scratch detail link.
 - **Read-only range git ops (M11b — Implemented)** — `logRange`
   (`git log <base>..<branch>`), `diffRange` (`git diff <base>..<branch>`), and
   `resolveBaseRef` (`git merge-base <mainBranch> <branch>`) in
@@ -120,6 +126,28 @@ flowchart TD
     NeedsInputIdle -- no --> Crash
 ```
 
+### Project-grouped active workspaces (Implemented)
+
+```mermaid
+sequenceDiagram
+    participant L as Left rail
+    participant W as Web tier
+    participant DB as Postgres
+
+    L->>W: render app layout
+    W->>DB: select visible active runs with workspaces
+    DB-->>W: Flow and scratch rows joined to project, executor, creator
+    W->>W: map status from runs.status and scratch_runs.dialog_status
+    W->>W: group by project and compute active counts
+    W-->>L: RailWorkspaceGroup[]
+    L-->>L: render project header, count, plus action, rows
+```
+
+Active workspace rows use `runs.status` for Flow rows and combine
+`runs.status` with `scratch_runs.dialog_status` for scratch rows. Scratch
+`WaitingForUser` is displayed as its own label even though the shared
+`runs.status` remains `Running`.
+
 ### Garbage collection
 
 A cron route GCs worktrees older than 7d in terminal state.
@@ -164,6 +192,16 @@ flowchart LR
   GC failures log and continue without setting `removed_at`.
 - Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
   `removed_at` is set instead.
+- Active workspace rail groups MUST include both `flow` and `scratch` runs
+  visible to the current user and MUST keep task board queries filtered to
+  `runs.run_kind = 'flow'`.
+- Active workspace status labels MUST distinguish `Running`,
+  `WaitingForUser`, `NeedsInput`, `NeedsInputIdle`, `HumanWorking`, `Review`,
+  and `Crashed`; `WaitingForUser` is scratch-specific and maps from
+  `scratch_runs.dialog_status` while `runs.status = 'Running'`.
+- Each project group MUST expose a scratch launch `+` action with that project
+  preselected and MUST show launched-by display when `runs.created_by_user_id`
+  or legacy scratch creator metadata is available.
 - **(Implemented, M11b)** The manual-takeover return reads the EXISTING worktree
   through read-only range ops (`logRange`/`diffRange`/`resolveBaseRef`) ONLY; it
   creates NO new branch/target/PR and performs no push, merge, or

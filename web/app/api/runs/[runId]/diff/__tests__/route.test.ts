@@ -151,6 +151,20 @@ describe("GET /api/runs/[runId]/diff", () => {
     expect(body.targetBranch).toBe("release");
   });
 
+  it("does not include upload artifact storage paths in scratch diff responses", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(diffRunWorkspace).mockResolvedValueOnce("");
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as { diff?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.diff).toBe("");
+    expect(JSON.stringify(body)).not.toContain(".maister/");
+    expect(JSON.stringify(body)).not.toContain("uploads/");
+  });
+
   it("rejects removed workspaces", async () => {
     const runId = seedScratchRun({ removedAt: new Date() });
 

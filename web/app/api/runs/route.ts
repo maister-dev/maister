@@ -114,7 +114,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // front, so must-change callers cannot probe task/project existence before
     // auth. Project-role authz happens once projectId is derived from the task
     // row below (taskId is body-controlled — never trust a body projectId).
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
     const db = getDb() as unknown as {
@@ -368,6 +368,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       {
         taskId: task.id,
         runId,
+        createdByUserId: user.id,
         executorId: executor.id,
         resolvedFromTier,
         branch,
@@ -396,6 +397,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           projectId: project.id,
           flowId: flow.id,
           executorId: executor.id,
+          createdByUserId: user.id,
           status: "Pending",
           // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
           // the authoritative pin the runner resolves the manifest + bundle

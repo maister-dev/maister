@@ -18,6 +18,7 @@ const {
   scratchCapabilityProfiles,
   scratchMessages,
   scratchRuns,
+  users,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
 
@@ -41,6 +42,19 @@ type ScratchCapabilityProfileRow = {
   selectedRuleIds: string[];
   restrictions: Record<string, unknown>;
   downgradeNotes: Record<string, unknown> | null;
+};
+type ScratchAttachmentRow = {
+  id: string;
+  runId: string;
+  messageId: string | null;
+  kind: string;
+  label: string | null;
+  value: string;
+  fileName: string | null;
+  mimeType: string | null;
+  byteSize: number | null;
+  sha256: string | null;
+  createdAt: Date | string;
 };
 type PendingHitlRow = {
   id: string;
@@ -126,16 +140,50 @@ function publicWorkspace(
 
 function publicCapabilityProfile(
   row: ScratchCapabilityProfileRow | undefined,
-): ScratchCapabilityProfileRow | null {
+):
+  | (ScratchCapabilityProfileRow & { selectedAgentDefinitionIds: string[] })
+  | null {
   if (!row) return null;
+
+  const restrictionIds = Array.isArray(row.restrictions.selectedRestrictionIds)
+    ? row.restrictions.selectedRestrictionIds
+    : [];
+  const agentDefinitionIds = Array.isArray(
+    row.restrictions.selectedAgentDefinitionIds,
+  )
+    ? row.restrictions.selectedAgentDefinitionIds
+    : [];
 
   return {
     profileDigest: row.profileDigest,
     selectedMcpIds: row.selectedMcpIds,
     selectedSkillIds: row.selectedSkillIds,
     selectedRuleIds: row.selectedRuleIds,
-    restrictions: row.restrictions,
+    selectedAgentDefinitionIds: agentDefinitionIds,
+    restrictions: {
+      ...row.restrictions,
+      selectedRestrictionIds: restrictionIds,
+    },
     downgradeNotes: row.downgradeNotes,
+  };
+}
+
+function publicAttachment(row: ScratchAttachmentRow) {
+  const artifactRef = row.kind === "uploaded_file" ? row.value : null;
+
+  return {
+    id: row.id,
+    runId: row.runId,
+    messageId: row.messageId,
+    kind: row.kind,
+    label: row.label,
+    value: row.value,
+    fileName: row.fileName,
+    mimeType: row.mimeType,
+    byteSize: row.byteSize,
+    sha256: row.sha256,
+    artifactRef,
+    createdAt: row.createdAt,
   };
 }
 
@@ -167,6 +215,7 @@ export async function GET(
       attachmentRows,
       profileRows,
       pendingHitlRows,
+      creatorRows,
     ] = await Promise.all([
       db.select().from(workspaces).where(eq(workspaces.runId, runId)),
       db.select().from(scratchMessages).where(eq(scratchMessages.runId, runId)),
@@ -179,7 +228,14 @@ export async function GET(
         .from(scratchCapabilityProfiles)
         .where(eq(scratchCapabilityProfiles.runId, runId)),
       db.select().from(hitlRequests).where(eq(hitlRequests.runId, runId)),
+      (run.createdByUserId ?? scratch.createdByUserId)
+        ? db
+            .select()
+            .from(users)
+            .where(eq(users.id, run.createdByUserId ?? scratch.createdByUserId))
+        : Promise.resolve([]),
     ]);
+    const creator = creatorRows[0];
     const pendingHitl =
       (pendingHitlRows.find(
         (row: PendingHitlRow) => row.respondedAt === null,
@@ -190,6 +246,8 @@ export async function GET(
         id: run.id,
         projectId: run.projectId,
         executorId: run.executorId,
+        createdByUserId: run.createdByUserId ?? scratch.createdByUserId ?? null,
+        createdByDisplayName: creator?.name ?? creator?.email ?? null,
         status: run.status,
         currentStepId: run.currentStepId,
         startedAt: run.startedAt,
@@ -197,6 +255,8 @@ export async function GET(
       },
       scratch: {
         name: scratch.name,
+        workMode: scratch.workMode,
+        reasoningEffort: scratch.reasoningEffort,
         planMode: scratch.planMode,
         linkedTaskId: scratch.linkedTaskId,
         linkedIssueUrl: scratch.linkedIssueUrl,
@@ -214,7 +274,7 @@ export async function GET(
         (a: { sequence: number }, b: { sequence: number }) =>
           a.sequence - b.sequence,
       ),
-      attachments: attachmentRows,
+      attachments: attachmentRows.map(publicAttachment),
       capabilityProfile: publicCapabilityProfile(profileRows[0]),
       pendingHitl: pendingHitl
         ? {

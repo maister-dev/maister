@@ -676,12 +676,21 @@ paths:
         ownership, optional task ownership, branch/base-ref safety, selected
         capability visibility, supervisor readiness, and shared live-session
         capacity. Scratch v1 rejects when capacity is full and does not queue.
+
+        Accepts JSON for text/metadata-only launches and multipart form data
+        for binary uploads. Multipart requests carry a JSON `payload` field
+        matching `PostScratchRunBody` plus `files` parts. Uploaded files are
+        stored under the run artifact tree, never in the git worktree; accepted
+        upload count/bytes are INFO logged, and rejected uploads are WARN
+        logged without file contents.
       operationId: postScratchRun
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/PostScratchRunBody" }
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/ScratchRunMultipartBody" }
       responses:
         "201":
           description: Scratch run created and initial prompt dispatched.
@@ -689,7 +698,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ScratchRunResponse" }
         "400":
-          description: Malformed body (`CONFIG`).
+          description: Malformed JSON, multipart payload, or schema (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -698,12 +707,16 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Branch/worktree/capacity conflict or precondition failure (`CONFLICT` / `PRECONDITION`).
+          description: |
+            Branch/worktree/capacity conflict or precondition failure
+            (`CONFLICT` / `PRECONDITION`). Includes invisible project,
+            invalid branch, invalid filename/path, too many files, oversized
+            file, and oversized total multipart payload.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          description: Supervisor readiness, executor unavailable, or file-storage infrastructure failure (`EXECUTOR_UNAVAILABLE`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -748,6 +761,8 @@ paths:
         calls supervisor `POST /sessions/{sessionId}/prompt`. The body carries
         message content and attachment refs only. It MUST NOT include session
         ids, project slug, worktree path, step id, or message sequence.
+        Accepts JSON for text/metadata-only messages and multipart form data
+        with a JSON `payload` plus binary `files` parts.
       operationId: postScratchRunMessage
       parameters:
         - name: runId
@@ -759,6 +774,8 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/PostScratchMessageBody" }
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/ScratchMessageMultipartBody" }
       responses:
         "202":
           description: Message accepted and prompt dispatch started.
@@ -766,7 +783,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ScratchMessageResponse" }
         "400":
-          description: Malformed body (`CONFIG`).
+          description: Malformed JSON, multipart payload, or schema (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -775,12 +792,16 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Scratch run not found, not scratch, already has a prompt running, or is not input-ready (`PRECONDITION` / `CONFLICT`).
+          description: |
+            Scratch run not found, not scratch, already has a prompt running,
+            not input-ready, invalid upload filename/path, too many files,
+            oversized file, or oversized total multipart payload
+            (`PRECONDITION` / `CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Supervisor prompt delivery failed retryably (`EXECUTOR_UNAVAILABLE`).
+          description: Supervisor prompt delivery or file-storage infrastructure failed retryably (`EXECUTOR_UNAVAILABLE`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2007,13 +2028,13 @@ components:
         label: { type: string, minLength: 1 }
         kind:
           type: string
-          enum: [mcp, skill, rule, restriction]
+          enum: [mcp, skill, rule, agent_definition, restriction]
         source:
           type: string
           enum: [platform, project, flow-package]
         enforceability:
           type: string
-          enum: [supported, instructed, enforced]
+          enum: [enforced, instructed, unsupported]
         selectedByDefault: { type: boolean }
         agents:
           type: array
@@ -2029,10 +2050,22 @@ components:
         name: { type: string }
         mainBranch: { type: string }
         branchPrefix: { type: string }
+        defaultExecutorId:
+          type: string
+          format: uuid
+          nullable: true
     ScratchLaunchOptionsResponse:
       type: object
-      required: [projects, selectedProjectId, branches, executors, capabilities]
+      required:
+        [machine, projects, selectedProjectId, branches, executors, workModes, reasoningEfforts, capabilities]
       properties:
+        machine:
+          type: object
+          required: [id, label, readOnly]
+          properties:
+            id: { type: string }
+            label: { type: string }
+            readOnly: { type: boolean, enum: [true] }
         projects:
           type: array
           items: { $ref: "#/components/schemas/ScratchProjectOption" }
@@ -2046,6 +2079,10 @@ components:
         defaultScratchBranch:
           type: string
           nullable: true
+        defaultExecutorId:
+          type: string
+          format: uuid
+          nullable: true
         branches:
           type: array
           items: { type: string }
@@ -2053,16 +2090,40 @@ components:
           type: array
           items:
             type: object
-            required: [id, executorRefId, agent, model]
+            description: |
+              Configured ACP runner profile. Multiple rows may use the same
+              adapter agent with different model/router/env settings and must
+              remain distinct launcher options.
+            required: [id, executorRefId, displayLabel, agent, model]
             properties:
               id: { type: string, format: uuid }
               executorRefId: { type: string }
+              displayLabel: { type: string }
               agent: { type: string, enum: [claude, codex] }
               model: { type: string }
               router: { type: string, nullable: true }
+              envHint: { type: string, nullable: true }
+        workModes:
+          type: array
+          items:
+            type: object
+            required: [id, label, selectedByDefault]
+            properties:
+              id: { type: string, enum: [auto, plan_first, manual_approval] }
+              label: { type: string }
+              selectedByDefault: { type: boolean }
+        reasoningEfforts:
+          type: array
+          items:
+            type: object
+            required: [id, label, selectedByDefault]
+            properties:
+              id: { type: string, enum: [low, high, extra, ultra] }
+              label: { type: string }
+              selectedByDefault: { type: boolean }
         capabilities:
           type: object
-          required: [mcps, skills, rules, restrictions, defaultSelectedMcpIds]
+          required: [mcps, skills, rules, agentDefinitions, restrictions, defaultSelectedMcpIds]
           properties:
             mcps:
               type: array
@@ -2071,6 +2132,9 @@ components:
               type: array
               items: { $ref: "#/components/schemas/ScratchCapabilityOption" }
             rules:
+              type: array
+              items: { $ref: "#/components/schemas/ScratchCapabilityOption" }
+            agentDefinitions:
               type: array
               items: { $ref: "#/components/schemas/ScratchCapabilityOption" }
             restrictions:
@@ -2094,11 +2158,17 @@ components:
         ruleIds:
           type: array
           items: { type: string, minLength: 1 }
+        agentDefinitionIds:
+          type: array
+          items: { type: string, minLength: 1 }
         restrictionIds:
           type: array
           items: { type: string, minLength: 1 }
     ScratchAttachmentInput:
       type: object
+      description: |
+        Metadata-only attachment accepted in JSON bodies and the multipart
+        `payload` field. Binary uploads are sent as multipart `files` parts.
       required: [kind, value]
       properties:
         kind:
@@ -2111,9 +2181,32 @@ components:
           type: string
           minLength: 1
           maxLength: 20000
+    ScratchAttachment:
+      type: object
+      required: [id, runId, kind, label, value, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        messageId: { type: string, format: uuid, nullable: true }
+        kind:
+          type: string
+          enum: [issue_url, file_path, text_note, uploaded_file]
+        label: { type: string, nullable: true }
+        value:
+          type: string
+          description: Metadata value or rootless artifact reference.
+        fileName: { type: string, nullable: true }
+        mimeType: { type: string, nullable: true }
+        byteSize: { type: integer, minimum: 0, nullable: true }
+        sha256: { type: string, nullable: true }
+        artifactRef:
+          type: string
+          nullable: true
+          description: Rootless artifact reference for uploaded files. Absolute storage paths are never returned.
+        createdAt: { type: string, format: date-time }
     PostScratchRunBody:
       type: object
-      required: [projectId, baseBranch, branchName, executorId, prompt, planMode]
+      required: [projectId, baseBranch, executorId, prompt]
       additionalProperties: false
       description: |
         Implemented scratch launch body. The schema intentionally excludes
@@ -2123,12 +2216,26 @@ components:
       properties:
         projectId: { type: string, format: uuid }
         baseBranch: { type: string, minLength: 1, maxLength: 255 }
-        branchName: { type: string, minLength: 1, maxLength: 255 }
+        branchName:
+          type: string
+          minLength: 0
+          maxLength: 255
+          description: Optional explicit branch. Omit or send an empty string to use the generated scratch branch fallback.
         name: { type: string, maxLength: 200 }
         executorId: { type: string, format: uuid }
+        workMode:
+          type: string
+          enum: [auto, plan_first, manual_approval]
+          default: auto
+        reasoningEffort:
+          type: string
+          enum: [low, high, extra, ultra]
+          default: high
         planMode:
           type: string
           enum: [off, plan-first]
+          deprecated: true
+          description: Compatibility field derived from workMode.
         prompt: { type: string, minLength: 1, maxLength: 60000 }
         linkedTaskId: { type: string, format: uuid }
         linkedIssueUrl: { type: string, maxLength: 2048 }
@@ -2138,6 +2245,19 @@ components:
           items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
         capabilities:
           $ref: "#/components/schemas/ScratchCapabilitySelection"
+    ScratchRunMultipartBody:
+      type: object
+      required: [payload]
+      properties:
+        payload:
+          type: string
+          description: JSON-encoded PostScratchRunBody. Its attachments are metadata-only; binary files are supplied by `files`.
+        files:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            format: binary
     PostScratchMessageBody:
       type: object
       required: [content]
@@ -2151,6 +2271,19 @@ components:
           type: array
           maxItems: 20
           items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
+    ScratchMessageMultipartBody:
+      type: object
+      required: [payload]
+      properties:
+        payload:
+          type: string
+          description: JSON-encoded PostScratchMessageBody. Its attachments are metadata-only; binary files are supplied by `files`.
+        files:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            format: binary
     ScratchMessage:
       type: object
       required: [id, runId, sequence, role, content, createdAt]
@@ -2164,14 +2297,17 @@ components:
         createdAt: { type: string, format: date-time }
     ScratchRun:
       type: object
-      required: [runId, projectId, runStatus, dialogStatus, branchName, baseBranch, baseCommit, targetBranch, planMode]
+      required:
+        [runId, projectId, runStatus, dialogStatus, branchName, baseBranch, baseCommit, targetBranch, workMode, reasoningEffort, planMode]
       properties:
         runId: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
         name: { type: string, nullable: true }
+        createdByUserId: { type: string, format: uuid, nullable: true }
+        createdByDisplayName: { type: string, nullable: true }
         runStatus:
           type: string
-          enum: [Pending, Running, NeedsInput, NeedsInputIdle, Review, Crashed, Done, Abandoned, Failed]
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Crashed, Done, Abandoned, Failed]
         dialogStatus:
           type: string
           enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
@@ -2179,6 +2315,8 @@ components:
         baseBranch: { type: string }
         baseCommit: { type: string }
         targetBranch: { type: string }
+        workMode: { type: string, enum: [auto, plan_first, manual_approval] }
+        reasoningEffort: { type: string, enum: [low, high, extra, ultra] }
         planMode: { type: string, enum: [off, plan-first] }
     ScratchRunResponse:
       type: object
@@ -2209,22 +2347,26 @@ components:
       properties:
         run:
           type: object
-          required: [id, projectId, executorId, status, currentStepId, startedAt, endedAt]
+          required: [id, projectId, executorId, status, createdByUserId, currentStepId, startedAt, endedAt]
           properties:
             id: { type: string, format: uuid }
             projectId: { type: string, format: uuid }
             executorId: { type: string, format: uuid }
+            createdByUserId: { type: string, format: uuid, nullable: true }
+            createdByDisplayName: { type: string, nullable: true }
             status:
               type: string
-              enum: [Pending, Running, NeedsInput, NeedsInputIdle, Review, Crashed, Done, Abandoned, Failed]
+              enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Crashed, Done, Abandoned, Failed]
             currentStepId: { type: string, nullable: true }
             startedAt: { type: string, format: date-time }
             endedAt: { type: string, format: date-time, nullable: true }
         scratch:
           type: object
-          required: [name, planMode, linkedTaskId, linkedIssueUrl, baseBranch, baseCommit, targetBranch, dialogStatus]
+          required: [name, workMode, reasoningEffort, planMode, linkedTaskId, linkedIssueUrl, baseBranch, baseCommit, targetBranch, dialogStatus]
           properties:
             name: { type: string, nullable: true }
+            workMode: { type: string, enum: [auto, plan_first, manual_approval] }
+            reasoningEffort: { type: string, enum: [low, high, extra, ultra] }
             planMode: { type: string, enum: [off, plan-first] }
             linkedTaskId: { type: string, format: uuid, nullable: true }
             linkedIssueUrl: { type: string, nullable: true }
@@ -2249,10 +2391,10 @@ components:
           items: { $ref: "#/components/schemas/ScratchMessage" }
         attachments:
           type: array
-          items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
+          items: { $ref: "#/components/schemas/ScratchAttachment" }
         capabilityProfile:
           type: object
-          required: [profileDigest, selectedMcpIds, selectedSkillIds, selectedRuleIds, restrictions, downgradeNotes]
+          required: [profileDigest, selectedMcpIds, selectedSkillIds, selectedRuleIds, selectedAgentDefinitionIds, restrictions, downgradeNotes]
           properties:
             profileDigest: { type: string }
             selectedMcpIds:
@@ -2262,6 +2404,9 @@ components:
               type: array
               items: { type: string }
             selectedRuleIds:
+              type: array
+              items: { type: string }
+            selectedAgentDefinitionIds:
               type: array
               items: { type: string }
             restrictions:

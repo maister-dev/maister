@@ -58,6 +58,7 @@ erDiagram
         text flow_version "tag snapshot; scratch sentinel"
         text flow_revision "git SHA snapshot; manual sentinel"
         text flow_revision_id FK "nullable for scratch"
+        text created_by_user_id FK "nullable launch/audit owner"
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp started_at
@@ -138,6 +139,8 @@ erDiagram
         text project_id FK
         text name
         text initial_prompt
+        text work_mode "auto|plan_first|manual_approval"
+        text reasoning_effort "low|high|extra|ultra"
         text plan_mode "off|plan-first"
         text linked_task_id FK
         text linked_issue_url
@@ -170,9 +173,14 @@ erDiagram
         text id PK
         text run_id FK
         text message_id FK
-        text kind "issue_url|file_path|text_note"
+        text kind "issue_url|file_path|text_note|uploaded_file"
         text label
-        text value
+        text value "metadata value or rootless artifact ref"
+        text file_name
+        text mime_type
+        integer byte_size
+        text sha256
+        text storage_path "server-local path, never public DTO"
         timestamp created_at
     }
 
@@ -308,12 +316,21 @@ only for explicit HITL or permission waits.
   runs are not task attempts.
 - `RUNS ||--o| SCRATCH_RUNS` — only `run_kind = 'scratch'` rows have scratch
   metadata.
+- `RUNS.created_by_user_id` is nullable for legacy rows and records launched-by
+  display/audit ownership for new Flow and scratch launches. Scratch v1
+  authorization remains project-role based.
 - `SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES` — append-only dialog ledger with
   monotonic sequence per run.
 - `SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES` — exactly one launch-time
   profile snapshot per scratch run.
 - Scratch-run v1 stores branch-target metadata on `scratch_runs`: base branch,
   base commit, and target branch.
+- `SCRATCH_RUNS.plan_mode` is retained for compatibility and derived from
+  `work_mode`: `plan_first` maps to `plan-first`; `auto` and
+  `manual_approval` map to `off`.
+- `SCRATCH_ATTACHMENTS.storage_path` is server-internal. Public APIs expose
+  uploaded-file display metadata and the rootless artifact reference stored in
+  `value`, never absolute filesystem roots.
 - **(M11a — Designed)** `node_attempts` and `gate_results` are now drawn above
   (migration `0010`). The remaining graph-maturity tables — artifacts, artifact
   edges, assignments, external operation events — are still future work and not

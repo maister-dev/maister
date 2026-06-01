@@ -13,6 +13,14 @@ export type MaterializeCapabilityProfileArgs = {
   runId: string;
   worktreePath: string;
   profile: ResolvedCapabilityProfile;
+  executor?: {
+    executorRefId: string;
+    agent: string;
+    model: string;
+    router: string | null;
+  };
+  workMode?: "auto" | "plan_first" | "manual_approval";
+  reasoningEffort?: "low" | "high" | "extra" | "ultra";
 };
 
 export type MaterializedCapabilityProfile = {
@@ -44,6 +52,8 @@ function instructionLines(profile: ResolvedCapabilityProfile): string[] {
     "# Capability profile",
     "",
     `Plan mode: ${profile.planMode}`,
+    `Work mode: ${profile.workMode}`,
+    `Reasoning effort: ${profile.reasoningEffort}`,
     "",
     ...entries.map(
       (entry) =>
@@ -68,11 +78,19 @@ export async function materializeCapabilityProfile(
 
   const profilePath = path.join(rootPath, "profile.json");
   const instructionsPath = path.join(rootPath, "instructions.md");
+  const materializedProfile = {
+    ...args.profile,
+    executor: args.executor ?? null,
+    workMode: args.workMode ?? args.profile.workMode,
+    reasoningEffort: args.reasoningEffort ?? args.profile.reasoningEffort,
+    provisioningBoundary:
+      "Selected capabilities are provided as profile/instructions handoff only; native adapter provisioning is future work.",
+  };
 
-  await atomicWriteJson(profilePath, args.profile);
+  await atomicWriteJson(profilePath, materializedProfile);
   await atomicWriteText(
     instructionsPath,
-    `${instructionLines(args.profile).join("\n")}\n`,
+    `${instructionLines(materializedProfile).join("\n")}\n`,
   );
 
   return {

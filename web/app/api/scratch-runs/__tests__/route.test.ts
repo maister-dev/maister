@@ -1,6 +1,10 @@
 import type { NextRequest } from "next/server";
 import type { MaisterError as RuntimeMaisterError } from "@/lib/errors";
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -12,11 +16,13 @@ const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   loadSelectableCapabilities: vi.fn(),
   materializeCapabilityProfile: vi.fn(),
+  removeBranch: vi.fn(),
   removeWorktree: vi.fn(),
   requireActiveSession: vi.fn(),
   requireProjectAction: vi.fn(),
   resolveBaseCommit: vi.fn(),
   resolveCapabilityProfile: vi.fn(),
+  runtimeRoot: vi.fn(),
   sendScratchPromptAndProjectEvents: vi.fn(),
   sendPrompt: vi.fn(),
   worktreesRoot: vi.fn(),
@@ -45,12 +51,14 @@ const state: {
   inserts: InsertCall[];
   updates: UpdateCall[];
   selectCalls: number;
+  runtimeRoot: string | null;
   project: Record<string, unknown>;
   executor: Record<string, unknown>;
 } = {
   inserts: [],
   updates: [],
   selectCalls: 0,
+  runtimeRoot: null,
   project: {},
   executor: {},
 };
@@ -97,11 +105,13 @@ vi.mock("@/lib/scheduler", () => ({
     mocks.assertScratchCapacityAvailableInTransaction,
 }));
 vi.mock("@/lib/instance-config", () => ({
+  runtimeRoot: mocks.runtimeRoot,
   worktreesRoot: mocks.worktreesRoot,
 }));
 vi.mock("@/lib/worktree", () => ({
   addWorktree: mocks.addWorktree,
   branchExists: mocks.branchExists,
+  removeBranch: mocks.removeBranch,
   removeWorktree: mocks.removeWorktree,
   resolveBaseCommit: mocks.resolveBaseCommit,
 }));
@@ -130,6 +140,9 @@ beforeEach(async () => {
   state.inserts = [];
   state.updates = [];
   state.selectCalls = 0;
+  state.runtimeRoot = await mkdtemp(
+    path.join(tmpdir(), "maister-scratch-route-"),
+  );
   state.project = {
     id: projectId,
     slug: "demo",
@@ -188,6 +201,8 @@ beforeEach(async () => {
   });
   mocks.resolveBaseCommit.mockResolvedValue("abcdef1");
   mocks.branchExists.mockResolvedValue(false);
+  mocks.removeBranch.mockResolvedValue(undefined);
+  mocks.runtimeRoot.mockReturnValue(state.runtimeRoot);
   mocks.worktreesRoot.mockReturnValue("/tmp/maister-worktrees");
   mocks.addWorktree.mockResolvedValue(undefined);
   mocks.removeWorktree.mockResolvedValue(undefined);
@@ -214,24 +229,47 @@ beforeEach(async () => {
   ({ POST } = await import("../route"));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+  if (state.runtimeRoot) {
+    await rm(state.runtimeRoot, { recursive: true, force: true });
+    state.runtimeRoot = null;
+  }
 });
+
+function launchPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    projectId,
+    baseBranch: "main",
+    branchName: "maister/demo/scratch/test",
+    executorId,
+    planMode: "off",
+    prompt: "Investigate the thing",
+    attachments: [],
+    ...overrides,
+  };
+}
 
 function launchRequest(overrides: Record<string, unknown> = {}): NextRequest {
   return new Request("http://x/api/scratch-runs", {
     method: "POST",
-    body: JSON.stringify({
-      projectId,
-      baseBranch: "main",
-      branchName: "maister/demo/scratch/test",
-      executorId,
-      planMode: "off",
-      prompt: "Investigate the thing",
-      attachments: [],
-      ...overrides,
-    }),
+    body: JSON.stringify(launchPayload(overrides)),
+  }) as NextRequest;
+}
+
+function multipartLaunchRequest(args: {
+  overrides?: Record<string, unknown>;
+  files?: File[];
+}): NextRequest {
+  const formData = new FormData();
+
+  formData.set("payload", JSON.stringify(launchPayload(args.overrides)));
+  for (const file of args.files ?? []) formData.append("files", file);
+
+  return new Request("http://x/api/scratch-runs", {
+    method: "POST",
+    body: formData,
   }) as NextRequest;
 }
 
@@ -268,6 +306,73 @@ describe("POST /api/scratch-runs", () => {
       prompt: "Investigate the thing",
     });
     expect(state.inserts.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("treats an empty branch name as the generated scratch branch fallback", async () => {
+    const res = await POST(launchRequest({ branchName: "" }));
+    const body = (await res.json()) as { runId?: string };
+    const addArgs = mocks.addWorktree.mock.calls[0]?.[0] as
+      | { branch?: string }
+      | undefined;
+
+    expect(res.status).toBe(201);
+    expect(body.runId).toBeTruthy();
+    expect(addArgs?.branch).toMatch(/^maister\/demo\/scratch\/[0-9a-f-]+$/);
+    expect(addArgs?.branch).not.toBe("maister/demo/scratch/test");
+  });
+
+  it("accepts multipart launch with mixed metadata and uploaded files", async () => {
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const res = await POST(
+      multipartLaunchRequest({
+        overrides: {
+          branchName: "",
+          attachments: [{ kind: "text_note", value: "remember this" }],
+        },
+        files: [file],
+      }),
+    );
+    const body = (await res.json()) as { runId?: string };
+    const attachmentInsert = state.inserts.find((call) => {
+      if (!Array.isArray(call.values)) return false;
+
+      return call.values.some(
+        (row: Record<string, unknown>) => row.kind === "uploaded_file",
+      );
+    });
+    const rows = Array.isArray(attachmentInsert?.values)
+      ? (attachmentInsert.values as Array<Record<string, unknown>>)
+      : [];
+    const uploaded = rows.find((row) => row.kind === "uploaded_file");
+
+    expect(res.status).toBe(201);
+    expect(body.runId).toBeTruthy();
+    expect(uploaded).toMatchObject({
+      kind: "uploaded_file",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      byteSize: 5,
+    });
+    expect(uploaded?.value).toMatch(
+      /^\.maister\/demo\/runs\/.+\/uploads\/launch\/notes\.txt$/,
+    );
+    expect(uploaded?.storagePath).toEqual(
+      expect.stringContaining(state.runtimeRoot ?? ""),
+    );
+  });
+
+  it("rejects multipart upload count limits before worktree side effects", async () => {
+    const files = Array.from(
+      { length: 11 },
+      (_, index) => new File(["x"], `notes-${index}.txt`),
+    );
+    const res = await POST(multipartLaunchRequest({ files }));
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
+    expect(state.inserts).toHaveLength(0);
   });
 
   it("rejects at capacity before worktree, DB, or supervisor side effects", async () => {
@@ -328,6 +433,10 @@ describe("POST /api/scratch-runs", () => {
         force: true,
       }),
     );
+    expect(mocks.removeBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repo/demo",
+      branch: "maister/demo/scratch/test",
+    });
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
 
@@ -352,6 +461,10 @@ describe("POST /api/scratch-runs", () => {
         force: true,
       }),
     );
+    expect(mocks.removeBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repo/demo",
+      branch: "maister/demo/scratch/test",
+    });
     expect(mocks.createSession).not.toHaveBeenCalled();
     expect(state.inserts).toHaveLength(0);
   });

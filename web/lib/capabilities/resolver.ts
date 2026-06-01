@@ -23,8 +23,11 @@ export type ResolveCapabilityProfileArgs = {
   selectedMcpIds?: string[];
   selectedSkillIds?: string[];
   selectedRuleIds?: string[];
+  selectedAgentDefinitionIds?: string[];
   selectedRestrictionIds?: string[];
   planMode: "off" | "plan-first";
+  workMode?: "auto" | "plan_first" | "manual_approval";
+  reasoningEffort?: "low" | "high" | "extra" | "ultra";
   catalog: CapabilityCatalogRecord[];
 };
 
@@ -162,6 +165,11 @@ export function resolveCapabilityProfile(
   const selectedMcpIds = idsForKind(catalog, "mcp", args.selectedMcpIds);
   const selectedSkillIds = idsForKind(catalog, "skill", args.selectedSkillIds);
   const selectedRuleIds = idsForKind(catalog, "rule", args.selectedRuleIds);
+  const selectedAgentDefinitionIds = idsForKind(
+    catalog,
+    "agent_definition",
+    args.selectedAgentDefinitionIds,
+  );
   const selectedRestrictionIds = idsForKind(
     catalog,
     "restriction",
@@ -171,6 +179,7 @@ export function resolveCapabilityProfile(
     ...selectedRecords(catalog, "mcp", selectedMcpIds),
     ...selectedRecords(catalog, "skill", selectedSkillIds),
     ...selectedRecords(catalog, "rule", selectedRuleIds),
+    ...selectedRecords(catalog, "agent_definition", selectedAgentDefinitionIds),
     ...selectedRecords(catalog, "restriction", selectedRestrictionIds),
   ];
   const enforced: CapabilityProfileEntry[] = [];
@@ -217,9 +226,12 @@ export function resolveCapabilityProfile(
     projectId: args.projectId,
     executorAgent: args.executorAgent,
     planMode: args.planMode,
+    workMode: args.workMode ?? "auto",
+    reasoningEffort: args.reasoningEffort ?? "high",
     selectedMcpIds,
     selectedSkillIds,
     selectedRuleIds,
+    selectedAgentDefinitionIds,
     selectedRestrictionIds,
     enforced,
     instructed,

@@ -114,6 +114,20 @@ function capabilityOption(record: any) {
   };
 }
 
+function executorLabel(row: any): string {
+  const router = row.router ? ` via ${row.router}` : "";
+
+  return `${row.executorRefId} · ${row.agent} · ${row.model}${router}`;
+}
+
+function envHint(row: any): string | null {
+  if (!row.env || typeof row.env !== "object") return null;
+
+  const keys = Object.keys(row.env);
+
+  return keys.length > 0 ? keys.sort().join(", ") : null;
+}
+
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const user = await requireActiveSession();
@@ -125,14 +139,38 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     if (!project) {
       return NextResponse.json({
+        machine: {
+          id: "local",
+          label: "Local machine",
+          readOnly: true,
+        },
         projects: [],
         selectedProjectId: null,
+        defaultBaseBranch: null,
+        defaultScratchBranch: null,
+        defaultExecutorId: null,
         branches: [],
         executors: [],
+        workModes: [
+          { id: "auto", label: "Auto", selectedByDefault: true },
+          { id: "plan_first", label: "Plan first", selectedByDefault: false },
+          {
+            id: "manual_approval",
+            label: "Manual approval",
+            selectedByDefault: false,
+          },
+        ],
+        reasoningEfforts: [
+          { id: "low", label: "Low", selectedByDefault: false },
+          { id: "high", label: "High", selectedByDefault: true },
+          { id: "extra", label: "Extra", selectedByDefault: false },
+          { id: "ultra", label: "Ultra", selectedByDefault: false },
+        ],
         capabilities: {
           mcps: [],
           skills: [],
           rules: [],
+          agentDefinitions: [],
           restrictions: [],
           defaultSelectedMcpIds: [],
         },
@@ -151,26 +189,54 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       runId: randomUUID(),
     });
     const mcps = capabilities.filter((record) => record.kind === "mcp");
+    const defaultExecutorId =
+      project.defaultExecutorId ??
+      executorRows.find((row: any) => row.id)?.id ??
+      null;
 
     return NextResponse.json({
+      machine: {
+        id: "local",
+        label: "Local machine",
+        readOnly: true,
+      },
       projects: projectRows.map((row: any) => ({
         id: row.id,
         slug: row.slug,
         name: row.name,
         mainBranch: row.mainBranch,
         branchPrefix: row.branchPrefix,
+        defaultExecutorId: row.defaultExecutorId ?? null,
       })),
       selectedProjectId: project.id,
       defaultBaseBranch: project.mainBranch,
       defaultScratchBranch,
+      defaultExecutorId,
       branches: branchRows,
       executors: executorRows.map((row: any) => ({
         id: row.id,
         executorRefId: row.executorRefId,
+        displayLabel: executorLabel(row),
         agent: row.agent,
         model: row.model,
         router: row.router,
+        envHint: envHint(row),
       })),
+      workModes: [
+        { id: "auto", label: "Auto", selectedByDefault: true },
+        { id: "plan_first", label: "Plan first", selectedByDefault: false },
+        {
+          id: "manual_approval",
+          label: "Manual approval",
+          selectedByDefault: false,
+        },
+      ],
+      reasoningEfforts: [
+        { id: "low", label: "Low", selectedByDefault: false },
+        { id: "high", label: "High", selectedByDefault: true },
+        { id: "extra", label: "Extra", selectedByDefault: false },
+        { id: "ultra", label: "Ultra", selectedByDefault: false },
+      ],
       capabilities: {
         mcps: mcps.map(capabilityOption),
         skills: capabilities
@@ -178,6 +244,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           .map(capabilityOption),
         rules: capabilities
           .filter((record) => record.kind === "rule")
+          .map(capabilityOption),
+        agentDefinitions: capabilities
+          .filter((record) => record.kind === "agent_definition")
           .map(capabilityOption),
         restrictions: capabilities
           .filter((record) => record.kind === "restriction")

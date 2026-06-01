@@ -4,14 +4,18 @@ import type {
   RunStatus,
   ScratchDialogStatus,
   ScratchPlanMode,
+  ScratchReasoningEffort,
+  ScratchWorkMode,
 } from "@/lib/db/schema";
 import type {
   ScratchLaunchInput,
   ScratchMessageInput,
+  ScratchUploadedFileInput,
 } from "@/lib/scratch-runs/types";
 import type { PromptStopReason } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -26,18 +30,25 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { worktreesRoot } from "@/lib/instance-config";
+import { runtimeRoot, worktreesRoot } from "@/lib/instance-config";
 import {
   assertScratchCapacityAvailable,
   assertScratchCapacityAvailableInTransaction,
 } from "@/lib/scheduler";
-import { validateScratchAttachments } from "@/lib/scratch-runs/attachments";
+import { atomicWriteBuffer } from "@/lib/atomic";
+import {
+  metadataAttachmentRow,
+  uploadedFileMetadata,
+  validateScratchAttachments,
+} from "@/lib/scratch-runs/attachments";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import {
   decoratePromptForPlanMode,
   deriveScratchBranchName,
+  planModeToWorkMode,
   scratchNameFallback,
   scratchStepId,
+  workModeToPlanMode,
 } from "@/lib/scratch-runs/launch";
 import {
   nextScratchMessageSequence,
@@ -52,6 +63,7 @@ import { checkSupervisorHealth, createSession } from "@/lib/supervisor-client";
 import {
   addWorktree,
   branchExists,
+  removeBranch,
   removeWorktree,
   resolveBaseCommit,
 } from "@/lib/worktree";
@@ -90,6 +102,8 @@ export type ScratchRunResponse = {
     baseBranch: string;
     baseCommit: string;
     targetBranch: string | null;
+    workMode: ScratchWorkMode;
+    reasoningEffort: ScratchReasoningEffort;
     planMode: ScratchPlanMode;
   };
 };
@@ -127,6 +141,8 @@ function launchResponse(args: {
   baseBranch: string;
   baseCommit: string;
   targetBranch: string | null;
+  workMode: ScratchWorkMode;
+  reasoningEffort: ScratchReasoningEffort;
   planMode: ScratchPlanMode;
 }): ScratchRunResponse {
   return {
@@ -142,6 +158,8 @@ function launchResponse(args: {
       baseBranch: args.baseBranch,
       baseCommit: args.baseCommit,
       targetBranch: args.targetBranch,
+      workMode: args.workMode,
+      reasoningEffort: args.reasoningEffort,
       planMode: args.planMode,
     },
   };
@@ -223,7 +241,7 @@ function resolveScratchBranch(args: {
   project: any;
   runId: string;
 }): string {
-  const requested = args.body.branchName.trim();
+  const requested = args.body.branchName?.trim() ?? "";
 
   if (requested.length > 0) return requested;
 
@@ -233,6 +251,134 @@ function resolveScratchBranch(args: {
     requestedName: args.body.name,
     runId: args.runId,
   });
+}
+
+function scratchPolicy(body: ScratchLaunchInput): {
+  workMode: ScratchWorkMode;
+  reasoningEffort: ScratchReasoningEffort;
+  planMode: ScratchPlanMode;
+} {
+  const workMode = body.workMode ?? planModeToWorkMode(body.planMode ?? "off");
+  const reasoningEffort = body.reasoningEffort ?? "high";
+
+  return {
+    workMode,
+    reasoningEffort,
+    planMode: workModeToPlanMode(workMode),
+  };
+}
+
+function storedAttachmentValues(args: {
+  metadataAttachments: ReturnType<typeof metadataAttachmentRow>[];
+  uploadedAttachments: ReturnType<typeof uploadedFileMetadata>[];
+  runId: string;
+  messageId: string;
+}) {
+  return [...args.metadataAttachments, ...args.uploadedAttachments].map(
+    (attachment) => ({
+      id: randomUUID(),
+      runId: args.runId,
+      messageId: args.messageId,
+      kind: attachment.kind,
+      label: attachment.label,
+      value: attachment.value,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      byteSize: attachment.byteSize,
+      sha256: attachment.sha256,
+      storagePath: attachment.storagePath,
+    }),
+  );
+}
+
+async function storeUploadedFiles(args: {
+  runId: string;
+  messageId: string;
+  projectSlug: string;
+  scope: string;
+  files: readonly ScratchUploadedFileInput[];
+}): Promise<ReturnType<typeof uploadedFileMetadata>[]> {
+  if (args.files.length === 0) return [];
+
+  const root = runtimeRoot();
+  const safeNames = new Set<string>();
+  const attachments = args.files.map((file) =>
+    uploadedFileMetadata({
+      file,
+      projectSlug: args.projectSlug,
+      runId: args.runId,
+      scope: args.scope,
+      runtimeRoot: root,
+    }),
+  );
+
+  for (const attachment of attachments) {
+    if (!attachment.fileName) continue;
+    if (safeNames.has(attachment.fileName)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `duplicate upload filename: ${attachment.fileName}`,
+      );
+    }
+    safeNames.add(attachment.fileName);
+  }
+
+  for (const [index, attachment] of attachments.entries()) {
+    if (!attachment.storagePath) continue;
+    const source = args.files[index];
+
+    if (!source) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `stored upload metadata missing source file: ${attachment.label}`,
+      );
+    }
+
+    try {
+      await atomicWriteBuffer(attachment.storagePath, source.bytes);
+      log.info(
+        {
+          runId: args.runId,
+          messageId: args.messageId,
+          fileName: attachment.fileName,
+          byteSize: attachment.byteSize,
+          sha256: attachment.sha256,
+        },
+        "scratch upload stored",
+      );
+    } catch (err) {
+      log.error(
+        {
+          runId: args.runId,
+          messageId: args.messageId,
+          path: attachment.storagePath,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "scratch upload write failed",
+      );
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `failed to store uploaded file ${attachment.fileName}`,
+      );
+    }
+  }
+
+  return attachments;
+}
+
+function attachmentPromptLines(
+  attachments: readonly ReturnType<typeof uploadedFileMetadata>[],
+): string[] {
+  if (attachments.length === 0) return [];
+
+  return [
+    "",
+    "Uploaded files for this message:",
+    ...attachments.map(
+      (attachment) =>
+        `- ${attachment.fileName} (${attachment.mimeType}, ${attachment.byteSize} bytes, sha256 ${attachment.sha256}): ${attachment.value}; local path ${attachment.storagePath}`,
+    ),
+  ];
 }
 
 function downgradeNotes(
@@ -375,6 +521,7 @@ export async function completeScratchPromptTurn(args: {
 
 export async function launchScratchRun(args: {
   body: ScratchLaunchInput;
+  uploadedFiles?: readonly ScratchUploadedFileInput[];
   userId: string;
 }): Promise<ScratchRunResponse> {
   const db = getDb() as Db;
@@ -387,14 +534,18 @@ export async function launchScratchRun(args: {
   await validateLinkedTask(db, args.body.linkedTaskId, project.id);
 
   const catalog = await loadSelectableCapabilities(project.id, db);
+  const policy = scratchPolicy(args.body);
   const profile = resolveCapabilityProfile({
     projectId: project.id,
     executorAgent: executor.agent,
     selectedMcpIds: args.body.capabilities?.mcpIds,
     selectedSkillIds: args.body.capabilities?.skillIds,
     selectedRuleIds: args.body.capabilities?.ruleIds,
+    selectedAgentDefinitionIds: args.body.capabilities?.agentDefinitionIds,
     selectedRestrictionIds: args.body.capabilities?.restrictionIds,
-    planMode: args.body.planMode,
+    planMode: policy.planMode,
+    workMode: policy.workMode,
+    reasoningEffort: policy.reasoningEffort,
     catalog,
   });
   const platformStatus = await checkSupervisorHealth();
@@ -424,7 +575,9 @@ export async function launchScratchRun(args: {
 
   const worktreePath = path.join(worktreesRoot(), project.slug, runId);
   const prompt = decoratePromptForPlanMode({
-    planMode: args.body.planMode,
+    planMode: policy.planMode,
+    workMode: policy.workMode,
+    reasoningEffort: policy.reasoningEffort,
     prompt: args.body.prompt,
   });
   const now = new Date();
@@ -441,7 +594,9 @@ export async function launchScratchRun(args: {
       worktreePath,
     },
   );
+  const uploadedFiles = args.uploadedFiles ?? [];
   let worktreeCreated = false;
+  let uploadedAttachments: ReturnType<typeof uploadedFileMetadata>[] = [];
 
   await addWorktree({
     projectRepoPath: project.repoPath,
@@ -457,7 +612,22 @@ export async function launchScratchRun(args: {
     materialized = await materializeCapabilityProfile({
       runId,
       worktreePath,
+      executor: {
+        agent: executor.agent,
+        model: executor.model,
+        executorRefId: executor.executorRefId,
+        router: executor.router ?? null,
+      },
+      workMode: policy.workMode,
+      reasoningEffort: policy.reasoningEffort,
       profile,
+    });
+    uploadedAttachments = await storeUploadedFiles({
+      runId,
+      messageId,
+      projectSlug: project.slug,
+      scope: "launch",
+      files: uploadedFiles,
     });
     await db.transaction(async (tx: Db) => {
       await assertScratchCapacityAvailableInTransaction(tx);
@@ -474,6 +644,7 @@ export async function launchScratchRun(args: {
         flowVersion: "scratch",
         flowRevision: "manual",
         flowRevisionId: null,
+        createdByUserId: args.userId,
         startedAt: now,
       });
       await tx.insert(workspaces).values({
@@ -489,7 +660,9 @@ export async function launchScratchRun(args: {
         projectId: project.id,
         name,
         initialPrompt: args.body.prompt,
-        planMode: args.body.planMode,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
+        planMode: policy.planMode,
         linkedTaskId: args.body.linkedTaskId ?? null,
         linkedIssueUrl: args.body.linkedIssueUrl ?? null,
         baseBranch: args.body.baseBranch,
@@ -509,17 +682,18 @@ export async function launchScratchRun(args: {
         supervisorEventId: initialMessage.supervisorEventId ?? null,
         createdAt: now,
       });
-      if (validatedAttachments.length > 0) {
-        await tx.insert(scratchAttachments).values(
-          validatedAttachments.map((attachment) => ({
-            id: randomUUID(),
-            runId,
-            messageId,
-            kind: attachment.kind,
-            label: attachment.label ?? null,
-            value: attachment.value,
-          })),
-        );
+      const metadataAttachments = validatedAttachments.map(
+        metadataAttachmentRow,
+      );
+      const storedAttachments = storedAttachmentValues({
+        metadataAttachments,
+        uploadedAttachments,
+        runId,
+        messageId,
+      });
+
+      if (storedAttachments.length > 0) {
+        await tx.insert(scratchAttachments).values(storedAttachments);
       }
       await tx.insert(scratchCapabilityProfiles).values({
         id: randomUUID(),
@@ -531,6 +705,7 @@ export async function launchScratchRun(args: {
         selectedRuleIds: profile.selectedRuleIds,
         restrictions: {
           selectedRestrictionIds: profile.selectedRestrictionIds,
+          selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
         },
         adapterLaunch: materialized.adapterLaunch,
         downgradeNotes: downgradeNotes(profile),
@@ -553,6 +728,35 @@ export async function launchScratchRun(args: {
             rmErr: rmErr instanceof Error ? rmErr.message : String(rmErr),
           },
           "scratch compensating removeWorktree failed",
+        ),
+      );
+      await removeBranch({
+        projectRepoPath: project.repoPath,
+        branch,
+      }).catch((branchErr) =>
+        log.error(
+          {
+            branch,
+            branchErr:
+              branchErr instanceof Error
+                ? branchErr.message
+                : String(branchErr),
+          },
+          "[FIX] scratch compensating removeBranch failed",
+        ),
+      );
+    }
+    if (uploadedAttachments.length > 0) {
+      const uploadDir = path.dirname(uploadedAttachments[0].storagePath ?? "");
+
+      await rm(uploadDir, { recursive: true, force: true }).catch((rmErr) =>
+        log.warn(
+          {
+            runId,
+            uploadDir,
+            rmErr: rmErr instanceof Error ? rmErr.message : String(rmErr),
+          },
+          "scratch compensating upload cleanup failed",
         ),
       );
     }
@@ -594,7 +798,9 @@ export async function launchScratchRun(args: {
       runId,
       sessionId: session.sessionId,
       stepId: scratchStepId(),
-      prompt,
+      prompt: [prompt, ...attachmentPromptLines(uploadedAttachments)].join(
+        "\n",
+      ),
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
 
@@ -603,8 +809,16 @@ export async function launchScratchRun(args: {
         runId,
         projectId: project.id,
         executorId: executor.id,
+        createdByUserId: args.userId,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
         dialogStatus,
         stopReason: promptResult.stopReason,
+        uploadCount: uploadedFiles.length,
+        uploadBytes: uploadedFiles.reduce(
+          (sum, file) => sum + file.byteSize,
+          0,
+        ),
       },
       "scratch run launched",
     );
@@ -619,7 +833,9 @@ export async function launchScratchRun(args: {
       baseBranch: args.body.baseBranch,
       baseCommit,
       targetBranch: args.body.baseBranch,
-      planMode: args.body.planMode,
+      workMode: policy.workMode,
+      reasoningEffort: policy.reasoningEffort,
+      planMode: policy.planMode,
     });
   } catch (err) {
     await markScratchCrashed({ db, runId, err }).catch((markErr) =>
@@ -670,6 +886,7 @@ async function appendScratchUserMessage(args: {
   db: Db;
   runId: string;
   body: ScratchMessageInput;
+  uploadedFiles: readonly ScratchUploadedFileInput[];
 }) {
   const runRows = await args.db
     .select()
@@ -719,6 +936,31 @@ async function appendScratchUserMessage(args: {
       projectRepoPath: workspace.parentRepoPath,
       worktreePath: workspace.worktreePath,
     });
+    const uploadedAttachments =
+      args.uploadedFiles.length > 0
+        ? await (async () => {
+            const projectRows = await tx
+              .select()
+              .from(projects)
+              .where(eq(projects.id, lockedRun.projectId));
+            const project = projectRows[0];
+
+            if (!project) {
+              throw new MaisterError(
+                "PRECONDITION",
+                `project not found for scratch run: ${args.runId}`,
+              );
+            }
+
+            return storeUploadedFiles({
+              runId: args.runId,
+              messageId,
+              projectSlug: project.slug,
+              scope: messageId,
+              files: args.uploadedFiles,
+            });
+          })()
+        : [];
 
     await tx.insert(scratchMessages).values({
       id: messageId,
@@ -729,17 +971,16 @@ async function appendScratchUserMessage(args: {
       supervisorEventId: message.supervisorEventId ?? null,
       createdAt: now,
     });
-    if (attachments.length > 0) {
-      await tx.insert(scratchAttachments).values(
-        attachments.map((attachment) => ({
-          id: randomUUID(),
-          runId: args.runId,
-          messageId,
-          kind: attachment.kind,
-          label: attachment.label ?? null,
-          value: attachment.value,
-        })),
-      );
+    const metadataAttachments = attachments.map(metadataAttachmentRow);
+    const storedAttachments = storedAttachmentValues({
+      metadataAttachments,
+      uploadedAttachments,
+      runId: args.runId,
+      messageId,
+    });
+
+    if (storedAttachments.length > 0) {
+      await tx.insert(scratchAttachments).values(storedAttachments);
     }
     await tx
       .update(scratchRuns)
@@ -761,6 +1002,7 @@ async function appendScratchUserMessage(args: {
       messageId,
       sequence,
       supervisorSessionId: scratch.supervisorSessionId as string,
+      uploadedAttachments,
     };
   });
 }
@@ -768,12 +1010,14 @@ async function appendScratchUserMessage(args: {
 export async function sendScratchUserMessage(args: {
   runId: string;
   body: ScratchMessageInput;
+  uploadedFiles?: readonly ScratchUploadedFileInput[];
 }): Promise<ScratchMessageResponse> {
   const db = getDb() as Db;
   const appended = await appendScratchUserMessage({
     db,
     runId: args.runId,
     body: args.body,
+    uploadedFiles: args.uploadedFiles ?? [],
   });
 
   try {
@@ -781,7 +1025,10 @@ export async function sendScratchUserMessage(args: {
       runId: args.runId,
       sessionId: appended.supervisorSessionId,
       stepId: scratchStepId(),
-      prompt: args.body.content,
+      prompt: [
+        args.body.content,
+        ...attachmentPromptLines(appended.uploadedAttachments),
+      ].join("\n"),
     });
     const dialogStatus = await completeScratchPromptTurn({
       db,

@@ -8,6 +8,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
 type AttachmentKind = "issue_url" | "file_path" | "text_note";
+type WorkMode = "auto" | "plan_first" | "manual_approval";
+type ReasoningEffort = "low" | "high" | "extra" | "ultra";
 
 type ProjectOption = {
   id: string;
@@ -19,9 +21,11 @@ type ProjectOption = {
 type ExecutorOption = {
   id: string;
   executorRefId: string;
+  displayLabel: string;
   agent: "claude" | "codex";
   model: string | null;
   router: string | null;
+  envHint: string | null;
 };
 
 type CapabilityOption = {
@@ -36,16 +40,33 @@ type CapabilityOption = {
 };
 
 type LaunchOptions = {
+  machine: {
+    id: string;
+    label: string;
+    readOnly: true;
+  };
   projects: ProjectOption[];
   selectedProjectId: string | null;
   defaultBaseBranch?: string;
   defaultScratchBranch?: string;
+  defaultExecutorId?: string | null;
   branches: string[];
   executors: ExecutorOption[];
+  workModes: Array<{
+    id: WorkMode;
+    label: string;
+    selectedByDefault: boolean;
+  }>;
+  reasoningEfforts: Array<{
+    id: ReasoningEffort;
+    label: string;
+    selectedByDefault: boolean;
+  }>;
   capabilities: {
     mcps: CapabilityOption[];
     skills: CapabilityOption[];
     rules: CapabilityOption[];
+    agentDefinitions: CapabilityOption[];
     restrictions: CapabilityOption[];
     defaultSelectedMcpIds: string[];
   };
@@ -147,13 +168,17 @@ export function ScratchLauncher(): ReactElement {
   const [baseBranch, setBaseBranch] = useState("");
   const [branchName, setBranchName] = useState("");
   const [executorId, setExecutorId] = useState("");
-  const [planMode, setPlanMode] = useState(false);
+  const [workMode, setWorkMode] = useState<WorkMode>("auto");
+  const [reasoningEffort, setReasoningEffort] =
+    useState<ReasoningEffort>("high");
   const [linkedIssueUrl, setLinkedIssueUrl] = useState("");
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<AttachmentInput[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
   const [mcpIds, setMcpIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [ruleIds, setRuleIds] = useState<string[]>([]);
+  const [agentDefinitionIds, setAgentDefinitionIds] = useState<string[]>([]);
   const [restrictionIds, setRestrictionIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -179,8 +204,18 @@ export function ScratchLauncher(): ReactElement {
         setOptions(payload);
         setProjectId(payload.selectedProjectId ?? "");
         setBaseBranch(payload.defaultBaseBranch ?? payload.branches[0] ?? "");
-        setBranchName(payload.defaultScratchBranch ?? "");
-        setExecutorId(payload.executors[0]?.id ?? "");
+        setBranchName("");
+        setExecutorId(
+          payload.defaultExecutorId ?? payload.executors[0]?.id ?? "",
+        );
+        setWorkMode(
+          payload.workModes.find((option) => option.selectedByDefault)?.id ??
+            "auto",
+        );
+        setReasoningEffort(
+          payload.reasoningEfforts.find((option) => option.selectedByDefault)
+            ?.id ?? "high",
+        );
         setMcpIds(
           payload.capabilities.defaultSelectedMcpIds.length > 0
             ? payload.capabilities.defaultSelectedMcpIds
@@ -188,6 +223,9 @@ export function ScratchLauncher(): ReactElement {
         );
         setSkillIds(selectedDefaults(payload.capabilities.skills));
         setRuleIds(selectedDefaults(payload.capabilities.rules));
+        setAgentDefinitionIds(
+          selectedDefaults(payload.capabilities.agentDefinitions),
+        );
         setRestrictionIds(selectedDefaults(payload.capabilities.restrictions));
       })
       .catch((err: unknown) => {
@@ -205,13 +243,17 @@ export function ScratchLauncher(): ReactElement {
     () => options?.projects.find((project) => project.id === projectId) ?? null,
     [options?.projects, projectId],
   );
+  const selectedExecutor = useMemo(
+    () =>
+      options?.executors.find((executor) => executor.id === executorId) ?? null,
+    [executorId, options?.executors],
+  );
+  const fileBytes = useMemo(
+    () => files.reduce((sum, file) => sum + file.size, 0),
+    [files],
+  );
   const canSubmit =
-    !!projectId &&
-    !!baseBranch &&
-    !!branchName.trim() &&
-    !!executorId &&
-    !!prompt.trim() &&
-    !pending;
+    !!projectId && !!baseBranch && !!executorId && !!prompt.trim() && !pending;
 
   function addAttachment(kind: AttachmentKind): void {
     setAttachments((current) => [...current, { kind, label: "", value: "" }]);
@@ -250,27 +292,41 @@ export function ScratchLauncher(): ReactElement {
       .filter((attachment) => attachment.value.length > 0);
 
     try {
-      const response = await fetch("/api/scratch-runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          baseBranch,
-          branchName: branchName.trim(),
-          name: workspaceName.trim() || undefined,
-          executorId,
-          planMode: planMode ? "plan-first" : "off",
-          linkedIssueUrl: linkedIssueUrl.trim() || undefined,
-          prompt: prompt.trim(),
-          attachments: cleanedAttachments,
-          capabilities: {
-            mcpIds,
-            skillIds,
-            ruleIds,
-            restrictionIds,
-          },
-        }),
-      });
+      const launchPayload = {
+        projectId,
+        baseBranch,
+        branchName: branchName.trim() || undefined,
+        name: workspaceName.trim() || undefined,
+        executorId,
+        workMode,
+        reasoningEffort,
+        linkedIssueUrl: linkedIssueUrl.trim() || undefined,
+        prompt: prompt.trim(),
+        attachments: cleanedAttachments,
+        capabilities: {
+          mcpIds,
+          skillIds,
+          ruleIds,
+          agentDefinitionIds,
+          restrictionIds,
+        },
+      };
+      const requestInit: RequestInit =
+        files.length > 0
+          ? (() => {
+              const formData = new FormData();
+
+              formData.set("payload", JSON.stringify(launchPayload));
+              for (const file of files) formData.append("files", file);
+
+              return { method: "POST", body: formData };
+            })()
+          : {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(launchPayload),
+            };
+      const response = await fetch("/api/scratch-runs", requestInit);
 
       if (response.status !== 201 && response.status !== 202) {
         setError(errorText(await response.json().catch(() => null)));
@@ -278,9 +334,9 @@ export function ScratchLauncher(): ReactElement {
         return;
       }
 
-      const payload = (await response.json()) as { runId: string };
+      const responsePayload = (await response.json()) as { runId: string };
 
-      router.push(`/scratch-runs/${payload.runId}`);
+      router.push(`/scratch-runs/${responsePayload.runId}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -306,6 +362,14 @@ export function ScratchLauncher(): ReactElement {
         <div className={sectionShell}>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("machine")}</span>
+              <input
+                readOnly
+                className={clsx(inputBase, "text-mute")}
+                value={options?.machine.label ?? t("localMachine")}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
               <span className={fieldLabel}>{t("project")}</span>
               <select
                 className={inputBase}
@@ -328,10 +392,22 @@ export function ScratchLauncher(): ReactElement {
               >
                 {options?.executors.map((executor) => (
                   <option key={executor.id} value={executor.id}>
-                    {executor.executorRefId} · {executor.agent}
+                    {executor.displayLabel}
                   </option>
                 ))}
               </select>
+              {selectedExecutor ? (
+                <span className="truncate font-mono text-[10px] text-mute">
+                  {t("executorProfile")} · {selectedExecutor.agent} ·{" "}
+                  {selectedExecutor.model}
+                  {selectedExecutor.router
+                    ? ` · ${selectedExecutor.router}`
+                    : ""}
+                  {selectedExecutor.envHint
+                    ? ` · env: ${selectedExecutor.envHint}`
+                    : ""}
+                </span>
+              ) : null}
             </label>
             <label className="flex flex-col gap-1.5">
               <span className={fieldLabel}>{t("workspaceName")}</span>
@@ -361,9 +437,7 @@ export function ScratchLauncher(): ReactElement {
               <input
                 className={inputBase}
                 placeholder={
-                  selectedProject
-                    ? `${selectedProject.slug}/scratch/my-change`
-                    : "scratch/my-change"
+                  selectedProject ? t("branchNamePlaceholder") : t("optional")
                 }
                 spellCheck={false}
                 value={branchName}
@@ -383,15 +457,40 @@ export function ScratchLauncher(): ReactElement {
               onChange={(event) => setPrompt(event.target.value)}
             />
           </label>
-          <label className="mt-3 flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2.5 text-[12px] font-medium text-ink-2">
-            <input
-              checked={planMode}
-              className="accent-amber"
-              type="checkbox"
-              onChange={(event) => setPlanMode(event.target.checked)}
-            />
-            {t("planMode")}
-          </label>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("workMode")}</span>
+              <select
+                className={inputBase}
+                value={workMode}
+                onChange={(event) =>
+                  setWorkMode(event.target.value as WorkMode)
+                }
+              >
+                {options?.workModes.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("reasoningEffort")}</span>
+              <select
+                className={inputBase}
+                value={reasoningEffort}
+                onChange={(event) =>
+                  setReasoningEffort(event.target.value as ReasoningEffort)
+                }
+              >
+                {options?.reasoningEfforts.map((effort) => (
+                  <option key={effort.id} value={effort.id}>
+                    {effort.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
         <div className={sectionShell}>
@@ -421,6 +520,22 @@ export function ScratchLauncher(): ReactElement {
               value={linkedIssueUrl}
               onChange={(event) => setLinkedIssueUrl(event.target.value)}
             />
+          </label>
+          <label className="mb-3 flex flex-col gap-1.5">
+            <span className={fieldLabel}>{t("files")}</span>
+            <input
+              multiple
+              className={inputBase}
+              type="file"
+              onChange={(event) =>
+                setFiles(Array.from(event.currentTarget.files ?? []))
+              }
+            />
+            {files.length > 0 ? (
+              <span className="font-mono text-[10.5px] text-mute">
+                {t("fileSummary", { count: files.length, bytes: fileBytes })}
+              </span>
+            ) : null}
           </label>
           {attachments.length === 0 ? (
             <p className="text-[12px] leading-[1.5] text-mute">
@@ -508,6 +623,14 @@ export function ScratchLauncher(): ReactElement {
               options={options?.capabilities.rules ?? []}
               selectedIds={ruleIds}
               onToggle={(id) => setRuleIds((current) => toggleId(current, id))}
+            />
+            <CapabilityGroup
+              label={t("agentPacks")}
+              options={options?.capabilities.agentDefinitions ?? []}
+              selectedIds={agentDefinitionIds}
+              onToggle={(id) =>
+                setAgentDefinitionIds((current) => toggleId(current, id))
+              }
             />
             <CapabilityGroup
               label={t("restrictions")}

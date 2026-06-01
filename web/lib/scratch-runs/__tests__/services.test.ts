@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveScratchAttachmentPath,
+  safeUploadFileName,
+  uploadedFileMetadata,
   validateScratchAttachments,
 } from "@/lib/scratch-runs/attachments";
 import {
@@ -13,6 +15,7 @@ import {
   deriveScratchBranchName,
   scratchNameFallback,
   scratchStepId,
+  workModeToPlanMode,
 } from "@/lib/scratch-runs/launch";
 import {
   assistantScratchMessageDraft,
@@ -42,6 +45,8 @@ describe("scratch launch helpers", () => {
     expect(
       decoratePromptForPlanMode({ planMode: "plan-first", prompt: "Do work" }),
     ).toContain("wait for operator confirmation");
+    expect(workModeToPlanMode("plan_first")).toBe("plan-first");
+    expect(workModeToPlanMode("manual_approval")).toBe("off");
     expect(scratchStepId()).toBe("dialog");
   });
 });
@@ -87,6 +92,35 @@ describe("scratch attachment helpers", () => {
         value: "/repo/project/.worktrees/run-1/README.md",
       },
     ]);
+  });
+
+  it("builds uploaded-file artifact metadata outside the git worktree", () => {
+    const metadata = uploadedFileMetadata({
+      file: {
+        fileName: "notes.txt",
+        mimeType: "text/plain",
+        byteSize: 5,
+        bytes: new TextEncoder().encode("hello"),
+      },
+      projectSlug: "demo",
+      runId: "run-1",
+      scope: "launch",
+      runtimeRoot: "/runtime",
+    });
+
+    expect(metadata).toMatchObject({
+      kind: "uploaded_file",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      byteSize: 5,
+      value: ".maister/demo/runs/run-1/uploads/launch/notes.txt",
+      storagePath: "/runtime/.maister/demo/runs/run-1/uploads/launch/notes.txt",
+    });
+    expect(metadata.sha256).toHaveLength(64);
+    expect(() => safeUploadFileName("../secret.txt")).toThrow(/invalid/);
+    expect(() => safeUploadFileName("..\\secret.txt")).toThrow(/invalid/);
+    expect(() => safeUploadFileName("C:\\secret.txt")).toThrow(/invalid/);
+    expect(() => safeUploadFileName("nested/secret.txt")).toThrow(/invalid/);
   });
 });
 

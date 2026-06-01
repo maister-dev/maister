@@ -21,6 +21,7 @@ let db: NodePgDatabase;
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 let getPortfolio: typeof import("@/lib/queries/portfolio").getPortfolio;
+let getRailWorkspaceGroups: typeof import("@/lib/queries/portfolio").getRailWorkspaceGroups;
 let getRailWorkspaces: typeof import("@/lib/queries/portfolio").getRailWorkspaces;
 
 beforeAll(async () => {
@@ -35,7 +36,7 @@ beforeAll(async () => {
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ getPortfolio, getRailWorkspaces } = await import(
+  ({ getPortfolio, getRailWorkspaceGroups, getRailWorkspaces } = await import(
     "@/lib/queries/portfolio"
   ));
 }, 180_000);
@@ -390,6 +391,8 @@ describe("portfolio queries (integration)", () => {
     const scratchWorkspace = proj?.activeWorkspaces.find(
       (workspace) => workspace.runId === runId,
     );
+    const groups = await getRailWorkspaceGroups(user, "member");
+    const group = groups.find((candidate) => candidate.projectId === project);
     const rail = await getRailWorkspaces(user, "member");
 
     expect(scratchWorkspace).toMatchObject({
@@ -400,6 +403,21 @@ describe("portfolio queries (integration)", () => {
       scratchDialogStatus: "Crashed",
     });
     expect(portfolio.totalActiveWorkspaces).toBeGreaterThanOrEqual(1);
+    expect(group).toMatchObject({
+      projectId: project,
+      projectName: "Scratch Project",
+      activeCount: 1,
+      launchHref: `/scratch-runs/new?projectId=${project}`,
+    });
+    expect(group?.workspaces[0]).toMatchObject({
+      runId,
+      runKind: "scratch",
+      href: `/scratch-runs/${runId}`,
+      name: "Recover me",
+      statusLabel: "Crashed",
+      statusTone: "crashed",
+      launchedBy: "User scratch@test.com",
+    });
     expect(
       rail.find((workspace) => workspace.href === `/scratch-runs/${runId}`),
     ).toBeDefined();

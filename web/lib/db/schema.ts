@@ -416,6 +416,9 @@ export const runs = pgTable(
         onDelete: "set null",
       },
     ),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     checkpointAt: timestamp("checkpoint_at", {
       withTimezone: true,
       mode: "date",
@@ -472,8 +475,14 @@ export type ScratchDialogStatus =
   | "Abandoned";
 
 export type ScratchMessageRole = "user" | "assistant" | "tool" | "system";
-export type ScratchAttachmentKind = "issue_url" | "file_path" | "text_note";
+export type ScratchAttachmentKind =
+  | "issue_url"
+  | "file_path"
+  | "text_note"
+  | "uploaded_file";
 export type ScratchPlanMode = "off" | "plan-first";
+export type ScratchWorkMode = "auto" | "plan_first" | "manual_approval";
+export type ScratchReasoningEffort = "low" | "high" | "extra" | "ultra";
 export type ScratchAdapterLaunch = {
   env?: Record<string, string>;
   preArgs?: string[];
@@ -491,6 +500,16 @@ export const scratchRuns = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name"),
     initialPrompt: text("initial_prompt").notNull(),
+    workMode: text("work_mode", {
+      enum: ["auto", "plan_first", "manual_approval"],
+    })
+      .notNull()
+      .default("auto"),
+    reasoningEffort: text("reasoning_effort", {
+      enum: ["low", "high", "extra", "ultra"],
+    })
+      .notNull()
+      .default("high"),
     planMode: text("plan_mode", { enum: ["off", "plan-first"] })
       .notNull()
       .default("off"),
@@ -581,10 +600,15 @@ export const scratchAttachments = pgTable(
       onDelete: "cascade",
     }),
     kind: text("kind", {
-      enum: ["issue_url", "file_path", "text_note"],
+      enum: ["issue_url", "file_path", "text_note", "uploaded_file"],
     }).notNull(),
     label: text("label"),
     value: text("value").notNull(),
+    fileName: text("file_name"),
+    mimeType: text("mime_type"),
+    byteSize: integer("byte_size"),
+    sha256: text("sha256"),
+    storagePath: text("storage_path"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

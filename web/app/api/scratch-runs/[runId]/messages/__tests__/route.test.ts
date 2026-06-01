@@ -1,10 +1,15 @@
 import type { NextRequest } from "next/server";
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requireActiveSession: vi.fn(),
   requireProjectAction: vi.fn(),
+  runtimeRoot: vi.fn(),
   sendScratchPromptAndProjectEvents: vi.fn(),
   sendPrompt: vi.fn(),
 }));
@@ -29,39 +34,52 @@ type FakeDb = {
 const runId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
 const state: {
-  selectCalls: number;
+  scratchSelectCalls: number;
   scratchStatus: string;
   inserts: unknown[];
   updates: unknown[];
+  runtimeRoot: string | null;
 } = {
-  selectCalls: 0,
+  scratchSelectCalls: 0,
   scratchStatus: "WaitingForUser",
   inserts: [],
   updates: [],
+  runtimeRoot: null,
 };
+const tableNameSymbol = Symbol.for("drizzle:Name");
+
+function tableName(table: unknown): string | null {
+  if (!table || typeof table !== "object") return null;
+
+  return (table as Record<symbol, unknown>)[tableNameSymbol] as string | null;
+}
 
 const fakeDb: FakeDb = {
   select: () => ({
-    from: () => ({
+    from: (table: unknown) => ({
       where: async () => {
-        state.selectCalls += 1;
+        const name = tableName(table);
 
-        if (state.selectCalls === 1 || state.selectCalls === 2) {
+        if (name === "runs") {
           return [
             { id: runId, runKind: "scratch", projectId, status: "Running" },
           ];
         }
-        if (state.selectCalls === 3 || state.selectCalls === 6) {
+        if (name === "scratch_runs") {
+          state.scratchSelectCalls += 1;
+
           return [
             {
               runId,
               dialogStatus:
-                state.selectCalls === 6 ? "Running" : state.scratchStatus,
+                state.scratchSelectCalls === 2
+                  ? "Running"
+                  : state.scratchStatus,
               supervisorSessionId: "supervisor-session-1",
             },
           ];
         }
-        if (state.selectCalls === 4) {
+        if (name === "workspaces") {
           return [
             {
               runId,
@@ -70,8 +88,11 @@ const fakeDb: FakeDb = {
             },
           ];
         }
-        if (state.selectCalls === 5) {
+        if (name === "scratch_messages") {
           return [{ sequence: 1 }, { sequence: 2 }];
+        }
+        if (name === "projects") {
+          return [{ id: projectId, slug: "demo" }];
         }
 
         return [];
@@ -101,6 +122,9 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 vi.mock("@/lib/supervisor-client", () => ({
   sendPrompt: mocks.sendPrompt,
 }));
+vi.mock("@/lib/instance-config", () => ({
+  runtimeRoot: mocks.runtimeRoot,
+}));
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: mocks.sendScratchPromptAndProjectEvents,
 }));
@@ -111,12 +135,16 @@ let POST: (
 ) => Promise<Response>;
 
 beforeEach(async () => {
-  state.selectCalls = 0;
+  state.scratchSelectCalls = 0;
   state.scratchStatus = "WaitingForUser";
   state.inserts = [];
   state.updates = [];
+  state.runtimeRoot = await mkdtemp(
+    path.join(tmpdir(), "maister-scratch-message-"),
+  );
   mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
   mocks.requireProjectAction.mockResolvedValue({ role: "member" });
+  mocks.runtimeRoot.mockReturnValue(state.runtimeRoot);
   mocks.sendPrompt.mockResolvedValue({ stopReason: "end_turn" });
   mocks.sendScratchPromptAndProjectEvents.mockResolvedValue({
     stopReason: "end_turn",
@@ -125,15 +153,41 @@ beforeEach(async () => {
   ({ POST } = await import("../route"));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+  if (state.runtimeRoot) {
+    await rm(state.runtimeRoot, { recursive: true, force: true });
+    state.runtimeRoot = null;
+  }
 });
 
 function request(content = "Continue"): NextRequest {
   return new Request("http://x/api/scratch-runs/run/messages", {
     method: "POST",
     body: JSON.stringify({ content, attachments: [] }),
+  }) as NextRequest;
+}
+
+function multipartRequest(args: {
+  content: string;
+  attachments?: Array<Record<string, unknown>>;
+  files?: File[];
+}): NextRequest {
+  const formData = new FormData();
+
+  formData.set(
+    "payload",
+    JSON.stringify({
+      content: args.content,
+      attachments: args.attachments ?? [],
+    }),
+  );
+  for (const file of args.files ?? []) formData.append("files", file);
+
+  return new Request("http://x/api/scratch-runs/run/messages", {
+    method: "POST",
+    body: formData,
   }) as NextRequest;
 }
 
@@ -168,6 +222,45 @@ describe("POST /api/scratch-runs/[runId]/messages", () => {
       stepId: "dialog",
       prompt: "Continue please",
     });
+  });
+
+  it("accepts multipart messages with mixed metadata and uploaded files", async () => {
+    const res = await POST(
+      multipartRequest({
+        content: "Continue with file",
+        attachments: [{ kind: "text_note", value: "note" }],
+        files: [new File(["hello"], "notes.txt", { type: "text/plain" })],
+      }),
+      ctx(),
+    );
+    const body = (await res.json()) as { ok?: boolean; sequence?: number };
+    const attachmentRows =
+      state.inserts.find((values) => {
+        if (!Array.isArray(values)) return false;
+
+        return values.some(
+          (row: Record<string, unknown>) => row.kind === "uploaded_file",
+        );
+      }) ?? [];
+    const uploaded = Array.isArray(attachmentRows)
+      ? attachmentRows.find(
+          (row: Record<string, unknown>) => row.kind === "uploaded_file",
+        )
+      : null;
+
+    expect(res.status).toBe(202);
+    expect(body).toMatchObject({ ok: true, sequence: 3 });
+    expect(uploaded).toMatchObject({
+      kind: "uploaded_file",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      byteSize: 5,
+    });
+    expect(mocks.sendScratchPromptAndProjectEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Uploaded files for this message:"),
+      }),
+    );
   });
 
   it("rejects while a scratch prompt is already running", async () => {

@@ -251,6 +251,45 @@ export async function branchExists(args: BranchRefArgs): Promise<boolean> {
   }
 }
 
+export async function removeBranch(args: BranchRefArgs): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  log.info({ projectRepoPath: repo, branch }, "[FIX] removeBranch");
+
+  try {
+    const { stdout, stderr } = await runGit(repo, [
+      "branch",
+      "-D",
+      "--",
+      branch,
+    ]);
+
+    log.debug({ stdout, stderr }, "removeBranch done");
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (stderrText.includes("not found")) {
+      log.debug(
+        { projectRepoPath: repo, branch, stderrText },
+        "removeBranch: missing — no-op",
+      );
+
+      return;
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git branch delete failed: ${stderrText || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
 export async function listBranches(projectRepoPath: string): Promise<string[]> {
   const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
 

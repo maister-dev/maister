@@ -134,7 +134,7 @@ erDiagram
         text id PK
         text project_id FK
         text capability_ref_id "UNIQUE per project/source/kind"
-        text kind "mcp|skill|rule|setting|restriction|tool"
+        text kind "mcp|skill|rule|setting|restriction|tool|agent_definition|env_profile"
         text label
         text source "platform|project|flow-package"
         text version
@@ -176,6 +176,7 @@ erDiagram
         text flow_version "snapshot or scratch sentinel"
         text flow_revision "snapshot or manual sentinel"
         text flow_revision_id FK "nullable for scratch"
+        text created_by_user_id FK "nullable launch/audit owner"
         timestamp checkpoint_at
         timestamp keepalive_until "30min sliding"
         timestamp started_at
@@ -271,6 +272,8 @@ erDiagram
         text project_id FK
         text name
         text initial_prompt
+        text work_mode "auto|plan_first|manual_approval"
+        text reasoning_effort "low|high|extra|ultra"
         text plan_mode "off|plan-first"
         text linked_task_id FK
         text linked_issue_url
@@ -303,9 +306,14 @@ erDiagram
         text id PK
         text run_id FK
         text message_id FK
-        text kind "issue_url|file_path|text_note"
+        text kind "issue_url|file_path|text_note|uploaded_file"
         text label
-        text value
+        text value "metadata value or rootless artifact ref"
+        text file_name
+        text mime_type
+        integer byte_size
+        text sha256
+        text storage_path "server-local path, never public DTO"
         timestamp created_at
     }
 

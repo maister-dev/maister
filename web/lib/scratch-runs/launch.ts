@@ -1,6 +1,11 @@
 import "server-only";
 
 import type { PromptPolicy } from "@/lib/scratch-runs/types";
+import type {
+  ScratchPlanMode,
+  ScratchReasoningEffort,
+  ScratchWorkMode,
+} from "@/lib/db/schema";
 
 export function scratchNameFallback(prompt: string): string {
   const firstLine = prompt.trim().split("\n")[0]?.trim() ?? "";
@@ -26,14 +31,45 @@ export function deriveScratchBranchName(args: {
   return `${args.branchPrefix}${args.projectSlug}/scratch/${suffix}`;
 }
 
-export function decoratePromptForPlanMode(args: PromptPolicy): string {
-  if (args.planMode === "off") return args.prompt;
+export function workModeToPlanMode(workMode: ScratchWorkMode): ScratchPlanMode {
+  return workMode === "plan_first" ? "plan-first" : "off";
+}
 
-  return [
-    "Start in plan-first mode. Inspect the workspace, write a concise plan, and wait for operator confirmation before code edits.",
-    "",
-    args.prompt,
-  ].join("\n");
+export function planModeToWorkMode(planMode: ScratchPlanMode): ScratchWorkMode {
+  return planMode === "plan-first" ? "plan_first" : "auto";
+}
+
+function workModeInstruction(workMode: ScratchWorkMode): string | null {
+  if (workMode === "plan_first") {
+    return "Start in plan-first mode. Inspect the workspace, write a concise plan, and wait for operator confirmation before code edits.";
+  }
+  if (workMode === "manual_approval") {
+    return "Manual approval policy: ask the operator before making code edits or running potentially destructive commands.";
+  }
+
+  return null;
+}
+
+function reasoningInstruction(
+  reasoningEffort: ScratchReasoningEffort,
+): string | null {
+  if (reasoningEffort === "high") return null;
+
+  return `Reasoning effort policy: ${reasoningEffort}. Treat this as run guidance unless the selected ACP runner enforces it natively.`;
+}
+
+export function decoratePromptForPlanMode(args: PromptPolicy): string {
+  const workMode = args.workMode ?? planModeToWorkMode(args.planMode);
+  const reasoningEffort = args.reasoningEffort ?? "high";
+  const instruction = workModeInstruction(workMode);
+  const policyLines = [
+    instruction,
+    reasoningInstruction(reasoningEffort),
+  ].filter((line): line is string => line !== null);
+
+  if (policyLines.length === 0 && args.planMode === "off") return args.prompt;
+
+  return [...policyLines, "", args.prompt].join("\n");
 }
 
 export function scratchStepId(): string {
