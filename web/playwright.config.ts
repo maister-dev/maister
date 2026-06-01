@@ -9,6 +9,8 @@ const BASE_URL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
 const AUTH_SECRET =
   process.env.AUTH_SECRET ?? "e2e-insecure-test-secret-change-me";
 const AUTH_FILE = "e2e/.auth/admin.json";
+const AUTHED_SPEC =
+  /.*(m11[ab]-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -28,7 +30,7 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: [/.*\.setup\.ts$/, /m11[ab]-.*\.spec\.ts$/],
+      testIgnore: [/.*\.setup\.ts$/, AUTHED_SPEC, /live-.*\.spec\.ts$/],
     },
     // M11a/M11b specs run as the seeded admin against the dedicated e2e DB,
     // each against its OWN per-spec seeded project/run/worktree fixture.
@@ -36,7 +38,7 @@ export default defineConfig({
       name: "authed",
       use: { ...devices["Desktop Chrome"], storageState: AUTH_FILE },
       dependencies: ["setup"],
-      testMatch: /m11[ab]-.*\.spec\.ts$/,
+      testMatch: AUTHED_SPEC,
     },
   ],
   webServer: {
