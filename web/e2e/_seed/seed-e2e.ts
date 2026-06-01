@@ -174,6 +174,16 @@ type FixtureRecord = {
   worktreePath: string;
 };
 
+// The M11c refusal fixture has no run yet (the whole point is that launching it
+// is refused before a run exists), so it carries the task id and the node/class
+// the refusal message must name instead of a runId.
+type RefuseFixtureRecord = {
+  projectSlug: string;
+  taskId: string;
+  nodeId: string;
+  refusedClass: string;
+};
+
 type UserFixture = {
   id: string;
   email: string;
@@ -209,6 +219,86 @@ const LINEAR_MANIFEST = {
       id: "review",
       type: "human",
       prompt: "Review acceptance fixture.",
+    },
+  ],
+};
+
+// --- M11c fixture A: settings VISIBLE on a parked review run ----------------
+// A NeedsInput run parked at a `review` human node (no worktree, never resumes)
+// whose `implement` ai_coding node carries `settings` with an all-`instruct`
+// enforcement map. The run-detail settings panel reads the pinned manifest
+// (flows.manifest fallback in getRunSettings) and runs evaluateNodeEnforcement
+// live → every declared class resolves to `instructed`.
+
+const M11C_VISIBLE_SLUG = "e2e-m11c-visible";
+const M11C_VISIBLE_BRANCH = "maister/e2e-m11c-visible";
+const M11C_VISIBLE_NODE = "implement";
+
+const M11C_VISIBLE_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Settings Visible (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: M11C_VISIBLE_NODE,
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: "review" },
+      settings: {
+        mcps: ["github"],
+        tools: { claude: ["Edit"] },
+        enforcement: { mcps: "instruct", tools: "instruct" },
+      },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: M11C_VISIBLE_NODE },
+      rework: {
+        allowedTargets: [M11C_VISIBLE_NODE],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+const M11C_VISIBLE_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: M11C_VISIBLE_NODE },
+  reworkTargets: [M11C_VISIBLE_NODE],
+  workspacePolicies: ["keep"],
+};
+
+// --- M11c fixture B: strict-enforcement REFUSAL at launch -------------------
+// A launchable Backlog task whose enabled flow revision pins an ai_coding
+// `implement` node declaring `enforcement.mcps: "strict"`. On the FROZEN
+// all-instructed enforceability table no agent can strictly enforce `mcps`, so
+// POST /api/runs refuses with CONFIG (400) at the settings-enforcement gate —
+// BEFORE any worktree/run/workspace is created. The flow row is Enabled +
+// trusted and points at a flow_revisions row carrying the strict manifest (the
+// launch path resolves the manifest from flow.enabledRevisionId →
+// flow_revisions.manifest, never from flows.manifest).
+
+const M11C_REFUSE_SLUG = "e2e-m11c-refuse";
+const M11C_REFUSE_NODE = "implement";
+
+const M11C_REFUSE_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Strict Refusal (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: M11C_REFUSE_NODE,
+      type: "ai_coding",
+      action: { prompt: "/aif-implement {{ task.prompt }}" },
+      transitions: { success: "done" },
+      settings: { mcps: ["github"], enforcement: { mcps: "strict" } },
     },
   ],
 };
@@ -857,6 +947,199 @@ async function createRegistrationFixture(): Promise<RegistrationFixture> {
   };
 }
 
+async function seedM11cVisibleFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    executor: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    hitl: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-m11c-visible`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11C_VISIBLE_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project,
+      M11C_VISIBLE_SLUG,
+      "MAIster E2E M11c Visible",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m11c-visible@v0.0.1`,
+      JSON.stringify(M11C_VISIBLE_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E settings visible", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version)
+     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1')`,
+    [ids.run, ids.task, ids.project, ids.flow, ids.executor],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      M11C_VISIBLE_BRANCH,
+      worktreePath,
+      repoPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, $4)`,
+    [
+      ids.hitl,
+      ids.run,
+      JSON.stringify(M11C_VISIBLE_REVIEW_SCHEMA),
+      "Review the implementation. Approve to ship, or request rework.",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    runId: ids.run,
+    hitlRequestId: ids.hitl,
+    projectSlug: M11C_VISIBLE_SLUG,
+    branch: M11C_VISIBLE_BRANCH,
+    worktreePath,
+  };
+}
+
+async function seedM11cRefuseFixture(
+  pool: Pool,
+  userId: string,
+): Promise<RefuseFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    executor: randomUUID(),
+    flow: randomUUID(),
+    revision: randomUUID(),
+    task: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const installedPath = `/tmp/maister-e2e/flows/aif-m11c-refuse@v0.0.1`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11C_REFUSE_SLUG]);
+  // flow_revisions is project-independent (keyed by flow_ref_id + resolved
+  // revision); delete the prior row by that unique key for idempotency.
+  await pool.query(
+    `DELETE FROM flow_revisions WHERE flow_ref_id = 'aif-m11c-refuse'`,
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      M11C_REFUSE_SLUG,
+      "MAIster E2E M11c Refuse",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor, ids.project],
+  );
+  // The enabled revision the launch path resolves the manifest from. Installed +
+  // setup done + supported schema + engine-compatible so launch reaches the
+  // settings-enforcement gate rather than failing an earlier precondition.
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision, manifest_digest,
+        manifest, schema_version, engine_min, installed_path, setup_status, package_status)
+     VALUES ($1, 'aif-m11c-refuse', $2, 'v0.0.1', 'rev-m11c-refuse', 'sha-m11c-refuse',
+        $3, 1, '1.1.0', $4, 'done', 'Installed')`,
+    [
+      ids.revision,
+      "github.com/maister/maister-flow-aif",
+      JSON.stringify(M11C_REFUSE_MANIFEST),
+      installedPath,
+    ],
+  );
+  // The project flow row: Enabled + trusted, pointing at the strict revision.
+  // recommended_executor_id resolves the executor (the flowRecommended tier) so
+  // resolveExecutor does not throw EXECUTOR_UNAVAILABLE before the settings gate
+  // — the project has no default_executor_id and the task no override.
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, revision, installed_path, manifest,
+        schema_version, recommended_executor_id, enabled_revision_id, enablement_state, trust_status)
+     VALUES ($1, $2, 'aif-m11c-refuse', $3, 'v0.0.1', 'rev-m11c-refuse', $4, $5, 1,
+        $6, $7, 'Enabled', 'trusted')`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      installedPath,
+      JSON.stringify(M11C_REFUSE_MANIFEST),
+      ids.executor,
+      ids.revision,
+    ],
+  );
+  // A launchable Backlog task → the board shows a Launch button on its card.
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'Backlog', 'Backlog')`,
+    [
+      ids.task,
+      ids.project,
+      "E2E strict refusal",
+      "implement the feature",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    projectSlug: M11C_REFUSE_SLUG,
+    taskId: ids.task,
+    nodeId: M11C_REFUSE_NODE,
+    refusedClass: "mcps",
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -879,6 +1162,8 @@ async function main(): Promise<void> {
           REGISTRATION_SLUG,
           REGISTRATION_DUP_SLUG,
           LIVE_CCR_SLUG,
+          M11C_VISIBLE_SLUG,
+          M11C_REFUSE_SLUG,
         ],
       ],
     );
@@ -979,6 +1264,8 @@ async function main(): Promise<void> {
       },
     });
     const registration = await createRegistrationFixture();
+    const m11cVisible = await seedM11cVisibleFixture(pool, admin.id);
+    const m11cRefuse = await seedM11cRefuseFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -1010,6 +1297,8 @@ async function main(): Promise<void> {
         scratch,
         liveCcr,
         registration,
+        m11cVisible,
+        m11cRefuse,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -1021,7 +1310,8 @@ async function main(): Promise<void> {
       "utf8",
     );
     console.log(
-      `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, board ${board.projectSlug}, scratch ${scratch.projectSlug}`,
+      `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, board ${board.projectSlug}, scratch ${scratch.projectSlug}` +
+        `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})`,
     );
   } finally {
     await pool.end();

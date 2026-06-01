@@ -4,11 +4,14 @@
 // migrations (incl. M11a 0010_m11a_graph_ledger), and plants the review→rework
 // fixture. Auth (storageState) is handled separately by e2e/auth.setup.ts so
 // it runs after the webServer is ready.
+import type { Server } from "node:http";
+
 import { execSync } from "node:child_process";
 
 import { Pool } from "pg";
 
 import { E2E_DB_URL } from "./_seed/db-url";
+import { startStubSupervisor } from "./_seed/stub-supervisor";
 
 async function ensureDatabase(url: string): Promise<void> {
   const dbName = new URL(url).pathname.replace(/^\//, "");
@@ -36,7 +39,7 @@ async function ensureDatabase(url: string): Promise<void> {
   }
 }
 
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(): Promise<() => Promise<void>> {
   if (!E2E_DB_URL.startsWith("postgres")) {
     throw new Error(
       `e2e requires a Postgres E2E_DB_URL; got "${E2E_DB_URL}". ` +
@@ -60,4 +63,13 @@ export default async function globalSetup(): Promise<void> {
 
   console.log("global-setup: seeding review→rework fixture…");
   execSync("pnpm exec tsx e2e/_seed/seed-e2e.ts", { stdio: "inherit", env });
+
+  // The stub supervisor must be up BEFORE the webServer boots so the M11c
+  // launch-refusal scenario reads the platform as ready (and the board Launch
+  // button is enabled). Returned as the Playwright global teardown.
+  const stub: Server = await startStubSupervisor();
+
+  return async () => {
+    await new Promise<void>((resolve) => stub.close(() => resolve()));
+  };
 }
