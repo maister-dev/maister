@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 import { and, asc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import pino from "pino";
 
@@ -8,15 +10,19 @@ import { markCheckpointed } from "./state-transitions";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { compileManifest } from "@/lib/flows/graph/compile";
+import { markNodeFailed } from "@/lib/flows/graph/ledger";
 import { releaseSlotOnIdle } from "@/lib/scheduler";
 import {
   checkpointSession,
+  deleteSession,
   listSessions,
   type SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
+const { flowRevisions, flows, hitlRequests, nodeAttempts, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -286,10 +292,201 @@ async function runPass2(db: Db): Promise<number> {
   return abandoned;
 }
 
+// --- M11c Phase 3B: time-limit kill-on-cap watchdog (ADR-032) --------------
+
+type TimeLimitCandidate = {
+  id: string;
+  flowId: string | null;
+  flowRevisionId: string | null;
+  currentStepId: string | null;
+  acpSessionId: string | null;
+};
+
+async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
+  const rows = await db
+    .select({
+      id: runs.id,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+      currentStepId: runs.currentStepId,
+      acpSessionId: runs.acpSessionId,
+    })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.status, "Running"),
+        eq(runs.runKind, "flow"),
+        isNotNull(runs.currentStepId),
+        isNotNull(runs.acpSessionId),
+      ),
+    )
+    .orderBy(asc(runs.startedAt))
+    .limit(PER_TICK_LIMIT);
+
+  return rows;
+}
+
+// Resolve the pinned manifest for a run: the immutable flow_revisions.manifest
+// when the run carries a revision pin, else the live flows.manifest.
+async function resolveRunManifest(
+  db: Db,
+  candidate: TimeLimitCandidate,
+): Promise<FlowYamlV1 | null> {
+  if (candidate.flowRevisionId) {
+    const revRows = await db
+      .select({ manifest: flowRevisions.manifest })
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, candidate.flowRevisionId));
+
+    if (revRows[0]?.manifest) return revRows[0].manifest as FlowYamlV1;
+  }
+
+  if (!candidate.flowId) return null;
+
+  const flowRows = await db
+    .select({ manifest: flows.manifest })
+    .from(flows)
+    .where(eq(flows.id, candidate.flowId));
+
+  return (flowRows[0]?.manifest ?? null) as FlowYamlV1 | null;
+}
+
+function maxDurationMinutesFor(
+  manifest: FlowYamlV1,
+  nodeId: string,
+): number | null {
+  const node = compileManifest(manifest).nodes.get(nodeId);
+
+  if (!node) return null;
+  const settings = node.settings as
+    | { limits?: { maxDurationMinutes?: number } }
+    | undefined;
+  const cap = settings?.limits?.maxDurationMinutes;
+
+  return typeof cap === "number" ? cap : null;
+}
+
+type ActiveAttempt = { id: string; startedAt: Date };
+
+async function fetchActiveAttempt(
+  db: Db,
+  runId: string,
+  nodeId: string,
+): Promise<ActiveAttempt | null> {
+  const rows = await db
+    .select({ id: nodeAttempts.id, startedAt: nodeAttempts.startedAt })
+    .from(nodeAttempts)
+    .where(
+      and(
+        eq(nodeAttempts.runId, runId),
+        eq(nodeAttempts.nodeId, nodeId),
+        eq(nodeAttempts.status, "Running"),
+      ),
+    )
+    .orderBy(asc(nodeAttempts.attempt));
+
+  return rows.length > 0 ? rows[rows.length - 1] : null;
+}
+
+// Kill-on-cap pass: a Running flow node whose effective
+// limits.maxDurationMinutes is exceeded (elapsed from the active node attempt's
+// started_at) is terminated via supervisor DELETE (which drives teardown so no
+// permission deferred leaks), the attempt marked Failed, the run ended Failed.
+// Cost limits stay record-only — never a kill trigger.
+async function runTimeLimitPass(db: Db): Promise<number> {
+  const candidates = await fetchTimeLimitCandidates(db);
+
+  if (candidates.length === 0) return 0;
+
+  const supervisorMap = await loadSupervisorSessions();
+
+  if (supervisorMap === null) {
+    log.warn(
+      { candidateCount: candidates.length },
+      "watchdog aborted — listSessions failed; leaving Running candidates for next tick",
+    );
+
+    return 0;
+  }
+
+  let killed = 0;
+
+  await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
+    const manifest = await resolveRunManifest(db, row);
+
+    if (!manifest || !row.currentStepId) return;
+
+    const cap = maxDurationMinutesFor(manifest, row.currentStepId);
+
+    if (cap === null) return;
+
+    const attempt = await fetchActiveAttempt(db, row.id, row.currentStepId);
+
+    if (!attempt) return;
+
+    const elapsedMs = Date.now() - attempt.startedAt.getTime();
+
+    log.info(
+      { runId: row.id, nodeId: row.currentStepId, capMinutes: cap },
+      "watchdog armed for capped Running node",
+    );
+
+    if (elapsedMs <= cap * 60_000) return;
+
+    const live = row.acpSessionId
+      ? supervisorMap.get(row.acpSessionId)
+      : undefined;
+
+    if (live) {
+      try {
+        await deleteSession(live.sessionId);
+      } catch (err) {
+        log.warn(
+          {
+            runId: row.id,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "watchdog deleteSession failed — proceeding to mark Failed (session unrecoverable)",
+        );
+      }
+    }
+
+    // A declared maxDurationMinutes cap was exceeded — same family as the
+    // concurrency-cap PRECONDITION the sweeper already owns, NOT a pending-
+    // permission deferred expiry (that is HITL_TIMEOUT, which drives the
+    // /respond terminal branch). ADR-008 closed union: reuse PRECONDITION.
+    await markNodeFailed(attempt.id, { errorCode: "PRECONDITION" }, db);
+
+    const updated = await db
+      .update(runs)
+      .set({ status: "Failed", endedAt: new Date(), currentStepId: null })
+      .where(and(eq(runs.id, row.id), eq(runs.status, "Running")))
+      .returning({ id: runs.id });
+
+    if (updated.length === 0) {
+      log.debug(
+        { runId: row.id },
+        "watchdog status-guard mismatch — concurrent transition won",
+      );
+
+      return;
+    }
+
+    killed += 1;
+    log.warn(
+      { runId: row.id, nodeId: row.currentStepId, capMinutes: cap, elapsedMs },
+      "watchdog terminated run past maxDurationMinutes cap",
+    );
+  });
+
+  return killed;
+}
+
 export type SweepResult = {
   scannedRunsCount: number;
   idledCount: number;
   abandonedCount: number;
+  killedCount: number;
 };
 
 export async function runSweepTick(
@@ -298,19 +495,21 @@ export async function runSweepTick(
   const db = opts.db ?? getDb();
   const idledCount = await runPass1(db);
   const abandonedCount = await runPass2(db);
-  const scannedRunsCount = idledCount + abandonedCount;
+  const killedCount = await runTimeLimitPass(db);
+  const scannedRunsCount = idledCount + abandonedCount + killedCount;
 
   log.info(
     {
       scannedRunsCount,
       idledCount,
       abandonedCount,
+      killedCount,
       sweepIntervalSeconds: sweepIntervalSeconds(),
     },
     "sweeper tick complete",
   );
 
-  return { scannedRunsCount, idledCount, abandonedCount };
+  return { scannedRunsCount, idledCount, abandonedCount, killedCount };
 }
 
 // Singleton on globalThis so Next.js HMR does not multiply timers. The
