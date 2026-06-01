@@ -32,10 +32,9 @@ test("admin registers a local project and duplicate registration conflicts", asy
   await page.getByRole("button", { name: "Register project" }).click();
   expect((await registerResponse).status()).toBe(201);
   await expect(page.getByText("Project registered")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Open project/ })).toHaveAttribute(
-    "href",
-    `/projects/${fx.expectedSlug}`,
-  );
+  await expect(
+    page.getByRole("link", { name: /Open project/ }),
+  ).toHaveAttribute("href", `/projects/${fx.expectedSlug}`);
 
   const registeredCount = await countRows("projects", "slug = $1", [
     fx.expectedSlug,

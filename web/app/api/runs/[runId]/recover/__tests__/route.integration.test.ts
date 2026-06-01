@@ -16,13 +16,14 @@
 // mocked so each state→HTTP edge is asserted in isolation. The auth + project
 // membership trust boundary runs against the real DB.
 
+import type { RecoverResult } from "@/lib/runs/recover";
+
 import { randomUUID } from "node:crypto";
 
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
@@ -36,8 +37,6 @@ import {
   it,
   vi,
 } from "vitest";
-
-import type { RecoverResult } from "@/lib/runs/recover";
 
 import * as schemaModule from "@/lib/db/schema";
 

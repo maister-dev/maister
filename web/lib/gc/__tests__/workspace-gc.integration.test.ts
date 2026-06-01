@@ -42,8 +42,16 @@ import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { gcAgeDays } from "@/lib/instance-config";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flowRevisions, flows, projects, runs, tasks, users, workspaces } =
-  schema;
+const {
+  executors,
+  flowRevisions,
+  flows,
+  projects,
+  runs,
+  tasks,
+  users,
+  workspaces,
+} = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -214,7 +222,9 @@ function makeOpts(
   const removeOwnedWorktree = vi.fn(
     async (_args: Record<string, unknown>) => {},
   );
-  const resolveBaseRef = vi.fn(async () => "basesha0000000000000000000000000000000000");
+  const resolveBaseRef = vi.fn(
+    async () => "basesha0000000000000000000000000000000000",
+  );
   const preserveWorktree = vi.fn(
     over.preserveResult ??
       (async (args: { runId: string }) => ({
@@ -387,7 +397,9 @@ describe("runWorkspaceGcSweep (integration)", () => {
     const { opts, preserveWorktree, removeOwnedWorktree } = makeOpts({
       worktreeExists: async () => false,
       preserveResult: async () => {
-        throw new Error("preserve must not be called on an already-gone worktree");
+        throw new Error(
+          "preserve must not be called on an already-gone worktree",
+        );
       },
     });
     const summary = await runWorkspaceGcSweep(opts);

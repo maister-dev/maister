@@ -8,9 +8,20 @@ import type {
 } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+} from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { deriveTtlInfo } from "@/lib/gc/ttl";
+import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import * as schema from "@/lib/db/schema";
 
 const {
@@ -42,6 +53,10 @@ export const ACTIVE_RUN_STATUSES = [
   // mirroring lib/board.ts (which buckets HumanWorking into the in-flight set).
   "HumanWorking",
 ] as const;
+
+// M19 Phase 5: terminal run statuses whose surviving workspace still shows a GC
+// removal countdown in the left rail until the sweeper prunes it.
+export const RAIL_TTL_STATUSES = ["Abandoned", "Done"] as const;
 
 export type PortfolioStatus = "running" | "idle";
 export type AgentRole = "claude" | "codex" | "dev";
@@ -498,6 +513,8 @@ export type RailWorkspaceTone =
   | "review"
   | "crashed";
 
+export type RailTtlState = "active" | "warning" | "due";
+
 export interface RailWorkspaceRow {
   runId: string;
   runKind: RunKind;
@@ -510,6 +527,13 @@ export interface RailWorkspaceRow {
   time: string;
   href: string;
   latestActivityAt: Date;
+  // M19 Phase 5: GC TTL projection for the left-rail removal-countdown badge.
+  // Derived from deriveTtlInfo — DTO-only enums/booleans/Date, never raw
+  // session ids or worktree paths.
+  ttlState: RailTtlState;
+  effectiveRemovalAt: Date | null;
+  archived: boolean;
+  pruned: boolean;
 }
 
 export interface RailWorkspaceGroup {
@@ -545,6 +569,11 @@ function railStatus(input: {
   if (input.runStatus === "Review") return { label: "Review", tone: "review" };
   if (input.runStatus === "Crashed") {
     return { label: "Crashed", tone: "crashed" };
+  }
+  // M19 Phase 5: terminal workspaces awaiting GC surface their own (dimmed)
+  // status so they read as "winding down", not "Running".
+  if (input.runStatus === "Abandoned" || input.runStatus === "Done") {
+    return { label: input.runStatus, tone: "review" };
   }
 
   return { label: "Running", tone: "running" };
@@ -586,10 +615,14 @@ export async function getRailWorkspaceGroups(
       runKind: runs.runKind,
       createdByUserId: runs.createdByUserId,
       startedAt: runs.startedAt,
+      endedAt: runs.endedAt,
       runId: runs.id,
       scratchName: scratchRuns.name,
       scratchDialogStatus: scratchRuns.dialogStatus,
       scratchCreatedByUserId: scratchRuns.createdByUserId,
+      scheduledRemovalAt: workspaces.scheduledRemovalAt,
+      archivedBranch: workspaces.archivedBranch,
+      removedAt: workspaces.removedAt,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -597,16 +630,23 @@ export async function getRailWorkspaceGroups(
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id));
 
+  // Rail = active workspaces PLUS terminal (Abandoned/Done) workspaces still on
+  // disk that carry a GC removal deadline, so the TTL countdown badge surfaces
+  // before the sweeper prunes them.
+  const railFilter = and(
+    or(
+      inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+      and(
+        inArray(runs.status, [...RAIL_TTL_STATUSES]),
+        isNotNull(workspaces.scheduledRemovalAt),
+      ),
+    ),
+    isNull(workspaces.removedAt),
+  );
+
   const rows =
     globalRole === "admin"
-      ? await base
-          .where(
-            and(
-              inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-              isNull(workspaces.removedAt),
-            ),
-          )
-          .orderBy(desc(runs.startedAt))
+      ? await base.where(railFilter).orderBy(desc(runs.startedAt))
       : await base
           .innerJoin(
             projectMembers,
@@ -615,12 +655,7 @@ export async function getRailWorkspaceGroups(
               eq(projectMembers.userId, userId),
             ),
           )
-          .where(
-            and(
-              inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-              isNull(workspaces.removedAt),
-            ),
-          )
+          .where(railFilter)
           .orderBy(desc(runs.startedAt));
 
   const creatorIds = [
@@ -639,6 +674,9 @@ export async function getRailWorkspaceGroups(
       : [];
   const creators = new Map(creatorRows.map((row) => [row.id, row]));
   const groups = new Map<string, RailWorkspaceGroup>();
+  const nowMs = now.getTime();
+  const ageDays = gcAgeDays();
+  const warningDays = gcWarningDays();
 
   for (const row of rows) {
     const status = railStatus({
@@ -646,6 +684,16 @@ export async function getRailWorkspaceGroups(
       runKind: row.runKind as RunKind,
       scratchDialogStatus:
         row.scratchDialogStatus as ScratchDialogStatus | null,
+    });
+    const ttl = deriveTtlInfo({
+      status: row.status,
+      endedAt: row.endedAt,
+      scheduledRemovalAt: row.scheduledRemovalAt,
+      archivedBranch: row.archivedBranch,
+      removedAt: row.removedAt,
+      nowMs,
+      ageDays,
+      warningDays,
     });
     const creatorId = row.createdByUserId ?? row.scratchCreatedByUserId;
     const workspace: RailWorkspaceRow = {
@@ -665,6 +713,10 @@ export async function getRailWorkspaceGroups(
           ? `/scratch-runs/${row.runId}`
           : `/runs/${row.runId}`,
       latestActivityAt: row.startedAt,
+      ttlState: ttl.ttlState,
+      effectiveRemovalAt: ttl.effectiveRemovalAt,
+      archived: ttl.archived,
+      pruned: ttl.pruned,
     };
     const group =
       groups.get(row.projectId) ??

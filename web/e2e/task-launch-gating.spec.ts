@@ -11,7 +11,9 @@ test("task creation works, while launch is gated before side effects when superv
 
   await page.goto(`/projects/${fx.projectSlug}`);
   await page.getByRole("button", { name: "New task" }).click();
-  await page.locator('input[placeholder="Short summary of the task"]').fill(title);
+  await page
+    .locator('input[placeholder="Short summary of the task"]')
+    .fill(title);
   await page
     .locator('textarea[placeholder="What should the agent do?"]')
     .fill("Create a deterministic e2e backlog task.");

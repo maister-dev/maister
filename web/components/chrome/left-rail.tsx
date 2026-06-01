@@ -3,11 +3,34 @@ import type { RailWorkspaceGroup } from "@/lib/queries/portfolio";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement, ReactNode } from "react";
 
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
 import { PlatformStatusPill } from "@/components/chrome/platform-status";
+
+// Coarse relative-time copy for the GC removal countdown. Picks the largest unit
+// (days → hours → minutes) and uses Intl.RelativeTimeFormat so EN/RU phrasing
+// follows the active locale. Past deadlines render as "now".
+function countdownText(
+  locale: string,
+  effectiveRemovalAt: Date,
+  nowMs: number,
+): string {
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const deltaMs = effectiveRemovalAt.getTime() - nowMs;
+  const minutes = Math.round(deltaMs / 60_000);
+
+  if (deltaMs <= 0) return rtf.format(0, "minute");
+  if (Math.abs(minutes) >= 1440) {
+    return rtf.format(Math.round(minutes / 1440), "day");
+  }
+  if (Math.abs(minutes) >= 60) {
+    return rtf.format(Math.round(minutes / 60), "hour");
+  }
+
+  return rtf.format(minutes, "minute");
+}
 
 type WorkspaceStatus = "running" | "needs" | "queued" | "done";
 
@@ -104,6 +127,9 @@ export async function LeftRail({
 }: LeftRailProps): Promise<ReactElement> {
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
+  const tGc = await getTranslations("gc");
+  const locale = await getLocale();
+  const nowMs = Date.now();
   const activeCount =
     workspaceGroups.length > 0
       ? workspaceGroups.reduce((sum, group) => sum + group.activeCount, 0)
@@ -145,7 +171,7 @@ export async function LeftRail({
   return (
     <aside
       aria-label="Sections & active workspaces"
-      className="sticky top-[60px] hidden h-[calc(100vh-60px-56px)] flex-col gap-3.5 self-start overflow-y-auto overflow-x-hidden border-r border-line bg-paper px-3.5 pb-0 pt-3.5 md:flex"
+      className="sticky top-[60px] hidden h-[calc(100vh-60px-56px)] flex-col gap-3.5 self-start overflow-x-hidden border-r border-line bg-paper px-3.5 pb-0 pt-3.5 md:flex"
     >
       <nav
         aria-label="Sections"
@@ -205,7 +231,7 @@ export async function LeftRail({
         })}
       </nav>
 
-      <section className="flex min-h-[200px] flex-1 flex-col gap-1.5">
+      <section className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden">
         <div className="flex items-center justify-between px-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
           <span>{tPortfolio("activeWorkspaces")}</span>
           <button
@@ -278,6 +304,55 @@ export async function LeftRail({
                           {ws.time}
                         </span>
                       </Link>
+                      {ws.ttlState !== "active" || ws.archived ? (
+                        <div className="mb-1 flex flex-wrap items-center gap-1 px-2.5">
+                          {ws.ttlState !== "active" ? (
+                            <span
+                              className={clsx(
+                                "inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-[0.06em]",
+                                ws.ttlState === "due"
+                                  ? "border-red-300 bg-red-50 text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400"
+                                  : "border-amber-line bg-amber-soft text-amber",
+                              )}
+                              data-testid="ttl-badge"
+                              data-ttl-state={ws.ttlState}
+                            >
+                              <span
+                                className={clsx(
+                                  "h-[5px] w-[5px] rounded-full",
+                                  ws.ttlState === "due"
+                                    ? "bg-red-500"
+                                    : "bg-amber",
+                                )}
+                              />
+                              {ws.ttlState === "due"
+                                ? tGc("ttl.due")
+                                : tGc("ttl.warning")}
+                              {ws.effectiveRemovalAt ? (
+                                <span
+                                  suppressHydrationWarning
+                                  className="font-normal normal-case tracking-normal"
+                                >
+                                  ·{" "}
+                                  {countdownText(
+                                    locale,
+                                    ws.effectiveRemovalAt,
+                                    nowMs,
+                                  )}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
+                          {ws.archived ? (
+                            <span
+                              className="inline-flex items-center rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-mute"
+                              data-testid="ttl-archived"
+                            >
+                              {tGc("archived")}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

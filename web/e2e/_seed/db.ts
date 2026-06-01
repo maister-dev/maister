@@ -2,9 +2,7 @@ import { Pool } from "pg";
 
 import { E2E_DB_URL } from "./db-url";
 
-export async function withE2EDb<T>(
-  fn: (pool: Pool) => Promise<T>,
-): Promise<T> {
+export async function withE2EDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   const pool = new Pool({ connectionString: E2E_DB_URL });
 
   try {

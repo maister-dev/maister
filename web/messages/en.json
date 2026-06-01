@@ -382,7 +382,24 @@
     "settingsClassWorkspaceAccess": "Workspace access",
     "settingsNoConstraints": "No constrained capabilities",
     "settingsRefusalReason": "Refused at launch",
-    "settingsRefusedHint": "Settings refused at launch"
+    "settingsRefusedHint": "Settings refused at launch",
+    "cancel": "Cancel",
+    "crashTitle": "This run crashed",
+    "crashRecoverableHint": "A checkpoint survived. You can recover the run or discard its workspace.",
+    "notRecoverable": "This run cannot be recovered — discard its workspace to free the branch.",
+    "recover": "Recover",
+    "recovering": "Recovering…",
+    "recoverConfirmTitle": "Recover this run?",
+    "recoverConfirmBody": "Recovery re-runs the current node from its last checkpoint. Work already saved to the worktree is kept, but the node executes again from the start.",
+    "recoverQueued": "The host is at capacity — recovery is queued and will resume when a slot frees.",
+    "recoverConflict": "This run can no longer be recovered. Refresh and discard its workspace instead.",
+    "recoverGone": "The checkpoint is gone — this run can only be discarded now.",
+    "recoverRetry": "The supervisor is temporarily unavailable. Try again in a moment.",
+    "recoverError": "Recovery failed. Try again, or discard the workspace.",
+    "discard": "Discard",
+    "discarding": "Discarding…",
+    "discardConfirmTitle": "Discard this run?",
+    "discardConfirmBody": "Discarding abandons the run and schedules its worktree for removal. This cannot be undone."
   },
   "changePassword": {
     "title": "Change your password",
@@ -528,5 +545,14 @@
     "removed": "removed",
     "errorGeneric": "Action failed. Try again.",
     "adminOnly": "Package management requires the admin project role."
+  },
+  "gc": {
+    "ttl": {
+      "active": "Active",
+      "warning": "Removing soon",
+      "due": "Removal due"
+    },
+    "archived": "Archived",
+    "pruned": "Pruned"
   }
 }

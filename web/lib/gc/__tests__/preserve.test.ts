@@ -220,7 +220,9 @@ describe("preserveWorktree (real git)", () => {
 
     await track(repo);
 
-    const bare = await track(await mkdtemp(join(tmpdir(), "gc-preserve-bare-")));
+    const bare = await track(
+      await mkdtemp(join(tmpdir(), "gc-preserve-bare-")),
+    );
 
     await git(bare, "init", "-q", "--bare", "-b", "main");
     await git(repo, "remote", "add", "origin", bare);

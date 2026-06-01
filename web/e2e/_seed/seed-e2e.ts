@@ -303,6 +303,36 @@ const M11C_REFUSE_MANIFEST = {
   ],
 };
 
+// --- M19 fixture: reconcile + GC UI ----------------------------------------
+// One project carrying a recoverable Crashed flow run plus two terminal
+// Abandoned runs with staggered workspace removal deadlines. The Crashed run's
+// `current_step_id` points at the manifest's `ai_coding` node so
+// resolveCurrentNodeKind → "ai_coding" and the run-detail DTO computes
+// recoverable:true (status Crashed + acpSessionId present + agent node). None of
+// these runs resumes — no real worktree is provisioned (the M19 UI assertions
+// are read-only: run-detail crashed section, board Crashed column, left-rail TTL
+// badge, cron route). gcWarningDays defaults to 2 and gcAgeDays to 14.
+
+const M19_SLUG = "e2e-m19";
+const M19_CRASHED_BRANCH = "maister/e2e-m19-crashed";
+const M19_WARNING_BRANCH = "maister/e2e-m19-warning";
+const M19_DUE_BRANCH = "maister/e2e-m19-due";
+const M19_AGENT_NODE = "implement";
+
+const M19_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Reconcile/GC (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: M19_AGENT_NODE,
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
 function resetDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -773,10 +803,10 @@ async function seedLaunchableProjectFixture(
       executor.router ?? null,
     ],
   );
-  await pool.query(`UPDATE projects SET default_executor_id = $1 WHERE id = $2`, [
-    ids.executor,
-    ids.project,
-  ]);
+  await pool.query(
+    `UPDATE projects SET default_executor_id = $1 WHERE id = $2`,
+    [ids.executor, ids.project],
+  );
   await pool.query(
     `INSERT INTO flow_revisions
        (id, flow_ref_id, source, version_label, resolved_revision, manifest_digest, manifest,
@@ -1140,6 +1170,205 @@ async function seedM11cRefuseFixture(
   };
 }
 
+type M19FixtureRecord = {
+  projectId: string;
+  projectSlug: string;
+  repoPath: string;
+  crashedRunId: string;
+  crashedBranch: string;
+  warningRunId: string;
+  warningBranch: string;
+  dueRunId: string;
+  dueBranch: string;
+};
+
+async function seedM19Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M19FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    executor: randomUUID(),
+    flow: randomUUID(),
+    member: randomUUID(),
+    crashedTask: randomUUID(),
+    crashedRun: randomUUID(),
+    crashedWorkspace: randomUUID(),
+    crashedAttempt: randomUUID(),
+    warningTask: randomUUID(),
+    warningRun: randomUUID(),
+    warningWorkspace: randomUUID(),
+    dueTask: randomUUID(),
+    dueRun: randomUUID(),
+    dueWorkspace: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const now = Date.now();
+  const DAY_MS = 86_400_000;
+  // gcWarningDays defaults to 2 → warning deadline 1 day out (inside window).
+  const warningRemovalAt = new Date(now + 1 * DAY_MS).toISOString();
+  // due deadline already past → ttlState "due".
+  const dueRemovalAt = new Date(now - 1 * DAY_MS).toISOString();
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M19_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      M19_SLUG,
+      "MAIster E2E M19",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor, ids.project],
+  );
+  await pool.query(
+    `UPDATE projects SET default_executor_id = $1 WHERE id = $2`,
+    [ids.executor, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m19@v0.0.1`,
+      JSON.stringify(M19_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  // (1) Recoverable Crashed flow run: acp_session_id present + current node is
+  // the ai_coding node → run-detail recoverable:true, board Crashed column.
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.crashedTask,
+      ids.project,
+      "E2E crashed recoverable",
+      "do the thing",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, acp_session_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, 'Crashed', $6, 'acp-m19-crashed', 'v0.0.1', now(), now())`,
+    [
+      ids.crashedRun,
+      ids.crashedTask,
+      ids.project,
+      ids.flow,
+      ids.executor,
+      M19_AGENT_NODE,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status)
+     VALUES ($1, $2, $3, 'ai_coding', 1, 'Crashed')`,
+    [ids.crashedAttempt, ids.crashedRun, M19_AGENT_NODE],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.crashedWorkspace,
+      ids.crashedRun,
+      ids.project,
+      M19_CRASHED_BRANCH,
+      `${repoPath}/.worktrees/m19-crashed`,
+      repoPath,
+    ],
+  );
+
+  // (2) Abandoned run, workspace removal inside the warning window.
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'Abandoned', 'Backlog')`,
+    [ids.warningTask, ids.project, "E2E ttl warning", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, 'Abandoned', $6, 'v0.0.1', now(), now())`,
+    [
+      ids.warningRun,
+      ids.warningTask,
+      ids.project,
+      ids.flow,
+      ids.executor,
+      M19_AGENT_NODE,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, scheduled_removal_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      ids.warningWorkspace,
+      ids.warningRun,
+      ids.project,
+      M19_WARNING_BRANCH,
+      `${repoPath}/.worktrees/m19-warning`,
+      repoPath,
+      warningRemovalAt,
+    ],
+  );
+
+  // (3) Abandoned run, workspace removal deadline already past (due).
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'Abandoned', 'Backlog')`,
+    [ids.dueTask, ids.project, "E2E ttl due", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, 'Abandoned', $6, 'v0.0.1', now(), now())`,
+    [
+      ids.dueRun,
+      ids.dueTask,
+      ids.project,
+      ids.flow,
+      ids.executor,
+      M19_AGENT_NODE,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, scheduled_removal_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      ids.dueWorkspace,
+      ids.dueRun,
+      ids.project,
+      M19_DUE_BRANCH,
+      `${repoPath}/.worktrees/m19-due`,
+      repoPath,
+      dueRemovalAt,
+    ],
+  );
+
+  return {
+    projectId: ids.project,
+    projectSlug: M19_SLUG,
+    repoPath,
+    crashedRunId: ids.crashedRun,
+    crashedBranch: M19_CRASHED_BRANCH,
+    warningRunId: ids.warningRun,
+    warningBranch: M19_WARNING_BRANCH,
+    dueRunId: ids.dueRun,
+    dueBranch: M19_DUE_BRANCH,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -1151,35 +1380,30 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: url });
 
   try {
-    await pool.query(
-      `DELETE FROM projects WHERE slug = ANY($1::text[])`,
+    await pool.query(`DELETE FROM projects WHERE slug = ANY($1::text[])`, [
       [
-        [
-          M11A_SLUG,
-          M11B_SLUG,
-          BOARD_SLUG,
-          SCRATCH_SLUG,
-          REGISTRATION_SLUG,
-          REGISTRATION_DUP_SLUG,
-          LIVE_CCR_SLUG,
-          M11C_VISIBLE_SLUG,
-          M11C_REFUSE_SLUG,
-        ],
+        M11A_SLUG,
+        M11B_SLUG,
+        BOARD_SLUG,
+        SCRATCH_SLUG,
+        REGISTRATION_SLUG,
+        REGISTRATION_DUP_SLUG,
+        LIVE_CCR_SLUG,
+        M11C_VISIBLE_SLUG,
+        M11C_REFUSE_SLUG,
+        M19_SLUG,
       ],
-    );
-    await pool.query(
-      `DELETE FROM users WHERE email = ANY($1::text[])`,
+    ]);
+    await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
       [
-        [
-          ADMIN_EMAIL,
-          MUST_CHANGE_EMAIL,
-          PENDING_EMAIL,
-          DISABLED_EMAIL,
-          MEMBER_EMAIL,
-          EDIT_TARGET_EMAIL,
-        ],
+        ADMIN_EMAIL,
+        MUST_CHANGE_EMAIL,
+        PENDING_EMAIL,
+        DISABLED_EMAIL,
+        MEMBER_EMAIL,
+        EDIT_TARGET_EMAIL,
       ],
-    );
+    ]);
 
     const admin = await insertUser(pool, {
       email: ADMIN_EMAIL,
@@ -1266,6 +1490,7 @@ async function main(): Promise<void> {
     const registration = await createRegistrationFixture();
     const m11cVisible = await seedM11cVisibleFixture(pool, admin.id);
     const m11cRefuse = await seedM11cRefuseFixture(pool, admin.id);
+    const m19 = await seedM19Fixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -1299,6 +1524,7 @@ async function main(): Promise<void> {
         registration,
         m11cVisible,
         m11cRefuse,
+        m19,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -1311,7 +1537,8 @@ async function main(): Promise<void> {
     );
     console.log(
       `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, board ${board.projectSlug}, scratch ${scratch.projectSlug}` +
-        `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})`,
+        `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})` +
+        `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})`,
     );
   } finally {
     await pool.end();

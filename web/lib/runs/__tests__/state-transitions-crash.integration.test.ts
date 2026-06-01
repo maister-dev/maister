@@ -22,10 +22,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { gcAgeDays } from "@/lib/instance-config";
-import {
-  crashRunningRun,
-  markAbandoned,
-} from "@/lib/runs/state-transitions";
+import { crashRunningRun, markAbandoned } from "@/lib/runs/state-transitions";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { executors, flows, projects, runs, tasks, workspaces } = schema;
@@ -144,10 +141,7 @@ async function readRun(runId: string): Promise<any> {
 }
 
 async function readWorkspace(id: string): Promise<any> {
-  const rows = await db
-    .select()
-    .from(workspaces)
-    .where(eq(workspaces.id, id));
+  const rows = await db.select().from(workspaces).where(eq(workspaces.id, id));
 
   return rows[0];
 }

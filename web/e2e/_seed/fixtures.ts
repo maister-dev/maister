@@ -28,6 +28,27 @@ export type E2ERegistrationFixture = {
   duplicateSlug: string;
 };
 
+// M19 Phase 5: reconcile + GC UI fixture. One project carrying:
+//   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
+//     node → recoverable: true (run-detail crashed section + board Crashed col);
+//   • two terminal Abandoned runs whose workspaces have a staggered
+//     scheduled_removal_at — one inside the warning window, one already due —
+//     for the left-rail TTL badge (ttlState warning / due).
+export type E2EM19Fixture = {
+  projectId: string;
+  projectSlug: string;
+  repoPath: string;
+  // The recoverable Crashed flow run (run-detail + board Crashed column).
+  crashedRunId: string;
+  crashedBranch: string;
+  // Abandoned run whose workspace removal is inside the warning window.
+  warningRunId: string;
+  warningBranch: string;
+  // Abandoned run whose workspace removal deadline is already past (due).
+  dueRunId: string;
+  dueBranch: string;
+};
+
 export type E2EFixtures = {
   adminEmail: string;
   adminPassword: string;
@@ -50,6 +71,7 @@ export type E2EFixtures = {
     scratch: E2EProjectFixture;
     liveCcr: E2EProjectFixture;
     registration: E2ERegistrationFixture;
+    m19: E2EM19Fixture;
   };
 };
 

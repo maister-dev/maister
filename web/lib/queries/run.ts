@@ -16,10 +16,12 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { deriveTtlInfo } from "@/lib/gc/ttl";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
+import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
 
 const {
@@ -66,6 +68,12 @@ export interface RunDetail {
   // its current node is an agent node (`ai_coding`). DTO-projected boolean — the
   // raw `acpSessionId` is NEVER surfaced to the client.
   recoverable: boolean;
+  // M19 Phase 5: GC TTL projection for terminal (Abandoned/Done) runs — drives
+  // a removal-countdown surface on run-detail. DTO-only enums/booleans/Date.
+  ttlState: "active" | "warning" | "due";
+  effectiveRemovalAt: Date | null;
+  archived: boolean;
+  pruned: boolean;
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -99,6 +107,10 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
       agent: executors.agent,
+      endedAt: runs.endedAt,
+      scheduledRemovalAt: workspaces.scheduledRemovalAt,
+      archivedBranch: workspaces.archivedBranch,
+      removedAt: workspaces.removedAt,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -118,6 +130,16 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     status: row.status,
     acpSessionId: row.acpSessionId,
     currentNodeKind,
+  });
+  const ttl = deriveTtlInfo({
+    status: row.status,
+    endedAt: row.endedAt,
+    scheduledRemovalAt: row.scheduledRemovalAt,
+    archivedBranch: row.archivedBranch,
+    removedAt: row.removedAt,
+    nowMs: Date.now(),
+    ageDays: gcAgeDays(),
+    warningDays: gcWarningDays(),
   });
 
   const activeTakeoverRows = await client
@@ -157,6 +179,10 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     agent: row.agent,
     takeoverOwnerUserId,
     recoverable,
+    ttlState: ttl.ttlState,
+    effectiveRemovalAt: ttl.effectiveRemovalAt,
+    archived: ttl.archived,
+    pruned: ttl.pruned,
     pendingHitl: pending
       ? {
           hitlRequestId: pending.id,

@@ -23,9 +23,7 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await expect(
     page.getByRole("heading", { name: "E2E Acceptance Board" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "HITL inbox" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HITL inbox" })).toBeVisible();
   await expect(page.getByText("Acceptance backlog launch")).toBeVisible();
   await expect(page.locator("[data-board]")).toBeVisible();
   await expect(page.locator('[data-stage="backlog"]')).toContainText(

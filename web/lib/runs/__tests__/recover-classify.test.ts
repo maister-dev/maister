@@ -10,13 +10,20 @@
 //
 // PURE: no clock/db access; the run shape is a plain object literal.
 
-import { describe, expect, it } from "vitest";
-
 import type { RecoverPlan } from "@/lib/runs/recover";
+
+import { describe, expect, it } from "vitest";
 
 import { classifyRecover } from "@/lib/runs/recover";
 
-type NodeKind = "ai_coding" | "cli" | "check" | "judge" | "guard" | "human" | null;
+type NodeKind =
+  | "ai_coding"
+  | "cli"
+  | "check"
+  | "judge"
+  | "guard"
+  | "human"
+  | null;
 
 describe("classifyRecover — agent node", () => {
   it("ai_coding + acpSessionId present → resume-agent", () => {
@@ -46,9 +53,9 @@ describe("classifyRecover — non-agent node → redispatch", () => {
     it(`${String(kind)} node → redispatch (regardless of acpSessionId presence)`, () => {
       // A session-less gate node is re-dispatched via runFlow; the acpSessionId
       // (if any) is irrelevant to a non-agent node's recovery plan.
-      expect(classifyRecover({ acpSessionId: "acp-1" }, kind)).toBe<RecoverPlan>(
-        "redispatch",
-      );
+      expect(
+        classifyRecover({ acpSessionId: "acp-1" }, kind),
+      ).toBe<RecoverPlan>("redispatch");
       expect(classifyRecover({ acpSessionId: null }, kind)).toBe<RecoverPlan>(
         "redispatch",
       );

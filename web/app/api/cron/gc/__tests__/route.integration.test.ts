@@ -13,8 +13,6 @@
 //   4. a forced sub-sweep failure → 207 (partial).
 //   5. the response body never contains the token value.
 
-import { randomUUID } from "node:crypto";
-
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,

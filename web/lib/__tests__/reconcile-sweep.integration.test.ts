@@ -23,6 +23,9 @@
 //   8. listSessions THROWS → whole tick skipped, zeroed summary, NO run
 //      crashed.
 
+import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type { WorktreeInfo } from "@/lib/worktree";
+
 import { randomUUID } from "node:crypto";
 
 import {
@@ -33,10 +36,15 @@ import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
-import type { WorktreeInfo } from "@/lib/worktree";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { runReconcileSweep } from "@/lib/reconcile";
@@ -218,7 +226,8 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
     executorId,
     runKind: opts.runKind ?? "flow",
     status: opts.status ?? "Running",
-    acpSessionId: opts.acpSessionId === undefined ? "acp-default" : opts.acpSessionId,
+    acpSessionId:
+      opts.acpSessionId === undefined ? "acp-default" : opts.acpSessionId,
     currentStepId:
       opts.currentStepId === undefined ? "implement" : opts.currentStepId,
     flowVersion: "v1",
@@ -279,15 +288,16 @@ function makeOpts(over: {
   const runFlow = vi.fn(async () => {});
   const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
 
-  const listWorktrees = vi.fn(async (): Promise<WorktreeInfo[]> =>
-    (over.worktreePaths ?? []).map((p) => ({
-      path: p,
-      branch: "b",
-      head: "h",
-      bare: false,
-      locked: false,
-      prunable: false,
-    })),
+  const listWorktrees = vi.fn(
+    async (): Promise<WorktreeInfo[]> =>
+      (over.worktreePaths ?? []).map((p) => ({
+        path: p,
+        branch: "b",
+        head: "h",
+        bare: false,
+        locked: false,
+        prunable: false,
+      })),
   );
 
   const listSessions =

@@ -16,6 +16,7 @@ import {
   type TimelineEntry,
   type TimelineLabels,
 } from "@/components/board/run-timeline";
+import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import {
   getRunDetail,
@@ -134,6 +135,32 @@ export default async function RunDetailPage({
           ) : null}
         </div>
       </header>
+
+      {detail.status === "Crashed" ? (
+        <section
+          className="mb-6 rounded-[14px] border border-red-300 bg-red-50/60 p-5 dark:border-red-900/60 dark:bg-red-950/30"
+          data-testid="run-crashed-section"
+        >
+          <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-red-500 before:content-['']">
+            {t("crashTitle")}
+          </h2>
+          <p className="mb-4 text-[13px] leading-[1.4] text-body">
+            {detail.recoverable
+              ? t("crashRecoverableHint")
+              : t("notRecoverable")}
+          </p>
+          {detail.recoverable ? (
+            <RunRecoverActions runId={detail.runId} />
+          ) : (
+            <p
+              className="font-mono text-[12px] text-mute"
+              data-testid="run-not-recoverable"
+            >
+              {t("notRecoverable")}
+            </p>
+          )}
+        </section>
+      ) : null}
 
       {detail.pendingHitl ? (
         <section className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5">

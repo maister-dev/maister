@@ -27,9 +27,7 @@ describe("board — Crashed column (M19)", () => {
   });
 
   it("Crashed wins over Prepare taskStage", () => {
-    expect(
-      deriveStage(s("Crashed", { taskStage: "Prepare" })),
-    ).toBe("Crashed");
+    expect(deriveStage(s("Crashed", { taskStage: "Prepare" }))).toBe("Crashed");
   });
 
   it("Failed still maps to Backlog (retry rule)", () => {

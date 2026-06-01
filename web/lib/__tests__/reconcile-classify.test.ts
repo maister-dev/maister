@@ -16,9 +16,9 @@
 //
 // The classifier is PURE — nowMs/graceSeconds are inputs, no clock/db access.
 
-import { describe, expect, it } from "vitest";
-
 import type { ReconcileInput } from "@/lib/reconcile";
+
+import { describe, expect, it } from "vitest";
 
 import { classifyRunReconcile } from "@/lib/reconcile";
 
@@ -85,9 +85,7 @@ describe("classifyRunReconcile — step 2: worktree gone → crash", () => {
     // worktree-gone is checked BEFORE liveSession: a missing worktree can't
     // continue even if a session is somehow still live.
     expect(
-      classifyRunReconcile(
-        input({ worktreeExists: false, liveSession: true }),
-      ),
+      classifyRunReconcile(input({ worktreeExists: false, liveSession: true })),
     ).toEqual({ action: "crash", reason: "worktree-gone" });
   });
 
@@ -102,9 +100,10 @@ describe("classifyRunReconcile — step 2: worktree gone → crash", () => {
 
 describe("classifyRunReconcile — step 3: live session → reattach", () => {
   it("Running + worktree present + live session → reattach / live-session", () => {
-    expect(
-      classifyRunReconcile(input({ liveSession: true })),
-    ).toEqual({ action: "reattach", reason: "live-session" });
+    expect(classifyRunReconcile(input({ liveSession: true }))).toEqual({
+      action: "reattach",
+      reason: "live-session",
+    });
   });
 
   it("live session wins over node kind (cli) and over grace anchors", () => {
@@ -122,9 +121,10 @@ describe("classifyRunReconcile — step 3: live session → reattach", () => {
 
 describe("classifyRunReconcile — step 4a: cli node, no live session → crash", () => {
   it("Running + no live session + cli node → crash / cli-not-retry-safe", () => {
-    expect(
-      classifyRunReconcile(input({ currentNodeKind: "cli" })),
-    ).toEqual({ action: "crash", reason: "cli-not-retry-safe" });
+    expect(classifyRunReconcile(input({ currentNodeKind: "cli" }))).toEqual({
+      action: "crash",
+      reason: "cli-not-retry-safe",
+    });
   });
 
   it("cli crash is independent of grace anchors (cli is never retry-safe)", () => {
@@ -238,9 +238,10 @@ describe("classifyRunReconcile — step 4c: retry-safe gate → redispatch", () 
 
   for (const kind of GATE_KINDS) {
     it(`no live session + ${String(kind)} node → redispatch / gate-redispatch`, () => {
-      expect(
-        classifyRunReconcile(input({ currentNodeKind: kind })),
-      ).toEqual({ action: "redispatch", reason: "gate-redispatch" });
+      expect(classifyRunReconcile(input({ currentNodeKind: kind }))).toEqual({
+        action: "redispatch",
+        reason: "gate-redispatch",
+      });
     });
   }
 

@@ -92,7 +92,9 @@ test.describe("authentication lifecycle", () => {
     await page.getByRole("button", { name: "Create account" }).click();
 
     await expect(
-      page.getByText("Account created. An admin must activate it before you can sign in."),
+      page.getByText(
+        "Account created. An admin must activate it before you can sign in.",
+      ),
     ).toBeVisible();
 
     const pendingCount = await countRows(

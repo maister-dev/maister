@@ -27,6 +27,8 @@
 //   - unresumable: createSession throws CHECKPOINT → {state:"unresumable"},
 //     run back to Crashed with resume_started_at CLEARED.
 
+import type { CreateSessionResult } from "@/lib/supervisor-client";
+
 import { randomUUID } from "node:crypto";
 
 import {
@@ -46,8 +48,6 @@ import {
   it,
   vi,
 } from "vitest";
-
-import type { CreateSessionResult } from "@/lib/supervisor-client";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";

@@ -9,9 +9,15 @@ const PORT = Number(process.env.E2E_PORT ?? 3100);
 const BASE_URL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
 const AUTH_SECRET =
   process.env.AUTH_SECRET ?? "e2e-insecure-test-secret-change-me";
+// M19: the GET|POST /api/cron/gc route authenticates against MAISTER_CRON_TOKEN.
+// Pinned here (and re-read by e2e/m19-reconcile-gc.spec.ts via process.env) so
+// the cron auth-gate scenario can assert no-token→503, wrong-token→401,
+// valid-token→200/207 deterministically.
+const MAISTER_CRON_TOKEN =
+  process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(m11[abc]-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch)\.spec\.ts$/;
+  /.*(m11[abc]-.*|m19-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -62,6 +68,8 @@ export default defineConfig({
       // button is enabled and POST /api/runs gets PAST the health check to the
       // settings-enforcement gate (which is what refuses with CONFIG 400).
       MAISTER_SUPERVISOR_URL: STUB_SUPERVISOR_URL,
+      // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts).
+      MAISTER_CRON_TOKEN,
     },
   },
 });
