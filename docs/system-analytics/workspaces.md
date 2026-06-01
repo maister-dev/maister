@@ -50,6 +50,28 @@ stateDiagram-v2
     Removed --> [*]
 ```
 
+### M19 graceful GC lifecycle (Designed)
+
+M19 ([ADR-035](../decisions.md#adr-035)) refines the terminal tail of the
+lifecycle above into a **preserve-then-prune** countdown. On the `Abandoned`/
+`Done` transition the run stamps `workspaces.scheduled_removal_at = ended_at +
+MAISTER_GC_AGE_DAYS` (default 14); the worktree then sits in a TTL countdown,
+is **archived** (preserved) by the GC sweep, and only then **pruned**. Full GC
+domain detail — both delivery surfaces, the cron route, and the preserve
+flowchart — lives in [`reconciliation-gc.md`](reconciliation-gc.md). The GC
+state is **derived** from `scheduled_removal_at`, `archived_at`, and
+`removed_at` (no `gc_state` enum column).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Countdown: run terminal (Abandoned/Done)<br/>scheduled_removal_at stamped (migration 0015)
+    Countdown --> Countdown: now < effective deadline<br/>TTL ramp green to amber to red
+    Countdown --> Archived: GC sweep preserve<br/>archived_branch + archived_at set
+    Archived --> Pruned: removeOwnedWorktree<br/>removed_at set
+    Countdown --> Pruned: clean + merged<br/>nothing to preserve
+    Pruned --> [*]
+```
+
 ## Process flows
 
 ### Create a worktree (Implemented)
@@ -126,6 +148,13 @@ flowchart TD
     NeedsInputIdle -- no --> Crash
 ```
 
+> M19 ([ADR-033](../decisions.md#adr-033)) makes this reconcile **allow-list
+> `Running`-only** and adds a grace guard plus a retry-safety split (read-only
+> `check`/`judge` gate nodes re-dispatch; `cli` nodes crash). The
+> "runs vs `git worktree list`" branch becomes the `worktree-gone → Crashed`
+> classification. The full classifier and the GC lifecycle live in
+> [`reconciliation-gc.md`](reconciliation-gc.md).
+
 ### Project-grouped active workspaces (Implemented)
 
 ```mermaid
@@ -160,6 +189,54 @@ flowchart LR
     Update --> Done([next row])
 ```
 
+### M19 preserve-then-prune GC (Designed)
+
+M19 ([ADR-035](../decisions.md#adr-035)) replaces the single-step removal above
+with a graceful, destructive-safe sweep delivered BOTH as a background
+`globalThis`-singleton sweeper (`MAISTER_GC_SWEEP_INTERVAL_SECONDS`, default
+3600) and the token-guarded cron route. The candidate select uses the
+**effective deadline** so pre-0015 terminal runs (null `scheduled_removal_at`)
+are still collected. Every removal is gated on preserve success; GC archives a
+branch, it NEVER merges to main/target.
+
+```mermaid
+flowchart TD
+    Sweep([sweeper tick or POST /api/cron/gc]) --> Select[SELECT workspaces<br/>WHERE removed_at IS NULL<br/>AND run.status IN Abandoned, Done<br/>AND COALESCE scheduled_removal_at,<br/>ended_at + MAISTER_GC_AGE_DAYS <= now]
+    Select --> Porcelain[statusPorcelain --untracked-files=all]
+    Porcelain --> Dirty{dirty?}
+    Dirty -- yes --> Snap[git add -A && git commit --no-verify<br/>maister: GC snapshot of runId]
+    Dirty -- no --> Div{logRange base..branch non-empty?}
+    Snap --> Arch[git branch -f maister/archive/runId HEAD<br/>set archived_branch + archived_at]
+    Div -- yes --> Arch
+    Div -- no --> Nothing[nothing to preserve]
+    Arch --> Ok{preserve ok?}
+    Nothing --> Ok
+    Ok -- yes --> Remove[removeOwnedWorktree force<br/>set removed_at]
+    Ok -- no --> Skip[skip row, log WARN,<br/>retry next tick]
+    Remove --> Done([next row])
+```
+
+### M19 worktree TTL color ramp (Designed)
+
+Read models surface a derived `ttlState` for `Abandoned`/`Done` workspaces so
+the portfolio rail, board, and run-detail can render a countdown to GC removal.
+The effective deadline mirrors the GC sweep exactly:
+`effectiveRemovalAt = scheduled_removal_at ?? (ended_at + MAISTER_GC_AGE_DAYS)`.
+
+```mermaid
+flowchart LR
+    Now([render time now]) --> Eff[effectiveRemovalAt =<br/>scheduled_removal_at ?? ended_at + MAISTER_GC_AGE_DAYS]
+    Eff --> Due{now >= effectiveRemovalAt?}
+    Due -- yes --> Red[due: red]
+    Due -- no --> Warn{now >= effectiveRemovalAt - MAISTER_GC_WARNING_DAYS?}
+    Warn -- yes --> Amber[warning: amber]
+    Warn -- no --> Green[active: green]
+    Eff --> Arch{archived_at set?}
+    Arch -- yes --> ArchInd[archived indication]
+    Eff --> Pruned{removed_at set?}
+    Pruned -- yes --> PrunedInd[pruned indication]
+```
+
 ## Expectations
 
 - Exactly one worktree per run, rooted at
@@ -190,6 +267,15 @@ flowchart LR
   explicit recover route for crashed scratch sessions.
 - GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
   GC failures log and continue without setting `removed_at`.
+- **(Designed, M19)** GC MUST select terminal candidates by
+  `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`
+  (default age 14 d) and MUST preserve before pruning: dirty tracked + untracked
+  state is snapshot-committed onto `maister/archive/<runId>`, and
+  `removeOwnedWorktree` runs ONLY when preserve succeeds. See
+  [`reconciliation-gc.md`](reconciliation-gc.md).
+- **(Designed, M19)** GC MUST NOT merge into main/target; preservation is the
+  archive branch (+ optional push when `MAISTER_GC_ARCHIVE_PUSH=true`, default
+  `false`) only.
 - Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
   `removed_at` is set instead.
 - Active workspace rail groups MUST include both `flow` and `scratch` runs

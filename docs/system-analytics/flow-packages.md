@@ -148,6 +148,27 @@ sequenceDiagram
     DB-->>UI: new runs use older revision
 ```
 
+### M19 flow-revision GC (Designed)
+
+`removeRevision` sets `package_status='Removed'` under a dual-FK guard but
+leaves the installed bytes on disk. M19 ([ADR-036](../decisions.md#adr-036))
+adds an automatic sweep that deletes the row and removes the install path once
+a `Removed` revision is past `MAISTER_GC_AGE_DAYS` and still unreferenced. It
+re-asserts the same guards under `FOR UPDATE`; it only removes (`rm
+installedPath`) and NEVER runs `setup.sh` or any package hook. Delivered by the
+shared GC sweeper + cron route described in
+[`reconciliation-gc.md`](reconciliation-gc.md).
+
+```mermaid
+flowchart TD
+    Sweep([GC sweeper tick or POST /api/cron/gc]) --> Select[SELECT flow_revisions<br/>WHERE package_status=Removed<br/>AND removed-age > MAISTER_GC_AGE_DAYS]
+    Select --> Lock[SELECT FOR UPDATE]
+    Lock --> Ref{zero runs.flow_revision_id<br/>AND zero flows.enabled_revision_id?}
+    Ref -- no --> Skip[skip: still referenced]
+    Ref -- yes --> Delete[DELETE row + rm installedPath recursive force]
+    Delete --> Done([next row])
+```
+
 ## Expectations
 
 - Current M4 loader remains the low-level installer, but M10 adds product
@@ -172,6 +193,12 @@ sequenceDiagram
 - Rollback changes project enablement only. It does not mutate existing runs or
   delete the newer package revision.
 - Package removal is refused while any run references the revision.
+- **(Designed, M19)** Flow-revision GC MUST delete a `flow_revisions` row and
+  its install path ONLY when `package_status='Removed'`, past
+  `MAISTER_GC_AGE_DAYS`, with zero `runs.flow_revision_id` and zero
+  `flows.enabled_revision_id` references re-asserted under `FOR UPDATE`; it only
+  removes bytes and NEVER runs `setup.sh`. See
+  [`reconciliation-gc.md`](reconciliation-gc.md).
 - Full marketplace, signatures, reputation, dependency solving, org-wide
   package policy, and automatic rollout remain deferred.
 
@@ -209,6 +236,9 @@ manifest + install path from that pinned revision.
   before workspace creation.
 - **Remove referenced revision** -> `PRECONDITION`; keep revision until no run
   references it.
+- **(Designed, M19) GC of a still-referenced `Removed` revision** -> the FK
+  re-assert under `FOR UPDATE` finds a reference and the sweep SKIPS the row,
+  leaving the bytes until it is genuinely unreferenced. No error raised.
 - **Rollback target incompatible with current project config** ->
   `PRECONDITION`; user must resolve config/capability mismatch first.
 

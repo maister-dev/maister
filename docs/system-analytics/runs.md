@@ -47,7 +47,7 @@ stateDiagram-v2
     Running --> Failed: agent exits non-zero<br/>(no recovery path)
 
     Crashed --> Running: Recover click<br/>(--resume with acp_session_id)
-    Crashed --> Abandoned: Discard click<br/>(force-discard worktree)
+    Crashed --> Abandoned: Discard click<br/>(GC countdown, no sync removal)
 
     Review --> Done: promotion succeeds
     Review --> Review: local promotion conflict<br/>(stays in Review)
@@ -112,6 +112,36 @@ machine:
    `web/lib/runs/resume-recovery.ts` (there is no `reconcile.ts`), whose SELECT
    filters `runs.status='NeedsInput' AND acpSessionId IS NOT NULL` — so
    `HumanWorking` is excluded by construction.
+
+### M19 reconcile-driven `Running → Crashed` + hybrid Recover (Designed)
+
+M19 ([ADR-033](../decisions.md#adr-033), [ADR-034](../decisions.md#adr-034))
+adds an out-of-band **reconcile sweep** (startup + periodic) that classifies a
+stranded `Running` run into re-attach / re-dispatch / skip / `Crashed`. This is
+the **`Running → Crashed`** transition that did not previously exist (only
+`NeedsInput → Crashed` did, via `crashResumedRun`); M19 adds `crashRunningRun`
+(CAS `WHERE status='Running'`). The full classification table and the GC
+lifecycle live in [`reconciliation-gc.md`](reconciliation-gc.md). Four
+invariants bind it to the run machine:
+
+1. **Allow-list `Running`-only.** Reconcile NEVER touches a non-`Running` row;
+   `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal stay owned by the
+   `resume-recovery`, `takeover-return`, and idle sweeps. Candidate sets are
+   disjoint by construction.
+2. **Grace guard.** A `Running` agent run with no live session is SKIPPED while
+   `runs.resume_started_at` OR the latest `node_attempts.started_at` is within
+   `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace is it
+   `Crashed`. This protects in-flight launches and Recovers.
+3. **Retry-safety split.** No-live-session `check`/`judge` gate nodes
+   re-dispatch (read-only, CAS-guarded no-op when a runner still holds the run);
+   a `cli` node is `Crashed` (`cli-not-retry-safe`) and never auto-re-dispatched.
+4. **Hybrid Recover.** `POST /api/runs/{runId}/recover` flips `Crashed → Running`
+   and stamps `runs.resume_started_at` BEFORE the supervisor side-effect, then
+   `--resume`s an agent node or re-dispatches a session-less gate node. It
+   re-admits through the global cap (a `Crashed` run already released its slot):
+   slot-free resumes now, cap-full queues as `Pending` (202) and the scheduler
+   resumes it on slot-free. `POST /api/runs/{runId}/discard` marks `Abandoned`
+   and enters the GC countdown (no synchronous worktree removal).
 
 ## Process flows
 
@@ -218,7 +248,7 @@ flowchart TD
     Crash2 --> User{user choice}
     User -- Recover --> Resume[POST /sessions resumeSessionId=acp_session_id]
     Resume --> Running[status=Running]
-    User -- Discard --> Drop[remove worktree, status=Abandoned]
+    User -- Discard --> Drop[status=Abandoned,<br/>GC countdown then preserve-prune]
 ```
 
 > The **takeover-return** branch rescues a run stranded in `Running` when the
@@ -257,6 +287,16 @@ flowchart TD
 - **(Designed)** Full Flow-run state survives Next.js restart AND
   supervisor restart; on boot, reconciliation classifies orphans as
   `Crashed` and offers Recover or Discard.
+- **(Designed, M19)** The reconcile sweep is allow-list `Running`-only and
+  transitions a stranded `Running` run to `Crashed` (`crashRunningRun`)
+  ONLY when the worktree is gone, a `cli` node has no live session, or an
+  agent session is gone past `MAISTER_RECONCILE_GRACE_SECONDS`; every such
+  transition calls `promoteNextPending` and clears
+  `runs.resume_started_at`. See [`reconciliation-gc.md`](reconciliation-gc.md).
+- **(Designed, M19)** Recover stamps `runs.resume_started_at` and flips
+  `Crashed → Running` (cap free) or `Crashed → Pending` (cap full, 202)
+  BEFORE any `createSession`; it re-admits through the global cap and never
+  over-spawns. See [`reconciliation-gc.md`](reconciliation-gc.md).
 - **(Designed)** Flow-run Recover is offered ONLY when
   `runs.acp_session_id IS NOT NULL`; otherwise Discard is the sole
   option.

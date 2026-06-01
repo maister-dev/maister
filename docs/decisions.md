@@ -54,6 +54,10 @@
 | [ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status) | Manual takeover as a local worktree handoff (`HumanWorking` status) | Accepted | 2026-05-31 |
 | [ADR-031](#adr-031-node-typed-settings-schema-carve-b) | Node typed settings schema (carve (b): schema + shape-validation + visibility now; capability resolution + materialization → M14) | Accepted | 2026-06-01 |
 | [ADR-032](#adr-032-settings-enforcement-refusal-boundary) | Settings-enforcement refusal boundary (declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, CONFIG/EXECUTOR_UNAVAILABLE, no new code) | Accepted | 2026-06-01 |
+| [ADR-033](#adr-033-crash-reconciliation-model-startup--periodic-sweeper-allow-list-running-only) | Crash reconciliation model (startup + periodic sweeper, allow-list `Running`-only) | Accepted | 2026-06-01 |
+| [ADR-034](#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission) | Crashed-run recovery semantics (hybrid `--resume` + re-dispatch, durable-marker-first, cap re-admission) | Accepted | 2026-06-01 |
+| [ADR-035](#adr-035-graceful-workspace-gc-preserve-then-prune) | Graceful workspace GC (preserve-then-prune) | Accepted | 2026-06-01 |
+| [ADR-036](#adr-036-flow-revision-gc) | Flow-revision GC | Accepted | 2026-06-01 |
 
 ---
 
@@ -1392,6 +1396,381 @@ record-only.
   override (M14-era) could then smuggle an unenforceable class past a
   manifest-level launch check. Rejected — gate at the launch precondition AND
   the per-node runtime build (belt-and-suspenders).
+
+---
+
+### ADR-033: Crash reconciliation model (startup + periodic sweeper, allow-list `Running`-only)
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** A run is `Running` only while a runner loop is attached to its
+ACP session. A Next.js restart, a supervisor restart, or a host reboot kills
+that loop while the `runs` row stays `Running` — a stranded run that no live
+event will ever advance. The supervisor heartbeat
+(`supervisor/src/heartbeat.ts`) detects an orphaned agent process every 5 s
+and emits `session.crashed`, but the web tier only observes that while it is
+actively streaming the run, so a crash during a restart window is invisible.
+Two recovery sweeps already run from `web/instrumentation.ts` —
+`runResumeRecoverySweep` (claimed-but-undelivered `NeedsInput`) and
+`runTakeoverReturnRecoverySweep` (stranded `Running` after a takeover return,
+[ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)).
+Neither covers a plain stranded `Running` run, and a naive
+"`Running` + no live session → `Crashed`" sweep is **FORBIDDEN**
+(`web/lib/runs/resume-recovery.ts:328-331`): it false-positives on a
+session-less `check`/`judge` gate executing between agent sessions. M19 needs
+a third sweep whose classifier is precise enough to never crash a healthy run.
+
+**Decision:** Add a **reconcile engine** that runs once at startup
+(`web/instrumentation.ts`, after the two existing recovery sweeps, before the
+keep-alive sweeper) and on a periodic singleton interval
+(`MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`, default 60). Its core is a pure
+classifier `classifyRunReconcile(input) → {action, reason}` (`web/lib/reconcile.ts`)
+that, per run, gathers `run.status`, `run.runKind`, `run.acpSessionId`,
+`run.currentStepId`, the node type of `currentStepId` (resolved from the run's
+pinned `flow_revisions.manifest` compiled to the graph; legacy `steps[]` compile
+to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`), and
+`liveSession` (`acpSessionId` ∈ live `listSessions` map). It gates **exactly** as:
+
+| Run state | Condition | Action | Reason |
+|-----------|-----------|--------|--------|
+| status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
+| `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
+| `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
+| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge` — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
+| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover (accepted-risk re-dispatch). A future manifest `retry_safe: true` opt-in can widen this. |
+| `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
+| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
+| `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
+
+Locked properties of the engine:
+
+1. **Allow-list `Running`-only.** The classifier returns `skip` for every
+   non-`Running` status; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal
+   rows belong to other sweeps and are never touched here.
+2. **Grace guard.** A `Running` agent run with no live session whose
+   `resume_started_at` OR latest `node_attempts.started_at` is within
+   `MAISTER_RECONCILE_GRACE_SECONDS` (default 90) → `skip`. This is REQUIRED so
+   a periodic tick never crashes a run whose ACP session is still being created —
+   by a fresh launch OR by an in-flight Recover, which flips `Crashed→Running` +
+   stamps `resume_started_at` *before* `createSession`
+   ([ADR-034](#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)).
+   Only past the grace window does it `crash`.
+3. **Retry-safety split (Codex F4).** Only read-only gate evals (`check`/`judge`)
+   auto-`redispatch` (a CAS no-op when the real runner still holds the run — the
+   contract `runTakeoverReturnRecoverySweep` already relies on). A `cli` node is
+   NOT idempotent and is `crash`ed (reason `cli-not-retry-safe`), never
+   auto-redispatched; its half-run side effects are recovered only via explicit
+   human Recover.
+4. **Disjoint sweeps.** Reconcile, `resume-recovery`, and `takeover-return` all
+   scan non-terminal runs but MUST act on disjoint sets. The reconcile sweep
+   excludes the takeover-return candidate set (carry its `returned_diff` +
+   `ended_at` + stale-re-entry-gate predicate as an exclusion) and is allow-list
+   `Running`-only so it never overlaps the `NeedsInput`-scoped resume-recovery
+   sweep.
+5. **Transient supervisor unavailability → skip the whole tick.** If
+   `listSessions` fails, the engine skips the entire tick (like
+   `resume-recovery`) — it NEVER crashes a run on a transient supervisor outage.
+6. **Sanctioned recovery path, not a banned poll.** The periodic
+   `listSessions`/`listWorktrees` poll is the heartbeat + reconcile **recovery**
+   path, NOT a live-path state-transition poll. The house rule forbidding
+   `fs.watch`/`chokidar`/polling (root `CLAUDE.md` §1) governs the *live* path
+   — ACP notifications drive transitions while a runner is attached. Reconcile
+   is the explicitly-sanctioned recovery channel for the restart/crash window,
+   stated here so reviewers do not read it as a forbidden live poll.
+
+**Consequences:**
+
+- A stranded `Running` run is detected and resolved within one sweep interval
+  of any restart, without a banned live-path poll.
+- The classifier is pure (inputs are plain data: run row incl.
+  `resume_started_at`, latest-attempt `startedAt`, `nowMs`, `graceSeconds`,
+  `worktreeExists`, `liveSession`, `currentNodeKind`) → every table row is
+  unit-testable with no clock/db access.
+- On a healthy box the only paths to CRASH are worktree-gone,
+  agent-session-gone **past grace**, or a half-run `cli` node — all genuine
+  deaths; an in-flight launch/recover within grace is never crashed.
+- Each `Running→Crashed` releases its scheduler slot
+  (`promoteNextPending`, parity with `markAbandoned`,
+  [ADR-009](#adr-009-global-concurrency-cap--3)).
+- Two new env vars (`MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
+  `MAISTER_RECONCILE_GRACE_SECONDS`); no new port, sidecar, or wire change.
+
+**Alternatives Considered:**
+
+- **Naive "`Running` + no live session → `Crashed`" sweep:** false-positives on
+  a session-less `check`/`judge` gate executing between agent sessions
+  (`web/lib/runs/resume-recovery.ts:328-331`). Rejected — the classifier splits
+  retry-safe gates (redispatch) from non-idempotent `cli` (crash) and guards
+  in-flight agent sessions with the grace window.
+- **`fs.watch`/`chokidar` on the worktree or session journal:** a banned
+  live-path mechanism (root `CLAUDE.md` §1); the live path is ACP notifications.
+  Rejected — reconcile is the recovery path, driven by heartbeat + periodic
+  poll, not a filesystem watcher.
+- **Fold reconciliation into the existing resume-recovery or takeover-return
+  sweep:** their candidate sets (`NeedsInput`-claimed, takeover-returned
+  `Running`) are deliberately narrow; widening either to cover plain stranded
+  `Running` runs would entangle the disjointness invariant and re-introduce the
+  forbidden false-positive. Rejected — a third, allow-list-`Running` sweep.
+
+---
+
+### ADR-034: Crashed-run recovery semantics (hybrid `--resume` + re-dispatch, durable-marker-first, cap re-admission)
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** A `Crashed` flow run owes recovery
+([ADR-011](#adr-011-workspace-lifecycle-via-git-worktree)). The cross-process
+`--resume` plumbing already exists (`web/lib/runs/resume.ts`,
+`web/lib/runs/resume-driver.ts`, the scratch recover route), and
+`crashRunningRun` ([ADR-033](#adr-033-crash-reconciliation-model-startup--periodic-sweeper-allow-list-running-only))
+produces the `Crashed` row. M19 must decide *how* a user recovers a `Crashed`
+flow run: a mid-turn agent node and a session-less gate node need different
+mechanisms; the recovery must survive a crash *during* recovery without leaking
+an ACP session or double-spawning; and because a `Crashed` run already released
+its concurrency slot (`crashRunningRun → promoteNextPending`), a Recover is a
+**re-launch** that MUST respect the global cap
+([ADR-009](#adr-009-global-concurrency-cap--3)), unlike the M8 idle-resume which
+never vacated its slot.
+
+**Decision:** Recover is **hybrid**, classified by the current node type
+(`classifyRecover(run, currentNodeKind) → 'resume-agent' | 'redispatch' | 'discard-only'`):
+
+- **agent node** → `createSession({resumeSessionId: run.acpSessionId})` reusing
+  `resume.ts`/`resume-driver.ts`, then `scheduleResumedSessionDrive` at
+  `currentStepId`.
+- **session-less gate node** (`check`/`judge`) → `runFlow` re-dispatch (no
+  `createSession`).
+- **`acpSessionId` absent or unresumable** → `discard-only` (no resume offered;
+  the UI surfaces Discard).
+
+Recovery is ordered **durable-marker-BEFORE-side-effect** (Codex #1), in two
+phases under the scheduler advisory lock:
+
+- **Phase 1 (durable intent + cap admission, one tx):** `SELECT … FOR UPDATE`;
+  CAS `WHERE status='Crashed'` (allow-list, not `!terminal`); count live
+  (`Running`/`NeedsInput`/`HumanWorking`) vs `MAISTER_MAX_CONCURRENT_RUNS`.
+  - **slot free** → flip `status→Running`, set `resume_started_at = now()`, set
+    `currentStepId` = resume target → proceed to Phase 2.
+  - **cap full** → flip `status→Pending` (keep `acpSessionId`, set
+    `resume_started_at` + `currentStepId`) → return **202 `{state:"queued"}`**,
+    NO `createSession`. The scheduler resumes it on slot-free (Codex F2 — a
+    Crashed run already freed its slot, so Recover re-admits through the cap and
+    never over-spawns; this is **not** a cap bypass). A promoted `Pending` run
+    **with** `acpSessionId` is resumed via the Phase-2 path (refreshing
+    `resume_started_at` at promotion); **without** it (a fresh queued launch,
+    `acpSessionId` null) it is fresh-launched — an unambiguous discriminator.
+  This tuple (`Running`/`Pending` + `resume_started_at` + `acpSessionId`) **IS**
+  the durable in-flight/queued marker, committed *before* any supervisor call.
+- **Phase 2 (side-effect, only when admitted):** the resume/redispatch above.
+  The driver/runner clears `resume_started_at` on first progress.
+
+The **reconcile engine is the single crash-window recovery mechanism** — there
+is no bespoke recover-recovery sweep. Every death/ambiguity during recovery
+reduces to a `Running` + `resume_started_at` + `acpSessionId` state the
+reconciler already owns (re-attach if the resumed session is live, re-crash past
+grace if not). The §3.2 failure mapping:
+
+| Window / failure | HTTP | Row state & who recovers |
+|------------------|------|--------------------------|
+| cap full at admission | 202 `{state:"queued"}` | `Crashed→Pending` (acpSessionId retained); scheduler resumes on slot free. No `createSession` → no over-spawn (Codex F2) |
+| concurrent 2nd Recover click | 409 | Phase-1 CAS on `status='Crashed'` fails (now `Running`/`Pending`) → duplicate `createSession` impossible |
+| crash **before** `createSession` | — | `Running` + `acpSessionId` not live + past grace → reconciler re-crashes to `Crashed` (clears `resume_started_at`); user retries. No session leaked |
+| crash **after** `createSession` success | — | `Running` + `acpSessionId` now live → reconciler re-attaches the driver |
+| supervisor 5xx / network / timeout (ambiguous) | 503 | leave `Running` (do NOT roll back — the ack may have been lost and a session may be live); reconciler reattaches if it came up, else re-crashes past grace. Retryable |
+| supervisor 4xx `CHECKPOINT` (unresumable acp session) | 410 | `crashRunningRun` → `Crashed` (clears `resume_started_at`); surface discard-only |
+
+**Discard** is a single terminal action, NOT a synchronous worktree delete
+(Codex #2/#3): one tx `markAbandoned` (allow-list incl. `Crashed`) stamps
+`scheduled_removal_at = endedAt + MAISTER_GC_AGE_DAYS` then `promoteNextPending`.
+The worktree is left in place showing the TTL countdown and is preserved-then-
+pruned by the GC sweep
+([ADR-035](#adr-035-graceful-workspace-gc-preserve-then-prune)) — one lifecycle;
+Discard never calls `preserveWorktree`/`removeOwnedWorktree`. Idempotent on
+already-terminal (same-state → 200, conflict → 409); immediate force-delete is
+Phase 2.
+
+**RBAC:** recover and discard are gated by a **new project action `recoverRun`
+with min role `member`** (added to `PROJECT_ACTION_MIN`) — distinct from
+`launchRun`, so recovery permission is granted independently of launch. `runId`
+is the url-param (trusted via route shape + RBAC); `projectId` is server-state
+(DB join `runs→project`); bodies are empty.
+
+**Consequences:**
+
+- A mid-turn agent crash resumes via `--resume`; a session-less gate crash
+  re-dispatches; an unresumable run offers discard-only — no false resume.
+- No crash window leaves a leaked ACP session or a double-spawn: the durable
+  marker precedes the side-effect, the CAS makes a second Recover a 409, and the
+  cap admission makes over-spawn impossible.
+- A transient supervisor failure (503) leaves the run `Running` (NOT rolled
+  back) and is retryable; the reconciler resolves it within one grace window.
+- `recoverRun=member` lets a member recover/discard without launch rights;
+  no new `MaisterError` code ([ADR-008](#adr-008-typed-error-taxonomy-maistererror)
+  closed union — recover/discard reuse `CHECKPOINT`/`CONFLICT`/`PRECONDITION`/
+  `EXECUTOR_UNAVAILABLE`).
+- `runs.resume_started_at` (migration 0015) is the durable in-flight marker AND
+  the reconcile grace anchor.
+- Live-agent graph `--resume` continuation semantics are CI-verified only on the
+  mock adapter (M8) + the M0 single-session live spike; if mid-turn continuation
+  proves unsafe, agent nodes fall back to `redispatch` (re-run the node fresh) —
+  this ADR is updated before that code change.
+
+**Alternatives Considered:**
+
+- **Flip `Crashed→Running` on supervisor ack (marker-after-side-effect):**
+  leaves a crash window where `createSession` succeeded but the row is still
+  `Crashed` with no durable in-flight record — the reconciler cannot tell a
+  recovered run from a dead one. Rejected — durable marker first.
+- **Recover bypasses the concurrency cap (resume in-place like M8 idle-resume):**
+  a `Crashed` run already vacated its slot, so resuming without re-admission
+  would exceed `MAISTER_MAX_CONCURRENT_RUNS`. Rejected — Recover re-admits;
+  cap-full queues to `Pending` (202).
+- **A bespoke recover-recovery sweep for the recover crash window:** duplicates
+  what the reconcile engine already does for every `Running` + marker state.
+  Rejected — the reconcile engine is the single crash-window recovery.
+- **Discard synchronously removes the worktree:** couples Discard to GC preserve
+  logic, adds an AFTER-side removal-failure path, and risks losing un-committed
+  agent edits. Rejected — Discard enters the GC countdown; preserve-then-prune
+  is one unified lifecycle.
+
+---
+
+### ADR-035: Graceful workspace GC (preserve-then-prune)
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** [ADR-011](#adr-011-workspace-lifecycle-via-git-worktree) promised a
+cron GC of `Abandoned`/`Done` worktrees, deferred to M19. A worktree of a
+terminal run can still carry valuable work: committed run-branch divergence, or
+uncommitted/untracked agent edits left when the run crashed or was discarded
+([ADR-034](#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)).
+A naive `git worktree remove` would destroy that work. GC must also not become a
+promotion path — silently merging a GC'd branch into the project default is
+dangerous and is M18's job, not GC's.
+
+**Decision:** GC of terminal-run worktrees is **preserve-then-prune**. Age =
+`MAISTER_GC_AGE_DAYS` (default 14) with a `MAISTER_GC_WARNING_DAYS` (default 2)
+warning ramp surfaced as a TTL color ramp (green → amber → red). Delivery is
+**dual**: a background sweeper singleton (`MAISTER_GC_SWEEP_INTERVAL_SECONDS`,
+default 3600) AND a token-guarded HTTP cron route `GET`/`POST /api/cron/gc`
+(constant-time `X-Maister-Cron-Token` vs `MAISTER_CRON_TOKEN`; empty config →
+503 disabled, mismatch → 401). `MAISTER_CRON_TOKEN` is a **server-only secret**
+— never logged, never streamed.
+
+Candidate select = `workspaces.removed_at IS NULL` joined to
+`runs.status IN ('Abandoned','Done')` where the **effective deadline**
+`COALESCE(scheduled_removal_at, ended_at + MAISTER_GC_AGE_DAYS) <= now()`
+(Codex F3 — the `ended_at` fallback collects pre-migration-0015 terminal runs
+whose `scheduled_removal_at` is null, so **no backfill migration is needed**).
+The same effective deadline drives the TTL read models so pre-0015 rows show a
+countdown too.
+
+Order inside `preserveWorktree`, BEFORE any `removeOwnedWorktree` (Codex F1 —
+preserve EVERYTHING first):
+
+1. `statusPorcelain(worktree)` (`--untracked-files=all`) to detect staged +
+   unstaged + untracked changes.
+2. **Dirty** → a snapshot commit IN the worktree capturing tracked AND untracked
+   state: `git add -A && git commit --no-verify -m "maister: GC snapshot of <runId>"`.
+   The run is terminal and the worktree is about to be deleted, so advancing its
+   branch HEAD is safe; the snapshot lands on the archive ref.
+3. When dirty OR `logRange(base..branch)` non-empty → point the archive branch
+   `maister/archive/<runId>` at the (snapshot-or-)branch HEAD (`git branch -f`);
+   if a remote exists and `MAISTER_GC_ARCHIVE_PUSH=true` (default `false`), push
+   it (host git creds per [ADR-025](#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)).
+   Record `workspaces.archived_branch` / `archived_at`.
+4. **Removal is gated on preserve success.** Only after preserve succeeds is the
+   worktree removed; on ANY git failure `preserveWorktree` returns `ok:false`
+   and the caller SKIPS removal (log WARN, leave for the next tick / operator).
+   Forcibly removing un-preserved dirty state is FORBIDDEN.
+
+GC **never auto-merges** into the project default/target branch (that is M18
+promotion, [ADR-012](#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict)).
+A clean worktree with no commit divergence has nothing to preserve → skip
+straight to removal. The migration 0015 adds three nullable `workspaces` columns
+(`scheduled_removal_at`, `archived_branch`, `archived_at`) — no `gc_state` enum.
+
+**Consequences:**
+
+- No GC run ever loses committed, uncommitted, or untracked agent work — preserve
+  precedes and gates every removal.
+- Pre-0015 terminal runs are collected via the `ended_at + AGE` fallback without
+  a backfill migration.
+- Discard and the natural Abandoned/Done lifecycle share one GC path
+  ([ADR-034](#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)).
+- Preserving dirty state advances the run branch HEAD with one synthetic
+  `maister: GC snapshot` commit on the archive branch — intentional and safe
+  (the run is terminal, the worktree is being deleted).
+- All partial crash-window states (dirty-not-snapshotted, archived-not-pruned,
+  pruned-not-marked) converge on a re-run; no window deletes un-preserved state.
+- Six new env vars total across M19 GC + reconcile;
+  `MAISTER_CRON_TOKEN` is server-only.
+
+**Alternatives Considered:**
+
+- **Plain `git worktree remove` on age:** destroys uncommitted/untracked agent
+  edits and committed run-branch divergence. Rejected — preserve-then-prune,
+  removal gated on preserve success.
+- **Auto-merge the run branch into the default/target on GC:** a silent merge is
+  dangerous and is M18 promotion, not GC. Rejected — archive branch only, never
+  merge-to-main.
+- **A backfill migration to stamp `scheduled_removal_at` on pre-0015 terminal
+  runs:** unnecessary — the `COALESCE(scheduled_removal_at, ended_at + AGE)`
+  effective-deadline fallback (Codex F3) covers them. Rejected — no backfill.
+- **A `gc_state` enum column:** more fan-out points; the UI derives TTL / pruned
+  / archived state from `scheduled_removal_at` + `archived_at`/`archived_branch`
+  + existing `removed_at`. Rejected — three nullable columns, no enum.
+
+---
+
+### ADR-036: Flow-revision GC
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
+introduced immutable `flow_revisions` and `removeRevision`
+(`web/lib/flows/lifecycle.ts:386`), which marks a revision `packageStatus='Removed'`
+under a dual-FK guard (refused while any `runs.flow_revision_id` references it or
+it is a `flows.enabled_revision_id`). That ADR explicitly deferred automatic GC
+of unreferenced `Removed` revisions to M19 (lifecycle comment line 385:
+"Automatic GC of unreferenced revisions is M19"). A `Removed` revision still
+occupies its content-addressed install path on disk
+(`~/.maister/flows/<id>@<sha>/`) until something reclaims it.
+
+**Decision:** A `runRevisionGcSweep` (`web/lib/gc/revision-gc.ts`), delivered by
+the same dual surface as workspace GC
+([ADR-035](#adr-035-graceful-workspace-gc-preserve-then-prune) — background
+sweeper + token cron), auto-deletes unreferenced `Removed` revisions past
+`MAISTER_GC_AGE_DAYS`. Per candidate: `SELECT … FOR UPDATE`, **re-assert** the
+existing dual-FK guard (zero `runs.flow_revision_id` references AND zero
+`flows.enabled_revision_id` references) — reusing the guard logic from
+`lifecycle.removeRevision` — then delete the `flow_revisions` row and
+`rm(installedPath, {recursive, force})`. The sweep **only removes**; it NEVER
+runs `setup.sh` or any plugin hook, so no fetch-then-execute path is introduced
+([ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl) trust model
+unchanged).
+
+**Consequences:**
+
+- Disk reclaimed for revisions no run or enablement pointer references, past the
+  age window, with no manual step.
+- The dual-FK guard is re-asserted under `FOR UPDATE` at delete time, so a
+  revision that gained a reference between mark and sweep is skipped — never a
+  dangling FK.
+- Removal is purely destructive (`rm` + row delete); no `setup.sh`/hook
+  execution → no new trust/execution surface.
+- Shares the `MAISTER_GC_AGE_DAYS` age and the GC delivery surfaces; no new env
+  var of its own.
+
+**Alternatives Considered:**
+
+- **A separate FK / age guard for revision GC:** the
+  [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
+  dual-FK guard already encodes exactly "unreferenced", and `MAISTER_GC_AGE_DAYS`
+  already times workspace GC. Rejected — reuse both.
+- **Run `setup.sh`/plugin teardown hooks on revision removal:** introduces a
+  fetch-then-execute path GC has no reason to open; M19 GC only reclaims disk.
+  Rejected — remove-only, no hooks.
 
 ---
 

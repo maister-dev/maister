@@ -469,6 +469,13 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global concurrency cap (across all projects) |
+| `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` | no | `60` | Web: periodic reconcile sweeper interval (M19) |
+| `MAISTER_RECONCILE_GRACE_SECONDS` | no | `90` | Web: grace window before a no-live-session agent run is crashed (protects in-flight launches/recovers) (M19) |
+| `MAISTER_GC_SWEEP_INTERVAL_SECONDS` | no | `3600` | Web: background GC sweeper interval (M19) |
+| `MAISTER_GC_AGE_DAYS` | no | `14` | Web: age before Abandoned/Done worktrees + Removed flow revisions are GC'd (M19) |
+| `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) (M19) |
+| `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
+| `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` returns 503 disabled) | (none) | **Server-only secret** for `GET`/`POST /api/cron/gc` auth — never logged or streamed (M19) |
 | `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |

@@ -61,6 +61,7 @@ erDiagram
         text created_by_user_id FK "nullable launch/audit owner"
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
+        timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         timestamp started_at
         timestamp ended_at
     }
@@ -74,6 +75,9 @@ erDiagram
         text parent_repo_path
         timestamp created_at
         timestamp removed_at
+        timestamp scheduled_removal_at "GC prune deadline (M19)"
+        text archived_branch "preserved archive ref name (M19)"
+        timestamp archived_at "when archive branch created (M19)"
     }
 
     STEP_RUNS {

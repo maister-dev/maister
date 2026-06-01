@@ -352,6 +352,9 @@ queries.
   createdByUserId?,              // nullable FK -> users.id; launch/audit owner
   checkpointAt?,                 // when graceful checkpoint happened
   keepaliveUntil?,               // 30-min sliding window in NeedsInput
+  resumeStartedAt?,              // M19 (timestamptz, migration 0015) durable
+                                 //   Recover in-flight marker + reconcile grace
+                                 //   anchor; see below
   startedAt, endedAt?
 }
 ```
@@ -373,6 +376,19 @@ on terminal transitions (`Review` / `Failed`). Scratch dialog state is stored in
 write the authenticated caller for active-workspace launched-by display and
 audit; v1 authorization remains project-role based, not owner-exclusive.
 
+**(M19 — Designed, migration `0015`, additive.)** `resumeStartedAt`
+(`timestamptz`, nullable) is the durable Recover in-flight marker and the
+reconcile grace anchor. The Recover path stamps it in the same transaction
+that flips `Crashed -> Running` (or `Crashed -> Pending` when the
+concurrency cap is full), *before* the supervisor `createSession` side-effect,
+so a crash in the resume window leaves a re-recoverable row. The reconcile
+sweep treats a no-live-session agent run as in-flight (skips it) while
+`resumeStartedAt` (or the latest `node_attempts.started_at`) is within
+`MAISTER_RECONCILE_GRACE_SECONDS`, and only crashes it past the grace window.
+The runner clears it to `NULL` on first progress; `crashRunningRun` also clears
+it so a re-crashed row stays clean. Cascade: lives on `runs`, dropped with the
+run row.
+
 Indexes: `(projectId, status, runKind)` for portfolio and active
 workspace queries, `(runKind, taskId)` for board/latest-attempt lookups that
 must exclude scratch runs, and the existing `(taskId)` lookup for compatibility
@@ -384,7 +400,13 @@ until all callers move to the typed index.
 {
   id, runId, projectId,
   branch, worktreePath (UNIQUE), parentRepoPath,
-  createdAt, removedAt?
+  createdAt, removedAt?,
+  scheduledRemovalAt?,           // M19 (timestamptz, migration 0015) when GC
+                                 //   will prune; see below
+  archivedBranch?,               // M19 (text, migration 0015) preserved
+                                 //   archive ref name
+  archivedAt?                    // M19 (timestamptz, migration 0015) when the
+                                 //   archive branch was created
 }
 ```
 
@@ -392,6 +414,22 @@ One workspace per run. `worktreePath` is globally unique across the host.
 Planned M18 adds `baseBranch`, `baseCommit`, `targetBranch`, and
 `promotionMode` metadata so the run ledger can explain branch-targeted
 promotion without relying on naming conventions.
+
+**(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns
+drive the worktree TTL lifecycle. `scheduledRemovalAt` (`timestamptz`) is the
+GC deadline, stamped on the terminal `Abandoned`/`Done` transition as
+`runs.ended_at + MAISTER_GC_AGE_DAYS`; the GC sweep and the TTL color-ramp read
+models compute the **effective deadline** as
+`scheduledRemovalAt ?? (runs.ended_at + MAISTER_GC_AGE_DAYS)`, so terminal runs
+that pre-date migration `0015` (null `scheduledRemovalAt`) are still collected
+without a backfill migration. `archivedBranch` (`text`) and `archivedAt`
+(`timestamptz`) are set by the preserve-then-prune GC step: before any removal,
+GC archives the worktree's preserved HEAD to `maister/archive/<runId>` and
+records the ref name + timestamp here. There is intentionally **no** `gc_state`
+enum — the UI derives the TTL state (active/warning/due), pruned (`removedAt`
+non-null), and archived (`archivedBranch` non-null) from these columns plus the
+existing `removedAt`. Cascade: lives on `workspaces`, dropped with the
+workspace row (which itself cascades from `runs.id` / `projects.id`).
 
 Scratch-run v1 stores `baseBranch`, `baseCommit`, and `targetBranch` in
 `scratch_runs` because the branch semantics belong to the manual dialog

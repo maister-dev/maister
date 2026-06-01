@@ -70,6 +70,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/runs.md`](system-analytics/runs.md) | Run state machine, ACP keep-alive + checkpoint. |
 | [`system-analytics/executors.md`](system-analytics/executors.md) | Executor identity, model routing (env-router vs CCR). |
 | [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, promotion policy, reconciliation. |
+| [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md) | Crash reconciliation + workspace/revision GC (preserve-then-prune, TTL ramp, cron route) — M19. |
 | [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
 | [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) | Manual takeover (local worktree handoff): `HumanWorking`, claim/return, downstream staleness, run-detail timeline (M11b). |
 | [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) | Node typed settings, declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, launch-time refusal boundary, time-limit watchdog, settings-visibility UI (M11c). |

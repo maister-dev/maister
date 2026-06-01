@@ -100,6 +100,8 @@ tags:
     description: Manual takeover — local worktree handoff (M11b, ADR-030).
   - name: flow-packages
     description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
+  - name: reconciliation-gc
+    description: Crash recover/discard and the token-guarded GC cron route (M19, ADR-033..036).
 paths:
   /api/projects:
     post:
@@ -1501,6 +1503,263 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/recover:
+    post:
+      tags: [reconciliation-gc]
+      summary: (M19) Recover a Crashed run
+      description: |
+        (Designed, M19 — ADR-034. Code lands in Phase 3.)
+
+        Recovers a `Crashed` flow run via the hybrid ACP `--resume` path:
+        `--resume <acpSessionId>` for an agent node, `runFlow` re-dispatch for
+        a session-less gate node. Discard-only when `acpSessionId` is absent or
+        unresumable.
+
+        Requires project membership at `member` or above
+        (`requireProjectAction("recoverRun")`). The `projectId` is derived from
+        the run row (`server-state`); `runId` is the URL parameter
+        (`url-param`). **Body is EMPTY** — base/target refs, current node, and
+        `acpSessionId` are all derived server-side.
+
+        **Durable-marker-before-side-effect (ADR-034 / §3.2).** Phase 1 (one tx
+        under the scheduler advisory lock): `SELECT … FOR UPDATE`, CAS
+        `WHERE status='Crashed'`, then re-admit through the global concurrency
+        cap (a `Crashed` run already released its slot — Recover is a re-launch,
+        NOT a cap bypass). On a free slot the run flips `Crashed→Running` with
+        `runs.resume_started_at = now()` and proceeds to Phase 2
+        (`createSession({resumeSessionId})`). On a full cap the run flips
+        `Crashed→Pending` (retaining `acpSessionId`, stamping
+        `resume_started_at`) and returns `202 {state:"queued"}` with NO
+        supervisor call — the scheduler resumes it when a slot frees. The
+        reconcile engine (ADR-033) is the single recovery mechanism for every
+        crash/ambiguity window thereafter.
+
+        No new `MaisterError` code (ADR-008 closed union): unresumable acp
+        session → `CHECKPOINT` (410); not `Crashed` / concurrent recover →
+        `CONFLICT` (409); transient supervisor failure → `EXECUTOR_UNAVAILABLE`
+        (503), run left `Running` for the reconciler to re-attach or re-crash.
+
+        **Identifier trust (per-route).**
+
+        | Identifier | Source | Trust |
+        | ---------- | ------ | ----- |
+        | `runId` | path parameter, route-shape validated | `url-param` |
+        | `userId` | Auth.js session | `auth-context` |
+        | `projectId` | DB join from the run row | `server-state` |
+        | `acpSessionId`, current node | DB row / pinned manifest | `server-state` |
+      operationId: recoverRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: |
+            Run resumed now. A slot was free, so the run flipped
+            `Crashed→Running` and the supervisor `--resume` session was
+            dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runStatus]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runStatus:
+                    type: string
+                    enum: [Running]
+                    description: AFTER-side marker — the driver attaches at the resume target node.
+        "202":
+          description: |
+            Cap full at admission. The run flipped `Crashed→Pending` (retaining
+            `acpSessionId`); the scheduler resumes it via the same `--resume`
+            path when a slot frees. No supervisor session was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoverQueuedResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            Run is not in `Crashed`, or a concurrent Recover won the Phase-1 CAS
+            first (run is now `Running`/`Pending`) — a duplicate `createSession`
+            is impossible (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "410":
+          description: |
+            The stored acp session is unresumable — supervisor refused the
+            `--resume` (`CHECKPOINT`). The run is `Crashed`; surface discard-only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Transient supervisor failure (5xx / network / timeout) during the
+            `createSession` side-effect (`EXECUTOR_UNAVAILABLE`). The run is
+            left `Running` — NO rollback (an ack may have been lost and a
+            session may be live); the reconciler re-attaches if it came up, else
+            re-crashes past the grace window. Retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/discard:
+    post:
+      tags: [reconciliation-gc]
+      summary: (M19) Discard a run into the GC countdown
+      description: |
+        (Designed, M19 — ADR-034 / ADR-035. Code lands in Phase 3.)
+
+        Marks a run `Abandoned` and enters the workspace GC countdown. This is a
+        single terminal action — it does **NOT** synchronously remove the
+        worktree. The worktree is left in place showing the TTL color-ramp
+        countdown and is preserved-then-pruned by the GC sweep
+        (`MAISTER_GC_AGE_DAYS`), exactly like any other Abandoned run.
+
+        One tx: `markAbandoned` (allow-list incl. `Crashed`) stamps
+        `workspaces.scheduled_removal_at = endedAt + MAISTER_GC_AGE_DAYS`, then
+        `promoteNextPending` frees the slot. Idempotent on an already-terminal
+        run: a same-state retry returns 200; a conflicting non-terminal state
+        returns 409. No worktree side-effect means no removal-failure path.
+
+        Requires project membership at `member` or above
+        (`requireProjectAction("recoverRun")`). The `projectId` is derived from
+        the run row (`server-state`); `runId` is the URL parameter
+        (`url-param`). **Body is EMPTY.**
+
+        No new `MaisterError` code (ADR-008 closed union): conflicting
+        non-terminal state → `CONFLICT` (409).
+      operationId: discardRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: |
+            Run marked `Abandoned` and entered the GC countdown (the worktree
+            stays for preserve-then-prune). Returned unchanged on an idempotent
+            same-state retry.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runStatus]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runStatus:
+                    type: string
+                    enum: [Abandoned]
+                    description: Terminal AFTER-side status.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            Run is in a conflicting non-terminal state that is not discardable
+            (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/cron/gc:
+    get:
+      tags: [reconciliation-gc]
+      summary: (M19) Run the GC sweep (token-guarded cron)
+      description: |
+        (Designed, M19 — ADR-035 / ADR-036. Code lands in Phase 4.)
+
+        Token-guarded HTTP entry point for the preserve-then-prune GC sweep —
+        the same work the background sweeper performs
+        (`MAISTER_GC_SWEEP_INTERVAL_SECONDS`), exposed for an external cron. The
+        sweep collects Abandoned/Done worktrees and unreferenced `Removed` flow
+        revisions past `MAISTER_GC_AGE_DAYS`, preserves dirty/divergent
+        worktrees to a `maister/archive/<runId>` branch (optionally pushed when
+        `MAISTER_GC_ARCHIVE_PUSH=true`), and only then prunes.
+
+        Auth is by the `X-Maister-Cron-Token` header, compared in constant time
+        to `MAISTER_CRON_TOKEN` — NOT an Auth.js session. **No body / query
+        cross-resource identifiers**: the sweep derives its candidate set from
+        server state only.
+      operationId: runGcCron
+      security:
+        - cronToken: []
+      responses:
+        "200":
+          description: GC sweep completed; the summary reports per-sub-sweep counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+        "207":
+          description: |
+            A sub-sweep (worktree GC or revision GC) partially failed; the
+            summary's `errors` array names what was skipped. Successful work was
+            still committed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+        "401":
+          description: |
+            Missing or mismatched `X-Maister-Cron-Token` (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            `MAISTER_CRON_TOKEN` is unset — the cron route is disabled
+            (`CONFIG`). Configure the token to enable it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    post:
+      tags: [reconciliation-gc]
+      summary: (M19) Run the GC sweep (token-guarded cron)
+      description: |
+        (Designed, M19 — ADR-035 / ADR-036. Code lands in Phase 4.)
+
+        POST variant of `GET /api/cron/gc` — identical behavior, for cron
+        runners that prefer a non-idempotent verb. Auth is the same
+        `X-Maister-Cron-Token` header (constant-time compare to
+        `MAISTER_CRON_TOKEN`). **Body is EMPTY**; the sweep derives its
+        candidate set from server state only.
+      operationId: runGcCronPost
+      security:
+        - cronToken: []
+      responses:
+        "200":
+          description: GC sweep completed; the summary reports per-sub-sweep counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+        "207":
+          description: |
+            A sub-sweep partially failed; the summary's `errors` array names what
+            was skipped. Successful work was still committed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GcSweepSummary" }
+        "401":
+          description: |
+            Missing or mismatched `X-Maister-Cron-Token` (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            `MAISTER_CRON_TOKEN` is unset — the cron route is disabled
+            (`CONFIG`). Configure the token to enable it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/activity:
     post:
       tags: [runs]
@@ -1826,6 +2085,15 @@ paths:
         "409": { $ref: "#/components/responses/Precondition" }
         "422": { $ref: "#/components/responses/Config" }
 components:
+  securitySchemes:
+    cronToken:
+      type: apiKey
+      in: header
+      name: X-Maister-Cron-Token
+      description: |
+        Shared-secret header for the GC cron route, compared in constant time
+        to `MAISTER_CRON_TOKEN`. Server-only secret — never logged or streamed.
+        Unset token disables the route (503). Not an Auth.js session.
   responses:
     Unauthenticated:
       description: No valid session (`UNAUTHENTICATED`).
@@ -2019,6 +2287,47 @@ components:
           type: integer
           minimum: 1
           description: Present iff `status == "Pending"`.
+    RecoverQueuedResponse:
+      type: object
+      description: |
+        (Designed, M19) Returned by `POST /api/runs/{runId}/recover` with HTTP
+        202 when the global concurrency cap was full at admission. The run
+        flipped `Crashed→Pending` (retaining `acpSessionId`); the scheduler
+        resumes it via `--resume` when a slot frees.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [queued]
+        queuePosition:
+          type: integer
+          minimum: 1
+          description: Optional queue position for the re-admitted resume.
+    GcSweepSummary:
+      type: object
+      description: |
+        (Designed, M19) Result of one GC sweep — the same shape the background
+        sweeper logs and the cron route returns. Counts cover the worktree and
+        revision sub-sweeps. A non-empty `errors` array accompanies the 207
+        partial-failure response.
+      required: [worktreesPreserved, worktreesRemoved, revisionsRemoved, errors]
+      properties:
+        worktreesPreserved:
+          type: integer
+          minimum: 0
+          description: Worktrees archived to `maister/archive/<runId>` before removal.
+        worktreesRemoved:
+          type: integer
+          minimum: 0
+          description: Abandoned/Done worktrees pruned past `MAISTER_GC_AGE_DAYS`.
+        revisionsRemoved:
+          type: integer
+          minimum: 0
+          description: Unreferenced `Removed` flow revisions GC'd under the dual-FK guard.
+        errors:
+          type: array
+          description: Per-row skip reasons when a sub-sweep partially failed (207).
+          items: { type: string }
     ScratchCapabilityOption:
       type: object
       required: [id, recordId, kind, label, source, enforceability, selectedByDefault, agents]
