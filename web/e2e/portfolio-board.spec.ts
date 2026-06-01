@@ -10,8 +10,11 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Projects." })).toBeVisible();
+  // exact:true targets the main-grid project link. The left rail (rendered at
+  // md+) carries a "Start scratch workspace in E2E Acceptance Board" link whose
+  // name contains this string, so a substring match resolves to two elements.
   await expect(
-    page.getByRole("link", { name: "E2E Acceptance Board" }),
+    page.getByRole("link", { name: "E2E Acceptance Board", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("things need your review")).toBeVisible();
   await expect(

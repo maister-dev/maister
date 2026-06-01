@@ -56,6 +56,12 @@ function loadM19(): M19Fixture {
 const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 const CRON_HEADER = "X-Maister-Cron-Token";
 
+// Run this file's tests serially (the suite is fullyParallel). The cron-GC test
+// (d) runs a GLOBAL GC sweep that prunes the past-deadline "due" workspace that
+// the TTL-badge test (c) asserts; serial ordering keeps (c) before (d) so the
+// destructive sweep can't race the read-only UI assertions.
+test.describe.configure({ mode: "serial" });
+
 test.describe("M19 reconcile + GC UI", () => {
   test("(a) Crashed run-detail shows recover/discard + a re-run warning in the Recover confirm", async ({
     page,
@@ -142,14 +148,22 @@ test.describe("M19 reconcile + GC UI", () => {
     await page.goto(`/projects/${fx.projectSlug}`);
 
     // The left-rail lists active/terminal workspaces; the GC TTL badge tags each
-    // terminal workspace's removal window. The two seeded Abandoned runs carry a
-    // warning-window and a due deadline respectively.
+    // terminal workspace's removal window. Scope each assertion to its specific
+    // seeded run's rail row — the rail is a GLOBAL view, so a parallel test that
+    // abandons a run in another project would otherwise perturb a global count.
+    const warningRow = page
+      .locator("aside li")
+      .filter({ has: page.locator(`a[href$="/runs/${fx.warningRunId}"]`) });
     await expect(
-      page.locator('[data-testid="ttl-badge"][data-ttl-state="warning"]'),
-    ).toHaveCount(1);
+      warningRow.locator('[data-testid="ttl-badge"][data-ttl-state="warning"]'),
+    ).toBeVisible();
+
+    const dueRow = page
+      .locator("aside li")
+      .filter({ has: page.locator(`a[href$="/runs/${fx.dueRunId}"]`) });
     await expect(
-      page.locator('[data-testid="ttl-badge"][data-ttl-state="due"]'),
-    ).toHaveCount(1);
+      dueRow.locator('[data-testid="ttl-badge"][data-ttl-state="due"]'),
+    ).toBeVisible();
   });
 });
 

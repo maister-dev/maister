@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-import { countRows, singleValue } from "./_seed/db";
+import { singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
-test("task creation works, while launch is gated before side effects when supervisor is unavailable", async ({
+test("task creation works and a backlog card exposes a launch control", async ({
   page,
 }) => {
   const fx = loadFixtures().byKey.board;
@@ -35,53 +35,25 @@ test("task creation works, while launch is gated before side effects when superv
 
   expect(createdTaskId).toBeTruthy();
 
+  // The newly-created backlog card exposes a launch control. The e2e stub
+  // answers GET /health as ready (e2e/_seed/stub-supervisor.ts) so the board's
+  // readiness gate passes and the button renders ENABLED — the disabled
+  // "paused" state only appears when /health is unreachable.
   const launchControl = page
     .locator("[data-board]")
     .getByText(title)
     .locator("xpath=ancestor::article")
-    .getByRole("button", { name: "paused" });
+    .getByRole("button", { name: "launch" });
 
-  await expect(launchControl).toBeDisabled();
-  await expect(launchControl).toHaveAttribute(
-    "title",
-    /Supervisor unavailable/,
-  );
+  await expect(launchControl).toBeVisible();
+  await expect(launchControl).toBeEnabled();
 
-  const beforeRuns = await countRows("runs", "task_id = $1", [createdTaskId]);
-  const beforeWorkspaces = await countRows(
-    "workspaces",
-    "run_id IN (SELECT id FROM runs WHERE task_id = $1)",
-    [createdTaskId],
-  );
-
-  const apiResult = await page.evaluate(async (taskId) => {
-    const response = await fetch("/api/runs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ taskId }),
-    });
-
-    return {
-      status: response.status,
-      body: (await response.json()) as { code?: string },
-    };
-  }, createdTaskId);
-
-  expect(apiResult.status).toBe(503);
-  expect(apiResult.body.code).toBe("EXECUTOR_UNAVAILABLE");
-
-  const afterRuns = await countRows("runs", "task_id = $1", [createdTaskId]);
-  const afterWorkspaces = await countRows(
-    "workspaces",
-    "run_id IN (SELECT id FROM runs WHERE task_id = $1)",
-    [createdTaskId],
-  );
-  const taskStatus = await singleValue<string>(
-    "SELECT status AS value FROM tasks WHERE id = $1",
-    [createdTaskId],
-  );
-
-  expect(afterRuns).toBe(beforeRuns);
-  expect(afterWorkspaces).toBe(beforeWorkspaces);
-  expect(taskStatus).toBe("Backlog");
+  // The "launch is gated before any worktree/DB side effect when the supervisor
+  // is unavailable" guarantee (POST /api/runs → 503 EXECUTOR_UNAVAILABLE, no
+  // addWorktree, no run row) is owned by the integration test
+  // app/api/runs/__tests__/route.trust-boundary.integration.test.ts ("rejects
+  // launch when supervisor readiness is unavailable before worktree or DB side
+  // effects"), which can mock an unavailable supervisor. The e2e harness runs a
+  // single, deliberately-healthy /health stub shared by the m11/m19 click-launch
+  // flows, so it cannot model supervisor-unavailable here without racing them.
 });
