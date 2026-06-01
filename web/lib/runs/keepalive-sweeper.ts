@@ -12,7 +12,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed } from "@/lib/flows/graph/ledger";
-import { releaseSlotOnIdle } from "@/lib/scheduler";
+import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import {
   checkpointSession,
   deleteSession,
@@ -68,32 +68,41 @@ function needsInputIdleTtlHours(): number {
 // a second HTTP round-trip.
 type SessionMap = Map<string, SupervisorSessionRecord>;
 
-async function loadSupervisorSessions(): Promise<SessionMap | null> {
+async function loadSupervisorSessionRecords(): Promise<
+  SupervisorSessionRecord[] | null
+> {
   try {
-    const records = await listSessions();
-    const map: SessionMap = new Map();
-
-    for (const rec of records) {
-      if (rec.status === "live" && rec.acpSessionId) {
-        map.set(rec.acpSessionId, rec);
-      } else if (rec.status === "live") {
-        // No acpSessionId yet (rare race during boot) — fall back to
-        // the supervisor sessionId as the key. The matching path below
-        // tries acpSessionId first; the supervisor-sessionId fallback
-        // is only an escape hatch.
-        map.set(rec.sessionId, rec);
-      }
-    }
-
-    return map;
+    return await listSessions();
   } catch (err) {
     log.warn(
       { err: (err as Error).message },
-      "sweeper listSessions failed — pass 1 will treat all candidates as non-live and checkpoint them directly",
+      "sweeper listSessions failed — candidates left for the next tick",
     );
 
     return null;
   }
+}
+
+async function loadSupervisorSessions(): Promise<SessionMap | null> {
+  const records = await loadSupervisorSessionRecords();
+
+  if (records === null) return null;
+
+  const map: SessionMap = new Map();
+
+  for (const rec of records) {
+    if (rec.status === "live" && rec.acpSessionId) {
+      map.set(rec.acpSessionId, rec);
+    } else if (rec.status === "live") {
+      // No acpSessionId yet (rare race during boot) — fall back to
+      // the supervisor sessionId as the key. The matching path below
+      // tries acpSessionId first; the supervisor-sessionId fallback
+      // is only an escape hatch.
+      map.set(rec.sessionId, rec);
+    }
+  }
+
+  return map;
 }
 
 type Pass1Candidate = {
@@ -400,9 +409,9 @@ async function runTimeLimitPass(db: Db): Promise<number> {
 
   if (candidates.length === 0) return 0;
 
-  const supervisorMap = await loadSupervisorSessions();
+  const records = await loadSupervisorSessionRecords();
 
-  if (supervisorMap === null) {
+  if (records === null) {
     log.warn(
       { candidateCount: candidates.length },
       "watchdog aborted — listSessions failed; leaving Running candidates for next tick",
@@ -435,40 +444,81 @@ async function runTimeLimitPass(db: Db): Promise<number> {
 
     if (elapsedMs <= cap * 60_000) return;
 
-    const live = row.acpSessionId
-      ? supervisorMap.get(row.acpSessionId)
-      : undefined;
+    // Match the live supervisor session by the server-owned (runId, stepId),
+    // NOT by runs.acp_session_id: the graph runner persists acp_session_id only
+    // AFTER the node's prompt returns, so a node still mid-prompt has a null
+    // column while its agent session is live. Looking up by (runId, stepId)
+    // finds — and therefore actually tears down — that session instead of
+    // marking the run Failed while the agent keeps mutating the worktree
+    // (split-brain). Only the EXACT capped node's session is matched, never a
+    // later node's live session.
+    const live = records.find(
+      (r) =>
+        r.status === "live" &&
+        r.runId === row.id &&
+        r.stepId === row.currentStepId,
+    );
 
     if (live) {
       try {
         await deleteSession(live.sessionId);
       } catch (err) {
+        // 5xx / network → retryable: leave the run Running and retry next tick.
+        // Marking Failed without confirming teardown is the split-brain we must
+        // avoid (terminal run, still-live agent).
+        if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+          log.warn(
+            { runId: row.id, err: err.message },
+            "watchdog deleteSession 5xx — leaving Running for next tick",
+          );
+
+          return;
+        }
+        // Terminal failure (e.g. 404 unknown session) → the session is already
+        // gone; safe to proceed to the terminal transition.
         log.warn(
           {
             runId: row.id,
             err: err instanceof Error ? err.message : String(err),
           },
-          "watchdog deleteSession failed — proceeding to mark Failed (session unrecoverable)",
+          "watchdog deleteSession terminal failure — session unrecoverable, proceeding",
         );
       }
     }
+    // No live session for this (run, node): the capped node's agent is not
+    // running — confirmed absent, safe to mark Failed.
 
-    // A declared maxDurationMinutes cap was exceeded — same family as the
-    // concurrency-cap PRECONDITION the sweeper already owns, NOT a pending-
-    // permission deferred expiry (that is HITL_TIMEOUT, which drives the
-    // /respond terminal branch). ADR-008 closed union: reuse PRECONDITION.
-    await markNodeFailed(attempt.id, { errorCode: "PRECONDITION" }, db);
+    // Claim the terminal transition atomically over BOTH runs and the active
+    // attempt, guarded on the run still being Running ON THIS NODE. A
+    // concurrently-finishing node moves runs.current_step_id off this node, so
+    // the guard matches zero rows and we never overwrite its ledger attempt.
+    // A maxDurationMinutes cap is the same family as the concurrency-cap
+    // PRECONDITION the sweeper owns, NOT a pending-permission deferred expiry
+    // (that is HITL_TIMEOUT). ADR-008 closed union: reuse PRECONDITION.
+    const claimed: boolean = await db.transaction(async (tx: Db) => {
+      const upd = await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date(), currentStepId: null })
+        .where(
+          and(
+            eq(runs.id, row.id),
+            eq(runs.status, "Running"),
+            eq(runs.currentStepId, row.currentStepId),
+          ),
+        )
+        .returning({ id: runs.id });
 
-    const updated = await db
-      .update(runs)
-      .set({ status: "Failed", endedAt: new Date(), currentStepId: null })
-      .where(and(eq(runs.id, row.id), eq(runs.status, "Running")))
-      .returning({ id: runs.id });
+      if (upd.length === 0) return false;
 
-    if (updated.length === 0) {
+      await markNodeFailed(attempt.id, { errorCode: "PRECONDITION" }, tx);
+
+      return true;
+    });
+
+    if (!claimed) {
       log.debug(
-        { runId: row.id },
-        "watchdog status-guard mismatch — concurrent transition won",
+        { runId: row.id, nodeId: row.currentStepId },
+        "watchdog claim lost — run advanced concurrently; no ledger mutation",
       );
 
       return;
@@ -479,9 +529,44 @@ async function runTimeLimitPass(db: Db): Promise<number> {
       { runId: row.id, nodeId: row.currentStepId, capMinutes: cap, elapsedMs },
       "watchdog terminated run past maxDurationMinutes cap",
     );
+
+    // A maxDurationMinutes kill is a terminal transition that frees a scheduler
+    // slot, exactly like a normal runner exit — promote the next Pending run so
+    // queued work is not stranded. Mirrors runner-graph's promoteAfterExit.
+    await promoteAfterTimeoutKill(db);
   });
 
   return killed;
+}
+
+// Promote the next Pending run after a watchdog kill freed a slot. Lazy-imports
+// runFlow to avoid a static cycle (runner.ts → runGraph → keepalive sweep), the
+// same pattern runner-graph's promoteAfterExit uses. Non-fatal: a failed
+// promotion never blocks the kill that already committed.
+async function promoteAfterTimeoutKill(db: Db): Promise<void> {
+  try {
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    await promoteNextPending({
+      db,
+      runFlow: (next: string) => {
+        void runFlow(next).catch((err: unknown) =>
+          log.error(
+            {
+              err: err instanceof Error ? err.message : String(err),
+              runId: next,
+            },
+            "watchdog-promoted runFlow dispatch failed",
+          ),
+        );
+      },
+    });
+  } catch (err) {
+    log.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "watchdog promoteNextPending after kill failed (non-fatal)",
+    );
+  }
 }
 
 export type SweepResult = {

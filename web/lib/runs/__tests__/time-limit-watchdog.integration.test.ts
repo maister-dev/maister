@@ -44,9 +44,19 @@ vi.mock("@/lib/supervisor-client", () => ({
   checkpointSession: (id: string) => checkpointSessionSpy(id),
 }));
 
+// A watchdog kill frees a scheduler slot and promotes the next Pending run via
+// a lazy import of runFlow; mock it to a spy so the dispatch is observable and
+// no real flow execution runs in the test.
+const runFlowSpy = vi.fn(async (_runId: string) => undefined);
+
+vi.mock("@/lib/flows/runner", () => ({
+  runFlow: (id: string) => runFlowSpy(id),
+}));
+
 let runSweepTick: (opts?: { db?: unknown }) => Promise<unknown>;
 
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -131,9 +141,12 @@ beforeEach(async () => {
   await db.delete(schema.tasks);
   await db.delete(schema.flows);
   deleteSessionSpy.mockClear();
+  deleteSessionSpy.mockReset();
+  deleteSessionSpy.mockResolvedValue(undefined);
   listSessionsSpy.mockReset();
   listSessionsSpy.mockResolvedValue([]);
   checkpointSessionSpy.mockReset();
+  runFlowSpy.mockClear();
 });
 
 // Seed a Running run with one active node_attempts row. `attemptStartedAt`
@@ -196,10 +209,16 @@ async function seedRunningNode(opts: {
   return { runId, supervisorSessionId };
 }
 
-function liveSessionRecord(acpSessionId: string, supervisorSessionId: string) {
+// The watchdog matches a live session by the server-owned (runId, stepId), not
+// by acp_session_id (which the runner persists only after the prompt returns).
+function liveSessionRecord(
+  runId: string,
+  supervisorSessionId: string,
+  acpSessionId?: string,
+) {
   return {
     sessionId: supervisorSessionId,
-    runId: "ignored",
+    runId,
     projectSlug: "wd-app",
     stepId: "implement",
     status: "live" as const,
@@ -209,6 +228,45 @@ function liveSessionRecord(acpSessionId: string, supervisorSessionId: string) {
     monotonicId: 0,
     acpSessionId,
   };
+}
+
+// A queued Pending run (no worktree/attempt needed) used to assert the watchdog
+// promotes queued work after a kill frees a scheduler slot.
+async function seedPendingRun(startedAt: Date): Promise<string> {
+  const flowId = randomUUID();
+  const taskId = randomUUID();
+  const runId = randomUUID();
+
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "g-pending",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/g-pending",
+    manifest: manifestWithLimits({}),
+    schemaVersion: 1,
+  });
+  await db.insert(schema.tasks).values({
+    id: taskId,
+    projectId,
+    title: "t",
+    prompt: "p",
+    flowId,
+    status: "InFlight",
+  });
+  await db.insert(schema.runs).values({
+    id: runId,
+    taskId,
+    projectId,
+    flowId,
+    executorId,
+    flowVersion: "v1.0.0",
+    status: "Pending",
+    startedAt,
+  });
+
+  return runId;
 }
 
 async function getRun(runId: string): Promise<any> {
@@ -240,7 +298,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     });
 
     listSessionsSpy.mockResolvedValue([
-      liveSessionRecord(acp, supervisorSessionId),
+      liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
     await runSweepTick({ db });
@@ -269,7 +327,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     });
 
     listSessionsSpy.mockResolvedValue([
-      liveSessionRecord(acp, supervisorSessionId),
+      liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
     await runSweepTick({ db });
@@ -289,7 +347,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     });
 
     listSessionsSpy.mockResolvedValue([
-      liveSessionRecord(acp, supervisorSessionId),
+      liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
     await runSweepTick({ db });
@@ -309,7 +367,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     });
 
     listSessionsSpy.mockResolvedValue([
-      liveSessionRecord(acp, supervisorSessionId),
+      liveSessionRecord(runId, supervisorSessionId, acp),
     ]);
 
     await runSweepTick({ db });
@@ -341,5 +399,77 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
 
     expect(attempt.status).toBe("Failed");
     expect(attempt.errorCode).not.toBeNull();
+  }, 60_000);
+
+  it("tears down a mid-prompt over-cap session even when acp_session_id is still null (matched by runId+stepId)", async () => {
+    // The dangerous path: the run is over cap while the node prompt is still
+    // running, so runs.acp_session_id has NOT been persisted yet — but a live
+    // supervisor session exists. Matching by (runId, stepId) MUST find and kill
+    // it, otherwise the run is marked Failed while the agent keeps running.
+    const { runId, supervisorSessionId } = await seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: null,
+    });
+
+    listSessionsSpy.mockResolvedValue([
+      // No acpSessionId on the record either — matched purely by runId+stepId.
+      liveSessionRecord(runId, supervisorSessionId),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
+    expect(deleteSessionSpy).toHaveBeenCalledWith(supervisorSessionId);
+    expect((await getRun(runId)).status).toBe("Failed");
+    expect((await getAttempt(runId)).status).toBe("Failed");
+  }, 60_000);
+
+  it("leaves the run Running (retries next tick) when deleteSession fails with a retryable 5xx", async () => {
+    // Marking Failed without confirming teardown is split-brain (terminal run,
+    // live agent). A retryable supervisor failure must leave the run Running.
+    const { runId, supervisorSessionId } = await seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: "acp-5xx",
+    });
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, supervisorSessionId, "acp-5xx"),
+    ]);
+    deleteSessionSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
+    );
+
+    await runSweepTick({ db });
+
+    expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
+    expect((await getRun(runId)).status).toBe("Running");
+    expect((await getAttempt(runId)).status).toBe("Running");
+  }, 60_000);
+
+  it("promotes a queued Pending run after a timeout kill frees the slot", async () => {
+    const { runId, supervisorSessionId } = await seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: "acp-promote",
+    });
+    const pendingRunId = await seedPendingRun(new Date(Date.now() - 60_000));
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, supervisorSessionId, "acp-promote"),
+    ]);
+
+    await runSweepTick({ db });
+
+    // The capped run is terminal Failed; the freed slot promotes the Pending
+    // run to Running AND dispatches runFlow for it (F3).
+    expect((await getRun(runId)).status).toBe("Failed");
+    expect((await getRun(pendingRunId)).status).toBe("Running");
+
+    // runFlow is dispatched via queueMicrotask inside promoteNextPending; flush
+    // the task queue before asserting the dispatch fired.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runFlowSpy).toHaveBeenCalledWith(pendingRunId);
   }, 60_000);
 });
