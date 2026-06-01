@@ -291,23 +291,31 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     expect(runs).toHaveLength(0);
   });
 
-  it("an all-instruct manifest passes the enforcement gate (proceeds to worktree creation)", async () => {
+  it("an all-instruct manifest launches cleanly (202, creates runs + workspaces rows)", async () => {
     const res = await POST(request("task-proj-instruct"));
 
-    // The enforcement gate runs BEFORE worktree creation and refuses with a
-    // 400 CONFIG. An all-instruct manifest must NOT be refused there — the
-    // launch proceeds past the gate to the worktree side-effect.
-    //
-    // We assert the boundary the gate owns (gate did not block → addWorktree
-    // reached), NOT the final 202: a pre-existing unrelated route FK-order bug
-    // (workspaces inserted before runs) makes the post-gate transaction 500 in
-    // this harness. Asserting addWorktree-was-called isolates the enforcement
-    // gate's pass behavior from that downstream bug. See tester report
-    // "Implementor must-knows".
-    const refusedAtGate =
-      res.status === 400 && (await res.clone().json()).code === "CONFIG";
-
-    expect(refusedAtGate).toBe(false);
+    expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+
+    const runRows = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-instruct"));
+
+    expect(runRows).toHaveLength(1);
+
+    const workspaceRows = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.runId, runRows[0].id));
+
+    expect(workspaceRows).toHaveLength(1);
+
+    const task = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, "task-proj-instruct"));
+
+    expect(task[0].status).toBe("InFlight");
   });
 });

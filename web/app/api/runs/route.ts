@@ -355,14 +355,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     try {
       await db.transaction(async (tx: any) => {
-        await tx.insert(workspaces).values({
-          id: randomUUID(),
-          runId,
-          projectId: project.id,
-          branch,
-          worktreePath,
-          parentRepoPath: project.repoPath,
-        });
+        // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
+        // so the workspace insert would violate it if it ran first.
         await tx.insert(runs).values({
           id: runId,
           taskId: task.id,
@@ -378,6 +372,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           flowVersion: revision.versionLabel,
           flowRevision: revision.resolvedRevision,
           flowRevisionId: revision.id,
+        });
+        await tx.insert(workspaces).values({
+          id: randomUUID(),
+          runId,
+          projectId: project.id,
+          branch,
+          worktreePath,
+          parentRepoPath: project.repoPath,
         });
         await tx
           .update(tasks)
