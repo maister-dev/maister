@@ -106,6 +106,7 @@ erDiagram
         text base_ref "M11b 0011 merge-base SHA for returned range"
         text returned_commits "M11b 0011 raw git log base..branch"
         text returned_diff "M11b 0011 raw git diff base..branch"
+        jsonb enforcement_snapshot "M11c 0013 append-only verdict audit"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"

@@ -285,6 +285,95 @@ Discriminated on `type`:
 | `guard` | `id`, `type=guard` + at least one of `cost`, `time`, `regex` | — |
 | `human` | `id`, `type=human`, `form_schema` (path to JSON schema with `schemaVersion`) | `on_reject.goto_step`, `on_reject.comments_var` |
 
+### Node `settings` (typed, M11c)
+
+Every Flow graph node carries an **optional** typed `settings` block. The block
+is discriminated on node type and replaces the M11a opaque passthrough — the
+shape is now validated, not passed through verbatim. `settings` is OPTIONAL on
+**every** node type: a node with no `settings` validates and runs unchanged, and
+absence of `settings` NEVER triggers a launch refusal (back-compat). Settings
+ride in the pinned `flow_revisions.manifest` — no separate file, env var, or
+sidecar. Validation lives in `web/lib/config.schema.ts`; failures throw
+`MaisterError({ code: "CONFIG" })`.
+
+Status: the typed shape, node-level validation, the launch-time refusal
+boundary, the `enforcement` evaluator, the `enforcement_snapshot` audit record,
+and the time-limit watchdog are **Implemented (M11c subset)**. Capability-
+reference resolution against a registry, agent-aware capability mapping, and
+per-session materialization are **Designed (M14)**. See
+[ADR-031](decisions.md) (typed settings) / [ADR-032](decisions.md) (refusal
+boundary) and the frozen enforcement spec in
+[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md).
+
+**`ai_coding` / `judge` settings** (agent-capability shape):
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `executors` | `string[]` | Each id MUST exist in `maister.yaml` `executors[]` (validated at project load, M11c). |
+| `model` | `string` | Free-form model override. |
+| `thinkingEffort` | `low \| medium \| high` | Unknown value rejected. |
+| `mcps` | `string[]` | Capability class. Registry resolution is M14 (Designed). |
+| `tools` | `{ claude?: string[]; codex?: string[] }` | Per-agent tool map; malformed map rejected. Capability class. |
+| `skills` | `string[]` | Capability class. Registry resolution is M14 (Designed). |
+| `settingsProfile` | `string` | Named settings profile reference. |
+| `workspaceAccess` | `read \| write \| none` | Capability class. |
+| `artifactAccess` | `string[]` | Artifact ids the node may read/write. |
+| `permissionMode` | `ask \| allow \| deny` | Capability class. Unknown value rejected. |
+| `limits` | `{ maxDurationMinutes?: number > 0; maxCostUsd?: number > 0 }` | Out-of-range rejected. `maxDurationMinutes` is the watchdog cap (below); `maxCostUsd` is record-only. |
+| `restrictions` | `string[]` | Capability class. Registry resolution is M14 (Designed). |
+| `enforcement` | `{ mcps?; tools?; skills?; restrictions?; permissionMode?; workspaceAccess? }` | Per-class intent — see below. |
+
+**`human` settings** (decision/role/takeover shape):
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `roles` | `string[]` | Eligible reviewer roles. Role refs are NOT validated against a registry in M11c (M13). |
+| `assignees` | `string[]` | Specific assignees. |
+| `decisions` | `string[]` | Each value MUST appear in the node's `transitions` (M11c). |
+| `allowFurtherTracks` | `boolean` | Permit spawning further tracks. |
+| `allowTakeover` | `boolean` | Permit manual takeover. |
+| `slaHours` | `number > 0` | Out-of-range rejected. |
+| `stalenessHint` | `string` | Hint surfaced when downstream goes stale. |
+| `returnRequires` | `string[]` | Conditions required before returning. |
+
+**`cli` / `check` settings** (command shape):
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `command` | `string` | Command to run. |
+| `timeoutMs` | `number > 0` | Out-of-range rejected. |
+| `environmentPolicy` | `inherit \| clean \| whitelist` | Unknown value rejected. |
+| `inputArtifacts` | `string[]` | Artifact ids consumed. |
+| `outputArtifacts` | `string[]` | Artifact ids produced. |
+| `failureClass` | `blocking \| advisory \| retryable` | Unknown value rejected. |
+
+#### `enforcement` intent + the static enforceability table
+
+`settings.enforcement` declares, per capability class (`mcps`, `tools`,
+`skills`, `restrictions`, `permissionMode`, `workspaceAccess`), how strictly the
+class must hold:
+
+| Value | Meaning |
+| ----- | ------- |
+| `strict` | The class MUST be enforced; launch refuses if the build cannot enforce it. |
+| `instruct` | **Default.** The class is passed to the agent as an instruction. |
+| `off` | The class is omitted from the verdict set. |
+
+At launch, each `strict` class is checked against `ENFORCEABILITY_BY_AGENT` — a
+**code constant** in `web/lib/flows/enforcement.ts` (NOT an env var, port, or
+config-file path), keyed by `agent × capabilityClass`. In M11c every cell is
+`instructed`, so any `strict` declaration is `refused` and launch throws
+(`CONFIG`, or `EXECUTOR_UNAVAILABLE` once M14 flips cells). M14 only ever flips
+`instructed → enforced`; the contract tightens, never loosens. The table and the
+`evaluateNodeEnforcement` truth table are FROZEN in
+[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) — that
+file is canonical; do not duplicate them here.
+
+The `limits.maxDurationMinutes` watchdog is agent-agnostic and inherently
+enforced — it is NOT subject to the `strict`/`instruct` table. A run whose
+elapsed exceeds the cap is terminated `Failed` via the supervisor's existing
+`DELETE /sessions/:id`.
+
 ### Cross-reference checks
 
 `loadFlowManifest()` runs:

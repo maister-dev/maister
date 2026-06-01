@@ -27,8 +27,10 @@ the flow) and a `type` chosen from:
 > loop, and gate execution — is **Implemented** in M11a, shipped on the
 > `feature/m11a-flow-graph-lifecycle` branch. Sub-parts owned by later
 > milestones are tagged
-> inline: the node `settings` block → **M11c (Designed)** (parsed as opaque
-> passthrough in M11a, enforced in M11c); manual takeover / `human_edit` /
+> inline: the node `settings` block → **Implemented (M11c subset)** (typed
+> shape + launch-time enforcement boundary; capability-reference resolution and
+> per-session materialization remain **M14 (Designed)**); manual takeover /
+> `human_edit` /
 > `merge` nodes → **M11b (Designed)**; typed artifact instances
 > (`input.requires` / `output.produces`) → **M12**. Decisions:
 > [ADR-026](decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
@@ -56,9 +58,11 @@ nodes:
         - steps.plan.output
         - artifact: plan-summary
           kind: generic_file
-    # settings: M11c (Designed) — in M11a this block is parsed as an opaque
-    # passthrough (preserved, not enforced) and emits SETTINGS_NOT_ENFORCED_WARN;
-    # typed validation + enforcement land in M11c.
+    # settings: Implemented (M11c subset) — typed per-node-type shape, validated
+    # at compile time; OPTIONAL. The per-class `enforcement` intent gates launch
+    # (strict on a class the build cannot enforce → refusal). M11c resolves NO
+    # capability refs and materializes NOTHING — ref resolution + per-session
+    # materialization are M14 (Designed).
     settings:
       executors: [codex-fast, claude-strong]
       thinkingEffort: high
@@ -72,6 +76,8 @@ nodes:
         - no-global-installs
         - no-secret-env
       permissionMode: ask
+      enforcement:
+        restrictions: strict    # strict | instruct (default) | off, per class
       limits:
         maxDurationMinutes: 45
         maxCostUsd: 5
@@ -181,12 +187,13 @@ Lifecycle sections:
 | `transitions` | Maps declared outcomes to declared node ids. |
 | `rework` | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
 
-**Node `settings` — M11c (Designed).** In M11a the `settings` block is parsed
-as an opaque passthrough: it is preserved on the node (never silently stripped),
-records a one-time `SETTINGS_NOT_ENFORCED_WARN`, and is **not enforced**. Typed
-validation and the runtime enforcement boundary (refuse undeclared
-MCP/tool/skill/restriction) land in M11c, resolving registry refs through the
-M14 capability registry.
+**Node `settings` — Implemented (M11c subset).** The `settings` block is parsed
+into a typed, per-node-type discriminated shape and validated at compile time
+(the M11a opaque passthrough and the `SETTINGS_NOT_ENFORCED_WARN` no longer
+exist). It is **OPTIONAL on every node type** — a settings-less node validates
+and runs unchanged, and absence of `settings` NEVER triggers a refusal. **M11c
+performs no materialization**: it neither resolves capability references nor
+writes any per-session settings file (those are M14, below).
 
 Node-specific settings are intentionally first-class product configuration:
 AI-coding nodes constrain executors, agent definitions, MCP servers, tools,
@@ -196,13 +203,31 @@ SLA/staleness hints, and return requirements. CLI/check/judge nodes constrain
 commands, environment policy, artifact inputs/outputs, timeout, and failure
 classification.
 
-Planned M14 resolves every `settings.executors`, `settings.mcps`,
+**Per-class `enforcement` intent (M11c).** Each of the six capability classes —
+`mcps`, `tools`, `skills`, `restrictions`, `permissionMode`, `workspaceAccess` —
+carries an optional `enforcement` intent of `strict | instruct | off`, default
+`instruct`, declared in `settings.enforcement`. At launch, MAIster evaluates each
+declared class against the static `ENFORCEABILITY_BY_AGENT` table for the
+resolved agent. If an `ai_coding`/`judge` node declares `enforcement: strict` on
+a class MAIster cannot strictly enforce for that agent, the launch is **refused**
+before any worktree/run/workspace side-effect — `MaisterError("CONFIG")` when no
+agent can enforce the class at all, or `MaisterError("EXECUTOR_UNAVAILABLE")`
+when some agent can but the resolved one cannot. **No new error code** is
+introduced ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
+(all-`instructed` in M11c), and the refusal allow-list are specified in
+[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
+rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
+
+Planned **M14 (Designed)** resolves every `settings.executors`, `settings.mcps`,
 `settings.skills`, `settings.settingsProfile`, `settings.tools`, and
 `settings.restrictions` entry through the project capability registry before
-execution. The resolved profile is agent-aware: the same abstract tool id can
-map to different concrete Claude or Codex tool names.
+execution. The resolved profile is agent-aware: the same abstract tool id (e.g.
+`tools: [shell]`) can map to different concrete Claude or Codex tool names. M14
+also flips `ENFORCEABILITY_BY_AGENT` cells `instructed → enforced` as
+materialization lands (the contract only ever tightens, never loosens).
 
-The runner enforces the resolved profile at the AI session scope. For a
+The M14 runner enforces the resolved profile at the AI session scope. For a
 per-node session, the profile is effectively node-scoped: before the node
 starts, the runner materializes only that node's allowed skills, MCP config,
 adapter `settings.json` or equivalent settings file, environment profile, and
@@ -211,11 +236,7 @@ long-living ACP session, skills, MCPs, settings, and tool restrictions are
 session-wide: every AI node inside that session must share the same resolved
 capability profile. If a later node needs different capabilities, the Flow must
 declare a new session boundary unless the adapter supports explicit safe profile
-swap.
-
-If a Flow requires strict enforcement and the selected executor can only receive
-the restriction as an instruction, MAIster refuses the node launch instead of
-silently weakening the capability boundary.
+swap. None of this materialization runs in M11c.
 
 **Review-driven rework — M11a (Implemented).** Human review does not execute
 arbitrary `goto_step`. The Flow declares allowed decisions and targets; the

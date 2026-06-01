@@ -40,7 +40,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `scratch_attachments` | Text note, file path, or issue URL attachments attached to a scratch run or message. | `scratch_runs.run_id`, optional `scratch_messages.id` |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path. | `scratch_runs.run_id` |
 | `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
-| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). | `runs.id`, `users.id` (takeover owner, M11b) |
+| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b) |
 | `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
 | `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
 
@@ -545,6 +545,8 @@ One immutable row per node execution; `attempt` auto-increments per
   baseRef?,                                 // M11b merge-base SHA of the returned range
   returnedCommits?,                         // M11b raw `git log <base>..<branch>` text
   returnedDiff?,                            // M11b raw `git diff <base>..<branch>` text
+  enforcementSnapshot?,                     // M11c (jsonb, migration 0013) append-only
+                                            //   per-capability-class verdict audit array
   acpSessionId?,                            // ACP session id (agent/judge nodes)
   stdout?,                                  // truncated to 1 MiB by the writer
   vars (jsonb, DEFAULT '{}'),               // node output bag for templating
@@ -566,6 +568,20 @@ stored minimally; typed `commit_set`/`diff` artifact instances are **M12**. The
 index is unchanged (`node_attempts_run_idx` on `(runId)`). See
 [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) and
 [ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
+
+**(M11c — migration `0013`, additive to `0011`.)** `enforcementSnapshot`
+(jsonb, nullable) is an **append-only** audit record written once at launch /
+first attempt and never mutated. It holds the resolved per-capability-class
+verdicts as an array of `{ class, declared, capability, verdict }` where
+`class ∈ {mcps, tools, skills, restrictions, permissionMode, workspaceAccess}`,
+`declared ∈ {strict, instruct, off}`, `capability ∈ {enforced, instructed,
+unsupported}`, and `verdict ∈ {enforced, instructed, refused}`. It is written on
+**both** the launch pass path and the refusal path, and is read by the M11c
+run-detail settings panel. Because it is an audit snapshot rather than a mutable
+mirror of a `maister.yaml` field, the config-state SET/CLEAR round-trip rule does
+not apply. See
+[`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) and
+ADR-032 in [`decisions.md`](decisions.md).
 
 ## `gate_results`
 

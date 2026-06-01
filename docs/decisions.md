@@ -52,6 +52,8 @@
 | [ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped) | Full-featured gate execution in M11a; M15 re-scoped | Accepted | 2026-05-30 |
 | [ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c) | Split M11 into M11a / M11b / M11c | Accepted | 2026-05-30 |
 | [ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status) | Manual takeover as a local worktree handoff (`HumanWorking` status) | Accepted | 2026-05-31 |
+| [ADR-031](#adr-031-node-typed-settings-schema-carve-b) | Node typed settings schema (carve (b): schema + shape-validation + visibility now; capability resolution + materialization → M14) | Accepted | 2026-06-01 |
+| [ADR-032](#adr-032-settings-enforcement-refusal-boundary) | Settings-enforcement refusal boundary (declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, CONFIG/EXECUTOR_UNAVAILABLE, no new code) | Accepted | 2026-06-01 |
 
 ---
 
@@ -1226,6 +1228,170 @@ properties:
   ([ADR-008](#adr-008-typed-error-taxonomy-maistererror)) already covers every
   takeover failure via `PRECONDITION`/`CONFLICT`/`EXECUTOR_UNAVAILABLE`. Rejected
   — no new code.
+
+---
+
+### ADR-031: Node typed settings schema (carve (b))
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** M11a shipped the Flow graph manifest (`nodes[]`,
+[ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump)) but
+deliberately punted on node `settings`: the block is parsed as an opaque
+passthrough (`z.record(z.string(), z.unknown())` in `nodeCommon`) and
+`loadFlowManifest` emits a one-time `SETTINGS_NOT_ENFORCED_WARN`. Roadmap
+criterion #6 ("AI node settings are visible in the UI and enforced by runtime
+boundaries: no undeclared MCP/tool/skill/restriction escape hatch is silently
+allowed") and the node-settings half of criterion #8 (docs) remain open. Real
+*positive* enforcement of #6 depends on **M14** (scoped capability
+materialization): the named-capability registry, import-from-git resolved SHA,
+agent-aware mapping (`tools:[shell]`→concrete names), and per-session
+materialization of `settings.json` / MCP config / skills. M11c cannot resolve
+`mcps:[github]` to an enforceability verdict without the M14 registry, and must
+not duplicate M14's registry-reference validation (roadmap #1, assigned to M14)
+or M13's role validation.
+
+**Decision:** Adopt **carve (b)**. M11c replaces the M11a opaque passthrough
+with a **typed, per-node-type discriminated `settings` schema** and **removes**
+`SETTINGS_NOT_ENFORCED_WARN`. Each node `type` gets a distinct shape: `ai_coding`
+and `judge` carry the agent-capability shape (`executors`, `model`,
+`thinkingEffort`, `mcps`, `tools` (agent-aware map), `skills`, `settingsProfile`,
+`workspaceAccess`, `artifactAccess`, `permissionMode`, `limits`, `restrictions`,
+plus a per-class `enforcement` map); `human` carries
+roles/assignees/decisions/takeover/SLA/return shape; `cli`/`check` carry
+command/timeout/environmentPolicy/artifacts/failureClass shape. `settings` is
+OPTIONAL on every node type (back-compat: compiled-linear and minimal graph
+nodes carry none; absence never triggers a refusal). M11c validates settings
+**shape + enum + numeric bounds + intra-manifest/server-state references only**:
+`settings.executors[]` against `maister.yaml executors[]` (the existing M6 ref
+set), `human.decisions[]` against the node's `transitions` (the M11a validator),
+and `enforcement` keys only on classes the node type owns. M11c **never** reads a
+capability registry, resolves an abstract capability id, validates an
+MCP/tool/skill/agent/restriction *reference*, or materializes a settings file —
+all of that is M14.
+
+**Consequences:**
+
+- The `z.unknown()` passthrough and `SETTINGS_NOT_ENFORCED_WARN` (and its WARN
+  emission) are deleted from `web/lib/config.schema.ts` / `web/lib/config.ts`;
+  the M11a tests asserting the constant/WARN are superseded (assert against the
+  removed named symbol, not a string match).
+- Settings ride in the already-pinned `flow_revisions.manifest` (server-state,
+  immutable per run); there is no YAML→DB persistence of settings in M11c, so
+  the config-state SET/CLEAR round-trip rule is N/A.
+- The criterion-#6 slice is honest and non-silent: schema + visibility are real
+  now, the refusal boundary ([ADR-032](#adr-032-settings-enforcement-refusal-boundary))
+  is real now, and M14 later flips capability classes from `instructed` to
+  `enforced` and adds registry-ref resolution **without weakening** the contract.
+- Docs: `flow-dsl.md` node `settings` is promoted Designed→Implemented for the
+  M11c subset; M14 parts stay Designed.
+
+**Alternatives Considered:**
+
+- **Ship full enforcement now (resolve refs + materialize):** requires the M14
+  registry + spawn-env layer that does not exist; would either fabricate
+  verdicts or silently weaken the boundary. Rejected — carve at the M14
+  dependency.
+- **Keep the opaque passthrough and only add a UI view:** leaves criterion #6
+  "no silent escape hatch" unmet (undeclared shape still accepted). Rejected —
+  the typed schema is the contract.
+- **A single shared settings shape across node types:** `cli`/`check` have no
+  capabilities and `human` has no MCP/tools; a flat shape would accept nonsense
+  (`mcps` on a `human` node). Rejected — discriminate by node `type`.
+
+---
+
+### ADR-032: Settings-enforcement refusal boundary
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** Carve (b) ([ADR-031](#adr-031-node-typed-settings-schema-carve-b))
+ships the typed settings now but defers materialized enforcement to M14.
+Criterion #6 forbids a "silent escape hatch": a flow that *declares* it needs
+strict enforcement of a capability class MAIster cannot yet strictly enforce
+must NOT launch as if it could. Until M14 owns the materializing registry,
+MAIster can only *gate* whether a node is allowed to launch.
+
+**Decision:** Record an explicit per-class **`enforcement` intent**
+(`strict | instruct | off`, default `instruct`) on each capability-bearing
+setting, resolved against a **static per-agent enforceability table** — a code
+constant `ENFORCEABILITY_BY_AGENT` in `web/lib/flows/enforcement.ts` mapping
+`agent → capabilityClass → 'enforced' | 'instructed' | 'unsupported'`. The table
+is **conservatively seeded all-`instructed`** (no `enforced` cell) for M11c: the
+`permissionMode`-on-`claude` cell is the only candidate for `enforced`, and only
+if `claude-agent-acp@0.37.0` is verified end-to-end to honor
+`--permission-mode deny|ask`; that spike (Phase 0.10) had **no live adapter** in
+M11c, so the whole table stays `instructed`. A pure evaluator
+`evaluateNodeEnforcement(settings, agent, table)` returns, per declared class,
+`verdict='refused'` iff `declared==='strict' && table[agent][class]!=='enforced'`,
+`'enforced'` iff `declared==='strict' && table[agent][class]==='enforced'`,
+`'instructed'` otherwise (`off`→omitted). `assertNodeLaunchable(node, agent,
+table)` throws on any `refused` class: **`MaisterError("CONFIG")`** when no agent
+in the table can `enforced` the class (the build cannot strictly enforce it at
+all — internal over-declaration), **`MaisterError("EXECUTOR_UNAVAILABLE")`** when
+some agent can `enforced` it but the resolved executor's agent cannot. **No new
+error code** ([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed
+union). The refusal attaches at TWO points: the **launch precondition** in
+`web/app/api/runs/route.ts` (whole-manifest static check, AFTER trust +
+enablement + executor resolution, BEFORE worktree creation) and the **per-node
+runtime gate** in `web/lib/flows/graph/runner-graph.ts` (immediately before a
+node's `action` is built, post per-node executor resolution), so a future
+per-node executor override cannot smuggle an unenforceable class past launch. The
+refusal fires BEFORE any ACP session / permission deferred is created (no leaked
+deferred). Resolved per-class verdicts are snapshotted to
+`node_attempts.enforcement_snapshot` (migration `0013`) at launch/first-attempt
+for audit, on both the pass and refusal paths. The supervisor `spawn.ts` env
+construction is **unchanged** in M11c — M11c only gates whether the node may
+launch; the materialized env layer is M14.
+
+Time-limit enforcement (`limits.maxDurationMinutes`) is separate: it is
+MAIster-side and agent-agnostic, therefore inherently `enforced` and NOT subject
+to the strict/instruct table. It is a **web-side watchdog**, not a launch
+refusal — the existing keep-alive / scheduler sweep computes elapsed from the
+active `node_attempts.started_at` and terminates a past-cap run via the existing
+supervisor `DELETE /sessions/:id`, marking the node `Failed`. Cost limits remain
+record-only.
+
+**Consequences:**
+
+- With the all-`instructed` table, every `strict` declaration on any capability
+  class refuses launch with `CONFIG`; the `EXECUTOR_UNAVAILABLE` branch is
+  exercised by tests that inject a table with an `enforced` cell. The
+  evaluator/asserter take the table as an injectable parameter (default
+  `ENFORCEABILITY_BY_AGENT`).
+- The contract only ever tightens: M14 flips cells `instructed→enforced` and
+  adds registry-ref resolution; a flow that launched under M11c never *starts*
+  failing because a class became enforceable. Each `instructed` cell carries a
+  `TODO(M14)`.
+- The refusal applies to `ai_coding` AND `judge` nodes (both spawn an agent
+  session). Capability-scoping of gate agent-sessions
+  (`skill_check`/`ai_judgment`) stays M14.
+- No new env var / port / sidecar / config path (the table is a code constant;
+  settings ride in the manifest) → no `Dockerfile` / `compose.*` /
+  `.env.example` change.
+
+**Alternatives Considered:**
+
+- **A new `MaisterError` code (`ENFORCEMENT` / `CAPABILITY`):**
+  [ADR-008](#adr-008-typed-error-taxonomy-maistererror) is a closed union;
+  `CONFIG` (build-cannot-enforce) and `EXECUTOR_UNAVAILABLE` (not-for-this-agent)
+  already model both failure modes precisely. Rejected — no new code.
+- **Seed `permissionMode=enforced` for claude without the spike:** a
+  wrongly-`enforced` cell lets a `strict permissionMode` PASS the launch gate
+  while nothing enforces it — the exact silent escape hatch #6 forbids. Rejected
+  — conservative `instructed` until verified end-to-end.
+- **Supervisor-side time-limit timer (arm in `spawn.ts`):** the web tier owns
+  the run state machine and the DB, so a supervisor kill would still need a
+  web-side mark-`Failed`; arming a timer in `spawn.ts` also breaks this ADR's
+  "spawn.ts unchanged" freeze and the `POST /sessions` wire. For
+  minute-granularity caps the sweep overshoot is negligible. **Revisit at M14**,
+  when the materialization / spawn-env layer moves supervisor-side, the freeze
+  lifts, and second-precise, outage-surviving kills become worth the wire change.
+  Rejected for M11c — web-side watchdog reusing the keep-alive sweep.
+- **Enforce only at the supervisor wire (single gate):** a per-node executor
+  override (M14-era) could then smuggle an unenforceable class past a
+  manifest-level launch check. Rejected — gate at the launch precondition AND
+  the per-node runtime build (belt-and-suspenders).
 
 ---
 
