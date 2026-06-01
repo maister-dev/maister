@@ -1,0 +1,8 @@
+schemaVersion: 1
+name: Greet (fixture)
+# M11c (AC-6 back-compat): a settings-less linear flow. Absence of `settings`
+# MUST NEVER trigger an enforcement refusal.
+steps:
+  - id: greet
+    type: cli
+    command: "echo hello"

@@ -27,6 +27,21 @@ nodes:
     type: ai_coding
     action:
       prompt: "/aif-implement"
+    # M11c (ADR-031/032): typed settings, demonstrated with an all-`instruct`
+    # enforcement intent so the bundled demo launches cleanly on the
+    # conservative static table. M14 flips these to `strict` once it can
+    # materialize the capabilities per session.
+    settings:
+      tools:
+        claude: [Read, Edit, Bash]
+      skills: [aif-implement]
+      permissionMode: ask
+      limits:
+        maxDurationMinutes: 60
+      enforcement:
+        tools: instruct
+        skills: instruct
+        permissionMode: instruct
     transitions:
       success: checks
 

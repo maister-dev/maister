@@ -1,0 +1,26 @@
+schemaVersion: 1
+name: Strict Refusal (fixture)
+# M11c (ADR-032): an ai_coding node declaring `enforcement: strict` on a
+# capability class the static ENFORCEABILITY_BY_AGENT table can only INSTRUCT.
+# Launch MUST be refused with MaisterError("CONFIG"). Drives Verify #2/#3 + e2e.
+compat:
+  engine_min: 1.1.0
+nodes:
+  - id: implement
+    type: ai_coding
+    action:
+      prompt: "/aif-implement"
+    settings:
+      mcps: [github]
+      enforcement:
+        mcps: strict
+    transitions:
+      success: review
+  - id: review
+    type: human
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve]
+    transitions:
+      approve: done
