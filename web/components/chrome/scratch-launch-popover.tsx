@@ -85,7 +85,7 @@ export function ScratchLaunchPopover({
         >
           <button
             aria-label={t("close")}
-            className="absolute inset-0 cursor-default bg-transparent"
+            className="absolute inset-0 cursor-default bg-paper-warm/80 backdrop-blur-[1px]"
             type="button"
             onClick={() => setOpen(false)}
           />
