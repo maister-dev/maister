@@ -37,7 +37,9 @@ function offersTakeover(schema: unknown): boolean {
   return Boolean(s.review) && (s.allowedDecisions ?? []).includes("takeover");
 }
 
-function staleSummaryText(summary: Record<string, unknown> | null): string | null {
+function staleSummaryText(
+  summary: Record<string, unknown> | null,
+): string | null {
   if (summary === null) return null;
   const count = summary.count;
 
@@ -137,6 +139,9 @@ export default async function RunDetailPage({
     elapsed: t("elapsed"),
     returnedCommits: t("returnedCommits"),
     returnedDiff: t("returnedDiff"),
+    assignmentLedger: t("assignmentLedger"),
+    assignmentActor: t("assignmentActor"),
+    assignmentSystemActor: t("assignmentSystemActor"),
     empty: t("timelineEmpty"),
     decisionLabel: (d) =>
       d === "approve"
@@ -207,88 +212,88 @@ export default async function RunDetailPage({
         </section>
       ) : null}
 
-      {detail.pendingHitl
-        ? (() => {
-            const staleText = staleSummaryText(
-              detail.pendingHitl.assignmentStaleEvidenceSummary,
-            );
+      {detail.pendingHitl ? (
+        (() => {
+          const staleText = staleSummaryText(
+            detail.pendingHitl.assignmentStaleEvidenceSummary,
+          );
 
-            return (
-              <section className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5">
-          <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
-            {t("pendingTitle")}
-          </h2>
-          <p className="mb-4 text-[14px] leading-[1.4] text-ink">
-            {detail.pendingHitl.prompt}
-          </p>
-          <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-            {detail.pendingHitl.assignmentActionKind ? (
-              <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                {t("assignmentAction", {
-                  action: detail.pendingHitl.assignmentActionKind,
-                })}
-              </span>
-            ) : null}
-            {detail.pendingHitl.assignmentRoleRefs.length > 0 ? (
-              <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                {t("assignmentRoles", {
-                  roles: detail.pendingHitl.assignmentRoleRefs.join(", "),
-                })}
-              </span>
-            ) : null}
-            {staleText ? (
-              <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-amber">
-                {t("assignmentStaleEvidence", {
-                  count: staleText,
-                })}
-              </span>
-            ) : null}
-            <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-              {detail.pendingHitl.assigneeLabel
-                ? t("assignmentClaimedBy", {
-                    actor: detail.pendingHitl.assigneeLabel,
-                  })
-                : t("assignmentUnclaimed")}
-            </span>
-          </div>
-          <div className="mb-4 flex flex-wrap gap-2">
-            <AssignmentActions
-              assigneeUserId={detail.pendingHitl.assigneeUserId}
-              assignmentId={detail.pendingHitl.assignmentId}
-              canAct={canAct}
-              currentUserId={user.id}
-              labels={{
-                claim: t("assignmentClaim"),
-                release: t("assignmentRelease"),
-                takeOver: t("assignmentTakeOver"),
-              }}
-              status={detail.pendingHitl.assignmentStatus}
-            />
-          </div>
-          <RunHitlResponse
-            canAct={canAct}
-            hitlRequestId={detail.pendingHitl.hitlRequestId}
-            kind={detail.pendingHitl.kind}
-            options={detail.pendingHitl.options}
-            runId={detail.runId}
-            schema={detail.pendingHitl.schema}
-          />
-          {canClaim ? (
-            <div className="mt-4 border-t border-dashed border-amber-line pt-4">
-              <RunTakeoverActions
-                branch={detail.branch}
+          return (
+            <section className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5">
+              <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
+                {t("pendingTitle")}
+              </h2>
+              <p className="mb-4 text-[14px] leading-[1.4] text-ink">
+                {detail.pendingHitl.prompt}
+              </p>
+              <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+                {detail.pendingHitl.assignmentActionKind ? (
+                  <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                    {t("assignmentAction", {
+                      action: detail.pendingHitl.assignmentActionKind,
+                    })}
+                  </span>
+                ) : null}
+                {detail.pendingHitl.assignmentRoleRefs.length > 0 ? (
+                  <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                    {t("assignmentRoles", {
+                      roles: detail.pendingHitl.assignmentRoleRefs.join(", "),
+                    })}
+                  </span>
+                ) : null}
+                {staleText ? (
+                  <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-amber">
+                    {t("assignmentStaleEvidence", {
+                      count: staleText,
+                    })}
+                  </span>
+                ) : null}
+                <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                  {detail.pendingHitl.assigneeLabel
+                    ? t("assignmentClaimedBy", {
+                        actor: detail.pendingHitl.assigneeLabel,
+                      })
+                    : t("assignmentUnclaimed")}
+                </span>
+              </div>
+              <div className="mb-4 flex flex-wrap gap-2">
+                <AssignmentActions
+                  assigneeUserId={detail.pendingHitl.assigneeUserId}
+                  assignmentId={detail.pendingHitl.assignmentId}
+                  canAct={canAct}
+                  currentUserId={user.id}
+                  labels={{
+                    claim: t("assignmentClaim"),
+                    release: t("assignmentRelease"),
+                    takeOver: t("assignmentTakeOver"),
+                  }}
+                  status={detail.pendingHitl.assignmentStatus}
+                />
+              </div>
+              <RunHitlResponse
                 canAct={canAct}
-                isOwner={false}
-                mode="claimable"
+                hitlRequestId={detail.pendingHitl.hitlRequestId}
+                kind={detail.pendingHitl.kind}
+                options={detail.pendingHitl.options}
                 runId={detail.runId}
-                worktreePath={detail.worktreePath}
+                schema={detail.pendingHitl.schema}
               />
-            </div>
-          ) : null}
-              </section>
-            );
-          })()
-        : (
+              {canClaim ? (
+                <div className="mt-4 border-t border-dashed border-amber-line pt-4">
+                  <RunTakeoverActions
+                    branch={detail.branch}
+                    canAct={canAct}
+                    isOwner={false}
+                    mode="claimable"
+                    runId={detail.runId}
+                    worktreePath={detail.worktreePath}
+                  />
+                </div>
+              ) : null}
+            </section>
+          );
+        })()
+      ) : (
         <p className="rounded-[14px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute">
           {t("noPending")}
         </p>
@@ -311,6 +316,7 @@ export default async function RunDetailPage({
       ) : null}
 
       <RunTimeline
+        assignmentEvents={timeline.assignmentEvents}
         entries={timeline.entries as TimelineEntry[]}
         labels={timelineLabels}
       />

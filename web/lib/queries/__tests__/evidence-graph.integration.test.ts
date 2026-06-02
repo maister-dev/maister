@@ -288,9 +288,7 @@ describe("buildEvidenceGraph (integration)", () => {
 
     expect(artifacts).toHaveLength(3);
 
-    const byArtifactId = new Map(
-      artifacts.map((n) => [n.meta.artifactId, n]),
-    );
+    const byArtifactId = new Map(artifacts.map((n) => [n.meta.artifactId, n]));
 
     expect(byArtifactId.get(seeded.newDiffId)?.state).toBe("current");
     expect(byArtifactId.get(seeded.oldDiffId)?.state).toBe("superseded");
@@ -357,8 +355,7 @@ describe("buildEvidenceGraph (integration)", () => {
 
     expect(
       outputEdges.some(
-        (e) =>
-          e.source === implementNode?.id && e.target === newDiffNode?.id,
+        (e) => e.source === implementNode?.id && e.target === newDiffNode?.id,
       ),
     ).toBe(true);
   });

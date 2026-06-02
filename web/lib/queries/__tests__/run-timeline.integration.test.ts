@@ -45,7 +45,11 @@ afterAll(async () => {
 
 // Seed a real flows + users row and thread the non-null flowId, per the
 // project test-hygiene rule (tasks/runs.flow_id is NOT NULL + FK since 0000).
-async function seedRun(): Promise<{ runId: string }> {
+async function seedRun(): Promise<{
+  projectId: string;
+  runId: string;
+  taskId: string;
+}> {
   const projectId = randomUUID();
   const executorId = randomUUID();
   const flowId = randomUUID();
@@ -94,7 +98,7 @@ async function seedRun(): Promise<{ runId: string }> {
     flowVersion: "v1.0.0",
   });
 
-  return { runId };
+  return { projectId, runId, taskId };
 }
 
 async function seedUser(name: string | null): Promise<string> {
@@ -111,6 +115,69 @@ async function seedUser(name: string | null): Promise<string> {
 }
 
 describe("getRunTimeline (integration)", () => {
+  it("returns assignment event history for run-detail audit", async () => {
+    const { projectId, runId, taskId } = await seedRun();
+    const actorId = randomUUID();
+    const assignmentId = randomUUID();
+
+    await db.insert(schema.actorIdentities).values({
+      id: actorId,
+      projectId,
+      kind: "system",
+      label: "MAIster lifecycle",
+      systemKey: "assignment-lifecycle",
+    });
+    await db.insert(schema.assignments).values({
+      id: assignmentId,
+      projectId,
+      runId,
+      taskId,
+      nodeId: "review",
+      actionKind: "human_review",
+      status: "cancelled",
+      roleRefs: ["maintainer"],
+      title: "Review assignment",
+    });
+    await db.insert(schema.assignmentEvents).values({
+      id: randomUUID(),
+      assignmentId,
+      projectId,
+      runId,
+      eventKind: "created",
+      toStatus: "open",
+      createdAt: new Date("2026-06-02T09:00:00.000Z"),
+    });
+    await db.insert(schema.assignmentEvents).values({
+      id: randomUUID(),
+      assignmentId,
+      projectId,
+      runId,
+      eventKind: "system_closed",
+      actorId,
+      fromStatus: "claimed",
+      toStatus: "cancelled",
+      createdAt: new Date("2026-06-02T09:01:00.000Z"),
+    });
+
+    const timeline = await getRunTimeline(runId);
+
+    expect(timeline.entries).toEqual([]);
+    expect(timeline.assignmentEvents).toHaveLength(2);
+    expect(timeline.assignmentEvents.map((event) => event.eventKind)).toEqual([
+      "created",
+      "system_closed",
+    ]);
+    expect(timeline.assignmentEvents[1]).toMatchObject({
+      actionKind: "human_review",
+      actorKind: "system",
+      actorLabel: "MAIster lifecycle",
+      fromStatus: "claimed",
+      nodeId: "review",
+      title: "Review assignment",
+      toStatus: "cancelled",
+    });
+  });
+
   it("returns ordered entries with current-vs-stale gates and the takeover handoff block", async () => {
     const { runId } = await seedRun();
     const ownerId = await seedUser("Reviewer Rae");

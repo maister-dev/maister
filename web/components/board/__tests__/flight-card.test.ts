@@ -106,9 +106,7 @@ describe("FlightCard — humanworking takeover surface (M11b)", () => {
 
 describe("FlightCard — evidence badges (M12)", () => {
   it("renders the merge-blocked and evidence-stale badges when both flags are set", () => {
-    const html = render(
-      baseCard({ evidenceStale: true, mergeBlocked: true }),
-    );
+    const html = render(baseCard({ evidenceStale: true, mergeBlocked: true }));
 
     // The merge-blocked chip carries the translated label as aria-label/title.
     expect(html).toContain('aria-label="Merge blocked"');

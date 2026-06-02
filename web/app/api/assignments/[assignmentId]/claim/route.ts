@@ -4,9 +4,9 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import pino from "pino";
 
-import { claimAssignment } from "@/lib/assignments/service";
-
 import { handleAssignmentAction, type RouteParams } from "../_shared";
+
+import { claimAssignment } from "@/lib/assignments/service";
 
 const log = pino({
   name: "api-assignment-claim",

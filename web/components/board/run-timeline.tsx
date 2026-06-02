@@ -21,6 +21,21 @@ export interface TimelineHandoffView {
   returnedDiff: string | null;
 }
 
+export interface TimelineAssignmentEventView {
+  id: string;
+  assignmentId: string;
+  actionKind: string;
+  title: string;
+  eventKind: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  actorLabel: string | null;
+  actorKind: string | null;
+  nodeId: string | null;
+  stepId: string | null;
+  createdAt: string;
+}
+
 export interface TimelineEntry {
   nodeAttemptId: string;
   nodeId: string;
@@ -46,12 +61,16 @@ export interface TimelineLabels {
   elapsed: string;
   returnedCommits: string;
   returnedDiff: string;
+  assignmentLedger: string;
+  assignmentActor: string;
+  assignmentSystemActor: string;
   empty: string;
   decisionLabel: (decision: string) => string;
 }
 
 export interface RunTimelineProps {
   entries: TimelineEntry[];
+  assignmentEvents: TimelineAssignmentEventView[];
   labels: TimelineLabels;
 }
 
@@ -230,20 +249,72 @@ function EntryCard({
   );
 }
 
+function actorText(
+  event: TimelineAssignmentEventView,
+  labels: TimelineLabels,
+): string {
+  if (event.actorLabel) return event.actorLabel;
+  if (event.actorKind === "system") return labels.assignmentSystemActor;
+
+  return labels.assignmentActor;
+}
+
+function AssignmentEventRow({
+  event,
+  labels,
+}: {
+  event: TimelineAssignmentEventView;
+  labels: TimelineLabels;
+}): ReactElement {
+  const statusText =
+    event.fromStatus || event.toStatus
+      ? `${event.fromStatus ?? "none"} -> ${event.toStatus ?? "none"}`
+      : null;
+
+  return (
+    <li className="rounded-[8px] border border-line bg-ivory px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 font-mono text-[11px] text-ink-2">
+          <span className="font-bold uppercase tracking-[0.08em] text-ink">
+            {event.eventKind}
+          </span>
+          <span className="text-mute"> · {event.actionKind}</span>
+          <span className="text-mute"> · {event.title}</span>
+          {(event.nodeId ?? event.stepId) ? (
+            <span className="text-mute"> · {event.nodeId ?? event.stepId}</span>
+          ) : null}
+        </div>
+        <div className="flex flex-none flex-wrap items-center gap-2 font-mono text-[10px] text-mute">
+          <span>{actorText(event, labels)}</span>
+          {statusText ? <span>{statusText}</span> : null}
+          <span suppressHydrationWarning>
+            {new Date(event.createdAt).toLocaleString()}
+          </span>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 export function RunTimeline({
+  assignmentEvents,
   entries,
   labels,
 }: RunTimelineProps): ReactElement {
+  const hasEntries = entries.length > 0;
+  const hasAssignmentEvents = assignmentEvents.length > 0;
+
   return (
     <section className="mt-8">
       <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
         {labels.title}
       </h2>
-      {entries.length === 0 ? (
+      {!hasEntries && !hasAssignmentEvents ? (
         <p className="rounded-[14px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute">
           {labels.empty}
         </p>
-      ) : (
+      ) : null}
+      {hasEntries ? (
         <ol className="flex flex-col gap-2.5">
           {entries.map((entry) => (
             <EntryCard
@@ -253,7 +324,23 @@ export function RunTimeline({
             />
           ))}
         </ol>
-      )}
+      ) : null}
+      {hasAssignmentEvents ? (
+        <div className="mt-4">
+          <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-mute">
+            {labels.assignmentLedger}
+          </h3>
+          <ol className="flex flex-col gap-1.5">
+            {assignmentEvents.map((event) => (
+              <AssignmentEventRow
+                key={event.id}
+                event={event}
+                labels={labels}
+              />
+            ))}
+          </ol>
+        </div>
+      ) : null}
     </section>
   );
 }

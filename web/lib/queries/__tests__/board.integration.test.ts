@@ -258,9 +258,7 @@ describe("getBoardData — evidence badge flags (integration)", () => {
 
   it("mergeBlocked=true via a blocking artifact_required gate with status=stale", async () => {
     const { projectId, runId } = await seedReviewRun({
-      gates: [
-        { kind: "artifact_required", mode: "blocking", status: "stale" },
-      ],
+      gates: [{ kind: "artifact_required", mode: "blocking", status: "stale" }],
     });
 
     const card = await flightCard(projectId, runId);
@@ -284,9 +282,7 @@ describe("getBoardData — evidence badge flags (integration)", () => {
   it("both flags false for a run with only current, non-merge-required evidence", async () => {
     const { projectId, runId } = await seedReviewRun({
       artifacts: [{ validity: "current", requiredFor: ["review"] }],
-      gates: [
-        { kind: "command_check", mode: "blocking", status: "passed" },
-      ],
+      gates: [{ kind: "command_check", mode: "blocking", status: "passed" }],
     });
 
     const card = await flightCard(projectId, runId);

@@ -97,16 +97,19 @@ function mixedArtifacts(): ArtifactInstance[] {
   } as const;
 
   return [
-    { ...base, id: "a1", nodeId: "implement", kind: "diff", validity: "current" },
+    {
+      ...base,
+      id: "a1",
+      nodeId: "implement",
+      kind: "diff",
+      validity: "current",
+    },
     { ...base, id: "a2", nodeId: "implement", kind: "log", validity: "stale" },
     { ...base, id: "a3", nodeId: "checks", kind: "log", validity: "current" },
   ] as unknown as ArtifactInstance[];
 }
 
-async function invokeGet(
-  runId: string,
-  query: Record<string, string> = {},
-) {
+async function invokeGet(runId: string, query: Record<string, string> = {}) {
   const { GET } = await import("../route");
   const qs = new URLSearchParams(query).toString();
   const url = `http://localhost/api/runs/${runId}/artifacts${qs ? `?${qs}` : ""}`;

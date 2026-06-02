@@ -192,8 +192,7 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       assignmentStatus: assignment?.status ?? null,
       assignmentActionKind: assignment?.actionKind ?? null,
       assignmentRoleRefs: assignment?.roleRefs ?? [],
-      assignmentStaleEvidenceSummary:
-        assignment?.staleEvidenceSummary ?? null,
+      assignmentStaleEvidenceSummary: assignment?.staleEvidenceSummary ?? null,
       assigneeLabel: assignee?.label ?? null,
       assigneeUserId: assignee?.userId ?? null,
       agent: row.agent,

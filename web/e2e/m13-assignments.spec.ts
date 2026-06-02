@@ -111,7 +111,13 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
     await pool.query(
       `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
        VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
-      [ids.task, ids.project, "E2E assignment queue", "review the work", ids.flow],
+      [
+        ids.task,
+        ids.project,
+        "E2E assignment queue",
+        "review the work",
+        ids.flow,
+      ],
     );
     await pool.query(
       `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)

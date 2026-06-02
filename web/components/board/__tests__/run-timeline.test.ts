@@ -18,6 +18,9 @@ const labels: TimelineLabels = {
   elapsed: "elapsed",
   returnedCommits: "Returned commits",
   returnedDiff: "Returned diff",
+  assignmentLedger: "Assignment ledger",
+  assignmentActor: "unknown actor",
+  assignmentSystemActor: "system",
   empty: "No attempts yet.",
   decisionLabel: (d) => (d === "approve" ? "Approve" : d),
 };
@@ -101,7 +104,13 @@ function handoffEntry(): TimelineEntry {
 }
 
 function render(entries: TimelineEntry[]): string {
-  return renderToStaticMarkup(createElement(RunTimeline, { entries, labels }));
+  return renderToStaticMarkup(
+    createElement(RunTimeline, {
+      assignmentEvents: [],
+      entries,
+      labels,
+    }),
+  );
 }
 
 describe("RunTimeline component", () => {
@@ -134,5 +143,37 @@ describe("RunTimeline component", () => {
     const html = render([]);
 
     expect(html).toContain("No attempts yet.");
+  });
+
+  it("renders assignment ledger history when no node attempt is present", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunTimeline, {
+        assignmentEvents: [
+          {
+            id: "event-1",
+            assignmentId: "assignment-1",
+            actionKind: "human_review",
+            title: "Review assignment",
+            eventKind: "system_closed",
+            fromStatus: "claimed",
+            toStatus: "cancelled",
+            actorLabel: null,
+            actorKind: "system",
+            nodeId: "review",
+            stepId: null,
+            createdAt: "2026-06-02T09:00:00.000Z",
+          },
+        ],
+        entries: [],
+        labels,
+      }),
+    );
+
+    expect(html).toContain("Assignment ledger");
+    expect(html).toContain("system_closed");
+    expect(html).toContain("human_review");
+    expect(html).toContain("Review assignment");
+    expect(html).toContain("system");
+    expect(html).not.toContain("No attempts yet.");
   });
 });

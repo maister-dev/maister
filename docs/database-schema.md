@@ -21,34 +21,34 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 `accounts`, `sessions`, `verification_tokens`, `project_members`, and the
 `tasks.stage` column.
 
-| Table | Purpose | Cascades from |
-| ----- | ------- | ------------- |
-| `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`; `account_status` controls login eligibility. | (root) |
-| `accounts` | Auth.js OAuth account links (Drizzle adapter contract). | `users.id` |
-| `sessions` | Auth.js session tokens. | `users.id` |
-| `verification_tokens` | Auth.js email-verification tokens. PK `(identifier, token)`. | (root) |
-| `project_members` | Per-project role assignments. UNIQUE `(project_id, user_id)`. | `projects.id`, `users.id` |
-| `projects` | Registered repos. `slug` + `repo_path` both UNIQUE. | (root) |
-| `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
-| `flows` | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement. | `projects.id` |
-| `capability_records` | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings. | `projects.id` |
-| `project_flow_roles` | **(M13 persistence — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles. | `projects.id` |
-| `actor_identities` | **(M13 persistence — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events. | `projects.id`, optional `users.id` |
-| `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
-| `runs` | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
-| `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
-| `scratch_runs` | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. | `runs.id`, `projects.id`, `users.id`, optional `tasks.id` |
-| `scratch_messages` | Append-only dialog message ledger with monotonic sequence per scratch run. | `scratch_runs.run_id` |
-| `scratch_attachments` | Text note, file path, or issue URL attachments attached to a scratch run or message. | `scratch_runs.run_id`, optional `scratch_messages.id` |
-| `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path. | `scratch_runs.run_id` |
-| `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
-| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b) |
-| `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
-| `artifact_instances` | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
-| `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`. | `runs.id` |
-| `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
-| `assignments` | **(M13 persistence — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, conflict, and external waits. Runtime creation is phased in after the persistence slice. | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
-| `assignment_events` | **(M13 persistence — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger. | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
+| Table                         | Purpose                                                                                                                                                                                                                                                                                                                    | Cascades from                                                              |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `users`                       | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`; `account_status` controls login eligibility.                                                                                                                                                                                                  | (root)                                                                     |
+| `accounts`                    | Auth.js OAuth account links (Drizzle adapter contract).                                                                                                                                                                                                                                                                    | `users.id`                                                                 |
+| `sessions`                    | Auth.js session tokens.                                                                                                                                                                                                                                                                                                    | `users.id`                                                                 |
+| `verification_tokens`         | Auth.js email-verification tokens. PK `(identifier, token)`.                                                                                                                                                                                                                                                               | (root)                                                                     |
+| `project_members`             | Per-project role assignments. UNIQUE `(project_id, user_id)`.                                                                                                                                                                                                                                                              | `projects.id`, `users.id`                                                  |
+| `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE.                                                                                                                                                                                                                                                                        | (root)                                                                     |
+| `executors`                   | Project-scoped agent identities `{agent, model, env?, router?}`.                                                                                                                                                                                                                                                           | `projects.id`                                                              |
+| `flows`                       | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
+| `capability_records`          | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings.                                                                                                                                                                                                     | `projects.id`                                                              |
+| `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
+| `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
+| `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
+| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`.                                                                                                                                                                                                | `tasks.id`, `projects.id`, `flows.id`, `executors.id`                      |
+| `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
+| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session.                                                                                                                                                                                                                 | `runs.id`, `projects.id`, `users.id`, optional `tasks.id`                  |
+| `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
+| `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `scratch_messages.id`                      |
+| `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
+| `step_runs`                   | Per-step execution records for the linear flow runner (legacy-read after M11a).                                                                                                                                                                                                                                            | `runs.id`                                                                  |
+| `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b)                               |
+| `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
+| `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK.                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
+| `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
+| `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
+| `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
+| `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 
 ## `users`
 
@@ -109,9 +109,9 @@ this table is populated by Auth.js when OAuth providers are added (Phase 2).
 
 ```ts
 {
-  sessionToken (PK),
-  userId,                         // FK -> users.id (cascade)
-  expires
+  sessionToken(PK),
+    userId, // FK -> users.id (cascade)
+    expires;
 }
 ```
 
@@ -121,8 +121,9 @@ this table is populated by Auth.js when OAuth providers are added (Phase 2).
 
 ```ts
 {
-  identifier, token,              // PK (identifier, token)
-  expires
+  identifier,
+    token, // PK (identifier, token)
+    expires;
 }
 ```
 
@@ -192,7 +193,7 @@ executor id resolves within its project's namespace, never cross-project.
 
 ## `project_flow_roles`
 
-(M13 persistence, migration `0018`.)
+(M13, migration `0018`.)
 
 ```ts
 {
@@ -215,7 +216,7 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 
 ## `actor_identities`
 
-(M13 persistence, migration `0018`.)
+(M13, migration `0018`.)
 
 ```ts
 {
@@ -236,7 +237,7 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 M13 web routes resolve Auth.js sessions to `kind = 'user'`. API-token,
 internal-agent, and system actors are modeled for attribution and future
 external-operation ingress, but no token-authenticated write path is enabled by
-this persistence slice. UNIQUE `(projectId, userId)` gives one user actor per
+this milestone. UNIQUE `(projectId, userId)` gives one user actor per
 project and preserves audit labels if the linked user is later removed.
 
 ## `flows`
@@ -286,7 +287,7 @@ UNIQUE `(projectId, flowRefId)`.
 
 M10 (ADR-021) repurposed `flows` as the project **enablement pointer**: the
 `source/version/revision/installedPath/manifest/schemaVersion/
-recommendedExecutorId` columns are now a denormalized cache of the *enabled*
+recommendedExecutorId` columns are now a denormalized cache of the _enabled_
 revision; runtime byte authority is `flow_revisions` via `runs.flow_revision_id`.
 
 ## `flow_revisions`
@@ -438,7 +439,7 @@ audit; v1 authorization remains project-role based, not owner-exclusive.
 (`timestamptz`, nullable) is the durable Recover in-flight marker and the
 reconcile grace anchor. The Recover path stamps it in the same transaction
 that flips `Crashed -> Running` (or `Crashed -> Pending` when the
-concurrency cap is full), *before* the supervisor `createSession` side-effect,
+concurrency cap is full), _before_ the supervisor `createSession` side-effect,
 so a crash in the resume window leaves a re-recoverable row. The reconcile
 sweep treats a no-live-session agent run as in-flight (skips it) while
 `resumeStartedAt` (or the latest `node_attempts.started_at`) is within
@@ -798,11 +799,11 @@ validity FSM.
 **Deterministic id contract.** Every row's `id` is derived so re-execution and
 projector replay **upsert** idempotently (`onConflictDoUpdate`):
 
-| Origin | PK format | Example |
-| ------ | --------- | ------- |
-| Runner-inline declared output | `run:<nodeAttemptId>:<artifactDefId>` | `run:na_abc123:impl-diff` |
-| Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>` | `run:na_abc123:default:log` |
-| Projector-derived | `proj:<runId>:<monotonicId>` | `proj:run_xyz789:42` |
+| Origin                              | PK format                             | Example                     |
+| ----------------------------------- | ------------------------------------- | --------------------------- |
+| Runner-inline declared output       | `run:<nodeAttemptId>:<artifactDefId>` | `run:na_abc123:impl-diff`   |
+| Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>`  | `run:na_abc123:default:log` |
+| Projector-derived                   | `proj:<runId>:<monotonicId>`          | `proj:run_xyz789:42`        |
 
 `monotonicId` is **run-global** across the single per-run `run.events.jsonl`
 log, so each projector `id` is unique across the entire run's event stream.
@@ -886,12 +887,12 @@ supervisorSessionId }`. The response shape is `{ optionId: string }`.
 **Two-phase response semantics.** `response` and `respondedAt`
 together encode the delivery state of an HITL row:
 
-| `response` | `respondedAt` | Meaning |
-| ---------- | ------------- | ------- |
-| `NULL`     | `NULL`        | Unclaimed — no user submission yet. |
+| `response` | `respondedAt` | Meaning                                                                                                                                                                                                                                                                     |
+| ---------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NULL`     | `NULL`        | Unclaimed — no user submission yet.                                                                                                                                                                                                                                         |
 | set        | `NULL`        | Claimed — user's intent stored under a row-level `SELECT ... FOR UPDATE`, but the durable side-effect (supervisor `requestPermission` resolve, or `input-<stepId>.json` write) has not been acknowledged yet. Retryable from this state with the SAME payload (idempotent). |
-| set        | set           | Delivered. Same-payload retries return `200`; a retry that finds `runs.status = 'NeedsInput'` re-queues the runner wake-up so a process crash between commit and the original microtask cannot strand the run. |
-| `NULL`     | set           | Never occurs (invariant). |
+| set        | set           | Delivered. Same-payload retries return `200`; a retry that finds `runs.status = 'NeedsInput'` re-queues the runner wake-up so a process crash between commit and the original microtask cannot strand the run.                                                              |
+| `NULL`     | set           | Never occurs (invariant).                                                                                                                                                                                                                                                   |
 
 Conflicting-payload submissions are rejected with `409` at the CAS
 step — they never reach the side-effect. Permission rows additionally
@@ -901,7 +902,7 @@ round-trip.
 
 ## `assignments`
 
-(M13 persistence, migration `0018`.)
+(M13, migration `0018`.)
 
 ```ts
 {
@@ -941,7 +942,7 @@ assignment per HITL wait when the row is linked to `hitl_requests`.
 
 ## `assignment_events`
 
-(M13 persistence, migration `0018`.)
+(M13, migration `0018`.)
 
 ```ts
 {
@@ -976,17 +977,17 @@ explicitly chooses that as a temporary bridge.
 > tables above. They remain in the list below struck through for traceability;
 > the rest stay future work.
 
-| Planned object | Why it exists | Likely parent |
-| -------------- | ------------- | ------------- |
-| `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
-| `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
-| ~~`node_attempts`~~ → **M11a (Implemented)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
-| ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above. | `runs.id`, `node_attempts.id` |
-| `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
-| ~~`gate_results`~~ → **M11a (Implemented)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
-| ~~`assignments`~~ → **M13 persistence (Implemented)** | Claimable human work persistence landed as `assignments` + `assignment_events` in migration `0018`; runtime/UI integration is still being phased in. See [`assignments`](#assignments) above. | `runs.id`, optional task |
-| `api_tokens` | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata. | `projects.id` |
-| `external_operation_events` | Audit/ledger records for token or MCP actions: task create, run launch, artifact attach, gate report, readiness read. | `projects.id`, optional run/task |
+| Planned object                                                                                  | Why it exists                                                                                                                                                                                                          | Likely parent                    |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `flow_package_revisions`                                                                        | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary.                                                                         | project or system cache          |
+| `project_flow_enablements`                                                                      | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs.                                                                                                       | `projects.id`, package revision  |
+| ~~`node_attempts`~~ → **M11a (Implemented)**                                                    | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
+| ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
+| `artifact_edges`                                                                                | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence.                                                                                                                     | `artifacts.id`                   |
+| ~~`gate_results`~~ → **M11a (Implemented)**                                                     | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them.                                                                               | `runs.id`, `node_attempts.id`    |
+| ~~`assignments`~~ → **M13 (Implemented)**                                                       | Claimable work persistence, runtime assignment creation, assignment actions, and run-detail ledger history landed as `assignments` + `assignment_events` in migration `0018`. See [`assignments`](#assignments) above. | `runs.id`, optional task         |
+| `api_tokens`                                                                                    | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata.                                                                                                                  | `projects.id`                    |
+| `external_operation_events`                                                                     | Audit/ledger records for token or MCP actions: task create, run launch, artifact attach, gate report, readiness read.                                                                                                  | `projects.id`, optional run/task |
 
 Launch-time snapshots remain mandatory for every mutable surface: Flow package
 revision, capability profile revision, branch target, gate policy, and executor
@@ -1010,8 +1011,8 @@ projects
   ├── executors          (FK projectId, cascade)
   ├── flows              (FK projectId, cascade)
   ├── capability_records (FK projectId, cascade)
-  ├── project_flow_roles (FK projectId, cascade)      ← M13 persistence
-  ├── actor_identities   (FK projectId, cascade)      ← M13 persistence
+  ├── project_flow_roles (FK projectId, cascade)      ← M13
+  ├── actor_identities   (FK projectId, cascade)      ← M13
   ├── tasks              (FK projectId, cascade)
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
@@ -1024,8 +1025,8 @@ projects
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
   │           ├── artifact_projection_cursors (FK runId, cascade)        ← M12
   │           ├── hitl_requests   (FK runId,        cascade)
-  │           │     └── assignments (FK hitlRequestId, cascade)          ← M13 persistence
-  │           ├── assignments     (FK runId,        cascade)             ← M13 persistence
+  │           │     └── assignments (FK hitlRequestId, cascade)          ← M13
+  │           ├── assignments     (FK runId,        cascade)             ← M13
   │           │     └── assignment_events (FK assignmentId, cascade)
   │           └── scratch_runs    (FK runId,        cascade)
   │                 ├── scratch_messages
@@ -1048,37 +1049,37 @@ chain end-to-end against testcontainers Postgres.
 
 Created via Drizzle:
 
-| Table | Index | Columns | Purpose |
-| ----- | ----- | ------- | ------- |
-| `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |
-| `users` | `users_account_status_idx` | `(accountStatus)` | Admin queue and status-filtered user management |
-| `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
-| `capability_records` | `capability_records_project_kind_idx` | `(projectId, kind, selectable)` | Scratch launch-options catalog lookup |
-| `project_flow_roles` | `project_flow_roles_project_idx` | `(projectId)` | Project role registry lookup |
-| `actor_identities` | `actor_identities_project_idx` | `(projectId)` | Project actor lookup |
-| `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
-| `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |
-| `runs` | `runs_project_status_kind_idx` | `(projectId, status, runKind)` | Active workspace queries across Flow and scratch runs. |
-| `runs` | `runs_kind_task_idx` | `(runKind, taskId)` | Board/latest-attempt lookups that explicitly exclude scratch runs. |
-| `scratch_runs` | `scratch_runs_project_status_idx` | `(projectId, dialogStatus)` | Project scratch workspace lists. |
-| `scratch_attachments` | `scratch_attachments_run_idx` | `(runId)` | Run-level attachment lookup. |
-| `scratch_attachments` | `scratch_attachments_message_idx` | `(messageId)` | Message attachment lookup. |
-| `step_runs` | `step_runs_run_idx` | `(runId)` | Per-run step lookups (templating) |
-| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt) |
-| `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |
-| `gate_results` | `gate_results_run_idx` | `(runId)` | **(M11a)** Per-run gate lookups |
-| `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(M11a)** Gates for a node attempt |
-| `artifact_instances` | `artifact_instances_run_idx` | `(runId)` | **(M12)** Evidence index for a run |
-| `artifact_instances` | `artifact_instances_node_attempt_idx` | `(nodeAttemptId)` | **(M12)** All artifacts for a node attempt |
-| `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |
-| `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
-| `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
-| `assignments` | `assignments_project_status_idx` | `(projectId, status)` | Project work queue |
-| `assignments` | `assignments_run_status_idx` | `(runId, status)` | Run-detail work queue |
-| `assignments` | `assignments_current_actor_idx` | `(assigneeActorId)` | Actor-owned work lookup |
-| `assignments` | `assignments_hitl_request_idx` | `(hitlRequestId)` | HITL assignment lookup |
-| `assignment_events` | `assignment_events_assignment_idx` | `(assignmentId)` | Assignment event history |
-| `assignment_events` | `assignment_events_project_created_idx` | `(projectId, createdAt)` | Project audit stream |
+| Table                 | Index                                   | Columns                           | Purpose                                                            |
+| --------------------- | --------------------------------------- | --------------------------------- | ------------------------------------------------------------------ |
+| `project_members`     | `project_members_user_idx`              | `(userId)`                        | Per-user project listing / authz lookups                           |
+| `users`               | `users_account_status_idx`              | `(accountStatus)`                 | Admin queue and status-filtered user management                    |
+| `tasks`               | `tasks_project_status_idx`              | `(projectId, status)`             | Board queries                                                      |
+| `capability_records`  | `capability_records_project_kind_idx`   | `(projectId, kind, selectable)`   | Scratch launch-options catalog lookup                              |
+| `project_flow_roles`  | `project_flow_roles_project_idx`        | `(projectId)`                     | Project role registry lookup                                       |
+| `actor_identities`    | `actor_identities_project_idx`          | `(projectId)`                     | Project actor lookup                                               |
+| `runs`                | `runs_project_status_idx`               | `(projectId, status)`             | Portfolio queries                                                  |
+| `runs`                | `runs_task_idx`                         | `(taskId)`                        | Latest-attempt lookups                                             |
+| `runs`                | `runs_project_status_kind_idx`          | `(projectId, status, runKind)`    | Active workspace queries across Flow and scratch runs.             |
+| `runs`                | `runs_kind_task_idx`                    | `(runKind, taskId)`               | Board/latest-attempt lookups that explicitly exclude scratch runs. |
+| `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
+| `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
+| `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |
+| `step_runs`           | `step_runs_run_idx`                     | `(runId)`                         | Per-run step lookups (templating)                                  |
+| `node_attempts`       | `node_attempts_run_step_attempt_uq`     | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt)            |
+| `node_attempts`       | `node_attempts_run_idx`                 | `(runId)`                         | **(M11a)** Templating highest-attempt-wins union                   |
+| `gate_results`        | `gate_results_run_idx`                  | `(runId)`                         | **(M11a)** Per-run gate lookups                                    |
+| `gate_results`        | `gate_results_node_attempt_idx`         | `(nodeAttemptId)`                 | **(M11a)** Gates for a node attempt                                |
+| `artifact_instances`  | `artifact_instances_run_idx`            | `(runId)`                         | **(M12)** Evidence index for a run                                 |
+| `artifact_instances`  | `artifact_instances_node_attempt_idx`   | `(nodeAttemptId)`                 | **(M12)** All artifacts for a node attempt                         |
+| `artifact_instances`  | `artifact_instances_run_kind_idx`       | `(runId, kind)`                   | **(M12)** Filter by kind                                           |
+| `artifact_instances`  | `artifact_instances_run_validity_idx`   | `(runId, validity)`               | **(M12)** Filter by validity                                       |
+| `hitl_requests`       | `hitl_requests_run_idx`                 | `(runId)`                         | Pending HITL panel                                                 |
+| `assignments`         | `assignments_project_status_idx`        | `(projectId, status)`             | Project work queue                                                 |
+| `assignments`         | `assignments_run_status_idx`            | `(runId, status)`                 | Run-detail work queue                                              |
+| `assignments`         | `assignments_current_actor_idx`         | `(assigneeActorId)`               | Actor-owned work lookup                                            |
+| `assignments`         | `assignments_hitl_request_idx`          | `(hitlRequestId)`                 | HITL assignment lookup                                             |
+| `assignment_events`   | `assignment_events_assignment_idx`      | `(assignmentId)`                  | Assignment event history                                           |
+| `assignment_events`   | `assignment_events_project_created_idx` | `(projectId, createdAt)`          | Project audit stream                                               |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,
@@ -1116,12 +1117,12 @@ runtime uses `drizzle-kit push --dialect=sqlite` manually; details in
 
 ## Public API (`web/lib/db/client.ts`)
 
-| Export | Type | Use |
-| ------ | ---- | --- |
-| `buildClient()` | factory | Fresh Drizzle client. Throws `MaisterError({ code: 'CONFIG' })` on missing or unsupported `DB_URL`. |
-| `getDb()` | accessor | Process-wide lazy singleton (cached after first call). |
-| `maskUrl(url)` | helper | Masks the password portion for safe logging. |
-| `schema` | namespace | Re-exported `* as schema` for query type inference. |
+| Export          | Type      | Use                                                                                                 |
+| --------------- | --------- | --------------------------------------------------------------------------------------------------- |
+| `buildClient()` | factory   | Fresh Drizzle client. Throws `MaisterError({ code: 'CONFIG' })` on missing or unsupported `DB_URL`. |
+| `getDb()`       | accessor  | Process-wide lazy singleton (cached after first call).                                              |
+| `maskUrl(url)`  | helper    | Masks the password portion for safe logging.                                                        |
+| `schema`        | namespace | Re-exported `* as schema` for query type inference.                                                 |
 
 `getDb()` is lazy on purpose so importing the module does not require
 `DB_URL` to be set (tests rely on this).

@@ -116,9 +116,7 @@ const statusPorcelainSpy = vi.fn(async () => "");
 const runFlowSpy = vi.fn(async () => undefined);
 const recordArtifactSpy = vi.fn(async () => ({ id: "art-1" }));
 const supersedePriorSpy = vi.fn(async () => undefined);
-const getCurrentRequiredForGitArtifactsSpy = vi.fn(
-  async () => [] as unknown[],
-);
+const getCurrentRequiredForGitArtifactsSpy = vi.fn(async () => [] as unknown[]);
 
 // A db whose transaction passes the same fake through. The claim/return
 // CAS + selects are exercised through the mocked helpers above, so the db

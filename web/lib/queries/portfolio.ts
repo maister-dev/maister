@@ -479,7 +479,8 @@ export async function getPortfolio(
       firstNeedByProject.set(row.projectId, {
         runId: row.runId,
         prompt: row.prompt,
-        agent: row.runStatus === "HumanWorking" ? "dev" : (row.agent as AgentRole),
+        agent:
+          row.runStatus === "HumanWorking" ? "dev" : (row.agent as AgentRole),
         branch: row.branch,
       });
     }

@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  actorIdentities as actorIdentitiesTable,
+  artifactInstances as artifactInstancesTable,
+  assignmentEvents as assignmentEventsTable,
+  assignments as assignmentsTable,
   executors as executorsTable,
   flows as flowsTable,
   hitlRequests as hitlRequestsTable,
@@ -25,6 +29,10 @@ type TableRows = {
   workspaces: Record<string, unknown>[];
   step_runs: Record<string, unknown>[];
   hitl_requests: Record<string, unknown>[];
+  assignments: Record<string, unknown>[];
+  assignment_events: Record<string, unknown>[];
+  actor_identities: Record<string, unknown>[];
+  artifact_instances: Record<string, unknown>[];
 };
 
 type CapturedUpdate = {
@@ -41,6 +49,10 @@ function tableNameOf(table: unknown): keyof TableRows {
   if (table === workspacesTable) return "workspaces";
   if (table === stepRunsTable) return "step_runs";
   if (table === hitlRequestsTable) return "hitl_requests";
+  if (table === assignmentsTable) return "assignments";
+  if (table === assignmentEventsTable) return "assignment_events";
+  if (table === actorIdentitiesTable) return "actor_identities";
+  if (table === artifactInstancesTable) return "artifact_instances";
   throw new Error("unknown table object passed to fakeDb");
 }
 
@@ -59,6 +71,10 @@ function makeFakeDb(initial: Partial<TableRows>): {
     workspaces: initial.workspaces ?? [],
     step_runs: initial.step_runs ?? [],
     hitl_requests: initial.hitl_requests ?? [],
+    assignments: initial.assignments ?? [],
+    assignment_events: initial.assignment_events ?? [],
+    actor_identities: initial.actor_identities ?? [],
+    artifact_instances: initial.artifact_instances ?? [],
   };
   const updates: CapturedUpdate[] = [];
   const inserts: Array<{
@@ -86,13 +102,15 @@ function makeFakeDb(initial: Partial<TableRows>): {
     from: (table: unknown) => {
       const tableName = tableNameOf(table);
       const projected = () => project(cols, rows[tableName]);
-      const makeThenable = () => {
-        const promise = Promise.resolve(projected());
+      const makeRowsQuery = (rs: Record<string, unknown>[]) => {
+        const promise = Promise.resolve(rs);
 
         return Object.assign(promise, {
-          orderBy: () => Promise.resolve(projected()),
+          orderBy: () => makeRowsQuery(rs),
+          limit: (n: number) => Promise.resolve(rs.slice(0, n)),
         });
       };
+      const makeThenable = () => makeRowsQuery(projected());
 
       return {
         where: () => makeThenable(),
@@ -107,9 +125,18 @@ function makeFakeDb(initial: Partial<TableRows>): {
     const tableName = tableNameOf(table);
 
     return {
-      values: async (row: Record<string, unknown>) => {
-        inserts.push({ table: tableName, row });
-        rows[tableName].push(row);
+      values: (row: Record<string, unknown>) => {
+        const inserted =
+          tableName === "step_runs"
+            ? { stdout: null, vars: {}, exitCode: null, ...row }
+            : row;
+
+        inserts.push({ table: tableName, row: inserted });
+        rows[tableName].push(inserted);
+
+        return Object.assign(Promise.resolve(undefined), {
+          onConflictDoUpdate: () => Promise.resolve(undefined),
+        });
       },
     };
   };
@@ -118,11 +145,18 @@ function makeFakeDb(initial: Partial<TableRows>): {
 
     return {
       set: (vals: Record<string, unknown>) => ({
-        where: async () => {
+        where: () => {
+          const affected = [...rows[tableName]];
+
           updates.push({ table: tableName, set: vals });
-          for (const r of rows[tableName]) {
+          for (const r of affected) {
             Object.assign(r, vals);
           }
+
+          return Object.assign(Promise.resolve(undefined), {
+            returning: (cols?: Record<string, unknown>) =>
+              Promise.resolve(project(cols, affected)),
+          });
         },
       }),
     };
@@ -246,6 +280,10 @@ function baseFixture(): TableRows {
     ],
     step_runs: [],
     hitl_requests: [],
+    assignments: [],
+    assignment_events: [],
+    actor_identities: [],
+    artifact_instances: [],
   };
 }
 
@@ -320,6 +358,8 @@ describe("runFlow re-entry", () => {
       status: "Succeeded",
       attempt: 1,
       vars: {},
+      stdout: null,
+      exitCode: null,
       startedAt: new Date(0),
     });
     fixture.step_runs.push({
@@ -330,6 +370,8 @@ describe("runFlow re-entry", () => {
       status: "NeedsInput",
       attempt: 1,
       vars: {},
+      stdout: null,
+      exitCode: null,
       startedAt: new Date(1),
     });
 
@@ -409,6 +451,8 @@ describe("runFlow re-entry", () => {
       status: "NeedsInput",
       attempt: 1,
       vars: {},
+      stdout: null,
+      exitCode: null,
       startedAt: new Date(0),
     });
 

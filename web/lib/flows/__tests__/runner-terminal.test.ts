@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  actorIdentities as actorIdentitiesTable,
+  artifactInstances as artifactInstancesTable,
+  assignmentEvents as assignmentEventsTable,
+  assignments as assignmentsTable,
   executors as executorsTable,
   flows as flowsTable,
   hitlRequests as hitlRequestsTable,
@@ -48,6 +52,10 @@ type TableRows = {
   workspaces: Row[];
   step_runs: Row[];
   hitl_requests: Row[];
+  assignments: Row[];
+  assignment_events: Row[];
+  actor_identities: Row[];
+  artifact_instances: Row[];
 };
 
 function tableNameOf(t: unknown): keyof TableRows {
@@ -59,6 +67,10 @@ function tableNameOf(t: unknown): keyof TableRows {
   if (t === workspacesTable) return "workspaces";
   if (t === stepRunsTable) return "step_runs";
   if (t === hitlRequestsTable) return "hitl_requests";
+  if (t === assignmentsTable) return "assignments";
+  if (t === assignmentEventsTable) return "assignment_events";
+  if (t === actorIdentitiesTable) return "actor_identities";
+  if (t === artifactInstancesTable) return "artifact_instances";
   throw new Error("unknown table");
 }
 
@@ -86,7 +98,10 @@ function makeFakeDb(initial: TableRows): {
       const thenable = (rs: Row[]) => {
         const p = Promise.resolve(rs);
 
-        return Object.assign(p, { orderBy: () => Promise.resolve(rs) });
+        return Object.assign(p, {
+          orderBy: () => thenable(rs),
+          limit: (n: number) => Promise.resolve(rs.slice(0, n)),
+        });
       };
 
       return {
@@ -100,9 +115,18 @@ function makeFakeDb(initial: TableRows): {
     const name = tableNameOf(table);
 
     return {
-      values: async (row: Row) => {
-        inserts.push({ table: name, row });
-        rows[name].push(row);
+      values: (row: Row) => {
+        const inserted =
+          name === "step_runs"
+            ? { stdout: null, vars: {}, exitCode: null, ...row }
+            : row;
+
+        inserts.push({ table: name, row: inserted });
+        rows[name].push(inserted);
+
+        return Object.assign(Promise.resolve(undefined), {
+          onConflictDoUpdate: () => Promise.resolve(undefined),
+        });
       },
     };
   };
@@ -111,9 +135,26 @@ function makeFakeDb(initial: TableRows): {
 
     return {
       set: (vals: Row) => ({
-        where: async () => {
+        where: () => {
+          const affected = [...rows[name]];
+
           updates.push({ table: name, set: vals });
-          for (const r of rows[name]) Object.assign(r, vals);
+          for (const r of affected) Object.assign(r, vals);
+
+          return Object.assign(Promise.resolve(undefined), {
+            returning: (cols?: Row) =>
+              Promise.resolve(
+                cols
+                  ? affected.map((r) => {
+                      const out: Row = {};
+
+                      for (const k of Object.keys(cols)) out[k] = r[k];
+
+                      return out;
+                    })
+                  : affected,
+              ),
+          });
         },
       }),
     };
@@ -214,6 +255,10 @@ describe("runFlow terminal-status precedence", () => {
       ],
       step_runs: [],
       hitl_requests: [],
+      assignments: [],
+      assignment_events: [],
+      actor_identities: [],
+      artifact_instances: [],
     };
     const { client, updates } = makeFakeDb(fixture);
 

@@ -3,6 +3,7 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
   Assignment,
+  AssignmentEvent,
   EnforcementSnapshotEntry,
   GateResult,
   GateVerdict,
@@ -15,6 +16,7 @@ import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
@@ -28,6 +30,7 @@ import { extractOptions } from "@/lib/queries/hitl";
 
 const {
   actorIdentities,
+  assignmentEvents,
   assignments,
   executors,
   flowRevisions,
@@ -40,6 +43,11 @@ const {
   users,
   workspaces,
 } = schema;
+
+const log = pino({
+  name: "run-queries",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -277,6 +285,21 @@ export interface TimelineHandoff {
   returnedDiff: string | null;
 }
 
+export interface TimelineAssignmentEvent {
+  id: string;
+  assignmentId: string;
+  actionKind: Assignment["actionKind"];
+  title: string;
+  eventKind: AssignmentEvent["eventKind"];
+  fromStatus: string | null;
+  toStatus: string | null;
+  actorLabel: string | null;
+  actorKind: string | null;
+  nodeId: string | null;
+  stepId: string | null;
+  createdAt: string;
+}
+
 export interface TimelineEntry {
   nodeAttemptId: string;
   nodeId: string;
@@ -294,6 +317,7 @@ export interface TimelineEntry {
 
 export interface RunTimeline {
   entries: TimelineEntry[];
+  assignmentEvents: TimelineAssignmentEvent[];
 }
 
 // One ordered read model over the append-only M11a ledger: every node attempt
@@ -342,6 +366,26 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     .from(gateResults)
     .where(eq(gateResults.runId, runId))
     .orderBy(asc(gateResults.createdAt));
+  const assignmentEventRows = await client
+    .select({
+      id: assignmentEvents.id,
+      assignmentId: assignmentEvents.assignmentId,
+      actionKind: assignments.actionKind,
+      title: assignments.title,
+      eventKind: assignmentEvents.eventKind,
+      fromStatus: assignmentEvents.fromStatus,
+      toStatus: assignmentEvents.toStatus,
+      actorLabel: actorIdentities.label,
+      actorKind: actorIdentities.kind,
+      nodeId: assignments.nodeId,
+      stepId: assignments.stepId,
+      createdAt: assignmentEvents.createdAt,
+    })
+    .from(assignmentEvents)
+    .innerJoin(assignments, eq(assignments.id, assignmentEvents.assignmentId))
+    .leftJoin(actorIdentities, eq(actorIdentities.id, assignmentEvents.actorId))
+    .where(eq(assignmentEvents.runId, runId))
+    .orderBy(asc(assignmentEvents.createdAt));
 
   const gatesByAttempt = new Map<string, TimelineGate[]>();
 
@@ -383,8 +427,27 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
         }
       : null,
   }));
+  const events: TimelineAssignmentEvent[] = assignmentEventRows.map((r) => ({
+    id: r.id,
+    assignmentId: r.assignmentId,
+    actionKind: r.actionKind,
+    title: r.title,
+    eventKind: r.eventKind,
+    fromStatus: r.fromStatus,
+    toStatus: r.toStatus,
+    actorLabel: r.actorLabel,
+    actorKind: r.actorKind,
+    nodeId: r.nodeId,
+    stepId: r.stepId,
+    createdAt: r.createdAt.toISOString(),
+  }));
 
-  return { entries };
+  log.debug(
+    { runId, assignmentEventCount: events.length },
+    "[FIX:M13] assignment timeline events loaded",
+  );
+
+  return { entries, assignmentEvents: events };
 }
 
 // --- M11c: run-detail settings-visibility read model (ADR-032) ------------

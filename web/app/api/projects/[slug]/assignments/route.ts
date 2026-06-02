@@ -14,8 +14,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
-const { assignments, projects } =
-  schemaModule as unknown as Record<string, any>;
+const { assignments, projects } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): route accepts both pg and sqlite drizzle clients.
 type Db = any;

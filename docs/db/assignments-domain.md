@@ -1,9 +1,10 @@
 # Assignments Domain
 
-M13 persistence introduces a work-ownership layer over existing HITL and manual
-takeover flows. The database tables are implemented in migration `0018`; full
-automatic assignment creation across every runtime path and the UI read models
-are being phased in by the remaining M13 tasks.
+M13 introduces a work-ownership layer over existing HITL and manual takeover
+flows. The database tables are implemented in migration `0018`; runtime
+assignment creation, claim/release/take-over APIs, board/run-detail surfaces,
+and run-detail assignment ledger history are wired for the implemented wait
+classes.
 
 Flow roles are routing labels. They do not authorize users. Authorization stays
 with `project_members.role` and `requireProjectAction()`.
@@ -110,18 +111,18 @@ erDiagram
 
 ## Indexes
 
-| Table | Index | Columns | Purpose |
-| ----- | ----- | ------- | ------- |
-| `project_flow_roles` | `project_flow_roles_project_key_uq` | `(project_id, role_ref)` UNIQUE | One role ref per project. |
-| `project_flow_roles` | `project_flow_roles_project_idx` | `(project_id)` | Project registry lookup. |
-| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
-| `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
-| `assignments` | `assignments_hitl_request_uq` | `(hitl_request_id)` UNIQUE | One assignment per HITL wait. |
-| `assignments` | `assignments_project_status_idx` | `(project_id, status)` | Project work queue. |
-| `assignments` | `assignments_run_status_idx` | `(run_id, status)` | Run-detail work queue. |
-| `assignments` | `assignments_current_actor_idx` | `(assignee_actor_id)` | Actor-owned work lookup. |
-| `assignments` | `assignments_hitl_request_idx` | `(hitl_request_id)` | HITL lookup. |
-| `assignment_events` | `assignment_events_assignment_idx` | `(assignment_id)` | Event history. |
-| `assignment_events` | `assignment_events_project_created_idx` | `(project_id, created_at)` | Project audit stream. |
+| Table                | Index                                   | Columns                         | Purpose                       |
+| -------------------- | --------------------------------------- | ------------------------------- | ----------------------------- |
+| `project_flow_roles` | `project_flow_roles_project_key_uq`     | `(project_id, role_ref)` UNIQUE | One role ref per project.     |
+| `project_flow_roles` | `project_flow_roles_project_idx`        | `(project_id)`                  | Project registry lookup.      |
+| `actor_identities`   | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE  | One user actor per project.   |
+| `actor_identities`   | `actor_identities_project_idx`          | `(project_id)`                  | Project actor lookup.         |
+| `assignments`        | `assignments_hitl_request_uq`           | `(hitl_request_id)` UNIQUE      | One assignment per HITL wait. |
+| `assignments`        | `assignments_project_status_idx`        | `(project_id, status)`          | Project work queue.           |
+| `assignments`        | `assignments_run_status_idx`            | `(run_id, status)`              | Run-detail work queue.        |
+| `assignments`        | `assignments_current_actor_idx`         | `(assignee_actor_id)`           | Actor-owned work lookup.      |
+| `assignments`        | `assignments_hitl_request_idx`          | `(hitl_request_id)`             | HITL lookup.                  |
+| `assignment_events`  | `assignment_events_assignment_idx`      | `(assignment_id)`               | Event history.                |
+| `assignment_events`  | `assignment_events_project_created_idx` | `(project_id, created_at)`      | Project audit stream.         |
 
 Source: `web/lib/db/schema.ts`.

@@ -4,13 +4,13 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import pino from "pino";
 
-import { releaseAssignment } from "@/lib/assignments/service";
-
 import {
   handleAssignmentAction,
   readOptionalReason,
   type RouteParams,
 } from "../_shared";
+
+import { releaseAssignment } from "@/lib/assignments/service";
 
 const log = pino({
   name: "api-assignment-release",

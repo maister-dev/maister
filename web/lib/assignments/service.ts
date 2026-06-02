@@ -1,6 +1,11 @@
 import "server-only";
 
 import type { MaisterYamlV2 } from "@/lib/config.schema";
+import type {
+  ActorIdentity,
+  Assignment,
+  ProjectFlowRole,
+} from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -9,10 +14,15 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import type { ActorIdentity, Assignment, ProjectFlowRole } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-const { actorIdentities, assignmentEvents, assignments, projectFlowRoles, runs } =
+const {
+  actorIdentities,
+  assignmentEvents,
+  assignments,
+  projectFlowRoles,
+  runs,
+} =
   // FIXME(any): dual drizzle-orm peer-dep variants.
   schemaModule as unknown as Record<string, any>;
 
@@ -85,7 +95,10 @@ export type AssignmentTransitionArgs = ClaimAssignmentArgs & {
 };
 
 export type CompleteAssignmentArgs = ClaimAssignmentArgs & {
-  eventKind?: Extract<AssignmentEventKind, "completed" | "responded" | "returned">;
+  eventKind?: Extract<
+    AssignmentEventKind,
+    "completed" | "responded" | "returned"
+  >;
   payload?: Record<string, unknown>;
 };
 
@@ -100,7 +113,10 @@ export type CancelAssignmentArgs = ClaimAssignmentArgs & {
 export type CompleteHitlAssignmentFromCurrentActorArgs = {
   db?: Db;
   hitlRequestId: string;
-  eventKind?: Extract<AssignmentEventKind, "completed" | "responded" | "returned">;
+  eventKind?: Extract<
+    AssignmentEventKind,
+    "completed" | "responded" | "returned"
+  >;
   payload?: Record<string, unknown>;
 };
 
@@ -239,7 +255,12 @@ export async function syncProjectFlowRolesFromConfig(
         .from(projectFlowRoles)
         .where(eq(projectFlowRoles.projectId, args.projectId));
 
-      return { rows: rows as ProjectFlowRole[], addedCount, updatedCount, archivedCount };
+      return {
+        rows: rows as ProjectFlowRole[],
+        addedCount,
+        updatedCount,
+        archivedCount,
+      };
     },
   );
 
@@ -735,7 +756,10 @@ export async function completeHitlAssignmentFromCurrentActor(
     if (!existing) return null;
     const assignment = existing as Assignment;
 
-    if (assignment.status === "completed" || assignment.status === "cancelled") {
+    if (
+      assignment.status === "completed" ||
+      assignment.status === "cancelled"
+    ) {
       return assignment;
     }
 
@@ -859,7 +883,10 @@ export async function cancelActiveAssignmentsForRun(args: {
   const db = args.db ?? getDb();
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
-    const active = await getOpenAssignmentsForRun({ db: tx, runId: args.runId });
+    const active = await getOpenAssignmentsForRun({
+      db: tx,
+      runId: args.runId,
+    });
     const cancelled: Assignment[] = [];
 
     for (const assignment of active) {
@@ -884,7 +911,10 @@ export async function systemCloseActiveAssignmentsForRun(
   const db = args.db ?? getDb();
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
-    const active = await getOpenAssignmentsForRun({ db: tx, runId: args.runId });
+    const active = await getOpenAssignmentsForRun({
+      db: tx,
+      runId: args.runId,
+    });
 
     if (active.length === 0) return [];
 

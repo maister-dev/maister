@@ -41,8 +41,7 @@ const {
   runs,
   tasks,
   workspaces,
-} =
-  schemaModule as unknown as Record<string, any>;
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-runs",
@@ -71,10 +70,7 @@ function assertCompiledFlowRolesLaunchable(args: {
   for (const node of args.compiled.nodes.values()) {
     const finishRole = node.finishHuman?.role;
 
-    if (
-      finishRole !== undefined &&
-      !args.activeRoleRefs.has(finishRole)
-    ) {
+    if (finishRole !== undefined && !args.activeRoleRefs.has(finishRole)) {
       throw new MaisterError(
         "CONFIG",
         `flow "${args.flowRefId}" node "${node.id}" finish.human.role references unknown active Flow role "${finishRole}" for project ${args.projectSlug}`,
@@ -365,6 +361,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
 
       const compiled = compileManifest(revision.manifest as FlowYamlV1);
+
       assertCompiledFlowRolesLaunchable({
         compiled,
         activeRoleRefs: activeFlowRoleRefs,

@@ -37,6 +37,7 @@
   **Expectation: full-featured gate execution** ([ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)). `command_check`/`ai_judgment`/`human_review` execute; `skill_check` runs best-effort (no capability scoping until M14); `artifact_required` (M12) and `external_check` (M16) are schema-valid + status-modelled but stubbed. Full status lifecycle (`pending|running|passed|failed|stale|skipped|overridden`), `blocking|advisory` modes, structured verdicts, staleness propagation, and override-without-erasure are real. Gate results **feed but do not gate promotion** (that is M15/M18).
 
   **Acceptance criteria:**
+
   - Linear back-compat: a `steps[]`-only manifest needs no graph syntax and runs to `Review` exactly as today.
   - Graph validation rejects unknown node ids (in `transitions`/`rework.allowedTargets`/`staleFrom`/`input.requires`), duplicate node/gate ids, unknown gate kinds, cycles without `rework.maxLoops`, unsupported workspace policies, human decisions targeting undeclared transitions, both/neither of `steps`/`nodes`, and graph flows without `compat.engine_min ≥ 1.1.0`. (Unknown **role** refs → M13; MCP/tool/skill/agent/restriction refs → M14; node-level **executor** refs → M11c.)
   - A graph Flow executes `plan → implement → checks → judge → review`, rejects from review back to `implement` with comments, marks `checks`/`judge` stale and reruns them, then reaches a fresh review gate.
@@ -53,6 +54,7 @@
   **Expectation: run-detail timeline.** Run detail distinguishes current vs stale gates and shows all node attempts, decisions, checkpoints, handoffs, returned commits, and rerun results in one timeline.
 
   **Acceptance criteria:**
+
   - Manual takeover moves a run into `HumanWorking`, exposes the handoff branch and owner on the board, imports returned commits, shows the returned diff, and forces downstream checks/judges/user-review to rerun.
   - Run detail UI distinguishes current vs stale gates and shows all node attempts, decisions, checkpoints, handoffs, returned commits, and rerun results in one timeline.
   - The bundled `aif` Flow demonstrates manual takeover.
@@ -65,15 +67,16 @@
   **Expectation: enforcement boundary (refusal slice; positive enforcement → M14).** The typed `settings` schema replaces the M11a opaque passthrough; each capability-bearing setting carries a declared `enforcement` intent (`strict | instruct | off`). At launch, a node declaring `enforcement: strict` on a capability class the build cannot strictly enforce (static `ENFORCEABILITY_BY_AGENT` table — every M14-materialized class is conservatively `instructed`) is **refused** (`CONFIG`/`EXECUTOR_UNAVAILABLE`, no silent fallback); settings are surfaced in the run-detail UI as `enforced/instructed/refused`. Node-level **executor** refs (`settings.executors`) are validated against `maister.yaml executors[]` (config-state, resolvable via the M6 override chain without the M14 registry). **Materialized positive enforcement** (writing per-session `settings.json`/MCP config/skills, flipping classes `instructed`→`enforced`) and **capability-registry refs** (MCPs/tools/skills/agents/restrictions) are validated/materialized in M14.
 
   **Acceptance criteria:**
-  - Manifest validation rejects unknown node-level executor refs (`settings.executors` against `maister.yaml executors[]`) plus node-settings shape (enum/bound/`enforcement`/human-`decisions`-vs-`transitions`). This is the node-settings-shape + node-level-executor-ref slice of criterion #1; the MCP/tool/skill/agent/restriction *registry-ref* subset of #1 stays → M14, the human *role* refs subset stays → M13.
+
+  - Manifest validation rejects unknown node-level executor refs (`settings.executors` against `maister.yaml executors[]`) plus node-settings shape (enum/bound/`enforcement`/human-`decisions`-vs-`transitions`). This is the node-settings-shape + node-level-executor-ref slice of criterion #1; the MCP/tool/skill/agent/restriction _registry-ref_ subset of #1 stays → M14, the human _role_ refs subset stays → M13.
   - AI node settings are visible in the UI and a launch-time refusal boundary blocks any undeclared-as-enforceable `enforcement: strict` escape hatch (criterion #6 refusal/visibility slice). Materialized positive enforcement (`instructed`→`enforced`) stays → M14; #6 is not fully complete until then.
   - The opaque `settings` passthrough from M11a is replaced by typed validation; `SETTINGS_NOT_ENFORCED_WARN` is removed.
   - Docs cover the node settings schema (criterion #8 node-settings-docs half).
 
 - [x] **M12. Typed artifacts and evidence graph** — make Flow
-  inputs/outputs first-class runtime objects, stored as typed metadata with
-  filesystem/git payloads. This is the review backbone: artifacts are not just
-  files, they are evidence that a run is ready or not ready.
+      inputs/outputs first-class runtime objects, stored as typed metadata with
+      filesystem/git payloads. This is the review backbone: artifacts are not just
+      files, they are evidence that a run is ready or not ready.
 
   **As-built (shipped 2026-06-02):** schema migration `0017` + `artifact-store`,
   runner-inline recording + the ADR-022/ADR-038 projector, manifest validation
@@ -110,6 +113,7 @@
   from the same node but never erase history.
 
   **Acceptance criteria:**
+
   - Flow validation rejects duplicate artifact ids, unknown required inputs,
     unsupported artifact kinds, invalid artifact paths/refs, and merge-required
     artifacts that no node can produce.
@@ -135,12 +139,26 @@
   - Architecture note: artifact instances are written by the same web-side
     **projector** that derives them from the supervisor event stream — see ADR-022.
 
-- [ ] **M13. Role-owned work queue and assignment UX** — make human work
-  visible and claimable across board, inbox, run detail, and manual takeover.
-  This is not RBAC. For the current target, roles are Flow/project routing
-  labels and ownership signals that make paused work obvious. Any project
-  teammate may claim, respond, return, or merge; MAIster records who acted but
-  does not block actions by role.
+- [x] **M13. Role-owned work queue and assignment UX** — make human work
+      visible and claimable across board, inbox, run detail, and manual takeover.
+      This is not RBAC. For the current target, roles are Flow/project routing
+      labels and ownership signals that make paused work obvious. Any project
+      teammate may claim, respond, return, or merge; MAIster records who acted but
+      does not block actions by role.
+
+  **As-built (shipped 2026-06-02):** ADR-040, `maister.yaml flow_roles[]`,
+  migration `0018`, `project_flow_roles`, non-human-capable
+  `actor_identities`, `assignments`, and append-only `assignment_events`;
+  launch-time Flow role validation against active project roles; runtime
+  assignment creation for ACP permission HITL, linear form/human HITL, graph
+  `human_review`, manual takeover, merge-conflict waits, and terminal cleanup;
+  assignment claim/release/take-over APIs; HITL respond auto-claim and
+  conflict handling; manual takeover return completes assignments after M12
+  `commit_set`/`diff` artifacts; portfolio/project/run-detail assignment
+  read models and EN/RU UI strings; run-detail assignment ledger history.
+  Verified with focused unit tests, M13 Playwright, and docs validation; local
+  Docker/Testcontainers availability is still required for the Postgres
+  integration lane.
 
   **Expectation: role registry.** Projects can define roles such as
   `owner`, `reviewer`, `maintainer`, `qa`, and `release-owner`. Flow human
@@ -167,9 +185,10 @@
   M12, and resumes the M11a validation path.
 
   **Acceptance criteria:**
+
   - Flow validation rejects human nodes that reference unknown project roles.
   - Runtime creates assignments for `permission`, `form`, `human`,
-    `human_edit`, and merge-conflict/manual-resolution waits.
+    `human_review`, manual takeover, merge-conflict/manual-resolution waits.
   - Board cards and portfolio inbox display role, assignee or unclaimed state,
     elapsed time, action kind, branch/ref, and stale-evidence summary.
   - A user can claim, release, respond, and return assigned work from the UI;
@@ -181,15 +200,16 @@
   - Completed, cancelled, stale, and superseded assignments remain visible in
     run history but no longer appear as actionable inbox items.
   - Deferred explicitly: RBAC, project membership permissions, role-based
-    action blocking, escalation calendars, notifications, external board sync,
-    and org/team administration.
+    action blocking, `human_edit` nodes (M18), external hook waits (M16),
+    escalation calendars, notifications, external board sync, and org/team
+    administration.
 
 - [ ] **M14. Scoped capability materialization** — make node and session
-  settings executable by giving MCP servers, skills, settings files, tools,
-  agent definitions, restrictions, and Flow-shipped resources a project-visible
-  registry plus runner-owned materialization. This turns M11c node settings from
-  descriptive YAML into enforceable runtime boundaries where the adapter
-  supports enforcement.
+      settings executable by giving MCP servers, skills, settings files, tools,
+      agent definitions, restrictions, and Flow-shipped resources a project-visible
+      registry plus runner-owned materialization. This turns M11c node settings from
+      descriptive YAML into enforceable runtime boundaries where the adapter
+      supports enforcement.
 
   **Expectation: capability registry.** Projects expose named capability
   records for MCP servers, skills, agent definitions, tool profiles,
@@ -235,6 +255,7 @@
   combination.
 
   **Acceptance criteria:**
+
   - Project config can declare capability records and Flow node settings can
     reference them by id.
   - Flow validation rejects unknown MCPs, tools, skills, agents, restriction
@@ -266,19 +287,19 @@
     capability policy, and cross-project capability promotion workflows.
 
 - [ ] **M15. Readiness policy and verdict calibration** — make readiness an
-  explicit Flow-distributed contract that decides when a run may promote.
-  **Re-scoped ([ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)):**
-  gate *execution* — the six gate kinds, the `pending|running|passed|failed|stale|skipped|overridden`
-  status lifecycle, `blocking|advisory` modes, structured verdicts, staleness
-  propagation, and override-without-erasure — moved to **M11a**. M15 keeps only
-  the readiness-policy DSL, verdict calibration, and `external_check` ingestion.
+      explicit Flow-distributed contract that decides when a run may promote.
+      **Re-scoped ([ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)):**
+      gate _execution_ — the six gate kinds, the `pending|running|passed|failed|stale|skipped|overridden`
+      status lifecycle, `blocking|advisory` modes, structured verdicts, staleness
+      propagation, and override-without-erasure — moved to **M11a**. M15 keeps only
+      the readiness-policy DSL, verdict calibration, and `external_check` ingestion.
 
   **Expectation: readiness policy decides promotion.** A run can move forward,
   enter review, or merge only when its Flow-declared blocking gates (executed in
   M11a) are current and passed or explicitly overridden. Project config supplies
   reusable command profiles, skill mappings, capability/env profiles, and default
   timeout/cost overrides; the Flow declares which gates are required. In M11a
-  gate results are *recorded* but do not gate promotion; M15 adds the
+  gate results are _recorded_ but do not gate promotion; M15 adds the
   promotion-gating readiness check.
 
   **Expectation: verdict calibration.** Confidence thresholds and pass/fail
@@ -291,6 +312,7 @@
   staleness rules over external commits.
 
   **Acceptance criteria:**
+
   - Review and merge refuse when any required blocking gate is missing, pending,
     running, failed, stale, or skipped (M11a records gate results; M15 enforces
     the promotion gate).
@@ -306,10 +328,10 @@
     operations API/report contract.
 
 - [ ] **M16. External operations API, tokens, and thin MCP facade** — expose a
-  small project-scoped control surface for CI, local scripts, external tools,
-  and running agents. The canonical contract is the HTTP API with managed API
-  tokens; MCP is a thin agent-facing facade over the same service layer and
-  audit model, not a second orchestration backend.
+      small project-scoped control surface for CI, local scripts, external tools,
+      and running agents. The canonical contract is the HTTP API with managed API
+      tokens; MCP is a thin agent-facing facade over the same service layer and
+      audit model, not a second orchestration backend.
 
   **Expectation: API-first integration.** External systems use REST endpoints
   secured by project-scoped tokens to create tasks, launch runs, read run
@@ -343,6 +365,7 @@
   rules.
 
   **Acceptance criteria:**
+
   - Project settings can create, list, and revoke project API tokens; token
     secrets are stored hashed and shown only once.
   - Token-authenticated requests are attributed in audit/ledger records with
@@ -371,10 +394,10 @@
 - [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11a's typed decisions, M11b's manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
 
 - [ ] **M18. Branch targeting, diff review, and manual promotion** — replace
-  the narrow "merge to main" assumption with engineer-controlled branch
-  targeting. A run starts from a selected base branch, works in a MAIster run
-  branch/worktree, then promotes that result to a selected target branch by PR
-  or local merge after readiness passes.
+      the narrow "merge to main" assumption with engineer-controlled branch
+      targeting. A run starts from a selected base branch, works in a MAIster run
+      branch/worktree, then promotes that result to a selected target branch by PR
+      or local merge after readiness passes.
 
   **Expectation: launch branch selection.** Task launch UI lets the operator
   choose Flow, runner/executor, base branch, and optionally target branch. Base
@@ -404,6 +427,7 @@
   through the normal assignment/artifact/gate path.
 
   **Acceptance criteria:**
+
   - Launch can select base branch and optional target branch; both are validated
     against the project repo before worktree creation.
   - Run branches are created from the selected base branch commit, not
@@ -430,22 +454,22 @@
 
 ## Completed
 
-| Milestone | Date |
-|-----------|------|
-| M0. Spike: ACP library + cross-process resume + codex parity | 2026-05-25 |
-| M1. Drizzle schema + Postgres | 2026-05-26 |
-| M2. Core libs (errors, atomic, config v2) | 2026-05-26 |
-| M3. Supervisor daemon (`supervisor/`) | 2026-05-26 |
-| M4. Flow plugin loader | 2026-05-26 |
-| M5. Flow DSL parser + executor + aif plugin | 2026-05-27 |
-| M6. Executor registry: claude + codex + CCR | 2026-05-27 |
-| M7. ACP integration + SSE bridge | 2026-05-28 |
-| M8. Worker lifecycle: keep-alive + checkpoint + resume | 2026-05-29 |
-| M9. Web UI core: registry + portfolio + board + auth + RU i18n | 2026-05-29 |
-| M10. Flow package lifecycle and distribution UX | 2026-05-30 |
+| Milestone                                                                    | Date       |
+| ---------------------------------------------------------------------------- | ---------- |
+| M0. Spike: ACP library + cross-process resume + codex parity                 | 2026-05-25 |
+| M1. Drizzle schema + Postgres                                                | 2026-05-26 |
+| M2. Core libs (errors, atomic, config v2)                                    | 2026-05-26 |
+| M3. Supervisor daemon (`supervisor/`)                                        | 2026-05-26 |
+| M4. Flow plugin loader                                                       | 2026-05-26 |
+| M5. Flow DSL parser + executor + aif plugin                                  | 2026-05-27 |
+| M6. Executor registry: claude + codex + CCR                                  | 2026-05-27 |
+| M7. ACP integration + SSE bridge                                             | 2026-05-28 |
+| M8. Worker lifecycle: keep-alive + checkpoint + resume                       | 2026-05-29 |
+| M9. Web UI core: registry + portfolio + board + auth + RU i18n               | 2026-05-29 |
+| M10. Flow package lifecycle and distribution UX                              | 2026-05-30 |
 | M11a. Flow graph v1: node lifecycle, run ledger, review-driven rework, gates | 2026-05-31 |
-| M11b. Manual takeover (local worktree handoff) + run-detail timeline | 2026-05-31 |
-| M21. Project repo onboarding (URL clone + configurable roots) | 2026-05-31 |
-| M11c. Node typed settings + runtime enforcement boundary | 2026-06-01 |
-| M12. Typed artifacts and evidence graph | 2026-06-02 |
-| M19. Reconciliation + GC | 2026-06-02 |
+| M11b. Manual takeover (local worktree handoff) + run-detail timeline         | 2026-05-31 |
+| M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
+| M11c. Node typed settings + runtime enforcement boundary                     | 2026-06-01 |
+| M12. Typed artifacts and evidence graph                                      | 2026-06-02 |
+| M19. Reconciliation + GC                                                     | 2026-06-02 |

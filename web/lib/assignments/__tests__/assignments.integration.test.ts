@@ -10,9 +10,6 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import * as fullSchema from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
-
 import {
   claimAssignment,
   cancelAssignment,
@@ -25,6 +22,9 @@ import {
   systemCloseActiveAssignmentsForRun,
   takeOverAssignment,
 } from "../service";
+
+import * as fullSchema from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -459,7 +459,11 @@ describe("assignments service", () => {
       createdByActorId: actor.id,
     });
 
-    await claimAssignment({ db, assignmentId: assignment.id, actorId: actor.id });
+    await claimAssignment({
+      db,
+      assignmentId: assignment.id,
+      actorId: actor.id,
+    });
     const released = await releaseAssignment({
       db,
       assignmentId: assignment.id,
@@ -758,9 +762,9 @@ describe("assignments service", () => {
     expect(closed.map((assignment) => assignment.id).sort()).toEqual(
       [first.id, second.id].sort(),
     );
-    expect(closed.every((assignment) => assignment.status === "cancelled")).toBe(
-      true,
-    );
+    expect(
+      closed.every((assignment) => assignment.status === "cancelled"),
+    ).toBe(true);
 
     const systemActors = await db
       .select()

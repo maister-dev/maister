@@ -164,7 +164,11 @@ async function seedAssignment(args: {
   });
 
   if (args.claimed) {
-    await claimAssignment({ db, assignmentId: assignment.id, actorId: actor.id });
+    await claimAssignment({
+      db,
+      assignmentId: assignment.id,
+      actorId: actor.id,
+    });
   }
 
   return { projectId: project.projectId, assignmentId: assignment.id, runId };

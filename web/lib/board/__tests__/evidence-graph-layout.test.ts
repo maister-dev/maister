@@ -83,8 +83,18 @@ function sampleGraph(): EvidenceGraph {
       },
     ],
     edges: [
-      { id: "e-input", source: "task-input", target: "attempt-1", kind: "input" },
-      { id: "e-out", source: "attempt-1", target: "artifact-new", kind: "output" },
+      {
+        id: "e-input",
+        source: "task-input",
+        target: "attempt-1",
+        kind: "input",
+      },
+      {
+        id: "e-out",
+        source: "attempt-1",
+        target: "artifact-new",
+        kind: "output",
+      },
       {
         id: "e-sup",
         source: "artifact-old",

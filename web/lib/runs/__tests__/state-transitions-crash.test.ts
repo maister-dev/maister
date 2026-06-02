@@ -30,10 +30,6 @@ vi.mock("drizzle-orm", async (importOriginal) => {
   };
 });
 
-import * as schemaModule from "@/lib/db/schema";
-
-const { runs } = schemaModule as unknown as Record<string, any>;
-
 type Captured = {
   setArg: Record<string, unknown> | null;
   whereArg: unknown;

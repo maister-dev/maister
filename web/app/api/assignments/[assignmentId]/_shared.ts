@@ -118,10 +118,7 @@ function errorResponse(
       `${ctx.actionName} error`,
     );
 
-    return Response.json(
-      { code: err.code, message: err.message },
-      { status },
-    );
+    return Response.json({ code: err.code, message: err.message }, { status });
   }
 
   const message = err instanceof Error ? err.message : String(err);
