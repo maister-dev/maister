@@ -4,10 +4,11 @@ All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 `VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), the two **M11a (Implemented)**
 execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 **M11b (migration `0011`, additive)** takeover columns and `HumanWorking`
-status, scratch-run persistence, and the selectable capability catalog.
-For partial views by domain, see
+status, scratch-run persistence, the selectable capability catalog, and the
+**M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
+and `ARTIFACT_PROJECTION_CURSORS`. For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
-[`hitl-domain.md`](hitl-domain.md).
+[`hitl-domain.md`](hitl-domain.md), [`artifacts-domain.md`](artifacts-domain.md).
 
 ```mermaid
 erDiagram
@@ -35,6 +36,10 @@ erDiagram
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    RUNS ||--o{ ARTIFACT_INSTANCES : "evidence index (M12)"
+    NODE_ATTEMPTS ||--o{ ARTIFACT_INSTANCES : "attempt evidence (M12, nullable)"
+    RUNS ||--o| ARTIFACT_PROJECTION_CURSORS : "projector cursor (M12)"
+    ARTIFACT_INSTANCES ||--o| ARTIFACT_INSTANCES : "superseded_by (M12, SET NULL)"
     RUNS ||--o{ HITL_REQUESTS : raises
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
     TASKS ||--o{ SCRATCH_RUNS : "optional link"
@@ -257,6 +262,38 @@ erDiagram
         timestamp ended_at
     }
 
+    ARTIFACT_INSTANCES {
+        text id PK "deterministic — see artifacts-domain.md"
+        text run_id FK "NOT NULL → runs(id) ON DELETE CASCADE"
+        text node_attempt_id FK "NULL → node_attempts(id) ON DELETE CASCADE"
+        text node_id "denormalized logical node id (nullable)"
+        integer attempt "denormalized attempt number (nullable)"
+        text artifact_def_id "manifest output id; NULL for defaults/projector"
+        text kind "diff|log|test_report|lint_report|ai_judgment|human_note|commit_set|checkpoint|preview|generic_file"
+        text producer "runner|projector|takeover|gate|human"
+        jsonb locator "discriminated union — server-written only"
+        text uri "optional human/direct display ref"
+        text hash "content hash when cheap"
+        integer size_bytes "nullable"
+        text validity "current|stale|superseded|failed|skipped DEFAULT current"
+        jsonb required_for "(review|merge)[] — declared, not enforced until M14"
+        text visibility "internal|shared DEFAULT internal"
+        text retention "run|ephemeral DEFAULT run"
+        integer monotonic_id "projector event id; NULL for runner-inline"
+        text superseded_by_id FK "NULL → artifact_instances(id) ON DELETE SET NULL"
+        timestamptz created_at "DEFAULT now()"
+    }
+
+    ARTIFACT_PROJECTION_CURSORS {
+        text id PK "= run_id (one cursor per run)"
+        text run_id FK "NOT NULL → runs(id) ON DELETE CASCADE"
+        text scope "run — one row per run"
+        text events_log_path "run.events.jsonl path"
+        integer last_monotonic_id "DEFAULT 0; run-global"
+        text status "idle|running|caught_up|failed DEFAULT idle"
+        timestamptz updated_at "DEFAULT now()"
+    }
+
     HITL_REQUESTS {
         text id PK
         text run_id FK
@@ -340,10 +377,12 @@ erDiagram
 ## Planned roadmap extensions
 
 The ERD shows implemented tables, M11a `node_attempts` / `gate_results`
-(migration `0010`), scratch-run persistence, and `capability_records`. The
-remaining roadmap M12-M18 additive persistence — artifacts and artifact edges,
-assignments, API tokens, and external operation events — is not drawn until its
-migrations exist. See
+(migration `0010`), scratch-run persistence, `capability_records`, and the
+M12 (Implemented, migration `0015`) `artifact_instances` /
+`artifact_projection_cursors` typed-evidence tables (see
+[`artifacts-domain.md`](artifacts-domain.md)). The remaining roadmap M13-M18
+additive persistence — artifact edges, assignments, API tokens, and external
+operation events — is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes

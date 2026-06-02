@@ -88,12 +88,12 @@ nodes:
         - id: implementation-log
           kind: log
           path: ".maister/{{ run.id }}/implement.log"
-          visibility: timeline
+          visibility: internal
         - id: implementation-diff
           kind: diff
           path: "."
-          visibility: review
-          requiredForReview: true
+          visibility: shared
+          requiredFor: [review]
     pre_finish:
       gates:
         - id: format
@@ -162,10 +162,10 @@ nodes:
       produces:
         - id: returned-commits
           kind: commit_set
-          requiredForReview: true
+          requiredFor: [review]
         - id: returned-diff
           kind: diff
-          requiredForReview: true
+          requiredFor: [review]
 ```
 
 > The `transitions` above reference upstream node ids (`review`, `checks`) that
@@ -346,6 +346,45 @@ directory, worktree, or git repository. The first artifact kinds are:
 Each artifact instance belongs to a run, node, and attempt. It records the
 artifact definition id, kind, producer, uri/path, hash, size, created time, and
 validity: `current`, `stale`, `superseded`, `failed`, or `skipped`.
+
+**`output.produces[]`.** A node's `output` block declares the typed artifacts it
+produces. Each entry:
+
+| field | type | meaning |
+| ----- | ---- | ------- |
+| `id` | string, **unique within the manifest** | Stable artifact id other nodes' `input.requires` and `artifact_required` gates reference. |
+| `kind` | enum (closed catalog) | One of `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, `generic_file`. |
+| `schema?` | string | Optional schema id/ref describing the payload shape. |
+| `path?` | string | Optional run-relative / worktree path to the payload. |
+| `ref?` | string | Optional git ref (used by `commit_set` / `diff`). |
+| `visibility?` | `internal` \| `shared` | Who may read the artifact. **Declared/recorded in M12; access enforcement is M14.** |
+| `retention?` | `run` \| `ephemeral` | Lifetime policy. **Declared/recorded in M12; enforcement is M14.** |
+| `requiredFor?` | (`"review"` \| `"merge"`)[] | Phases this artifact blocks if missing/stale. It is a field ON a `produces[]` entry, so the artifact is always produced by the declaring node. |
+
+**`input.requires[]`.** A node's `input` block declares the typed artifacts it
+consumes. Each entry is **either** a bare artifact id (string) — referencing an
+`output.produces[].id` — **or** an object `{ artifact, kind }` that additionally
+pins the expected `kind`. An unknown ref or `kind` mismatch is a manifest
+violation (`CONFIG`). A required input that is missing or `stale` at runtime
+fails the node BEFORE its action (`PRECONDITION`).
+
+**`artifact_required` gate.** This gate references artifact ids through its
+`inputArtifacts` field and **passes ONLY when every referenced artifact instance
+is `current`** (not missing, `stale`, `superseded`, `failed`, or `skipped`).
+
+- `mode: blocking` — an unsatisfied gate is a **blocking failure that stops the
+  node finishing**. Placed in a `human_review` node's `pre_finish`, this is the
+  **review-refusal mechanism**: review cannot complete until the required
+  evidence is `current`.
+- `mode: advisory` — an unsatisfied gate is **recorded non-blocking**; the node
+  continues.
+
+**Manifest validation (`CONFIG`).** At load/validate time the manifest is
+rejected (`CONFIG`) for: a duplicate `output.produces[].id` within the manifest;
+an `input.requires` ref (bare id or `{ artifact, kind }`) to an unknown artifact
+id; an `input.requires` object whose declared `kind` mismatches the producing
+artifact's `kind`; an unsupported artifact `kind`; an invalid `path`/`ref`; or an
+`artifact_required` gate whose `inputArtifacts` reference unknown artifact ids.
 
 The run detail UI includes an evidence graph explorer. It connects task inputs,
 node attempts, artifacts, gates, human decisions, returned commits, and merge

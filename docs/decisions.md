@@ -58,6 +58,9 @@
 | [ADR-034](#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission) | Crashed-run recovery semantics (hybrid `--resume` + re-dispatch, durable-marker-first, cap re-admission) | Accepted | 2026-06-01 |
 | [ADR-035](#adr-035-graceful-workspace-gc-preserve-then-prune) | Graceful workspace GC (preserve-then-prune) | Accepted | 2026-06-01 |
 | [ADR-036](#adr-036-flow-revision-gc) | Flow-revision GC | Accepted | 2026-06-01 |
+| [ADR-037](#adr-037-typed-artifact-model) | Typed artifact model: `artifact_instances` is the queryable evidence index only (payloads on disk/worktree/git), closed `kind` catalog, validity FSM, M12 deferral list | Accepted | 2026-06-01 |
+| [ADR-038](#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022) | Hybrid write path for `artifact_instances` (refines ADR-022): runner-inline + scoped web-side projector, deterministic-PK idempotency, per-RUN cursor, no watcher | Accepted | 2026-06-01 |
+| [ADR-039](#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer) | `@xyflow/react` + `@dagrejs/dagre` as the read-only evidence-graph renderer (sanctioned exception to "no other component lib") | Accepted | 2026-06-01 |
 
 ---
 
@@ -1801,6 +1804,183 @@ unchanged).
 - **Run `setup.sh`/plugin teardown hooks on revision removal:** introduces a
   fetch-then-execute path GC has no reason to open; M19 GC only reclaims disk.
   Rejected — remove-only, no hooks.
+### ADR-037: Typed artifact model
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** M12 introduces an evidence graph: review gates and the run-detail
+UI need to query *what evidence a run produced* (diffs, logs, test/lint
+reports, AI judgments, human notes, commit sets, checkpoints, previews) without
+re-parsing logs or re-running git on every read. Run artifacts already live in
+the run dir (`.maister/<projectSlug>/runs/<runId>/`), the worktree, and git;
+duplicating their bytes into Postgres would double-store, drift, and bloat the
+DB. M11 owns the runner-side `node_attempts` ledger; M12 must add a queryable
+evidence index over the *same* on-disk/in-git truth, not a parallel payload
+store.
+
+**Decision:** Add one new table, `artifact_instances`, that is the **queryable
+evidence INDEX only**. Payloads stay where they are produced — on disk in the
+run dir, in the worktree, or in git. Postgres holds **metadata plus a typed
+discriminated `locator`** that points at the payload (run-dir relative path, git
+ref/range, supervisor log offset, external URL — discriminated by locator
+kind). The artifact `kind` is a **closed catalog**: `diff | log | test_report |
+lint_report | ai_judgment | human_note | commit_set | checkpoint | preview |
+generic_file`. Each row carries a **validity FSM**: `current | stale |
+superseded | failed | skipped`. Supersession and staleness **mutate** `validity`
+and set `superseded_by_id` — rows are **never deleted** (append-and-mark, so the
+evidence graph stays historically complete and auditable).
+
+The following are **explicitly out of M12 scope** (deferral list, recorded so
+they are not silently assumed): a content-addressed blob store; an artifact
+marketplace; benchmark datasets; rich preview sandboxing; cross-run artifact
+reuse; full payload-schema validation for every `kind`; external ingestion
+beyond M16.
+
+**Consequences:**
+
+- Enables the M12 evidence graph and review-refusal gates: a gate can query
+  `artifact_instances` for `current` evidence of a required `kind` and refuse
+  when it is missing or `stale`, without touching the payload bytes.
+- No new `MaisterError` code — `CONFIG` (malformed/over-declared artifact intent)
+  and `PRECONDITION` (required evidence absent) cover the failure modes;
+  [ADR-008](#adr-008-typed-error-taxonomy-maistererror) stays a closed union.
+- The DB never holds payload bytes, so it cannot drift from disk/git; the
+  `locator` is the single dereference path and git remains the source for diffs.
+- The closed `kind` catalog and validity FSM are a contract: adding a `kind` or a
+  validity state is itself an ADR-worthy change, not a silent schema edit.
+
+**Alternatives Considered:**
+
+- **Store payloads in Postgres (bytes or JSONB per artifact):** double-stores
+  what is already on disk/in git, bloats the DB, and drifts. Rejected — index
+  metadata + `locator` only.
+- **Open/free-form `kind` string:** loses the discriminated payload contract and
+  lets nodes emit un-gateable evidence types. Rejected — closed catalog.
+- **Hard-delete on supersession/staleness:** breaks audit and the historical
+  evidence graph; a superseded judgment must remain inspectable. Rejected —
+  mutate `validity` + `superseded_by_id`, never delete.
+
+---
+
+### ADR-038: Hybrid write path for `artifact_instances` (refines ADR-022)
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** [ADR-037](#adr-037-typed-artifact-model) makes
+`artifact_instances` the evidence index. Two producers see different slices of
+the truth: the **runner** (graph + linear) knows node/step boundaries and the
+artifacts a node deterministically produces (diff, commit set, lint/test report,
+AI judgment, human note, checkpoint, default log, guard metrics); the **web
+tier** sees the supervisor **event stream** and can derive evidence the runner
+cannot observe (per-tool-call activity, preview URLs). The no-`fs.watch` /
+no-`chokidar` / no-polling rule (root CLAUDE.md §1) forbids a watcher driving
+state. [ADR-022] is the web-side projector pattern that this ADR refines and
+scopes.
+
+**Decision:** Two write paths into **one** index:
+
+1. **Runner-inline.** Graph and linear runners record artifacts at node/step
+   boundaries: `diff`, `commit_set`, `lint_report`, `test_report`,
+   `ai_judgment`, `human_note`, `checkpoint`, a default `log`, plus guard
+   metrics. Deterministic primary keys: `run:<nodeAttemptId>:<artifactDefId>`
+   for declared artifacts and `run:<nodeAttemptId>:default:<kind>` for the
+   per-node defaults.
+2. **A scoped ADR-022 web-side projector.** It derives **event-stream-only**
+   evidence the runner cannot see: tool-call activity (`log`) and `preview`
+   URLs.
+
+Idempotency is by **deterministic PK**: re-execution / replay **upserts**
+(`onConflictDoUpdate`) — no partial-unique-index gymnastics. The projector uses
+**two-phase cursor ordering**: in ONE db transaction it upserts the derived
+artifacts THEN advances the cursor `last_monotonic_id`. There is **no watcher** —
+the projector is a **PULL** at runner sync points plus an **idempotent startup
+catch-up sweep**. This honors the no-`fs.watch`/`chokidar`/polling rule: the
+projector *derives data, never drives state*.
+
+**Phase-0 re-confirmation correction (stated explicitly):** the supervisor event
+log is the **RUN-scoped** `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
+— one file per run, shared across all steps (confirmed at
+`supervisor/src/spawn.ts:124-136`). `monotonicId` is **RUN-GLOBAL** and strictly
+increasing (seeded by `tailMaxMonotonicId` on each spawn, `spawn.ts:32` and
+`spawn.ts:140-143`); event lines carry `sessionId`, **not** `stepId`.
+Therefore:
+
+- the projector cursor scope is **per-RUN** (cursor PK `<runId>`);
+- the projector artifact PK is `proj:<runId>:<monotonicId>` (**NOT**
+  `proj:<runId>:<stepId>:<monotonicId>`);
+- node-attempt attribution is by joining `event.sessionId ===
+  node_attempts.acp_session_id` (unmatched → run-level `NULL`).
+
+This corrects the plan's §11.1 ratified default, which assumed a per-step log.
+
+**Consequences:**
+
+- [ADR-022] stays "lands with M12" — this ADR scopes it, it does not reopen it.
+- The M11 `node_attempts` ledger remains **runner-owned**; the projector never
+  writes it.
+- The projector **never reassembles diffs** — git is the source for diff
+  payloads; the projector only derives `log` and `preview` evidence from the
+  event stream.
+- One index, two producers, deterministic PKs → replay/restart is safe (upsert),
+  and the per-RUN cursor + two-phase transaction guarantee at-least-once derive
+  with exactly-once effect.
+
+**Alternatives Considered:**
+
+- **Per-step event log + `proj:<runId>:<stepId>:<monotonicId>` PK (plan §11.1
+  default):** the supervisor log is per-RUN with a RUN-GLOBAL `monotonicId` and
+  no `stepId` on event lines (verified, `spawn.ts:124-136`). Rejected — corrected
+  to per-RUN cursor and `proj:<runId>:<monotonicId>`.
+- **A single runner-only write path:** the runner cannot see tool-call activity
+  or preview URLs that exist only in the event stream. Rejected — the scoped
+  projector covers the event-stream-only slice.
+- **A watcher (`fs.watch`/`chokidar`) feeding the projector:** violates root
+  CLAUDE.md §1 and lets a derived index drive state. Rejected — PULL at sync
+  points + idempotent startup sweep.
+- **Partial-unique-index idempotency instead of deterministic PKs:** more moving
+  parts and brittle under replay. Rejected — deterministic PK + `onConflictDoUpdate`.
+
+---
+
+### ADR-039: `@xyflow/react` + `@dagrejs/dagre` as the evidence-graph renderer
+
+**Date:** 2026-06-01
+**Status:** Accepted
+**Context:** M12 ships a **read-only evidence-graph explorer** in the web UI:
+nodes (run nodes + their typed artifacts from
+[ADR-037](#adr-037-typed-artifact-model)) and edges (flow transitions,
+supersession, staleness). It must render HeroUI chips *inside* graph nodes,
+auto-layout a directed graph left-to-right, and be read-only (no editing
+affordances). `web/CLAUDE.md` says "no other component lib" — that rule needs an
+explicit carve-out before adopting a graph renderer.
+
+**Decision:** Adopt **React Flow** (`@xyflow/react` v12+; React 19.2 peer
+dependency verified at install) plus **`@dagrejs/dagre`** for the read-only
+evidence-graph explorer. Rationale: graph nodes are **React components** (HeroUI
+chips render inside them), React Flow has **first-class read-only mode**,
+`@dagrejs/dagre` gives **LR auto-layout**, and both are **React 19 compatible**.
+This ADR records the **sanctioned exception** to `web/CLAUDE.md` "no other
+component lib": that rule governs **component KITS** (HeroUI is the sole kit);
+React Flow is a **visualization primitive**, not a component kit, so it does not
+breach the rule. The explorer is **client-only** (`"use client"` +
+`next/dynamic` with `ssr:false`) and imports `@xyflow/react/dist/style.css`.
+
+**Consequences:**
+
+- MAIster's **first interactive UI dependency beyond HeroUI**; the exception is
+  scoped to graph visualization, not general components.
+- **Client-bundle only** — no env var, no port, no `compose.*` change; the
+  dependency never reaches the supervisor or the server tier.
+- `web/CLAUDE.md` is updated to cite this ADR at the "no other component lib"
+  rule so the carve-out is discoverable from the rule it qualifies.
+
+**Alternatives Considered:**
+
+- **Cytoscape.js:** nodes are not React components, so HeroUI chips cannot render
+  inside them. Rejected — graph nodes must be React.
+- **reaflow:** maintenance concerns. Rejected.
+- **Hand-rolled SVG:** explicitly rejected by the user; reinvents layout,
+  panning, and read-only interaction that React Flow provides. Rejected.
 
 ---
 

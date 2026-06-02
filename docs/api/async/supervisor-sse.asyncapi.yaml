@@ -25,6 +25,12 @@ info:
     every event to a run-scoped `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
     durable log so the web SSE bridge can tail a single file across
     consecutive sessions of the same run.
+
+    Consumer (M12): the web-side artifact projector tails the per-run
+    `run.events.jsonl` and consumes `session.update` /
+    `session.permission_request` messages to derive event-stream evidence
+    (tool-call activity `log` + `preview` URLs). It is a pull-based,
+    read-only consumer; it never drives run state.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster

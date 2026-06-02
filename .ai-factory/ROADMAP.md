@@ -70,10 +70,19 @@
   - The opaque `settings` passthrough from M11a is replaced by typed validation; `SETTINGS_NOT_ENFORCED_WARN` is removed.
   - Docs cover the node settings schema (criterion #8 node-settings-docs half).
 
-- [ ] **M12. Typed artifacts and evidence graph** — make Flow
+- [x] **M12. Typed artifacts and evidence graph** — make Flow
   inputs/outputs first-class runtime objects, stored as typed metadata with
   filesystem/git payloads. This is the review backbone: artifacts are not just
   files, they are evidence that a run is ready or not ready.
+
+  **As-built (shipped 2026-06-02):** schema migration `0017` + `artifact-store`,
+  runner-inline recording + the ADR-022/ADR-038 projector, manifest validation
+  (`produces`/`requires`/`artifact_required`, engine 1.2.0), staleness FSM +
+  blocking `artifact_required` review-refusal, path-confined `artifacts` +
+  `artifacts/[id]/payload` API routes, the React Flow evidence-graph explorer +
+  the board merge-blocked/evidence-stale badge, and the bundled `aif` manifest
+  migrated to engine 1.2.0. ADRs 037/038/039 (renumbered from 033/034/035 after
+  M19 claimed 033..036; migration renumbered 0015 → 0017 on the same rebase).
 
   **Expectation: Flow-declared artifacts.** Nodes can declare required inputs
   and produced outputs with `id`, `kind`, optional schema, path/ref, visibility,
@@ -437,3 +446,6 @@
 | M11a. Flow graph v1: node lifecycle, run ledger, review-driven rework, gates | 2026-05-31 |
 | M11b. Manual takeover (local worktree handoff) + run-detail timeline | 2026-05-31 |
 | M21. Project repo onboarding (URL clone + configurable roots) | 2026-05-31 |
+| M11c. Node typed settings + runtime enforcement boundary | 2026-06-01 |
+| M12. Typed artifacts and evidence graph | 2026-06-02 |
+| M19. Reconciliation + GC | 2026-06-02 |

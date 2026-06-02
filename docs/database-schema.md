@@ -42,6 +42,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
 | `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b) |
 | `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
+| `artifact_instances` | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
+| `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`. | `runs.id` |
 | `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
 
 ## `users`
@@ -695,6 +697,96 @@ An unparseable `ai_judgment` verdict is `status='failed'` with raw prose kept in
 ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)). Indexed on
 `(runId)` and `(nodeAttemptId)`. Cascade: `ON DELETE CASCADE` from `runs.id`.
 
+## `artifact_instances`
+
+**(M12 — Implemented, migration `0015`.)** Typed evidence index — one row per
+diff, log, report, judgment, note, commit set, checkpoint, or preview produced
+during a run. See [`db/artifacts-domain.md`](db/artifacts-domain.md) for the ERD
+and [`system-analytics/artifacts.md`](system-analytics/artifacts.md) for the
+validity FSM.
+
+```ts
+{
+  id,                                       // deterministic PK (see id contract)
+  runId,                                    // NOT NULL, FK -> runs.id, ON DELETE CASCADE
+  nodeAttemptId?,                           // FK -> node_attempts.id, ON DELETE CASCADE
+  nodeId?,                                  // denormalized logical node id
+  attempt?,                                 // denormalized attempt number (integer)
+  artifactDefId?,                           // manifest output.produces[].id;
+                                            //   NULL for defaults / projector rows
+  kind: 'diff' | 'log' | 'test_report' | 'lint_report'
+      | 'ai_judgment' | 'human_note' | 'commit_set'
+      | 'checkpoint' | 'preview' | 'generic_file',
+  producer: 'runner' | 'projector' | 'takeover' | 'gate' | 'human',
+  locator (jsonb),                          // discriminated union, server-written only:
+                                            //   git-range{ baseCommit, headRef }
+                                            //   | git-log{ baseRef, headRef }
+                                            //   | file{ path }
+                                            //   | gate-verdict{ gateResultId }
+                                            //   | hitl-response{ hitlRequestId }
+                                            //   | inline{ text }
+  uri?,                                     // optional human/direct display ref
+  hash?,                                    // content hash (head SHA / file digest)
+  sizeBytes?,                               // integer, nullable
+  validity: 'current' | 'stale' | 'superseded'
+          | 'failed' | 'skipped',          // DEFAULT 'current'
+  requiredFor (jsonb)?,                     // ('review' | 'merge')[] — declared,
+                                            //   not enforced until M14
+  visibility: 'internal' | 'shared',        // DEFAULT 'internal'
+  retention: 'run' | 'ephemeral',           // DEFAULT 'run'
+  monotonicId?,                             // supervisor event id (projector rows);
+                                            //   run-global; NULL for runner-inline
+  supersededById?,                          // FK -> artifact_instances.id,
+                                            //   ON DELETE SET NULL (history pointer)
+  createdAt                                 // DEFAULT now()
+}
+```
+
+**Deterministic id contract.** Every row's `id` is derived so re-execution and
+projector replay **upsert** idempotently (`onConflictDoUpdate`):
+
+| Origin | PK format | Example |
+| ------ | --------- | ------- |
+| Runner-inline declared output | `run:<nodeAttemptId>:<artifactDefId>` | `run:na_abc123:impl-diff` |
+| Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>` | `run:na_abc123:default:log` |
+| Projector-derived | `proj:<runId>:<monotonicId>` | `proj:run_xyz789:42` |
+
+`monotonicId` is **run-global** across the single per-run `run.events.jsonl`
+log, so each projector `id` is unique across the entire run's event stream.
+
+Indexed on `(runId)`, `(nodeAttemptId)`, `(runId, kind)`, and
+`(runId, validity)`. Cascade: `ON DELETE CASCADE` from both `runs.id` and
+`node_attempts.id`; the self-referential `supersededById` is `ON DELETE SET
+NULL` — deleting a superseding row never blocks deletion and leaves the
+superseded row's pointer null.
+
+## `artifact_projection_cursors`
+
+**(M12 — Implemented, migration `0015`.)** One projector cursor **per run**
+([ADR-038](decisions.md) per-run-scope correction). Tracks how far the artifact
+projector has consumed the run's `run.events.jsonl`.
+
+```ts
+{
+  id,                                       // PK = runId (one cursor per run)
+  runId,                                    // NOT NULL, FK -> runs.id, ON DELETE CASCADE
+  scope: 'run',                             // run-scoped; UNIQUE (runId, scope)
+  eventsLogPath,                            // .maister/<slug>/runs/<runId>/run.events.jsonl
+  lastMonotonicId,                          // DEFAULT 0; run-global high-water mark
+  status: 'idle' | 'running'
+        | 'caught_up' | 'failed',           // DEFAULT 'idle'
+  updatedAt                                 // DEFAULT now()
+}
+```
+
+The cursor PK is the bare `<runId>` and `scope = "run"` — **not** the per-step
+`<runId>::<stepId>` the original plan assumed. The supervisor writes one
+`run.events.jsonl` per run with a run-global `monotonicId`, so a single
+run-scoped cursor advances past every event regardless of which session or step
+emitted it. The `UNIQUE (run_id, scope)` constraint leaves room for a future
+secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
+`runs.id`.
+
 ## `hitl_requests`
 
 ```ts
@@ -771,7 +863,7 @@ explicitly chooses that as a temporary bridge.
 | `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
 | `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
 | ~~`node_attempts`~~ → **M11a (Implemented)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
-| `artifacts` | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews, and external reports. | `runs.id`, node/step attempt |
+| ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above. | `runs.id`, `node_attempts.id` |
 | `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
 | ~~`gate_results`~~ → **M11a (Implemented)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
 | `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
@@ -805,8 +897,12 @@ projects
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── step_runs       (FK runId,        cascade)
   │           ├── node_attempts   (FK runId,        cascade)   ← M11a
-  │           │     └── gate_results (FK nodeAttemptId, cascade)
+  │           │     ├── gate_results      (FK nodeAttemptId, cascade)
+  │           │     └── artifact_instances (FK nodeAttemptId, cascade)   ← M12
   │           ├── gate_results    (FK runId,        cascade)   ← M11a (also direct)
+  │           ├── artifact_instances (FK runId,     cascade)   ← M12 (also direct)
+  │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
+  │           ├── artifact_projection_cursors (FK runId, cascade)        ← M12
   │           ├── hitl_requests   (FK runId,        cascade)
   │           └── scratch_runs    (FK runId,        cascade)
   │                 ├── scratch_messages
@@ -845,13 +941,18 @@ Created via Drizzle:
 | `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |
 | `gate_results` | `gate_results_run_idx` | `(runId)` | **(M11a)** Per-run gate lookups |
 | `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(M11a)** Gates for a node attempt |
+| `artifact_instances` | `artifact_instances_run_idx` | `(runId)` | **(M12)** Evidence index for a run |
+| `artifact_instances` | `artifact_instances_node_attempt_idx` | `(nodeAttemptId)` | **(M12)** All artifacts for a node attempt |
+| `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |
+| `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,
 capability_ref_id)`, `(id, attempt_number)`, `(run_id, step_id, attempt)`,
-`scratch_messages(run_id, sequence)`, and `scratch_capability_profiles.run_id`)
-implicitly create their own indexes in Postgres.
+`scratch_messages(run_id, sequence)`, `scratch_capability_profiles.run_id`, and
+`artifact_projection_cursors(run_id, scope)`) implicitly create their own
+indexes in Postgres.
 
 ## Workflow
 

@@ -268,6 +268,8 @@ These components are implemented unless the status column says otherwise:
 | `app/api/runs/[id]/diff/route.ts` | Route Handler | Raw `git diff` rendered in `<pre>`. | Implemented |
 | `app/api/runs/[id]/promote/route.ts` | Route Handler | Promote run branch to target branch by implemented `local_merge`; `pull_request` returns `CONFIG` until repository-hosting integration is wired. Local merge conflict → abort + Review/manual resolution. | Implemented |
 | `app/api/scratch-runs/[runId]/recover/route.ts` | Route Handler | Recover a crashed scratch session through the stored ACP session id. | Implemented |
+| Projector | `web/lib/projector/artifact-projector.ts` | Web-side. Derives event-stream evidence — the tool-call activity log + preview — from the per-run `run.events.jsonl`. Pull-based at runner sync points + startup catch-up. **Never drives run state.** | Implemented |
+| ArtifactStore | `web/lib/flows/graph/artifact-store.ts` | Web-side. CRUD + lifecycle (record / supersede / stale / fail) over the `artifact_instances` evidence index. | Implemented |
 
 ## Dependency rules
 

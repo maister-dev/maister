@@ -46,6 +46,10 @@ The lockfile (`pnpm-lock.yaml` at the repo root) is committed —
 `pnpm install --frozen-lockfile` reproduces the exact dependency tree
 for both `web/` and `supervisor/`. CI uses the frozen lockfile.
 
+`maister-web` now includes `@xyflow/react` (v12) + `@dagrejs/dagre` for the
+M12 evidence-graph explorer (React 19 compatible, already in the lockfile, no
+extra setup). See [ADR-039](decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
+
 ## Run the dev servers
 
 The web tier defaults to `MAISTER_SUPERVISOR_URL=http://localhost:7777`,

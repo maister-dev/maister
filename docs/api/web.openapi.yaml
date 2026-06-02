@@ -954,6 +954,187 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/runs/{runId}/artifacts:
+    get:
+      tags: [runs]
+      summary: (M12) List the typed-artifact evidence index for a run
+      description: |
+        Requires project membership at `viewer` or above. Returns the
+        typed-artifact evidence index for a run as an explicit DTO
+        projection — never raw internal handles (no `acp_session_id`, no
+        absolute worktree paths). All `locator.path` values are
+        run-relative. The optional `node`, `kind`, and `validity` query
+        params are filters only; they do not authorize access — the
+        `projectId` is derived from the run row.
+      operationId: listRunArtifacts
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: node
+          in: query
+          required: false
+          description: Filter by node id (`ArtifactInstance.nodeId`).
+          schema: { type: string }
+        - name: kind
+          in: query
+          required: false
+          description: Filter by artifact kind.
+          schema:
+            type: string
+            enum:
+              - diff
+              - log
+              - test_report
+              - lint_report
+              - ai_judgment
+              - human_note
+              - commit_set
+              - checkpoint
+              - preview
+              - generic_file
+        - name: validity
+          in: query
+          required: false
+          description: Filter by validity state.
+          schema:
+            type: string
+            enum: [current, stale, superseded, failed, skipped]
+      responses:
+        "200":
+          description: Typed-artifact evidence index for the run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArtifactInstanceList" }
+              examples:
+                index:
+                  summary: Two artifacts on one node attempt
+                  value:
+                    artifacts:
+                      - id: 6f0a1b2c-...
+                        runId: 8f1c2e34-...
+                        nodeAttemptId: 1a2b3c4d-...
+                        nodeId: implement
+                        attempt: 1
+                        artifactDefId: workspace-diff
+                        kind: diff
+                        producer: runner
+                        locator:
+                          kind: git-range
+                          baseCommit: 9c4e1f0a8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e
+                          headRef: maister/task-42-attempt-1
+                        uri: null
+                        hash: null
+                        sizeBytes: 4096
+                        validity: current
+                        requiredFor: [review]
+                        visibility: shared
+                        retention: run
+                        createdAt: "2026-06-01T10:15:00Z"
+                      - id: 7a1b2c3d-...
+                        runId: 8f1c2e34-...
+                        nodeAttemptId: 1a2b3c4d-...
+                        nodeId: implement
+                        attempt: 1
+                        artifactDefId: null
+                        kind: log
+                        producer: projector
+                        locator:
+                          kind: file
+                          path: runs/8f1c2e34/implement.log
+                        uri: null
+                        hash: null
+                        sizeBytes: 20480
+                        validity: current
+                        requiredFor: null
+                        visibility: internal
+                        retention: ephemeral
+                        createdAt: "2026-06-01T10:16:30Z"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found, or not visible to the caller's projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/artifacts/{artifactId}/payload:
+    get:
+      tags: [runs]
+      summary: (M12) Fetch the raw payload for one artifact
+      description: |
+        Requires project membership at `viewer` or above. Resolves the
+        artifact's `locator` to a file path that is **path-confined to the
+        run directory** and streams its raw payload. Diff / log / git / inline
+        output is served as `text/plain`; gate-verdict / hitl-response
+        payloads are served as `application/json`. A `locator` that resolves
+        outside the run dir is treated as not found (404), never served.
+      operationId: getRunArtifactPayload
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Raw artifact payload.
+          content:
+            text/plain:
+              schema: { type: string }
+              example: |
+                diff --git a/src/app.ts b/src/app.ts
+                @@ -1,3 +1,4 @@
+                +import { z } from "zod";
+            application/json:
+              schema: {}
+              examples:
+                gate-verdict:
+                  summary: Gate verdict payload
+                  value:
+                    verdict: pass
+                    confidence: 1
+                    reasons:
+                      - all required checks passed
+                    recommendedAction: merge
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            Artifact not found under this run, not visible to the caller's
+            projects, or its `locator` resolves to a path outside the run
+            directory (path-confinement violation — never served).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                not-found:
+                  summary: Unknown artifact or out-of-run-dir locator
+                  value:
+                    code: PRECONDITION
+                    message: Artifact not found under this run.
+        "410":
+          description: |
+            The index row still exists but its backing payload file was
+            deleted (`gone`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                gone:
+                  summary: Payload file deleted while index row remains
+                  value:
+                    code: PRECONDITION
+                    message: Artifact payload is gone (file deleted).
+
   /api/runs/{runId}/promote:
     post:
       tags: [runs]
@@ -2744,6 +2925,7 @@ components:
               nullable: true
               additionalProperties: true
         pendingHitl:
+          type: object
           nullable: true
           allOf:
             - $ref: "#/components/schemas/ScratchPendingHitl"
@@ -2890,6 +3072,151 @@ components:
             - PASSWORD_CHANGE_REQUIRED
             - ACCOUNT_INACTIVE
         message: { type: string }
+
+    ArtifactInstance:
+      type: object
+      description: |
+        (M12) Explicit DTO projection of one typed-artifact evidence row.
+        Internal handles are intentionally excluded: this DTO NEVER carries
+        `acp_session_id` or absolute worktree paths. Any file path in
+        `locator` is run-relative.
+      required:
+        - id
+        - runId
+        - kind
+        - producer
+        - locator
+        - validity
+        - visibility
+        - retention
+        - createdAt
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        nodeAttemptId: { type: string, nullable: true }
+        nodeId: { type: string, nullable: true }
+        attempt: { type: integer, nullable: true }
+        artifactDefId: { type: string, nullable: true }
+        kind:
+          type: string
+          description: Closed catalog of artifact kinds.
+          enum:
+            - diff
+            - log
+            - test_report
+            - lint_report
+            - ai_judgment
+            - human_note
+            - commit_set
+            - checkpoint
+            - preview
+            - generic_file
+        producer:
+          type: string
+          enum: [runner, projector, takeover, gate, human]
+        locator:
+          $ref: "#/components/schemas/ArtifactLocator"
+        uri: { type: string, nullable: true }
+        hash: { type: string, nullable: true }
+        sizeBytes: { type: integer, nullable: true }
+        validity:
+          type: string
+          enum: [current, stale, superseded, failed, skipped]
+        requiredFor:
+          type: array
+          nullable: true
+          description: |
+            Declared/recorded in M12; access enforcement is M14.
+          items:
+            type: string
+            enum: [review, merge]
+        visibility:
+          type: string
+          description: |
+            Declared/recorded in M12; access enforcement is M14.
+          enum: [internal, shared]
+        retention:
+          type: string
+          description: |
+            Declared/recorded in M12; access enforcement is M14.
+          enum: [run, ephemeral]
+        createdAt: { type: string, format: date-time }
+
+    ArtifactLocator:
+      description: |
+        (M12) Discriminated union locating an artifact's payload. The
+        `kind` field selects the variant. File paths are run-relative —
+        absolute worktree paths are never exposed.
+      oneOf:
+        - $ref: "#/components/schemas/ArtifactLocatorGitRange"
+        - $ref: "#/components/schemas/ArtifactLocatorGitLog"
+        - $ref: "#/components/schemas/ArtifactLocatorFile"
+        - $ref: "#/components/schemas/ArtifactLocatorGateVerdict"
+        - $ref: "#/components/schemas/ArtifactLocatorHitlResponse"
+        - $ref: "#/components/schemas/ArtifactLocatorInline"
+      discriminator:
+        propertyName: kind
+        mapping:
+          git-range: "#/components/schemas/ArtifactLocatorGitRange"
+          git-log: "#/components/schemas/ArtifactLocatorGitLog"
+          file: "#/components/schemas/ArtifactLocatorFile"
+          gate-verdict: "#/components/schemas/ArtifactLocatorGateVerdict"
+          hitl-response: "#/components/schemas/ArtifactLocatorHitlResponse"
+          inline: "#/components/schemas/ArtifactLocatorInline"
+
+    ArtifactLocatorGitRange:
+      type: object
+      required: [kind, baseCommit, headRef]
+      properties:
+        kind: { type: string, enum: [git-range] }
+        baseCommit: { type: string }
+        headRef: { type: string }
+
+    ArtifactLocatorGitLog:
+      type: object
+      required: [kind, baseRef, headRef]
+      properties:
+        kind: { type: string, enum: [git-log] }
+        baseRef: { type: string }
+        headRef: { type: string }
+
+    ArtifactLocatorFile:
+      type: object
+      required: [kind, path]
+      properties:
+        kind: { type: string, enum: [file] }
+        path:
+          type: string
+          description: Run-relative path inside the run directory.
+
+    ArtifactLocatorGateVerdict:
+      type: object
+      required: [kind, gateResultId]
+      properties:
+        kind: { type: string, enum: [gate-verdict] }
+        gateResultId: { type: string }
+
+    ArtifactLocatorHitlResponse:
+      type: object
+      required: [kind, hitlRequestId]
+      properties:
+        kind: { type: string, enum: [hitl-response] }
+        hitlRequestId: { type: string }
+
+    ArtifactLocatorInline:
+      type: object
+      required: [kind, text]
+      properties:
+        kind: { type: string, enum: [inline] }
+        text: { type: string }
+
+    ArtifactInstanceList:
+      type: object
+      required: [artifacts]
+      properties:
+        artifacts:
+          type: array
+          items: { $ref: "#/components/schemas/ArtifactInstance" }
 
     InstallFlowPackageBody:
       type: object

@@ -422,6 +422,28 @@ wiring for it. A Flow that uses the graph manifest (`nodes[]`) MUST declare
 `engine_min..engine_max` check above. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays
 `[1]` (the graph is additive — no `schemaVersion` bump).
 
+**M12 engine bump (Designed).** M12 bumps `MAISTER_ENGINE_VERSION`
+`1.1.0 → 1.2.0`. `GRAPH_MIN_ENGINE_VERSION` stays `1.1.0` — a graph-manifest
+Flow still only needs `compat.engine_min: 1.1.0` to enable. The **declared-
+artifact gate** is the new threshold: validating `input.requires` /
+`output.produces` refs against the manifest's declared artifact ids AND
+enforcing the `artifact_required` gate require `compat.engine_min ≥ 1.2.0`. A
+Flow that declares typed produces/requires or an `artifact_required` gate but
+sets `engine_min < 1.2.0` is refused through the same `engine_min..engine_max`
+check above. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]` (additive).
+
+**Default vs declared artifacts.** DEFAULT artifact recording — the run log,
+guard metrics, the human/form answer, and the diff — is captured for **all
+runs at engine 1.1.0 with no manifest changes**: every run records these
+regardless of what the Flow declares. The DECLARED-artifact contract — typed
+`output.produces` / `input.requires` validation plus the `artifact_required`
+gate — is opt-in and requires `compat.engine_min ≥ 1.2.0`.
+
+| Capability | Engine floor | Manifest changes | Scope |
+| ---------- | ------------ | ---------------- | ----- |
+| DEFAULT artifact recording (log, guard metrics, human/form answer, diff) | `1.1.0` | none | every run, always |
+| DECLARED-artifact contract (typed `produces`/`requires` validation + `artifact_required` gate) | `1.2.0` | declare `output.produces` / `input.requires` / `artifact_required` | Flows that opt in |
+
 ### Guard semantics
 
 `cost` / `time` / `regex` guard fields are parsed and evaluated as

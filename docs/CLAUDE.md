@@ -53,6 +53,7 @@ truth). The fix is to update docs in the same PR.
 | [`db/projects-domain.md`](db/projects-domain.md) | Projects + Executors + Flows ERD. |
 | [`db/runs-domain.md`](db/runs-domain.md) | Tasks + Runs + Workspaces ERD. |
 | [`db/hitl-domain.md`](db/hitl-domain.md) | HITL Requests ERD + form-schema shape. |
+| [`db/artifacts-domain.md`](db/artifacts-domain.md) | Artifact instances + projection cursors ERD. |
 | [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
 
 ### System analysis (`system-analytics/`)
@@ -74,6 +75,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
 | [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) | Manual takeover (local worktree handoff): `HumanWorking`, claim/return, downstream staleness, run-detail timeline (M11b). |
 | [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) | Node typed settings, declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, launch-time refusal boundary, time-limit watchdog, settings-visibility UI (M11c). |
+| [`system-analytics/artifacts.md`](system-analytics/artifacts.md) | Typed artifacts + evidence graph: artifact_instances index, validity FSM, runner-inline + projector write paths, review refusal (M12). |
 | [`system-analytics/instance-config.md`](system-analytics/instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
 | [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
 
