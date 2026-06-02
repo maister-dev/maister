@@ -170,7 +170,7 @@ export async function LeftRail({
   return (
     <aside
       aria-label="Sections & active workspaces"
-      className="sticky top-[60px] hidden h-[calc(100vh-60px-56px)] flex-col gap-3.5 self-start overflow-x-hidden border-r border-line bg-paper px-3.5 pb-0 pt-3.5 md:flex"
+      className="sticky top-[60px] z-[100] hidden h-[calc(100vh-60px-56px)] flex-col gap-3.5 self-start overflow-x-hidden border-r border-line bg-paper px-3.5 pb-0 pt-3.5 md:flex"
     >
       <nav
         aria-label="Sections"
