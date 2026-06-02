@@ -24,6 +24,7 @@ Every file in this folder follows the structure defined in
 | Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
 | Flows | [`flows.md`](flows.md) | Plugin packaging, step DSL (cli/agent/guard/human), executor override resolution. |
 | Flow settings | [`flow-settings.md`](flow-settings.md) | Typed node settings, launch refusal boundaries, and capability-materialization handoff. |
+| Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, and runner-owned materialization. |
 | Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
 | Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint/resume, crash recovery. |
 | Scratch runs | [`scratch-runs.md`](scratch-runs.md) | Manual coding-agent dialog workspaces outside the task board, visible in active workspaces. |
