@@ -15,6 +15,8 @@ const labels: FlightCardLabels = {
   takeoverReturn: "Return",
   elapsed: "elapsed",
   settingsRefused: "Settings refused at launch",
+  evidenceStale: "Evidence stale",
+  mergeBlocked: "Merge blocked",
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -34,6 +36,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     owner: null,
     refused: false,
     crashAction: null,
+    evidenceStale: false,
+    mergeBlocked: false,
     ...over,
   };
 }
@@ -97,5 +101,34 @@ describe("FlightCard — humanworking takeover surface (M11b)", () => {
     expect(html).not.toContain("Return");
     // The needs step body still renders.
     expect(html).toContain("implement step");
+  });
+});
+
+describe("FlightCard — evidence badges (M12)", () => {
+  it("renders the merge-blocked and evidence-stale badges when both flags are set", () => {
+    const html = render(
+      baseCard({ evidenceStale: true, mergeBlocked: true }),
+    );
+
+    // The merge-blocked chip carries the translated label as aria-label/title.
+    expect(html).toContain('aria-label="Merge blocked"');
+    expect(html).toContain('title="Merge blocked"');
+    // The evidence-stale chip carries the translated label as aria-label/title.
+    expect(html).toContain('aria-label="Evidence stale"');
+    expect(html).toContain('title="Evidence stale"');
+    // The glyphs themselves render.
+    expect(html).toContain("◆");
+    expect(html).toContain("≈");
+  });
+
+  it("omits both evidence badges when the flags are false", () => {
+    const html = render(
+      baseCard({ evidenceStale: false, mergeBlocked: false }),
+    );
+
+    expect(html).not.toContain("Merge blocked");
+    expect(html).not.toContain("Evidence stale");
+    expect(html).not.toContain("◆");
+    expect(html).not.toContain("≈");
   });
 });

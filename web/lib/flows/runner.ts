@@ -29,6 +29,8 @@ import {
   type RunFlowOptions,
 } from "./graph/runner-core";
 import { runGraph } from "./graph/runner-graph";
+import { recordDefaultArtifacts } from "./graph/default-artifacts";
+import { getArtifactsForRun } from "./graph/artifact-store";
 
 import { promoteNextPending } from "@/lib/scheduler";
 import {
@@ -360,12 +362,16 @@ export async function runFlow(
       await markStepRunning(stepRunId, db);
 
       const stepRunsCurrent = await getStepRunsForRun(runId, db);
+      // M12 (T3.4): pass current artifacts for template rendering.
+      const currentArtifacts = await getArtifactsForRun(runId, db);
+
       const context = buildContext({
         task: loaded.task,
         run: loaded.run,
         executor: loaded.executor,
         stepRuns: stepRunsCurrent,
         projectSlug: loaded.projectSlug,
+        artifacts: currentArtifacts,
       });
 
       let result: Awaited<ReturnType<typeof executeStep>>;
@@ -481,6 +487,25 @@ export async function runFlow(
         },
         db,
       );
+
+      // M12 (T3.3): record default artifacts at step finish.
+      await recordDefaultArtifacts(
+        {
+          runId,
+          stepRunId,
+          nodeId: step.id,
+          attempt: 1,
+          projectSlug: loaded.projectSlug,
+          workspace: loaded.workspace,
+          runtimeRoot,
+        },
+        db,
+      ).catch((err) => {
+        log2.warn(
+          { stepId: step.id, err: (err as Error).message },
+          "recordDefaultArtifacts failed (non-fatal)",
+        );
+      });
     }
   } catch (err) {
     const e = isMaisterError(err)
@@ -524,7 +549,13 @@ export async function runFlow(
 
       await promoteNextPending({
         db,
-        runFlow: (next) => void runFlow(next, nextOpts),
+        runFlow: (next) =>
+          void runFlow(next, nextOpts).catch((e) => {
+            log2.error(
+              { err: (e as Error).message },
+              "promoted runFlow failed (non-fatal)",
+            );
+          }),
       });
     } catch (err) {
       log2.error(
@@ -583,7 +614,13 @@ export async function runFlow(
 
     await promoteNextPending({
       db,
-      runFlow: (next) => void runFlow(next, nextOpts),
+      runFlow: (next) =>
+        void runFlow(next, nextOpts).catch((e) => {
+          log2.error(
+            { err: (e as Error).message },
+            "promoted runFlow failed (non-fatal)",
+          );
+        }),
     });
   } catch (err) {
     log2.error(

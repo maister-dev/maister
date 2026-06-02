@@ -38,6 +38,18 @@ export type FlowContext = {
     }
   >;
   env: Record<string, string>;
+  // M12 (T3.4): artifact namespace keyed by artifactDefId. Current-wins
+  // resolution: when multiple rows exist for the same id, the one with
+  // validity='current' is preferred. Always present (default {}).
+  artifacts: Record<
+    string,
+    {
+      kind: string;
+      uri?: string;
+      validity: string;
+      nodeId?: string;
+    }
+  >;
 };
 
 export type StepResult = {

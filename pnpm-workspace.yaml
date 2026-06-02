@@ -9,3 +9,5 @@ minimumReleaseAgeExclude:
   - next-intl-swc-plugin-extractor@4.13.0
   - next-intl@4.13.0
   - use-intl@4.13.0
+  - '@xyflow/react@12.11.0'
+  - '@xyflow/system@0.0.77'

@@ -4,15 +4,17 @@ import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 
 const {
+  artifactInstances,
   executors,
   flows,
+  gateResults,
   nodeAttempts,
   runs,
   stepRuns,
@@ -75,6 +77,12 @@ export interface FlightCard {
   // `discard`); null on every non-Crashed card. The raw session id is NEVER
   // surfaced to the client.
   crashAction: CrashAction | null;
+  // M12 (ADR-037) Phase 7: the latest run has ≥1 stale artifact (evidence
+  // invalidated by rework — a soft signal to re-check the evidence graph).
+  evidenceStale: boolean;
+  // M12 (ADR-037) Phase 7: merge is blocked because a merge-required artifact
+  // is non-current OR a blocking artifact_required gate failed/went stale.
+  mergeBlocked: boolean;
 }
 
 export interface BoardColumnData {
@@ -285,6 +293,151 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     }
   }
 
+  // M12 (ADR-037) Phase 7: which latest runs carry ≥1 stale artifact.
+  const evidenceStaleRunIds = new Set<string>();
+
+  if (latestRunIds.length > 0) {
+    const staleRows: Array<{ runId: string }> = await client
+      .select({ runId: artifactInstances.runId })
+      .from(artifactInstances)
+      .where(
+        and(
+          inArray(artifactInstances.runId, latestRunIds),
+          eq(artifactInstances.validity, "stale"),
+        ),
+      );
+
+    for (const r of staleRows) evidenceStaleRunIds.add(r.runId);
+  }
+
+  // M12 (ADR-037) Phase 7: which latest runs are merge-blocked, via either
+  // (a) a merge-required def that has NO current row (per-def-current — PR1/F2;
+  //     stale/superseded history never blocks once the def is re-produced), or
+  // (b) a blocking artifact_required gate that failed or went stale.
+  const mergeBlockedRunIds = new Set<string>();
+
+  if (latestRunIds.length > 0) {
+    // Distinct (runId, defId) pairs any row marks merge-required.
+    const requiredDefRows: Array<{
+      runId: string;
+      artifactDefId: string | null;
+    }> = await client
+      .select({
+        runId: artifactInstances.runId,
+        artifactDefId: artifactInstances.artifactDefId,
+      })
+      .from(artifactInstances)
+      .where(
+        and(
+          inArray(artifactInstances.runId, latestRunIds),
+          sql`${artifactInstances.requiredFor} @> ${JSON.stringify(["merge"])}::jsonb`,
+        ),
+      );
+
+    // (runId, defId) pairs that DO have a current row.
+    const currentPairs = new Set<string>();
+    const currentRows: Array<{
+      runId: string;
+      artifactDefId: string | null;
+    }> = await client
+      .select({
+        runId: artifactInstances.runId,
+        artifactDefId: artifactInstances.artifactDefId,
+      })
+      .from(artifactInstances)
+      .where(
+        and(
+          inArray(artifactInstances.runId, latestRunIds),
+          eq(artifactInstances.validity, "current"),
+        ),
+      );
+
+    for (const r of currentRows) {
+      if (r.artifactDefId) currentPairs.add(`${r.runId}:${r.artifactDefId}`);
+    }
+
+    for (const r of requiredDefRows) {
+      if (
+        r.artifactDefId &&
+        !currentPairs.has(`${r.runId}:${r.artifactDefId}`)
+      ) {
+        mergeBlockedRunIds.add(r.runId);
+      }
+    }
+
+    // Only the latest attempt's gate verdict is live: a stale row left by a
+    // prior attempt is retired once the node re-runs and re-evaluates its gate
+    // (mirrors per-def-current for artifacts). Keyed on node-attempt lineage.
+    const attemptRows: Array<{
+      id: string;
+      runId: string;
+      nodeId: string;
+      attempt: number;
+    }> = await client
+      .select({
+        id: nodeAttempts.id,
+        runId: nodeAttempts.runId,
+        nodeId: nodeAttempts.nodeId,
+        attempt: nodeAttempts.attempt,
+      })
+      .from(nodeAttempts)
+      .where(inArray(nodeAttempts.runId, latestRunIds));
+
+    const bestAttempt = new Map<string, { id: string; attempt: number }>();
+
+    for (const a of attemptRows) {
+      const key = `${a.runId}:${a.nodeId}`;
+      const cur = bestAttempt.get(key);
+
+      if (!cur || a.attempt > cur.attempt) {
+        bestAttempt.set(key, { id: a.id, attempt: a.attempt });
+      }
+    }
+
+    const liveAttemptIds = new Set([...bestAttempt.values()].map((v) => v.id));
+
+    const blockedGateRows: Array<{
+      runId: string;
+      nodeAttemptId: string;
+      status: string;
+      inputArtifactRefs: string[] | null;
+    }> = await client
+      .select({
+        runId: gateResults.runId,
+        nodeAttemptId: gateResults.nodeAttemptId,
+        status: gateResults.status,
+        inputArtifactRefs: gateResults.inputArtifactRefs,
+      })
+      .from(gateResults)
+      .where(
+        and(
+          inArray(gateResults.runId, latestRunIds),
+          eq(gateResults.kind, "artifact_required"),
+          eq(gateResults.mode, "blocking"),
+          inArray(gateResults.status, ["failed", "stale"]),
+        ),
+      );
+
+    for (const r of blockedGateRows) {
+      if (!liveAttemptIds.has(r.nodeAttemptId)) continue;
+
+      // Mirror assertEvidenceReady Check 2: a `failed` gate whose required
+      // inputs are ALL current again would pass today, so it no longer blocks
+      // merge. A `stale` gate always blocks (needs a re-run). Keeps the board
+      // badge consistent with the authoritative readiness verdict.
+      if (r.status === "failed") {
+        const refs = r.inputArtifactRefs ?? [];
+        const stillMissing =
+          refs.length === 0 ||
+          refs.some((ref) => !currentPairs.has(`${r.runId}:${ref}`));
+
+        if (!stillMissing) continue;
+      }
+
+      mergeBlockedRunIds.add(r.runId);
+    }
+  }
+
   // M11b (ADR-030): the active takeover claim per latest run — owner + the
   // claim time (the takeover node_attempts.started_at). Drives the
   // `humanworking` card's "claimed by <owner>" badge and elapsed time. The
@@ -384,6 +537,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         runStatus: run.status,
         acpSessionId: run.acpSessionId,
       }),
+      evidenceStale:
+        cardStatus !== "done" && evidenceStaleRunIds.has(run.runId),
+      mergeBlocked: cardStatus !== "done" && mergeBlockedRunIds.has(run.runId),
     });
 
     if (

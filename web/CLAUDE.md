@@ -254,6 +254,10 @@ add`, supervisor `POST /sessions` — body carries `taskId`, `flowId`,
   mark worktree stale; task → `Abandoned`)
 - `POST /api/runs/[id]/recover` (Crashed → respawn via `--resume <session-id>`
   if `acp_session_id` present; otherwise force-discard worktree)
+- `GET /api/runs/[id]/artifacts` (M12 — list the typed-artifact evidence index;
+  optional `node`/`kind`/`validity` filters)
+- `GET /api/runs/[id]/artifacts/[artifactId]/payload` (M12 — raw payload per
+  locator; `text/plain` or `application/json`; path-confined to the run dir)
 - `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
   all projects)
 

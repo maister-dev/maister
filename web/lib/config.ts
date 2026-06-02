@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import {
+  ARTIFACT_KINDS,
   TERMINAL_TRANSITION_TARGET,
   flowYamlV1Schema,
   formSchemaSchema,
@@ -22,7 +23,9 @@ import {
 import { MaisterError } from "@/lib/errors";
 import {
   GRAPH_MIN_ENGINE_VERSION,
+  MAISTER_ENGINE_VERSION,
   declaresGraphCapableEngineMin,
+  semverGte,
 } from "@/lib/flows/engine-version";
 
 const log = pino({ name: "config" });
@@ -434,6 +437,33 @@ function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
   return null;
 }
 
+// Artifact floor version: manifests that use typed artifacts must declare
+// engine_min >= this value.
+const ARTIFACT_ENGINE_MIN = "1.2.0";
+
+// Returns true when the manifest uses any artifact feature (produces, artifact
+// input.requires, or artifact_required gates). Used to gate the engine-min check.
+function declaresArtifacts(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    if (n.output?.produces && n.output.produces.length > 0) return true;
+
+    for (const req of n.input?.requires ?? []) {
+      // bare non-steps.* string OR {artifact:...} object
+      if (typeof req === "string") {
+        if (!/^steps\./.test(req)) return true;
+      } else {
+        return true;
+      }
+    }
+
+    for (const g of n.pre_finish?.gates ?? []) {
+      if (g.kind === "artifact_required") return true;
+    }
+  }
+
+  return false;
+}
+
 // Cross-reference + cycle + engine validation for a graph (`nodes[]`) manifest
 // (ADR-026). zod has already validated node/gate shape; this enforces the
 // graph-level invariants that zod cannot express.
@@ -450,6 +480,17 @@ function validateGraphManifest(
       `graph flow ${flowYamlPath} must declare compat.engine_min >= ${GRAPH_MIN_ENGINE_VERSION} (got ${
         manifest.compat?.engine_min ?? "unset"
       })`,
+    );
+  }
+
+  const engineMin = manifest.compat?.engine_min ?? "";
+  const artifactsPresent = declaresArtifacts(nodes);
+
+  // Engine gate: manifests declaring artifacts require engine_min >= 1.2.0.
+  if (artifactsPresent && !semverGte(engineMin, ARTIFACT_ENGINE_MIN)) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring artifacts but engine_min "${engineMin}" < ${ARTIFACT_ENGINE_MIN} — bump compat.engine_min to ${ARTIFACT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 
@@ -488,6 +529,12 @@ function validateGraphManifest(
   const gateIds = new Set<string>();
   let settingsNodeCount = 0;
   const enforcementTally: Record<string, number> = {};
+
+  // Artifact validation (rules 1-5) runs only when engine_min >= 1.2.0.
+  // A no-artifacts graph at 1.1.0 is still valid (backward compat).
+  if (semverGte(engineMin, ARTIFACT_ENGINE_MIN)) {
+    validateArtifacts(nodes, flowYamlPath);
+  }
 
   for (const n of nodes) {
     if (n.settings) {
@@ -533,10 +580,10 @@ function validateGraphManifest(
     }
 
     for (const req of n.input?.requires ?? []) {
-      // Only `steps.<id>.…` templating refs name a node and are checked here.
-      // A bare string (e.g. "plan-summary") is a typed-artifact name, validated
-      // by the M12 artifact graph — not a node id — so it is intentionally not
-      // checked against nodeIds in M11a.
+      // steps.<id>.… refs name a node id and are validated against nodeIds.
+      // Bare non-steps.* strings are typed-artifact names validated by
+      // validateArtifacts (above, when engine_min >= 1.2.0). Object form
+      // {artifact:...} is also handled there.
       if (typeof req !== "string") continue;
       const m = /^steps\.([^.]+)\./.exec(req);
 
@@ -581,6 +628,114 @@ function validateGraphManifest(
     },
     "flow.yaml graph manifest loaded",
   );
+}
+
+// Validates artifact-level invariants (rules 1-5, M12). Called only when
+// engine_min >= 1.2.0 so backward-compat graphs are untouched.
+function validateArtifacts(nodes: NodeDef[], flowYamlPath: string): void {
+  const artifactKindSet = new Set<string>(ARTIFACT_KINDS);
+
+  // Build registry of all produced artifact ids (rule 1: no duplicates) and a
+  // map of id → produced kind (rule 2b: requires kind-mismatch check).
+  const registry = new Set<string>();
+  const registryKind = new Map<string, string>();
+
+  for (const n of nodes) {
+    for (const p of n.output?.produces ?? []) {
+      // Rule 1: duplicate produces id across nodes.
+      if (registry.has(p.id)) {
+        throw new MaisterError(
+          "CONFIG",
+          `duplicate produces id "${p.id}" in ${flowYamlPath}`,
+        );
+      }
+      registry.add(p.id);
+      registryKind.set(p.id, p.kind);
+
+      // Rule 3: belt-and-suspenders kind check beyond schema.
+      if (!artifactKindSet.has(p.kind)) {
+        throw new MaisterError(
+          "CONFIG",
+          `produces "${p.id}" has unsupported kind "${p.kind}" in ${flowYamlPath}`,
+        );
+      }
+
+      // Rule 4: path must be a non-empty relative FILE path — no '..' segment,
+      // no trailing slash, not "" or ".". An empty or dot path joins to the run
+      // directory itself, which access() accepts; the payload route then 500s
+      // trying to read a directory as a file.
+      if (p.path !== undefined) {
+        const isAbsolute = p.path.startsWith("/");
+        const hasDotDot = p.path.split(/[/\\]/).includes("..");
+        const isDirLike = /[/\\]$/.test(p.path);
+        const normalized = p.path.replace(/\\/g, "/").replace(/\/+$/, "");
+        const isEmptyOrDot = normalized === "" || normalized === ".";
+
+        if (isAbsolute || hasDotDot || isDirLike || isEmptyOrDot) {
+          throw new MaisterError(
+            "CONFIG",
+            `produces "${p.id}" path "${p.path}" must be a non-empty relative file path (no '..', no trailing slash) in ${flowYamlPath}`,
+          );
+        }
+      }
+
+      if (p.ref !== undefined && p.ref === "") {
+        throw new MaisterError(
+          "CONFIG",
+          `produces "${p.id}" ref must not be empty in ${flowYamlPath}`,
+        );
+      }
+    }
+  }
+
+  // Rule 2: input.requires artifact refs must be in the registry.
+  for (const n of nodes) {
+    for (const req of n.input?.requires ?? []) {
+      if (typeof req === "string") {
+        // steps.* refs are node-id refs handled elsewhere — skip here.
+        if (/^steps\./.test(req)) continue;
+        if (!registry.has(req)) {
+          throw new MaisterError(
+            "CONFIG",
+            `node "${n.id}" input.requires references unknown artifact id "${req}" in ${flowYamlPath}`,
+          );
+        }
+      } else {
+        // Object form {artifact: id, kind: ...}
+        if (!registry.has(req.artifact)) {
+          throw new MaisterError(
+            "CONFIG",
+            `node "${n.id}" input.requires references unknown artifact id "${req.artifact}" in ${flowYamlPath}`,
+          );
+        }
+        // Rule 2b: the declared kind MUST match the producing artifact's kind.
+        const producedKind = registryKind.get(req.artifact);
+
+        if (producedKind !== undefined && req.kind !== producedKind) {
+          throw new MaisterError(
+            "CONFIG",
+            `node "${n.id}" input.requires "${req.artifact}" declares kind "${req.kind}" but it is produced as "${producedKind}" in ${flowYamlPath}`,
+          );
+        }
+      }
+    }
+  }
+
+  // Rule 5: artifact_required gates must reference artifacts in the registry.
+  for (const n of nodes) {
+    for (const g of n.pre_finish?.gates ?? []) {
+      if (g.kind !== "artifact_required") continue;
+
+      for (const artId of g.inputArtifacts ?? []) {
+        if (!registry.has(artId)) {
+          throw new MaisterError(
+            "CONFIG",
+            `artifact_required gate "${g.id}" inputArtifacts references unknown artifact id "${artId}" in ${flowYamlPath}`,
+          );
+        }
+      }
+    }
+  }
 }
 
 // M11c node-level settings validation (ADR-031/032). zod has already validated

@@ -26,6 +26,7 @@ const ctxBase = (overrides: Partial<FlowContext> = {}): FlowContext => ({
   executor: { id: "e1", agent: "claude", model: "claude-sonnet-4-6" },
   steps: {},
   env: {},
+  artifacts: {},
   ...overrides,
 });
 

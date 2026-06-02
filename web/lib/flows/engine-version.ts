@@ -13,7 +13,8 @@ const log = pino({
 // contract changes in a way packages can depend on.
 // Bumped 1.0.0 -> 1.1.0 for Flow graph v1 (`nodes[]`); graph flows MUST declare
 // `compat.engine_min >= 1.1.0` (ADR-026).
-export const MAISTER_ENGINE_VERSION = "1.1.0";
+// Bumped 1.1.0 -> 1.2.0 for typed artifact produces/requires validation (M12).
+export const MAISTER_ENGINE_VERSION = "1.2.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.
@@ -39,6 +40,18 @@ function compareSemver(a: SemverTuple, b: SemverTuple): number {
   }
 
   return 0;
+}
+
+// Returns true when `value` is a valid X.Y.Z semver >= reference `ref`.
+// Returns false for any unparseable input. Single semver implementation —
+// callers must not hand-roll their own comparison.
+export function semverGte(value: string, ref: string): boolean {
+  const v = parseSemver(value);
+  const r = parseSemver(ref);
+
+  if (!v || !r) return false;
+
+  return compareSemver(v, r) >= 0;
 }
 
 export type EngineCompatResult = {

@@ -73,6 +73,8 @@ export async function Board({
     takeoverReturn: t("return"),
     elapsed: t("elapsed"),
     settingsRefused: tRun("settingsRefusedHint"),
+    evidenceStale: t("evidenceStale"),
+    mergeBlocked: t("mergeBlocked"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"

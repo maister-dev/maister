@@ -21,8 +21,8 @@ describe("isEngineCompatible", () => {
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    // Engine is 1.1.0 (M11a bump); a min above it must be rejected.
-    const r = isEngineCompatible("1.2.0");
+    // Engine is 1.2.0 (M12 bump); a min above it must be rejected.
+    const r = isEngineCompatible("1.3.0");
 
     expect(r.compatible).toBe(false);
     expect(r.reason).toContain("engine_min");

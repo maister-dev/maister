@@ -15,6 +15,7 @@ const baseFlowCtx: FlowContext = {
   executor: { id: "e1", agent: "claude", model: "claude-sonnet-4-6" },
   steps: {},
   env: {},
+  artifacts: {},
 };
 
 function makeCtx(

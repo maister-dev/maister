@@ -108,6 +108,11 @@ const logRangeSpy = vi.fn(async () => "abc def Commit one\n");
 const diffRangeSpy = vi.fn(async () => "diff --git a b\n");
 const statusPorcelainSpy = vi.fn(async () => "");
 const runFlowSpy = vi.fn(async () => undefined);
+const recordArtifactSpy = vi.fn(async () => ({ id: "art-1" }));
+const supersedePriorSpy = vi.fn(async () => undefined);
+const getCurrentRequiredForGitArtifactsSpy = vi.fn(
+  async () => [] as unknown[],
+);
 
 // A db whose transaction passes the same fake through. The claim/return
 // CAS + selects are exercised through the mocked helpers above, so the db
@@ -164,6 +169,13 @@ vi.mock("@/lib/flows/graph/ledger", () => ({
   getActiveTakeover: (...a: unknown[]) => getActiveTakeoverSpy(...(a as [])),
   markDownstreamStale: (...a: unknown[]) =>
     markDownstreamStaleSpy(...(a as [])),
+}));
+
+vi.mock("@/lib/flows/graph/artifact-store", () => ({
+  recordArtifact: (...a: unknown[]) => recordArtifactSpy(...(a as [])),
+  supersedePrior: (...a: unknown[]) => supersedePriorSpy(...(a as [])),
+  getCurrentRequiredForGitArtifacts: (...a: unknown[]) =>
+    getCurrentRequiredForGitArtifactsSpy(...(a as [])),
 }));
 
 vi.mock("@/lib/runs/state-transitions", () => ({
@@ -225,6 +237,12 @@ beforeEach(() => {
   recordTakeoverReturnSpy.mockResolvedValue(undefined);
   markDownstreamStaleSpy.mockReset();
   markDownstreamStaleSpy.mockResolvedValue({ staledNodes: 1, staledGates: 1 });
+  recordArtifactSpy.mockReset();
+  recordArtifactSpy.mockResolvedValue({ id: "art-1" });
+  supersedePriorSpy.mockReset();
+  supersedePriorSpy.mockResolvedValue(undefined);
+  getCurrentRequiredForGitArtifactsSpy.mockReset();
+  getCurrentRequiredForGitArtifactsSpy.mockResolvedValue([]);
   markReturnedToRunningSpy.mockReset();
   markReturnedToRunningSpy.mockResolvedValue({ ok: true });
   getActiveTakeoverSpy.mockReset();

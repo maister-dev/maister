@@ -15,6 +15,8 @@ import { and, asc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
+import { markArtifactsStale } from "./artifact-store";
+
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
@@ -523,6 +525,8 @@ export async function markDownstreamStale(
 
     staledGates += Array.isArray(res) ? res.length : 0;
   }
+
+  await markArtifactsStale(runId, downstreamNodeIds, d);
 
   log.info(
     { runId, downstream: downstreamNodeIds, staledNodes, staledGates },

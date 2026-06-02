@@ -873,6 +873,124 @@ export const gateResults = pgTable(
   }),
 );
 
+// M12: typed artifact locator discriminated union (ADR-037).
+// Server-written only; payload route re-confines file paths to the run dir.
+export type ArtifactLocator =
+  | { kind: "git-range"; baseCommit: string; headRef: string }
+  | { kind: "git-log"; baseRef: string; headRef: string }
+  | { kind: "file"; path: string }
+  | { kind: "gate-verdict"; gateResultId: string }
+  | { kind: "hitl-response"; hitlRequestId: string }
+  | { kind: "inline"; text: string };
+
+// M12 (ADR-037): queryable evidence index. Payloads live on disk/git.
+// Two write paths: runner-inline (majority) and ADR-022 projector (event-stream).
+// Validity FSM: current → superseded (new attempt) / stale (rework) / failed / skipped.
+// Deterministic PK for idempotent upsert on replay.
+export const artifactInstances = pgTable(
+  "artifact_instances",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    // NULL for task-input / run-level artifacts
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "cascade",
+    }),
+    // Denormalized for grouping/query without joining node_attempts
+    nodeId: text("node_id"),
+    attempt: integer("attempt"),
+    // manifest output.produces[].id; NULL for defaults / projector-derived
+    artifactDefId: text("artifact_def_id"),
+    kind: text("kind", {
+      enum: [
+        "diff",
+        "log",
+        "test_report",
+        "lint_report",
+        "ai_judgment",
+        "human_note",
+        "commit_set",
+        "checkpoint",
+        "preview",
+        "generic_file",
+      ],
+    }).notNull(),
+    producer: text("producer", {
+      enum: ["runner", "projector", "takeover", "gate", "human"],
+    }).notNull(),
+    locator: jsonb("locator").$type<ArtifactLocator>().notNull(),
+    uri: text("uri"),
+    hash: text("hash"),
+    sizeBytes: integer("size_bytes"),
+    validity: text("validity", {
+      enum: ["current", "stale", "superseded", "failed", "skipped"],
+    })
+      .notNull()
+      .default("current"),
+    // Snapshot of manifest requiredFor at record time
+    requiredFor: jsonb("required_for").$type<("review" | "merge")[]>(),
+    visibility: text("visibility", { enum: ["internal", "shared"] })
+      .notNull()
+      .default("internal"),
+    retention: text("retention", { enum: ["run", "ephemeral"] })
+      .notNull()
+      .default("run"),
+    // Supervisor event id for projector rows; NULL for inline runner-recorded
+    monotonicId: integer("monotonic_id"),
+    // ON DELETE SET NULL — keeps the audit row but clears the forward pointer
+    supersededById: text("superseded_by_id").references(
+      (): ReturnType<typeof text> => artifactInstances.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxRun: index("artifact_instances_run_idx").on(t.runId),
+    idxNodeAttempt: index("artifact_instances_node_attempt_idx").on(
+      t.nodeAttemptId,
+    ),
+    idxRunKind: index("artifact_instances_run_kind_idx").on(t.runId, t.kind),
+    idxRunValidity: index("artifact_instances_run_validity_idx").on(
+      t.runId,
+      t.validity,
+    ),
+  }),
+);
+
+// M12 (ADR-022/ADR-038): per-run projector resume cursor. The projector
+// advances this in the same transaction as its upserts (crash-safe replay).
+export const artifactProjectionCursors = pgTable(
+  "artifact_projection_cursors",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    // Events-log scope (per Phase-0 freeze correction: "run" scope, cursor PK = runId)
+    scope: text("scope").notNull(),
+    eventsLogPath: text("events_log_path").notNull(),
+    lastMonotonicId: integer("last_monotonic_id").notNull().default(0),
+    status: text("status", {
+      enum: ["idle", "running", "caught_up", "failed"],
+    })
+      .notNull()
+      .default("idle"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRunScope: unique("artifact_projection_cursors_run_scope_uq").on(
+      t.runId,
+      t.scope,
+    ),
+  }),
+);
+
 export const hitlRequests = pgTable(
   "hitl_requests",
   {
@@ -966,3 +1084,12 @@ export type NodeAttemptType = NodeAttempt["nodeType"];
 export type GateResult = typeof gateResults.$inferSelect;
 export type GateResultStatus = GateResult["status"];
 export type GateKind = GateResult["kind"];
+export type ArtifactInstance = typeof artifactInstances.$inferSelect;
+export type ArtifactInstanceInsert = typeof artifactInstances.$inferInsert;
+export type ArtifactValidity = ArtifactInstance["validity"];
+export type ArtifactKind = ArtifactInstance["kind"];
+export type ArtifactProducer = ArtifactInstance["producer"];
+export type ArtifactProjectionCursor =
+  typeof artifactProjectionCursors.$inferSelect;
+export type ArtifactProjectionCursorInsert =
+  typeof artifactProjectionCursors.$inferInsert;

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  ArtifactInstance as ArtifactInstanceRow,
   Executor as ExecutorRow,
   NodeAttempt as NodeAttemptRow,
   Run as RunRow,
@@ -159,7 +160,37 @@ export type BuildContextArgs = {
   envWhitelist?: RegExp[];
   envSource?: Record<string, string | undefined>;
   outputTruncationBytes?: number;
+  // M12 (T3.4): artifact_instances rows for the run. Reduced to the artifacts
+  // namespace keyed by artifactDefId, current-wins. Optional for backward compat.
+  artifacts?: ArtifactInstanceRow[];
 };
+
+// M12 (T3.4): reduce artifact_instances rows to the artifacts namespace.
+// Current-wins: when multiple rows exist for the same artifactDefId, the row
+// with validity='current' replaces any prior row. If none is 'current' the
+// latest row (by insertion order) wins — callers should pass only current rows.
+function reduceArtifacts(
+  rows: ArtifactInstanceRow[],
+): FlowContext["artifacts"] {
+  const out: FlowContext["artifacts"] = {};
+
+  for (const row of rows) {
+    if (!row.artifactDefId) continue;
+    const id = row.artifactDefId;
+    const existing = out[id];
+
+    if (!existing || row.validity === "current") {
+      out[id] = {
+        kind: row.kind,
+        uri: row.uri ?? undefined,
+        validity: row.validity,
+        nodeId: row.nodeId ?? undefined,
+      };
+    }
+  }
+
+  return out;
+}
 
 export function buildContext(args: BuildContextArgs): FlowContext {
   const cap = args.outputTruncationBytes ?? DEFAULT_OUTPUT_TRUNCATION;
@@ -199,5 +230,6 @@ export function buildContext(args: BuildContextArgs): FlowContext {
     },
     steps: reduceLedger(args.stepRuns, args.nodeAttempts ?? [], cap),
     env,
+    artifacts: reduceArtifacts(args.artifacts ?? []),
   };
 }

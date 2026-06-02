@@ -841,3 +841,50 @@ export async function resolveBaseRef(
     );
   }
 }
+
+// Resolve a ref (branch/tag/SHA) to its immutable 40-char commit SHA. Used at
+// artifact-record time so git locators store a fixed SHA, never a mutable
+// branch name (PR2/F3). Same input hardening as the sibling git helpers.
+export async function resolveRefSha(
+  worktreePath: string,
+  ref: string,
+): Promise<string> {
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  const r = validate(gitRefSchema, ref, "ref");
+
+  log.debug({ worktreePath: wt, ref: r }, "resolveRefSha");
+
+  try {
+    // `rev-parse` echoes `--end-of-options`, so it cannot use the option
+    // terminator the sibling helpers rely on. `--verify` + the `gitRefSchema`
+    // guard (no leading `-`) is the equivalent option-injection hardening; the
+    // `^{commit}` peel resolves annotated tags to their commit SHA.
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", wt, "rev-parse", "--verify", `${r}^{commit}`],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+
+    const sha = stdout.trim();
+
+    if (!sha) {
+      throw new MaisterError("CONFLICT", `git rev-parse ${r} returned no SHA`);
+    }
+
+    log.info({ worktreePath: wt, ref: r, sha }, "resolveRefSha done");
+
+    return sha;
+  } catch (err) {
+    if (err instanceof MaisterError) throw err;
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git rev-parse ${r} failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}

@@ -1,23 +1,31 @@
 import "server-only";
 
 import type { GateDef } from "@/lib/config.schema";
-import type { GateVerdict } from "@/lib/db/schema";
+import type { ArtifactKind, GateVerdict } from "@/lib/db/schema";
 import type { AcpSessionState, FlowContext } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun } from "./runner-core";
 
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 
 import {
+  failStaleArtifactsForDef,
+  getCurrentArtifact,
+  recordSkippedArtifact,
+} from "./artifact-store";
+import {
   createGateResult,
   markGateFailed,
   markGatePassed,
   markGateSkipped,
 } from "./gate-store";
+
+import * as schemaModule from "@/lib/db/schema";
 
 const log = pino({
   name: "flow-gates-exec",
@@ -333,14 +341,72 @@ async function runOneGate(
     }
 
     case "artifact_required": {
-      // Needs the M12 typed-artifact graph to verify evidence exists/current.
-      await createGateResult({ ...base, status: "skipped" });
-      log.warn(
-        { runId: loaded.run.id, gateId: gate.id },
-        "artifact_required gate skipped — typed artifacts land in M12 (TODO(M12))",
+      const { id } = await createGateResult({ ...base, status: "running" });
+      const requiredIds = gate.inputArtifacts ?? [];
+      const outputRef = gate.output?.id ?? undefined;
+
+      // Verify every declared input artifact exists with validity='current'.
+      let allPresent = true;
+      const missingOrStale: string[] = [];
+
+      for (const defId of requiredIds) {
+        const artifact = await getCurrentArtifact(loaded.run.id, defId, ctx.db);
+
+        if (!artifact) {
+          allPresent = false;
+          missingOrStale.push(defId);
+        }
+      }
+
+      if (allPresent) {
+        await markGatePassed(
+          id,
+          {
+            verdict: "pass",
+            reasons: [
+              `all ${requiredIds.length} required artifact(s) present and current`,
+            ],
+          },
+          ctx.db,
+        );
+
+        if (outputRef) {
+          const { gateResults } = schemaModule as unknown as Record<
+            string,
+            any
+          >;
+
+          await ctx.db
+            .update(gateResults)
+            .set({ outputArtifactRef: outputRef })
+            .where(eq(gateResults.id, id));
+        }
+
+        return "passed";
+      }
+
+      // FSM stale → failed: a BLOCKING gate's required input is unavailable —
+      // mark any stale row of each missing def failed so the evidence graph
+      // shows the unmet dependency explicitly. A later rework re-produces and
+      // supersedes it, so recovery is unaffected.
+      if (gate.mode === "blocking") {
+        for (const defId of missingOrStale) {
+          await failStaleArtifactsForDef(loaded.run.id, defId, ctx.db);
+        }
+      }
+
+      await markGateFailed(
+        id,
+        {
+          verdict: "fail",
+          reasons: [
+            `missing or stale artifact(s): ${missingOrStale.join(", ")}`,
+          ],
+        },
+        ctx.db,
       );
 
-      return "skipped";
+      return "failed";
     }
 
     case "external_check": {
@@ -377,6 +443,27 @@ async function runOneGate(
 
     default: {
       await createGateResult({ ...base, status: "skipped" });
+
+      // FSM (none) → skipped: an unknown/unsupported gate kind cannot be
+      // evaluated. If it declares an output artifact, surface that output as
+      // explicitly `skipped` rather than silently absent (forward-compat for
+      // gate kinds a future engine introduces).
+      const out = gate.output as
+        | { id?: string; kind?: ArtifactKind }
+        | undefined;
+
+      if (out?.id) {
+        await recordSkippedArtifact(
+          {
+            runId: loaded.run.id,
+            nodeAttemptId,
+            nodeId: node.id,
+            artifactDefId: out.id,
+            kind: out.kind ?? "generic_file",
+          },
+          ctx.db,
+        );
+      }
 
       return "skipped";
     }

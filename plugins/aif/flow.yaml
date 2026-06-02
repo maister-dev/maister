@@ -4,8 +4,10 @@ recommended_executor: claude-sonnet
 setup: ./setup.sh
 # Package contract (M10, ADR-021). Flow graph v1 (M11a, ADR-026): this flow
 # uses the `nodes[]` graph form, so it MUST declare engine_min >= 1.1.0.
+# M12 (ADR-033): declares typed artifacts (produces/requires/artifact_required
+# gate), which requires engine_min >= 1.2.0.
 compat:
-  engine_min: 1.1.0
+  engine_min: 1.2.0
 capabilities:
   - shell
   - edit
@@ -20,6 +22,10 @@ nodes:
     type: ai_coding
     action:
       prompt: "/aif-plan {{ task.prompt }}"
+    output:
+      produces:
+        - id: plan-summary
+          kind: human_note
     transitions:
       success: implement
 
@@ -27,6 +33,15 @@ nodes:
     type: ai_coding
     action:
       prompt: "/aif-implement"
+    input:
+      requires:
+        - artifact: plan-summary
+          kind: human_note
+    output:
+      produces:
+        - id: impl-diff
+          kind: diff
+          requiredFor: [review, merge]
     # M11c (ADR-031/032): typed settings, demonstrated with an all-`instruct`
     # enforcement intent so the bundled demo launches cleanly on the
     # conservative static table. M14 flips these to `strict` once it can
@@ -49,6 +64,10 @@ nodes:
     type: check
     action:
       command: "pnpm -s lint"
+    output:
+      produces:
+        - id: lint-report
+          kind: lint_report
     transitions:
       success: judge
 
@@ -56,11 +75,33 @@ nodes:
     type: judge
     action:
       prompt: "Review the implementation diff against the task requirements. Reply with a JSON verdict object {\"verdict\":\"pass\"|\"fail\",\"confidence\":0-1,\"reasons\":[...],\"recommendedAction\":\"...\"}."
+    input:
+      requires:
+        - artifact: impl-diff
+          kind: diff
+        - artifact: lint-report
+          kind: lint_report
+    output:
+      produces:
+        - id: judge-verdict
+          kind: ai_judgment
     transitions:
       success: review
 
   - id: review
     type: human
+    input:
+      requires:
+        - artifact: judge-verdict
+          kind: ai_judgment
+    # M12 (ADR-033): block the human review until the merge-required impl-diff
+    # exists and is current — the review-refusal mechanism.
+    pre_finish:
+      gates:
+        - id: impl-diff-required
+          kind: artifact_required
+          mode: blocking
+          inputArtifacts: [impl-diff]
     finish:
       human:
         role: maintainer

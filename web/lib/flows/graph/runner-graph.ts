@@ -7,7 +7,7 @@ import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
 
 import { randomUUID } from "node:crypto";
-import { readFile, unlink } from "node:fs/promises";
+import { access, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, isNotNull } from "drizzle-orm";
@@ -32,17 +32,28 @@ import {
   markNodeSucceeded,
   setEnforcementSnapshot,
 } from "./ledger";
+import {
+  failArtifact,
+  getCurrentArtifact,
+  getArtifactsForRun,
+  recordCurrentArtifact,
+} from "./artifact-store";
+import { recordDefaultArtifacts } from "./default-artifacts";
+import { assertEvidenceReady } from "./evidence-readiness";
 
+import { semverGte } from "@/lib/flows/engine-version";
 import {
   assertNodeLaunchable,
   capabilityBearingSettings,
   evaluateNodeEnforcement,
 } from "@/lib/flows/enforcement";
 import { atomicWriteJson } from "@/lib/atomic";
+import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
   workspacePolicySchema,
   type WorkspacePolicy,
 } from "@/lib/config.schema";
+import { projectRunEvents } from "@/lib/projector/artifact-projector";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   isMaisterError,
@@ -333,6 +344,19 @@ export async function runGraph(
   const runId = loaded.run.id;
   const log2 = log.child({ runId });
 
+  // ADR-022/ADR-038: pull-project event-stream evidence at run boundaries (no
+  // watcher). Best-effort — a projection failure must never break the runner.
+  const safeProject = async () => {
+    try {
+      await projectRunEvents(runId, { db });
+    } catch (err) {
+      log2.warn(
+        { runId, err: (err as Error).message },
+        "projector sync-point failed",
+      );
+    }
+  };
+
   log2.info({}, "runGraph start");
 
   if (loaded.run.status !== "Running" && loaded.run.status !== "NeedsInput") {
@@ -343,6 +367,12 @@ export async function runGraph(
   }
 
   const graph = compileManifest(loaded.manifest);
+  // M12 (T3.2): artifact enforcement is only active when the manifest declares
+  // compat.engine_min >= 1.2.0 (the version that introduced typed artifacts).
+  const artifactEnforcementActive = semverGte(
+    loaded.manifest.compat?.engine_min ?? "0.0.0",
+    "1.2.0",
+  );
   const isNeedsInputResume =
     loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
 
@@ -684,6 +714,10 @@ export async function runGraph(
         }
       }
 
+      // M12 (T3.4): pass current artifact rows to buildContext so templates
+      // can reference {{ artifacts.<id>.kind/uri/validity/nodeId }}.
+      const currentArtifacts = await getArtifactsForRun(runId, db);
+
       const context = buildContext({
         task: loaded.task,
         run: loaded.run,
@@ -692,10 +726,49 @@ export async function runGraph(
         nodeAttempts: attempts,
         projectSlug: loaded.projectSlug,
         extraVars: pendingInjectedVars,
+        artifacts: currentArtifacts,
       });
 
       // The injected rework comments are consumed by this node only.
       pendingInjectedVars = undefined;
+
+      // M12 (T3.2): input artifact precondition check. Only when engine_min >= 1.2.0.
+      // For each requires entry that is a bare artifact id (not a steps.* ref),
+      // verify a current artifact row exists — if not, fail the node before action.
+      if (artifactEnforcementActive && node.input?.requires) {
+        for (const req of node.input.requires) {
+          // Bare string refs that start with "steps." are not artifact ids — skip.
+          const artifactId =
+            typeof req === "string"
+              ? req.match(/^steps\./)
+                ? null
+                : req
+              : (req as { artifact: string }).artifact;
+
+          if (!artifactId) continue;
+
+          const existing = await getCurrentArtifact(runId, artifactId, db);
+
+          if (!existing) {
+            const msg = `required input artifact ${artifactId} missing or not current`;
+
+            log2.warn({ nodeId: node.id, artifactId }, msg);
+            await markNodeFailed(
+              nodeAttemptId,
+              {
+                errorCode: "PRECONDITION",
+                stdout: msg,
+              },
+              db,
+            );
+            failed = true;
+            runErrorCode = "PRECONDITION";
+            break;
+          }
+        }
+
+        if (failed) break;
+      }
 
       let result: NodeResult;
 
@@ -736,6 +809,25 @@ export async function runGraph(
             .set({ acpSessionId: result.acpSessionId })
             .where(eq(runs.id, runId));
         }
+        // M12 (T3.3): record defaults at pause so log/guards/diff exist for
+        // the paused node even when it hasn't finished yet.
+        await recordDefaultArtifacts(
+          {
+            runId,
+            nodeAttemptId,
+            nodeId: node.id,
+            attempt: nodeAttemptCount + 1,
+            projectSlug: loaded.projectSlug,
+            workspace: loaded.workspace,
+            runtimeRoot,
+          },
+          db,
+        ).catch((err) => {
+          log2.warn(
+            { nodeId: node.id, err: (err as Error).message },
+            "recordDefaultArtifacts (NeedsInput) failed (non-fatal)",
+          );
+        });
         needsInput = true;
         log2.info({ nodeId: node.id }, "node requested NeedsInput");
         break;
@@ -814,6 +906,312 @@ export async function runGraph(
         }
       }
 
+      // M12 (T3.2): output artifact recording — path/diff/commit_set kinds plus
+      // the F1 catch-all inline producer for every OTHER declared kind
+      // (lint_report/ai_judgment/etc.), sourced from the node's captured output.
+      // Only active when engine_min >= 1.2.0. Runs AFTER action success AND
+      // gates pass, BEFORE markNodeSucceeded.
+      if (artifactEnforcementActive && node.output?.produces) {
+        const nodeRunDir = runDir(runtimeRoot, loaded.projectSlug, runId);
+        const currentAttempt = nodeAttemptCount + 1;
+
+        for (const produces of node.output.produces) {
+          if (produces.path !== undefined) {
+            // File kind: verify a regular file exists under the run dir.
+            // stat().isFile() (not access()) so an empty/dot path resolving to
+            // the run directory is rejected, never recorded as a file artifact.
+            const filePath = path.join(nodeRunDir, produces.path);
+            let fileOk = false;
+
+            try {
+              fileOk = (await stat(filePath)).isFile();
+            } catch {
+              fileOk = false;
+            }
+
+            if (!fileOk) {
+              const msg = `produced output file ${produces.path} not found for artifact ${produces.id}`;
+
+              log2.warn({ nodeId: node.id, artifactId: produces.id }, msg);
+              await markNodeFailed(
+                nodeAttemptId,
+                { errorCode: "PRECONDITION", stdout: msg },
+                db,
+              );
+              failed = true;
+              runErrorCode = "PRECONDITION";
+              break;
+            }
+
+            const newId = `run:${nodeAttemptId}:${produces.id}`;
+
+            await recordCurrentArtifact(
+              {
+                id: newId,
+                runId,
+                nodeAttemptId,
+                nodeId: node.id,
+                attempt: currentAttempt,
+                artifactDefId: produces.id,
+                kind: produces.kind,
+                producer: "runner",
+                locator: { kind: "file", path: produces.path },
+                validity: "current",
+                requiredFor: produces.requiredFor,
+                visibility: produces.visibility ?? "internal",
+                retention: produces.retention ?? "run",
+              },
+              db,
+            );
+          } else if (produces.kind === "diff") {
+            // Diff kind: always record with git-range locator.
+            const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+            let baseCommit = EMPTY_TREE;
+
+            try {
+              baseCommit = await resolveBaseRef({
+                worktreePath: loaded.workspace.worktreePath,
+                branch: loaded.workspace.branch,
+                mainBranch: "main",
+              });
+            } catch {
+              // no real git repo in test environments — use empty tree
+            }
+
+            // F3: store the immutable SHA so the payload renders the recorded
+            // range, not the live branch tip. Fall back to the branch name when
+            // git is unavailable (synthetic-flow test envs).
+            let headRef = loaded.workspace.branch;
+
+            try {
+              headRef = await resolveRefSha(
+                loaded.workspace.worktreePath,
+                loaded.workspace.branch,
+              );
+            } catch (err) {
+              // no real git repo — keep the branch name
+              log2.warn(
+                {
+                  nodeId: node.id,
+                  branch: loaded.workspace.branch,
+                  err: (err as Error).message,
+                },
+                "resolveRefSha failed — storing mutable branch headRef",
+              );
+            }
+
+            const newId = `run:${nodeAttemptId}:${produces.id}`;
+
+            await recordCurrentArtifact(
+              {
+                id: newId,
+                runId,
+                nodeAttemptId,
+                nodeId: node.id,
+                attempt: currentAttempt,
+                artifactDefId: produces.id,
+                kind: "diff",
+                producer: "runner",
+                locator: {
+                  kind: "git-range",
+                  baseCommit,
+                  headRef,
+                },
+                validity: "current",
+                requiredFor: produces.requiredFor,
+                visibility: produces.visibility ?? "internal",
+                retention: produces.retention ?? "run",
+              },
+              db,
+            );
+          } else if (produces.kind === "commit_set") {
+            // Commit set kind: always record with git-log locator. baseRef is
+            // the merge-base against main (same resolution as the diff kind) so
+            // the payload renders `git log baseRef..headRef` = the branch's own
+            // commits. Storing the branch name as baseRef (as before) resolved
+            // baseRef == headRef → an empty/wrong log. Branch-name fallback only
+            // when git is unavailable (synthetic-flow test envs).
+            let baseRef = loaded.workspace.branch;
+
+            try {
+              baseRef = await resolveBaseRef({
+                worktreePath: loaded.workspace.worktreePath,
+                branch: loaded.workspace.branch,
+                mainBranch: "main",
+              });
+            } catch (err) {
+              log2.warn(
+                {
+                  nodeId: node.id,
+                  branch: loaded.workspace.branch,
+                  err: (err as Error).message,
+                },
+                "resolveBaseRef failed — storing mutable branch baseRef for commit_set",
+              );
+            }
+
+            // F3: store the immutable head SHA; branch-name fallback when git
+            // is unavailable (synthetic-flow test envs).
+            let headRef = loaded.workspace.branch;
+
+            try {
+              headRef = await resolveRefSha(
+                loaded.workspace.worktreePath,
+                loaded.workspace.branch,
+              );
+            } catch (err) {
+              // no real git repo — keep the branch name
+              log2.warn(
+                {
+                  nodeId: node.id,
+                  branch: loaded.workspace.branch,
+                  err: (err as Error).message,
+                },
+                "resolveRefSha failed — storing mutable branch headRef",
+              );
+            }
+
+            const newId = `run:${nodeAttemptId}:${produces.id}`;
+
+            await recordCurrentArtifact(
+              {
+                id: newId,
+                runId,
+                nodeAttemptId,
+                nodeId: node.id,
+                attempt: currentAttempt,
+                artifactDefId: produces.id,
+                kind: "commit_set",
+                producer: "runner",
+                locator: {
+                  kind: "git-log",
+                  baseRef,
+                  headRef,
+                },
+                validity: "current",
+                requiredFor: produces.requiredFor,
+                visibility: produces.visibility ?? "internal",
+                retention: produces.retention ?? "run",
+              },
+              db,
+            );
+          } else {
+            // F1 catch-all: any other declared kind with no `path` and not
+            // diff/commit_set (lint_report, ai_judgment, human_note,
+            // test_report, …). Source the node's captured stdout. Prefer a
+            // file locator to <nodeId>.log when that file exists (run-dir
+            // confined → payload-serveable); otherwise an inline locator with
+            // the stdout text. Record ONLY when there is real content — an
+            // empty no-content output is left to the §3.6 backstop.
+            const logPath = path.join(nodeRunDir, `${node.id}.log`);
+            let logExists = false;
+
+            try {
+              await access(logPath);
+              logExists = true;
+            } catch {
+              logExists = false;
+            }
+
+            const stdoutText = result.stdout ?? "";
+            const hasContent = logExists || stdoutText.trim().length > 0;
+
+            if (hasContent) {
+              const newId = `run:${nodeAttemptId}:${produces.id}`;
+
+              await recordCurrentArtifact(
+                {
+                  id: newId,
+                  runId,
+                  nodeAttemptId,
+                  nodeId: node.id,
+                  attempt: currentAttempt,
+                  artifactDefId: produces.id,
+                  kind: produces.kind,
+                  producer: "runner",
+                  locator: logExists
+                    ? { kind: "file", path: `${node.id}.log` }
+                    : {
+                        kind: "inline",
+                        // Cap inline payload to match the ledger's 1 MB stdout
+                        // cap (runner-cli buffers up to 4 MB) — bound the row.
+                        text: stdoutText.slice(0, 1024 * 1024),
+                      },
+                  validity: "current",
+                  requiredFor: produces.requiredFor,
+                  visibility: produces.visibility ?? "internal",
+                  retention: produces.retention ?? "run",
+                },
+                db,
+              );
+            }
+          }
+        }
+
+        if (failed) break;
+      }
+
+      // F1 §3.6 backstop: every declared output MUST have a current artifact by
+      // node finish, else the node fails. Catches kinds the producers above
+      // could not source (empty stdout, no <nodeId>.log) so a `requiredFor`
+      // output is never silently skipped while the run reaches Review.
+      if (artifactEnforcementActive && node.output?.produces) {
+        let missingId: string | undefined;
+
+        for (const produces of node.output.produces) {
+          const current = await getCurrentArtifact(runId, produces.id, db);
+
+          if (!current) {
+            missingId = produces.id;
+            break;
+          }
+
+          // A current row exists but from a PRIOR attempt — THIS attempt did not
+          // re-produce the declared output (e.g. empty stdout on a rework run).
+          // Leaving the prior row current would let stale evidence satisfy
+          // review/merge readiness, so retire it (FSM current → failed) and fail
+          // the node just as a never-produced output would.
+          if (current.nodeAttemptId !== nodeAttemptId) {
+            await failArtifact(current.id, db);
+            missingId = produces.id;
+            break;
+          }
+        }
+
+        if (missingId) {
+          const msg = `${missingId} declared but not produced`;
+
+          await markNodeFailed(
+            nodeAttemptId,
+            { errorCode: "PRECONDITION", stdout: msg },
+            db,
+          );
+          log2.warn({ nodeId: node.id, artifactId: missingId }, msg);
+          failed = true;
+          runErrorCode = "PRECONDITION";
+          break;
+        }
+      }
+
+      // M12 (T3.3): record default artifacts at node finish.
+      await recordDefaultArtifacts(
+        {
+          runId,
+          nodeAttemptId,
+          nodeId: node.id,
+          attempt: nodeAttemptCount + 1,
+          projectSlug: loaded.projectSlug,
+          workspace: loaded.workspace,
+          runtimeRoot,
+        },
+        db,
+      ).catch((err) => {
+        log2.warn(
+          { nodeId: node.id, err: (err as Error).message },
+          "recordDefaultArtifacts failed (non-fatal)",
+        );
+      });
+
       // Determine the outcome that drives the transition. Action nodes finish
       // with "success"; a human review node finishes with its chosen decision.
       const outcome =
@@ -826,6 +1224,42 @@ export async function runGraph(
         node.rework !== undefined &&
         target !== undefined &&
         node.rework.allowedTargets.includes(target);
+
+      // M12 (F1): review-approval evidence gate. When a node finishes with a
+      // non-rework outcome that completes the run (terminal transition → run
+      // reaches Review), EVERY requiredFor:[review] def must be current and no
+      // blocking artifact_required gate may be stale/failed. This enforces the
+      // requiredFor:[review] contract even when the terminal node declares no
+      // matching artifact_required gate — the gate alone only checks its own
+      // inputArtifacts. The guard is keyed on the terminal transition, NOT on
+      // node type: a review/approval node may be human OR agent/cli/check, and
+      // all of them must satisfy the evidence contract before the run is Review.
+      // Refusal mirrors a blocking gate failure: node Failed → run Failed; the
+      // reviewer re-attempts after refreshing evidence.
+      if (
+        artifactEnforcementActive &&
+        !isRework &&
+        resolveTransition(node, outcome) === null
+      ) {
+        const readiness = await assertEvidenceReady(runId, "review", db);
+
+        if (!readiness.ready) {
+          const msg = `review refused: evidence not ready — ${readiness.reasons.join("; ")}`;
+
+          await markNodeFailed(
+            nodeAttemptId,
+            { errorCode: "PRECONDITION", stdout: msg },
+            db,
+          );
+          failed = true;
+          runErrorCode = "PRECONDITION";
+          log2.info(
+            { runId, blockedBy: readiness.reasons },
+            "review refusal (evidence not ready)",
+          );
+          break;
+        }
+      }
 
       if (isRework) {
         // Record the operator's chosen workspacePolicy from the artifact (Issue
@@ -899,6 +1333,7 @@ export async function runGraph(
         { from: node.id, outcome, to: next ?? "(terminal)", rework: isRework },
         "node transition",
       );
+      await safeProject();
       currentNodeId = next;
     }
   } catch (err) {
@@ -920,6 +1355,7 @@ export async function runGraph(
       opts.supervisorApi?.deleteSession,
       log2,
     );
+    await safeProject();
 
     return;
   }
@@ -931,6 +1367,7 @@ export async function runGraph(
       opts.supervisorApi?.deleteSession,
       log2,
     );
+    await safeProject();
     await promoteAfterExit(db, opts, log2);
 
     return;
@@ -958,6 +1395,7 @@ export async function runGraph(
     log2.info({}, "runGraph ended Review");
   }
 
+  await safeProject();
   await cleanupSlashSession(
     sessionState,
     opts.supervisorApi?.deleteSession,
@@ -983,7 +1421,13 @@ async function promoteAfterExit(
 
     await promoteNextPending({
       db,
-      runFlow: (next) => void runFlow(next, nextOpts),
+      runFlow: (next) =>
+        void runFlow(next, nextOpts).catch((e) => {
+          log2.error(
+            { err: (e as Error).message },
+            "promoted runFlow failed (non-fatal)",
+          );
+        }),
     });
   } catch (err) {
     log2.error(

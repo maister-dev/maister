@@ -15,6 +15,9 @@ export interface FlightCardLabels {
   elapsed: string;
   // M11c (ADR-032) Phase 4.3: refused-at-launch settings indicator hint.
   settingsRefused: string;
+  // M12 (ADR-037) Phase 7: evidence-graph badge hints.
+  evidenceStale: string;
+  mergeBlocked: string;
 }
 
 export interface FlightCardProps {
@@ -112,6 +115,24 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
               title={labels.reworking}
             >
               ↺
+            </span>
+          ) : null}
+          {card.mergeBlocked ? (
+            <span
+              aria-label={labels.mergeBlocked}
+              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
+              title={labels.mergeBlocked}
+            >
+              ◆
+            </span>
+          ) : null}
+          {card.evidenceStale ? (
+            <span
+              aria-label={labels.evidenceStale}
+              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
+              title={labels.evidenceStale}
+            >
+              ≈
             </span>
           ) : null}
           <span

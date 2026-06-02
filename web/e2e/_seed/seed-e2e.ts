@@ -91,6 +91,105 @@ const M11A_MANIFEST = {
   ],
 };
 
+// --- M12 fixture: evidence-graph surface on a parked review run --------------
+// A NeedsInput run parked at the aif `review` node with a full M12 evidence
+// trail: node_attempts (plan/implement/checks/judge Succeeded → review
+// NeedsInput), artifact_instances (plan-summary, impl-diff [requiredFor
+// review+merge, inline locator so the payload route returns text without git],
+// lint-report, judge-verdict — all `current`), and a PASSED blocking
+// artifact_required gate on the review attempt. The e2e spec drives the
+// evidence explorer, the artifact payload drawer, and the board
+// mergeBlocked/evidenceStale pills (by flipping validity/gate status in-DB).
+
+const M12_SLUG = "e2e-m12";
+const M12_BRANCH = "maister/e2e-evidence";
+
+const M12_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
+};
+
+// The migrated aif manifest (M12 typed artifacts) — kept in lockstep with
+// plugins/aif/flow.yaml so the run-detail settings/evidence reads resolve.
+const M12_MANIFEST = {
+  schemaVersion: 1,
+  name: "aif",
+  compat: { engine_min: "1.2.0" },
+  nodes: [
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "/aif-plan {{ task.prompt }}" },
+      output: { produces: [{ id: "plan-summary", kind: "human_note" }] },
+      transitions: { success: "implement" },
+    },
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "/aif-implement" },
+      input: { requires: [{ artifact: "plan-summary", kind: "human_note" }] },
+      output: {
+        produces: [
+          { id: "impl-diff", kind: "diff", requiredFor: ["review", "merge"] },
+        ],
+      },
+      transitions: { success: "checks" },
+    },
+    {
+      id: "checks",
+      type: "check",
+      action: { command: "pnpm -s lint" },
+      output: { produces: [{ id: "lint-report", kind: "lint_report" }] },
+      transitions: { success: "judge" },
+    },
+    {
+      id: "judge",
+      type: "judge",
+      action: { prompt: "Review the implementation diff." },
+      input: {
+        requires: [
+          { artifact: "impl-diff", kind: "diff" },
+          { artifact: "lint-report", kind: "lint_report" },
+        ],
+      },
+      output: { produces: [{ id: "judge-verdict", kind: "ai_judgment" }] },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      input: { requires: [{ artifact: "judge-verdict", kind: "ai_judgment" }] },
+      pre_finish: {
+        gates: [
+          {
+            id: "impl-diff-required",
+            kind: "artifact_required",
+            mode: "blocking",
+            inputArtifacts: ["impl-diff"],
+          },
+        ],
+      },
+      finish: {
+        human: {
+          role: "maintainer",
+          decisions: ["approve", "rework", "takeover"],
+          commentsVar: "review_comments",
+        },
+      },
+      transitions: { approve: "done", rework: "implement", takeover: "checks" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
 // --- M11b fixture: graph run paused at a takeover-capable review node --------
 
 const M11B_SLUG = "e2e-m11b";
@@ -172,6 +271,14 @@ type FixtureRecord = {
   projectSlug: string;
   branch: string;
   worktreePath: string;
+};
+
+// The M12 evidence fixture additionally carries the impl-diff artifact id and
+// the artifact_required gate id so the e2e spec can flip them in-DB (stale /
+// failed → and back) to drive the board mergeBlocked/evidenceStale pills.
+type M12FixtureRecord = FixtureRecord & {
+  implDiffArtifactId: string;
+  gateResultId: string;
 };
 
 // The M11c refusal fixture has no run yet (the whole point is that launching it
@@ -596,6 +703,202 @@ async function seedM11aFixture(
     projectSlug: M11A_SLUG,
     branch: M11A_BRANCH,
     worktreePath,
+  };
+}
+
+async function seedM12EvidenceFixture(
+  pool: Pool,
+  userId: string,
+): Promise<M12FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    executor: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    hitl: randomUUID(),
+    member: randomUUID(),
+    planAttempt: randomUUID(),
+    implAttempt: randomUUID(),
+    checksAttempt: randomUUID(),
+    judgeAttempt: randomUUID(),
+    reviewAttempt: randomUUID(),
+    planSummary: randomUUID(),
+    implDiff: randomUUID(),
+    lintReport: randomUUID(),
+    judgeVerdict: randomUUID(),
+    gate: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-evidence`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M12_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project,
+      M12_SLUG,
+      "MAIster E2E M12 Evidence",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m12@v0.0.1`,
+      JSON.stringify(M12_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E evidence graph", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow, ids.executor],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [ids.workspace, ids.run, ids.project, M12_BRANCH, worktreePath, repoPath],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, $4)`,
+    [
+      ids.hitl,
+      ids.run,
+      JSON.stringify(M12_REVIEW_SCHEMA),
+      "Review the implementation. Approve to ship, or request rework.",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  // Ledger: plan/implement/checks/judge Succeeded → review NeedsInput.
+  const attempts: Array<[string, string, string, string]> = [
+    [ids.planAttempt, "plan", "ai_coding", "Succeeded"],
+    [ids.implAttempt, "implement", "ai_coding", "Succeeded"],
+    [ids.checksAttempt, "checks", "check", "Succeeded"],
+    [ids.judgeAttempt, "judge", "judge", "Succeeded"],
+  ];
+
+  for (const [id, nodeId, nodeType, status] of attempts) {
+    await pool.query(
+      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
+       VALUES ($1, $2, $3, $4, 1, $5, now(), now())`,
+      [id, ids.run, nodeId, nodeType, status],
+    );
+  }
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.reviewAttempt, ids.run],
+  );
+
+  // Artifacts (validity current, producer runner). impl-diff uses an inline
+  // locator so the payload route returns text without touching git.
+  const artifacts: Array<[string, string, string, string, unknown, unknown]> = [
+    [
+      ids.planSummary,
+      ids.planAttempt,
+      "plan",
+      "plan-summary",
+      "human_note",
+      { kind: "inline", text: "Plan: implement feature X in three steps." },
+    ],
+    [
+      ids.implDiff,
+      ids.implAttempt,
+      "implement",
+      "impl-diff",
+      "diff",
+      {
+        kind: "inline",
+        text: "diff --git a/src/x.ts b/src/x.ts\n+export const x = 1;\n",
+      },
+    ],
+    [
+      ids.lintReport,
+      ids.checksAttempt,
+      "checks",
+      "lint-report",
+      "lint_report",
+      { kind: "inline", text: "0 problems (0 errors, 0 warnings)" },
+    ],
+    [
+      ids.judgeVerdict,
+      ids.judgeAttempt,
+      "judge",
+      "judge-verdict",
+      "ai_judgment",
+      { kind: "inline", text: '{"verdict":"pass","confidence":0.9}' },
+    ],
+  ];
+
+  for (const [
+    id,
+    nodeAttemptId,
+    nodeId,
+    artifactDefId,
+    kind,
+    locator,
+  ] of artifacts) {
+    const requiredFor =
+      artifactDefId === "impl-diff" ? ["review", "merge"] : null;
+
+    await pool.query(
+      `INSERT INTO artifact_instances
+         (id, run_id, node_attempt_id, node_id, attempt, artifact_def_id, kind,
+          producer, locator, validity, required_for, visibility, retention, created_at)
+       VALUES ($1, $2, $3, $4, 1, $5, $6, 'runner', $7, 'current', $8, 'internal', 'run', now())`,
+      [
+        id,
+        ids.run,
+        nodeAttemptId,
+        nodeId,
+        artifactDefId,
+        kind,
+        JSON.stringify(locator),
+        requiredFor ? JSON.stringify(requiredFor) : null,
+      ],
+    );
+  }
+
+  // A PASSED blocking artifact_required gate on the review attempt.
+  await pool.query(
+    `INSERT INTO gate_results
+       (id, run_id, node_attempt_id, gate_id, kind, mode, status, input_artifact_refs, created_at, ended_at)
+     VALUES ($1, $2, $3, 'impl-diff-required', 'artifact_required', 'blocking', 'passed', $4, now(), now())`,
+    [ids.gate, ids.run, ids.reviewAttempt, JSON.stringify(["impl-diff"])],
+  );
+
+  return {
+    runId: ids.run,
+    hitlRequestId: ids.hitl,
+    projectSlug: M12_SLUG,
+    branch: M12_BRANCH,
+    worktreePath,
+    implDiffArtifactId: ids.implDiff,
+    gateResultId: ids.gate,
   };
 }
 
@@ -1442,6 +1745,7 @@ async function main(): Promise<void> {
       [
         M11A_SLUG,
         M11B_SLUG,
+        M12_SLUG,
         BOARD_SLUG,
         SCRATCH_SLUG,
         REGISTRATION_SLUG,
@@ -1514,6 +1818,7 @@ async function main(): Promise<void> {
 
     const m11a = await seedM11aFixture(pool, admin.id);
     const m11b = await seedM11bFixture(pool, admin.id);
+    const m12 = await seedM12EvidenceFixture(pool, admin.id);
     const board = await seedLaunchableProjectFixture(pool, {
       slug: BOARD_SLUG,
       projectName: "E2E Acceptance Board",
@@ -1576,6 +1881,7 @@ async function main(): Promise<void> {
       byKey: {
         m11a,
         m11b,
+        m12,
         board,
         scratch,
         liveCcr,
@@ -1594,7 +1900,7 @@ async function main(): Promise<void> {
       "utf8",
     );
     console.log(
-      `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, board ${board.projectSlug}, scratch ${scratch.projectSlug}` +
+      `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, m12 ${m12.runId} (${M12_SLUG}), board ${board.projectSlug}, scratch ${scratch.projectSlug}` +
         `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})` +
         `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})`,
     );

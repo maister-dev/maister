@@ -467,8 +467,9 @@ describe("loadFlowManifest — graph (nodes[])", () => {
 
   it("accepts a known node id in input.requires (steps.<id> form)", async () => {
     const path = await writeGraph("graph-requires-known.yaml", (m) => {
+      // Only steps.* refs — no bare artifact ids so engine_min 1.1.0 is fine.
       m.nodes[1].input = {
-        requires: ["steps.implement.output", "some-artifact"],
+        requires: ["steps.implement.output"],
       };
     });
 

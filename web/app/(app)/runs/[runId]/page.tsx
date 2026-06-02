@@ -5,6 +5,8 @@ import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
+import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
+import { type EvidenceGraphLabels } from "@/components/board/evidence-graph";
 import {
   FlowSettingsPanel,
   type FlowSettingsPanelLabels,
@@ -18,6 +20,7 @@ import {
 } from "@/components/board/run-timeline";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
+import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import {
   getRunDetail,
   getRunSettings,
@@ -59,6 +62,32 @@ export default async function RunDetailPage({
 
   const timeline = await getRunTimeline(runId);
   const settings = await getRunSettings(runId);
+  const evidence = await buildEvidenceGraph(runId);
+  const tEvidence = await getTranslations("evidence");
+
+  const evidenceLabels: EvidenceGraphLabels = {
+    title: tEvidence("title"),
+    empty: tEvidence("empty"),
+    openPayload: tEvidence("openPayload"),
+    payloadGone: tEvidence("payloadGone"),
+    payloadError: tEvidence("payloadError"),
+    payloadLoading: tEvidence("payloadLoading"),
+    close: tEvidence("close"),
+    filterNode: tEvidence("filterNode"),
+    filterKind: tEvidence("filterKind"),
+    filterState: tEvidence("filterState"),
+    filterAny: tEvidence("filterAny"),
+    stateCurrent: tEvidence("stateCurrent"),
+    stateStale: tEvidence("stateStale"),
+    stateSuperseded: tEvidence("stateSuperseded"),
+    stateFailed: tEvidence("stateFailed"),
+    stateSkipped: tEvidence("stateSkipped"),
+    kindTaskInput: tEvidence("kindTaskInput"),
+    kindNodeAttempt: tEvidence("kindNodeAttempt"),
+    kindArtifact: tEvidence("kindArtifact"),
+    kindGate: tEvidence("kindGate"),
+    kindDecision: tEvidence("kindDecision"),
+  };
 
   const settingsClassLabel: Record<EnforcementSnapshotEntry["class"], string> =
     {
@@ -221,6 +250,17 @@ export default async function RunDetailPage({
         entries={timeline.entries as TimelineEntry[]}
         labels={timelineLabels}
       />
+
+      <section className="mt-6">
+        <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+          {evidenceLabels.title}
+        </h2>
+        <EvidenceGraphSection
+          graph={evidence}
+          labels={evidenceLabels}
+          runId={detail.runId}
+        />
+      </section>
 
       {settings ? (
         <FlowSettingsPanel

@@ -13,6 +13,11 @@ import {
   markDownstreamStale,
   recordTakeoverReturn,
 } from "@/lib/flows/graph/ledger";
+import {
+  getCurrentRequiredForGitArtifacts,
+  recordArtifact,
+  supersedePrior,
+} from "@/lib/flows/graph/artifact-store";
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
 import { loadRun } from "@/lib/flows/graph/runner-core";
 import { runFlow } from "@/lib/flows/runner";
@@ -22,6 +27,7 @@ import {
   diffRange,
   logRange,
   resolveBaseRef,
+  resolveRefSha,
   statusPorcelain,
 } from "@/lib/worktree";
 import * as schemaModule from "@/lib/db/schema";
@@ -155,10 +161,16 @@ export async function POST(
         );
       }
 
-      return { nodeId: active.nodeId };
+      return {
+        nodeId: active.nodeId,
+        nodeAttemptId: active.id,
+        attempt: active.attempt,
+      };
     });
 
     const nodeId = intent.nodeId;
+    const nodeAttemptId = intent.nodeAttemptId;
+    const attempt = intent.attempt;
     const { worktreePath, branch } = loaded.workspace;
 
     // Resolve the validation re-entry from the human_review node's
@@ -202,6 +214,21 @@ export async function POST(
     const baseRef = await resolveBaseRef({ worktreePath, branch, mainBranch });
     const returnedCommits = await logRange({ worktreePath, baseRef, branch });
     const returnedDiff = await diffRange({ worktreePath, baseRef, branch });
+
+    // F3: store the immutable head SHA in the git artifact locators so their
+    // payloads render the returned range, not the live branch tip. Branch-name
+    // fallback for parity with the runner (git is available here in practice).
+    let headRef = branch;
+
+    try {
+      headRef = await resolveRefSha(worktreePath, branch);
+    } catch (err) {
+      // keep the branch name when git cannot resolve the SHA
+      log.warn(
+        { runId, nodeId, branch, err: (err as Error).message },
+        "resolveRefSha failed — storing mutable branch headRef",
+      );
+    }
 
     const commitCountPre = returnedCommits
       .split("\n")
@@ -252,6 +279,44 @@ export async function POST(
           db: tx,
         });
 
+        // Record commit_set and diff artifacts for this takeover return.
+        // Both store the immutable head SHA (F3) so evidence consumers resolve
+        // the exact commits the human reviewer produced, regardless of later
+        // branch advances.
+        await recordArtifact(
+          {
+            id: `run:${nodeAttemptId}:takeover:commit_set`,
+            runId,
+            nodeAttemptId,
+            nodeId,
+            attempt,
+            artifactDefId: `takeover:${nodeId}:commit_set`,
+            kind: "commit_set",
+            producer: "takeover",
+            locator: { kind: "git-log", baseRef, headRef },
+          },
+          tx,
+        );
+
+        await recordArtifact(
+          {
+            id: `run:${nodeAttemptId}:takeover:diff`,
+            runId,
+            nodeAttemptId,
+            nodeId,
+            attempt,
+            artifactDefId: `takeover:${nodeId}:diff`,
+            kind: "diff",
+            producer: "takeover",
+            locator: {
+              kind: "git-range",
+              baseCommit: baseRef,
+              headRef,
+            },
+          },
+          tx,
+        );
+
         // Stale the re-entry node AND its downstream. downstreamOf excludes its
         // start node, so include the gate-bearing re-entry explicitly.
         await markDownstreamStale(
@@ -259,6 +324,51 @@ export async function POST(
           [reentryNode, ...downstreamOf(graph, reentryNode)],
           tx,
         );
+
+        // C2: re-pin every STILL-current requiredFor:[review|merge] git artifact
+        // (the upstream `impl-diff` etc.) to the post-takeover branch tip, so the
+        // review/merge evidence reflects the FULL cumulative diff base..tip —
+        // including the reviewer's takeover commits — not the pre-takeover range
+        // frozen when the producing node ran. Runs AFTER markDownstreamStale, so
+        // downstream requiredFor artifacts (already staled, to be re-produced by
+        // the re-run) are excluded; only upstream ones that will NOT be
+        // re-produced are refreshed. Each refresh supersedes the stale-pinned row
+        // in the same transaction (atomic).
+        const toRefresh = await getCurrentRequiredForGitArtifacts(runId, tx);
+
+        for (const art of toRefresh) {
+          const refreshedLocator =
+            art.kind === "commit_set"
+              ? { kind: "git-log" as const, baseRef, headRef }
+              : { kind: "git-range" as const, baseCommit: baseRef, headRef };
+
+          const { id: refreshedId } = await recordArtifact(
+            {
+              id: `${art.id}:rt:${nodeAttemptId}`,
+              runId,
+              nodeAttemptId: art.nodeAttemptId,
+              nodeId: art.nodeId,
+              attempt: art.attempt,
+              artifactDefId: art.artifactDefId,
+              kind: art.kind,
+              producer: "takeover",
+              locator: refreshedLocator,
+              validity: "current",
+              requiredFor: art.requiredFor,
+              visibility: art.visibility,
+              retention: art.retention,
+            },
+            tx,
+          );
+
+          await supersedePrior(
+            runId,
+            art.nodeId as string,
+            art.artifactDefId as string,
+            refreshedId,
+            tx,
+          );
+        }
 
         const flipped = await markReturnedToRunning(runId, { db: tx });
 

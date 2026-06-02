@@ -205,6 +205,20 @@ export const flowCompatSchema = z.object({
   engine_max: z.string().min(1).optional(),
 });
 
+// --- M12: typed artifact kinds (produces[]) — ADR-TBD --------------------
+export const ARTIFACT_KINDS = [
+  "diff",
+  "log",
+  "test_report",
+  "lint_report",
+  "ai_judgment",
+  "human_note",
+  "commit_set",
+  "checkpoint",
+  "preview",
+  "generic_file",
+] as const;
+
 // --- M11a: Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------
 // A graph manifest declares `nodes[]` instead of `steps[]` (mutually
 // exclusive). Cross-reference + cycle validation lives in `loadFlowManifest`
@@ -261,14 +275,20 @@ const nodeInputSchema = z
   })
   .passthrough();
 
-const nodeOutputSchema = z
+export const nodeOutputSchema = z
   .object({
-    // Typed artifact instances are M12; recorded but not validated in M11a.
     produces: z
       .array(
-        z
-          .object({ id: z.string().min(1), kind: z.string().min(1) })
-          .passthrough(),
+        z.object({
+          id: z.string().min(1),
+          kind: z.enum(ARTIFACT_KINDS),
+          schema: z.string().min(1).optional(),
+          path: z.string().optional(),
+          ref: z.string().optional(),
+          visibility: z.enum(["internal", "shared"]).optional(),
+          retention: z.enum(["run", "ephemeral"]).optional(),
+          requiredFor: z.array(z.enum(["review", "merge"])).optional(),
+        }),
       )
       .optional(),
   })
@@ -525,3 +545,5 @@ export type AiCodingSettings = z.infer<typeof aiCodingSettingsSchema>;
 export type JudgeSettings = z.infer<typeof judgeSettingsSchema>;
 export type HumanSettings = z.infer<typeof humanSettingsSchema>;
 export type CliCheckSettings = z.infer<typeof cliCheckSettingsSchema>;
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
+export type NodeOutput = z.infer<typeof nodeOutputSchema>;

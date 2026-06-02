@@ -27,6 +27,11 @@ export type CompiledNode = {
   // this node after a crash. Defaults false; only meaningful for session-less
   // node kinds (ai_coding recovers via `--resume`).
   retrySafe: boolean;
+  // M12 (T3.1): typed artifact requires/produces from the NodeDef. Present only
+  // for graph-based nodes (source.kind === "node"); compiled-linear nodes leave
+  // these undefined for backward compat.
+  input?: NodeDef["input"];
+  output?: NodeDef["output"];
 };
 
 export type FlowGraph = {
@@ -81,6 +86,8 @@ function compileGraph(graphNodes: NodeDef[]): FlowGraph {
       finishHuman: node.finish?.human,
       settings: node.settings,
       retrySafe: node.retry_safe ?? false,
+      input: node.input,
+      output: node.output,
     });
   }
 

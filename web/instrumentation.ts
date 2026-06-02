@@ -33,6 +33,14 @@ export async function register(): Promise<void> {
     const { runReconcileSweep } = await import("@/lib/reconcile");
 
     await runReconcileSweep();
+
+    // ADR-022/ADR-038: idempotent boot catch-up so event-stream evidence is
+    // projected before any run is viewed (deterministic-PK upsert → no dups).
+    const { runProjectorCatchUpSweep } = await import(
+      "@/lib/projector/catch-up-sweep"
+    );
+
+    await runProjectorCatchUpSweep();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(
