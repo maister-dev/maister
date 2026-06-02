@@ -469,7 +469,8 @@
 | M10. Flow package lifecycle and distribution UX                              | 2026-05-30 |
 | M11a. Flow graph v1: node lifecycle, run ledger, review-driven rework, gates | 2026-05-31 |
 | M11b. Manual takeover (local worktree handoff) + run-detail timeline         | 2026-05-31 |
-| M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
 | M11c. Node typed settings + runtime enforcement boundary                     | 2026-06-01 |
 | M12. Typed artifacts and evidence graph                                      | 2026-06-02 |
+| M13. Role-owned work queue and assignment UX                                 | 2026-06-02 |
 | M19. Reconciliation + GC                                                     | 2026-06-02 |
+| M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |

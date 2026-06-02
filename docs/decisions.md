@@ -47,6 +47,10 @@
 | [ADR-019](#adr-019-project-slug--repo_path-uniqueness-soft-archival) | Project slug + repo_path uniqueness, soft archival | Accepted | 2026-05-22 |
 | [ADR-020](#adr-020-fastify--pino-in-the-supervisor) | Fastify + pino in the supervisor | Accepted | 2026-05-25 |
 | [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility) | Flow package lifecycle: multi-revision, trust, and compatibility | Accepted | 2026-05-30 |
+| [ADR-022](#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models) | Structured run-data projection: `run.events.jsonl` is the event log, Postgres holds derived read-models | Accepted | 2026-05-30 |
+| [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres) | Run `web` + `supervisor` on the host; containerize only Postgres | Accepted | 2026-05-30 |
+| [ADR-024](#adr-024-external-operations-surface--rest--thin-mcp-facade-project-tokens-mandatory-audit-hitl-assessment--flow-owned-escalation) | External operations surface: REST + thin MCP facade, project tokens, mandatory audit, HITL assessment, Flow-owned escalation | Accepted | 2026-05-30 |
+| [ADR-025](#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots) | Project repo onboarding: URL clone or local path, host-credential auth, configurable roots | Accepted | 2026-05-31 |
 | [ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump) | Flow graph manifest v1 (`nodes[]`) + engine version bump | Accepted | 2026-05-30 |
 | [ADR-027](#adr-027-append-only-node_attempts-run-ledger) | Append-only `node_attempts` run ledger | Accepted | 2026-05-30 |
 | [ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped) | Full-featured gate execution in M11a; M15 re-scoped | Accepted | 2026-05-30 |
@@ -922,6 +926,9 @@ independent of M11/M12.
 - **Local `repo_path` only (status quo):** secure and simple but a manual clone step; kept as a supported mode, not the only one.
 - **MAIster-managed per-project credentials (model C):** per-project least privilege, but secret-at-rest, rotation, audit, and blast-radius make it a deliberate security design tied to M16/M18, not a registration add-on.
 - **Single unified `MAISTER_HOME` root:** rejected to avoid refactoring the hardcoded `~/.maister/flows` path; two explicit roots chosen instead.
+
+---
+
 ### ADR-026: Flow graph manifest v1 (`nodes[]`) + engine version bump
 
 **Date:** 2026-05-30

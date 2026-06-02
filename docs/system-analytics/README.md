@@ -23,6 +23,7 @@ Every file in this folder follows the structure defined in
 | Projects | [`projects.md`](projects.md) | Registration, slug derivation, archival, Flow plugin install on register. |
 | Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
 | Flows | [`flows.md`](flows.md) | Plugin packaging, step DSL (cli/agent/guard/human), executor override resolution. |
+| Flow settings | [`flow-settings.md`](flow-settings.md) | Typed node settings, launch refusal boundaries, and capability-materialization handoff. |
 | Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
 | Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint/resume, crash recovery. |
 | Scratch runs | [`scratch-runs.md`](scratch-runs.md) | Manual coding-agent dialog workspaces outside the task board, visible in active workspaces. |
@@ -30,6 +31,8 @@ Every file in this folder follows the structure defined in
 | Workspaces | [`workspaces.md`](workspaces.md) | Worktree lifecycle, promotion policy, reconciliation on startup. |
 | HITL | [`hitl.md`](hitl.md) | Three HITL kinds (permission / form / human), keep-alive activity tracking. |
 | Assignments | [`assignments.md`](assignments.md) | M13 role-owned work queue, actor identities, claim/release/take-over lifecycle. |
+| Artifacts | [`artifacts.md`](artifacts.md) | Typed evidence artifacts, validity, projections, and graph inputs. |
+| Reconciliation and GC | [`reconciliation-gc.md`](reconciliation-gc.md) | Crash reconciliation, recovery/discard, workspace preservation, and revision garbage collection. |
 | External operations | [`external-operations.md`](external-operations.md) | API tokens, external gate reports, and thin MCP facade for CI/scripts/agents. |
 | Instance configuration | [`instance-config.md`](instance-config.md) | Read-only host roots (`MAISTER_REPOS_ROOT`, `MAISTER_WORKTREES_ROOT`), host-tool status, admin `/settings`. |
 | Git integration | [`git-integration.md`](git-integration.md) | Provider detection, host-credential clone/init/remote, non-interactive git, URL redaction. |
