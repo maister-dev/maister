@@ -80,7 +80,7 @@ export function ScratchLaunchPopover({
         <div
           aria-labelledby={titleId}
           aria-modal="true"
-          className="fixed inset-0 z-50"
+          className="fixed inset-0 z-[1000]"
           role="dialog"
         >
           <button
