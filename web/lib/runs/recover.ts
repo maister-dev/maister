@@ -12,11 +12,18 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
+import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
+import { classifyRecover } from "@/lib/runs/recover-classify";
 import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { takeSchedulerLock } from "@/lib/scheduler";
 import { createSession } from "@/lib/supervisor-client";
+
+// Re-export the pure classifier from its canonical home so existing importers
+// (`@/lib/runs/recover`) keep working — the run-detail projection imports it
+// directly from `recover-classify` to avoid pulling this server-only graph.
+export { classifyRecover };
+export type { NodeKind, RecoverPlan } from "@/lib/runs/recover-classify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executors, projects, runs, workspaces } =
@@ -44,34 +51,6 @@ function capFromEnv(): number {
   return parsed;
 }
 
-type NodeKind =
-  | "ai_coding"
-  | "cli"
-  | "check"
-  | "judge"
-  | "guard"
-  | "human"
-  | null;
-
-// --- T3.1: pure classifier ------------------------------------------------
-
-export type RecoverPlan = "resume-agent" | "redispatch" | "discard-only";
-
-// The recovery-plan analogue of classifyRunReconcile. PURE (no clock/db):
-//   - ai_coding + acpSessionId present -> "resume-agent"
-//   - ai_coding + acpSessionId null    -> "discard-only"
-//   - any other node kind              -> "redispatch"
-export function classifyRecover(
-  run: { acpSessionId: string | null },
-  currentNodeKind: NodeKind,
-): RecoverPlan {
-  if (currentNodeKind === "ai_coding") {
-    return run.acpSessionId ? "resume-agent" : "discard-only";
-  }
-
-  return "redispatch";
-}
-
 // --- T3.2: resumeCrashedRun + driveResume ---------------------------------
 
 export type RecoverResult =
@@ -83,11 +62,15 @@ export type RecoverResult =
   | { state: "unresumable" }
   | { state: "transient" };
 
+// Crash-recover signal threaded into runFlow so the runner resumes FROM the
+// crashed node (re-runs it once) instead of no-op'ing or restarting from entry.
+export type RunFlowResumeOpts = { crashResume?: { targetStepId: string } };
+
 export interface ResumeCrashedRunOptions {
   db?: Db;
   createSession?: typeof createSession;
   scheduleResumedSessionDrive?: (o: RunResumedSessionOptions) => string;
-  runFlow?: (id: string) => Promise<void> | void;
+  runFlow?: (id: string, runOpts?: RunFlowResumeOpts) => Promise<void> | void;
   now?: () => Date;
 }
 
@@ -119,6 +102,7 @@ export async function resumeCrashedRun(
         status: runs.status,
         acpSessionId: runs.acpSessionId,
         currentStepId: runs.currentStepId,
+        resumeTargetStepId: runs.resumeTargetStepId,
         flowId: runs.flowId,
         flowRevisionId: runs.flowRevisionId,
       })
@@ -139,17 +123,25 @@ export async function resumeCrashedRun(
       return { state: "conflict" };
     }
 
-    const kind = await resolveCurrentNodeKind(tx, {
+    // The recover target is the node id retained at crash time
+    // (resume_target_step_id; current_step_id is nulled on a clean crash),
+    // falling back to current_step_id for live/hand-seeded rows.
+    const resumeTarget = run.resumeTargetStepId ?? run.currentStepId;
+    const { nodeKind, retrySafe } = await resolveNodeRecoverInfo(tx, {
       flowRevisionId: run.flowRevisionId,
       flowId: run.flowId,
-      currentStepId: run.currentStepId,
+      stepId: resumeTarget,
     });
-    const plan = classifyRecover({ acpSessionId: run.acpSessionId }, kind);
+    const plan = classifyRecover(
+      { acpSessionId: run.acpSessionId },
+      nodeKind,
+      retrySafe,
+    );
 
     if (plan === "discard-only") {
       log.info(
-        { runId },
-        "resumeCrashedRun: agent node with no acpSessionId — discard-only",
+        { runId, nodeKind, retrySafe },
+        "resumeCrashedRun: no resumable target (agent w/o session, or session-less not retry_safe) — discard-only",
       );
 
       return { state: "discard-only" };
@@ -160,7 +152,6 @@ export async function resumeCrashedRun(
       .from(runs)
       .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
     const liveCount = Number(liveRows[0]?.count ?? 0);
-    const resumeTarget = run.currentStepId;
     const at = now();
 
     if (liveCount >= cap) {
@@ -238,6 +229,7 @@ export async function driveResume(
       status: runs.status,
       acpSessionId: runs.acpSessionId,
       currentStepId: runs.currentStepId,
+      resumeTargetStepId: runs.resumeTargetStepId,
       executorId: runs.executorId,
       projectId: runs.projectId,
       flowId: runs.flowId,
@@ -262,24 +254,41 @@ export async function driveResume(
     return { state: "unresumable" };
   }
 
-  const kind = await resolveCurrentNodeKind(db, {
+  // Phase-1 set current_step_id to the recover target; fall back to the retained
+  // marker if driveResume is entered standalone.
+  const resumeTarget = run.currentStepId ?? run.resumeTargetStepId;
+  const { nodeKind, retrySafe } = await resolveNodeRecoverInfo(db, {
     flowRevisionId: run.flowRevisionId,
     flowId: run.flowId,
-    currentStepId: run.currentStepId,
+    stepId: resumeTarget,
   });
-  const plan = classifyRecover({ acpSessionId: run.acpSessionId }, kind);
+  const plan = classifyRecover(
+    { acpSessionId: run.acpSessionId },
+    nodeKind,
+    retrySafe,
+  );
 
   if (plan === "redispatch") {
     const runFlowFn =
       opts.runFlow ??
-      (async (id: string) => {
+      (async (id: string, runOpts?: RunFlowResumeOpts) => {
         const mod = await import("@/lib/flows/runner");
 
-        await mod.runFlow(id);
+        await mod.runFlow(id, runOpts);
       });
 
-    await runFlowFn(runId);
-    log.info({ runId }, "driveResume: session-less gate node → redispatched");
+    // Explicit crash-recover signal: the runner resumes FROM this node (re-runs
+    // it once) instead of no-op'ing (graph) or restarting from step 0 (linear).
+    await runFlowFn(
+      runId,
+      resumeTarget
+        ? { crashResume: { targetStepId: resumeTarget } }
+        : undefined,
+    );
+    log.info(
+      { runId, targetStepId: resumeTarget },
+      "driveResume: session-less retry_safe node → redispatched (resume from node)",
+    );
 
     return { state: "redispatched" };
   }

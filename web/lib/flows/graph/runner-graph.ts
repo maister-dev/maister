@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "../context";
@@ -356,13 +356,27 @@ export async function runGraph(
   // the claim is guarded by a re-entry node_attempt append inside the FOR-UPDATE
   // transaction, so a concurrent dispatch (the return route's queueMicrotask +
   // the F3 startup sweep) loses the claim and no-ops.
+  // M19 crash-recover (ADR-034): driveResume re-dispatched a crashed
+  // `retry_safe` session-less node — the run is already `Running` with
+  // current_step_id = the retained crash target. Without this mode runGraph
+  // treats `Running` + existing attempts + no resume as already-owned and
+  // no-ops (Codex round-3). The explicit `opts.crashResume` signal wins over the
+  // takeover path. Claimed below by a single-winner CAS-clear of
+  // resume_started_at.
+  const isCrashResume =
+    Boolean(opts.crashResume) &&
+    !isNeedsInputResume &&
+    loaded.run.status === "Running" &&
+    loaded.run.currentStepId !== null;
+
   const isTakeoverResume =
     !isNeedsInputResume &&
+    !isCrashResume &&
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null &&
     (await hasPendingTakeoverResume(runId, loaded.run.currentStepId, db));
 
-  const isResume = isNeedsInputResume || isTakeoverResume;
+  const isResume = isNeedsInputResume || isTakeoverResume || isCrashResume;
   const resumeNodeId = isResume ? (loaded.run.currentStepId as string) : null;
 
   // For a takeover resume, the claim winner appends the fresh re-entry attempt
@@ -406,6 +420,31 @@ export async function runGraph(
     }
 
     loaded.run.status = "Running";
+  } else if (isCrashResume) {
+    // M19 crash-recover claim: the run is already Running (driveResume flipped
+    // it). Single-winner guard = CAS-clear resume_started_at (set by recover /
+    // scheduler-promote). The winner clears it and traverses from resumeNodeId
+    // (re-running the crashed node as a fresh attempt); a concurrent loser sees
+    // it already null → 0 rows → bails. No status change (already Running).
+    const claimed = await db
+      .update(runs)
+      .set({ resumeStartedAt: null })
+      .where(and(eq(runs.id, runId), isNotNull(runs.resumeStartedAt)))
+      .returning({ id: runs.id });
+
+    if (claimed.length === 0) {
+      log2.info(
+        { currentStepId: resumeNodeId },
+        "runGraph crash-resume claim lost — another invocation owns this resume",
+      );
+
+      return;
+    }
+
+    log2.info(
+      { currentStepId: resumeNodeId },
+      "runGraph crash-resume claim acquired — re-dispatching retry_safe node",
+    );
   } else if (isTakeoverResume) {
     // Takeover-return resume claim. Under a row lock, re-verify the recorded
     // return is still un-resumed (no fresh re-entry attempt), then append the

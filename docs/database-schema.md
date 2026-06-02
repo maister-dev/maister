@@ -355,6 +355,9 @@ queries.
   resumeStartedAt?,              // M19 (timestamptz, migration 0015) durable
                                  //   Recover in-flight marker + reconcile grace
                                  //   anchor; see below
+  resumeTargetStepId?,           // M19 (text, migration 0016) node id retained
+                                 //   at crash time for Recover; current_step_id
+                                 //   is nulled on crash; see below
   startedAt, endedAt?
 }
 ```
@@ -388,6 +391,20 @@ sweep treats a no-live-session agent run as in-flight (skips it) while
 The runner clears it to `NULL` on first progress; `crashRunningRun` also clears
 it so a re-crashed row stays clean. Cascade: lives on `runs`, dropped with the
 run row.
+
+**(M19 — Implemented, migration `0016`, additive.)** `resumeTargetStepId`
+(`text`, nullable) is the node id retained at crash time for operator Recover.
+`crashRunningRun` copies `currentStepId → resumeTargetStepId` and nulls
+`currentStepId`, so the clean-terminal read of `currentStepId` is preserved
+while Recover still knows which node to resume to. Recover resolves the node
+kind and the manifest `retry_safe` flag from this column (falling back to
+`currentStepId` for live/hand-seeded rows) to classify the run into
+`resume-agent` / `redispatch` / `discard-only`. Without this column a
+reconcile-crashed run had no node to resume to (its `currentStepId` was nulled)
+— it fixes recovery for both agent and session-less crashed runs. See
+[ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
+and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
+Cascade: lives on `runs`, dropped with the run row.
 
 Indexes: `(projectId, status, runKind)` for portfolio and active
 workspace queries, `(runKind, taskId)` for board/latest-attempt lookups that

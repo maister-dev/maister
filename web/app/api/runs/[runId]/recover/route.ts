@@ -94,6 +94,43 @@ function runStatusForState(state: RecoverResult["state"]): string | undefined {
   }
 }
 
+type RecoverErrorState = Exclude<
+  RecoverResult["state"],
+  "resumed" | "redispatched" | "queued"
+>;
+
+// Non-success states are typed MaisterError codes (ADR-008 closed union) so API
+// clients can branch on `code` per docs/error-taxonomy.md — not just the HTTP
+// status. The codes match the OpenAPI 409/410/503 entries (MaisterErrorBody).
+function errorBodyForState(state: RecoverErrorState): {
+  code: string;
+  message: string;
+} {
+  switch (state) {
+    case "discard-only":
+      return {
+        code: "CONFLICT",
+        message: "run has no resumable session — discard it instead",
+      };
+    case "conflict":
+      return {
+        code: "CONFLICT",
+        message:
+          "run is not in Crashed — already terminal or a concurrent recover won the CAS",
+      };
+    case "unresumable":
+      return {
+        code: "CHECKPOINT",
+        message: "the stored acp session is unresumable — discard the run",
+      };
+    case "transient":
+      return {
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "transient supervisor failure during resume — retryable",
+      };
+  }
+}
+
 type RouteParams = { params: Promise<{ runId: string }> };
 
 export async function POST(
@@ -129,18 +166,30 @@ export async function POST(
     await requireProjectAction(run.projectId, "recoverRun");
 
     const r = await resumeCrashedRun(runId);
-    const ok =
-      r.state === "resumed" ||
-      r.state === "redispatched" ||
-      r.state === "queued";
-    const runStatus = runStatusForState(r.state);
 
     log.info({ runId, state: r.state }, "recover handled");
 
-    return NextResponse.json(
-      { ok, state: r.state, ...(runStatus ? { runStatus } : {}) },
-      { status: statusForState(r.state) },
+    if (
+      r.state === "resumed" ||
+      r.state === "redispatched" ||
+      r.state === "queued"
+    ) {
+      const runStatus = runStatusForState(r.state);
+
+      return NextResponse.json(
+        { ok: true, state: r.state, ...(runStatus ? { runStatus } : {}) },
+        { status: statusForState(r.state) },
+      );
+    }
+
+    const errorBody = errorBodyForState(r.state);
+
+    log.warn(
+      { runId, state: r.state, code: errorBody.code },
+      "recover refused",
     );
+
+    return NextResponse.json(errorBody, { status: statusForState(r.state) });
   } catch (err) {
     return errorResponse(err, { runId });
   }

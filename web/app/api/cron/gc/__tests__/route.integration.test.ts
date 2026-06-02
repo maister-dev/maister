@@ -51,6 +51,7 @@ const revisionSweepSpy = vi.fn(async () => ({
   scanned: 0,
   deleted: 0,
   skippedReferenced: 0,
+  failed: 0,
 }));
 
 vi.mock("@/lib/gc/workspace-gc", () => ({
@@ -126,6 +127,7 @@ beforeEach(() => {
     scanned: 0,
     deleted: 0,
     skippedReferenced: 0,
+    failed: 0,
   });
 });
 
@@ -136,6 +138,7 @@ describe("GET/POST /api/cron/gc", () => {
     const res = await cronPOST(req(TOKEN));
 
     expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("CONFIG");
     expect(workspaceSweepSpy).not.toHaveBeenCalled();
     expect(revisionSweepSpy).not.toHaveBeenCalled();
   }, 60_000);
@@ -144,6 +147,7 @@ describe("GET/POST /api/cron/gc", () => {
     const res = await cronPOST(req("wrong-token"));
 
     expect(res.status).toBe(401);
+    expect((await res.json()).code).toBe("UNAUTHENTICATED");
     expect(workspaceSweepSpy).not.toHaveBeenCalled();
     expect(revisionSweepSpy).not.toHaveBeenCalled();
   }, 60_000);
@@ -155,28 +159,20 @@ describe("GET/POST /api/cron/gc", () => {
     expect(workspaceSweepSpy).not.toHaveBeenCalled();
   }, 60_000);
 
-  it("returns 200 running BOTH sweeps with body {workspace, revision} on a valid token", async () => {
+  it("returns 200 running BOTH sweeps with the flat GcSweepSummary DTO on a valid token", async () => {
     const res = await cronPOST(req(TOKEN));
 
     expect(res.status).toBe(200);
     expect(workspaceSweepSpy).toHaveBeenCalledTimes(1);
     expect(revisionSweepSpy).toHaveBeenCalledTimes(1);
 
-    const body = await res.json();
-
-    expect(body).toMatchObject({
-      workspace: {
-        scanned: expect.any(Number),
-        preserved: expect.any(Number),
-        pruned: expect.any(Number),
-        skippedUnpreserved: expect.any(Number),
-        failed: expect.any(Number),
-      },
-      revision: {
-        scanned: expect.any(Number),
-        deleted: expect.any(Number),
-        skippedReferenced: expect.any(Number),
-      },
+    // Conforms to the OpenAPI GcSweepSummary contract (flat counts + errors),
+    // NOT the internal nested {workspace, revision} sub-summaries.
+    expect(await res.json()).toEqual({
+      worktreesPreserved: 0,
+      worktreesRemoved: 0,
+      revisionsRemoved: 0,
+      errors: [],
     });
   }, 60_000);
 
@@ -188,7 +184,7 @@ describe("GET/POST /api/cron/gc", () => {
     expect(revisionSweepSpy).toHaveBeenCalledTimes(1);
   }, 60_000);
 
-  it("returns 207 when a sub-sweep throws (partial)", async () => {
+  it("returns 207 with a non-empty errors array when a sub-sweep throws (partial)", async () => {
     workspaceSweepSpy.mockRejectedValueOnce(new Error("workspace sweep boom"));
 
     const res = await cronPOST(req(TOKEN));
@@ -196,6 +192,60 @@ describe("GET/POST /api/cron/gc", () => {
     expect(res.status).toBe(207);
     // The other sweep still ran.
     expect(revisionSweepSpy).toHaveBeenCalledTimes(1);
+
+    const body = await res.json();
+
+    expect(Array.isArray(body.errors)).toBe(true);
+    expect(body.errors.length).toBeGreaterThan(0);
+    expect(
+      body.errors.some((e: string) => e.includes("workspace sweep failed")),
+    ).toBe(true);
+  }, 60_000);
+
+  it("returns 207 when the workspace sweep CATCHES per-row failures (skippedUnpreserved/failed)", async () => {
+    workspaceSweepSpy.mockResolvedValueOnce({
+      scanned: 3,
+      preserved: 1,
+      pruned: 1,
+      skippedUnpreserved: 1,
+      failed: 1,
+    });
+
+    const res = await cronPOST(req(TOKEN));
+
+    // The sweep returned normally but left worktrees unpreserved/errored — the
+    // route must NOT report 200 (a cron monitor would otherwise miss the
+    // cleanup failure).
+    expect(res.status).toBe(207);
+
+    const body = await res.json();
+
+    expect(body.worktreesPreserved).toBe(1);
+    expect(body.worktreesRemoved).toBe(1);
+    expect(body.errors).toHaveLength(2);
+  }, 60_000);
+
+  it("returns 207 when the revision sweep CATCHES a cache-dir rm failure (failed > 0)", async () => {
+    revisionSweepSpy.mockResolvedValueOnce({
+      scanned: 1,
+      deleted: 1,
+      skippedReferenced: 0,
+      failed: 1,
+    });
+
+    const res = await cronPOST(req(TOKEN));
+
+    // The revision row was deleted from the registry but its cache dir was left
+    // orphaned on disk — a partial failure a cron monitor MUST see, not a 200.
+    expect(res.status).toBe(207);
+
+    const body = await res.json();
+
+    expect(body.revisionsRemoved).toBe(1);
+    expect(body.errors).toHaveLength(1);
+    expect(
+      body.errors.some((e: string) => e.includes("revision cache dir")),
+    ).toBe(true);
   }, 60_000);
 
   it("never leaks the token value in the response body", async () => {

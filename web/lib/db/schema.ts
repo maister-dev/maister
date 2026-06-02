@@ -435,6 +435,10 @@ export const runs = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // M19 crash-recover (ADR-034): the node id retained when a Running run is
+    // crashed (current_step_id is nulled for a clean terminal read). Recover
+    // re-dispatches THIS node; null → no resumable target → discard-only.
+    resumeTargetStepId: text("resume_target_step_id"),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(

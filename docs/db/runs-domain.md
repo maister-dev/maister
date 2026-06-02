@@ -62,6 +62,7 @@ erDiagram
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
+        text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
         timestamp started_at
         timestamp ended_at
     }

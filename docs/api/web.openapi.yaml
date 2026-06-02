@@ -1508,12 +1508,27 @@ paths:
       tags: [reconciliation-gc]
       summary: (M19) Recover a Crashed run
       description: |
-        (Designed, M19 — ADR-034. Code lands in Phase 3.)
+        (Implemented, M19 — ADR-034.)
 
-        Recovers a `Crashed` flow run via the hybrid ACP `--resume` path:
-        `--resume <acpSessionId>` for an agent node, `runFlow` re-dispatch for
-        a session-less gate node. Discard-only when `acpSessionId` is absent or
-        unresumable.
+        Recovers a `Crashed` flow run via a hybrid plan decided by
+        `classifyRecover(run, nodeKind, retrySafe)` over the **recover target
+        node** — `runs.resume_target_step_id` (the node id retained at crash
+        time; `current_step_id` is nulled on crash), falling back to
+        `current_step_id` for live/hand-seeded rows:
+
+        | recover target node | `acpSessionId` | node `retry_safe` | plan | result |
+        | ------------------- | -------------- | ----------------- | ---- | ------ |
+        | `ai_coding` (agent) | present | ignored | `resume-agent` — `--resume <acpSessionId>` | 200 resumed / 202 queued |
+        | `ai_coding` (agent) | null | ignored | `discard-only` | 409 |
+        | session-less (`cli`/`check`/`judge`/`guard`/`human`) | irrelevant | `true` | `redispatch` — re-run the node | 200 redispatched / 202 queued |
+        | session-less | irrelevant | `false` (default) | `discard-only` | 409 |
+        | unresolvable target node | — | — | `discard-only` | 409 |
+
+        An agent node is recovered by continuing its prior ACP session; a
+        session-less node has no resumable session and is only redispatchable
+        when its manifest config opts in with `retry_safe: true` (re-running a
+        session-less node repeats its side effects — accepted-risk). Otherwise
+        the run is discard-only.
 
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). The `projectId` is derived from
@@ -1546,7 +1561,7 @@ paths:
         | `runId` | path parameter, route-shape validated | `url-param` |
         | `userId` | Auth.js session | `auth-context` |
         | `projectId` | DB join from the run row | `server-state` |
-        | `acpSessionId`, current node | DB row / pinned manifest | `server-state` |
+        | `acpSessionId`, recover target node (`resume_target_step_id`) | DB row / pinned manifest | `server-state` |
       operationId: recoverRun
       parameters:
         - name: runId
@@ -1588,7 +1603,10 @@ paths:
           description: |
             Run is not in `Crashed`, or a concurrent Recover won the Phase-1 CAS
             first (run is now `Running`/`Pending`) — a duplicate `createSession`
-            is impossible (`CONFLICT`).
+            is impossible — or `classifyRecover` resolved to `discard-only` (an
+            agent target node with no `acpSessionId`, a session-less target node
+            that is not `retry_safe`, or an unresolvable target node), so only
+            Discard is offered (`CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

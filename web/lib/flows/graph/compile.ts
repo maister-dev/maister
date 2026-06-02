@@ -23,6 +23,10 @@ export type CompiledNode = {
   // so the per-node enforcement gate reads it without re-parsing the manifest.
   // Compiled-linear nodes carry no settings (undefined).
   settings?: NodeDef["settings"];
+  // M19 crash-recover (ADR-034): whether an operator Recover may re-dispatch
+  // this node after a crash. Defaults false; only meaningful for session-less
+  // node kinds (ai_coding recovers via `--resume`).
+  retrySafe: boolean;
 };
 
 export type FlowGraph = {
@@ -55,6 +59,7 @@ function compileLinear(steps: Step[]): FlowGraph {
       source: { kind: "step", step },
       transitions: { success: next },
       gates: [],
+      retrySafe: step.retry_safe ?? false,
     });
   });
 
@@ -75,6 +80,7 @@ function compileGraph(graphNodes: NodeDef[]): FlowGraph {
       rework: node.rework,
       finishHuman: node.finish?.human,
       settings: node.settings,
+      retrySafe: node.retry_safe ?? false,
     });
   }
 

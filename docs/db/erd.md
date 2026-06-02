@@ -180,6 +180,7 @@ erDiagram
         timestamp checkpoint_at
         timestamp keepalive_until "30min sliding"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
+        text resume_target_step_id "node id retained at crash time for Recover (M19, 0016)"
         timestamp started_at
         timestamp ended_at
     }

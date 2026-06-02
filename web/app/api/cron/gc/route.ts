@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { RevisionGcSummary } from "@/lib/gc/revision-gc";
+import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
+
 import { timingSafeEqual } from "node:crypto";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -35,45 +38,80 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const token = process.env.MAISTER_CRON_TOKEN;
 
   if (!token) {
-    return NextResponse.json({ error: "cron disabled" }, { status: 503 });
+    return NextResponse.json(
+      {
+        code: "CONFIG",
+        message: "MAISTER_CRON_TOKEN is unset — cron disabled",
+      },
+      { status: 503 },
+    );
   }
 
   if (!tokenMatches(req.headers.get(CRON_TOKEN_HEADER), token)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { code: "UNAUTHENTICATED", message: "missing or invalid cron token" },
+      { status: 401 },
+    );
   }
 
-  // Both sweeps run INDEPENDENTLY — each in its own try/catch so one throwing
-  // does not abort the other. Both ok → 200; either threw → 207 (partial).
-  let failed = false;
-  let workspace: unknown;
-  let revision: unknown;
+  // Both sweeps run INDEPENDENTLY (own try/catch). The route projects the two
+  // sub-summaries into the flat GcSweepSummary contract and returns 207 whenever
+  // a sub-sweep THREW or CAUGHT per-row failures (workspace
+  // skippedUnpreserved/failed OR revision cache-dir rm failed) — a cron monitor
+  // must NOT read 200 while worktrees were left unpreserved/unpruned or revision
+  // cache dirs were orphaned on disk. `skippedReferenced` is NOT an error: a
+  // still-referenced revision is correctly retained, not a failure.
+  const errors: string[] = [];
+  let workspace: WorkspaceGcSummary | null = null;
+  let revision: RevisionGcSummary | null = null;
 
   try {
     workspace = await runWorkspaceGcSweep();
   } catch (err) {
-    failed = true;
-    log.error(
-      { err: err instanceof Error ? err.message : String(err) },
-      "cron GC: workspace sweep threw",
-    );
-    workspace = { error: "workspace sweep failed" };
+    const message = err instanceof Error ? err.message : String(err);
+
+    errors.push(`workspace sweep failed: ${message}`);
+    log.error({ err: message }, "cron GC: workspace sweep threw");
   }
 
   try {
     revision = await runRevisionGcSweep();
   } catch (err) {
-    failed = true;
-    log.error(
-      { err: err instanceof Error ? err.message : String(err) },
-      "cron GC: revision sweep threw",
-    );
-    revision = { error: "revision sweep failed" };
+    const message = err instanceof Error ? err.message : String(err);
+
+    errors.push(`revision sweep failed: ${message}`);
+    log.error({ err: message }, "cron GC: revision sweep threw");
   }
 
-  return NextResponse.json(
-    { workspace, revision },
-    { status: failed ? 207 : 200 },
+  if (workspace && workspace.skippedUnpreserved > 0) {
+    errors.push(
+      `${workspace.skippedUnpreserved} workspace(s) skipped: preserve failed (left for retry)`,
+    );
+  }
+  if (workspace && workspace.failed > 0) {
+    errors.push(`${workspace.failed} workspace(s) errored during GC`);
+  }
+  if (revision && revision.failed > 0) {
+    errors.push(
+      `${revision.failed} revision cache dir(s) failed to remove (row deleted, dir orphaned on disk)`,
+    );
+  }
+
+  const summary = {
+    worktreesPreserved: workspace?.preserved ?? 0,
+    worktreesRemoved: workspace?.pruned ?? 0,
+    revisionsRemoved: revision?.deleted ?? 0,
+    errors,
+  };
+
+  log.info(
+    { ...summary, errorCount: errors.length },
+    "cron GC sweep completed",
   );
+
+  return NextResponse.json(summary, {
+    status: errors.length > 0 ? 207 : 200,
+  });
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {

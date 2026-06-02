@@ -4,7 +4,7 @@ import type { Run as RunRow } from "@/lib/db/schema";
 import type { Step } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "./context";
@@ -165,6 +165,7 @@ export async function runFlow(
       db,
       runtimeRoot,
       supervisorApi: opts.supervisorApi,
+      crashResume: opts.crashResume,
     });
 
     return;
@@ -177,10 +178,43 @@ export async function runFlow(
     );
   }
 
-  const isResume =
-    loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+  // M19 crash-recover (ADR-034): a redispatch of a crashed `retry_safe` linear
+  // node enters as `Running` with `crashResume.targetStepId`. Without this, a
+  // `Running` linear run has isResume=false → restarts from step 0 (Codex
+  // round-3: duplicates earlier side effects). Claim it single-winner by
+  // CAS-clearing `resume_started_at`; the loser (already cleared) bails.
+  const crashResumeStepId =
+    opts.crashResume && loaded.run.status === "Running"
+      ? opts.crashResume.targetStepId
+      : null;
 
-  if (isResume) {
+  if (crashResumeStepId !== null) {
+    const claimed = await db
+      .update(runs)
+      .set({ resumeStartedAt: null })
+      .where(and(eq(runs.id, runId), isNotNull(runs.resumeStartedAt)))
+      .returning({ id: runs.id });
+
+    if (claimed.length === 0) {
+      log2.info(
+        { targetStepId: crashResumeStepId },
+        "runFlow crash-resume claim lost — another invocation owns this resume",
+      );
+
+      return;
+    }
+    // Resume from the retained crashed node, not step 0.
+    loaded.run.currentStepId = crashResumeStepId;
+  }
+
+  // A NeedsInput resume (status NeedsInput) claims via the NeedsInput→Running
+  // CAS below; a crash-resume (status already Running) already claimed above via
+  // CAS-clear resume_started_at. `isResume` drives resumeIndex/stepsToRun for both.
+  const isNeedsInputResume =
+    loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+  const isResume = isNeedsInputResume || crashResumeStepId !== null;
+
+  if (isNeedsInputResume) {
     // Atomic resume claim: only ONE concurrent runFlow call for the
     // same NeedsInput row may transition it to Running and continue.
     // Without this guard, two near-simultaneous resume calls (the

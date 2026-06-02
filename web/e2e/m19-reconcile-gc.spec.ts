@@ -3,6 +3,8 @@
 // fixtures.json byKey.m19) plants ONE project `e2e-m19` carrying:
 //   • a recoverable Crashed flow run (acpSessionId checkpoint + an ai_coding
 //     current node → run-detail recoverable:true, board Crashed column);
+//   • a non-recoverable Crashed flow run (NO acpSessionId → recoverable:false)
+//     whose run-detail must still expose Discard but hide Recover (F1 guard);
 //   • two terminal Abandoned runs whose workspaces have a staggered
 //     scheduled_removal_at — one inside the 2-day warning window, one already
 //     due — for the left-rail TTL badge.
@@ -38,6 +40,8 @@ type M19Fixture = {
   repoPath: string;
   crashedRunId: string;
   crashedBranch: string;
+  notRecoverableRunId: string;
+  notRecoverableBranch: string;
   warningRunId: string;
   warningBranch: string;
   dueRunId: string;
@@ -119,6 +123,26 @@ test.describe("M19 reconcile + GC UI", () => {
     await expect(page.getByTestId("discard-confirm-submit")).toBeVisible();
   });
 
+  test("(a3) a non-recoverable Crashed run-detail hides Recover but still shows Discard", async ({
+    page,
+  }) => {
+    const fx = loadM19();
+
+    await page.goto(`/runs/${fx.notRecoverableRunId}`);
+
+    // The Crashed section renders for every Crashed run.
+    await expect(page.getByTestId("run-crashed-section")).toBeVisible();
+
+    // No acpSessionId → recoverable:false → the not-recoverable note shows and
+    // the Recover button is absent.
+    await expect(page.getByTestId("run-not-recoverable")).toBeVisible();
+    await expect(page.getByTestId("recover-button")).toHaveCount(0);
+
+    // Discard MUST still be available — it is the only UI path into the GC
+    // countdown for a run that cannot be resumed.
+    await expect(page.getByTestId("discard-button")).toBeVisible();
+  });
+
   test("(b) the board shows the Crashed run in the dedicated Crashed column", async ({
     page,
   }) => {
@@ -154,6 +178,7 @@ test.describe("M19 reconcile + GC UI", () => {
     const warningRow = page
       .locator("aside li")
       .filter({ has: page.locator(`a[href$="/runs/${fx.warningRunId}"]`) });
+
     await expect(
       warningRow.locator('[data-testid="ttl-badge"][data-ttl-state="warning"]'),
     ).toBeVisible();
@@ -161,6 +186,7 @@ test.describe("M19 reconcile + GC UI", () => {
     const dueRow = page
       .locator("aside li")
       .filter({ has: page.locator(`a[href$="/runs/${fx.dueRunId}"]`) });
+
     await expect(
       dueRow.locator('[data-testid="ttl-badge"][data-ttl-state="due"]'),
     ).toBeVisible();
@@ -190,17 +216,22 @@ test.describe("M19 cron GC auth gate", () => {
 
     expect([200, 207]).toContain(ok.status());
 
-    // The response carries the two sweep summaries and NEVER the token value.
+    // The response is the flat GcSweepSummary contract (OpenAPI) and NEVER the
+    // token value.
     const text = await ok.text();
 
     expect(text).not.toContain(CRON_TOKEN);
 
     const body = JSON.parse(text) as {
-      workspace?: unknown;
-      revision?: unknown;
+      worktreesPreserved?: unknown;
+      worktreesRemoved?: unknown;
+      revisionsRemoved?: unknown;
+      errors?: unknown;
     };
 
-    expect(body).toHaveProperty("workspace");
-    expect(body).toHaveProperty("revision");
+    expect(body).toHaveProperty("worktreesPreserved");
+    expect(body).toHaveProperty("worktreesRemoved");
+    expect(body).toHaveProperty("revisionsRemoved");
+    expect(Array.isArray(body.errors)).toBe(true);
   });
 });

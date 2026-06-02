@@ -22,7 +22,20 @@ GC is the deferred removal that never destroys un-committed work.
 - **Resume-in-flight marker** — `runs.resume_started_at` (timestamptz, null
   by default; **Designed, M19**, migration 0015). Stamped by Recover before
   the supervisor side-effect; anchors the reconcile grace window. Cleared on
-  first progress or on terminal write.
+  first progress, on terminal write, or by the runner's single-winner CAS-clear
+  (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND resume_started_at
+  IS NOT NULL`).
+- **Recover target node** — `runs.resume_target_step_id` (text, null by
+  default; **Implemented, M19**, migration 0016). The node id retained at crash
+  time: `crashRunningRun` copies `current_step_id → resume_target_step_id` and
+  nulls `current_step_id` (clean-terminal read preserved). Recover resolves the
+  node kind + `retry_safe` from this column (falling back to `current_step_id`
+  for live/hand-seeded rows). See [`runs.md`](runs.md).
+- **`retry_safe` opt-in** — a per-node boolean on graph nodes (`flow.yaml`
+  `nodes[]`) and linear steps (`steps[]`), default `false`. A crashed
+  session-less node is redispatch-recoverable only when its config declares
+  `retry_safe: true` (`ai_coding` ignores it — recovered via `--resume`). See
+  [`../flow-dsl.md`](../flow-dsl.md).
 - **Workspace** — `workspaces` row / git worktree. GC entities added by
   migration 0015 (**Designed, M19**):
   - `scheduled_removal_at` (timestamptz, null) — terminal GC deadline,
@@ -123,17 +136,41 @@ flowchart TD
     Sess -- yes --> Reatt[RE-ATTACH]
 ```
 
-### Operator Recover — agent resume (Implemented, M19)
+### Operator Recover — hybrid resume / re-dispatch (Implemented, M19)
 
-Operator-driven Recover (`POST /api/runs/{runId}/recover`) of a `Crashed`
-agent node continues the prior agent session via `--resume <acpSessionId>`
+Operator-driven Recover (`POST /api/runs/{runId}/recover`) classifies the
+`Crashed` run with `classifyRecover(run, nodeKind, retrySafe)` over the
+**recover target node** — `runs.resume_target_step_id` (the node id retained at
+crash time; `current_step_id` is nulled on crash), falling back to
+`current_step_id` for live/hand-seeded rows:
+
+| recover target node | `acpSessionId` | node `retry_safe` | plan | recoverable? |
+| ------------------- | -------------- | ----------------- | ---- | ------------ |
+| `ai_coding` (agent) | present | ignored | `resume-agent` — `--resume <acpSessionId>` | yes (200 resumed / 202 queued) |
+| `ai_coding` (agent) | null | ignored | `discard-only` | no (409) |
+| session-less (`cli`/`check`/`judge`/`guard`/`human`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
+| session-less | irrelevant | `false` (default) | `discard-only` | no (409) |
+| unresolvable target node | — | — | `discard-only` | no (409) |
+
+An agent node continues the prior agent session via `--resume <acpSessionId>`
 (`createSession({ resumeSessionId })` + `scheduleResumedSessionDrive`) — the
 same mechanism M8 idle-resume uses, and the continuation is exercised in CI
-against the mock ACP adapter. Session-less gate/`cli`/`human` nodes carry no
-resumable session and are re-dispatched via `runFlow` instead. The durable
-`Crashed → Running` (or `Crashed → Pending` when the cap is full) flip commits
-before any supervisor side-effect, so a lost supervisor ack leaves the run
-`Running` for the reconciler, never double-spawns.
+against the mock ACP adapter. A session-less node carries no resumable session
+and is re-dispatched via `runFlow` **only** when its manifest config declares
+`retry_safe: true` (re-running a session-less node repeats its side effects —
+accepted-risk); otherwise it is discard-only. The durable `Crashed → Running`
+(or `Crashed → Pending` when the cap is full) flip commits before any supervisor
+side-effect, so a lost supervisor ack leaves the run `Running` for the
+reconciler, never double-spawns.
+
+The runner recognizes Recover as a **crash-resume mode** (a third resume mode
+alongside NeedsInput-resume and takeover-resume): `driveResume` flips
+`Crashed → Running` and calls `runFlow(runId, { crashResume: { targetStepId } })`;
+`runGraph`/`runFlow` resume FROM the target node (re-running it once as a fresh
+attempt) instead of no-op'ing on the already-owned guard (graph) or restarting
+from step 0 (linear). The claim is single-winner via a CAS-clear of the
+in-flight marker (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND
+resume_started_at IS NOT NULL`): the winner drives, the loser bails.
 
 ### Cron GC route (Designed, M19)
 
@@ -188,17 +225,25 @@ flowchart TD
 - A `Running` agent run with no live session MUST be SKIPPED while
   `resume_started_at` OR the latest `node_attempts.started_at` is within
   `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace MUST it be
-  crashed (reason `agent-session-gone`).
-- A `Running` run with no live session whose current node is a read-only
-  gate eval (`check`/`judge`) MUST be re-dispatched; a `cli` node MUST be
-  crashed (reason `cli-not-retry-safe`) and NEVER auto-re-dispatched.
+  crashed (reason `agent-session-gone`). A `Running` run with no live session
+  whose current node is a read-only gate eval (`check`/`judge`) MUST be
+  re-dispatched; a `cli` node MUST be crashed (reason `cli-not-retry-safe`) and
+  NEVER auto-re-dispatched.
 - A supervisor `listSessions` failure MUST skip the whole reconcile tick;
   the sweep NEVER crashes a run on transient supervisor unavailability.
 - Reconcile candidate sets MUST stay disjoint from `runResumeRecoverySweep`
   (`NeedsInput`) and `runTakeoverReturnRecoverySweep` (returned takeover);
   reconcile excludes the takeover-return predicate.
-- Every `Running → Crashed` MUST call `promoteNextPending` after commit and
-  MUST clear `runs.resume_started_at` so the row is cleanly re-recoverable.
+- Every `Running → Crashed` MUST call `promoteNextPending` after commit, MUST
+  clear `runs.resume_started_at`, and MUST copy `current_step_id →
+  resume_target_step_id` (nulling `current_step_id`) so the row is cleanly
+  re-recoverable and operator Recover has a target node.
+- Operator Recover MUST classify via `classifyRecover(run, nodeKind,
+  retrySafe)` over the recover target (`resume_target_step_id`, else
+  `current_step_id`): an agent node with an `acpSessionId` resumes via
+  `--resume`; a session-less node re-dispatches ONLY when its config is
+  `retry_safe: true`; every other case is discard-only — and the crash-resume
+  runner MUST claim single-winner via a CAS-clear of `resume_started_at`.
 - GC MUST select terminal candidates by the effective deadline
   `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`
   so pre-0015 terminal runs with null `scheduled_removal_at` are still
@@ -255,7 +300,7 @@ flowchart TD
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   [`../db/erd.md`](../db/erd.md) (`workspaces.scheduled_removal_at`,
   `archived_branch`, `archived_at`, `runs.resume_started_at` — migration
-  0015).
+  0015; `runs.resume_target_step_id` — migration 0016).
 - Config reference: [`../configuration.md`](../configuration.md) —
   `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
   `MAISTER_RECONCILE_GRACE_SECONDS`, `MAISTER_GC_SWEEP_INTERVAL_SECONDS`,
@@ -285,7 +330,7 @@ to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`),
 | `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
 | `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
 | `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge` — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover (accepted-risk re-dispatch). A future manifest `retry_safe: true` opt-in can widen this. |
+| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
 | `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
 | `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |

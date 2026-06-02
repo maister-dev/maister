@@ -67,7 +67,7 @@ export async function runGcSweeps(): Promise<GcSweepsResult> {
     revision:
       revisionSettled.status === "fulfilled"
         ? revisionSettled.value
-        : { scanned: 0, deleted: 0, skippedReferenced: 0 },
+        : { scanned: 0, deleted: 0, skippedReferenced: 0, failed: 0 },
   };
 }
 

@@ -155,6 +155,8 @@ const cliStepSchema = z.object({
   command: z.string().min(1),
   pre_guards: z.array(guardConfigSchema).optional(),
   post_guards: z.array(guardConfigSchema).optional(),
+  // M19 crash-recover opt-in — see `nodeCommon.retry_safe`.
+  retry_safe: z.boolean().optional(),
 });
 
 const agentStepSchema = z.object({
@@ -164,6 +166,7 @@ const agentStepSchema = z.object({
   prompt: z.string().min(1),
   pre_guards: z.array(guardConfigSchema).optional(),
   post_guards: z.array(guardConfigSchema).optional(),
+  retry_safe: z.boolean().optional(),
 });
 
 const guardStepSchema = z.object({
@@ -172,6 +175,7 @@ const guardStepSchema = z.object({
   cost: z.number().optional(),
   time: z.number().optional(),
   regex: z.string().optional(),
+  retry_safe: z.boolean().optional(),
 });
 
 const humanStepSchema = z.object({
@@ -184,6 +188,7 @@ const humanStepSchema = z.object({
       comments_var: z.string().min(1).optional(),
     })
     .optional(),
+  retry_safe: z.boolean().optional(),
 });
 
 export const stepSchema = z.discriminatedUnion("type", [
@@ -396,6 +401,13 @@ const nodeCommon = {
   // decision/outcome -> target node id
   transitions: z.record(z.string(), z.string().min(1)).optional(),
   rework: reworkSchema.optional(),
+  // M19 crash-recover (ADR-034): opt-in that lets an operator Recover re-dispatch
+  // this node after a crash. Session-less nodes (cli/check/judge/guard/human)
+  // have no `--resume` handle, so re-running them repeats their side effects;
+  // recovery is offered ONLY when the Flow author marks the node retry-safe.
+  // Default false → such a crashed node is discard-only. Ignored for `ai_coding`
+  // (recovered via `--resume`, not re-dispatch).
+  retry_safe: z.boolean().optional(),
 };
 
 const aiCodingNodeSchema = z.object({

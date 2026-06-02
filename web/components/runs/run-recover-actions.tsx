@@ -12,6 +12,10 @@ import { recoverHttpToUiState } from "@/lib/runs/recover-ui";
 
 export interface RunRecoverActionsProps {
   runId: string;
+  // A Crashed run without a resumable session (no acpSessionId / non-agent
+  // current node) can only be discarded — hide Recover, but ALWAYS expose
+  // Discard so the run can still enter the GC countdown from the UI.
+  canRecover: boolean;
 }
 
 type DialogKind = "recover" | "discard" | null;
@@ -148,6 +152,7 @@ function ConfirmDialog({
 
 export function RunRecoverActions({
   runId,
+  canRecover,
 }: RunRecoverActionsProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
@@ -226,19 +231,21 @@ export function RunRecoverActions({
   return (
     <div className="flex flex-col gap-3" data-testid="run-recover-actions">
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          className={clsx(
-            "inline-flex w-max items-center rounded-lg border border-accent-4 bg-accent-4-soft px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-accent-4 hover:bg-[color-mix(in_oklab,var(--accent-4-soft)_70%,var(--paper))]",
-          )}
-          data-testid="recover-button"
-          type="button"
-          onClick={() => {
-            setError(null);
-            setDialog("recover");
-          }}
-        >
-          {t("recover")}
-        </button>
+        {canRecover ? (
+          <button
+            className={clsx(
+              "inline-flex w-max items-center rounded-lg border border-accent-4 bg-accent-4-soft px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-accent-4 hover:bg-[color-mix(in_oklab,var(--accent-4-soft)_70%,var(--paper))]",
+            )}
+            data-testid="recover-button"
+            type="button"
+            onClick={() => {
+              setError(null);
+              setDialog("recover");
+            }}
+          >
+            {t("recover")}
+          </button>
+        ) : null}
         <button
           className="inline-flex w-max items-center rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
           data-testid="discard-button"

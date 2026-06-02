@@ -280,10 +280,18 @@ Discriminated on `type`:
 
 | Type | Required fields | Optional fields |
 | ---- | --------------- | --------------- |
-| `cli` | `id`, `type=cli`, `command` | `pre_guards`, `post_guards` |
-| `agent` | `id`, `type=agent`, `mode=new-session\|slash-in-existing`, `prompt` | `pre_guards`, `post_guards` |
-| `guard` | `id`, `type=guard` + at least one of `cost`, `time`, `regex` | — |
-| `human` | `id`, `type=human`, `form_schema` (path to JSON schema with `schemaVersion`) | `on_reject.goto_step`, `on_reject.comments_var` |
+| `cli` | `id`, `type=cli`, `command` | `pre_guards`, `post_guards`, `retry_safe` |
+| `agent` | `id`, `type=agent`, `mode=new-session\|slash-in-existing`, `prompt` | `pre_guards`, `post_guards`, `retry_safe` |
+| `guard` | `id`, `type=guard` + at least one of `cost`, `time`, `regex` | `retry_safe` |
+| `human` | `id`, `type=human`, `form_schema` (path to JSON schema with `schemaVersion`) | `on_reject.goto_step`, `on_reject.comments_var`, `retry_safe` |
+
+`retry_safe` (boolean, default `false`) is also accepted on graph `nodes[]`. It
+gates operator crash-recovery re-dispatch of a session-less node — a `Crashed`
+run whose recover target is session-less (`cli`/`check`/`judge`/`guard`/`human`)
+is redispatch-recoverable only when its config declares `retry_safe: true`;
+`ai_coding` ignores it (recovered via `--resume`). See
+[ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
+and [`flow-dsl.md`](flow-dsl.md).
 
 ### Node `settings` (typed, M11c)
 

@@ -187,6 +187,16 @@ Lifecycle sections:
 | `transitions` | Maps declared outcomes to declared node ids. |
 | `rework` | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
 
+**Top-level `retry_safe?` (boolean, default `false`).** A per-node opt-in
+(also accepted on linear `steps[]`) that gates operator crash-recovery
+re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`guard`/`human`).
+A `Crashed` run whose recover target is session-less is redispatch-recoverable
+only when its config declares `retry_safe: true` — re-running a session-less
+node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
+`retry_safe` (they recover via `--resume`, never a fresh re-run). See
+[ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
+and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
+
 **Node `settings` — Implemented (M11c subset).** The `settings` block is parsed
 into a typed, per-node-type discriminated shape and validated at compile time
 (the M11a opaque passthrough and the `SETTINGS_NOT_ENFORCED_WARN` no longer

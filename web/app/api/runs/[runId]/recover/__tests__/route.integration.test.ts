@@ -280,6 +280,7 @@ describe("POST /api/runs/[runId]/recover — state → HTTP mapping", () => {
     const res = await invoke(runId);
 
     expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONFLICT");
   }, 60_000);
 
   it("conflict → 409", async () => {
@@ -290,6 +291,7 @@ describe("POST /api/runs/[runId]/recover — state → HTTP mapping", () => {
     const res = await invoke(runId);
 
     expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONFLICT");
   }, 60_000);
 
   it("unresumable → 410", async () => {
@@ -300,6 +302,7 @@ describe("POST /api/runs/[runId]/recover — state → HTTP mapping", () => {
     const res = await invoke(runId);
 
     expect(res.status).toBe(410);
+    expect((await res.json()).code).toBe("CHECKPOINT");
   }, 60_000);
 
   it("transient → 503", async () => {
@@ -310,6 +313,7 @@ describe("POST /api/runs/[runId]/recover — state → HTTP mapping", () => {
     const res = await invoke(runId);
 
     expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
   }, 60_000);
 });
 

@@ -207,6 +207,28 @@ describe("runRevisionGcSweep (integration)", () => {
     expect(await exists(installedPath)).toBe(false);
   }, 60_000);
 
+  it("counts a cache-dir rm FAILURE as failed (row deleted, dir orphaned) for the cron 207 path", async () => {
+    const { revisionId, installedPath } = await seedRemovedRevision({
+      installedAt: pastAge(),
+    });
+
+    // Inject a failing rm so the filesystem cleanup throws AFTER the in-tx row
+    // delete commits. The revision is gone from the registry (`deleted`), but
+    // its cache dir leaks on disk (`failed`) — never swallowed (Codex finding #2).
+    const failingRm = async (): Promise<void> => {
+      throw new Error("EACCES: simulated cache rm failure");
+    };
+
+    const summary = await runRevisionGcSweep({ db, rm: failingRm });
+
+    expect(summary.deleted).toBeGreaterThanOrEqual(1);
+    expect(summary.failed).toBeGreaterThanOrEqual(1);
+    // DB row IS gone (the delete committed before the rm).
+    expect(await revisionExists(revisionId)).toBe(false);
+    // The dir is still on disk because the injected rm was a no-op throw.
+    expect(await exists(installedPath)).toBe(true);
+  }, 60_000);
+
   it("skips a Removed revision still referenced by runs.flow_revision_id", async () => {
     const { revisionId, installedPath } = await seedRemovedRevision({
       installedAt: pastAge(),

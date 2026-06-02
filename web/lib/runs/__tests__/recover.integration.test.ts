@@ -93,6 +93,15 @@ const MANIFEST = {
       id: "verify",
       type: "check",
       action: { command: "true" },
+      // M19: opt-in → a crashed `verify` is redispatch-recoverable.
+      retry_safe: true,
+      transitions: { success: "guarded" },
+    },
+    {
+      id: "guarded",
+      type: "check",
+      action: { command: "true" },
+      // No retry_safe → a crashed `guarded` is discard-only.
       transitions: { success: "done" },
     },
   ],
@@ -291,11 +300,11 @@ describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
   }, 60_000);
 });
 
-describe("resumeCrashedRun — redispatch (session-less gate node)", () => {
-  it("Crashed run on a check node → {state:'redispatched'}, runFlow called, NO createSession", async () => {
+describe("resumeCrashedRun — redispatch (session-less retry_safe node)", () => {
+  it("Crashed run on a retry_safe check node → {state:'redispatched'}, runFlow called WITH crashResume target, NO createSession", async () => {
     const runId = await seedRun({
       status: "Crashed",
-      currentStepId: "verify", // check node
+      currentStepId: "verify", // retry_safe check node
       acpSessionId: "acp-check",
     });
 
@@ -311,9 +320,35 @@ describe("resumeCrashedRun — redispatch (session-less gate node)", () => {
     });
 
     expect(result).toEqual({ state: "redispatched" });
-    expect(runFlow).toHaveBeenCalledWith(runId);
+    // The crash-resume signal carries the retained target so the runner resumes
+    // FROM that node (re-runs it once) rather than no-op'ing or restarting.
+    expect(runFlow).toHaveBeenCalledWith(runId, {
+      crashResume: { targetStepId: "verify" },
+    });
     expect(createSession).not.toHaveBeenCalled();
     expect((await readRun(runId)).status).toBe("Running");
+  }, 60_000);
+
+  it("Crashed run on a NON-retry_safe check node → {state:'discard-only'}, no flip, no runFlow", async () => {
+    const runId = await seedRun({
+      status: "Crashed",
+      currentStepId: "guarded", // check node WITHOUT retry_safe
+      acpSessionId: null,
+    });
+
+    const createSession = vi.fn(async () => sessionResult());
+    const runFlow = vi.fn(async () => {});
+
+    const result = await resumeCrashedRun(runId, {
+      db,
+      createSession,
+      runFlow,
+    });
+
+    expect(result).toEqual({ state: "discard-only" });
+    expect(runFlow).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+    expect((await readRun(runId)).status).toBe("Crashed");
   }, 60_000);
 });
 

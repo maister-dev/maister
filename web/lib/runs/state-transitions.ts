@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
@@ -491,11 +491,18 @@ export async function crashRunningRun(
 
   log.debug({ runId, reason }, "[state-transitions.crashRunningRun] entry");
 
+  // M19 crash-recover (ADR-034): retain the crashed node id in
+  // resume_target_step_id BEFORE nulling current_step_id, so Recover can resolve
+  // the node kind (agent → --resume; session-less + retry_safe → re-dispatch).
+  // current_step_id is still nulled for the clean-terminal reconcile read. The
+  // SET right-hand sides evaluate against the pre-update row, so
+  // resume_target_step_id captures the OLD current_step_id in one statement.
   const rows = await db
     .update(runs)
     .set({
       status: "Crashed",
       endedAt: new Date(),
+      resumeTargetStepId: sql`${runs.currentStepId}`,
       currentStepId: null,
       resumeStartedAt: null,
     })

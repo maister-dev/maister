@@ -17,9 +17,10 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
+import { classifyRecover } from "@/lib/runs/recover-classify";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
+import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
@@ -63,10 +64,11 @@ export interface RunDetail {
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
   takeoverOwnerUserId: string | null;
-  // M19: whether a Crashed run can be recovered via ACP `--resume`. True iff
-  // the run is `Crashed`, still holds an `acpSessionId` checkpoint handle, AND
-  // its current node is an agent node (`ai_coding`). DTO-projected boolean — the
-  // raw `acpSessionId` is NEVER surfaced to the client.
+  // M19: whether a Crashed run can be recovered by the operator. True iff the
+  // run is `Crashed` AND `classifyRecover` is not `discard-only` — i.e. an agent
+  // node with an `acpSessionId` (`--resume`) OR any session-less node
+  // (re-dispatch). Only an agent node with no `acpSessionId` is discard-only.
+  // DTO-projected boolean — the raw `acpSessionId` is NEVER surfaced.
   recoverable: boolean;
   // M19 Phase 5: GC TTL projection for terminal (Abandoned/Done) runs — drives
   // a removal-countdown surface on run-detail. DTO-only enums/booleans/Date.
@@ -77,18 +79,27 @@ export interface RunDetail {
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
-// `currentNodeKind` is resolved by the caller from the run's pinned manifest
-// (compiled via `compileManifest`); session-less gate/cli/human nodes are not
-// agent nodes and are therefore not `--resume`-recoverable.
+// `currentNodeKind` + `retrySafe` are resolved by the caller from the run's
+// pinned manifest for the RECOVER TARGET node (resume_target_step_id, retained
+// at crash time; current_step_id is nulled on a clean terminal crash).
+// Recoverability MUST mirror the backend driver: a Crashed run is recoverable
+// unless `classifyRecover` returns `discard-only` — an agent node with a session
+// (--resume) or a `retry_safe` session-less node (re-dispatch). A session-less
+// node that is NOT retry-safe, or an unresolvable target, is discard-only
+// (Codex M19c finding #1 + round-3 fix).
 export function isRunRecoverable(input: {
   status: string;
   acpSessionId: string | null;
   currentNodeKind: NodeAttemptType | null;
+  retrySafe: boolean;
 }): boolean {
   return (
     input.status === "Crashed" &&
-    input.acpSessionId !== null &&
-    input.currentNodeKind === "ai_coding"
+    classifyRecover(
+      { acpSessionId: input.acpSessionId },
+      input.currentNodeKind,
+      input.retrySafe,
+    ) !== "discard-only"
   );
 }
 
@@ -100,6 +111,7 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       projectId: runs.projectId,
       status: runs.status,
       currentStepId: runs.currentStepId,
+      resumeTargetStepId: runs.resumeTargetStepId,
       acpSessionId: runs.acpSessionId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
@@ -121,15 +133,23 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
 
   if (!row) return null;
 
-  const currentNodeKind = await resolveCurrentNodeKind(client, {
-    flowRevisionId: row.flowRevisionId,
-    flowId: row.flowId,
-    currentStepId: row.currentStepId,
-  });
+  // Recoverability classifies the RECOVER TARGET node: the retained
+  // resume_target_step_id (set at crash time), falling back to current_step_id
+  // for live/hand-seeded rows. resolveNodeRecoverInfo yields {nodeKind, retrySafe}.
+  const recoverTargetStepId = row.resumeTargetStepId ?? row.currentStepId;
+  const { nodeKind: recoverNodeKind, retrySafe } = await resolveNodeRecoverInfo(
+    client,
+    {
+      flowRevisionId: row.flowRevisionId,
+      flowId: row.flowId,
+      stepId: recoverTargetStepId,
+    },
+  );
   const recoverable = isRunRecoverable({
     status: row.status,
     acpSessionId: row.acpSessionId,
-    currentNodeKind,
+    currentNodeKind: recoverNodeKind,
+    retrySafe,
   });
   const ttl = deriveTtlInfo({
     status: row.status,

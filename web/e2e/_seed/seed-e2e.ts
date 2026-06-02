@@ -315,6 +315,7 @@ const M11C_REFUSE_MANIFEST = {
 
 const M19_SLUG = "e2e-m19";
 const M19_CRASHED_BRANCH = "maister/e2e-m19-crashed";
+const M19_NOT_RECOVERABLE_BRANCH = "maister/e2e-m19-not-recoverable";
 const M19_WARNING_BRANCH = "maister/e2e-m19-warning";
 const M19_DUE_BRANCH = "maister/e2e-m19-due";
 const M19_AGENT_NODE = "implement";
@@ -1176,6 +1177,8 @@ type M19FixtureRecord = {
   repoPath: string;
   crashedRunId: string;
   crashedBranch: string;
+  notRecoverableRunId: string;
+  notRecoverableBranch: string;
   warningRunId: string;
   warningBranch: string;
   dueRunId: string;
@@ -1195,6 +1198,10 @@ async function seedM19Fixture(
     crashedRun: randomUUID(),
     crashedWorkspace: randomUUID(),
     crashedAttempt: randomUUID(),
+    notRecoverableTask: randomUUID(),
+    notRecoverableRun: randomUUID(),
+    notRecoverableWorkspace: randomUUID(),
+    notRecoverableAttempt: randomUUID(),
     warningTask: randomUUID(),
     warningRun: randomUUID(),
     warningWorkspace: randomUUID(),
@@ -1262,8 +1269,11 @@ async function seedM19Fixture(
       ids.flow,
     ],
   );
+  // Realistic reconcile-crash shape: current_step_id is nulled, the node id is
+  // retained in resume_target_step_id (ADR-034). Recover resolves ai_coding +
+  // acp_session_id → resume-agent → recoverable.
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, acp_session_id, flow_version, started_at, ended_at)
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, resume_target_step_id, acp_session_id, flow_version, started_at, ended_at)
      VALUES ($1, $2, $3, $4, $5, 'Crashed', $6, 'acp-m19-crashed', 'v0.0.1', now(), now())`,
     [
       ids.crashedRun,
@@ -1288,6 +1298,52 @@ async function seedM19Fixture(
       ids.project,
       M19_CRASHED_BRANCH,
       `${repoPath}/.worktrees/m19-crashed`,
+      repoPath,
+    ],
+  );
+
+  // (1b) Non-recoverable Crashed flow run: an agent node with NO acp_session_id
+  // → resolves discard-only → recoverable:false. Recover is hidden, but Discard
+  // MUST still render so the run can enter the GC countdown (the F1 guard). Same
+  // realistic crash shape: current_step_id nulled, node retained in
+  // resume_target_step_id.
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.notRecoverableTask,
+      ids.project,
+      "E2E crashed not-recoverable",
+      "do the thing",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, resume_target_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, 'Crashed', $6, 'v0.0.1', now(), now())`,
+    [
+      ids.notRecoverableRun,
+      ids.notRecoverableTask,
+      ids.project,
+      ids.flow,
+      ids.executor,
+      M19_AGENT_NODE,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status)
+     VALUES ($1, $2, $3, 'ai_coding', 1, 'Crashed')`,
+    [ids.notRecoverableAttempt, ids.notRecoverableRun, M19_AGENT_NODE],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.notRecoverableWorkspace,
+      ids.notRecoverableRun,
+      ids.project,
+      M19_NOT_RECOVERABLE_BRANCH,
+      `${repoPath}/.worktrees/m19-not-recoverable`,
       repoPath,
     ],
   );
@@ -1362,6 +1418,8 @@ async function seedM19Fixture(
     repoPath,
     crashedRunId: ids.crashedRun,
     crashedBranch: M19_CRASHED_BRANCH,
+    notRecoverableRunId: ids.notRecoverableRun,
+    notRecoverableBranch: M19_NOT_RECOVERABLE_BRANCH,
     warningRunId: ids.warningRun,
     warningBranch: M19_WARNING_BRANCH,
     dueRunId: ids.dueRun,

@@ -35,6 +35,12 @@ export type RunFlowOptions = {
   db?: Db;
   runtimeRoot?: string;
   supervisorApi?: SupervisorApi;
+  // M19 crash-recover (ADR-034): set by driveResume when re-dispatching a
+  // crashed `retry_safe` session-less node. The runner resumes FROM
+  // `targetStepId` (re-runs that node once) under a single-winner claim that
+  // CAS-clears `resume_started_at`, instead of no-op'ing (graph) or restarting
+  // from step 0 (linear).
+  crashResume?: { targetStepId: string };
 };
 
 export type LoadedRun = {

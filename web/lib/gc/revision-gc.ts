@@ -29,7 +29,17 @@ export interface RevisionGcSummary {
   scanned: number;
   deleted: number;
   skippedReferenced: number;
+  // Cache-dir removals that FAILED after the DB row was already deleted — the
+  // revision is gone from the registry but its `installedPath` is orphaned on
+  // disk. A partial failure the cron route surfaces as 207 (Codex M19c finding
+  // #2); silently swallowing it would let a monitor read 200 while disk leaks.
+  failed: number;
 }
+
+type RmDir = (
+  path: string,
+  options: { recursive: boolean; force: boolean },
+) => Promise<void>;
 
 type CandidateRow = {
   id: string;
@@ -63,10 +73,11 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
 // AND zero flows.enabled_revision_id refs). Clear → DELETE the row in-tx, then
 // rm the installedPath dir after commit. Still referenced → skip.
 export async function runRevisionGcSweep(
-  opts: { db?: Db; now?: () => Date } = {},
+  opts: { db?: Db; now?: () => Date; rm?: RmDir } = {},
 ): Promise<RevisionGcSummary> {
   const db = opts.db ?? getDb();
   const now = opts.now ?? (() => new Date());
+  const rmDir: RmDir = opts.rm ?? rm;
 
   const candidates = await loadCandidates(db, now());
 
@@ -74,6 +85,7 @@ export async function runRevisionGcSweep(
 
   let deleted = 0;
   let skippedReferenced = 0;
+  let failed = 0;
 
   for (const cand of candidates) {
     const removable: boolean = await db.transaction(async (tx: Db) => {
@@ -114,29 +126,36 @@ export async function runRevisionGcSweep(
       continue;
     }
 
-    await rm(cand.installedPath, { recursive: true, force: true }).catch(
-      (err) =>
-        log.warn(
-          {
-            revisionId: cand.id,
-            installedPath: cand.installedPath,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "revision GC: cache rm failed (row already deleted)",
-        ),
-    );
-
+    // The DB row is already deleted (committed in-tx), so the revision IS gone
+    // from the registry → `deleted++` regardless. A cache-dir rm failure is a
+    // SEPARATE axis (`failed++`) surfaced to the cron 207 path — never swallow
+    // it, or a monitor reads 200 while the dir leaks on disk.
     deleted += 1;
-    log.info(
-      { revisionId: cand.id, installedPath: cand.installedPath },
-      "revision GC: deleted",
-    );
+
+    try {
+      await rmDir(cand.installedPath, { recursive: true, force: true });
+      log.info(
+        { revisionId: cand.id, installedPath: cand.installedPath },
+        "revision GC: deleted",
+      );
+    } catch (err) {
+      failed += 1;
+      log.warn(
+        {
+          revisionId: cand.id,
+          installedPath: cand.installedPath,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "revision GC: cache rm failed (row already deleted, dir orphaned)",
+      );
+    }
   }
 
   const summary: RevisionGcSummary = {
     scanned: candidates.length,
     deleted,
     skippedReferenced,
+    failed,
   };
 
   log.info(summary, "revision GC sweep complete");

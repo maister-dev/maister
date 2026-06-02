@@ -144,21 +144,25 @@ export default async function RunDetailPage({
           <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-red-500 before:content-['']">
             {t("crashTitle")}
           </h2>
-          <p className="mb-4 text-[13px] leading-[1.4] text-body">
-            {detail.recoverable
-              ? t("crashRecoverableHint")
-              : t("notRecoverable")}
-          </p>
           {detail.recoverable ? (
-            <RunRecoverActions runId={detail.runId} />
+            <p className="mb-4 text-[13px] leading-[1.4] text-body">
+              {t("crashRecoverableHint")}
+            </p>
           ) : (
             <p
-              className="font-mono text-[12px] text-mute"
+              className="mb-4 text-[13px] leading-[1.4] text-body"
               data-testid="run-not-recoverable"
             >
               {t("notRecoverable")}
             </p>
           )}
+          {/* Discard is available for EVERY Crashed run (it is the only path
+              into the GC countdown); Recover is hidden when there is no
+              resumable session. */}
+          <RunRecoverActions
+            canRecover={detail.recoverable}
+            runId={detail.runId}
+          />
         </section>
       ) : null}
 

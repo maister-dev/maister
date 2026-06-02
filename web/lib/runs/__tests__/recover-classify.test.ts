@@ -1,20 +1,21 @@
-// M19 Phase 3 (T3.1): pure classifier `classifyRecover` in
-// `web/lib/runs/recover.ts`. The recovery-plan analogue of
-// `classifyRunReconcile` — decides how an operator-driven Recover treats a
-// Crashed run based on the run's acpSessionId and its current node kind.
+// M19 crash-recover (ADR-034): pure classifier `classifyRecover` in
+// `web/lib/runs/recover-classify.ts`. Decides how an operator-driven Recover
+// treats a Crashed run from the run's acpSessionId, its current node kind, and
+// the node's `retry_safe` opt-in.
 //
-// Contract (plan T3.1):
-//   - ai_coding + acpSessionId present  -> "resume-agent"
-//   - ai_coding + acpSessionId null     -> "discard-only"
-//   - any other node kind (cli/check/judge/guard/human/null) -> "redispatch"
+// Contract (Codex round-3 fix):
+//   - ai_coding + acpSessionId present       -> "resume-agent"
+//   - ai_coding + acpSessionId null          -> "discard-only"
+//   - session-less + retry_safe=true         -> "redispatch"
+//   - session-less + retry_safe=false / null -> "discard-only"
 //
 // PURE: no clock/db access; the run shape is a plain object literal.
 
-import type { RecoverPlan } from "@/lib/runs/recover";
+import type { RecoverPlan } from "@/lib/runs/recover-classify";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyRecover } from "@/lib/runs/recover";
+import { classifyRecover } from "@/lib/runs/recover-classify";
 
 type NodeKind =
   | "ai_coding"
@@ -25,22 +26,25 @@ type NodeKind =
   | "human"
   | null;
 
-describe("classifyRecover — agent node", () => {
+describe("classifyRecover — agent node (ignores retry_safe)", () => {
   it("ai_coding + acpSessionId present → resume-agent", () => {
     expect(
-      classifyRecover({ acpSessionId: "acp-1" }, "ai_coding"),
+      classifyRecover({ acpSessionId: "acp-1" }, "ai_coding", false),
+    ).toBe<RecoverPlan>("resume-agent");
+    expect(
+      classifyRecover({ acpSessionId: "acp-1" }, "ai_coding", true),
     ).toBe<RecoverPlan>("resume-agent");
   });
 
   it("ai_coding + acpSessionId null → discard-only", () => {
     expect(
-      classifyRecover({ acpSessionId: null }, "ai_coding"),
+      classifyRecover({ acpSessionId: null }, "ai_coding", true),
     ).toBe<RecoverPlan>("discard-only");
   });
 });
 
-describe("classifyRecover — non-agent node → redispatch", () => {
-  const REDISPATCH_KINDS: Array<Exclude<NodeKind, "ai_coding">> = [
+describe("classifyRecover — session-less node gated on retry_safe", () => {
+  const SESSION_LESS: Array<Exclude<NodeKind, "ai_coding">> = [
     "cli",
     "check",
     "judge",
@@ -49,16 +53,23 @@ describe("classifyRecover — non-agent node → redispatch", () => {
     null,
   ];
 
-  for (const kind of REDISPATCH_KINDS) {
-    it(`${String(kind)} node → redispatch (regardless of acpSessionId presence)`, () => {
-      // A session-less gate node is re-dispatched via runFlow; the acpSessionId
-      // (if any) is irrelevant to a non-agent node's recovery plan.
+  for (const kind of SESSION_LESS) {
+    it(`${String(kind)} + retry_safe=true → redispatch (acpSessionId irrelevant)`, () => {
       expect(
-        classifyRecover({ acpSessionId: "acp-1" }, kind),
+        classifyRecover({ acpSessionId: "acp-1" }, kind, true),
       ).toBe<RecoverPlan>("redispatch");
-      expect(classifyRecover({ acpSessionId: null }, kind)).toBe<RecoverPlan>(
-        "redispatch",
-      );
+      expect(
+        classifyRecover({ acpSessionId: null }, kind, true),
+      ).toBe<RecoverPlan>("redispatch");
+    });
+
+    it(`${String(kind)} + retry_safe=false → discard-only (re-run unsafe)`, () => {
+      expect(
+        classifyRecover({ acpSessionId: "acp-1" }, kind, false),
+      ).toBe<RecoverPlan>("discard-only");
+      expect(
+        classifyRecover({ acpSessionId: null }, kind, false),
+      ).toBe<RecoverPlan>("discard-only");
     });
   }
 });

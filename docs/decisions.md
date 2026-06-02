@@ -1633,6 +1633,36 @@ is the url-param (trusted via route shape + RBAC); `projectId` is server-state
   agent edits. Rejected — Discard enters the GC countdown; preserve-then-prune
   is one unified lifecycle.
 
+**Amendment (2026-06-02).** The shipped classifier is
+`classifyRecover(run, nodeKind, retrySafe) → 'resume-agent' | 'redispatch' |
+'discard-only'`, gated on a new per-node manifest opt-in and a new retained
+target column:
+
+- **`retry_safe` opt-in.** A per-node boolean (`flow.yaml` `nodes[]` AND linear
+  `steps[]`, default `false`) gates the session-less `redispatch` plan. A
+  crashed session-less node (`cli`/`check`/`judge`/`guard`/`human`) is
+  redispatch-recoverable **only** when its config declares `retry_safe: true` —
+  re-running a session-less node repeats its side effects (accepted-risk),
+  so the opt-in is explicit. This is the manifest opt-in foreshadowed in
+  `system-analytics/reconciliation-gc.md`. `ai_coding` ignores `retry_safe`
+  (it is always recovered via `--resume`, never re-run from scratch).
+- **`runs.resume_target_step_id` retention (migration 0016, nullable text).**
+  `crashRunningRun` copies `current_step_id → resume_target_step_id` and nulls
+  `current_step_id` (the clean-terminal read of §ADR-033 is preserved). Recover
+  resolves the node kind + `retry_safe` from `resume_target_step_id` (falling
+  back to `current_step_id` for live/hand-seeded rows). Without this column a
+  reconcile-crashed run had no node to resume to — this fixes recovery for BOTH
+  agent and session-less crashed runs.
+- **Runner crash-resume mode.** `driveResume` flips `Crashed → Running` and
+  calls `runFlow(runId, { crashResume: { targetStepId } })`. The graph runner
+  (`runGraph`) and the linear runner (`runFlow`) treat this as a resume FROM the
+  target node — re-running it once as a fresh attempt — instead of (graph)
+  no-op'ing on the already-owned guard or (linear) restarting from step 0. This
+  is a **third** resume mode alongside NeedsInput-resume and takeover-resume. The
+  claim is single-winner via a CAS-clear of the in-flight marker
+  (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND resume_started_at
+  IS NOT NULL`): the winner drives, the loser bails.
+
 ---
 
 ### ADR-035: Graceful workspace GC (preserve-then-prune)
