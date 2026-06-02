@@ -199,6 +199,7 @@ async function register(
   // Phase (a): load + validate maister.yaml. On failure → CONFIG (422),
   // NO db row written.
   const config = await loadProjectConfig(maisterYamlPath);
+  const flowRoles = config.flow_roles ?? [];
   const platformMcps = await loadPlatformMcpCapabilities(
     await resolvePlatformMcpRegistryPath(),
   );
@@ -266,7 +267,7 @@ async function register(
 
       await syncProjectFlowRolesFromConfig({
         projectId,
-        roles: config.flow_roles,
+        roles: flowRoles,
         db: tx,
       });
 
@@ -300,9 +301,7 @@ async function register(
     "register project rows persisted, installing flows",
   );
   const configuredRoleRefs =
-    config.flow_roles.length > 0
-      ? config.flow_roles.map((role) => role.ref)
-      : undefined;
+    flowRoles.length > 0 ? flowRoles.map((role) => role.ref) : undefined;
 
   // Phase (d): flow-install side-effects (clone + symlink + flows row), which
   // cannot live inside a DB transaction. On any failure, fully compensate so
