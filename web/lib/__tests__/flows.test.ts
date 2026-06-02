@@ -146,3 +146,91 @@ describe("isLocalDirectorySource", () => {
     expect(await isLocalDirectorySource(dir)).toEqual({ kind: "git" });
   });
 });
+
+describe("installFlowPlugin — project role validation", () => {
+  let workDir: string;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(join(tmpdir(), "flow-install-role-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  it("rejects a package that references a role outside the project registry", async () => {
+    const pluginDir = join(workDir, "plugin");
+
+    await mkdir(pluginDir);
+    await writeFile(
+      join(pluginDir, "flow.yaml"),
+      `
+schemaVersion: 1
+name: Role guarded flow
+compat:
+  engine_min: "1.1.0"
+nodes:
+  - id: review
+    type: human
+    finish:
+      human:
+        role: reviewer
+        decisions: [approve]
+    transitions:
+      approve: done
+`,
+      "utf8",
+    );
+
+    try {
+      await installFlowPlugin({
+        ...baseArgs,
+        source: pluginDir,
+        roleRefs: ["qa"],
+        db: {},
+      });
+      throw new Error("expected installFlowPlugin to throw, but it resolved");
+    } catch (err) {
+      if (!isMaisterError(err)) throw err;
+      expect(["CONFIG", "FLOW_INSTALL"]).toContain(err.code);
+      expect(err.message).toMatch(/unknown .*role "reviewer"/i);
+    }
+  });
+
+  it("keeps legacy packages compatible when no project role registry is supplied", async () => {
+    const pluginDir = join(workDir, "legacy-plugin");
+
+    await mkdir(pluginDir);
+    await writeFile(
+      join(pluginDir, "flow.yaml"),
+      `
+schemaVersion: 1
+name: Legacy role flow
+compat:
+  engine_min: "1.1.0"
+nodes:
+  - id: review
+    type: human
+    finish:
+      human:
+        role: reviewer
+        decisions: [approve]
+    transitions:
+      approve: done
+`,
+      "utf8",
+    );
+
+    await expect(
+      installFlowPlugin({
+        ...baseArgs,
+        source: pluginDir,
+        db: {
+          insert: () => {
+            throw new Error("db reached after manifest validation");
+          },
+        },
+      }),
+    ).rejects.toThrow(/db reached after manifest validation/);
+  });
+});

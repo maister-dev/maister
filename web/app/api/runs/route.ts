@@ -5,7 +5,7 @@ import type { AiCodingSettings, FlowYamlV1 } from "@/lib/config.schema";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -32,7 +32,16 @@ import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import { addWorktree, removeWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, flowRevisions, flows, projects, runs, tasks, workspaces } =
+const {
+  executors,
+  flowRevisions,
+  flows,
+  projectFlowRoles,
+  projects,
+  runs,
+  tasks,
+  workspaces,
+} =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -52,6 +61,40 @@ const LAUNCHABLE_ENABLEMENT_STATES = new Set<string>([
   "Enabled",
   "UpdateAvailable",
 ]);
+
+function assertCompiledFlowRolesLaunchable(args: {
+  compiled: ReturnType<typeof compileManifest>;
+  activeRoleRefs: ReadonlySet<string>;
+  flowRefId: string;
+  projectSlug: string;
+}): void {
+  for (const node of args.compiled.nodes.values()) {
+    const finishRole = node.finishHuman?.role;
+
+    if (
+      finishRole !== undefined &&
+      !args.activeRoleRefs.has(finishRole)
+    ) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow "${args.flowRefId}" node "${node.id}" finish.human.role references unknown active Flow role "${finishRole}" for project ${args.projectSlug}`,
+      );
+    }
+
+    if (node.source.kind !== "node" || node.source.node.type !== "human") {
+      continue;
+    }
+
+    for (const role of node.source.node.settings?.roles ?? []) {
+      if (args.activeRoleRefs.has(role)) continue;
+
+      throw new MaisterError(
+        "CONFIG",
+        `flow "${args.flowRefId}" node "${node.id}" settings.roles references unknown active Flow role "${role}" for project ${args.projectSlug}`,
+      );
+    }
+  }
+}
 
 function errorResponse(err: unknown): NextResponse {
   if (isMaisterError(err)) {
@@ -308,8 +351,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const executorRefIds = new Set<string>(
         projectExecutorRows.map((r: { refId: string }) => r.refId),
       );
+      const projectRoleRows = await db
+        .select({ ref: projectFlowRoles.roleRef })
+        .from(projectFlowRoles)
+        .where(
+          and(
+            eq(projectFlowRoles.projectId, project.id),
+            isNull(projectFlowRoles.archivedAt),
+          ),
+        );
+      const activeFlowRoleRefs = new Set<string>(
+        projectRoleRows.map((r: { ref: string }) => r.ref),
+      );
 
       const compiled = compileManifest(revision.manifest as FlowYamlV1);
+      assertCompiledFlowRolesLaunchable({
+        compiled,
+        activeRoleRefs: activeFlowRoleRefs,
+        flowRefId: flow.flowRefId,
+        projectSlug: project.slug,
+      });
+
       let configuredNodes = 0;
 
       for (const node of compiled.nodes.values()) {
@@ -353,6 +415,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           agent: executor.agent,
           capabilityNodes: configuredNodes,
           projectExecutors: executorRefIds.size,
+          projectFlowRoles: activeFlowRoleRefs.size,
         },
         "POST /api/runs settings-enforcement gate passed",
       );

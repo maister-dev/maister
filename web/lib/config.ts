@@ -140,8 +140,26 @@ export async function loadProjectConfig(
   }
 
   validateCapabilityIds(cfg, maisterYamlPath);
+  validateFlowRoleRefs(cfg, maisterYamlPath);
 
   return cfg;
+}
+
+function validateFlowRoleRefs(
+  cfg: MaisterYamlV2,
+  maisterYamlPath: string,
+): void {
+  const seen = new Set<string>();
+
+  for (const role of cfg.flow_roles) {
+    if (seen.has(role.ref)) {
+      throw new MaisterError(
+        "CONFIG",
+        `Duplicate flow role ref "${role.ref}" in ${maisterYamlPath}`,
+      );
+    }
+    seen.add(role.ref);
+  }
 }
 
 function validateCapabilityIds(
@@ -252,7 +270,10 @@ export async function loadPlatformMcpCapabilities(
 
 export async function loadFlowManifest(
   flowYamlPath: string,
-  opts?: { executorIds?: readonly string[] | ReadonlySet<string> },
+  opts?: {
+    executorIds?: readonly string[] | ReadonlySet<string>;
+    roleRefs?: readonly string[] | ReadonlySet<string>;
+  },
 ): Promise<FlowYamlV1> {
   let raw: string;
 
@@ -471,7 +492,10 @@ function validateGraphManifest(
   manifest: FlowYamlV1,
   nodes: NodeDef[],
   flowYamlPath: string,
-  opts?: { executorIds?: readonly string[] | ReadonlySet<string> },
+  opts?: {
+    executorIds?: readonly string[] | ReadonlySet<string>;
+    roleRefs?: readonly string[] | ReadonlySet<string>;
+  },
 ): void {
   // Graph flows must declare a sufficient engine_min.
   if (!declaresGraphCapableEngineMin(manifest.compat?.engine_min)) {
@@ -525,6 +549,12 @@ function validateGraphManifest(
       : opts.executorIds instanceof Set
         ? opts.executorIds
         : new Set(opts.executorIds);
+  const roleRefs =
+    opts?.roleRefs === undefined
+      ? undefined
+      : opts.roleRefs instanceof Set
+        ? opts.roleRefs
+        : new Set(opts.roleRefs);
 
   const gateIds = new Set<string>();
   let settingsNodeCount = 0;
@@ -537,9 +567,17 @@ function validateGraphManifest(
   }
 
   for (const n of nodes) {
+    validateNodeRoleRefs(n, flowYamlPath, roleRefs);
+
     if (n.settings) {
       settingsNodeCount += 1;
-      validateNodeSettings(n, flowYamlPath, executorIds, enforcementTally);
+      validateNodeSettings(
+        n,
+        flowYamlPath,
+        executorIds,
+        roleRefs,
+        enforcementTally,
+      );
     }
 
     for (const g of n.pre_finish?.gates ?? []) {
@@ -765,6 +803,7 @@ function validateNodeSettings(
   n: NodeDef,
   flowYamlPath: string,
   executorIds: ReadonlySet<string> | undefined,
+  roleRefs: ReadonlySet<string> | undefined,
   enforcementTally: Record<string, number>,
 ): void {
   if (executorIds && n.type === "ai_coding") {
@@ -790,6 +829,8 @@ function validateNodeSettings(
         );
       }
     }
+
+    validateSettingsRoleRefs(n, flowYamlPath, roleRefs);
   }
 
   if (
@@ -797,6 +838,41 @@ function validateNodeSettings(
     n.settings?.enforcement
   ) {
     enforcementTally[n.id] = Object.keys(n.settings.enforcement).length;
+  }
+}
+
+function validateNodeRoleRefs(
+  n: NodeDef,
+  flowYamlPath: string,
+  roleRefs: ReadonlySet<string> | undefined,
+): void {
+  const role = n.finish?.human?.role;
+
+  if (roleRefs === undefined || role === undefined || roleRefs.has(role)) {
+    return;
+  }
+
+  throw new MaisterError(
+    "CONFIG",
+    `node "${n.id}" finish.human.role references unknown Flow role "${role}" in ${flowYamlPath}`,
+  );
+}
+
+function validateSettingsRoleRefs(
+  n: NodeDef,
+  flowYamlPath: string,
+  roleRefs: ReadonlySet<string> | undefined,
+): void {
+  if (n.type !== "human") return;
+  if (roleRefs === undefined) return;
+
+  for (const role of n.settings?.roles ?? []) {
+    if (roleRefs.has(role)) continue;
+
+    throw new MaisterError(
+      "CONFIG",
+      `node "${n.id}" settings.roles references unknown Flow role "${role}" in ${flowYamlPath}`,
+    );
   }
 }
 

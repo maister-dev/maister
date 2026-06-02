@@ -3,6 +3,14 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  claimAssignment,
+  completeAssignment,
+  createAssignment,
+  ensureUserActor,
+  findActiveAssignmentForRun,
+  takeOverAssignment,
+} from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -140,24 +148,91 @@ export async function POST(
     // (23505) — a non-MaisterError → 500. With the CAS first, the loser's CAS
     // returns {ok:false} → deterministic 409 CONFLICT and it never reaches the
     // unique-violating INSERT.
-    const claimed: { ok: boolean } = await db.transaction(async (tx: Db) => {
-      const cas = await markHumanWorking(runId, user.id, { db: tx });
+    const claimed: { ok: boolean; assignmentId: string | null } =
+      await db.transaction(async (tx: Db) => {
+        const cas = await markHumanWorking(runId, user.id, { db: tx });
 
-      if (!cas.ok) {
-        // Lost the CAS to a concurrent claim → abort with 409 CONFLICT.
-        throw new MaisterError(
-          "CONFLICT",
-          `concurrent takeover claim won the CAS for run ${runId}`,
-        );
-      }
+        if (!cas.ok) {
+          // Lost the CAS to a concurrent claim → abort with 409 CONFLICT.
+          throw new MaisterError(
+            "CONFLICT",
+            `concurrent takeover claim won the CAS for run ${runId}`,
+          );
+        }
 
-      await claimTakeover({ runId, nodeId, userId: user.id, db: tx });
+        const actor = await ensureUserActor({
+          db: tx,
+          projectId: run.projectId,
+          userId: user.id,
+          label: user.name ?? user.email ?? user.id,
+        });
+        const reviewAssignment = await findActiveAssignmentForRun({
+          db: tx,
+          runId,
+          actionKinds: ["human_review"],
+        });
 
-      return { ok: true };
-    });
+        if (reviewAssignment) {
+          if (reviewAssignment.status === "open") {
+            await claimAssignment({
+              db: tx,
+              assignmentId: reviewAssignment.id,
+              actorId: actor.id,
+            });
+          } else if (reviewAssignment.assigneeActorId !== actor.id) {
+            await takeOverAssignment({
+              db: tx,
+              assignmentId: reviewAssignment.id,
+              actorId: actor.id,
+              reason: "manual takeover claim",
+            });
+          }
+
+          await completeAssignment({
+            db: tx,
+            assignmentId: reviewAssignment.id,
+            actorId: actor.id,
+            eventKind: "completed",
+            payload: { action: "manual_takeover_claim", nodeId },
+          });
+        }
+
+        const takeover = await claimTakeover({
+          runId,
+          nodeId,
+          userId: user.id,
+          db: tx,
+        });
+        const manualAssignment = await createAssignment({
+          db: tx,
+          projectId: run.projectId,
+          runId,
+          taskId: run.taskId ?? null,
+          nodeId,
+          nodeAttemptId: takeover.id,
+          actionKind: "manual_takeover",
+          title: `Manual takeover for ${nodeId}`,
+          createdByActorId: actor.id,
+          branch: loaded.workspace.branch,
+        });
+
+        await claimAssignment({
+          db: tx,
+          assignmentId: manualAssignment.id,
+          actorId: actor.id,
+        });
+
+        return { ok: true, assignmentId: manualAssignment.id };
+      });
 
     log.info(
-      { runId, nodeId, ownerUserId: user.id, claimed: claimed.ok },
+      {
+        runId,
+        nodeId,
+        ownerUserId: user.id,
+        assignmentId: claimed.assignmentId,
+        claimed: claimed.ok,
+      },
       "takeover claimed",
     );
 

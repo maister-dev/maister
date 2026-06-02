@@ -11,6 +11,9 @@ domain projects state onto it.
 
 - **Run** — `runs` row. FK to `tasks`, `projects`, `flows`,
   `executors`.
+- **Assignment** — M13 ownership row for pending human-visible work. It points
+  at a run for inbox/read-model purposes but does not add run statuses and does
+  not participate in scheduler caps.
 - **ACP session id** — opaque resume handle (`runs.acp_session_id`).
   Lifecycle described in [`../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume`](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume).
 - **Workspace** — git worktree under

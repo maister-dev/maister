@@ -32,6 +32,7 @@ import { runGraph } from "./graph/runner-graph";
 import { recordDefaultArtifacts } from "./graph/default-artifacts";
 import { getArtifactsForRun } from "./graph/artifact-store";
 
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   isMaisterError,
@@ -580,12 +581,22 @@ export async function runFlow(
       .update(runs)
       .set({ status: "Crashed", endedAt, currentStepId: null })
       .where(eq(runs.id, runId));
+    await systemCloseActiveAssignmentsForRun({
+      db,
+      runId,
+      reason: "linear flow crashed",
+    });
     log2.error({ runErrorCode }, "runFlow ended Crashed");
   } else if (failed) {
     await db
       .update(runs)
       .set({ status: "Failed", endedAt, currentStepId: null })
       .where(eq(runs.id, runId));
+    await systemCloseActiveAssignmentsForRun({
+      db,
+      runId,
+      reason: "linear flow failed",
+    });
     log2.warn({ runErrorCode }, "runFlow ended Failed");
   } else {
     await db

@@ -12,6 +12,7 @@ import pino from "pino";
 
 import * as schemaModule from "./schema";
 
+import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { upsertExecutorsFromConfig } from "@/lib/executors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
@@ -106,6 +107,7 @@ async function main() {
         settings: [],
         tools: [],
       },
+      flow_roles: [{ ref: "maintainer", label: "Maintainer" }],
       flows: [
         {
           id: "bugfix",
@@ -152,6 +154,20 @@ async function main() {
     log.info(
       { table: "projects", id: projectId, defaultExecutorId },
       "updated default_executor_id",
+    );
+
+    await syncProjectFlowRolesFromConfig({
+      db,
+      projectId,
+      roles: seedConfig.flow_roles,
+    });
+    log.info(
+      {
+        table: "project_flow_roles",
+        projectId,
+        roleCount: seedConfig.flow_roles.length,
+      },
+      "synced flow roles",
     );
 
     await db.insert(projectMembers).values({

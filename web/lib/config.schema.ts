@@ -15,6 +15,15 @@ export const flowEntrySchema = z.object({
   executor_override: z.string().min(1).optional(),
 });
 
+export const flowRoleSchema = z.object({
+  ref: z
+    .string()
+    .min(1)
+    .regex(/^[A-Za-z0-9._-]+$/, "role ref must match /^[A-Za-z0-9._-]+$/"),
+  label: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+});
+
 export const capabilityAgentSchema = z.enum(["claude", "codex"]);
 
 export const capabilitySourceSchema = z.enum([
@@ -132,6 +141,7 @@ export const maisterYamlV2Schema = z.object({
   executors: z.array(executorSchema).min(1),
   default_executor: z.string().min(1),
   capabilities: maisterCapabilitiesSchema,
+  flow_roles: z.array(flowRoleSchema).default([]),
   flows: z.array(flowEntrySchema),
 });
 

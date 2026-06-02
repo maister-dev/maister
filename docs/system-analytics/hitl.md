@@ -11,6 +11,9 @@ artifact protocol used when the worker is checkpointed.
 ## Domain entities
 
 - **HITL request** — `hitl_requests` row. FK to `runs`.
+- **Assignment** — M13 `assignments` row linked by `hitl_request_id`; this is
+  the inbox and ownership primitive for open HITL work. `hitl_requests` still
+  owns the payload and `responded_at` marker.
 - **Kind** — `'permission' | 'form' | 'human'`:
   - `permission` — binary approve/deny via ACP
     `session/request_permission`.
@@ -80,13 +83,16 @@ sequenceDiagram
     A-->>SV: ACP requestPermission
     SV-->>R: SSE session.permission_request
     R->>DB: INSERT hitl_requests {kind=permission, schema.options}
+    R->>DB: INSERT assignments {actionKind=permission}
     R->>DB: UPDATE runs SET status=NeedsInput
     W-->>U: UI renders approve/deny prompt
     U->>W: POST /api/runs/{runId}/hitl/{hitlRequestId}/respond {optionId}
     W->>DB: Phase 1: claim row, store response {optionId}
+    W->>DB: Claim linked assignment for actor
     W->>SV: Phase 2: POST /sessions/{sessionId}/input {action=select, optionId}
     SV->>A: ACP response {outcome=selected, optionId}
     W->>DB: Phase 3: set responded_at
+    W->>DB: Complete assignment after delivery
     A-->>SV: continues and emits session.update
     SV-->>R: session.update
     R->>DB: transition NeedsInput -> Running
@@ -258,6 +264,9 @@ fields:
 - Every HITL request is persisted as a `hitl_requests` row before the
   run transitions to `NeedsInput`; UI never derives HITL state from
   supervisor in-memory state.
+- Every new permission/form/human wait creates an open M13 assignment; legacy
+  HITL rows without assignments remain readable as compatibility data, but new
+  inbox ownership/counts prefer assignments.
 - **(Implemented)** A run in `NeedsInput` extends `keepalive_until` by
   `MAISTER_KEEPALIVE_MINUTES` (default 30) on operator activity through
   `POST /api/runs/[id]/activity`.

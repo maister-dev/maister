@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireActiveSession } from "@/lib/authz";
 import {
+  actorIdentities as actorIdentitiesTable,
+  assignmentEvents as assignmentEventsTable,
+  assignments as assignmentsTable,
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
   runs as runsTable,
@@ -21,13 +24,24 @@ type Tables = {
   hitl_requests: Row[];
   projects: Row[];
   scratch_runs: Row[];
+  assignments: Row[];
+  actor_identities: Row[];
+  assignment_events: Row[];
 };
 
 const dbState: {
   tables: Tables;
   updates: Array<{ table: string; set: Row }>;
 } = {
-  tables: { runs: [], hitl_requests: [], projects: [], scratch_runs: [] },
+  tables: {
+    runs: [],
+    hitl_requests: [],
+    projects: [],
+    scratch_runs: [],
+    assignments: [],
+    actor_identities: [],
+    assignment_events: [],
+  },
   updates: [],
 };
 
@@ -36,6 +50,9 @@ function tableOf(t: unknown): keyof Tables {
   if (t === hitlRequestsTable) return "hitl_requests";
   if (t === projectsTable) return "projects";
   if (t === scratchRunsTable) return "scratch_runs";
+  if (t === assignmentsTable) return "assignments";
+  if (t === actorIdentitiesTable) return "actor_identities";
+  if (t === assignmentEventsTable) return "assignment_events";
   throw new Error("unknown table");
 }
 
@@ -64,20 +81,65 @@ const updateChain = (table: unknown) => {
 
   return {
     set: (vals: Row) => ({
-      where: async () => {
+      where: () => {
         dbState.updates.push({ table: name, set: vals });
-        for (const r of dbState.tables[name]) Object.assign(r, vals);
+        const updated = dbState.tables[name].map((r) => {
+          Object.assign(r, vals);
+
+          return r;
+        });
+        const result: any = Promise.resolve(updated);
+
+        result.returning = async () => updated;
+
+        return result;
       },
     }),
   };
 };
 
+const insertChain = (table: unknown) => {
+  const name = tableOf(table);
+  let inserted: Row | null = null;
+
+  return {
+    values: (row: Row) => {
+      inserted = { ...row };
+
+      if (name === "actor_identities") {
+        const existing = dbState.tables.actor_identities.find(
+          (actor) =>
+            actor.projectId === row.projectId && actor.userId === row.userId,
+        );
+
+        if (existing) {
+          Object.assign(existing, row);
+          inserted = existing;
+        } else {
+          dbState.tables.actor_identities.push(inserted);
+        }
+      } else {
+        dbState.tables[name].push(inserted);
+      }
+
+      const chain: any = Promise.resolve(undefined);
+
+      chain.onConflictDoUpdate = () => chain;
+      chain.returning = async () => (inserted ? [inserted] : []);
+
+      return chain;
+    },
+  };
+};
+
 const fakeDb = {
+  insert: insertChain,
   select: (cols?: Row) => selectChain(cols),
   update: updateChain,
 
   transaction: async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
     return await fn({
+      insert: insertChain,
       select: (cols?: Row) => selectChain(cols),
       update: updateChain,
     });
@@ -145,6 +207,9 @@ beforeEach(async () => {
     hitl_requests: [],
     projects: [],
     scratch_runs: [],
+    assignments: [],
+    actor_identities: [],
+    assignment_events: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();
@@ -208,6 +273,31 @@ function seedPermissionRow(
   });
 
   return { runId, hitlRequestId };
+}
+
+function seedAssignment(hitlRequestId: string, runId: string): string {
+  const assignmentId = `assignment-${hitlRequestId}`;
+
+  dbState.tables.assignments.push({
+    id: assignmentId,
+    projectId: "proj-1",
+    runId,
+    taskId: null,
+    nodeId: null,
+    stepId: "plan",
+    hitlRequestId,
+    actionKind: "permission",
+    status: "open",
+    roleRefs: ["security_reviewer"],
+    title: "Review permission",
+    assigneeActorId: null,
+    claimedAt: null,
+    completedByActorId: null,
+    completedAt: null,
+    createdByActorId: null,
+  });
+
+  return assignmentId;
 }
 
 function seedFormRow(
@@ -276,6 +366,53 @@ describe("HITL respond route — kind=permission", () => {
 
     expect(hitl.response).toEqual({ optionId: "allow" });
     expect(hitl.respondedAt).toBeInstanceOf(Date);
+  });
+
+  it("linked assignment is claimed by the responding actor and completed", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+    const assignmentId = seedAssignment(hitlRequestId, runId);
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.actor_identities[0]).toMatchObject({
+      projectId: "proj-1",
+      kind: "user",
+      userId: "u-test",
+    });
+    expect(dbState.tables.assignments[0]).toMatchObject({
+      id: assignmentId,
+      status: "completed",
+      assigneeActorId: dbState.tables.actor_identities[0].id,
+      completedByActorId: dbState.tables.actor_identities[0].id,
+    });
+    expect(
+      dbState.tables.assignment_events.map((event) => event.eventKind),
+    ).toEqual(["claimed", "responded"]);
+  });
+
+  it("rejects a distinct actor response when the assignment is already claimed", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    seedAssignment(hitlRequestId, runId);
+    dbState.tables.assignments[0].status = "claimed";
+    dbState.tables.assignments[0].assigneeActorId = "actor-other";
+    vi.mocked(requireActiveSession).mockResolvedValueOnce({
+      id: "u-second",
+      role: "member",
+      mustChangePassword: false,
+    } as Awaited<ReturnType<typeof requireActiveSession>>);
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(409);
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+    expect(dbState.tables.assignments[0]).toMatchObject({
+      status: "claimed",
+      assigneeActorId: "actor-other",
+      completedAt: null,
+    });
+    expect(dbState.tables.assignment_events).toHaveLength(0);
   });
 
   it("scratch permission delivery returns the dialog to Running", async () => {

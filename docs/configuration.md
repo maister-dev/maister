@@ -72,6 +72,12 @@ capabilities:
       agent: codex
       source: project
       path: .maister/capabilities/codex-default/settings.json
+flow_roles:
+  - ref: maintainer
+    label: Maintainer
+    description: Human user, service, or internal agent that owns reviews
+  - ref: qa
+    label: QA
 flows:
   - id: bugfix
     source: github.com/org/maister-flow-bugfix
@@ -108,6 +114,7 @@ flows:
 | `executors[].env` | `null` | Map of env vars passed to the spawned agent (env-router pattern). |
 | `executors[].router` | unset | `ccr` enables `@musistudio/claude-code-router` multi-provider routing inside the session. |
 | `flows[].executor_override` | unset | When set, must reference an `id` in `executors[]`. Persisted to `flows.executor_override_id` by `upsertExecutorsFromConfig()` and slots into the override chain at tier 3 (between task override and project default). |
+| `flow_roles[]` | `[]` | M13 Flow routing registry. Each `ref` is project-scoped and may be used by `finish.human.role` or human-node `settings.roles[]`. Flow roles are not RBAC and never replace `project_members.role`. |
 
 ### Planned Flow package lifecycle
 
@@ -150,6 +157,26 @@ Runtime must snapshot the resolved capability profile into the run ledger before
 an AI node starts. If a node requires strict enforcement but the selected
 executor can only receive that capability as an instruction, launch fails rather
 than silently weakening the boundary.
+
+### Flow role registry
+
+`flow_roles[]` is the M13 project-local registry for human-work routing labels.
+It accepts:
+
+| Field | Rule |
+| ----- | ---- |
+| `ref` | Required safe id (`A-Z`, `a-z`, digits, `.`, `_`, `-`). Unique within the project config. |
+| `label` | Optional display label. Defaults to `ref` when persisted. |
+| `description` | Optional operator-facing explanation. |
+
+When a project declares at least one `flow_roles[]` entry, Flow install
+validates every graph `finish.human.role` and human-node `settings.roles[]`
+against that registry and rejects unknown refs with `CONFIG`. Removing a role
+from `maister.yaml` archives the DB row; re-adding the same ref reactivates it.
+
+For compatibility, omitted or empty `flow_roles[]` does not enforce existing
+role annotations in older Flow packages. New M13 projects that use role-owned
+queues should declare the registry explicitly.
 
 For scratch runs, the web tier owns scoped materialization. V1 writes
 `profile.json` and `instructions.md` into the run workspace/runtime area,

@@ -5,12 +5,13 @@ import type { CrashReason } from "@/lib/runs/state-transitions";
 import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 import type { WorktreeInfo } from "@/lib/worktree";
 
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import {
   reconcileGraceSeconds,
   reconcileSweepIntervalSeconds,
@@ -23,7 +24,7 @@ import { listSessions } from "@/lib/supervisor-client";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { nodeAttempts, projects, runs, workspaces } =
+const { assignments, nodeAttempts, projects, runs, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -177,6 +178,12 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   reattached: 0,
   skipped: 0,
 };
+const TERMINAL_ASSIGNMENT_CLEANUP_STATUSES = [
+  "Done",
+  "Failed",
+  "Abandoned",
+  "Crashed",
+] as const;
 
 function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
   switch (reason) {
@@ -314,6 +321,38 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
   return all;
 }
 
+async function closeTerminalRunAssignments(db: Db): Promise<number> {
+  const rows: Array<{ runId: string }> = await db
+    .select({ runId: assignments.runId })
+    .from(assignments)
+    .innerJoin(runs, eq(runs.id, assignments.runId))
+    .where(
+      and(
+        inArray(assignments.status, ["open", "claimed"]),
+        inArray(runs.status, [...TERMINAL_ASSIGNMENT_CLEANUP_STATUSES]),
+      ),
+    )
+    .limit(PER_TICK_LIMIT);
+  const runIds = [...new Set(rows.map((row) => row.runId))];
+
+  for (const runId of runIds) {
+    await systemCloseActiveAssignmentsForRun({
+      db,
+      runId,
+      reason: "terminal run reconciliation",
+    });
+  }
+
+  if (runIds.length > 0) {
+    log.info(
+      { runCount: runIds.length },
+      "[FIX:M13] terminal run assignments closed by reconcile",
+    );
+  }
+
+  return runIds.length;
+}
+
 export async function runReconcileSweep(
   opts: RunReconcileSweepOptions = {},
 ): Promise<ReconcileSweepSummary> {
@@ -331,6 +370,8 @@ export async function runReconcileSweep(
     opts.scheduleResumedSessionDrive ?? scheduleResumedSessionDrive;
   const now = opts.now ?? (() => new Date());
   const graceSeconds = reconcileGraceSeconds();
+
+  await closeTerminalRunAssignments(db);
 
   // listSessions ONCE up front. On throw → skip the whole tick (never crash on
   // transient supervisor unavailability).
@@ -431,6 +472,11 @@ export async function runReconcileSweep(
             db,
           });
         }
+        await systemCloseActiveAssignmentsForRun({
+          db,
+          runId: cand.runId,
+          reason: `reconcile crashed run: ${reason}`,
+        });
         await promoteNextPending({
           db,
           runFlow: (next: string) => void Promise.resolve(runFlow(next)),

@@ -9,10 +9,10 @@ The diagrams in this folder are the **visual** view. If they disagree
 with the Drizzle schema, the Drizzle schema wins — open a PR to fix
 the ERD.
 
-Scratch-run persistence and the selectable capability catalog are included in
-the ERDs because migrations now back the run/workspace/capability contracts.
-Roadmap persistence for artifacts, assignments, API tokens, and external
-operation events remains tracked in
+Scratch-run persistence, the selectable capability catalog, M12 artifacts, and
+M13 assignment persistence are included in the ERDs because migrations now back
+those contracts. Roadmap persistence for API tokens and external operation
+events remains tracked in
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence)
 until migrations exist.
 
@@ -24,6 +24,7 @@ until migrations exist.
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
 | [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + scratch-run tables. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + form-schema shape. |
+| [`assignments-domain.md`](assignments-domain.md) | M13 Flow roles, actors, assignments, and assignment events. |
 
 ## Cardinality notation
 

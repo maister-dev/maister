@@ -4,6 +4,11 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  completeAssignment,
+  ensureUserActor,
+  findActiveAssignmentForRun,
+} from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -387,6 +392,35 @@ export async function POST(
           .update(runs)
           .set({ currentStepId: reentryNode })
           .where(eq(runs.id, runId));
+
+        const actor = await ensureUserActor({
+          db: tx,
+          projectId: run.projectId,
+          userId: user.id,
+          label: user.name ?? user.email ?? user.id,
+        });
+        const manualAssignment = await findActiveAssignmentForRun({
+          db: tx,
+          runId,
+          actionKinds: ["manual_takeover"],
+        });
+
+        if (manualAssignment) {
+          await completeAssignment({
+            db: tx,
+            assignmentId: manualAssignment.id,
+            actorId: actor.id,
+            eventKind: "returned",
+            payload: {
+              nodeId,
+              nodeAttemptId,
+              reentryNode,
+              baseRef,
+              headRef,
+              returnedCommitCount: commitCountPre,
+            },
+          });
+        }
       });
     } catch (err) {
       if (isMaisterError(err)) throw err;

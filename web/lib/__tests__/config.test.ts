@@ -72,6 +72,7 @@ describe("loadProjectConfig", () => {
     expect(cfg.executors).toHaveLength(3);
     expect(cfg.flows).toHaveLength(2);
     expect(cfg.capabilities.mcps).toEqual([]);
+    expect(cfg.flow_roles).toEqual([]);
   });
 
   it("rejects missing file with CONFIG MaisterError", async () => {
@@ -172,6 +173,41 @@ capabilities:
       command: github-mcp-server
 `;
     const path = await writeFixture("dup-capability.yaml", yaml);
+
+    await expect(loadProjectConfig(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("loads flow role registry entries", async () => {
+    const yaml = `${goldenYaml}
+flow_roles:
+  - ref: reviewer
+    label: Reviewer
+    description: Human or service reviewer
+  - ref: qa
+`;
+    const path = await writeFixture("roles.yaml", yaml);
+
+    const cfg = await loadProjectConfig(path);
+
+    expect(cfg.flow_roles).toEqual([
+      {
+        ref: "reviewer",
+        label: "Reviewer",
+        description: "Human or service reviewer",
+      },
+      { ref: "qa" },
+    ]);
+  });
+
+  it("rejects duplicate flow role refs", async () => {
+    const yaml = `${goldenYaml}
+flow_roles:
+  - ref: reviewer
+  - ref: reviewer
+`;
+    const path = await writeFixture("dup-roles.yaml", yaml);
 
     await expect(loadProjectConfig(path)).rejects.toMatchObject({
       code: "CONFIG",
@@ -665,6 +701,29 @@ describe("loadFlowManifest — node settings validation (M11c)", () => {
     });
 
     await expect(loadFlowManifest(path)).resolves.toBeTruthy();
+  });
+
+  it("rejects human role refs absent from the supplied project Flow role set", async () => {
+    const path = await writeGraph("graph-bad-role-ref.yaml", (m) => {
+      m.nodes[2].finish = {
+        human: { role: "reviewer", decisions: ["approve", "rework"] },
+      };
+      m.nodes[2].settings = { roles: ["qa"] };
+    });
+
+    let caught: unknown;
+
+    try {
+      await loadFlowManifest(path, { roleRefs: ["release-manager"] });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(isMaisterError(caught)).toBe(true);
+    const msg = caught instanceof Error ? caught.message : "";
+
+    expect(msg).toContain("review");
+    expect(msg).toContain("reviewer");
   });
 });
 

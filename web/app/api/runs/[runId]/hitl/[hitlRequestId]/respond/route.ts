@@ -8,6 +8,12 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  claimAssignment,
+  completeAssignment,
+  ensureUserActor,
+  systemCloseActiveAssignmentsForRun,
+} from "@/lib/assignments/service";
 import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -21,7 +27,7 @@ import { runFlow } from "@/lib/flows/runner";
 import { deliverPermission } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, projects, runs, scratchRuns } =
+const { assignments, hitlRequests, projects, runs, scratchRuns } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -191,7 +197,7 @@ export async function POST(
     // BEFORE any resource lookup, so unauthenticated or must-change callers
     // cannot probe HITL/run existence via PRECONDITION shape-leaks. Project
     // membership is enforced below, once projectId is derived from the run row.
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
 
     // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
     const db = getDb() as any;
@@ -234,6 +240,7 @@ export async function POST(
         runId,
         hitlRequestId,
         startedAt,
+        sessionUser,
       });
     }
 
@@ -245,6 +252,7 @@ export async function POST(
       runId,
       hitlRequestId,
       startedAt,
+      sessionUser,
     });
   } catch (err) {
     return errorResponse(err, { runId, hitlRequestId });
@@ -261,7 +269,83 @@ type HandlerArgs = {
   runId: string;
   hitlRequestId: string;
   startedAt: number;
+  sessionUser: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+  };
 };
+
+type ResponseAssignmentClaim = {
+  assignmentId: string;
+  actorId: string;
+} | null;
+
+async function claimAssignmentForResponse(args: {
+  db: any;
+  hitlRequestId: string;
+  projectId: string;
+  sessionUser: HandlerArgs["sessionUser"];
+}): Promise<ResponseAssignmentClaim> {
+  const [assignment] = await args.db
+    .select()
+    .from(assignments)
+    .where(eq(assignments.hitlRequestId, args.hitlRequestId));
+
+  if (!assignment) return null;
+
+  const actor = await ensureUserActor({
+    db: args.db,
+    projectId: args.projectId,
+    userId: args.sessionUser.id,
+    label:
+      args.sessionUser.name ?? args.sessionUser.email ?? args.sessionUser.id,
+  });
+
+  if (
+    assignment.status === "claimed" &&
+    assignment.assigneeActorId !== actor.id
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      `assignment is claimed by another actor: assignmentId=${assignment.id}`,
+    );
+  }
+
+  if (assignment.status === "open") {
+    await claimAssignment({
+      db: args.db,
+      assignmentId: assignment.id,
+      actorId: actor.id,
+    });
+  } else if (
+    assignment.status !== "claimed" &&
+    assignment.status !== "completed"
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `assignment is not respondable: assignmentId=${assignment.id} status=${assignment.status}`,
+    );
+  }
+
+  return { assignmentId: assignment.id, actorId: actor.id };
+}
+
+async function completeResponseAssignment(
+  db: any,
+  claim: ResponseAssignmentClaim,
+  payload: Record<string, unknown> = {},
+): Promise<void> {
+  if (claim === null) return;
+
+  await completeAssignment({
+    db,
+    assignmentId: claim.assignmentId,
+    actorId: claim.actorId,
+    eventKind: "responded",
+    payload,
+  });
+}
 
 async function markScratchPermissionDelivered(
   db: any,
@@ -334,6 +418,13 @@ async function handlePermissionResponse(
     }
   }
 
+  const assignmentClaim = await claimAssignmentForResponse({
+    db,
+    hitlRequestId,
+    projectId: runRow.projectId,
+    sessionUser: args.sessionUser,
+  });
+
   // Phase 1: claim the row with a row-level lock. Two semantics co-exist:
   //   1. unclaimed → CAS the response with our optionId
   //   2. claimed with same optionId → idempotent retry; no UPDATE needed
@@ -404,6 +495,8 @@ async function handlePermissionResponse(
   });
 
   if (claim.kind === "already-delivered") {
+    await completeResponseAssignment(db, assignmentClaim, { optionId });
+
     log.info(
       {
         runId,
@@ -526,6 +619,11 @@ async function handlePermissionResponse(
       },
       "resume spawn failed terminally — run transitioned to Failed",
     );
+    await systemCloseActiveAssignmentsForRun({
+      db,
+      runId,
+      reason: `permission resume failed terminally: ${r.code}`,
+    });
 
     return NextResponse.json(
       { code: r.code, message: r.message, terminal: true },
@@ -551,6 +649,7 @@ async function handlePermissionResponse(
         ),
       );
     await markScratchPermissionDelivered(db, runRow, runId);
+    await completeResponseAssignment(db, assignmentClaim, { optionId });
 
     log.info(
       {
@@ -632,6 +731,8 @@ async function handlePermissionResponse(
       }
 
       if (outcome.transition === "already-delivered") {
+        await completeResponseAssignment(db, assignmentClaim, { optionId });
+
         log.info(
           {
             runId,
@@ -650,6 +751,11 @@ async function handlePermissionResponse(
       }
 
       await markScratchPermissionTimedOut(db, runRow, runId);
+      await systemCloseActiveAssignmentsForRun({
+        db,
+        runId,
+        reason: "permission deferred expired before response was delivered",
+      });
 
       log.warn(
         {
@@ -758,6 +864,13 @@ async function handleFormHumanResponse(
     throw new MaisterError("PRECONDITION", "project slug not found");
   }
 
+  const assignmentClaim = await claimAssignmentForResponse({
+    db,
+    hitlRequestId,
+    projectId: runRow.projectId,
+    sessionUser: args.sessionUser,
+  });
+
   // Phase 1: claim the row before touching the filesystem. Concurrent
   // double-submits with the same payload are idempotent; conflicting
   // payloads return 409 BEFORE either request can write to disk.
@@ -841,6 +954,10 @@ async function handleFormHumanResponse(
   });
 
   if (claim.kind === "already-delivered") {
+    await completeResponseAssignment(db, assignmentClaim, {
+      response: claim.storedResponse as Record<string, unknown>,
+    });
+
     // Same-payload retry on an already-delivered row. If the run is
     // still in NeedsInput, the original microtask may have been lost
     // (process restart between commit and queueMicrotask, runner
@@ -916,6 +1033,9 @@ async function handleFormHumanResponse(
     .where(
       and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
     );
+  await completeResponseAssignment(db, assignmentClaim, {
+    response: claim.storedResponse as Record<string, unknown>,
+  });
 
   scheduleResume(runId);
 

@@ -10,6 +10,11 @@ import pino from "pino";
 
 import { renderStrict } from "./templating";
 
+import {
+  completeHitlAssignmentFromCurrentActor,
+  createHitlAssignmentForRun,
+  systemCloseActiveAssignmentsForRun,
+} from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import { hitlRequests, runs } from "@/lib/db/schema";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
@@ -151,6 +156,17 @@ async function tryAutoDeliverStoredIntent(
         },
       })
       .where(eq(hitlRequests.id, prior.id));
+    await completeHitlAssignmentFromCurrentActor({
+      db: pctx.db,
+      hitlRequestId: prior.id,
+      eventKind: "responded",
+      payload: {
+        optionId,
+        originalRequestId: priorRequestId,
+        reissuedRequestId: ev.requestId,
+        deliveredViaResume: true,
+      },
+    });
 
     log.info(
       {
@@ -210,6 +226,15 @@ async function handlePermissionRequest(
         },
         prompt: synthesizePermissionPrompt(ev.toolCall),
       });
+      await createHitlAssignmentForRun({
+        db: tx,
+        runId: pctx.runId,
+        hitlRequestId,
+        stepId: pctx.stepId,
+        actionKind: "permission",
+        roleRefs: [],
+        title: synthesizePermissionPrompt(ev.toolCall),
+      });
       await tx
         .update(runs)
         .set({ status: "NeedsInput", currentStepId: pctx.stepId })
@@ -264,6 +289,11 @@ async function handlePermissionRequest(
         .update(runs)
         .set({ status: "Crashed", endedAt: new Date() })
         .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")));
+      await systemCloseActiveAssignmentsForRun({
+        db: pctx.db,
+        runId: pctx.runId,
+        reason: "permission persistence failed before HITL wait became durable",
+      });
     } catch (updateErr) {
       log.warn(
         {

@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
+import { AssignmentActions } from "@/components/board/assignment-actions";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
 import { type EvidenceGraphLabels } from "@/components/board/evidence-graph";
 import {
@@ -34,6 +35,17 @@ function offersTakeover(schema: unknown): boolean {
   const s = schema as { review?: boolean; allowedDecisions?: string[] };
 
   return Boolean(s.review) && (s.allowedDecisions ?? []).includes("takeover");
+}
+
+function staleSummaryText(summary: Record<string, unknown> | null): string | null {
+  if (summary === null) return null;
+  const count = summary.count;
+
+  if (typeof count === "number" && count > 0) {
+    return String(count);
+  }
+
+  return "!";
 }
 
 export default async function RunDetailPage({
@@ -195,14 +207,64 @@ export default async function RunDetailPage({
         </section>
       ) : null}
 
-      {detail.pendingHitl ? (
-        <section className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5">
+      {detail.pendingHitl
+        ? (() => {
+            const staleText = staleSummaryText(
+              detail.pendingHitl.assignmentStaleEvidenceSummary,
+            );
+
+            return (
+              <section className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5">
           <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
             {t("pendingTitle")}
           </h2>
           <p className="mb-4 text-[14px] leading-[1.4] text-ink">
             {detail.pendingHitl.prompt}
           </p>
+          <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+            {detail.pendingHitl.assignmentActionKind ? (
+              <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                {t("assignmentAction", {
+                  action: detail.pendingHitl.assignmentActionKind,
+                })}
+              </span>
+            ) : null}
+            {detail.pendingHitl.assignmentRoleRefs.length > 0 ? (
+              <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                {t("assignmentRoles", {
+                  roles: detail.pendingHitl.assignmentRoleRefs.join(", "),
+                })}
+              </span>
+            ) : null}
+            {staleText ? (
+              <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-amber">
+                {t("assignmentStaleEvidence", {
+                  count: staleText,
+                })}
+              </span>
+            ) : null}
+            <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+              {detail.pendingHitl.assigneeLabel
+                ? t("assignmentClaimedBy", {
+                    actor: detail.pendingHitl.assigneeLabel,
+                  })
+                : t("assignmentUnclaimed")}
+            </span>
+          </div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <AssignmentActions
+              assigneeUserId={detail.pendingHitl.assigneeUserId}
+              assignmentId={detail.pendingHitl.assignmentId}
+              canAct={canAct}
+              currentUserId={user.id}
+              labels={{
+                claim: t("assignmentClaim"),
+                release: t("assignmentRelease"),
+                takeOver: t("assignmentTakeOver"),
+              }}
+              status={detail.pendingHitl.assignmentStatus}
+            />
+          </div>
           <RunHitlResponse
             canAct={canAct}
             hitlRequestId={detail.pendingHitl.hitlRequestId}
@@ -223,8 +285,10 @@ export default async function RunDetailPage({
               />
             </div>
           ) : null}
-        </section>
-      ) : (
+              </section>
+            );
+          })()
+        : (
         <p className="rounded-[14px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute">
           {t("noPending")}
         </p>

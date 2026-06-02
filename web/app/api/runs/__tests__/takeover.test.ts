@@ -14,6 +14,12 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  actorIdentities as actorIdentitiesTable,
+  assignmentEvents as assignmentEventsTable,
+  assignments as assignmentsTable,
+  runs as runsTable,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 type Row = Record<string, unknown>;
@@ -120,28 +126,91 @@ const getCurrentRequiredForGitArtifactsSpy = vi.fn(
 // `.select().from().where().for()` returning the locked run row for the FOR
 // UPDATE intent read.
 function makeDb(): Row {
+  const assignmentRows: Row[] = [];
+  const actorRows: Row[] = [];
+  const assignmentEventRows: Row[] = [];
   const lockedRun = () => [loadedRef.value!.run as Row];
-  const updateChain = () => ({
-    set: () => ({
-      where: () => ({ returning: async () => [{ id: "run-1" }] }),
+  const tableOf = (table: unknown) => {
+    if (table === runsTable) return "runs";
+    if (table === assignmentsTable) return "assignments";
+    if (table === actorIdentitiesTable) return "actor_identities";
+    if (table === assignmentEventsTable) return "assignment_events";
+
+    return "unknown";
+  };
+  const rowsFor = (table: unknown) => {
+    const name = tableOf(table);
+
+    if (name === "runs") return lockedRun();
+    if (name === "assignments") return assignmentRows;
+    if (name === "actor_identities") return actorRows;
+    if (name === "assignment_events") return assignmentEventRows;
+
+    return lockedRun();
+  };
+  const insertChain = (table: unknown) => {
+    const name = tableOf(table);
+
+    return {
+      values: (row: Row) => {
+        const inserted = {
+          id:
+            (row.id as string | undefined) ??
+            `${name}-${assignmentRows.length + actorRows.length + 1}`,
+          ...row,
+        };
+
+        if (name === "assignments") {
+          assignmentRows.push(inserted);
+        } else if (name === "actor_identities") {
+          actorRows.push(inserted);
+        } else if (name === "assignment_events") {
+          assignmentEventRows.push(inserted);
+        }
+
+        const result: any = Promise.resolve(undefined);
+
+        result.onConflictDoUpdate = () => result;
+        result.returning = async () => [inserted];
+
+        return result;
+      },
+    };
+  };
+  const updateChain = (table: unknown) => ({
+    set: (vals: Row) => ({
+      where: () => {
+        const updated = rowsFor(table).map((row) => {
+          Object.assign(row, vals);
+
+          return row;
+        });
+        const result: any = Promise.resolve(updated);
+
+        result.returning = async () => updated;
+
+        return result;
+      },
     }),
   });
   const selectChain = () => ({
-    from: () => ({
+    from: (table: unknown) => ({
       where: () => {
-        const w = Promise.resolve(lockedRun());
+        const w = Promise.resolve(rowsFor(table));
         // FOR UPDATE form: .where().for("update")
 
-        return Object.assign(w, { for: async () => lockedRun() });
+        return Object.assign(w, { for: async () => rowsFor(table) });
       },
     }),
   });
   const tx = {
+    insert: insertChain,
     select: selectChain,
     update: updateChain,
   };
 
   return {
+    insert: insertChain,
     select: selectChain,
     update: updateChain,
     transaction: async (fn: (t: Row) => Promise<unknown>) => fn(tx),

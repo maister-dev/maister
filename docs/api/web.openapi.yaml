@@ -96,6 +96,8 @@ tags:
     description: Manual coding-agent dialog workspaces outside the task board.
   - name: hitl
     description: Human-in-the-loop response surface.
+  - name: assignments
+    description: M13 role-owned work queue and assignment ownership.
   - name: takeover
     description: Manual takeover — local worktree handoff (M11b, ADR-030).
   - name: flow-packages
@@ -281,6 +283,121 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/assignments:
+    get:
+      tags: [assignments]
+      summary: List project assignments
+      description: |
+        M13 work-queue read model. Requires project visibility
+        (`requireProjectAction("readBoard")`). The URL `slug` resolves the
+        project id from server state; the route accepts no body-controlled
+        project/run/user identifiers.
+      operationId: getProjectAssignments
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Project assignments visible to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Precondition" }
+  /api/assignments/{assignmentId}/claim:
+    post:
+      tags: [assignments]
+      summary: Claim an open assignment
+      description: |
+        Claims an assignment for the current Auth.js user actor. The route
+        derives project, run, and actor ids from server state and ignores any
+        cross-resource ids in the body.
+      operationId: claimAssignment
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Claimed assignment DTO.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Assignment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/assignments/{assignmentId}/release:
+    post:
+      tags: [assignments]
+      summary: Release a claimed assignment
+      description: |
+        Reopens a claim held by the current actor. Body may carry a reason
+        string only; actor/project/run ids are always server-derived.
+      operationId: releaseAssignment
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignmentReasonBody" }
+      responses:
+        "200":
+          description: Reopened assignment DTO.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Assignment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+  /api/assignments/{assignmentId}/take-over:
+    post:
+      tags: [assignments]
+      summary: Deliberately take over another actor's assignment claim
+      description: |
+        Transfers a claim from its current actor to the current Auth.js user
+        actor and appends a `taken_over` assignment event. Body may carry a
+        reason string only.
+      operationId: takeOverAssignment
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignmentReasonBody" }
+      responses:
+        "200":
+          description: Transferred assignment DTO.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Assignment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Precondition" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
   /api/auth/{nextauth}:
     get:
       tags: [auth]
@@ -2311,6 +2428,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    Conflict:
+      description: State conflict (`PRECONDITION` / `CONFLICT`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     Config:
       description: Invalid body or incompatible package (`CONFIG`).
       content:
@@ -2407,6 +2529,80 @@ components:
             override chain at tier 2 (between run-launcher override and
             per-flow override). Any other executor ID returns `422
             CONFIG`.
+    AssignmentReasonBody:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    AssignmentActor:
+      type: object
+      required: [id, kind, label]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [user, api_token, internal_agent, system]
+        label: { type: string }
+    Assignment:
+      type: object
+      required:
+        - id
+        - projectId
+        - runId
+        - status
+        - roleRefs
+        - title
+        - assigneeActor
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        taskId: { type: string, format: uuid, nullable: true }
+        nodeId: { type: string, nullable: true }
+        stepId: { type: string, nullable: true }
+        hitlRequestId: { type: string, format: uuid, nullable: true }
+        actionKind:
+          type: string
+          enum:
+            - permission
+            - form
+            - human_review
+            - manual_takeover
+            - merge_conflict
+        status:
+          type: string
+          enum:
+            - open
+            - claimed
+            - completed
+            - cancelled
+        roleRefs:
+          type: array
+          items: { type: string }
+        title: { type: string }
+        branch: { type: string, nullable: true }
+        ref: { type: string, nullable: true }
+        staleEvidenceSummary:
+          type: object
+          nullable: true
+          additionalProperties: true
+        claimedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        assigneeActor:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AssignmentActor"
+    AssignmentList:
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: "#/components/schemas/Assignment" }
     RegisterUserBody:
       type: object
       required: [name, email, password]

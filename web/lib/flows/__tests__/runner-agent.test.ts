@@ -4,6 +4,12 @@ import type { PromptResult, SupervisorEvent } from "@/lib/supervisor-client";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  assignmentEvents as assignmentEventsTable,
+  assignments as assignmentsTable,
+  hitlRequests as hitlRequestsTable,
+  runs as runsTable,
+} from "@/lib/db/schema";
+import {
   runAgentStep,
   type RunAgentStepCtx,
   type SupervisorApi,
@@ -38,9 +44,26 @@ function makeCtx(
 
 type InsertSpy = {
   insertCalls: Array<Record<string, unknown>>;
+  assignmentRows: Array<Record<string, unknown>>;
+  assignmentEventRows: Array<Record<string, unknown>>;
   updates: Array<{ set: Record<string, unknown> }>;
   insertFails: boolean;
 };
+
+type FakeTableName =
+  | "hitl_requests"
+  | "runs"
+  | "assignments"
+  | "assignment_events";
+
+function tableOf(table: unknown): FakeTableName {
+  if (table === hitlRequestsTable) return "hitl_requests";
+  if (table === runsTable) return "runs";
+  if (table === assignmentsTable) return "assignments";
+  if (table === assignmentEventsTable) return "assignment_events";
+
+  throw new Error("unknown table");
+}
 
 function makeFakeDb(
   opts: {
@@ -55,17 +78,46 @@ function makeFakeDb(
 } {
   const state: InsertSpy = {
     insertCalls: [],
+    assignmentRows: [],
+    assignmentEventRows: [],
     updates: [],
     insertFails: Boolean(opts.insertFails),
   };
-  const insertChain = () => ({
-    values: async (row: Record<string, unknown>) => {
-      if (state.insertFails) {
-        throw new Error("simulated INSERT failure");
-      }
-      state.insertCalls.push(row);
-    },
-  });
+  const insertChain = (table: unknown) => {
+    const name = tableOf(table);
+
+    return {
+      values: (row: Record<string, unknown>) => {
+        if (state.insertFails && name === "hitl_requests") {
+          throw new Error("simulated INSERT failure");
+        }
+        if (name === "hitl_requests") {
+          state.insertCalls.push(row);
+        }
+        if (name === "assignments") {
+          state.assignmentRows.push(row);
+        }
+        if (name === "assignment_events") {
+          state.assignmentEventRows.push(row);
+        }
+
+        const inserted =
+          name === "assignments"
+            ? {
+                ...row,
+                projectId: row.projectId ?? "proj-1",
+                runId: row.runId ?? "run-1",
+              }
+            : row;
+        const result: any = Promise.resolve(undefined);
+
+        result.onConflictDoUpdate = () => result;
+        result.returning = async () => [inserted];
+
+        return result;
+      },
+    };
+  };
   const updateChain = () => ({
     set: (vals: Record<string, unknown>) => ({
       where: (..._args: unknown[]) => {
@@ -85,10 +137,21 @@ function makeFakeDb(
   // stored intent. Tests without `priorIntent` get an empty result so
   // the legacy "INSERT new row" path still fires.
   const selectChain = () => ({
-    from: () => ({
-      where: () => ({
-        limit: async () => (opts.priorIntent ? [opts.priorIntent] : []),
-      }),
+    from: (table: unknown) => ({
+      where: () => {
+        const name = tableOf(table);
+        const rows =
+          name === "hitl_requests" && opts.priorIntent
+            ? [opts.priorIntent]
+            : name === "runs"
+              ? [{ projectId: "proj-1", taskId: null }]
+              : [];
+        const result: any = Promise.resolve(rows);
+
+        result.limit = async () => rows;
+
+        return result;
+      },
     }),
   });
 

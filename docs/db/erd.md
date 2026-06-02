@@ -6,9 +6,11 @@ execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 **M11b (migration `0011`, additive)** takeover columns and `HumanWorking`
 status, scratch-run persistence, the selectable capability catalog, and the
 **M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
-and `ARTIFACT_PROJECTION_CURSORS`. For partial views by domain, see
+and `ARTIFACT_PROJECTION_CURSORS`, and **M13 persistence (Implemented,
+migration `0018`)** assignment tables. For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
-[`hitl-domain.md`](hitl-domain.md), [`artifacts-domain.md`](artifacts-domain.md).
+[`hitl-domain.md`](hitl-domain.md), [`artifacts-domain.md`](artifacts-domain.md),
+and [`assignments-domain.md`](assignments-domain.md).
 
 ```mermaid
 erDiagram
@@ -20,6 +22,8 @@ erDiagram
     PROJECTS ||--o{ EXECUTORS : has
     PROJECTS ||--o{ FLOWS : has
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
+    PROJECTS ||--o{ PROJECT_FLOW_ROLES : "flow routing labels"
+    PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
     PROJECTS ||--o{ TASKS : has
     PROJECTS ||--o{ RUNS : has
     PROJECTS ||--o{ WORKSPACES : has
@@ -41,6 +45,14 @@ erDiagram
     RUNS ||--o| ARTIFACT_PROJECTION_CURSORS : "projector cursor (M12)"
     ARTIFACT_INSTANCES ||--o| ARTIFACT_INSTANCES : "superseded_by (M12, SET NULL)"
     RUNS ||--o{ HITL_REQUESTS : raises
+    RUNS ||--o{ ASSIGNMENTS : "work queue (M13)"
+    HITL_REQUESTS ||--o| ASSIGNMENTS : "linked wait (M13)"
+    NODE_ATTEMPTS ||--o{ ASSIGNMENTS : "optional attempt (M13)"
+    TASKS ||--o{ ASSIGNMENTS : "optional task (M13)"
+    ARTIFACT_INSTANCES ||--o{ ASSIGNMENTS : "evidence pointer (M13)"
+    ACTOR_IDENTITIES ||--o{ ASSIGNMENTS : "assignee/creator/completer"
+    ASSIGNMENTS ||--o{ ASSIGNMENT_EVENTS : "lifecycle events"
+    ACTOR_IDENTITIES ||--o{ ASSIGNMENT_EVENTS : "event actor"
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
     TASKS ||--o{ SCRATCH_RUNS : "optional link"
     USERS ||--o{ SCRATCH_RUNS : "created by"
@@ -149,6 +161,32 @@ erDiagram
         boolean selected_by_default
         boolean selectable
         jsonb material
+        timestamp disabled_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PROJECT_FLOW_ROLES {
+        text id PK
+        text project_id FK
+        text role_ref "UNIQUE per project"
+        text label
+        text description
+        text source "config|flow|system"
+        timestamp archived_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ACTOR_IDENTITIES {
+        text id PK
+        text project_id FK
+        text kind "user|api_token|internal_agent|system"
+        text label
+        text user_id FK
+        text token_id
+        text internal_agent_ref
+        text system_key
         timestamp disabled_at
         timestamp created_at
         timestamp updated_at
@@ -309,6 +347,46 @@ erDiagram
         timestamp created_at
     }
 
+    ASSIGNMENTS {
+        text id PK
+        text project_id FK
+        text run_id FK
+        text task_id FK
+        text node_id
+        text step_id
+        text hitl_request_id FK
+        text node_attempt_id FK
+        text action_kind "permission|form|human_review|manual_takeover|merge_conflict"
+        text status "open|claimed|completed|cancelled"
+        jsonb role_refs
+        text title
+        text assignee_actor_id FK
+        text created_by_actor_id FK
+        text completed_by_actor_id FK
+        text evidence_artifact_id FK
+        text branch
+        text ref
+        integer sla_hours
+        jsonb stale_evidence_summary
+        timestamp claimed_at
+        timestamp completed_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ASSIGNMENT_EVENTS {
+        text id PK
+        text assignment_id FK
+        text project_id FK
+        text run_id FK
+        text event_kind "created|claimed|released|taken_over|responded|returned|completed|cancelled|superseded|system_closed"
+        text actor_id FK
+        text from_status
+        text to_status
+        jsonb payload
+        timestamp created_at
+    }
+
     SCRATCH_RUNS {
         text run_id PK
         text project_id FK
@@ -380,9 +458,10 @@ The ERD shows implemented tables, M11a `node_attempts` / `gate_results`
 (migration `0010`), scratch-run persistence, `capability_records`, and the
 M12 (Implemented, migration `0015`) `artifact_instances` /
 `artifact_projection_cursors` typed-evidence tables (see
-[`artifacts-domain.md`](artifacts-domain.md)). The remaining roadmap M13-M18
-additive persistence — artifact edges, assignments, API tokens, and external
-operation events — is not drawn until its migrations exist. See
+[`artifacts-domain.md`](artifacts-domain.md)) and M13 assignment persistence
+(see [`assignments-domain.md`](assignments-domain.md)). The remaining roadmap
+additive persistence — artifact edges, API tokens, and external operation
+events — is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes
@@ -397,6 +476,10 @@ operation events — is not drawn until its migrations exist. See
 | `project_members` | `project_members_project_user_uq` | `(project_id, user_id)` UNIQUE | One membership per user/project. |
 | `project_members` | `project_members_user_idx` | `(user_id)` | Per-user project listing / authz. |
 | `capability_records` | `capability_records_project_kind_idx` | `(project_id, kind, selectable)` | Scratch launch-options catalog lookup. |
+| `project_flow_roles` | `project_flow_roles_project_key_uq` | `(project_id, role_ref)` UNIQUE | One Flow role ref per project. |
+| `project_flow_roles` | `project_flow_roles_project_idx` | `(project_id)` | Project Flow role lookup. |
+| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
+| `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
 | `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
@@ -412,6 +495,13 @@ operation events — is not drawn until its migrations exist. See
 | `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |
 | `gate_results` | `gate_results_node_attempt_idx` | `(node_attempt_id)` | **(M11a)** Gates for a node attempt. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
+| `assignments` | `assignments_hitl_request_uq` | `(hitl_request_id)` UNIQUE | One assignment per linked HITL wait. |
+| `assignments` | `assignments_project_status_idx` | `(project_id, status)` | Project work queue. |
+| `assignments` | `assignments_run_status_idx` | `(run_id, status)` | Run-detail work queue. |
+| `assignments` | `assignments_current_actor_idx` | `(assignee_actor_id)` | Actor-owned work lookup. |
+| `assignments` | `assignments_hitl_request_idx` | `(hitl_request_id)` | HITL lookup. |
+| `assignment_events` | `assignment_events_assignment_idx` | `(assignment_id)` | Assignment event history. |
+| `assignment_events` | `assignment_events_project_created_idx` | `(project_id, created_at)` | Project audit stream. |
 | `projects` | implicit | `slug`, `repo_path` UNIQUE | Registration collisions. |
 | `executors` | `executors_project_ref_uq` | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace. |
 | `flows` | `flows_project_ref_uq` | `(project_id, flow_ref_id)` UNIQUE | Per-project namespace. |

@@ -4,6 +4,10 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  cancelActiveAssignmentsForRun,
+  ensureUserActor,
+} from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
@@ -76,7 +80,7 @@ export async function POST(
 
   try {
     // Auth-first.
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as Db;
     const rows = await db.select().from(runs).where(eq(runs.id, runId));
@@ -91,15 +95,35 @@ export async function POST(
 
     await requireProjectAction(run.projectId, "answerHitl");
 
-    // A HumanWorking run releases its takeover claim first (HumanWorking →
-    // NeedsInput) so the standard abandon transition fires from a known
-    // non-terminal status; the original review HITL re-opening is moot once the
-    // run is abandoned.
-    if (run.status === "HumanWorking") {
-      await releaseHumanWorking(runId, { db });
-    }
+    const actor = await ensureUserActor({
+      db,
+      projectId: run.projectId,
+      userId: user.id,
+      label: user.name ?? user.email ?? user.id,
+    });
+    const abandoned = await db.transaction(async (tx: Db) => {
+      // A HumanWorking run releases its takeover claim first (HumanWorking →
+      // NeedsInput) so the standard abandon transition fires from a known
+      // non-terminal status; the original review HITL re-opening is moot once
+      // the run is abandoned.
+      if (run.status === "HumanWorking") {
+        await releaseHumanWorking(runId, { db: tx });
+      }
 
-    const abandoned = await markAbandoned(runId, { db });
+      const result = await markAbandoned(runId, { db: tx });
+
+      if (result.ok) {
+        await cancelActiveAssignmentsForRun({
+          db: tx,
+          runId,
+          actorId: actor.id,
+          eventKind: "system_closed",
+          reason: "run abandoned",
+        });
+      }
+
+      return result;
+    });
 
     if (!abandoned.ok) {
       return NextResponse.json(

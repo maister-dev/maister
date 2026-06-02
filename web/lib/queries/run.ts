@@ -2,6 +2,7 @@ import "server-only";
 
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
+  Assignment,
   EnforcementSnapshotEntry,
   GateResult,
   GateVerdict,
@@ -26,6 +27,8 @@ import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
 
 const {
+  actorIdentities,
+  assignments,
   executors,
   flowRevisions,
   flows,
@@ -46,6 +49,13 @@ function db(): NodePgDatabase<typeof schema> {
 export interface RunPendingHitl {
   hitlRequestId: string;
   kind: HitlRequest["kind"];
+  assignmentId: string | null;
+  assignmentStatus: Assignment["status"] | null;
+  assignmentActionKind: Assignment["actionKind"] | null;
+  assignmentRoleRefs: string[];
+  assignmentStaleEvidenceSummary: Record<string, unknown> | null;
+  assigneeLabel: string | null;
+  assigneeUserId: string | null;
   prompt: string;
   options: HitlOption[];
   schema: unknown;
@@ -187,6 +197,24 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
     .orderBy(desc(hitlRequests.createdAt));
   const pending = hitlRows[0];
+  const pendingAssignmentRows = pending
+    ? await client
+        .select()
+        .from(assignments)
+        .where(eq(assignments.hitlRequestId, pending.id))
+    : [];
+  const pendingAssignment = pendingAssignmentRows[0] ?? null;
+  const pendingAssigneeRows =
+    pendingAssignment?.assigneeActorId != null
+      ? await client
+          .select({
+            label: actorIdentities.label,
+            userId: actorIdentities.userId,
+          })
+          .from(actorIdentities)
+          .where(eq(actorIdentities.id, pendingAssignment.assigneeActorId))
+      : [];
+  const pendingAssignee = pendingAssigneeRows[0] ?? null;
 
   return {
     runId: row.runId,
@@ -207,6 +235,14 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       ? {
           hitlRequestId: pending.id,
           kind: pending.kind,
+          assignmentId: pendingAssignment?.id ?? null,
+          assignmentStatus: pendingAssignment?.status ?? null,
+          assignmentActionKind: pendingAssignment?.actionKind ?? null,
+          assignmentRoleRefs: pendingAssignment?.roleRefs ?? [],
+          assignmentStaleEvidenceSummary:
+            pendingAssignment?.staleEvidenceSummary ?? null,
+          assigneeLabel: pendingAssignee?.label ?? null,
+          assigneeUserId: pendingAssignee?.userId ?? null,
           prompt: pending.prompt,
           options: extractOptions(pending.kind, pending.rawSchema),
           schema: pending.rawSchema,

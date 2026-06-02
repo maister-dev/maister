@@ -6,6 +6,11 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  createAssignment,
+  ensureUserActor,
+  systemCloseActiveAssignmentsForRun,
+} from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -133,6 +138,46 @@ function assertPromotionTargetAllowed(
   }
 }
 
+async function createMergeConflictAssignment(args: {
+  db: Db;
+  run: any;
+  workspace: any;
+  sessionUser: { id: string; name?: string | null; email?: string | null };
+  targetBranch: string;
+}): Promise<void> {
+  const actor = await ensureUserActor({
+    db: args.db,
+    projectId: args.run.projectId,
+    userId: args.sessionUser.id,
+    label:
+      args.sessionUser.name ?? args.sessionUser.email ?? args.sessionUser.id,
+  });
+
+  await createAssignment({
+    db: args.db,
+    projectId: args.run.projectId,
+    runId: args.run.id,
+    taskId: args.run.taskId ?? null,
+    actionKind: "merge_conflict",
+    roleRefs: [],
+    title: `Resolve merge conflict into ${args.targetBranch}`,
+    createdByActorId: actor.id,
+    branch: args.workspace.branch,
+    ref: args.targetBranch,
+  });
+
+  log.info(
+    {
+      runId: args.run.id,
+      projectId: args.run.projectId,
+      actorId: actor.id,
+      branch: args.workspace.branch,
+      targetBranch: args.targetBranch,
+    },
+    "[FIX:M13] merge-conflict assignment created",
+  );
+}
+
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,
@@ -153,7 +198,7 @@ export async function POST(
   }
 
   try {
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
 
     if (body.mode === "pull_request") {
       throw new MaisterError(
@@ -186,11 +231,27 @@ export async function POST(
       );
     }
 
-    const commit = await promoteLocalMerge({
-      projectRepoPath: workspace.parentRepoPath,
-      sourceBranch: workspace.branch,
-      targetBranch,
-    });
+    let commit: string;
+
+    try {
+      commit = await promoteLocalMerge({
+        projectRepoPath: workspace.parentRepoPath,
+        sourceBranch: workspace.branch,
+        targetBranch,
+      });
+    } catch (err) {
+      if (isMaisterError(err) && err.code === "CONFLICT") {
+        await createMergeConflictAssignment({
+          db,
+          run,
+          workspace,
+          sessionUser,
+          targetBranch,
+        });
+      }
+
+      throw err;
+    }
     const now = new Date();
 
     // M19 Phase 1 (T1.C): parity with the Abandoned path — stamp the GC
@@ -223,6 +284,11 @@ export async function POST(
         .update(workspaces)
         .set({ scheduledRemovalAt })
         .where(eq(workspaces.runId, runId));
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: "run promoted to Done",
+      });
     });
 
     return NextResponse.json({

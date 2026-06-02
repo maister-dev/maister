@@ -243,6 +243,78 @@ export const flows = pgTable(
   }),
 );
 
+// M13 (ADR-040): Flow roles are project-scoped routing labels, not RBAC.
+// Authorization still comes from project_members.role through authz.ts.
+export const projectFlowRoles = pgTable(
+  "project_flow_roles",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    roleRef: text("role_ref").notNull(),
+    label: text("label").notNull(),
+    description: text("description"),
+    source: text("source", { enum: ["config", "flow", "system"] })
+      .notNull()
+      .default("config"),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectRole: unique("project_flow_roles_project_key_uq").on(
+      t.projectId,
+      t.roleRef,
+    ),
+    idxProject: index("project_flow_roles_project_idx").on(t.projectId),
+  }),
+);
+
+// M13 (ADR-040): actor attribution. M13 web writes resolve only kind="user";
+// api_token/internal_agent/system are schema-supported for future attribution.
+export const actorIdentities = pgTable(
+  "actor_identities",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind", {
+      enum: ["user", "api_token", "internal_agent", "system"],
+    }).notNull(),
+    label: text("label").notNull(),
+    userId: text("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    tokenId: text("token_id"),
+    internalAgentRef: text("internal_agent_ref"),
+    systemKey: text("system_key"),
+    disabledAt: timestamp("disabled_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectUserActor: unique("actor_identities_project_user_uq").on(
+      t.projectId,
+      t.userId,
+    ),
+    idxProject: index("actor_identities_project_idx").on(t.projectId),
+  }),
+);
+
 export type CapabilityKind =
   | "mcp"
   | "skill"
@@ -991,6 +1063,144 @@ export const artifactProjectionCursors = pgTable(
   }),
 );
 
+export const assignments = pgTable(
+  "assignments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "set null",
+    }),
+    nodeId: text("node_id"),
+    stepId: text("step_id"),
+    hitlRequestId: text("hitl_request_id").references(() => hitlRequests.id, {
+      onDelete: "cascade",
+    }),
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "cascade",
+    }),
+    actionKind: text("action_kind", {
+      enum: [
+        "permission",
+        "form",
+        "human_review",
+        "manual_takeover",
+        "merge_conflict",
+      ],
+    }).notNull(),
+    status: text("status", {
+      enum: ["open", "claimed", "completed", "cancelled"],
+    })
+      .notNull()
+      .default("open"),
+    roleRefs: jsonb("role_refs").$type<string[]>().notNull().default([]),
+    title: text("title").notNull(),
+    assigneeActorId: text("assignee_actor_id").references(
+      () => actorIdentities.id,
+      { onDelete: "set null" },
+    ),
+    createdByActorId: text("created_by_actor_id").references(
+      () => actorIdentities.id,
+      { onDelete: "set null" },
+    ),
+    completedByActorId: text("completed_by_actor_id").references(
+      () => actorIdentities.id,
+      { onDelete: "set null" },
+    ),
+    evidenceArtifactId: text("evidence_artifact_id").references(
+      () => artifactInstances.id,
+      { onDelete: "set null" },
+    ),
+    branch: text("branch"),
+    ref: text("ref"),
+    slaHours: integer("sla_hours"),
+    staleEvidenceSummary: jsonb("stale_evidence_summary").$type<
+      Record<string, unknown>
+    >(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqHitlRequest: unique("assignments_hitl_request_uq").on(t.hitlRequestId),
+    idxProjectStatus: index("assignments_project_status_idx").on(
+      t.projectId,
+      t.status,
+    ),
+    idxRunStatus: index("assignments_run_status_idx").on(t.runId, t.status),
+    idxCurrentActor: index("assignments_current_actor_idx").on(
+      t.assigneeActorId,
+    ),
+    idxHitl: index("assignments_hitl_request_idx").on(t.hitlRequestId),
+  }),
+);
+
+export const assignmentEvents = pgTable(
+  "assignment_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => assignments.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    eventKind: text("event_kind", {
+      enum: [
+        "created",
+        "claimed",
+        "released",
+        "taken_over",
+        "responded",
+        "returned",
+        "completed",
+        "cancelled",
+        "superseded",
+        "system_closed",
+      ],
+    }).notNull(),
+    actorId: text("actor_id").references(() => actorIdentities.id, {
+      onDelete: "set null",
+    }),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    payload: jsonb("payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxAssignment: index("assignment_events_assignment_idx").on(t.assignmentId),
+    idxProjectCreated: index("assignment_events_project_created_idx").on(
+      t.projectId,
+      t.createdAt,
+    ),
+  }),
+);
+
 export const hitlRequests = pgTable(
   "hitl_requests",
   {
@@ -1065,6 +1275,9 @@ export type FlowEnablementState = Flow["enablementState"];
 export type FlowTrustStatus = Flow["trustStatus"];
 export type FlowPackageStatus = FlowRevision["packageStatus"];
 export type FlowSetupStatus = FlowRevision["setupStatus"];
+export type ProjectFlowRole = typeof projectFlowRoles.$inferSelect;
+export type ActorIdentity = typeof actorIdentities.$inferSelect;
+export type ActorIdentityKind = ActorIdentity["kind"];
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type TaskStage = Task["stage"];
@@ -1093,3 +1306,6 @@ export type ArtifactProjectionCursor =
   typeof artifactProjectionCursors.$inferSelect;
 export type ArtifactProjectionCursorInsert =
   typeof artifactProjectionCursors.$inferInsert;
+export type Assignment = typeof assignments.$inferSelect;
+export type AssignmentStatus = Assignment["status"];
+export type AssignmentEvent = typeof assignmentEvents.$inferSelect;

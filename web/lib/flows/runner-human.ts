@@ -11,6 +11,7 @@ import pino from "pino";
 import { renderStrict } from "./templating";
 
 import { atomicWriteJson } from "@/lib/atomic";
+import { createHitlAssignmentForRun } from "@/lib/assignments/service";
 import { validateFormSchemaVersion } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -200,25 +201,34 @@ export async function runHumanStep(
 
   await atomicWriteJson(needsInputPath, body);
 
-  const db = (ctx.db ?? getDb()) as unknown as {
-    insert: (t: unknown) => { values: (v: unknown) => Promise<void> };
-  };
+  const db = (ctx.db ?? getDb()) as any;
 
   const kind: "form" | "human" = step.on_reject ? "human" : "form";
+  const hitlRequestId = randomUUID();
 
   await db.insert(hitlRequests).values({
-    id: randomUUID(),
+    id: hitlRequestId,
     runId: ctx.runId,
     stepId: step.id,
     kind,
     schema,
     prompt: promptText,
   });
+  await createHitlAssignmentForRun({
+    db,
+    runId: ctx.runId,
+    hitlRequestId,
+    stepId: step.id,
+    actionKind: "form",
+    roleRefs: [],
+    title: promptText,
+  });
 
   log.info(
     {
       runId: ctx.runId,
       stepId: step.id,
+      hitlRequestId,
       needsInputPath,
       schemaPath: resolvedPath,
     },

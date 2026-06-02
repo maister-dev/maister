@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { markAbandoned } from "@/lib/runs/state-transitions";
@@ -92,6 +93,12 @@ export async function POST(
     const res = await markAbandoned(runId, { db });
 
     if (res.ok) {
+      await systemCloseActiveAssignmentsForRun({
+        db,
+        runId,
+        reason: "run discarded",
+      });
+
       // The just-abandoned run freed a slot — promote the oldest Pending. Lazy
       // scheduler defaults resume/launch the promoted run.
       try {

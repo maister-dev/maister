@@ -162,6 +162,22 @@ const knownExecutorManifest = {
   ],
 };
 
+const missingFlowRoleManifest = {
+  schemaVersion: 1,
+  name: "MissingFlowRole",
+  nodes: [
+    {
+      id: "review",
+      type: "human",
+      settings: {
+        roles: ["reviewer"],
+        decisions: ["approve"],
+      },
+      transitions: { approve: "done" },
+    },
+  ],
+};
+
 async function seedProjectWithManifest(
   id: string,
   slug: string,
@@ -269,6 +285,11 @@ beforeAll(async () => {
     "proj-goodexec",
     "proj-goodexec",
     knownExecutorManifest,
+  );
+  await seedProjectWithManifest(
+    "proj-badrole",
+    "proj-badrole",
+    missingFlowRoleManifest,
   );
   await seedProjectWithManifest(
     "proj-untrusted",
@@ -408,6 +429,25 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
       .where(eq(schema.runs.taskId, "task-proj-goodexec"));
 
     expect(runRows).toHaveLength(1);
+  });
+
+  it("refuses a manifest role ref missing from the active project Flow role registry before worktree creation", async () => {
+    const res = await POST(request("task-proj-badrole"));
+
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+
+    expect(body.code).toBe("CONFIG");
+    expect(body.message).toContain("reviewer");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-badrole"));
+
+    expect(runs).toHaveLength(0);
   });
 
   it("refuses an untrusted revision on the TRUST gate BEFORE the enforcement evaluator (PRECONDITION 409, not CONFIG)", async () => {

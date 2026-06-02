@@ -185,7 +185,7 @@ export default async function ProjectBoardPage({
 
       {tab === "board" ? (
         <section>
-          <HitlInbox canAct={canAct} inbox={hitl} />
+          <HitlInbox canAct={canAct} currentUserId={user.id} inbox={hitl} />
           <BoardTools
             labels={{
               filterFlow: t("filterFlow"),

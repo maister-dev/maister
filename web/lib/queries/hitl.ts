@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { HitlRequest } from "@/lib/db/schema";
+import type { Assignment, HitlRequest } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
@@ -8,7 +8,15 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 
-const { executors, flows, hitlRequests, runs, workspaces } = schema;
+const {
+  actorIdentities,
+  assignments,
+  executors,
+  flows,
+  hitlRequests,
+  runs,
+  workspaces,
+} = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -26,6 +34,13 @@ export interface HitlItem {
   hitlRequestId: string;
   runId: string;
   kind: HitlRequest["kind"];
+  assignmentId: string | null;
+  assignmentStatus: Assignment["status"] | null;
+  assignmentActionKind: Assignment["actionKind"] | null;
+  assignmentRoleRefs: string[];
+  assignmentStaleEvidenceSummary: Record<string, unknown> | null;
+  assigneeLabel: string | null;
+  assigneeUserId: string | null;
   agent: HitlAgent;
   branch: string;
   flowRef: string;
@@ -98,7 +113,12 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
   const projectRunIds = await client
     .select({ id: runs.id })
     .from(runs)
-    .where(eq(runs.projectId, projectId));
+    .where(
+      and(
+        eq(runs.projectId, projectId),
+        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+      ),
+    );
 
   if (projectRunIds.length === 0) {
     return { items: [], count: 0, oldest: null };
@@ -130,18 +150,60 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));
+  const hitlIds = rows.map((row) => row.hitlRequestId);
+  const assignmentRows =
+    hitlIds.length > 0
+      ? await client
+          .select()
+          .from(assignments)
+          .where(inArray(assignments.hitlRequestId, hitlIds))
+      : [];
+  const actorIds = assignmentRows
+    .map((assignment) => assignment.assigneeActorId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const actorRows =
+    actorIds.length > 0
+      ? await client
+          .select({
+            id: actorIdentities.id,
+            label: actorIdentities.label,
+            userId: actorIdentities.userId,
+          })
+          .from(actorIdentities)
+          .where(inArray(actorIdentities.id, actorIds))
+      : [];
+  const actorsById = new Map(actorRows.map((actor) => [actor.id, actor]));
+  const assignmentsByHitlId = new Map(
+    assignmentRows.map((assignment) => [assignment.hitlRequestId, assignment]),
+  );
 
-  const items: HitlItem[] = rows.map((row) => ({
-    hitlRequestId: row.hitlRequestId,
-    runId: row.runId,
-    kind: row.kind,
-    agent: row.agent,
-    branch: row.branch,
-    flowRef: row.flowRef,
-    prompt: row.prompt,
-    options: extractOptions(row.kind, row.rawSchema),
-    time: relativeTime(row.createdAt, now),
-  }));
+  const items: HitlItem[] = rows.map((row) => {
+    const assignment = assignmentsByHitlId.get(row.hitlRequestId) ?? null;
+    const assignee =
+      assignment?.assigneeActorId != null
+        ? (actorsById.get(assignment.assigneeActorId) ?? null)
+        : null;
+
+    return {
+      hitlRequestId: row.hitlRequestId,
+      runId: row.runId,
+      kind: row.kind,
+      assignmentId: assignment?.id ?? null,
+      assignmentStatus: assignment?.status ?? null,
+      assignmentActionKind: assignment?.actionKind ?? null,
+      assignmentRoleRefs: assignment?.roleRefs ?? [],
+      assignmentStaleEvidenceSummary:
+        assignment?.staleEvidenceSummary ?? null,
+      assigneeLabel: assignee?.label ?? null,
+      assigneeUserId: assignee?.userId ?? null,
+      agent: row.agent,
+      branch: row.branch,
+      flowRef: row.flowRef,
+      prompt: row.prompt,
+      options: extractOptions(row.kind, row.rawSchema),
+      time: relativeTime(row.createdAt, now),
+    };
+  });
 
   return {
     items,

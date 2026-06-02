@@ -48,6 +48,10 @@ import {
   evaluateNodeEnforcement,
 } from "@/lib/flows/enforcement";
 import { atomicWriteJson } from "@/lib/atomic";
+import {
+  createHitlAssignmentForRun,
+  systemCloseActiveAssignmentsForRun,
+} from "@/lib/assignments/service";
 import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
   workspacePolicySchema,
@@ -196,17 +200,39 @@ async function runReviewHuman(
     requestedAt: new Date().toISOString(),
   });
 
+  const hitlRequestId = randomUUID();
+  const settingsRoleRefs =
+    node.nodeType === "human" && node.settings && "roles" in node.settings
+      ? (node.settings.roles ?? [])
+      : [];
+  const roleRefs = Array.from(
+    new Set(
+      [node.finishHuman?.role, ...settingsRoleRefs].filter(
+        (role): role is string => typeof role === "string",
+      ),
+    ),
+  );
+
   await ctx.db.insert(hitlRequests).values({
-    id: randomUUID(),
+    id: hitlRequestId,
     runId: loaded.run.id,
     stepId: node.id,
     kind: "human",
     schema,
     prompt,
   });
+  await createHitlAssignmentForRun({
+    db: ctx.db,
+    runId: loaded.run.id,
+    hitlRequestId,
+    nodeId: node.id,
+    actionKind: "human_review",
+    roleRefs,
+    title: prompt,
+  });
 
   log.info(
-    { runId: loaded.run.id, nodeId: node.id },
+    { runId: loaded.run.id, nodeId: node.id, hitlRequestId, roleRefs },
     "review HITL created — pausing NeedsInput",
   );
 
@@ -1380,12 +1406,22 @@ export async function runGraph(
       .update(runs)
       .set({ status: "Crashed", endedAt, currentStepId: null })
       .where(eq(runs.id, runId));
+    await systemCloseActiveAssignmentsForRun({
+      db,
+      runId,
+      reason: "graph flow crashed",
+    });
     log2.error({ runErrorCode }, "runGraph ended Crashed");
   } else if (failed) {
     await db
       .update(runs)
       .set({ status: "Failed", endedAt, currentStepId: null })
       .where(eq(runs.id, runId));
+    await systemCloseActiveAssignmentsForRun({
+      db,
+      runId,
+      reason: "graph flow failed",
+    });
     log2.warn({ runErrorCode }, "runGraph ended Failed");
   } else {
     await db

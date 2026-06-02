@@ -10,6 +10,7 @@ import { markCheckpointed } from "./state-transitions";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed } from "@/lib/flows/graph/ledger";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
@@ -511,6 +512,11 @@ async function runTimeLimitPass(db: Db): Promise<number> {
       if (upd.length === 0) return false;
 
       await markNodeFailed(attempt.id, { errorCode: "PRECONDITION" }, tx);
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId: row.id,
+        reason: "node execution exceeded maxDurationMinutes",
+      });
 
       return true;
     });

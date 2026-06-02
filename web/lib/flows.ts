@@ -69,6 +69,7 @@ export type InstallFlowPluginArgs = {
   projectSlug: string;
   flowId: string;
   workspaceRoot?: string;
+  roleRefs?: readonly string[];
   // FIXME(any): dual drizzle-orm peer-dep variants. Caller may pass
   // either a node-postgres or better-sqlite3 drizzle client.
   db?: any;
@@ -394,9 +395,12 @@ async function loadManifestOrThrow(
   flowYamlPath: string,
   source: string,
   version: string,
+  opts: { roleRefs?: readonly string[] } = {},
 ): Promise<FlowYamlV1> {
   try {
-    return await loadFlowManifest(flowYamlPath);
+    return await loadFlowManifest(flowYamlPath, {
+      roleRefs: opts.roleRefs,
+    });
   } catch (err) {
     throw wrapInstallStage({
       source,
@@ -505,10 +509,11 @@ export async function installRevision(opts: {
   source: string;
   version: string;
   flowId: string;
+  roleRefs?: readonly string[];
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstalledRevision> {
-  const { source, version, flowId, signal } = opts;
+  const { source, version, flowId, roleRefs, signal } = opts;
   const db = opts.db ?? getDb();
 
   const sourceKind = await isLocalDirectorySource(source);
@@ -523,6 +528,7 @@ export async function installRevision(opts: {
       join(sourceKind.absPath, "flow.yaml"),
       source,
       version,
+      { roleRefs },
     );
     resolvedRevision = manifestDigest(manifestForIntent).slice(
       0,
@@ -547,6 +553,7 @@ export async function installRevision(opts: {
         join(tmpDir, "flow.yaml"),
         source,
         version,
+        { roleRefs },
       );
     } catch (err) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -583,6 +590,7 @@ export async function installRevision(opts: {
         join(target, "flow.yaml"),
         source,
         version,
+        { roleRefs },
       );
       const setupRow: Array<{ setupStatus: InstalledRevision["setupStatus"] }> =
         await db
@@ -627,6 +635,7 @@ export async function installRevision(opts: {
       join(target, "flow.yaml"),
       source,
       version,
+      { roleRefs },
     );
 
     // SECURITY (ADR-021): NEVER execute a package's setup.sh during install —
@@ -793,11 +802,19 @@ async function upsertFlowEnablementRow(opts: {
 async function installFlowPluginImpl(
   args: InstallFlowPluginArgs,
 ): Promise<InstallResult> {
-  const { source, version, projectId, projectSlug, flowId, signal } = args;
+  const { source, version, projectId, projectSlug, flowId, roleRefs, signal } =
+    args;
   const workspaceRoot = args.workspaceRoot ?? process.cwd();
   const db = args.db ?? getDb();
 
-  const rev = await installRevision({ source, version, flowId, db, signal });
+  const rev = await installRevision({
+    source,
+    version,
+    flowId,
+    roleRefs,
+    db,
+    signal,
+  });
 
   const trustStatus = resolveTrust(source);
   // Trusted-by-policy sources auto-enable to preserve the one-shot register UX;

@@ -22,6 +22,9 @@ instances (**M12**). The locked decision is
 - **Takeover claim** — a run transition `NeedsInput → HumanWorking`
   (`runs.status`). Session-less by design; holds a concurrency slot and a
   worktree.
+- **Manual takeover assignment** — M13 `assignments` row with
+  `action_kind='manual_takeover'`, created and claimed by the takeover actor
+  after the `HumanWorking` CAS succeeds.
 - **Takeover attempt** — the `node_attempts` row of the `human_review` node that
   carries the takeover columns `owner_user_id`, `base_ref`, `returned_commits`,
   `returned_diff` (raw `git log`/`git diff` text; nullable, populated only on
@@ -75,8 +78,10 @@ sequenceDiagram
     W->>DB: requireActiveSession + requireProjectAction(answerHitl)
     W->>DB: load run + workspace, assert status=NeedsInput
     W->>DB: assert current node is human_review AND decisions include takeover
-    W->>DB: claimTakeover (append takeover node_attempts row + owner_user_id)
     W->>DB: markHumanWorking (CAS status=HumanWorking WHERE status=NeedsInput)
+    W->>DB: complete active review assignment, if present
+    W->>DB: claimTakeover (append takeover node_attempts row + owner_user_id)
+    W->>DB: create + claim manual_takeover assignment
     W-->>U: 200 worktreePath / branch / ownerUserId
 ```
 
@@ -106,6 +111,7 @@ sequenceDiagram
     W->>DB: markDownstreamStale reentryNode + downstreamOf(reentryNode)
     Note over W: Phase 3 - AFTER-side marker
     W->>DB: markReturnedToRunning status=Running + takeover attempt ended_at
+    W->>DB: complete manual_takeover assignment
     W-->>R: queueMicrotask runFlow resume at transitions.takeover (checks)
     R->>DB: staled gates rerun over the human commits then fresh human_review
 ```
@@ -181,6 +187,9 @@ linear run renders an empty-but-valid timeline (no crash).
 - Return is a two-phase commit: the AFTER-side marker
   (`status='Running'` + takeover `ended_at`) is set ONLY after `git log`/`git
   diff` + `recordTakeoverReturn` + `markDownstreamStale` all succeed.
+- M13 assignment completion is part of that after-side transaction: the manual
+  takeover assignment is completed only after artifacts, staleness, cursor, and
+  `Running` status have committed.
 - A dirty worktree on return (`git status --porcelain=v1 --untracked-files=all`
   non-empty — uncommitted tracked edits OR untracked files) is rejected 409
   `CONFLICT` BEFORE any ledger write, because the recorded `base..branch`

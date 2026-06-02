@@ -32,6 +32,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
 | `flows` | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement. | `projects.id` |
 | `capability_records` | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings. | `projects.id` |
+| `project_flow_roles` | **(M13 persistence — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles. | `projects.id` |
+| `actor_identities` | **(M13 persistence — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events. | `projects.id`, optional `users.id` |
 | `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
 | `runs` | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
 | `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
@@ -45,6 +47,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `artifact_instances` | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`. | `runs.id` |
 | `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
+| `assignments` | **(M13 persistence — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, conflict, and external waits. Runtime creation is phased in after the persistence slice. | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
+| `assignment_events` | **(M13 persistence — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger. | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 
 ## `users`
 
@@ -185,6 +189,55 @@ per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-p
 
 UNIQUE constraint `(projectId, executorRefId)` — each Flow's referenced
 executor id resolves within its project's namespace, never cross-project.
+
+## `project_flow_roles`
+
+(M13 persistence, migration `0018`.)
+
+```ts
+{
+  id,
+  projectId,                      // FK -> projects.id (cascade)
+  roleRef,                        // Flow routing ref from maister.yaml flow_roles[]
+  label,
+  description?,
+  source: 'config' | 'flow' | 'system',
+  archivedAt?,
+  createdAt,
+  updatedAt
+}
+```
+
+UNIQUE `(projectId, roleRef)`. `roleRef` is a Flow routing label, not an authz
+role. Authorization remains on `project_members.role` through
+`requireProjectAction()`. Removing a role from `maister.yaml` archives the row;
+re-adding the same ref reactivates it instead of creating a second logical role.
+
+## `actor_identities`
+
+(M13 persistence, migration `0018`.)
+
+```ts
+{
+  id,
+  projectId,                      // FK -> projects.id (cascade)
+  kind: 'user' | 'api_token' | 'internal_agent' | 'system',
+  label,
+  userId?,                        // FK -> users.id (SET NULL)
+  tokenId?,                       // identifier only; no token material
+  internalAgentRef?,
+  systemKey?,
+  disabledAt?,
+  createdAt,
+  updatedAt
+}
+```
+
+M13 web routes resolve Auth.js sessions to `kind = 'user'`. API-token,
+internal-agent, and system actors are modeled for attribution and future
+external-operation ingress, but no token-authenticated write path is enabled by
+this persistence slice. UNIQUE `(projectId, userId)` gives one user actor per
+project and preserves audit labels if the linked user is later removed.
 
 ## `flows`
 
@@ -846,6 +899,71 @@ carry `schema.supervisorSessionId` so the web tier can route the
 deferred resolution to the right supervisor session without an extra
 round-trip.
 
+## `assignments`
+
+(M13 persistence, migration `0018`.)
+
+```ts
+{
+  id,
+  projectId,                      // FK -> projects.id (cascade)
+  runId,                          // FK -> runs.id (cascade)
+  taskId?,                        // FK -> tasks.id (SET NULL)
+  nodeId?,
+  stepId?,
+  hitlRequestId?,                 // FK -> hitl_requests.id (cascade)
+  nodeAttemptId?,                 // FK -> node_attempts.id (cascade)
+  actionKind: 'permission' | 'form' | 'human_review'
+            | 'manual_takeover' | 'merge_conflict',
+  status: 'open' | 'claimed' | 'completed' | 'cancelled',
+  roleRefs,                       // jsonb string[] snapshot
+  title,
+  assigneeActorId?,               // FK -> actor_identities.id (SET NULL)
+  createdByActorId?,              // FK -> actor_identities.id (SET NULL)
+  completedByActorId?,            // FK -> actor_identities.id (SET NULL)
+  evidenceArtifactId?,            // FK -> artifact_instances.id (SET NULL)
+  branch?,
+  ref?,
+  slaHours?,
+  staleEvidenceSummary?,
+  claimedAt?,
+  completedAt?,
+  createdAt,
+  updatedAt
+}
+```
+
+The persistence contract is implemented; full automatic creation for every
+HITL/takeover path and UI read models are M13 follow-up tasks in progress.
+`runs.status` remains the scheduler and concurrency authority; assignment
+status is claimable-work state only. UNIQUE `hitlRequestId` gives one
+assignment per HITL wait when the row is linked to `hitl_requests`.
+
+## `assignment_events`
+
+(M13 persistence, migration `0018`.)
+
+```ts
+{
+  id,
+  assignmentId,                   // FK -> assignments.id (cascade)
+  projectId,                      // FK -> projects.id (cascade)
+  runId,                          // FK -> runs.id (cascade)
+  eventKind: 'created' | 'claimed' | 'released' | 'taken_over'
+           | 'responded' | 'returned' | 'completed'
+           | 'cancelled' | 'superseded' | 'system_closed',
+  actorId?,                       // FK -> actor_identities.id (SET NULL)
+  fromStatus?,
+  toStatus?,
+  payload,                        // jsonb, no token material
+  createdAt
+}
+```
+
+Events are append-only. Current M13 services write
+`created`/`claimed`/`released`/`taken_over`/`responded`/`returned`/`completed`/`cancelled`/`system_closed`
+events in the same DB transaction as the corresponding assignment state change.
+
 ## Planned roadmap persistence
 
 The roadmap introduces product objects that are not yet represented as first
@@ -866,7 +984,7 @@ explicitly chooses that as a temporary bridge.
 | ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above. | `runs.id`, `node_attempts.id` |
 | `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
 | ~~`gate_results`~~ → **M11a (Implemented)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
-| `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
+| ~~`assignments`~~ → **M13 persistence (Implemented)** | Claimable human work persistence landed as `assignments` + `assignment_events` in migration `0018`; runtime/UI integration is still being phased in. See [`assignments`](#assignments) above. | `runs.id`, optional task |
 | `api_tokens` | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata. | `projects.id` |
 | `external_operation_events` | Audit/ledger records for token or MCP actions: task create, run launch, artifact attach, gate report, readiness read. | `projects.id`, optional run/task |
 
@@ -892,6 +1010,8 @@ projects
   ├── executors          (FK projectId, cascade)
   ├── flows              (FK projectId, cascade)
   ├── capability_records (FK projectId, cascade)
+  ├── project_flow_roles (FK projectId, cascade)      ← M13 persistence
+  ├── actor_identities   (FK projectId, cascade)      ← M13 persistence
   ├── tasks              (FK projectId, cascade)
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
@@ -904,12 +1024,17 @@ projects
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
   │           ├── artifact_projection_cursors (FK runId, cascade)        ← M12
   │           ├── hitl_requests   (FK runId,        cascade)
+  │           │     └── assignments (FK hitlRequestId, cascade)          ← M13 persistence
+  │           ├── assignments     (FK runId,        cascade)             ← M13 persistence
+  │           │     └── assignment_events (FK assignmentId, cascade)
   │           └── scratch_runs    (FK runId,        cascade)
   │                 ├── scratch_messages
   │                 │     └── scratch_attachments   (optional message FK)
   │                 ├── scratch_attachments         (run FK)
   │                 └── scratch_capability_profiles
   ├── runs               (FK projectId, cascade)  ← also direct
+  ├── assignments         (FK projectId, cascade)  ← also direct, M13
+  ├── assignment_events   (FK projectId, cascade)  ← also direct, M13
   └── workspaces         (FK projectId, cascade)  ← also direct
 ```
 
@@ -929,6 +1054,8 @@ Created via Drizzle:
 | `users` | `users_account_status_idx` | `(accountStatus)` | Admin queue and status-filtered user management |
 | `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
 | `capability_records` | `capability_records_project_kind_idx` | `(projectId, kind, selectable)` | Scratch launch-options catalog lookup |
+| `project_flow_roles` | `project_flow_roles_project_idx` | `(projectId)` | Project role registry lookup |
+| `actor_identities` | `actor_identities_project_idx` | `(projectId)` | Project actor lookup |
 | `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
 | `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |
 | `runs` | `runs_project_status_kind_idx` | `(projectId, status, runKind)` | Active workspace queries across Flow and scratch runs. |
@@ -946,13 +1073,21 @@ Created via Drizzle:
 | `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |
 | `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
+| `assignments` | `assignments_project_status_idx` | `(projectId, status)` | Project work queue |
+| `assignments` | `assignments_run_status_idx` | `(runId, status)` | Run-detail work queue |
+| `assignments` | `assignments_current_actor_idx` | `(assigneeActorId)` | Actor-owned work lookup |
+| `assignments` | `assignments_hitl_request_idx` | `(hitlRequestId)` | HITL assignment lookup |
+| `assignment_events` | `assignment_events_assignment_idx` | `(assignmentId)` | Assignment event history |
+| `assignment_events` | `assignment_events_project_created_idx` | `(projectId, createdAt)` | Project audit stream |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,
-capability_ref_id)`, `(id, attempt_number)`, `(run_id, step_id, attempt)`,
-`scratch_messages(run_id, sequence)`, `scratch_capability_profiles.run_id`, and
-`artifact_projection_cursors(run_id, scope)`) implicitly create their own
-indexes in Postgres.
+capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
+`actor_identities(project_id, user_id)`, `(id, attempt_number)`,
+`(run_id, step_id, attempt)`, `scratch_messages(run_id, sequence)`,
+`scratch_capability_profiles.run_id`,
+`artifact_projection_cursors(run_id, scope)`, and
+`assignments.hitl_request_id`) implicitly create their own indexes in Postgres.
 
 ## Workflow
 

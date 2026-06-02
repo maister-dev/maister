@@ -2,6 +2,11 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createAssignment,
+  ensureUserActor,
+  systemCloseActiveAssignmentsForRun,
+} from "@/lib/assignments/service";
+import {
   runs as runsTable,
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
@@ -82,6 +87,12 @@ vi.mock("@/lib/worktree", () => ({
   promoteLocalMerge: vi.fn(async () => "def5678"),
 }));
 
+vi.mock("@/lib/assignments/service", () => ({
+  createAssignment: vi.fn(async () => ({ id: "assignment-1" })),
+  ensureUserActor: vi.fn(async () => ({ id: "actor-1" })),
+  systemCloseActiveAssignmentsForRun: vi.fn(async () => []),
+}));
+
 function seedScratchRun(
   overrides: Partial<{
     runKind: "flow" | "scratch";
@@ -140,10 +151,16 @@ async function invokePost(runId: string, body: unknown) {
 
 beforeEach(() => {
   dbState.tables = { runs: [], scratch_runs: [], workspaces: [] };
-  vi.mocked(branchExists).mockClear();
+  vi.mocked(branchExists).mockReset();
   vi.mocked(branchExists).mockResolvedValue(true);
-  vi.mocked(promoteLocalMerge).mockClear();
+  vi.mocked(promoteLocalMerge).mockReset();
   vi.mocked(promoteLocalMerge).mockResolvedValue("def5678");
+  vi.mocked(createAssignment).mockReset();
+  vi.mocked(createAssignment).mockResolvedValue({ id: "assignment-1" } as any);
+  vi.mocked(ensureUserActor).mockReset();
+  vi.mocked(ensureUserActor).mockResolvedValue({ id: "actor-1" } as any);
+  vi.mocked(systemCloseActiveAssignmentsForRun).mockReset();
+  vi.mocked(systemCloseActiveAssignmentsForRun).mockResolvedValue([]);
 });
 
 describe("POST /api/runs/[runId]/promote", () => {
@@ -178,6 +195,11 @@ describe("POST /api/runs/[runId]/promote", () => {
       currentStepId: null,
     });
     expect(dbState.tables.runs[0].endedAt).toBeInstanceOf(Date);
+    expect(systemCloseActiveAssignmentsForRun).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId,
+      reason: "run promoted to Done",
+    });
   });
 
   it("rejects a missing target branch before merge", async () => {
@@ -226,6 +248,24 @@ describe("POST /api/runs/[runId]/promote", () => {
     expect(res.status).toBe(409);
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Review");
     expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(ensureUserActor).toHaveBeenCalledWith({
+      db: fakeDb,
+      projectId: "project-1",
+      userId: "user-1",
+      label: "user-1",
+    });
+    expect(createAssignment).toHaveBeenCalledWith({
+      db: fakeDb,
+      projectId: "project-1",
+      runId,
+      taskId: null,
+      actionKind: "merge_conflict",
+      roleRefs: [],
+      title: "Resolve merge conflict into main",
+      createdByActorId: "actor-1",
+      branch: "scratch/demo",
+      ref: "main",
+    });
   });
 
   it("rejects non-scratch runs", async () => {

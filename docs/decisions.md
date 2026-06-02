@@ -61,6 +61,7 @@
 | [ADR-037](#adr-037-typed-artifact-model) | Typed artifact model: `artifact_instances` is the queryable evidence index only (payloads on disk/worktree/git), closed `kind` catalog, validity FSM, M12 deferral list | Accepted | 2026-06-01 |
 | [ADR-038](#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022) | Hybrid write path for `artifact_instances` (refines ADR-022): runner-inline + scoped web-side projector, deterministic-PK idempotency, per-RUN cursor, no watcher | Accepted | 2026-06-01 |
 | [ADR-039](#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer) | `@xyflow/react` + `@dagrejs/dagre` as the read-only evidence-graph renderer (sanctioned exception to "no other component lib") | Accepted | 2026-06-01 |
+| [ADR-040](#adr-040-assignment-actors-and-role-owned-work-queue) | Assignment actors and role-owned work queue: Flow roles route work, actors attribute ownership, no new M13 ingress | Accepted | 2026-06-02 |
 
 ---
 
@@ -1981,6 +1982,95 @@ breach the rule. The explorer is **client-only** (`"use client"` +
 - **reaflow:** maintenance concerns. Rejected.
 - **Hand-rolled SVG:** explicitly rejected by the user; reinvents layout,
   panning, and read-only interaction that React Flow provides. Rejected.
+
+---
+
+### ADR-040: Assignment actors and role-owned work queue
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** M13 turns waiting human work into a durable, queryable queue without
+changing the existing HITL, manual-takeover, or M12 evidence contracts.
+`hitl_requests` currently stores the payload that unblocks a run; manual
+takeover ownership lives on `node_attempts.owner_user_id`; and M12
+`artifact_instances` is the queryable evidence index. None of those tables is
+the right place to model "who owns this waiting item now" or "which Flow role
+should see it." At the same time, an actor in MAIster is not always a human:
+future external systems will act through project API tokens, internal MAIster
+agents may perform system work, and lifecycle automation already needs system
+attribution. M13 must model those identities now without enabling new
+token-authenticated write paths before the external-operations milestone.
+
+**Decision:** Add an assignment layer with four concepts:
+
+1. **Flow role registry.** `project_flow_roles` stores project-scoped routing
+   labels such as `reviewer`, `qa`, or `release-manager`. These roles come from
+   `maister.yaml` / Flow configuration and are validated at launch and sync
+   boundaries, but they are **not RBAC** and do not replace
+   `project_members.role`. Authorization remains
+   `requireProjectAction(..., "answerHitl")`; in M13 a role mismatch is visible
+   context only and never blocks claim, release, HITL response, takeover,
+   return, abandon, or promotion.
+2. **Actor identities.** `actor_identities` is the attribution primitive for
+   `user`, `api_token`, `internal_agent`, and `system` actors. M13 resolves UI
+   and web API requests only to `user` actors derived from Auth.js plus project
+   authorization. `api_token` rows are schema-supported for future M16 external
+   operations and read-only imported attribution; M13 does not add token
+   secrets, token authentication, token-scoped permissions, or any unauthenticated
+   write route.
+3. **Assignments.** `assignments` is the durable wait/ownership object over
+   existing waits: ACP permission HITL, form/human HITL, graph human review, and
+   manual takeover. It stores the current status, role snapshot, optional claim
+   actor, and links to the relevant run, HITL request, node attempt, and evidence
+   where applicable. `hitl_requests` remains the response payload source of
+   truth; `node_attempts` remains the runner/takeover ledger; `artifact_instances`
+   remains the evidence source of truth.
+4. **Assignment events.** `assignment_events` is append-only audit for create,
+   claim, transfer, release, complete, cancel, and stale/terminal closure. Events
+   reference `actor_identities`, including `system` for lifecycle closures. A
+   completion event is written only after the side effect it describes succeeds:
+   HITL delivery, takeover return/evidence recording, release, abandon, or run
+   terminal reconciliation.
+
+M13 keeps the existing run status vocabulary (`NeedsInput`, `NeedsInputIdle`,
+`HumanWorking`, terminal states), supervisor API, and `MaisterError` union. No
+new deployment wiring, environment variable, supervisor route, or external-token
+ingress is introduced.
+
+**Consequences:**
+
+- Boards and inboxes can query one assignment surface instead of inferring
+  ownership from raw HITL rows or takeover fields.
+- Flow-role configuration becomes fail-fast and testable while staying separate
+  from project authorization.
+- Non-human actors are represented consistently before M16, avoiding a later
+  human-only schema migration, but those rows do not grant access in M13.
+- M12 evidence remains authoritative for stale/merge-blocked/readiness badges;
+  assignments may summarize or link evidence, but never duplicate artifact
+  validity state.
+- Route DTOs must project assignment fields explicitly and must not expose
+  `acp_session_id`, supervisor handles, filesystem worktree paths, token
+  material, or raw DB rows. Assignment write routes derive project, run, HITL,
+  node-attempt, and actor identifiers from URL parameters, Auth.js context, and
+  server state; request bodies never carry cross-resource IDs.
+
+**Alternatives Considered:**
+
+- **Overload `project_members.role` as Flow routing.** Rejected because project
+  membership is authorization and Flow roles are delivery labels; mixing them
+  would make role mismatch a security decision and block useful work.
+- **Use `hitl_requests` as the queue table.** Rejected because HITL rows carry
+  unblock payloads, not ownership lifecycle, and manual takeover is not always a
+  HITL payload.
+- **Add human-only owner columns.** Rejected because MAIster actors include
+  external systems, internal agents, and system automation; a human-only schema
+  would force a redesign for M16.
+- **Implement API-token ingress in M13.** Rejected because the external
+  operations surface belongs to M16. M13 stores attribution-ready identities but
+  only Auth.js users can act through the web routes.
+- **Add new run statuses or supervisor routes.** Rejected because assignment
+  ownership is a web-tier durable read/write model over existing lifecycle
+  states and does not require supervisor protocol changes.
 
 ---
 

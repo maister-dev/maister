@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { loadPlatformMcpCapabilities, loadProjectConfig } from "@/lib/config";
+import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -263,6 +264,12 @@ async function register(
         db: tx,
       });
 
+      await syncProjectFlowRolesFromConfig({
+        projectId,
+        roles: config.flow_roles,
+        db: tx,
+      });
+
       await tx
         .update(projects)
         .set({ defaultExecutorId })
@@ -292,6 +299,10 @@ async function register(
     { projectId, slug, repoPath },
     "register project rows persisted, installing flows",
   );
+  const configuredRoleRefs =
+    config.flow_roles.length > 0
+      ? config.flow_roles.map((role) => role.ref)
+      : undefined;
 
   // Phase (d): flow-install side-effects (clone + symlink + flows row), which
   // cannot live inside a DB transaction. On any failure, fully compensate so
@@ -310,6 +321,7 @@ async function register(
         projectId,
         projectSlug: slug,
         flowId: flow.id,
+        roleRefs: configuredRoleRefs,
         db,
       });
     }

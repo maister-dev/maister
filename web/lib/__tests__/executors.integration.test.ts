@@ -76,6 +76,7 @@ function configWith(over: Partial<MaisterYamlV2> = {}): MaisterYamlV2 {
       settings: [],
       tools: [],
     },
+    flow_roles: [],
     flows: [],
   };
 

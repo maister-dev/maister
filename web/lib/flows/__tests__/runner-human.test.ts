@@ -6,18 +6,85 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  assignmentEvents as assignmentEventsTable,
+  assignments as assignmentsTable,
+  hitlRequests as hitlRequestsTable,
+  runs as runsTable,
+} from "@/lib/db/schema";
 import { runHumanStep } from "@/lib/flows/runner-human";
 
 let runtimeRoot: string;
 let flowInstallPath: string;
 const inserted: Array<Record<string, unknown>> = [];
 
-const fakeDb = {
-  insert: () => ({
-    values: async (row: Record<string, unknown>) => {
-      inserted.push(row);
+type FakeTableName =
+  | "hitl_requests"
+  | "runs"
+  | "assignments"
+  | "assignment_events";
+
+function tableOf(table: unknown): FakeTableName {
+  if (table === hitlRequestsTable) return "hitl_requests";
+  if (table === runsTable) return "runs";
+  if (table === assignmentsTable) return "assignments";
+  if (table === assignmentEventsTable) return "assignment_events";
+
+  throw new Error("unknown table");
+}
+
+function insertChain(table: unknown) {
+  const name = tableOf(table);
+
+  return {
+    values: (row: Record<string, unknown>) => {
+      if (name === "hitl_requests") {
+        inserted.push(row);
+      }
+
+      const persisted =
+        name === "assignments"
+          ? {
+              ...row,
+              projectId: row.projectId ?? "proj-1",
+              runId: row.runId ?? "run-1",
+            }
+          : row;
+      const result: any = Promise.resolve(undefined);
+
+      result.onConflictDoUpdate = () => result;
+      result.returning = async () => [persisted];
+
+      return result;
     },
-  }),
+  };
+}
+
+function selectChain() {
+  return {
+    from: (table: unknown) => ({
+      where: () => {
+        const name = tableOf(table);
+        const rows =
+          name === "runs" ? [{ projectId: "proj-1", taskId: null }] : [];
+        const result: any = Promise.resolve(rows);
+
+        result.limit = async () => rows;
+
+        return result;
+      },
+    }),
+  };
+}
+
+const fakeDb = {
+  insert: insertChain,
+  select: selectChain,
+  transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+    await fn({
+      insert: insertChain,
+      select: selectChain,
+    }),
 };
 
 const ctxBase = (overrides: Partial<FlowContext> = {}): FlowContext => ({

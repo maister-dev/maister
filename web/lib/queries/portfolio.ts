@@ -25,6 +25,7 @@ import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import * as schema from "@/lib/db/schema";
 
 const {
+  assignments,
   executors,
   flows,
   hitlRequests,
@@ -52,6 +53,12 @@ export const ACTIVE_RUN_STATUSES = [
   // worktree + a concurrency slot, so it counts as an active workspace —
   // mirroring lib/board.ts (which buckets HumanWorking into the in-flight set).
   "HumanWorking",
+] as const;
+const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
+  "NeedsInput",
+  "NeedsInputIdle",
+  "HumanWorking",
+  "Review",
 ] as const;
 
 // M19 Phase 5: terminal run statuses whose surviving workspace still shows a GC
@@ -241,6 +248,7 @@ export async function getPortfolio(
     activeRunRows,
     recentMergeRows,
     needRows,
+    legacyNeedRows,
   ] = await Promise.all([
     client
       .select({
@@ -313,12 +321,37 @@ export async function getPortfolio(
 
     client
       .select({
+        projectId: assignments.projectId,
+        runId: runs.id,
+        prompt: assignments.title,
+        agent: executors.agent,
+        branch: workspaces.branch,
+        createdAt: assignments.createdAt,
+        runStatus: runs.status,
+      })
+      .from(assignments)
+      .innerJoin(runs, eq(runs.id, assignments.runId))
+      .innerJoin(executors, eq(executors.id, runs.executorId))
+      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+      .where(
+        and(
+          inArray(assignments.projectId, projectIds),
+          inArray(assignments.status, ["open", "claimed"]),
+          inArray(runs.status, [...ACTIONABLE_ASSIGNMENT_RUN_STATUSES]),
+          isNull(workspaces.removedAt),
+        ),
+      )
+      .orderBy(desc(assignments.createdAt)),
+
+    client
+      .select({
         projectId: runs.projectId,
         runId: runs.id,
         prompt: hitlRequests.prompt,
         agent: executors.agent,
         branch: workspaces.branch,
         createdAt: hitlRequests.createdAt,
+        runStatus: runs.status,
       })
       .from(hitlRequests)
       .innerJoin(runs, eq(runs.id, hitlRequests.runId))
@@ -327,6 +360,7 @@ export async function getPortfolio(
       .where(
         and(
           inArray(runs.projectId, projectIds),
+          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
           isNull(hitlRequests.respondedAt),
           isNull(workspaces.removedAt),
         ),
@@ -430,8 +464,13 @@ export async function getPortfolio(
 
   const needCountByProject = new Map<string, number>();
   const firstNeedByProject = new Map<string, PortfolioNeed>();
+  const assignmentNeedRunIds = new Set(needRows.map((row) => row.runId));
+  const effectiveNeedRows = [
+    ...needRows,
+    ...legacyNeedRows.filter((row) => !assignmentNeedRunIds.has(row.runId)),
+  ];
 
-  for (const row of needRows) {
+  for (const row of effectiveNeedRows) {
     needCountByProject.set(
       row.projectId,
       (needCountByProject.get(row.projectId) ?? 0) + 1,
@@ -440,7 +479,7 @@ export async function getPortfolio(
       firstNeedByProject.set(row.projectId, {
         runId: row.runId,
         prompt: row.prompt,
-        agent: row.agent as AgentRole,
+        agent: row.runStatus === "HumanWorking" ? "dev" : (row.agent as AgentRole),
         branch: row.branch,
       });
     }
