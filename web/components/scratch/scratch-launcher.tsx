@@ -2,7 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
@@ -83,18 +83,17 @@ type ApiError = {
   message?: string;
 };
 
-const fieldLabel =
-  "font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute";
-const inputBase =
-  "w-full rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
-const compactInput =
-  "w-full min-w-0 rounded-md border border-line-soft bg-paper px-2.5 py-2 font-mono text-[12px] leading-[1.3] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
-const compactSelect = `${compactInput} cursor-pointer`;
 const commandShell =
-  "overflow-hidden rounded-[14px] border border-line bg-paper shadow-[0_24px_70px_-48px_var(--ink)]";
+  "overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_24px_70px_-48px_var(--ink)]";
 const commandBand = "bg-[color-mix(in_oklab,var(--ivory)_55%,var(--paper))]";
 const detailShell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_34%,var(--paper))]";
+const iconButton =
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line-soft bg-[color-mix(in_oklab,var(--paper)_82%,var(--ink)_8%)] text-mute transition hover:border-amber hover:text-amber";
+const contextPill =
+  "inline-flex h-8 min-w-0 items-center gap-2 rounded-full border border-transparent bg-transparent px-2.5 text-[13px] font-medium text-mute transition hover:border-line-soft hover:bg-paper hover:text-ink";
+const invisibleSelect =
+  "absolute inset-0 h-full w-full cursor-pointer opacity-0";
 const checkboxLine =
   "flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-[12px] text-ink-2 hover:bg-paper";
 const summaryButton =
@@ -122,12 +121,130 @@ function selectedCount(...lists: readonly string[][]): number {
   return lists.reduce((sum, list) => sum + list.length, 0);
 }
 
-function executorSummary(executor: ExecutorOption | null): string {
-  if (!executor) return "none";
+function iconLabel(label: string): string {
+  return label.trim().length > 0 ? label : "untitled";
+}
 
-  return [executor.agent, executor.model, executor.router, executor.envHint]
-    .filter((part): part is string => Boolean(part))
-    .join(" · ");
+function bytesSummary(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kib = bytes / 1024;
+
+  if (kib < 1024) return `${kib.toFixed(kib >= 10 ? 0 : 1)} KB`;
+
+  const mib = kib / 1024;
+
+  return `${mib.toFixed(mib >= 10 ? 0 : 1)} MB`;
+}
+
+function PaperclipIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
+      <path d="m21.4 11.4-9.7 9.7a5.8 5.8 0 0 1-8.2-8.2l10.4-10.4a3.9 3.9 0 0 1 5.5 5.5L9.7 17.7a2 2 0 1 1-2.8-2.8l8.9-8.9" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <path d="M12 19V5" />
+      <path d="m5 12 7-7 7 7" />
+    </svg>
+  );
+}
+
+function BranchIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.7"
+      viewBox="0 0 24 24"
+    >
+      <path d="M6 3v12" />
+      <path d="M18 9a3 3 0 1 0-3-3" />
+      <path d="M6 15a3 3 0 1 0 3 3" />
+      <path d="M18 9c0 3.5-2.7 5-6 5H9" />
+    </svg>
+  );
+}
+
+function ProjectIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.7"
+      viewBox="0 0 24 24"
+    >
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+    </svg>
+  );
+}
+
+function MachineIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.7"
+      viewBox="0 0 24 24"
+    >
+      <rect height="12" rx="2" width="18" x="3" y="4" />
+      <path d="M8 20h8" />
+      <path d="M12 16v4" />
+    </svg>
+  );
+}
+
+function AgentMark({
+  agent,
+}: {
+  agent: ExecutorOption["agent"];
+}): ReactElement {
+  return (
+    <span
+      aria-hidden="true"
+      className={clsx(
+        "inline-flex h-5 w-5 items-center justify-center rounded-full font-mono text-[11px] font-semibold",
+        agent === "claude"
+          ? "bg-[#f27f4c]/15 text-[#f27f4c]"
+          : "bg-amber-soft text-amber",
+      )}
+    >
+      {agent === "claude" ? "*" : "C"}
+    </span>
+  );
 }
 
 function CapabilityGroup({
@@ -198,11 +315,15 @@ export function ScratchLauncher(): ReactElement {
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<AttachmentInput[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [filePreviews, setFilePreviews] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const [mcpIds, setMcpIds] = useState<string[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [ruleIds, setRuleIds] = useState<string[]>([]);
   const [agentDefinitionIds, setAgentDefinitionIds] = useState<string[]>([]);
   const [restrictionIds, setRestrictionIds] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -262,6 +383,22 @@ export function ScratchLauncher(): ReactElement {
     return () => controller.abort();
   }, [projectId]);
 
+  useEffect(() => {
+    const previews = new Map<string, string>();
+
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+
+      previews.set(file.name, URL.createObjectURL(file));
+    }
+
+    setFilePreviews(previews);
+
+    return () => {
+      for (const url of previews.values()) URL.revokeObjectURL(url);
+    };
+  }, [files]);
+
   const selectedProject = useMemo(
     () => options?.projects.find((project) => project.id === projectId) ?? null,
     [options?.projects, projectId],
@@ -270,10 +407,6 @@ export function ScratchLauncher(): ReactElement {
     () =>
       options?.executors.find((executor) => executor.id === executorId) ?? null,
     [executorId, options?.executors],
-  );
-  const fileBytes = useMemo(
-    () => files.reduce((sum, file) => sum + file.size, 0),
-    [files],
   );
   const contextCount =
     files.length + attachments.length + (linkedIssueUrl.trim() ? 1 : 0);
@@ -306,6 +439,13 @@ export function ScratchLauncher(): ReactElement {
     setAttachments((current) =>
       current.filter((_, itemIndex) => itemIndex !== index),
     );
+  }
+
+  function removeFile(index: number): void {
+    setFiles((current) =>
+      current.filter((_, itemIndex) => itemIndex !== index),
+    );
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function handleSubmit(
@@ -388,58 +528,297 @@ export function ScratchLauncher(): ReactElement {
   return (
     <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
       <section className={commandShell}>
-        <div className={clsx(commandBand, "grid gap-2 p-3 md:grid-cols-2")}>
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className={fieldLabel}>{t("workspaceName")}</span>
-            <input
-              className={compactInput}
-              placeholder={t("workspaceNamePlaceholder")}
-              value={workspaceName}
-              onChange={(event) => setWorkspaceName(event.target.value)}
-            />
-          </label>
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className={fieldLabel}>{t("branchName")}</span>
-            <input
-              className={compactInput}
-              placeholder={
-                selectedProject ? t("branchNamePlaceholder") : t("optional")
-              }
-              spellCheck={false}
-              value={branchName}
-              onChange={(event) => setBranchName(event.target.value)}
-            />
-          </label>
+        <div
+          className={clsx(
+            commandBand,
+            "flex flex-col gap-3 p-4 pb-3 md:flex-row md:items-center",
+          )}
+        >
+          <input
+            aria-label={t("workspaceName")}
+            className="min-w-0 flex-1 bg-transparent text-[24px] font-semibold leading-none text-ink outline-none placeholder:text-mute"
+            placeholder={t("workspaceNamePlaceholder")}
+            value={workspaceName}
+            onChange={(event) => setWorkspaceName(event.target.value)}
+          />
+          <input
+            aria-label={t("branchName")}
+            className="min-w-0 bg-transparent font-mono text-[19px] leading-none text-ink outline-none placeholder:text-mute md:w-[280px] md:text-right"
+            placeholder={
+              selectedProject ? t("branchNamePlaceholder") : t("optional")
+            }
+            spellCheck={false}
+            value={branchName}
+            onChange={(event) => setBranchName(event.target.value)}
+          />
         </div>
 
-        <label className="flex flex-col gap-2 p-4">
-          <span className={fieldLabel}>{t("prompt")}</span>
+        <div className="mx-4 flex min-h-[280px] flex-col rounded-[18px] border border-line-soft bg-[color-mix(in_oklab,var(--paper)_86%,var(--ink)_8%)] p-3 shadow-inner">
+          {files.length > 0 ||
+          attachments.length > 0 ||
+          linkedIssueUrl.trim() ? (
+            <div className="mb-3 flex max-h-[118px] flex-col gap-2 overflow-y-auto pr-1">
+              {files.length > 0 ? (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {files.map((file, index) => {
+                    const preview = filePreviews.get(file.name) ?? null;
+
+                    return (
+                      <div
+                        key={`${file.name}-${index}`}
+                        className="group relative flex min-w-[160px] max-w-[220px] items-center gap-2 rounded-lg border border-line-soft bg-paper p-2"
+                      >
+                        {preview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            alt=""
+                            className="h-10 w-10 rounded-md object-cover"
+                            src={preview}
+                          />
+                        ) : (
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-ivory font-mono text-[10px] text-mute">
+                            FILE
+                          </span>
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-semibold text-ink">
+                            {iconLabel(file.name)}
+                          </span>
+                          <span className="block font-mono text-[10.5px] text-mute">
+                            {bytesSummary(file.size)}
+                          </span>
+                        </span>
+                        <button
+                          aria-label={t("remove")}
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 font-mono text-[11px] text-white opacity-0 transition group-hover:opacity-100"
+                          type="button"
+                          onClick={() => removeFile(index)}
+                        >
+                          x
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              {linkedIssueUrl.trim() ? (
+                <div className="grid gap-2 rounded-lg border border-line-soft bg-paper p-2 md:grid-cols-[120px_1fr_auto]">
+                  <span className="self-center rounded-full bg-ivory px-2 py-1 font-mono text-[10.5px] font-semibold text-mute">
+                    {t("linkedIssue")}
+                  </span>
+                  <input
+                    aria-label={t("linkedIssue")}
+                    className="min-w-0 bg-transparent font-mono text-[12px] text-ink outline-none placeholder:text-mute"
+                    placeholder="https://github.com/org/repo/issues/123"
+                    type="url"
+                    value={linkedIssueUrl}
+                    onChange={(event) => setLinkedIssueUrl(event.target.value)}
+                  />
+                  <button
+                    className="rounded-md px-2 font-mono text-[11px] text-mute hover:bg-ivory hover:text-amber"
+                    type="button"
+                    onClick={() => setLinkedIssueUrl("")}
+                  >
+                    {t("remove")}
+                  </button>
+                </div>
+              ) : null}
+
+              {attachments.map((attachment, index) => (
+                <div
+                  key={`${attachment.kind}-${index}`}
+                  className="grid gap-2 rounded-lg border border-line-soft bg-paper p-2 md:grid-cols-[112px_1fr_1.4fr_auto]"
+                >
+                  <select
+                    aria-label={t("attachment")}
+                    className="min-w-0 rounded-md bg-ivory px-2 py-1 font-mono text-[11px] text-ink outline-none"
+                    value={attachment.kind}
+                    onChange={(event) =>
+                      updateAttachment(index, {
+                        kind: event.target.value as AttachmentKind,
+                      })
+                    }
+                  >
+                    <option value="issue_url">
+                      {t("attachmentKind.issue_url")}
+                    </option>
+                    <option value="file_path">
+                      {t("attachmentKind.file_path")}
+                    </option>
+                    <option value="text_note">
+                      {t("attachmentKind.text_note")}
+                    </option>
+                  </select>
+                  <input
+                    aria-label={t("attachmentLabel")}
+                    className="min-w-0 bg-transparent font-mono text-[12px] text-ink outline-none placeholder:text-mute"
+                    placeholder={t("attachmentLabel")}
+                    value={attachment.label}
+                    onChange={(event) =>
+                      updateAttachment(index, { label: event.target.value })
+                    }
+                  />
+                  <input
+                    aria-label={t("attachmentValue")}
+                    className="min-w-0 bg-transparent font-mono text-[12px] text-ink outline-none placeholder:text-mute"
+                    placeholder={t("attachmentValue")}
+                    value={attachment.value}
+                    onChange={(event) =>
+                      updateAttachment(index, { value: event.target.value })
+                    }
+                  />
+                  <button
+                    className="rounded-md px-2 font-mono text-[11px] text-mute hover:bg-ivory hover:text-amber"
+                    type="button"
+                    onClick={() => removeAttachment(index)}
+                  >
+                    {t("remove")}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <textarea
-            className="min-h-[270px] w-full resize-y bg-transparent text-[16px] leading-[1.55] text-ink outline-none placeholder:text-mute"
+            aria-label={t("prompt")}
+            className="min-h-[180px] flex-1 resize-y bg-transparent text-[20px] leading-[1.45] text-ink outline-none placeholder:text-mute"
             placeholder={t("promptPlaceholder")}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
           />
-        </label>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <label className="relative inline-flex h-9 min-w-[134px] max-w-[260px] items-center gap-2 rounded-full border border-line-soft bg-paper px-3 text-[13px] font-semibold text-ink">
+                {selectedExecutor ? (
+                  <AgentMark agent={selectedExecutor.agent} />
+                ) : null}
+                <span className="min-w-0 truncate">
+                  {selectedExecutor?.displayLabel ?? t("executor")}
+                </span>
+                <span aria-hidden="true" className="text-mute">
+                  v
+                </span>
+                <select
+                  aria-label={t("executor")}
+                  className={invisibleSelect}
+                  value={executorId}
+                  onChange={(event) => setExecutorId(event.target.value)}
+                >
+                  {options?.executors.map((executor) => (
+                    <option key={executor.id} value={executor.id}>
+                      {executor.displayLabel}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="relative inline-flex h-9 min-w-[120px] items-center justify-center rounded-full border border-line-soft bg-paper px-3 font-mono text-[12px] font-semibold text-mute">
+                <span className="truncate">{workMode}</span>
+                <select
+                  aria-label={t("workMode")}
+                  className={invisibleSelect}
+                  value={workMode}
+                  onChange={(event) =>
+                    setWorkMode(event.target.value as WorkMode)
+                  }
+                >
+                  {options?.workModes.map((mode) => (
+                    <option key={mode.id} value={mode.id}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                multiple
+                aria-label={t("files")}
+                className="sr-only"
+                type="file"
+                onChange={(event) =>
+                  setFiles(Array.from(event.currentTarget.files ?? []))
+                }
+              />
+              <button
+                aria-label={t("attachment")}
+                className={iconButton}
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <PaperclipIcon />
+              </button>
+              <button
+                aria-label={t("linkedIssue")}
+                className={iconButton}
+                type="button"
+                onClick={() =>
+                  setLinkedIssueUrl((current) =>
+                    current.trim() ? current : "https://",
+                  )
+                }
+              >
+                #
+              </button>
+              <button
+                aria-label={t("attachmentKind.text_note")}
+                className={iconButton}
+                type="button"
+                onClick={() => addAttachment("text_note")}
+              >
+                +
+              </button>
+              <label className="relative inline-flex h-9 min-w-[84px] items-center justify-center rounded-full border border-line-soft bg-paper px-3 font-mono text-[13px] font-semibold text-ink">
+                <span>{reasoningEffort}</span>
+                <select
+                  aria-label={t("reasoningEffort")}
+                  className={invisibleSelect}
+                  value={reasoningEffort}
+                  onChange={(event) =>
+                    setReasoningEffort(event.target.value as ReasoningEffort)
+                  }
+                >
+                  {options?.reasoningEfforts.map((effort) => (
+                    <option key={effort.id} value={effort.id}>
+                      {effort.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                aria-label={t("launch")}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-amber text-white shadow-[0_8px_24px_-10px_var(--amber)] transition-[transform,background] hover:-translate-y-px hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!canSubmit}
+                type="submit"
+              >
+                <ArrowUpIcon />
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div
           className={clsx(
             commandBand,
-            "grid gap-2 border-t border-line-soft p-3 lg:grid-cols-[1.05fr_1fr_1fr_auto]",
+            "flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3",
           )}
         >
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className={fieldLabel}>{t("machine")}</span>
-            <input
-              readOnly
-              className={clsx(compactInput, "text-mute")}
-              value={options?.machine.label ?? t("localMachine")}
-            />
-          </label>
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className={fieldLabel}>{t("project")}</span>
+          <span className={contextPill}>
+            <MachineIcon />
+            <span>{options?.machine.label ?? t("localMachine")}</span>
+          </span>
+          <label className={clsx(contextPill, "relative")}>
+            <ProjectIcon />
+            <span className="min-w-0 truncate">
+              {selectedProject?.name ?? t("project")}
+            </span>
+            <span aria-hidden="true">v</span>
             <select
-              className={compactSelect}
+              aria-label={t("project")}
+              className={invisibleSelect}
               value={projectId}
               onChange={(event) => setProjectId(event.target.value)}
             >
@@ -450,10 +829,13 @@ export function ScratchLauncher(): ReactElement {
               ))}
             </select>
           </label>
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className={fieldLabel}>{t("baseBranch")}</span>
+          <label className={clsx(contextPill, "relative")}>
+            <BranchIcon />
+            <span className="min-w-0 truncate">{baseBranch}</span>
+            <span aria-hidden="true">v</span>
             <select
-              className={compactSelect}
+              aria-label={t("baseBranch")}
+              className={invisibleSelect}
               value={baseBranch}
               onChange={(event) => setBaseBranch(event.target.value)}
             >
@@ -464,196 +846,17 @@ export function ScratchLauncher(): ReactElement {
               ))}
             </select>
           </label>
-          <button
-            className="mt-auto flex min-h-10 items-center justify-center gap-2 rounded-full bg-amber px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_24px_-10px_var(--amber)] transition-[transform,background] hover:-translate-y-px hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={!canSubmit}
-            type="submit"
-          >
-            {pending ? t("launching") : t("launch")}
-            <span className="font-mono">→</span>
-          </button>
+          <span className={contextPill}>
+            <span className="font-mono text-[13px]">o</span>
+            <span>{capabilityCount}</span>
+          </span>
+          {contextCount > 0 ? (
+            <span className={contextPill}>
+              <PaperclipIcon />
+              <span>{contextCount}</span>
+            </span>
+          ) : null}
         </div>
-      </section>
-
-      <section className="grid gap-2 lg:grid-cols-3">
-        <details className={detailShell}>
-          <summary className={summaryButton}>
-            <span>{t("executor")}</span>
-            <span className="min-w-0 truncate rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
-              {selectedExecutor?.displayLabel ?? t("optional")}
-            </span>
-          </summary>
-          <div className="border-t border-line-soft p-3">
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("executor")}</span>
-              <select
-                className={inputBase}
-                value={executorId}
-                onChange={(event) => setExecutorId(event.target.value)}
-              >
-                {options?.executors.map((executor) => (
-                  <option key={executor.id} value={executor.id}>
-                    {executor.displayLabel}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="mt-2 truncate font-mono text-[10.5px] text-mute">
-              {t("executorProfile")} · {executorSummary(selectedExecutor)}
-            </p>
-          </div>
-        </details>
-
-        <details className={detailShell}>
-          <summary className={summaryButton}>
-            <span>{t("attachments")}</span>
-            <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
-              {contextCount}
-            </span>
-          </summary>
-          <div className="flex flex-col gap-3 border-t border-line-soft p-3">
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("linkedIssue")}</span>
-              <input
-                className={inputBase}
-                placeholder="https://github.com/org/repo/issues/123"
-                type="url"
-                value={linkedIssueUrl}
-                onChange={(event) => setLinkedIssueUrl(event.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("files")}</span>
-              <input
-                multiple
-                className={inputBase}
-                type="file"
-                onChange={(event) =>
-                  setFiles(Array.from(event.currentTarget.files ?? []))
-                }
-              />
-              {files.length > 0 ? (
-                <span className="font-mono text-[10.5px] text-mute">
-                  {t("fileSummary", { count: files.length, bytes: fileBytes })}
-                </span>
-              ) : null}
-            </label>
-            <div className="flex flex-wrap gap-1.5">
-              {(["issue_url", "file_path", "text_note"] as const).map(
-                (kind) => (
-                  <button
-                    key={kind}
-                    className="rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[10.5px] text-ink-2 hover:border-amber hover:text-amber"
-                    type="button"
-                    onClick={() => addAttachment(kind)}
-                  >
-                    + {t(`attachmentKind.${kind}`)}
-                  </button>
-                ),
-              )}
-            </div>
-            {attachments.length === 0 ? (
-              <p className="text-[12px] leading-[1.5] text-mute">
-                {t("noAttachments")}
-              </p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {attachments.map((attachment, index) => (
-                  <div
-                    key={`${attachment.kind}-${index}`}
-                    className="grid gap-2 rounded-lg border border-line bg-paper p-2 md:grid-cols-[120px_1fr_1.5fr_auto]"
-                  >
-                    <select
-                      className={inputBase}
-                      value={attachment.kind}
-                      onChange={(event) =>
-                        updateAttachment(index, {
-                          kind: event.target.value as AttachmentKind,
-                        })
-                      }
-                    >
-                      <option value="issue_url">
-                        {t("attachmentKind.issue_url")}
-                      </option>
-                      <option value="file_path">
-                        {t("attachmentKind.file_path")}
-                      </option>
-                      <option value="text_note">
-                        {t("attachmentKind.text_note")}
-                      </option>
-                    </select>
-                    <input
-                      className={inputBase}
-                      placeholder={t("attachmentLabel")}
-                      value={attachment.label}
-                      onChange={(event) =>
-                        updateAttachment(index, { label: event.target.value })
-                      }
-                    />
-                    <input
-                      className={inputBase}
-                      placeholder={t("attachmentValue")}
-                      value={attachment.value}
-                      onChange={(event) =>
-                        updateAttachment(index, { value: event.target.value })
-                      }
-                    />
-                    <button
-                      className="rounded-lg border border-line px-3 font-mono text-[11px] text-mute hover:border-amber hover:text-amber"
-                      type="button"
-                      onClick={() => removeAttachment(index)}
-                    >
-                      {t("remove")}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </details>
-
-        <details className={detailShell}>
-          <summary className={summaryButton}>
-            <span>{t("workMode")}</span>
-            <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
-              {workMode} · {reasoningEffort}
-            </span>
-          </summary>
-          <div className="grid gap-3 border-t border-line-soft p-3 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("workMode")}</span>
-              <select
-                className={inputBase}
-                value={workMode}
-                onChange={(event) =>
-                  setWorkMode(event.target.value as WorkMode)
-                }
-              >
-                {options?.workModes.map((mode) => (
-                  <option key={mode.id} value={mode.id}>
-                    {mode.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("reasoningEffort")}</span>
-              <select
-                className={inputBase}
-                value={reasoningEffort}
-                onChange={(event) =>
-                  setReasoningEffort(event.target.value as ReasoningEffort)
-                }
-              >
-                {options?.reasoningEfforts.map((effort) => (
-                  <option key={effort.id} value={effort.id}>
-                    {effort.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </details>
       </section>
 
       <details className={detailShell}>

@@ -35,13 +35,8 @@ test("scratch launch controls render, while capacity guard fails without durable
   await expect(page.getByLabel("Base branch")).toHaveValue("main");
   await expect(page.getByLabel("Branch name")).toHaveValue("");
 
-  await expect(
-    page.locator("details").filter({ hasText: "ACP profile" }),
-  ).not.toHaveAttribute("open", "");
-  await page.locator("summary").filter({ hasText: "ACP profile" }).click();
   await expect(page.getByLabel("ACP profile")).toHaveValue(fx.executorId);
 
-  await page.locator("summary").filter({ hasText: "Work mode" }).click();
   await page.getByLabel("Work mode").selectOption("plan_first");
   await page.getByLabel("Reasoning effort").selectOption("extra");
 
@@ -51,7 +46,6 @@ test("scratch launch controls render, while capacity guard fails without durable
     .getByLabel("What do you want to do?")
     .fill("Try a deterministic scratch launch against an unavailable daemon.");
 
-  await page.locator("summary").filter({ hasText: "Attachments" }).click();
   await page.getByLabel("Files").setInputFiles(uploadPath);
 
   const beforeRuns = await countRows("runs", "project_id = $1", [fx.projectId]);
