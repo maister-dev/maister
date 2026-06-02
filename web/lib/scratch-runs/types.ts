@@ -45,7 +45,7 @@ export const scratchLaunchInputSchema = z
     workMode: scratchWorkModeSchema.optional(),
     reasoningEffort: scratchReasoningEffortSchema.default("high"),
     planMode: scratchPlanModeSchema.optional(),
-    prompt: z.string().min(1).max(60_000),
+    prompt: z.string().max(60_000).default(""),
     linkedTaskId: z.string().uuid().optional(),
     linkedIssueUrl: z.string().url().max(2048).optional(),
     attachments: z.array(scratchAttachmentInputSchema).max(20).default([]),

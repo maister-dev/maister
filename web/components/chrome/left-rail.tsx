@@ -8,6 +8,7 @@ import Link from "next/link";
 import clsx from "clsx";
 
 import { PlatformStatusPill } from "@/components/chrome/platform-status";
+import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 
 // Coarse relative-time copy for the GC removal countdown. Picks the largest unit
 // (days → hours → minutes) and uses Intl.RelativeTimeFormat so EN/RU phrasing
@@ -48,7 +49,6 @@ export interface LeftRailProps {
   workspaces?: RailWorkspace[];
   workspaceGroups?: RailWorkspaceGroup[];
   inboxCount?: number;
-  launchHref?: string;
   platformStatus: PlatformStatus;
   userRole?: GlobalRole;
 }
@@ -121,7 +121,6 @@ export async function LeftRail({
   workspaces = [],
   workspaceGroups = [],
   inboxCount = 0,
-  launchHref,
   platformStatus,
   userRole,
 }: LeftRailProps): Promise<ReactElement> {
@@ -256,18 +255,15 @@ export async function LeftRail({
                   <span className="rounded-full bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
                     {group.activeCount}
                   </span>
-                  <Link
-                    aria-label={tPortfolio("startScratchInProject", {
-                      project: group.projectName,
-                    })}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber"
-                    href={group.launchHref}
+                  <ScratchLaunchPopover
+                    hint={group.projectName}
+                    label="+"
+                    projectId={group.projectId}
                     title={tPortfolio("startScratchInProject", {
                       project: group.projectName,
                     })}
-                  >
-                    +
-                  </Link>
+                    variant="icon"
+                  />
                 </div>
                 <ul className="flex list-none flex-col gap-0.5">
                   {group.workspaces.map((ws) => (
@@ -432,18 +428,17 @@ export async function LeftRail({
       </div>
 
       <div className="mt-auto flex shrink-0 flex-col gap-2 border-t border-line pb-4 pt-3">
-        <Link
-          className="flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] bg-amber px-3 py-[11px] pl-3.5 font-sans text-[13.5px] font-semibold tracking-[-0.005em] text-white shadow-[0_8px_24px_-10px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2"
-          href={launchHref ?? "#"}
-        >
-          <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-white/20 font-mono text-[14px] font-bold leading-none">
-            +
-          </span>
-          <span className="flex-1 text-left">{tPortfolio("launchRun")}</span>
-          <kbd className="rounded bg-white/[0.18] px-1.5 py-[3px] font-mono text-[10px] font-semibold tracking-[0.04em]">
-            ⌘L
-          </kbd>
-        </Link>
+        <ScratchLaunchPopover
+          hint={tPortfolio("launchHint")}
+          label={tPortfolio("launchRun")}
+          shortcut={
+            <kbd className="rounded bg-white/[0.18] px-1.5 py-[3px] font-mono text-[10px] font-semibold tracking-[0.04em]">
+              Cmd L
+            </kbd>
+          }
+          title={tPortfolio("launchRun")}
+          variant="primary"
+        />
         <div className="px-0.5 font-mono text-[10px] tracking-[0.04em] text-mute">
           {platformStatus.kind === "ready"
             ? tPortfolio("launchHint")

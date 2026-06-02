@@ -18,13 +18,12 @@ test("scratch launch controls render, while capacity guard fails without durable
 
   await page.goto("/");
   await page
-    .getByRole("link", {
+    .getByRole("button", {
       name: "Start scratch workspace in E2E Acceptance Board",
     })
     .click();
-  await expect(page).toHaveURL(
-    new RegExp(`/scratch-runs/new\\?projectId=${boardFx.projectId}`),
-  );
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByLabel("Project")).toHaveValue(boardFx.projectId);
 
   await page.goto(`/scratch-runs/new?projectId=${fx.projectId}`);
 

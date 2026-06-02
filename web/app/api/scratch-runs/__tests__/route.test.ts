@@ -308,6 +308,46 @@ describe("POST /api/scratch-runs", () => {
     expect(state.inserts.length).toBeGreaterThanOrEqual(4);
   });
 
+  it("prepares a scratch supervisor session without sending an empty initial prompt", async () => {
+    const res = await POST(launchRequest({ prompt: "" }));
+    const body = (await res.json()) as {
+      runId?: string;
+      status?: { dialogStatus?: string };
+    };
+    const insertedRows = state.inserts.flatMap((call) =>
+      Array.isArray(call.values) ? call.values : [call.values],
+    ) as Array<Record<string, unknown>>;
+    const scratchRunRow = insertedRows.find(
+      (row) => row.initialPrompt === "" && row.dialogStatus === "Starting",
+    );
+    const userMessageRow = insertedRows.find((row) => row.role === "user");
+
+    expect(res.status).toBe(201);
+    expect(body.runId).toBeTruthy();
+    expect(body.status?.dialogStatus).toBe("WaitingForUser");
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: body.runId,
+        projectSlug: "demo",
+      }),
+    );
+    expect(mocks.sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
+    expect(scratchRunRow).toMatchObject({
+      initialPrompt: "",
+      lastUserMessageAt: null,
+    });
+    expect(userMessageRow).toBeUndefined();
+    expect(state.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({
+            dialogStatus: "WaitingForUser",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("treats an empty branch name as the generated scratch branch fallback", async () => {
     const res = await POST(launchRequest({ branchName: "" }));
     const body = (await res.json()) as { runId?: string };

@@ -83,6 +83,16 @@ type ApiError = {
   message?: string;
 };
 
+type ScratchLaunchResponse = {
+  runId: string;
+  dialogUrl?: string;
+};
+
+export type ScratchLauncherProps = {
+  initialProjectId?: string | null;
+  onLaunched?: (response: ScratchLaunchResponse) => void;
+};
+
 const commandShell =
   "overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_24px_70px_-48px_var(--ink)]";
 const commandBand = "bg-[color-mix(in_oklab,var(--ivory)_55%,var(--paper))]";
@@ -293,17 +303,21 @@ function CapabilityGroup({
   );
 }
 
-export function ScratchLauncher(): ReactElement {
+export function ScratchLauncher({
+  initialProjectId,
+  onLaunched,
+}: ScratchLauncherProps = {}): ReactElement {
   const t = useTranslations("scratch");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialProjectId = searchParams.get("projectId");
+  const routeProjectId = searchParams.get("projectId");
+  const requestedProjectId = initialProjectId ?? routeProjectId ?? "";
 
   const [options, setOptions] = useState<LaunchOptions | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [projectId, setProjectId] = useState(initialProjectId ?? "");
+  const [projectId, setProjectId] = useState(requestedProjectId);
   const [workspaceName, setWorkspaceName] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [branchName, setBranchName] = useState("");
@@ -417,8 +431,11 @@ export function ScratchLauncher(): ReactElement {
     agentDefinitionIds,
     restrictionIds,
   );
-  const canSubmit =
-    !!projectId && !!baseBranch && !!executorId && !!prompt.trim() && !pending;
+  const canSubmit = !!projectId && !!baseBranch && !!executorId && !pending;
+
+  useEffect(() => {
+    setProjectId(requestedProjectId);
+  }, [requestedProjectId]);
 
   function addAttachment(kind: AttachmentKind): void {
     setAttachments((current) => [...current, { kind, label: "", value: "" }]);
@@ -506,9 +523,15 @@ export function ScratchLauncher(): ReactElement {
         return;
       }
 
-      const responsePayload = (await response.json()) as { runId: string };
+      const responsePayload = (await response.json()) as ScratchLaunchResponse;
 
-      router.push(`/scratch-runs/${responsePayload.runId}`);
+      if (onLaunched) {
+        onLaunched(responsePayload);
+      } else {
+        router.push(
+          responsePayload.dialogUrl ?? `/scratch-runs/${responsePayload.runId}`,
+        );
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

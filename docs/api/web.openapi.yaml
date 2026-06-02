@@ -2910,13 +2910,15 @@ components:
         createdAt: { type: string, format: date-time }
     PostScratchRunBody:
       type: object
-      required: [projectId, baseBranch, executorId, prompt]
+      required: [projectId, baseBranch, executorId]
       additionalProperties: false
       description: |
         Implemented scratch launch body. The schema intentionally excludes
         `runId`, `projectSlug`, `worktreePath`, `stepId`,
         `supervisorSessionId`, `acpSessionId`, and capability profile paths;
-        the server derives those values after authz and validation.
+        the server derives those values after authz and validation. When
+        `prompt` is omitted or empty, launch still prepares the worktree-backed
+        ACP session and leaves the dialog waiting for the first user message.
       properties:
         projectId: { type: string, format: uuid }
         baseBranch: { type: string, minLength: 1, maxLength: 255 }
@@ -2940,7 +2942,11 @@ components:
           enum: [off, plan-first]
           deprecated: true
           description: Compatibility field derived from workMode.
-        prompt: { type: string, minLength: 1, maxLength: 60000 }
+        prompt:
+          type: string
+          minLength: 0
+          maxLength: 60000
+          default: ""
         linkedTaskId: { type: string, format: uuid }
         linkedIssueUrl: { type: string, maxLength: 2048 }
         attachments:

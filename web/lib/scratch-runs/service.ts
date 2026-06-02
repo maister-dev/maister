@@ -272,7 +272,7 @@ function storedAttachmentValues(args: {
   metadataAttachments: ReturnType<typeof metadataAttachmentRow>[];
   uploadedAttachments: ReturnType<typeof uploadedFileMetadata>[];
   runId: string;
-  messageId: string;
+  messageId: string | null;
 }) {
   return [...args.metadataAttachments, ...args.uploadedAttachments].map(
     (attachment) => ({
@@ -293,7 +293,7 @@ function storedAttachmentValues(args: {
 
 async function storeUploadedFiles(args: {
   runId: string;
-  messageId: string;
+  messageId: string | null;
   projectSlug: string;
   scope: string;
   files: readonly ScratchUploadedFileInput[];
@@ -600,19 +600,25 @@ export async function launchScratchRun(args: {
   }
 
   const worktreePath = path.join(worktreesRoot(), project.slug, runId);
-  const prompt = decoratePromptForPlanMode({
-    planMode: policy.planMode,
-    workMode: policy.workMode,
-    reasoningEffort: policy.reasoningEffort,
-    prompt: args.body.prompt,
-  });
+  const rawPrompt = args.body.prompt.trim();
+  const hasInitialPrompt = rawPrompt.length > 0;
+  const prompt = hasInitialPrompt
+    ? decoratePromptForPlanMode({
+        planMode: policy.planMode,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
+        prompt: rawPrompt,
+      })
+    : "";
   const now = new Date();
   const name = args.body.name?.trim() || scratchNameFallback(args.body.prompt);
-  const messageId = randomUUID();
-  const initialMessage = userScratchMessageDraft({
-    sequence: 1,
-    content: args.body.prompt,
-  });
+  const messageId = hasInitialPrompt ? randomUUID() : null;
+  const initialMessage = hasInitialPrompt
+    ? userScratchMessageDraft({
+        sequence: 1,
+        content: rawPrompt,
+      })
+    : null;
   const validatedAttachments = validateScratchAttachments(
     args.body.attachments,
     {
@@ -696,18 +702,20 @@ export async function launchScratchRun(args: {
         targetBranch: args.body.baseBranch,
         dialogStatus: "Starting",
         createdByUserId: args.userId,
-        lastUserMessageAt: now,
+        lastUserMessageAt: hasInitialPrompt ? now : null,
         updatedAt: now,
       });
-      await tx.insert(scratchMessages).values({
-        id: messageId,
-        runId,
-        sequence: initialMessage.sequence,
-        role: initialMessage.role,
-        content: initialMessage.content,
-        supervisorEventId: initialMessage.supervisorEventId ?? null,
-        createdAt: now,
-      });
+      if (initialMessage && messageId) {
+        await tx.insert(scratchMessages).values({
+          id: messageId,
+          runId,
+          sequence: initialMessage.sequence,
+          role: initialMessage.role,
+          content: initialMessage.content,
+          supervisorEventId: initialMessage.supervisorEventId ?? null,
+          createdAt: now,
+        });
+      }
       const metadataAttachments = validatedAttachments.map(
         metadataAttachmentRow,
       );
@@ -806,6 +814,10 @@ export async function launchScratchRun(args: {
     });
 
     await db.transaction(async (tx: Db) => {
+      const dialogStatus: ScratchDialogStatus = hasInitialPrompt
+        ? "Running"
+        : "WaitingForUser";
+
       await tx
         .update(runs)
         .set({ acpSessionId: session.acpSessionId })
@@ -814,11 +826,46 @@ export async function launchScratchRun(args: {
         .update(scratchRuns)
         .set({
           supervisorSessionId: session.sessionId,
-          dialogStatus: "Running",
+          dialogStatus,
           updatedAt: new Date(),
         })
         .where(eq(scratchRuns.runId, runId));
     });
+
+    if (!hasInitialPrompt) {
+      log.info(
+        {
+          runId,
+          projectId: project.id,
+          executorId: executor.id,
+          createdByUserId: args.userId,
+          workMode: policy.workMode,
+          reasoningEffort: policy.reasoningEffort,
+          dialogStatus: "WaitingForUser",
+          uploadCount: uploadedFiles.length,
+          uploadBytes: uploadedFiles.reduce(
+            (sum, file) => sum + file.byteSize,
+            0,
+          ),
+        },
+        "scratch workspace prepared without initial prompt",
+      );
+
+      return launchResponse({
+        runId,
+        projectId: project.id,
+        name,
+        runStatus: runStatusForDialogStatus("WaitingForUser"),
+        dialogStatus: "WaitingForUser",
+        branchName: branch,
+        baseBranch: args.body.baseBranch,
+        baseCommit,
+        targetBranch: args.body.baseBranch,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
+        planMode: policy.planMode,
+      });
+    }
 
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
