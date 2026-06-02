@@ -3,8 +3,9 @@
 import type { ReactElement } from "react";
 
 import { useEffect, useState } from "react";
-import { useTheme } from "next-themes";
 import clsx from "clsx";
+
+import { useTheme } from "@/lib/theme";
 
 const navTool = clsx(
   "inline-flex items-center gap-1.5 rounded-lg border border-line",

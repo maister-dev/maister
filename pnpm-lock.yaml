@@ -135,9 +135,6 @@ importers:
       next-intl:
         specifier: 4.13.0
         version: 4.13.0(@swc/helpers@0.5.23)(next@16.2.6(@babel/core@7.29.7)(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6)(typescript@5.6.3)
-      next-themes:
-        specifier: 0.4.6
-        version: 0.4.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       pg:
         specifier: ^8.21.0
         version: 8.21.0
@@ -4645,12 +4642,6 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
-
-  next-themes@0.4.6:
-    resolution: {integrity: sha512-pZvgD5L0IEvX5/9GWyHMf3m8BKiVQwsCMHfoFosXtXBMnaS0ZnIJ9ST4b4NqLVKDEm8QBxoNNGNaBv2JNF6XNA==}
-    peerDependencies:
-      react: ^16.8 || ^17 || ^18 || ^19 || ^19.0.0-rc
-      react-dom: ^16.8 || ^17 || ^18 || ^19 || ^19.0.0-rc
 
   next@16.2.6:
     resolution: {integrity: sha512-qOVgKJg1+At15NpeUP+eJgCHvTCgXsogweq87Ri/Ix7PkqQHg4sdaXmSFqKlgaIXE4kW0g25LE68W87UANlHtw==}
@@ -10029,11 +10020,6 @@ snapshots:
       typescript: 5.6.3
     transitivePeerDependencies:
       - '@swc/helpers'
-
-  next-themes@0.4.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
-    dependencies:
-      react: 19.2.6
-      react-dom: 19.2.6(react@19.2.6)
 
   next@16.2.6(@babel/core@7.29.7)(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
     dependencies:

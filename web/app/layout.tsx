@@ -37,7 +37,7 @@ export default async function RootLayout({
   return (
     <html
       suppressHydrationWarning
-      className={clsx(fontSans.variable, fontMono.variable)}
+      className={clsx(fontSans.variable, fontMono.variable, "dark")}
       lang={locale}
     >
       <head />

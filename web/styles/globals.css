@@ -9,8 +9,8 @@
    Ported from the Claude Design handoff:
    .ai-factory/references/m9-design/project/landing/02-hifi.css
    `--amber` is the brand accent and resolves to fern green here.
-   Theme is toggled by next-themes via the `.light` / `.dark` class
-   on <html> (attribute="class"), so tokens are keyed on those classes.
+   Theme is toggled by the local script-free provider via the `.light` / `.dark`
+   class on <html> (attribute="class"), so tokens are keyed on those classes.
    ═══════════════════════════════════════════════════════════════ */
 
 :root,

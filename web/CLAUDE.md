@@ -27,7 +27,7 @@ is template demo material to be **replaced** as we implement MAIster routes.
 | UI library  | `@heroui/react` `3.0.4` + `@heroui/styles`       |
 | Styling     | Tailwind CSS `4.1.11` via `@tailwindcss/postcss` |
 | Variants    | `tailwind-variants` `3.2.2`                      |
-| Theming     | `next-themes` `0.4.6` (default `dark`)           |
+| Theming     | Local script-free theme provider (default `dark`) |
 | Lint        | ESLint `9` flat config + Prettier                |
 | Pkg manager | pnpm                                             |
 | Node        | 24 (per root CLAUDE.md container target)         |
@@ -42,8 +42,9 @@ Main/default UI language - EN, project should be i18n-ized. RU interface support
 
 `styles/globals.css` defines the `@theme` block with `forest-*` CSS custom
 properties (backgrounds, surfaces, borders, text, accent, status colours).
-Light/dark variants switch via `next-themes` `class` strategy:
-`<ThemeProvider attribute="class" defaultTheme="dark">`. Components import
+Light/dark variants switch through `lib/theme.tsx`, which toggles the
+`.light` / `.dark` class on `<html>` without injecting client-rendered script
+tags. Components import
 the tokens as Tailwind utilities (`bg-forest-bg`, `text-forest-text-primary`,
 etc.). The tokens are also referenced via the `@custom-variant dark` rule so
 `dark:` prefixes resolve correctly.
@@ -173,7 +174,7 @@ web/
 ├── app/                  # Next.js App Router
 │   ├── layout.tsx        # Root layout: Providers + Navbar + container
 │   ├── page.tsx          # Home (template stub — to replace with run list)
-│   ├── providers.tsx     # next-themes ThemeProvider wrapper
+│   ├── providers.tsx     # local theme provider wrapper
 │   ├── error.tsx         # Root error boundary
 │   ├── about/            # template stub
 │   ├── blog/             # template stub
@@ -181,7 +182,7 @@ web/
 │   └── pricing/          # template stub
 ├── components/
 │   ├── navbar.tsx        # HeroUI Navbar wired to siteConfig.navItems
-│   ├── theme-switch.tsx  # next-themes toggle
+│   ├── theme-switch.tsx  # local theme toggle
 │   ├── icons.tsx         # inline SVG icons (IconSvgProps type)
 │   ├── primitives.ts     # title()/subtitle() via tailwind-variants
 │   └── counter.tsx       # HeroUI <Button> demo (delete when no longer used)
@@ -409,7 +410,7 @@ keeps long human reviews from being penalized for thinking time.
 
 - Default to **Server Components**. Add `"use client"` only when a component uses state, effects, browser APIs, or HeroUI components that require client context (most do — `<Button>`, themed inputs, modals). Match the template: `providers.tsx`, `counter.tsx`, `theme-switch.tsx` are explicit `"use client"`.
 - Route handlers and server actions live in `app/`. Keep secret-touching logic server-side; **never** ship API keys to client.
-- Default theme is `dark` (`<Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>` in `app/layout.tsx`). Use `next-themes` `useTheme()` to toggle.
+- Default theme is `dark` (`<Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>` in `app/layout.tsx`). Use `@/lib/theme` `useTheme()` to toggle.
 
 ### Styling
 
@@ -475,7 +476,7 @@ rewrite page functionality later. Reference impl:
 ## HeroUI integration notes
 
 - `@heroui/styles` is imported once in `styles/globals.css`. Don't re-import it in components.
-- Providers chain in `app/providers.tsx` currently wraps `next-themes` only. When HeroUI ships a top-level provider for v3 features (toast, modal stack), add it inside `<NextThemesProvider>`.
+- Providers chain in `app/providers.tsx` currently wraps the local theme provider only. When HeroUI ships a top-level provider for v3 features (toast, modal stack), add it inside `<ThemeProvider>`.
 - For new themes/colors prefer extending CSS variables in `globals.css` over forking HeroUI tokens.
 
 ## Template leftovers to clean (when you next touch them)
