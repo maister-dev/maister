@@ -334,6 +334,7 @@ This plan keeps scratch-run capability selection compatible with the current imp
   - Main area: prompt textarea.
   - Bottom row: fixed machine label from launch-options, project dropdown, base branch dropdown defaulting to project default branch.
   - Compact controls: runner/executor menu, files menu, work mode menu, reasoning effort menu, platform MCP menu, skills/agent-packs menu, rules/restrictions menu.
+  - Prompt, optional name/branch, machine/project/base branch, and launch are the primary composer surface; runner, files, policy, and capability controls must not render as one large always-expanded form.
   - Project query param preselects project, refreshes branch/executor/capability options, and keeps base branch defaulted to the selected project's default branch unless the user changes it.
   - Empty branch submits no `branchName`; backend derives fallback.
   - File menu supports binary file input plus metadata attachments.
@@ -353,6 +354,7 @@ This plan keeps scratch-run capability selection compatible with the current imp
   Acceptance:
   - User can launch without typing branch name.
   - User can upload files before launch.
+  - User sees a prompt-first command box on first load, with advanced controls compacted behind expandable controls.
   - The UI does not present unsupported controls as enforced if they are metadata-only.
 
 - [x] Task 12: Update scratch dialog composer and attachment rendering.

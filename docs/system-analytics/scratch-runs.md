@@ -43,6 +43,11 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   run artifact tree at
   `.maister/<projectSlug>/runs/<runId>/uploads/<launch-or-message>/<safeName>`,
   never inside the git worktree.
+- **Command-box launcher** - Implemented. Scratch intake is a prompt-first
+  command box, not a constantly expanded setup form. Optional workspace/branch
+  names sit above the prompt; machine, project, base branch, and submit sit in
+  the footer; executor, attachments, work policy, and capabilities live in
+  compact expandable controls.
 - **Scratch capability profile** - Implemented. Selected platform/project/
   Flow-package MCPs, skills, rules, agent definitions, and restrictions resolve
   through the capability catalog, then snapshot into
@@ -258,6 +263,9 @@ secret material.
 
 - Scratch launch MUST select an executor profile by `executors.id` and MUST NOT
   collapse profiles that share the same ACP adapter `agent`.
+- Scratch launch UI MUST keep the prompt as the primary surface and MUST NOT
+  expose runner, file, policy, and capability selectors as one large always-open
+  form.
 - Scratch launch MUST accept an empty `branchName` and derive the generated
   scratch branch fallback from server state.
 - Scratch launch MUST reject invisible projects, missing/out-of-project
@@ -305,9 +313,12 @@ secret material.
 
 ## Acceptance Criteria
 
-- Command-box scratch launch shows optional name/branch fields, prompt,
-  machine label, project/base-branch selectors, executor profile menu,
-  attachment controls, work mode, reasoning effort, and capability menus.
+- Command-box scratch launch shows optional name/branch fields above the
+  prompt, machine label plus project/base-branch selectors in the footer, and a
+  launch button in the same composer surface.
+- Executor profile, attachment controls, work mode, reasoning effort, and
+  capability selections are reachable through compact expandable controls and
+  are not all expanded by default.
 - Launch from a project-group `+` opens scratch launch with that project
   preselected.
 - A blank branch name launches with the generated scratch branch fallback; an

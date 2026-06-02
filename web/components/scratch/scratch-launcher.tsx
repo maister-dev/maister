@@ -87,10 +87,18 @@ const fieldLabel =
   "font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute";
 const inputBase =
   "w-full rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
-const sectionShell =
-  "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))] p-3";
+const compactInput =
+  "w-full min-w-0 rounded-md border border-line-soft bg-paper px-2.5 py-2 font-mono text-[12px] leading-[1.3] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
+const compactSelect = `${compactInput} cursor-pointer`;
+const commandShell =
+  "overflow-hidden rounded-[14px] border border-line bg-paper shadow-[0_24px_70px_-48px_var(--ink)]";
+const commandBand = "bg-[color-mix(in_oklab,var(--ivory)_55%,var(--paper))]";
+const detailShell =
+  "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_34%,var(--paper))]";
 const checkboxLine =
   "flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-[12px] text-ink-2 hover:bg-paper";
+const summaryButton =
+  "flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-2 transition hover:bg-ivory hover:text-amber [&::-webkit-details-marker]:hidden";
 
 function selectedDefaults(options: readonly CapabilityOption[]): string[] {
   return options
@@ -110,6 +118,18 @@ function errorText(payload: ApiError | null): string {
   return "Request failed.";
 }
 
+function selectedCount(...lists: readonly string[][]): number {
+  return lists.reduce((sum, list) => sum + list.length, 0);
+}
+
+function executorSummary(executor: ExecutorOption | null): string {
+  if (!executor) return "none";
+
+  return [executor.agent, executor.model, executor.router, executor.envHint]
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+}
+
 function CapabilityGroup({
   label,
   options,
@@ -124,9 +144,12 @@ function CapabilityGroup({
   if (options.length === 0) return null;
 
   return (
-    <details open className="rounded-lg border border-line bg-paper">
-      <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-mute">
-        {label} · {selectedIds.length}/{options.length}
+    <details className="rounded-lg border border-line bg-paper">
+      <summary className={summaryButton}>
+        <span>{label}</span>
+        <span className="rounded-full bg-ivory px-2 py-0.5 text-[10px] text-mute">
+          {selectedIds.length}/{options.length}
+        </span>
       </summary>
       <div className="border-t border-line-soft p-1.5">
         {options.map((option) => (
@@ -252,6 +275,15 @@ export function ScratchLauncher(): ReactElement {
     () => files.reduce((sum, file) => sum + file.size, 0),
     [files],
   );
+  const contextCount =
+    files.length + attachments.length + (linkedIssueUrl.trim() ? 1 : 0);
+  const capabilityCount = selectedCount(
+    mcpIds,
+    skillIds,
+    ruleIds,
+    agentDefinitionIds,
+    restrictionIds,
+  );
   const canSubmit =
     !!projectId && !!baseBranch && !!executorId && !!prompt.trim() && !pending;
 
@@ -354,35 +386,104 @@ export function ScratchLauncher(): ReactElement {
   }
 
   return (
-    <form
-      className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"
-      onSubmit={handleSubmit}
-    >
-      <section className="flex min-w-0 flex-col gap-4">
-        <div className={sectionShell}>
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("machine")}</span>
-              <input
-                readOnly
-                className={clsx(inputBase, "text-mute")}
-                value={options?.machine.label ?? t("localMachine")}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("project")}</span>
-              <select
-                className={inputBase}
-                value={projectId}
-                onChange={(event) => setProjectId(event.target.value)}
-              >
-                {options?.projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+    <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+      <section className={commandShell}>
+        <div className={clsx(commandBand, "grid gap-2 p-3 md:grid-cols-2")}>
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className={fieldLabel}>{t("workspaceName")}</span>
+            <input
+              className={compactInput}
+              placeholder={t("workspaceNamePlaceholder")}
+              value={workspaceName}
+              onChange={(event) => setWorkspaceName(event.target.value)}
+            />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className={fieldLabel}>{t("branchName")}</span>
+            <input
+              className={compactInput}
+              placeholder={
+                selectedProject ? t("branchNamePlaceholder") : t("optional")
+              }
+              spellCheck={false}
+              value={branchName}
+              onChange={(event) => setBranchName(event.target.value)}
+            />
+          </label>
+        </div>
+
+        <label className="flex flex-col gap-2 p-4">
+          <span className={fieldLabel}>{t("prompt")}</span>
+          <textarea
+            className="min-h-[270px] w-full resize-y bg-transparent text-[16px] leading-[1.55] text-ink outline-none placeholder:text-mute"
+            placeholder={t("promptPlaceholder")}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+          />
+        </label>
+
+        <div
+          className={clsx(
+            commandBand,
+            "grid gap-2 border-t border-line-soft p-3 lg:grid-cols-[1.05fr_1fr_1fr_auto]",
+          )}
+        >
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className={fieldLabel}>{t("machine")}</span>
+            <input
+              readOnly
+              className={clsx(compactInput, "text-mute")}
+              value={options?.machine.label ?? t("localMachine")}
+            />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className={fieldLabel}>{t("project")}</span>
+            <select
+              className={compactSelect}
+              value={projectId}
+              onChange={(event) => setProjectId(event.target.value)}
+            >
+              {options?.projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className={fieldLabel}>{t("baseBranch")}</span>
+            <select
+              className={compactSelect}
+              value={baseBranch}
+              onChange={(event) => setBaseBranch(event.target.value)}
+            >
+              {options?.branches.map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="mt-auto flex min-h-10 items-center justify-center gap-2 rounded-full bg-amber px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_24px_-10px_var(--amber)] transition-[transform,background] hover:-translate-y-px hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!canSubmit}
+            type="submit"
+          >
+            {pending ? t("launching") : t("launch")}
+            <span className="font-mono">→</span>
+          </button>
+        </div>
+      </section>
+
+      <section className="grid gap-2 lg:grid-cols-3">
+        <details className={detailShell}>
+          <summary className={summaryButton}>
+            <span>{t("executor")}</span>
+            <span className="min-w-0 truncate rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
+              {selectedExecutor?.displayLabel ?? t("optional")}
+            </span>
+          </summary>
+          <div className="border-t border-line-soft p-3">
             <label className="flex flex-col gap-1.5">
               <span className={fieldLabel}>{t("executor")}</span>
               <select
@@ -396,68 +497,129 @@ export function ScratchLauncher(): ReactElement {
                   </option>
                 ))}
               </select>
-              {selectedExecutor ? (
-                <span className="truncate font-mono text-[10px] text-mute">
-                  {t("executorProfile")} · {selectedExecutor.agent} ·{" "}
-                  {selectedExecutor.model}
-                  {selectedExecutor.router
-                    ? ` · ${selectedExecutor.router}`
-                    : ""}
-                  {selectedExecutor.envHint
-                    ? ` · env: ${selectedExecutor.envHint}`
-                    : ""}
+            </label>
+            <p className="mt-2 truncate font-mono text-[10.5px] text-mute">
+              {t("executorProfile")} · {executorSummary(selectedExecutor)}
+            </p>
+          </div>
+        </details>
+
+        <details className={detailShell}>
+          <summary className={summaryButton}>
+            <span>{t("attachments")}</span>
+            <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
+              {contextCount}
+            </span>
+          </summary>
+          <div className="flex flex-col gap-3 border-t border-line-soft p-3">
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("linkedIssue")}</span>
+              <input
+                className={inputBase}
+                placeholder="https://github.com/org/repo/issues/123"
+                type="url"
+                value={linkedIssueUrl}
+                onChange={(event) => setLinkedIssueUrl(event.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("files")}</span>
+              <input
+                multiple
+                className={inputBase}
+                type="file"
+                onChange={(event) =>
+                  setFiles(Array.from(event.currentTarget.files ?? []))
+                }
+              />
+              {files.length > 0 ? (
+                <span className="font-mono text-[10.5px] text-mute">
+                  {t("fileSummary", { count: files.length, bytes: fileBytes })}
                 </span>
               ) : null}
             </label>
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("workspaceName")}</span>
-              <input
-                className={inputBase}
-                placeholder={t("workspaceNamePlaceholder")}
-                value={workspaceName}
-                onChange={(event) => setWorkspaceName(event.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabel}>{t("baseBranch")}</span>
-              <select
-                className={inputBase}
-                value={baseBranch}
-                onChange={(event) => setBaseBranch(event.target.value)}
-              >
-                {options?.branches.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
-                  </option>
+            <div className="flex flex-wrap gap-1.5">
+              {(["issue_url", "file_path", "text_note"] as const).map(
+                (kind) => (
+                  <button
+                    key={kind}
+                    className="rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[10.5px] text-ink-2 hover:border-amber hover:text-amber"
+                    type="button"
+                    onClick={() => addAttachment(kind)}
+                  >
+                    + {t(`attachmentKind.${kind}`)}
+                  </button>
+                ),
+              )}
+            </div>
+            {attachments.length === 0 ? (
+              <p className="text-[12px] leading-[1.5] text-mute">
+                {t("noAttachments")}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {attachments.map((attachment, index) => (
+                  <div
+                    key={`${attachment.kind}-${index}`}
+                    className="grid gap-2 rounded-lg border border-line bg-paper p-2 md:grid-cols-[120px_1fr_1.5fr_auto]"
+                  >
+                    <select
+                      className={inputBase}
+                      value={attachment.kind}
+                      onChange={(event) =>
+                        updateAttachment(index, {
+                          kind: event.target.value as AttachmentKind,
+                        })
+                      }
+                    >
+                      <option value="issue_url">
+                        {t("attachmentKind.issue_url")}
+                      </option>
+                      <option value="file_path">
+                        {t("attachmentKind.file_path")}
+                      </option>
+                      <option value="text_note">
+                        {t("attachmentKind.text_note")}
+                      </option>
+                    </select>
+                    <input
+                      className={inputBase}
+                      placeholder={t("attachmentLabel")}
+                      value={attachment.label}
+                      onChange={(event) =>
+                        updateAttachment(index, { label: event.target.value })
+                      }
+                    />
+                    <input
+                      className={inputBase}
+                      placeholder={t("attachmentValue")}
+                      value={attachment.value}
+                      onChange={(event) =>
+                        updateAttachment(index, { value: event.target.value })
+                      }
+                    />
+                    <button
+                      className="rounded-lg border border-line px-3 font-mono text-[11px] text-mute hover:border-amber hover:text-amber"
+                      type="button"
+                      onClick={() => removeAttachment(index)}
+                    >
+                      {t("remove")}
+                    </button>
+                  </div>
                 ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1.5 md:col-span-2">
-              <span className={fieldLabel}>{t("branchName")}</span>
-              <input
-                className={inputBase}
-                placeholder={
-                  selectedProject ? t("branchNamePlaceholder") : t("optional")
-                }
-                spellCheck={false}
-                value={branchName}
-                onChange={(event) => setBranchName(event.target.value)}
-              />
-            </label>
+              </div>
+            )}
           </div>
-        </div>
+        </details>
 
-        <div className={sectionShell}>
-          <label className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("prompt")}</span>
-            <textarea
-              className={clsx(inputBase, "min-h-[220px] resize-y")}
-              placeholder={t("promptPlaceholder")}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-            />
-          </label>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <details className={detailShell}>
+          <summary className={summaryButton}>
+            <span>{t("workMode")}</span>
+            <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
+              {workMode} · {reasoningEffort}
+            </span>
+          </summary>
+          <div className="grid gap-3 border-t border-line-soft p-3 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             <label className="flex flex-col gap-1.5">
               <span className={fieldLabel}>{t("workMode")}</span>
               <select
@@ -491,173 +653,59 @@ export function ScratchLauncher(): ReactElement {
               </select>
             </label>
           </div>
-        </div>
-
-        <div className={sectionShell}>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <span className={fieldLabel}>{t("attachments")}</span>
-            <div className="flex flex-wrap gap-1.5">
-              {(["issue_url", "file_path", "text_note"] as const).map(
-                (kind) => (
-                  <button
-                    key={kind}
-                    className="rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[10.5px] text-ink-2 hover:border-amber hover:text-amber"
-                    type="button"
-                    onClick={() => addAttachment(kind)}
-                  >
-                    + {t(`attachmentKind.${kind}`)}
-                  </button>
-                ),
-              )}
-            </div>
-          </div>
-          <label className="mb-3 flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("linkedIssue")}</span>
-            <input
-              className={inputBase}
-              placeholder="https://github.com/org/repo/issues/123"
-              type="url"
-              value={linkedIssueUrl}
-              onChange={(event) => setLinkedIssueUrl(event.target.value)}
-            />
-          </label>
-          <label className="mb-3 flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("files")}</span>
-            <input
-              multiple
-              className={inputBase}
-              type="file"
-              onChange={(event) =>
-                setFiles(Array.from(event.currentTarget.files ?? []))
-              }
-            />
-            {files.length > 0 ? (
-              <span className="font-mono text-[10.5px] text-mute">
-                {t("fileSummary", { count: files.length, bytes: fileBytes })}
-              </span>
-            ) : null}
-          </label>
-          {attachments.length === 0 ? (
-            <p className="text-[12px] leading-[1.5] text-mute">
-              {t("noAttachments")}
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {attachments.map((attachment, index) => (
-                <div
-                  key={`${attachment.kind}-${index}`}
-                  className="grid gap-2 rounded-lg border border-line bg-paper p-2 md:grid-cols-[120px_1fr_1.5fr_auto]"
-                >
-                  <select
-                    className={inputBase}
-                    value={attachment.kind}
-                    onChange={(event) =>
-                      updateAttachment(index, {
-                        kind: event.target.value as AttachmentKind,
-                      })
-                    }
-                  >
-                    <option value="issue_url">
-                      {t("attachmentKind.issue_url")}
-                    </option>
-                    <option value="file_path">
-                      {t("attachmentKind.file_path")}
-                    </option>
-                    <option value="text_note">
-                      {t("attachmentKind.text_note")}
-                    </option>
-                  </select>
-                  <input
-                    className={inputBase}
-                    placeholder={t("attachmentLabel")}
-                    value={attachment.label}
-                    onChange={(event) =>
-                      updateAttachment(index, { label: event.target.value })
-                    }
-                  />
-                  <input
-                    className={inputBase}
-                    placeholder={t("attachmentValue")}
-                    value={attachment.value}
-                    onChange={(event) =>
-                      updateAttachment(index, { value: event.target.value })
-                    }
-                  />
-                  <button
-                    className="rounded-lg border border-line px-3 font-mono text-[11px] text-mute hover:border-amber hover:text-amber"
-                    type="button"
-                    onClick={() => removeAttachment(index)}
-                  >
-                    {t("remove")}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        </details>
       </section>
 
-      <aside className="flex flex-col gap-4">
-        <div className={sectionShell}>
-          <div className="mb-3 flex items-center justify-between">
-            <span className={fieldLabel}>{t("capabilities")}</span>
-            <span className="font-mono text-[10.5px] text-mute">
-              {t("capabilitiesHint")}
-            </span>
-          </div>
-          <div className="flex flex-col gap-2">
-            <CapabilityGroup
-              label={t("mcps")}
-              options={options?.capabilities.mcps ?? []}
-              selectedIds={mcpIds}
-              onToggle={(id) => setMcpIds((current) => toggleId(current, id))}
-            />
-            <CapabilityGroup
-              label={t("skills")}
-              options={options?.capabilities.skills ?? []}
-              selectedIds={skillIds}
-              onToggle={(id) => setSkillIds((current) => toggleId(current, id))}
-            />
-            <CapabilityGroup
-              label={t("rules")}
-              options={options?.capabilities.rules ?? []}
-              selectedIds={ruleIds}
-              onToggle={(id) => setRuleIds((current) => toggleId(current, id))}
-            />
-            <CapabilityGroup
-              label={t("agentPacks")}
-              options={options?.capabilities.agentDefinitions ?? []}
-              selectedIds={agentDefinitionIds}
-              onToggle={(id) =>
-                setAgentDefinitionIds((current) => toggleId(current, id))
-              }
-            />
-            <CapabilityGroup
-              label={t("restrictions")}
-              options={options?.capabilities.restrictions ?? []}
-              selectedIds={restrictionIds}
-              onToggle={(id) =>
-                setRestrictionIds((current) => toggleId(current, id))
-              }
-            />
-          </div>
+      <details className={detailShell}>
+        <summary className={summaryButton}>
+          <span>{t("capabilities")}</span>
+          <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] text-mute">
+            {capabilityCount} · {t("capabilitiesHint")}
+          </span>
+        </summary>
+        <div className="grid gap-2 border-t border-line-soft p-3 md:grid-cols-2 xl:grid-cols-5">
+          <CapabilityGroup
+            label={t("mcps")}
+            options={options?.capabilities.mcps ?? []}
+            selectedIds={mcpIds}
+            onToggle={(id) => setMcpIds((current) => toggleId(current, id))}
+          />
+          <CapabilityGroup
+            label={t("skills")}
+            options={options?.capabilities.skills ?? []}
+            selectedIds={skillIds}
+            onToggle={(id) => setSkillIds((current) => toggleId(current, id))}
+          />
+          <CapabilityGroup
+            label={t("rules")}
+            options={options?.capabilities.rules ?? []}
+            selectedIds={ruleIds}
+            onToggle={(id) => setRuleIds((current) => toggleId(current, id))}
+          />
+          <CapabilityGroup
+            label={t("agentPacks")}
+            options={options?.capabilities.agentDefinitions ?? []}
+            selectedIds={agentDefinitionIds}
+            onToggle={(id) =>
+              setAgentDefinitionIds((current) => toggleId(current, id))
+            }
+          />
+          <CapabilityGroup
+            label={t("restrictions")}
+            options={options?.capabilities.restrictions ?? []}
+            selectedIds={restrictionIds}
+            onToggle={(id) =>
+              setRestrictionIds((current) => toggleId(current, id))
+            }
+          />
         </div>
+      </details>
 
-        {error ? (
-          <div className="rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
-            {error}
-          </div>
-        ) : null}
-
-        <button
-          className="flex w-full items-center justify-center gap-2 rounded-full bg-amber px-5 py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_-10px_var(--amber)] transition-[transform,background] hover:-translate-y-px hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={!canSubmit}
-          type="submit"
-        >
-          {pending ? t("launching") : t("launch")}
-          <span className="font-mono">→</span>
-        </button>
-      </aside>
+      {error ? (
+        <div className="rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
+          {error}
+        </div>
+      ) : null}
     </form>
   );
 }

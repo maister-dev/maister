@@ -70,9 +70,10 @@ Prove the spine on **several real projects in parallel**:
    may spawn many runs over its lifetime (1:N) — if a run fails or is
    abandoned, the task returns to Backlog with the Launch button re-enabled.
 6. Start a scratch workspace outside the task board from a compact command box:
-   choose project, base branch, optional branch/name, executor profile, work
-   mode, reasoning effort, prompt, optional issue/files, and run-scoped
-   MCP/skill/rule/agent-pack profile.
+   write the prompt first, keep project/base branch/optional branch/name in the
+   composer, and adjust executor profile, work mode, reasoning effort,
+   optional issue/files, and run-scoped MCP/skill/rule/agent-pack profile
+   through expandable controls.
 7. Run Claude Code or Codex headlessly inside the worktree through ACP.
 8. Show run progress, logs, dialog turns, and HITL in the Web UI through
    durable SSE.

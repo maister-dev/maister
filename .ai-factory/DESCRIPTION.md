@@ -46,10 +46,11 @@ For the full vision, product model, architecture, and roadmap see
   launched-by · last activity. "Needs you (N)" badge counts pending HITL across
   all projects.
 - **Scratch workspaces**: manual conversation-style coding-agent sessions
-  outside the task board. The compact launcher selects project, base branch,
-  optional scratch branch/workspace name, configured executor profile, work
-  mode, reasoning effort, metadata/binary attachments, and run-scoped
-  MCP/skill/rule/agent-pack capability profile. Scratch runs appear in
+  outside the task board. The prompt-first command-box launcher keeps optional
+  scratch branch/workspace name, project, base branch, and submit in the main
+  composer, with configured executor profile, work mode, reasoning effort,
+  metadata/binary attachments, and run-scoped MCP/skill/rule/agent-pack
+  capability profile in compact expandable controls. Scratch runs appear in
   project-grouped active workspaces but keep `task_id = NULL`.
 - **Per-project task board**: 2 columns `Backlog | In Flight`. In Flight
   holds `Running | NeedsInput | NeedsInputIdle | Review | Crashed`. A

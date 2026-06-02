@@ -115,9 +115,10 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
 - `POST /api/runs` launch path with scheduler, worktree creation, and
   background Flow runner.
 - Scratch run intake is a compact manual workspace surface outside the task
-  board: choose project, base branch, optional scratch branch/name, executor
-  profile, work mode, reasoning effort, optional issue/files, and run-scoped
-  platform/project/Flow-package MCP/skill/rule/agent-pack profile; show it in
+  board: a prompt-first command box for project, base branch, optional scratch
+  branch/name, and launch, with executor profile, work mode, reasoning effort,
+  optional issue/files, and run-scoped platform/project/Flow-package
+  MCP/skill/rule/agent-pack profile tucked into expandable controls; show it in
   project-grouped active workspace lists and open it as a coding-agent dialog.
 - ACP supervisor process with claude/codex adapter binaries.
 - Durable run SSE via `run.events.jsonl`.
