@@ -291,6 +291,18 @@ beforeAll(async () => {
     "proj-badrole",
     missingFlowRoleManifest,
   );
+  await db.insert(schema.projectFlowRoles).values({
+    id: "role-proj-badrole-maintainer",
+    projectId: "proj-badrole",
+    roleRef: "maintainer",
+    label: "Maintainer",
+    source: "config",
+  });
+  await seedProjectWithManifest(
+    "proj-emptyrole",
+    "proj-emptyrole",
+    missingFlowRoleManifest,
+  );
   await seedProjectWithManifest(
     "proj-untrusted",
     "proj-untrusted",
@@ -448,6 +460,20 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
       .where(eq(schema.runs.taskId, "task-proj-badrole"));
 
     expect(runs).toHaveLength(0);
+  });
+
+  it("does not enforce manifest role refs when the project has no active Flow role registry", async () => {
+    const res = await POST(request("task-proj-emptyrole"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-emptyrole"));
+
+    expect(runs).toHaveLength(1);
   });
 
   it("refuses an untrusted revision on the TRUST gate BEFORE the enforcement evaluator (PRECONDITION 409, not CONFIG)", async () => {

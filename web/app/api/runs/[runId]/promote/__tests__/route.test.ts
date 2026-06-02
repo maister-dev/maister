@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAssignment,
   ensureUserActor,
+  findActiveAssignmentForRun,
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import {
@@ -90,6 +91,7 @@ vi.mock("@/lib/worktree", () => ({
 vi.mock("@/lib/assignments/service", () => ({
   createAssignment: vi.fn(async () => ({ id: "assignment-1" })),
   ensureUserActor: vi.fn(async () => ({ id: "actor-1" })),
+  findActiveAssignmentForRun: vi.fn(async () => null),
   systemCloseActiveAssignmentsForRun: vi.fn(async () => []),
 }));
 
@@ -159,6 +161,8 @@ beforeEach(() => {
   vi.mocked(createAssignment).mockResolvedValue({ id: "assignment-1" } as any);
   vi.mocked(ensureUserActor).mockReset();
   vi.mocked(ensureUserActor).mockResolvedValue({ id: "actor-1" } as any);
+  vi.mocked(findActiveAssignmentForRun).mockReset();
+  vi.mocked(findActiveAssignmentForRun).mockResolvedValue(null);
   vi.mocked(systemCloseActiveAssignmentsForRun).mockReset();
   vi.mocked(systemCloseActiveAssignmentsForRun).mockResolvedValue([]);
 });
@@ -248,6 +252,11 @@ describe("POST /api/runs/[runId]/promote", () => {
     expect(res.status).toBe(409);
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Review");
     expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(findActiveAssignmentForRun).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId,
+      actionKinds: ["merge_conflict"],
+    });
     expect(ensureUserActor).toHaveBeenCalledWith({
       db: fakeDb,
       projectId: "project-1",
@@ -266,6 +275,31 @@ describe("POST /api/runs/[runId]/promote", () => {
       branch: "scratch/demo",
       ref: "main",
     });
+  });
+
+  it("does not duplicate an active merge-conflict assignment on repeated conflict", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(promoteLocalMerge).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "merge conflict"),
+    );
+    vi.mocked(findActiveAssignmentForRun).mockResolvedValueOnce({
+      id: "assignment-existing",
+    } as any);
+
+    const res = await invokePost(runId, {
+      mode: "local_merge",
+      targetBranch: "main",
+    });
+
+    expect(res.status).toBe(409);
+    expect(findActiveAssignmentForRun).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId,
+      actionKinds: ["merge_conflict"],
+    });
+    expect(ensureUserActor).not.toHaveBeenCalled();
+    expect(createAssignment).not.toHaveBeenCalled();
   });
 
   it("rejects non-scratch runs", async () => {

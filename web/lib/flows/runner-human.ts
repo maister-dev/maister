@@ -3,7 +3,7 @@ import "server-only";
 import type { FlowContext, StepResult } from "./types";
 
 import { randomUUID } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -26,6 +26,14 @@ const log = pino({
 });
 
 const FORM_SCHEMA_VERSION = 1;
+
+type DbLike = {
+  insert: (table: unknown) => {
+    values: (row: Record<string, unknown>) => unknown;
+  };
+  select: () => unknown;
+  transaction?: <T>(fn: (tx: DbLike) => Promise<T>) => Promise<T>;
+};
 
 export type HumanStepLike = {
   id: string;
@@ -201,28 +209,52 @@ export async function runHumanStep(
 
   await atomicWriteJson(needsInputPath, body);
 
-  const db = (ctx.db ?? getDb()) as any;
+  const db = (ctx.db ?? getDb()) as DbLike;
 
   const kind: "form" | "human" = step.on_reject ? "human" : "form";
   const hitlRequestId = randomUUID();
 
-  await db.insert(hitlRequests).values({
-    id: hitlRequestId,
-    runId: ctx.runId,
-    stepId: step.id,
-    kind,
-    schema,
-    prompt: promptText,
-  });
-  await createHitlAssignmentForRun({
-    db,
-    runId: ctx.runId,
-    hitlRequestId,
-    stepId: step.id,
-    actionKind: "form",
-    roleRefs: [],
-    title: promptText,
-  });
+  const persistHitlRequestAndAssignment = async (tx: DbLike): Promise<void> => {
+    await tx.insert(hitlRequests).values({
+      id: hitlRequestId,
+      runId: ctx.runId,
+      stepId: step.id,
+      kind,
+      schema,
+      prompt: promptText,
+    });
+    await createHitlAssignmentForRun({
+      db: tx,
+      runId: ctx.runId,
+      hitlRequestId,
+      stepId: step.id,
+      actionKind: "form",
+      roleRefs: [],
+      title: promptText,
+    });
+  };
+
+  try {
+    if (typeof db.transaction === "function") {
+      await db.transaction(persistHitlRequestAndAssignment);
+    } else {
+      await persistHitlRequestAndAssignment(db);
+    }
+  } catch (err) {
+    await unlink(needsInputPath).catch((cleanupErr: unknown) => {
+      log.error(
+        {
+          runId: ctx.runId,
+          stepId: step.id,
+          needsInputPath,
+          err: (err as Error).message,
+          cleanupErr: (cleanupErr as Error).message,
+        },
+        "[FIX:M13] failed to remove needs-input.json after HITL assignment persistence failure",
+      );
+    });
+    throw err;
+  }
 
   log.info(
     {
@@ -232,7 +264,7 @@ export async function runHumanStep(
       needsInputPath,
       schemaPath: resolvedPath,
     },
-    "human step wrote needs-input.json + hitl_requests row",
+    "[FIX:M13] human step wrote needs-input.json + HITL assignment",
   );
 
   return {

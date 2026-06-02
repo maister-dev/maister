@@ -9,6 +9,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   createAssignment,
   ensureUserActor,
+  findActiveAssignmentForRun,
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
@@ -145,6 +146,26 @@ async function createMergeConflictAssignment(args: {
   sessionUser: { id: string; name?: string | null; email?: string | null };
   targetBranch: string;
 }): Promise<void> {
+  const existing = await findActiveAssignmentForRun({
+    db: args.db,
+    runId: args.run.id,
+    actionKinds: ["merge_conflict"],
+  });
+
+  if (existing !== null) {
+    log.info(
+      {
+        runId: args.run.id,
+        projectId: args.run.projectId,
+        assignmentId: existing.id,
+        targetBranch: args.targetBranch,
+      },
+      "[FIX:M13] merge-conflict assignment already active",
+    );
+
+    return;
+  }
+
   const actor = await ensureUserActor({
     db: args.db,
     projectId: args.run.projectId,

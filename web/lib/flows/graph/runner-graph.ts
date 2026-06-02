@@ -75,6 +75,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+type TransactionalDb = Db & {
+  transaction: <T>(fn: (tx: Db) => Promise<T>) => Promise<T>;
+};
+
 // Hard backstop on total node executions per run — a defense beyond per-node
 // rework.maxLoops so a misdeclared graph can never spin forever.
 const HARD_NODE_EXECUTION_CEILING = 500;
@@ -192,7 +196,9 @@ async function runReviewHuman(
       node.rework?.commentsVar ?? node.finishHuman?.commentsVar ?? null,
   };
 
-  await atomicWriteJson(path.join(dir, "needs-input.json"), {
+  const needsInputPath = path.join(dir, "needs-input.json");
+
+  await atomicWriteJson(needsInputPath, {
     nodeId: node.id,
     kind: "human_review",
     schema,
@@ -213,27 +219,56 @@ async function runReviewHuman(
     ),
   );
 
-  await ctx.db.insert(hitlRequests).values({
-    id: hitlRequestId,
-    runId: loaded.run.id,
-    stepId: node.id,
-    kind: "human",
-    schema,
-    prompt,
-  });
-  await createHitlAssignmentForRun({
-    db: ctx.db,
-    runId: loaded.run.id,
-    hitlRequestId,
-    nodeId: node.id,
-    actionKind: "human_review",
-    roleRefs,
-    title: prompt,
-  });
+  const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
+    await tx.insert(hitlRequests).values({
+      id: hitlRequestId,
+      runId: loaded.run.id,
+      stepId: node.id,
+      kind: "human",
+      schema,
+      prompt,
+    });
+    await createHitlAssignmentForRun({
+      db: tx,
+      runId: loaded.run.id,
+      hitlRequestId,
+      nodeId: node.id,
+      actionKind: "human_review",
+      roleRefs,
+      title: prompt,
+    });
+  };
+
+  try {
+    if (
+      typeof (ctx.db as { transaction?: unknown }).transaction === "function"
+    ) {
+      await (ctx.db as TransactionalDb).transaction(
+        persistHitlRequestAndAssignment,
+      );
+    } else {
+      await persistHitlRequestAndAssignment(ctx.db);
+    }
+  } catch (err) {
+    await unlink(needsInputPath).catch((cleanupErr: unknown) => {
+      log.error(
+        {
+          runId: loaded.run.id,
+          nodeId: node.id,
+          hitlRequestId,
+          needsInputPath,
+          err: asError(err).message,
+          cleanupErr: asError(cleanupErr).message,
+        },
+        "[FIX:M13] failed to remove review needs-input.json after HITL assignment persistence failure",
+      );
+    });
+    throw err;
+  }
 
   log.info(
     { runId: loaded.run.id, nodeId: node.id, hitlRequestId, roleRefs },
-    "review HITL created — pausing NeedsInput",
+    "[FIX:M13] review HITL assignment created — pausing NeedsInput",
   );
 
   return {

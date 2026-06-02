@@ -17,6 +17,8 @@ import { runHumanStep } from "@/lib/flows/runner-human";
 let runtimeRoot: string;
 let flowInstallPath: string;
 const inserted: Array<Record<string, unknown>> = [];
+let transactionCount = 0;
+let failAssignmentInsert = false;
 
 type FakeTableName =
   | "hitl_requests"
@@ -53,7 +55,13 @@ function insertChain(table: unknown) {
       const result: any = Promise.resolve(undefined);
 
       result.onConflictDoUpdate = () => result;
-      result.returning = async () => [persisted];
+      result.returning = async () => {
+        if (name === "assignments" && failAssignmentInsert) {
+          throw new Error("assignment insert failed");
+        }
+
+        return [persisted];
+      };
 
       return result;
     },
@@ -80,11 +88,20 @@ function selectChain() {
 const fakeDb = {
   insert: insertChain,
   select: selectChain,
-  transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
-    await fn({
-      insert: insertChain,
-      select: selectChain,
-    }),
+  transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    transactionCount += 1;
+    const insertedCount = inserted.length;
+
+    try {
+      return await fn({
+        insert: insertChain,
+        select: selectChain,
+      });
+    } catch (err) {
+      inserted.length = insertedCount;
+      throw err;
+    }
+  },
 };
 
 const ctxBase = (overrides: Partial<FlowContext> = {}): FlowContext => ({
@@ -115,6 +132,8 @@ beforeEach(async () => {
   runtimeRoot = await mkdtemp(join(tmpdir(), "runner-human-rt-"));
   flowInstallPath = await mkdtemp(join(tmpdir(), "runner-human-flow-"));
   inserted.length = 0;
+  transactionCount = 0;
+  failAssignmentInsert = false;
   vi.restoreAllMocks();
 });
 
@@ -163,6 +182,7 @@ describe("runHumanStep — first pass", () => {
       stepId: "review",
       kind: "form",
     });
+    expect(transactionCount).toBe(1);
   });
 
   it("inserts kind=human when on_reject is present", async () => {
@@ -188,6 +208,43 @@ describe("runHumanStep — first pass", () => {
 
     expect(inserted).toHaveLength(1);
     expect(inserted[0].kind).toBe("human");
+  });
+
+  it("fails the HITL row and assignment as one transaction when assignment creation fails", async () => {
+    const formSchema = await writeSchema();
+
+    failAssignmentInsert = true;
+
+    await expect(
+      runHumanStep(
+        { id: "review", type: "human", form_schema: formSchema },
+        {
+          runtimeRoot,
+          projectSlug: "demo",
+          runId: "run-1",
+          stepId: "review",
+          flowInstallPath,
+          context: ctxBase(),
+          db: fakeDb,
+        },
+      ),
+    ).rejects.toThrow("assignment insert failed");
+
+    expect(transactionCount).toBe(1);
+    expect(inserted).toHaveLength(0);
+
+    const needsInputPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      "run-1",
+      "needs-input.json",
+    );
+
+    await expect(readFile(needsInputPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 

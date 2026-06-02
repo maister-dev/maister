@@ -67,6 +67,8 @@ function assertCompiledFlowRolesLaunchable(args: {
   flowRefId: string;
   projectSlug: string;
 }): void {
+  if (args.activeRoleRefs.size === 0) return;
+
   for (const node of args.compiled.nodes.values()) {
     const finishRole = node.finishHuman?.role;
 
@@ -361,6 +363,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
 
       const compiled = compileManifest(revision.manifest as FlowYamlV1);
+      const skippedFlowRoleValidation = activeFlowRoleRefs.size === 0;
 
       assertCompiledFlowRolesLaunchable({
         compiled,
@@ -413,8 +416,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           capabilityNodes: configuredNodes,
           projectExecutors: executorRefIds.size,
           projectFlowRoles: activeFlowRoleRefs.size,
+          skippedFlowRoleValidation,
         },
-        "POST /api/runs settings-enforcement gate passed",
+        skippedFlowRoleValidation
+          ? "[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"
+          : "POST /api/runs settings-enforcement gate passed",
       );
     }
 
