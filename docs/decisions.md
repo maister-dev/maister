@@ -62,6 +62,9 @@
 | [ADR-038](#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022) | Hybrid write path for `artifact_instances` (refines ADR-022): runner-inline + scoped web-side projector, deterministic-PK idempotency, per-RUN cursor, no watcher | Accepted | 2026-06-01 |
 | [ADR-039](#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer) | `@xyflow/react` + `@dagrejs/dagre` as the read-only evidence-graph renderer (sanctioned exception to "no other component lib") | Accepted | 2026-06-01 |
 | [ADR-040](#adr-040-assignment-actors-and-role-owned-work-queue) | Assignment actors and role-owned work queue: Flow roles route work, actors attribute ownership, no new M13 ingress | Accepted | 2026-06-02 |
+| [ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization) | Capability registry refs + agent-aware mapping + runner-owned native materialization (`node_attempts.materialization_plan` ledger column, no new artifact kind, secret-channel boundary, recoverable cleanup) | Accepted | 2026-06-02 |
+| [ADR-042](#adr-042-conservative-spike-gated-enforcement-flip-claude-first) | Conservative spike-gated `instructed→enforced` flip; claude-first (codex stays instructed, `permissionMode` re-run live, contract only tightens) | Accepted | 2026-06-02 |
+| [ADR-043](#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline) | Capability import reuses the flow-install fetch→trust→execute pipeline (physically separate `setup.sh`, trust route ships, path-safety) | Accepted | 2026-06-02 |
 
 ---
 
@@ -2071,6 +2074,308 @@ ingress is introduced.
 - **Add new run statuses or supervisor routes.** Rejected because assignment
   ownership is a web-tier durable read/write model over existing lifecycle
   states and does not require supervisor protocol changes.
+---
+
+### ADR-041: Capability registry refs + agent-aware mapping + runner-owned native materialization
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** [ADR-031](#adr-031-node-typed-settings-schema-carve-b) shipped typed
+node `settings` but deferred the **positive** half of roadmap criterion #6 to
+M14: resolving `mcps:[github]` / `skills:[…]` / `tools:[…]` /
+`restrictions:[…]` / `settingsProfile` references against a project capability
+registry, mapping abstract capability names to concrete per-agent artifacts, and
+**materializing** real adapter config (`settings.json`, `.mcp.json`, skill dirs)
+into the run so the boundary is genuinely enforced rather than merely declared.
+The scratch-run capability libraries (`web/lib/capabilities/{types,catalog,
+resolver,materialize}.ts`) already exist but are wired for scratch runs only and
+their materializer is a load-bearing stub (`provisioningBoundary: "…native
+adapter provisioning is future work."`). M14 must wire that path to Flow runs,
+record the result as run evidence, and provision natively — **without** reopening
+M12's closed artifact-kind catalog ([ADR-037](#adr-037-typed-artifact-model)),
+its projector / validity-FSM, or the supervisor wire contract. The supervisor
+already accepts `capabilityProfilePath` + `adapterLaunch.env/preArgs/postArgs`
+(`supervisor/src/types.ts`) and stays dumb. Two non-obvious hazards must be
+locked here: (1) secret leakage into the agent worktree, and (2) cleanup of
+scoped materialized files running OUTSIDE any live `runFlow` (the abandon route
+and the crash reconciler act on already-terminal rows, where throwing is
+incoherent).
+
+**Decision:**
+
+1. **AD-1 — Materialization plan lives in the ledger, not a new artifact kind.**
+   The resolved + materialized per-node plan is stored as a
+   **`node_attempts.materialization_plan` jsonb column** (migration `0018`),
+   mirroring the existing `enforcement_snapshot` column — NOT an
+   `artifact_instances` row and NOT a new `kind`. This satisfies "records it in
+   the run ledger" and the snapshot-immutability requirement without touching
+   M12's closed artifact-kind catalog, projector, validity FSM, or evidence-graph
+   fan-out. The jsonb shape is
+   `{ profileDigest, resolvedRevisions:[{refId,kind,sha}], materializedFiles:[paths],
+   enforcedClasses, instructedClasses, refusedClasses, cleanup:{status,error?,at} }`.
+2. **AD-2 — No separate flow-run profile table.** `scratch_capability_profiles`
+   stays scratch-only. Flow runs persist the resolved profile INSIDE
+   `materialization_plan` (digest + per-capability resolved revisions +
+   materialized file paths). One source of truth, no second table to reconcile.
+3. **AD-3 — Native provisioning is per-agent, per-session-scope, inside the
+   worktree, runner-owned.** Concrete files are written into
+   `worktreePath/.maister/capabilities/<runId>/<nodeAttemptId>/` (node-scoped)
+   **before** `POST /sessions`; the dir is passed via `capabilityProfilePath` and
+   concrete adapter flags via `adapterLaunch.preArgs`. The supervisor stays dumb
+   (it already supports both fields). **All** adapter-specific knowledge lives in
+   a new pure module `web/lib/capabilities/agent-map.ts`
+   (`mapProfileToAgentArtifacts(profile, agent)`), which closes the
+   `config.ts:745` carve-b stub by validating node-settings refs
+   (`mcps/skills/restrictions/settingsProfile/tools`) against the project
+   capability registry.
+4. **Secret boundary.** Secret values — env-profile values AND any credential an
+   MCP-server config carries — are **NEVER** written into the agent worktree and
+   **NEVER** persisted to the ledger or surfaced in the UI. They reach the adapter
+   ONLY via `adapterLaunch.env`, which `spawn.ts` injects into the child process
+   and never writes to disk. Worktree config files (`settings.json`, `.mcp.json`)
+   reference secrets **by env-var NAME only** (e.g. `"token": "${GITHUB_TOKEN}"`,
+   never the literal). Catalog / ledger / logs / SSE keep env redacted to
+   key-names.
+5. **Cleanup is a RECOVERABLE state machine, not a hard crash.** A scoped-cleanup
+   substate `{status: pending|done|failed, error?, at}` persists inside
+   `materialization_plan.cleanup`. In-`runFlow` seams best-effort `rm` the node
+   dir after `deleteSession`; on failure they record `cleanup.failed`, ERROR-log,
+   and continue (a leftover non-secret config dir is low-severity — secrets are no
+   longer in the worktree). **Post-terminal seams** (the abandon route, the crash
+   reconciler) best-effort `rm`, record `cleanup.failed`, and **NEVER throw
+   `CRASH`** — the row is already terminal. A strict cleanup sweeper (extending the
+   existing GC pass) and the M19 worktree GC are the two backstops; a persistently
+   `cleanup.failed` plan stays operator-visible in run-detail.
+
+No new `MaisterError` code — [ADR-008](#adr-008-typed-error-taxonomy-maistererror)
+stays a closed union; `CONFIG` (over-declaration / mid-session profile mismatch)
+and the now-live `EXECUTOR_UNAVAILABLE` ([ADR-042](#adr-042-conservative-spike-gated-enforcement-flip-claude-first))
+cover the new failure modes. Imports reuse the flow-install pipeline per
+[ADR-043](#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline).
+
+**Consequences:**
+
+- One migration (`0018`) adds the `capability_imports` table AND the
+  `node_attempts.materialization_plan` column (the cleanup substate rides in the
+  same jsonb — no extra column for cleanup tracking).
+- The closed M12 artifact catalog is untouched: no `materialization_plan` kind,
+  no projector edit, no validity-FSM change.
+- The supervisor wire contract is unchanged; the materialized dir + adapter flags
+  flow through the already-existing `capabilityProfilePath` / `adapterLaunch`
+  fields.
+- A grep of the entire materialized `.maister/capabilities/**` tree, the
+  `materialization_plan` ledger, and any UI payload for every secret value MUST
+  return absent — this is a standing regression.
+- Cleanup failure never crashes a terminal run; the residual risk (an operator
+  ignoring a persistently-failing sweep) is surfaced in the run-detail capability
+  view, not hidden.
+
+**Alternatives Considered:**
+
+- **New `artifact_instances` kind for the materialization plan:** reopens M12's
+  closed catalog and forces projector / validity-FSM / evidence-graph fan-out for
+  an internal evidence object the UI reads once. Rejected — ledger jsonb column.
+- **Separate flow-run profile table:** a second source of truth to reconcile
+  against the ledger. Rejected — the plan rides in `materialization_plan`.
+- **Teach the supervisor to materialize:** spreads adapter-specific knowledge
+  across the wire boundary and breaks the "supervisor stays dumb" invariant
+  ([ADR-002](#adr-002-supervisor-runs-as-a-separate-node-daemon)). Rejected — all
+  mapping lives in `web/lib/capabilities/agent-map.ts`; the supervisor only
+  injects env and forwards flags.
+- **Write a plaintext env file into the worktree for the adapter to read:** puts
+  secrets on disk in the worktree the agent can read and exfiltrate. Rejected —
+  secrets travel ONLY through `adapterLaunch.env`.
+- **Throw `MaisterError("CRASH")` on any cleanup failure (the strict model):**
+  incoherent on the post-terminal seams (abandon route, crash reconciler) that run
+  outside `runFlow` on already-terminal rows. Rejected — recoverable substate +
+  sweeper backstop.
+
+---
+
+### ADR-042: Conservative spike-gated enforcement flip; claude-first
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** [ADR-032](#adr-032-settings-enforcement-refusal-boundary) froze
+`ENFORCEABILITY_BY_AGENT` (`web/lib/flows/enforcement.ts`) **all-`instructed`**
+across both agents and all six capability classes (`mcps`, `tools`, `skills`,
+`restrictions`, `permissionMode`, `workspaceAccess`), with a `TODO(M14)` on every
+cell and an explicit note that the `permissionMode` spike (M11c Phase 0.10) was
+**unverifiable** — no live adapter. ADR-032 also locked that the contract may
+only ever *tighten*: a cell may flip `instructed → enforced` but never the
+reverse, and flipping a cell activates the previously-dead `EXECUTOR_UNAVAILABLE`
+branch in `assertNodeLaunchable`. M14 now materializes real adapter config
+([ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)),
+so cells *can* become genuinely enforced — but native provisioning does not
+automatically mean the adapter honors it. A wrongly-`enforced` cell lets a
+`strict` declaration PASS the launch gate while nothing constrains the agent —
+the exact silent escape hatch criterion #6 forbids.
+
+**Decision:** An `ENFORCEABILITY_BY_AGENT` cell flips `instructed → enforced`
+ONLY after a **per-class, per-agent live-adapter spike** proves the materialized
+config genuinely constrains the agent (a denied tool is unavailable; a
+non-configured MCP server is absent; an unselected skill is not loaded;
+`permissionMode` is honored). **Claude-first:** only `claude` cells are
+candidates for flipping this milestone; **ALL six `codex` cells stay
+`instructed`** with a documented rationale (codex-acp sandbox/config enforcement
+is unproven), and codex enforced mapping is **Phase 2**. The `permissionMode`
+cell MUST be **re-run live** before flipping — the M11c spike was unverifiable.
+Where no live adapter is available in CI, the flip is gated on a documented manual
+spike PLUS a CI mock asserting the *mechanism* (the correct flags/files are
+emitted), stated explicitly — never a silent cap. Each `claude` cell NOT flipped
+keeps `instructed` and replaces its `TODO(M14)` with a rationale comment
+(`// M14: stays instructed — <reason from spike>`); each `codex` cell keeps
+`instructed` with the codex-deferral rationale. No deny-list anywhere — the
+launch/runtime guard stays an allow-list of `enforced` cells. This ADR tightens
+ADR-032's frozen all-`instructed` table; it never loosens it.
+
+**Verdict table (filled in Phase 5).** Rows are the six classes for **claude**;
+`codex` is omitted (all cells stay `instructed`, Phase 2). To be completed from
+the Phase-5 spike evidence:
+
+| claude class | mechanism (materialized artifact / flag) | spike verdict | flipped? |
+| ------------ | ---------------------------------------- | ------------- | -------- |
+| `mcps` | `.mcp.json` (`--mcp-config`) | *(Phase 5)* | *(Phase 5)* |
+| `tools` | `settings.json` allow/deny + agent-aware map | *(Phase 5)* | *(Phase 5)* |
+| `skills` | materialized skill dirs | *(Phase 5)* | *(Phase 5)* |
+| `restrictions` | `settings.json` restriction policy | *(Phase 5)* | *(Phase 5)* |
+| `permissionMode` | `--permission-mode` (MUST re-run live) | *(Phase 5)* | *(Phase 5)* |
+| `workspaceAccess` | workspace-scoping flags | *(Phase 5)* | *(Phase 5)* |
+
+`spike verdict ∈ {enforced, not-verifiable}`; a cell flips iff `enforced`.
+
+**Consequences:**
+
+- Flipping any cell activates the previously-dead `EXECUTOR_UNAVAILABLE` branch
+  in `assertNodeLaunchable`: a `strict` declaration on a class enforced for some
+  agent but `instructed`/`unsupported` for the *resolved* executor's agent now
+  refuses with `503`, not `400`.
+- The M11c frozen-invariant test ("every cell is `instructed`") is **superseded**
+  in this milestone — its assertion migrates to "cells {…flipped…} are
+  `enforced`, the rest `instructed`"; this is the only milestone permitted to flip
+  cells.
+- A flow that launched under M11c never *starts* failing because a class became
+  enforceable — the contract only tightens, so a previously-`instructed` strict
+  declaration that was refused stays refused or becomes accepted, never the
+  reverse.
+- The bundled `aif` flow flips `enforcement.{tools|skills|permissionMode}` from
+  `instruct → strict` ONLY for classes this ADR's table marks `enforced`; the rest
+  stay `instruct`.
+- Codex remains a fully-supported executor whose capability classes are
+  `instructed` only — declaring `strict` on a codex-resolved node refuses with
+  `CONFIG` until Phase 2.
+
+**Alternatives Considered:**
+
+- **Flip all cells now that materialization exists:** materializing config does
+  not prove the adapter honors it; flipping unverified cells recreates the silent
+  escape hatch. Rejected — per-(agent,class) spike gate.
+- **Spike claude AND codex this milestone:** doubles the spike surface for an
+  agent whose config-enforcement is unproven; codex enforced mapping
+  (`config.toml` / `--sandbox`) is a separate Phase-2 design. Rejected —
+  claude-first.
+- **Trust the M11c `permissionMode` verdict and flip on materialization alone:**
+  that verdict was explicitly *unverifiable* (no live adapter). Rejected — re-run
+  live before flipping.
+- **A deny-list of unenforceable classes:** inverts the safe default; a new class
+  would be silently enforceable. Rejected — allow-list of `enforced` cells only.
+
+---
+
+### ADR-043: Capability import reuses the flow-install fetch→trust→execute pipeline
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** A project's named capabilities (MCP servers, skills, agent
+definitions, restriction/settings profiles) can ship from git, exactly as Flow
+packages do. [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
+already established the Flow-install pipeline — clone-by-tag, record the resolved
+40-hex SHA + manifest digest, two-phase install with a `package_status` marker, a
+trust policy (`local`/`file://` + `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` ⇒
+`trusted_by_policy`, else `untrusted`), and the **carryover rule that `setup.sh`
+is NEVER run at install** (fetch and execute are physically separate). M14 must
+import capability packages with the same safety properties; rebuilding a parallel
+pipeline would duplicate the trust/path-safety machinery and risk diverging from
+it. Two questions were open: (Q1) does M14 ship a trust-confirm route/UI or defer
+it, and what is the idempotency marker; and how is path-traversal prevented when
+an import `id`/`version` reaches a filesystem path or git op.
+
+**Decision:** Capability imports **mirror** `installRevision`
+(`web/lib/flows.ts`): clone-by-tag → `gitRevParseHead` → record the resolved
+40-hex SHA + manifest digest + manifest jsonb + `trustStatus = resolveTrust(source)`
++ `setupStatus`, in a new `installCapabilityRevision` (`web/lib/capabilities/
+import.ts`). Cache at `~/.maister/capabilities/<id>@<sha[:12]>/`; the
+`capability_imports` row is keyed unique on `(projectId, capabilityRefId,
+resolvedRevision)`. Trust is resolved via `resolveTrust` plus a new
+`MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` env var.
+
+1. **Fetch and execute are PHYSICALLY SEPARATE functions.** `installCapabilityRevision`
+   MUST NOT run `setup.sh` ([ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
+   carryover). `setup.sh` runs only via a separate `runCapabilityRevisionSetup`,
+   gated on `trustStatus ∈ {trusted, trusted_by_policy}` AND
+   `setupStatus ∈ {pending, failed}` — **idempotently re-runnable** after a
+   transient failure, NOT one-shot.
+2. **Trust route ships (Q1 decision).** M14 ships
+   `POST /api/projects/[slug]/capabilities/[capabilityRefId]/trust` plus a UI
+   confirm; third-party (untrusted) sources are visually marked and require
+   explicit confirm before setup runs. The route's identifiers are
+   `slug` (url-param → project server-state), `capabilityRefId` (url-param,
+   validated against the project's import rows = server-state), and a body of
+   only `{confirm:true}` (no cross-resource locator). Under `SELECT … FOR UPDATE`
+   the order is `trustStatus='trusted'` (BEFORE) → `runCapabilityRevisionSetup`
+   (side-effect) → `setupStatus='done'` (AFTER). The **idempotency marker is
+   `setupStatus`, NOT `trustStatus`**: a post-trust setup failure leaves
+   `trusted` + `failed`, and a re-POST re-runs setup; the route returns `409` ONLY
+   when `setupStatus ∈ {done, not_required}` (genuinely nothing to do), NEVER
+   merely because `trustStatus` is already set. Setup failure → `setupStatus='failed'`,
+   `503` (retryable); setup network/timeout → `setupStatus` left `pending`, `503`.
+3. **Path safety.** Every capability/import `id` and `version` that can reach a
+   filesystem path or git op MUST validate against `SAFE_PATH_SEGMENT`
+   (`/^[A-Za-z0-9._-]+$/`) + `notDotRef` (no `.`/`..`/embedded `..`), mirroring
+   `flowIdSchema`/`versionSchema` (`web/lib/flow-paths.ts`). Validation is enforced
+   **twice** (defence-in-depth): at the Zod schema AND inside the path builder
+   `systemCapabilityCachePath`, which re-validates before constructing the path.
+   An import `id` of `../evil`, `..`, or `a/b` is rejected at both layers and
+   never reaches `~/.maister/capabilities/`; a traversal id passed directly to the
+   path builder throws `MaisterError("FLOW_INSTALL")` and writes nothing outside
+   the cache.
+
+No new `MaisterError` code — `FLOW_INSTALL` carries import/path failures and
+`CONFIG`/`EXECUTOR_UNAVAILABLE` cover the rest
+([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed union).
+
+**Consequences:**
+
+- The import pipeline inherits ADR-021's two-phase-install + trust safety for
+  free; no parallel machinery.
+- One new env var (`MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES`) and one new
+  on-disk cache prefix (`~/.maister/capabilities/`, sharing the existing
+  `~/.maister` volume that already holds `flows/`).
+- The trust route is **retry-safe**: a setup that fails after the trust write is
+  recoverable by re-POST because the marker is `setupStatus`, not `trustStatus` —
+  no spurious `409` strands a `trusted`+`failed` row.
+- An untrusted source carrying an executable `setup.sh` MUST NOT execute it at
+  install — a standing regression (sentinel-absent + `trustStatus='untrusted'`).
+- Removing a `capability_imports[]` entry disables its `capability_records`
+  (config-state symmetry).
+
+**Alternatives Considered:**
+
+- **A bespoke capability-import pipeline:** duplicates ADR-021's trust /
+  path-safety / two-phase machinery and will drift from it. Rejected — mirror
+  `installRevision`.
+- **Run `setup.sh` at install (single fetch-and-execute function):** executes
+  untrusted code before any trust decision — the exact hazard ADR-021 forbids.
+  Rejected — physically separate fetch and execute.
+- **Defer the trust route/UI to Phase 2:** leaves third-party imports either
+  silently trusted or unusable; the roadmap "trust/install UX" expectation needs
+  it now. Rejected — Q1 ships the route.
+- **Use `trustStatus` as the route's idempotency marker:** a post-trust setup
+  failure would strand a `trusted` row at `409` with setup never completed.
+  Rejected — `setupStatus` is the marker, so a re-POST re-runs setup.
+- **Single-layer path validation (schema only):** a path built from a
+  server-state id that bypassed the schema would be unchecked. Rejected —
+  defence-in-depth at schema AND path builder.
 
 ---
 
