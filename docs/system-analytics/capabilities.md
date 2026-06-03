@@ -24,13 +24,16 @@ It owns four things: (1) the **project capability registry** —
 `capability_imports`; (2) **resolution** of a node's abstract capability refs
 (`mcps:[github]`, `tools:[edit]`, `skills:[…]`, `restrictions:[…]`,
 `settingsProfile`) against that registry into a deterministic per-agent profile;
-(3) **native materialization** of concrete adapter config
-(`settings.json`, `.mcp.json`, skill dirs) into a node-scoped directory inside the
-worktree **before** the ACP session spawns, with secrets travelling only through
-the spawn env channel; and (4) the conservative, spike-gated flip of
+(3) **native materialization** of concrete adapter config —
+`<worktree>/.claude/settings.local.json` (tools/permissionMode) written **before**
+the ACP session spawns, plus MCP servers delivered over ACP
+`newSession params.mcpServers` carrying env-var **names only** — never a secret
+VALUE on disk or the wire (ADR-044); and (4) the conservative, spike-gated flip of
 `ENFORCEABILITY_BY_AGENT` cells from `instructed` to `enforced`. Scope is the
-`web/` tier and the on-disk worktree only — the supervisor stays dumb (it already
-accepts `capabilityProfilePath` + `adapterLaunch.env/preArgs`). Out of scope and
+`web/` tier and the on-disk worktree only — the supervisor resolves
+`StartSessionRequest.mcpServers` env names → values from its own `process.env` at
+spawn (it also still accepts the non-secret `capabilityProfilePath` +
+`adapterLaunch` paths). Out of scope and
 deferred to **Phase 2**: a capability marketplace, sandboxing of untrusted import
 sources, cross-project capability promotion, codex enforced mapping
 (`config.toml` / `--sandbox`), and a Flow capability-designer UI.
@@ -59,14 +62,23 @@ sources, cross-project capability promotion, codex enforced mapping
   a resolved capability revision changes). For Flow runs it is NOT persisted in
   its own table; it is folded into the materialization plan (AD-2). The scratch
   path keeps using `scratch_capability_profiles` (scratch-only, unchanged).
-- **Agent materialization** (Designed (M14)). The pure output of
-  `web/lib/capabilities/agent-map.ts` `mapProfileToAgentArtifacts(profile, agent)`
-  — split into `files` (non-secret config destined for the worktree:
-  `settings.json`, `.mcp.json` with env-var-name references, skill dirs,
-  permission flags) and `env` (secret values destined for `adapterLaunch.env`).
-  The ONLY adapter-specific knowledge in the codebase. claude is materialized
-  fully; codex is `instructed`-only (profile/instructions handoff, no enforced
-  artifacts) this milestone.
+- **Agent materialization** (M14; delivery mechanism Implemented + CI-verified,
+  enforcement still gated — see
+  [ADR-044](../decisions.md#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven)).
+  The pure output of `web/lib/capabilities/agent-map.ts`
+  `mapProfileToAgentArtifacts({ profile, agent, tools?, permissionMode? })`:
+  `{ settingsLocal, mcpServers, skills }` — **no secret values**. `settingsLocal`
+  is the `<worktree>/.claude/settings.local.json` body the claude SDK reads as its
+  highest-precedence "local" tier (`permissions.allow` = the node `tools`
+  allow-list; `permissions.defaultMode` maps `permissionMode`
+  ask→default / allow→bypassPermissions / deny→plan; `null` when neither applies).
+  `mcpServers` carries env-var **names only** (`envKeys`) and is delivered over ACP
+  `newSession params.mcpServers`, resolved name→value supervisor-side from
+  `process.env` — secrets never reach the worktree, the wire, or the DB (no
+  `.mcp.json`, no `adapterLaunch.env` secret values). The ONLY adapter-specific
+  knowledge in the codebase. claude is materialized; codex returns empty
+  (`{ settingsLocal: null, mcpServers: [], skills: [] }`, `instructed`-only this
+  milestone).
 - **Materialization plan** (`node_attempts.materialization_plan` jsonb, **NEW** —
   Designed (M14), migration `0019`). The ledger record of what was resolved and
   materialized for one node attempt (AD-1):
@@ -164,13 +176,13 @@ sequenceDiagram
     participant S as supervisor
     R->>Res: resolve(node.settings, agent, run-start catalog snapshot)
     Res-->>R: profile + profileDigest (or CONFIG if enforced+unsupported)
-    R->>Map: mapProfileToAgentArtifacts(profile, agent)
-    Map-->>R: { files (non-secret), env (secret values) }
-    R->>FS: atomic write files (settings.json, .mcp.json by env-var NAME, skill dirs)
+    R->>Map: mapProfileToAgentArtifacts({ profile, agent, tools, permissionMode })
+    Map-->>R: { settingsLocal, mcpServers, skills } (no secret values)
+    R->>FS: atomic write worktree .claude/settings.local.json (tools to allow, permissionMode to defaultMode)
     Note over R,L: db.transaction: setMaterializationPlan (write-once) + markNodeRunning
     R->>L: materialization_plan written
-    R->>S: POST /sessions (capabilityProfilePath + adapterLaunch.preArgs + env)
-    Note over S: spawn injects env into child process — secrets never on disk
+    R->>S: POST /sessions (capabilityProfilePath + mcpServers by env-var NAME)
+    Note over S: newSession params.mcpServers — supervisor resolves env names to process.env values
     S-->>R: session/update stream
     Note over R,FS: on scope end (success/fail/checkpoint/abandon): rm node dir, record cleanup
 ```
@@ -245,12 +257,12 @@ Phase 5 from the [ADR-041 verdict table](../decisions.md#adr-041-conservative-sp
 
 | `(agent, class)` | materialized mechanism | enforced this milestone? |
 | ---------------- | ---------------------- | ------------------------ |
-| `claude, mcps` | `.mcp.json` (`--mcp-config`) | *(Phase 5 spike — claude-first candidate)* |
-| `claude, tools` | `settings.json` + agent-aware map | *(Phase 5 spike — claude-first candidate)* |
-| `claude, skills` | materialized skill dirs | *(Phase 5 spike — claude-first candidate)* |
-| `claude, restrictions` | `settings.json` restriction policy | *(Phase 5 spike — claude-first candidate)* |
-| `claude, permissionMode` | `--permission-mode` (MUST re-run live) | *(Phase 5 spike — claude-first candidate)* |
-| `claude, workspaceAccess` | workspace-scoping flags | *(Phase 5 spike — claude-first candidate)* |
+| `claude, mcps` | ACP `newSession params.mcpServers` (env NAMES) | *(Phase 5 spike — claude-first candidate)* |
+| `claude, tools` | `settings.local.json` `permissions.allow` | *(Phase 5 spike — claude-first candidate)* |
+| `claude, skills` | `settings.local.json` `skillOverrides` (not emitted yet) | *(Phase 5 spike — claude-first candidate)* |
+| `claude, restrictions` | `settings.local.json` `permissions.deny` (not emitted yet) | *(Phase 5 spike — claude-first candidate)* |
+| `claude, permissionMode` | `settings.local.json` `permissions.defaultMode` (MUST re-run live) | *(Phase 5 spike — claude-first candidate)* |
+| `claude, workspaceAccess` | `settings.local.json` `permissions.additionalDirectories` (not emitted yet) | *(Phase 5 spike — claude-first candidate)* |
 | `codex, *` | profile/instructions handoff only | **No — stays `instructed` (Phase 2)** |
 
 A cell flips iff its Phase-5 spike verdict is `enforced`; an unproven `claude`
@@ -272,9 +284,12 @@ they hold once the milestone lands, not before).
   with `MaisterError("CONFIG")` at BOTH project-register and run-launch, using the
   same ref-id map builder (closes the `config.ts:745` carve-b stub).
 - A secret value (env-profile value OR an MCP-server credential) MUST NEVER appear
-  in the materialized `.maister/capabilities/**` tree, in `materialization_plan`,
-  in logs/SSE, or in any UI payload; it MUST reach the adapter ONLY via
-  `adapterLaunch.env`, and worktree config MUST reference it by env-var NAME only.
+  in the materialized `.maister/capabilities/**` tree, in `settings.local.json`, in
+  `materialization_plan`, on the web→supervisor wire, in logs/SSE, or in any UI
+  payload; it MUST reach the adapter ONLY by env-var NAME — carried as
+  `mcpServers[].envKeys` over ACP `newSession` and resolved name→value
+  supervisor-side from `process.env` (no `.mcp.json`, no `adapterLaunch.env` secret
+  values).
 - `node_attempts.materialization_plan` MUST be written **write-once** (`IS NULL`
   guard) inside the SAME `db.transaction` as `markNodeRunning`, before
   `POST /sessions`.
@@ -330,9 +345,10 @@ they hold once the milestone lands, not before).
   unsupported class throws `MaisterError("CONFIG")`; an `instructed`/`off` class
   on an unsupporting agent is downgraded to the handoff (instructions only), never
   silently dropped.
-- **Secret never in worktree** → a materialized `.mcp.json` carrying a credential
-  emits `"${GITHUB_TOKEN}"`, and the literal value travels only in
-  `adapterLaunch.env`; a grep of the worktree, ledger, and UI for the literal
+- **Secret never in worktree** → an MCP server's credential is delivered as an env
+  NAME (`mcpServers[].envKeys=["GITHUB_TOKEN"]`) over ACP `newSession`, resolved to
+  its value only inside the supervisor's `process.env` at spawn; a grep of the
+  worktree, the web→supervisor wire payload, the ledger, and the UI for the literal
   returns absent (standing regression).
 - **Untrusted import carrying `setup.sh`** → `installCapabilityRevision` records
   `trustStatus='untrusted'` and does NOT run the script; a sentinel the script
