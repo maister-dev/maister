@@ -145,7 +145,7 @@ M15's genuine gaps:
 <!-- Commit checkpoint: tasks 3-5 -->
 
 ### Phase 2 — Verdict calibration at execution (TDD slice)
-- [ ] Task 6: Calibration at execution for `ai_judgment` + `skill_check` (red→green→verify) (depends on 3, 5)
+- [x] Task 6: Calibration at execution for `ai_judgment` + `skill_check` (red→green→verify) (depends on 3, 5)
 <!-- Commit checkpoint: task 6 -->
 
 ### Phase 3 — Shared readiness-core + authoritative evaluator (TDD slice)

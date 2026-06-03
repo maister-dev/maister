@@ -141,6 +141,57 @@ export function isPassVerdict(verdict: string): boolean {
   return PASS_VERDICTS.has(verdict.trim().toLowerCase());
 }
 
+// Applies the effective calibration policy to a parsed PASS verdict.
+// Only call when isPassVerdict(parsed.verdict) is true.
+// Returns { pass: true } with no calibration when no threshold is configured
+// (legacy pass). When a threshold is set, returns the deterministic outcome
+// and attaches the calibration sub-object so the caller can persist it.
+export function calibrateVerdict(
+  parsed: GateVerdict,
+  calibration:
+    | { confidence_min?: number; allow_missing_confidence?: boolean }
+    | undefined,
+): { pass: boolean; calibration?: GateVerdict["calibration"] } {
+  if (calibration?.confidence_min === undefined) {
+    // No threshold configured — legacy pass, no calibration recorded.
+    return { pass: true };
+  }
+
+  const confidenceMin = calibration.confidence_min;
+  const rawVerdict = parsed.verdict!;
+
+  if (typeof parsed.confidence === "number") {
+    if (parsed.confidence >= confidenceMin) {
+      return {
+        pass: true,
+        calibration: { confidenceMin, rawVerdict, outcome: "above_threshold" },
+      };
+    }
+
+    return {
+      pass: false,
+      calibration: { confidenceMin, rawVerdict, outcome: "below_threshold" },
+    };
+  }
+
+  // Confidence absent.
+  if (calibration.allow_missing_confidence === true) {
+    return {
+      pass: true,
+      calibration: {
+        confidenceMin,
+        rawVerdict,
+        outcome: "missing_confidence_allowed",
+      },
+    };
+  }
+
+  return {
+    pass: false,
+    calibration: { confidenceMin, rawVerdict, outcome: "no_confidence" },
+  };
+}
+
 // Run one node's `pre_finish.gates` in declared order, writing a gate_results
 // row per gate. A `blocking` gate that fails aborts the node finish (caller
 // fails the run); an `advisory` gate records its verdict and the node
@@ -330,9 +381,20 @@ async function runOneGate(
       }
 
       if (isPassVerdict(verdict.verdict ?? "")) {
-        await markGatePassed(id, verdict, ctx.db);
+        const cal = calibrateVerdict(verdict, gate.calibration);
+        const verdictToStore = cal.calibration
+          ? { ...verdict, calibration: cal.calibration }
+          : verdict;
 
-        return "passed";
+        if (cal.pass) {
+          await markGatePassed(id, verdictToStore, ctx.db);
+
+          return "passed";
+        }
+
+        await markGateFailed(id, verdictToStore, ctx.db);
+
+        return "failed";
       }
 
       await markGateFailed(id, verdict, ctx.db);
