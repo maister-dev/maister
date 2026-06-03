@@ -6,20 +6,20 @@ per-node-attempt materialization plan introduced by M14. See
 for behavior and the import lifecycle FSM, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
 
-> **Status: Designed (M14, Phase 0 spec).** Migration `0019_m14_capability_materialization`
+> **Status: Implemented (M14).** Migration `0019_m14_capability_materialization`
 > (additive, forward-only, no down-migration) adds `capability_imports` and
 > `node_attempts.materialization_plan`. `capability_records` is Implemented (migration `0012`).
-> See ADR-040, ADR-041, ADR-042 in [`../decisions.md`](../decisions.md).
+> See ADR-041, ADR-042, ADR-043 in [`../decisions.md`](../decisions.md).
 
 The diagram below covers three entities:
 
 - **`CAPABILITY_RECORDS`** — the existing project-visible registry catalog
   (Implemented, migration `0012`).
 - **`CAPABILITY_IMPORTS`** — the new git-pinned import ledger, one row per
-  `(project, capabilityRefId, resolvedRevision)` (Designed, M14).
+  `(project, capabilityRefId, resolvedRevision)` (Implemented, M14).
 - **`NODE_ATTEMPTS.materialization_plan`** — the new nullable jsonb column on
   the existing `node_attempts` table that stores the per-node resolved and
-  materialized profile snapshot (Designed, M14). The column itself belongs to
+  materialized profile snapshot (Implemented, M14). The column itself belongs to
   [`runs-domain.md`](runs-domain.md); it is drawn here because its content is
   the capability domain's primary output.
 
@@ -92,9 +92,9 @@ registration (`upsertCapabilitiesFromConfig`).
   retain their snapshot and are not retroactively invalidated.
 - `enforceability` — `enforced | instructed | unsupported` for the selected
   executor agent. M14 begins flipping cells from `instructed` to `enforced` as
-  native materialization is spike-verified (see ADR-041).
+  native materialization is spike-verified (see ADR-042).
 
-## Column notes — `capability_imports` (Designed, M14)
+## Column notes — `capability_imports` (Implemented, M14)
 
 `capability_imports` mirrors `flow_revisions` (migration `0010`). It is the
 durable ledger for each git-pinned capability package fetched from a
@@ -103,7 +103,7 @@ durable ledger for each git-pinned capability package fetched from a
 - `capability_ref_id` — the `id` from `maister.yaml capability_imports[].id`.
   Validated against `SAFE_PATH_SEGMENT` (`/^[A-Za-z0-9._-]+$/`, no `.` or `..`)
   at the Zod schema layer AND inside `systemCapabilityCachePath` (defence in
-  depth; see ADR-042 and R-PATH).
+  depth; see ADR-043 and R-PATH).
 - `version_tag` — the `version` tag pin from `maister.yaml`. Validated against
   the same `SAFE_PATH_SEGMENT` regex. Passed verbatim to `git clone --branch`.
 - `resolved_revision` — the 40-hex commit SHA captured by `gitRevParseHead`
@@ -125,7 +125,7 @@ durable ledger for each git-pinned capability package fetched from a
   Installed → Failed → Removed`. An `Installing` row that dies without updating
   is treated as `Failed` on the next startup reconcile.
 - `trust_status` — `untrusted | trusted | trusted_by_policy`. The `setup.sh`
-  entrypoint is NEVER executed on an `untrusted` source (see ADR-042 and R-TRUST).
+  entrypoint is NEVER executed on an `untrusted` source (see ADR-043 and R-TRUST).
   `trusted_by_policy` is granted automatically by `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES`
   (mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES`).
 
@@ -134,15 +134,13 @@ durable ledger for each git-pinned capability package fetched from a
 | Constraint / Index | Columns | Purpose |
 | ------------------ | ------- | ------- |
 | `capability_imports_project_ref_revision_uq` UNIQUE | `(project_id, capability_ref_id, resolved_revision)` | One row per (project, import id, resolved git SHA). Content-addressable: the same SHA from two different tags shares one row. |
-| `capability_imports_project_ref_idx` | `(project_id, capability_ref_id)` | Look up all revisions for an import within a project (used by the trust route and the catalog upsert). |
-| `capability_imports_package_status_idx` | `(package_status)` | Startup reconcile finds all `Installing` rows to flip `Failed`. |
 
-## `node_attempts.materialization_plan` jsonb (Designed, M14)
+## `node_attempts.materialization_plan` jsonb (Implemented, M14)
 
-This nullable jsonb column on the **existing** `node_attempts` table (Designed,
+This nullable jsonb column on the **existing** `node_attempts` table (Implemented,
 migration `0019`) records the complete resolved and materialized capability
 profile for one node attempt. It is written inside the same DB transaction that
-marks the node `Running`. **Write-once / mutable `cleanup` carve-out (ADR-040):**
+marks the node `Running`. **Write-once / mutable `cleanup` carve-out (ADR-041):**
 the profile body (`profileDigest`, `resolvedRevisions`, `materializedFiles`,
 `enforcedClasses`, `instructedClasses`, `refusedClasses`) is written once (seeded
 with `cleanup.status = 'pending'`). The `cleanup` sub-object is the mutable
@@ -178,8 +176,12 @@ Shape:
   in-flight runs; re-materialization (e.g. after `NeedsInputIdle` resume) uses
   THIS snapshot rather than a fresh catalog read (AC #10).
 - `materializedFiles` — worktree-relative paths of the non-secret config files
-  written by the materializer (e.g. `settings.json`, `.mcp.json`, skill dirs).
-  Secret values are NEVER listed here; they ride only in `adapterLaunch.env`.
+  written by the materializer. The only materialized file is
+  `<worktree>/.claude/settings.local.json` (tools → `permissions.allow`,
+  permissionMode → `permissions.defaultMode`); MCP servers are delivered over
+  ACP `newSession params.mcpServers` carrying env-var **names only**, resolved
+  name→value supervisor-side from `process.env` (ADR-044). Secret values are
+  NEVER written to disk or listed here, and never cross the wire.
 - `enforcedClasses / instructedClasses / refusedClasses` — the per-class verdict
   summary for the run-detail capability view (T6.1). Duplicates `enforcement_snapshot`
   at the profile level for display convenience; `enforcement_snapshot` remains
@@ -188,7 +190,7 @@ Shape:
   materialized dir exists and cleanup has not been attempted; `done` after the
   node-scoped dir is removed; `failed` when removal failed (recorded, surfaced in
   the run-detail panel, swept by the backstop GC). Cleanup failure does NOT crash
-  the run once secrets are out of the worktree (see ADR-040 and R-DEFER).
+  the run once secrets are out of the worktree (see ADR-041 and R-DEFER).
 
 ## Cascade chain
 
@@ -219,5 +221,5 @@ M19 workspace GC (ADR-035/036) as a backstop when the in-flow cleanup seams miss
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Config: [`../configuration.md`](../configuration.md) §`capability_imports[]`.
-- ADRs: [ADR-040](../decisions.md), [ADR-041](../decisions.md), [ADR-042](../decisions.md).
-- Source (Designed, M14): migration `0019_m14_capability_materialization`.
+- ADRs: [ADR-041](../decisions.md), [ADR-042](../decisions.md), [ADR-043](../decisions.md).
+- Source (Implemented, M14): migration `0019_m14_capability_materialization`.

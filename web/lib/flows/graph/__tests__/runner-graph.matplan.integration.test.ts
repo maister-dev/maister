@@ -22,7 +22,7 @@ import type { NodeAttempt } from "@/lib/db/schema";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -38,6 +38,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { runFlow } from "@/lib/flows/runner";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -63,7 +64,12 @@ afterAll(async () => {
   await container?.stop();
 });
 
-type Seeded = { runId: string; projectId: string; runtimeRoot: string };
+type Seeded = {
+  runId: string;
+  projectId: string;
+  runtimeRoot: string;
+  worktreePath: string;
+};
 
 async function seedGraphRun(manifest: unknown): Promise<Seeded> {
   const projectId = randomUUID();
@@ -124,7 +130,7 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     parentRepoPath: `/tmp/${slug}`,
   });
 
-  return { runId, projectId, runtimeRoot };
+  return { runId, projectId, runtimeRoot, worktreePath };
 }
 
 // Seed the capability_records the node opts into via its settings, carrying
@@ -329,6 +335,24 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     expect(plan!.enforcedClasses).toContain("github");
     expect(plan!.instructedClasses).toContain("my-skill");
     expect(plan!.refusedClasses).toEqual([]);
+
+    // M1 regression: the materialized profile.json records the executor REF id
+    // (the maister.yaml `executors[].id`), NOT the `executors`-table PK/UUID.
+    const profileJson = JSON.parse(
+      await readFile(
+        join(
+          capabilityMaterializationRootPath(
+            seeded.worktreePath,
+            seeded.runId,
+            attempt!.id,
+          ),
+          "profile.json",
+        ),
+        "utf8",
+      ),
+    );
+
+    expect(profileJson.executor.executorRefId).toBe("claude-sonnet");
   }, 60_000);
 
   it("captures the run-start resolved-revision snapshot in the plan (T4.4)", async () => {
@@ -404,6 +428,69 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     // it into the run-start snapshot either.
     expect(plan!.resolvedRevisions).not.toContainEqual(
       expect.objectContaining({ refId: "codex-only-skill" }),
+    );
+  }, 60_000);
+
+  it("never persists a capability secret VALUE into the materialization_plan ledger (R-SECRET)", async () => {
+    const SECRET = "ghp_MATPLAN_LEDGER_SECRET_xyz";
+    const seeded = await seedGraphRun(capabilityDeclaringFlow);
+
+    // github's material carries a literal secret in its `config` blob (arbitrary
+    // user YAML) — neither the value nor the config must reach the durable plan.
+    await db.insert(schema.capabilityRecords).values([
+      {
+        id: randomUUID(),
+        projectId: seeded.projectId,
+        capabilityRefId: "github",
+        kind: "mcp",
+        label: "GitHub MCP",
+        source: "project",
+        revision: "sha-github-1111",
+        agents: ["claude", "codex"],
+        enforceability: "enforced",
+        selectable: true,
+        selectedByDefault: false,
+        material: {
+          command: "github-mcp",
+          args: [],
+          envKeys: ["GITHUB_TOKEN"],
+          config: { token: SECRET },
+        },
+      },
+      {
+        id: randomUUID(),
+        projectId: seeded.projectId,
+        capabilityRefId: "my-skill",
+        kind: "skill",
+        label: "My Skill",
+        source: "project",
+        revision: "sha-skill-2222",
+        agents: ["claude", "codex"],
+        enforceability: "instructed",
+        selectable: true,
+        selectedByDefault: false,
+        material: {},
+      },
+    ]);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: makeSupervisorSpy(),
+    });
+
+    // Re-read the persisted plan jsonb straight from the DB and grep it: the plan
+    // carries refIds / shas / class-names / paths — NEVER material or secrets.
+    const attempts = await getAttempts(seeded.runId);
+    const plan = attempts.find(
+      (a) => a.nodeId === "implement",
+    )!.materializationPlan;
+
+    expect(plan).not.toBeNull();
+    expect(JSON.stringify(plan)).not.toContain(SECRET);
+    // The structural ref IS recorded (proving the plan was actually built).
+    expect(plan!.resolvedRevisions.some((r) => r.refId === "github")).toBe(
+      true,
     );
   }, 60_000);
 });

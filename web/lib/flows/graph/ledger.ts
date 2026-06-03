@@ -12,7 +12,7 @@ import type { WorkspacePolicy } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
@@ -252,10 +252,14 @@ export async function setMaterializationPlan(
 }
 
 // M14 T4.3 (R-DEFER): mutate ONLY the .cleanup sub-object of an attempt's
-// materialization plan. Drizzle has no jsonb-path update, so this is a
-// read-modify-write that spreads the existing plan body and overwrites .cleanup.
-// MUTABLE by design (no IS NULL guard) — the post-run cleanup transition fires
-// after the write-once plan body is set, and only ever touches .cleanup.
+// materialization plan. MUTABLE by design (no IS NULL guard) — the post-run
+// cleanup transition fires after the write-once plan body is set, and only ever
+// touches `.cleanup`. Uses an in-place `jsonb_set` on the `{cleanup}` path rather
+// than a read-modify-write spread of the whole plan: concurrent cleanup writers
+// (per-node success vs cron-sweep / reconcile reclaim) then each set ONLY their
+// `.cleanup`, and neither can resurrect a stale immutable body (#atomicity). The
+// `materialization_plan IS NOT NULL` guard makes it a no-op (0 rows) when no plan
+// was written, matching the prior "no plan → skip" behavior.
 export async function updateMaterializationCleanup(
   nodeAttemptId: string,
   cleanup: MaterializationPlan["cleanup"],
@@ -263,23 +267,26 @@ export async function updateMaterializationCleanup(
 ): Promise<void> {
   const d = db ?? getDb();
 
-  const rows = await d
-    .select({ plan: nodeAttempts.materializationPlan })
-    .from(nodeAttempts)
-    .where(eq(nodeAttempts.id, nodeAttemptId));
+  const updated = await d
+    .update(nodeAttempts)
+    .set({
+      materializationPlan: sql`jsonb_set(${nodeAttempts.materializationPlan}, '{cleanup}', ${JSON.stringify(
+        cleanup,
+      )}::jsonb)`,
+    })
+    .where(
+      and(
+        eq(nodeAttempts.id, nodeAttemptId),
+        isNotNull(nodeAttempts.materializationPlan),
+      ),
+    )
+    .returning({ id: nodeAttempts.id });
 
-  const plan = rows[0]?.plan;
-
-  if (!plan) {
+  if (updated.length === 0) {
     log.warn({ nodeAttemptId }, "updateMaterializationCleanup: no plan");
 
     return;
   }
-
-  await d
-    .update(nodeAttempts)
-    .set({ materializationPlan: { ...plan, cleanup } })
-    .where(eq(nodeAttempts.id, nodeAttemptId));
 
   log.debug(
     { nodeAttemptId, cleanupStatus: cleanup.status },

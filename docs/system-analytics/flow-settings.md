@@ -9,12 +9,12 @@
 > watchdog, and the run-detail visibility panel are **Implemented** in M11c.
 > Capability-reference resolution against a registry (carve-b), agent-aware
 > mapping, and per-session native materialization are **Implemented (M14)** — see
-> ADR-040 / ADR-041 / ADR-042 in [`decisions.md`](decisions.md). Capability config
+> ADR-041 / ADR-042 / ADR-043 in [`decisions.md`](decisions.md). Capability config
 > is now genuinely **delivered** to the claude agent via
 > `<worktree>/.claude/settings.local.json` (`tools` → `permissions.allow`,
 > `permissionMode` → `permissions.defaultMode`) and ACP `newSession`
-> `params.mcpServers` (env resolved supervisor-side); the ADR-040 CLI-flag channel
-> was disproven against `claude-agent-acp@0.37.0` and corrected — see ADR-043.
+> `params.mcpServers` (env resolved supervisor-side); the CLI-flag channel
+> was disproven against `claude-agent-acp@0.37.0` and corrected — see ADR-044.
 > Per-class delivery: `tools`, `permissionMode`, `mcps` are **delivered**
 > (mechanism CI-verified); `skills`, `restrictions`, `workspaceAccess` are **not
 > emitted this milestone** (stay `instructed`, Phase 2); all `codex` classes stay
@@ -22,7 +22,7 @@
 >
 > **M14 enforcement note:** delivery is built, but the `instructed → enforced`
 > flip is **deferred** — no cell is flipped this milestone. The flip is gated on a
-> **live-adapter spike that cannot run in CI** (see ADR-041), so
+> **live-adapter spike that cannot run in CI** (see ADR-042), so
 > `ENFORCEABILITY_BY_AGENT` stays **all `instructed`**. The run-detail UI labels
 > dispositions as "Enforced (plan)" / "Instructed (plan)", NOT live verdicts. Do
 > NOT flip `ENFORCEABILITY_BY_AGENT` cells in this file — only a passing live spike
@@ -89,12 +89,12 @@ stateDiagram-v2
 
 The table is **all `instructed`** (no `enforced` cell) and remains so through M14:
 the delivery mechanism is built and CI-verified (capability config is materialized
-and delivered via settings.local.json + ACP `mcpServers`, see ADR-043), but the
+and delivered via settings.local.json + ACP `mcpServers`, see ADR-044), but the
 `instructed → enforced` flip is **deferred** — it is gated on a live-adapter spike
-that cannot run in CI (see ADR-041). A cell flips to `enforced` only after a
+that cannot run in CI (see ADR-042). A cell flips to `enforced` only after a
 per-class/per-agent live spike proves enforcement. Every cell carries a `TODO(M14)`
 in code. **Codex stays `instructed` for all six classes in M14** (Q2 decision, see
-ADR-041).
+ADR-042).
 
 | agent → class | `mcps` | `tools` | `skills` | `restrictions` | `permissionMode` | `workspaceAccess` |
 | ------------- | ------ | ------- | -------- | -------------- | ---------------- | ----------------- |
@@ -133,9 +133,9 @@ export const ENFORCEABILITY_BY_AGENT: Record<
 M11c `--permission-mode` CLI mechanism was disproven against
 `claude-agent-acp@0.37.0` (the adapter ignores those flags); `permissionMode` is
 now delivered via `<worktree>/.claude/settings.local.json` `permissions.defaultMode`
-(`ask→default`/`allow→bypassPermissions`/`deny→plan`, see ADR-043). Whether the
+(`ask→default`/`allow→bypassPermissions`/`deny→plan`, see ADR-044). Whether the
 delivered value actually CONSTRAINS the agent end-to-end remains unverified without
-a live adapter (it cannot run in CI, see ADR-041), so the
+a live adapter (it cannot run in CI, see ADR-042), so the
 `permissionMode`-on-`claude` cell stays `instructed`. A wrongly-`enforced` cell
 would let a `strict permissionMode` declaration PASS the launch gate while nothing
 enforces it — the exact silent escape hatch criterion #6 forbids. Re-run the live

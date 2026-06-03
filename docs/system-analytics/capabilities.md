@@ -1,16 +1,23 @@
 # Scoped capability materialization (M14)
 
-> **Status: Designed (M14).** Every table, column, route, state machine, and
-> behavior described below is **Designed (M14)** — accepted as a contract, NOT
-> yet present in the current branch. Nothing here is Implemented. A later phase
-> flips these tags to Implemented as code lands; until then read every "MUST" as
-> the contract code will satisfy, not as as-built. Locked decisions:
-> [ADR-040](../decisions.md#adr-040-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
+> **Status: Implemented (M14).** Materialization and delivery are **Implemented
+> (M14)** — the import pipeline, carve-b reference validation, agent-aware name
+> mapping (`agent-map`), per-session native materialization (`materialize`), ACP
+> `newSession params.mcpServers` delivery, the `node_attempts.materialization_plan`
+> ledger, scoped cleanup, and the run-detail capability view have all shipped to
+> the current branch. **Only the spike-gated `instructed → enforced` flip stays
+> Designed/deferred** — `ENFORCEABILITY_BY_AGENT` stays all `instructed` this
+> milestone, gated on a live-adapter spike that cannot run in CI (ADR-042). Read
+> every "MUST" tied to the flip as the deferred contract; everything else is
+> as-built. Locked decisions:
+> [ADR-041](../decisions.md#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
 > (registry refs + agent-aware mapping + runner-owned native materialization),
-> [ADR-041](../decisions.md#adr-041-conservative-spike-gated-enforcement-flip-claude-first)
+> [ADR-042](../decisions.md#adr-042-conservative-spike-gated-enforcement-flip-claude-first)
 > (conservative spike-gated flip, claude-first),
-> [ADR-042](../decisions.md#adr-042-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline)
-> (import reuses the flow-install pipeline). Extends
+> [ADR-043](../decisions.md#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline)
+> (import reuses the flow-install pipeline),
+> [ADR-044](../decisions.md#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven)
+> (delivery via `settings.local.json` + ACP `newSession`). Extends
 > [flow-settings.md](flow-settings.md) (M11c), which froze the
 > `ENFORCEABILITY_BY_AGENT` table this domain flips.
 
@@ -125,7 +132,7 @@ stateDiagram-v2
 ```
 
 Setup execution is **physically separate** from fetch
-([ADR-042](../decisions.md#adr-042-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline)):
+([ADR-043](../decisions.md#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline)):
 `installCapabilityRevision` NEVER runs `setup.sh`; `runCapabilityRevisionSetup`
 runs it ONLY when `trustStatus ∈ {trusted, trusted_by_policy}` AND
 `setupStatus ∈ {pending, failed}` (idempotently re-runnable).
@@ -251,7 +258,7 @@ capability-bearing setting on every `ai_coding`/`judge` node resolves to an
 `enforced` cell for the resolved agent.
 
 The set of `(agent, class) → enforced` cells is the **allow-list**, filled in
-Phase 5 from the [ADR-041 verdict table](../decisions.md#adr-041-conservative-spike-gated-enforcement-flip-claude-first).
+Phase 5 from the [ADR-042 verdict table](../decisions.md#adr-042-conservative-spike-gated-enforcement-flip-claude-first).
 **claude-first:** only `claude` cells are candidates this milestone; **every
 `codex` cell stays `instructed`** (codex enforced mapping → Phase 2).
 
@@ -359,13 +366,15 @@ they hold once the milestone lands, not before).
 
 ## Linked artifacts
 
-- ADRs: [ADR-040](../decisions.md#adr-040-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
+- ADRs: [ADR-041](../decisions.md#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
   (registry refs + agent-aware mapping + runner-owned materialization, ledger
   column, secret boundary, recoverable cleanup),
-  [ADR-041](../decisions.md#adr-041-conservative-spike-gated-enforcement-flip-claude-first)
+  [ADR-042](../decisions.md#adr-042-conservative-spike-gated-enforcement-flip-claude-first)
   (conservative spike-gated flip, claude-first, verdict table),
-  [ADR-042](../decisions.md#adr-042-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline)
+  [ADR-043](../decisions.md#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline)
   (import reuses fetch→trust→execute, trust route, path-safety),
+  [ADR-044](../decisions.md#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven)
+  (delivery via `settings.local.json` + ACP `newSession`, CLI-flag disproven),
   [ADR-031](../decisions.md#adr-031-node-typed-settings-schema-carve-b) (typed
   settings, carve (b)),
   [ADR-032](../decisions.md#adr-032-settings-enforcement-refusal-boundary)

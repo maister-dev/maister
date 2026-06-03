@@ -7,7 +7,7 @@ execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 status, scratch-run persistence, the selectable capability catalog, and the
 **M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
 and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
-assignment tables, and the **M14 (Designed, migration `0019`)**
+assignment tables, and the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
 column. For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
@@ -295,7 +295,7 @@ erDiagram
         text returned_commits "M11b 0011 raw git log base..branch"
         text returned_diff "M11b 0011 raw git diff base..branch"
         jsonb enforcement_snapshot "M11c 0013 append-only verdict audit"
-        jsonb materialization_plan "M14 0019 Designed: resolved profile + cleanup substate"
+        jsonb materialization_plan "M14 0019 Implemented: resolved profile + cleanup substate"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"
@@ -481,7 +481,7 @@ The ERD shows implemented tables, M11a `node_attempts` / `gate_results`
 M12 (Implemented, migration `0015`) `artifact_instances` /
 `artifact_projection_cursors` typed-evidence tables (see
 [`artifacts-domain.md`](artifacts-domain.md)), M13 assignment persistence
-(see [`assignments-domain.md`](assignments-domain.md)), and the **M14 (Designed,
+(see [`assignments-domain.md`](assignments-domain.md)), and the **M14 (Implemented,
 migration `0019`)** `capability_imports` table and
 `node_attempts.materialization_plan` column (see
 [`capabilities-domain.md`](capabilities-domain.md)). The remaining roadmap
@@ -501,9 +501,7 @@ events — is not drawn until its migrations exist. See
 | `project_members`     | `project_members_project_user_uq`       | `(project_id, user_id)` UNIQUE         | One membership per user/project.                                                                                        |
 | `project_members`     | `project_members_user_idx`              | `(user_id)`                            | Per-user project listing / authz.                                                                                       |
 | `capability_records`  | `capability_records_project_kind_idx`   | `(project_id, kind, selectable)`       | Scratch launch-options catalog lookup.                                                                                  |
-| `capability_imports`  | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Designed)** One row per (project, import id, resolved git SHA). |
-| `capability_imports`  | `capability_imports_project_ref_idx`    | `(project_id, capability_ref_id)`      | **(M14 Designed)** Trust route + catalog upsert lookups. |
-| `capability_imports`  | `capability_imports_package_status_idx` | `(package_status)`                     | **(M14 Designed)** Startup reconcile finds `Installing` rows to flip `Failed`. |
+| `capability_imports`  | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Implemented)** One row per (project, import id, resolved git SHA). |
 | `project_flow_roles`  | `project_flow_roles_project_key_uq`     | `(project_id, role_ref)` UNIQUE        | One Flow role ref per project.                                                                                          |
 | `project_flow_roles`  | `project_flow_roles_project_idx`        | `(project_id)`                         | Project Flow role lookup.                                                                                               |
 | `actor_identities`    | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE         | One user actor per project.                                                                                             |

@@ -29,7 +29,7 @@ the flow) and a `type` chosen from:
 > milestones are tagged
 > inline: the node `settings` block → **Implemented (M11c subset)** (typed
 > shape + launch-time enforcement boundary; capability-reference resolution and
-> per-session materialization remain **M14 (Designed)**); manual takeover /
+> per-session materialization are **M14 (Implemented)**); manual takeover /
 > `human_edit` /
 > `merge` nodes → **M11b (Designed)**; typed artifact instances
 > (`input.requires` / `output.produces`) → **M12**. Decisions:
@@ -62,7 +62,7 @@ nodes:
     # at compile time; OPTIONAL. The per-class `enforcement` intent gates launch
     # (strict on a class the build cannot enforce → refusal). M11c resolves NO
     # capability refs and materializes NOTHING — ref resolution + per-session
-    # materialization are M14 (Designed).
+    # materialization are M14 (Implemented).
     settings:
       executors: [codex-fast, claude-strong]
       thinkingEffort: high
@@ -229,13 +229,13 @@ closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
 rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
 
-**M14 (Designed, Phase 0 spec) — registry-resolved refs and native materialization.**
+**M14 (Implemented) — registry-resolved refs and native materialization.**
 Every `settings.mcps[]`, `settings.skills[]`, `settings.restrictions[]`,
 `settings.settingsProfile`, and `settings.tools.{claude|codex}[]` entry is
 validated at project-load and run-launch time against the project capability
 registry (`capability_records`). An unknown ref, or a ref present in the
 registry but not supported for the selected executor agent, is rejected with
-`MaisterError("CONFIG")` before any worktree/run side-effect (see ADR-040 and
+`MaisterError("CONFIG")` before any worktree/run side-effect (see ADR-041 and
 [`configuration.md`](configuration.md) §cross-reference-checks). This validation
 is the "carve-b" boundary — a stub existed in M11c but resolution was deferred.
 
@@ -243,7 +243,7 @@ The resolved profile is agent-aware: the same abstract tool id (e.g.
 `tools: [shell]`) maps to different concrete Claude or Codex tool names via
 `web/lib/capabilities/agent-map.ts`. M14 also flips `ENFORCEABILITY_BY_AGENT`
 cells `instructed → enforced` as spike-verified materialization lands (the
-contract only ever tightens, never loosens — see ADR-041).
+contract only ever tightens, never loosens — see ADR-042).
 
 For long-living ACP sessions (`slash-in-existing` mode), every AI node that
 reuses the session MUST share the same resolved `profileDigest`. On digest
@@ -251,7 +251,7 @@ mismatch, the runner either starts a fresh session at a Flow-declared session
 boundary, or rejects with `MaisterError("CONFIG")` ("capability profile changes
 mid-session require a declared session boundary"). This is enforced by comparing
 `node_attempts.materialization_plan.profileDigest` across the session scope
-(see ADR-040, AC #5 and #9).
+(see ADR-041, AC #5 and #9).
 
 The M14 runner enforces the resolved profile at the AI session scope. For a
 per-node session, the profile is effectively node-scoped: before the node

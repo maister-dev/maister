@@ -65,12 +65,16 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
-import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
+import {
+  capabilityMaterializationRootPath,
+  materializeCapabilityProfile,
+  SETTINGS_OWNED_MARKER_SUFFIX,
+} from "@/lib/capabilities/materialize";
 import { resolveCapabilityProfile } from "@/lib/capabilities/resolver";
 import {
   cleanupNodeMaterialization,
   cleanupRunMaterializations,
+  reclaimWorktreeSettings,
 } from "@/lib/capabilities/cleanup";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -219,6 +223,10 @@ function settingsLocalBakPath(worktreePath: string): string {
   return `${settingsLocalPath(worktreePath)}.maister-bak`;
 }
 
+function settingsLocalOwnedPath(worktreePath: string): string {
+  return `${settingsLocalPath(worktreePath)}${SETTINGS_OWNED_MARKER_SUFFIX}`;
+}
+
 async function writeJson(p: string, value: unknown): Promise<void> {
   await mkdir(join(p, ".."), { recursive: true });
   await writeFile(p, JSON.stringify(value));
@@ -282,6 +290,7 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     const slPath = settingsLocalPath(worktreePath);
 
     await writeJson(slPath, { permissions: { allow: ["Read"] } });
+    await writeFile(settingsLocalOwnedPath(worktreePath), runId);
 
     expect(await exists(slPath)).toBe(true);
     expect(await exists(settingsLocalBakPath(worktreePath))).toBe(false);
@@ -315,6 +324,7 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     // M14's live config + the user's original captured as the backup.
     await writeJson(slPath, { user: "current-m14-config" });
     await writeJson(bakPath, { user: "ORIGINAL" });
+    await writeFile(settingsLocalOwnedPath(worktreePath), runId);
 
     // Settings reclaim is run-level (once per run), not per-node.
     await cleanupRunMaterializations({ runId, worktreePath, db });
@@ -404,5 +414,48 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     // Plan body survives the failure path.
     expect(plan!.profileDigest).toBe("digest-e");
     expect(plan!.enforcedClasses).toEqual(["github"]);
+  });
+
+  it("reclaim is idempotent: a 2nd pass never re-deletes a restored user original (Test 5, #data-loss)", async () => {
+    const worktreePath = await mkdtemp(join(tmpdir(), "wt-reclaim-idem-"));
+    const slPath = settingsLocalPath(worktreePath);
+
+    // The user's pre-existing settings.local.json.
+    await writeJson(slPath, { user: "ORIGINAL" });
+
+    // M14 materializes → backs the original up to .maister-bak + drops the
+    // ownership marker.
+    await materializeCapabilityProfile({
+      runId: "run-idem",
+      worktreePath,
+      profile: claudeProfile(),
+      nodeAttemptId: "node-1",
+      tools: ["Read"],
+    });
+
+    expect(await exists(settingsLocalBakPath(worktreePath))).toBe(true);
+    expect(await exists(settingsLocalOwnedPath(worktreePath))).toBe(true);
+
+    // First reclaim → restores the user's original, consumes bak + marker.
+    expect(await reclaimWorktreeSettings(worktreePath)).toEqual({
+      reclaimed: true,
+    });
+    expect(JSON.parse(await readFile(slPath, "utf8"))).toEqual({
+      user: "ORIGINAL",
+    });
+    expect(await exists(settingsLocalBakPath(worktreePath))).toBe(false);
+    expect(await exists(settingsLocalOwnedPath(worktreePath))).toBe(false);
+
+    // Second reclaim (e.g. a later cron sweep over the same lingering run) must
+    // be a NO-OP — the marker is gone, so the restored original is preserved.
+    expect(await reclaimWorktreeSettings(worktreePath)).toEqual({
+      reclaimed: false,
+    });
+    expect(await exists(slPath)).toBe(true);
+    expect(JSON.parse(await readFile(slPath, "utf8"))).toEqual({
+      user: "ORIGINAL",
+    });
+
+    await fsRm(worktreePath, { recursive: true, force: true });
   });
 });

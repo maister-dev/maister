@@ -466,7 +466,7 @@ async function materializeNodeCapabilities(
     tools: settings.tools?.[agent],
     permissionMode: settings.permissionMode,
     executor: {
-      executorRefId: loaded.executor.id,
+      executorRefId: loaded.executor.executorRefId,
       agent,
       model: loaded.executor.model,
       router: loaded.executor.router ?? null,
@@ -1621,11 +1621,16 @@ export async function runGraph(
 
   const endedAt = new Date();
 
+  // CAS on `status="Running"`: by this point the NeedsInput / checkpoint paths
+  // returned early, so the run is still `Running` UNLESS a concurrent abandon /
+  // takeover / reconcile-crash moved it off-status. Guard the terminal write so
+  // that operator action wins instead of being clobbered back to Failed/Review
+  // (#ledger-clobber / #split-brain).
   if (failed && runErrorCode === "CRASH") {
     await db
       .update(runs)
       .set({ status: "Crashed", endedAt, currentStepId: null })
-      .where(eq(runs.id, runId));
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")));
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -1636,7 +1641,7 @@ export async function runGraph(
     await db
       .update(runs)
       .set({ status: "Failed", endedAt, currentStepId: null })
-      .where(eq(runs.id, runId));
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")));
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -1647,7 +1652,7 @@ export async function runGraph(
     await db
       .update(runs)
       .set({ status: "Review", endedAt, currentStepId: null })
-      .where(eq(runs.id, runId));
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")));
     log2.info({}, "runGraph ended Review");
   }
 

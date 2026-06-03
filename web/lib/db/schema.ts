@@ -865,7 +865,7 @@ export const nodeAttempts = pgTable(
     enforcementSnapshot: jsonb("enforcement_snapshot").$type<
       EnforcementSnapshotEntry[]
     >(),
-    // M14 (ADR-040): scoped capability materialization plan written by the
+    // M14 (ADR-041): scoped capability materialization plan written by the
     // launch pipeline before ACP session spawn. Null for pre-M14 rows and
     // node types that do not trigger capability materialization (cli/check).
     materializationPlan: jsonb(
@@ -1265,7 +1265,7 @@ export const projectMembers = pgTable(
   }),
 );
 
-// --- M14 (ADR-040): scoped capability materialization -------------------------------------
+// --- M14 (ADR-041): scoped capability materialization -------------------------------------
 
 // Written by the launch pipeline; records what was resolved and applied for an
 // ai_coding / judge node attempt. Stored in node_attempts.materialization_plan.

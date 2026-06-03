@@ -2408,7 +2408,7 @@ paths:
       tags: [capabilities]
       summary: Trust-confirm a capability import and run its setup
       description: |
-        **Designed (M14, Phase 0 spec).** Admin-only
+        **Implemented (M14).** Admin-only
         (`requireProjectAction("managePackages")`). Establishes explicit trust
         for a `capability_imports[]` entry and, when trust is granted, executes
         the import's `setup.sh` (if present and not yet run).
@@ -2434,12 +2434,8 @@ paths:
         `'not_required'` (genuinely nothing to do), and NEVER merely because
         `trustStatus` is already `'trusted'`.
 
-        When `confirm: false`, `trustStatus` is set back to `'untrusted'` (revoke
-        trust). Revocation is refused with 409 if the import is referenced by a
-        running run (`package_status = 'Installed'` and active `node_attempts`).
-
-        Source (Designed): `web/app/api/projects/[slug]/capabilities/[capabilityRefId]/trust/route.ts`.
-        See [ADR-042](../decisions.md) and
+        Source: `web/app/api/projects/[slug]/capabilities/[capabilityRefId]/trust/route.ts`.
+        See [ADR-043](../decisions.md) and
         [`configuration.md`](../configuration.md#capability_imports).
       operationId: confirmCapabilityImportTrust
       parameters:
@@ -2464,14 +2460,16 @@ paths:
               properties:
                 confirm:
                   type: boolean
+                  enum: [true]
                   description: |
-                    `true` — grant trust and run setup (if pending/failed).
-                    `false` — revoke trust (refused if referenced by a live run).
+                    Must be `true` — grant trust and run setup (if pending/failed).
+                    The handler body schema is `z.literal(true)`; any other value
+                    is rejected with 422 (`CONFIG`).
       responses:
         "200":
           description: |
             Trust established and setup completed (`setupStatus = 'done'` or
-            `'not_required'`). When `confirm: false`, trust has been revoked.
+            `'not_required'`).
           content:
             application/json:
               schema:
@@ -2484,27 +2482,21 @@ paths:
                     enum: [not_required, done]
                   trustStatus:
                     type: string
-                    enum: [untrusted, trusted, trusted_by_policy]
-        "400":
+                    enum: [trusted, trusted_by_policy]
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Project or capability import not found for this project
+            (`PRECONDITION`), or setup is already `done` or `not_required`
+            (nothing to do, `CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
           description: |
             Body is malformed or `capabilityRefId` fails `SAFE_PATH_SEGMENT`
             validation (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404":
-          description: |
-            Project or capability import not found for this project.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "409":
-          description: |
-            Setup is already `done` or `not_required` (nothing to do), or
-            trust revocation is blocked by an active run referencing this import
-            (`CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

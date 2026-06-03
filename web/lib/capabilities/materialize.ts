@@ -29,7 +29,15 @@ const execFileAsync = promisify(execFile);
 const WORKTREE_EXCLUDE_PATTERNS = [
   ".claude/settings.local.json",
   "*.maister-bak",
+  "*.maister-owned",
 ] as const;
+
+// Sibling marker written next to a materialized settings.local.json. Its presence
+// means "M14 owns the current settings.local.json and has not reclaimed it yet";
+// reclaim consumes it and refuses to touch the file when it is absent. This makes
+// worktree-settings reclaim idempotent — a repeated run-terminal / cron-sweep pass
+// can never delete a user's restored original (#data-loss).
+export const SETTINGS_OWNED_MARKER_SUFFIX = ".maister-owned";
 
 export type MaterializeCapabilityProfileArgs = {
   runId: string;
@@ -257,6 +265,12 @@ export async function materializeCapabilityProfile(
 
     await atomicWriteJson(target, artifacts.settingsLocal);
     settingsLocalPath = target;
+    // Ownership marker: reclaim only touches settings.local.json while this
+    // exists, so a restored user-original is never re-deleted (#data-loss).
+    await atomicWriteText(
+      `${target}${SETTINGS_OWNED_MARKER_SUFFIX}`,
+      args.runId,
+    );
 
     await ensureWorktreeGitExclude(worktreePath);
   }

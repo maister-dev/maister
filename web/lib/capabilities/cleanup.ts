@@ -8,7 +8,10 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
+import {
+  capabilityMaterializationRootPath,
+  SETTINGS_OWNED_MARKER_SUFFIX,
+} from "@/lib/capabilities/materialize";
 import {
   getNodeAttemptsForRun,
   updateMaterializationCleanup,
@@ -81,35 +84,36 @@ export async function cleanupNodeMaterialization(args: {
 
 // R-DEFER: worktree-level reclaim of `<worktree>/.claude/settings.local.json`.
 // Done ONCE per run (not per node), since the file is a single shared worktree
-// resource. If a `.maister-bak` exists, the user had an original — restore it
-// and drop the bak; otherwise remove the M14-created file. NEVER throws.
-//
-// Limitation: a repo that COMMITS `.claude/settings.local.json` (an anti-pattern
-// — it is meant to be local/gitignored) and runs a flow firing multiple
-// run-terminal cleanups could have its restored original re-removed by a later
-// reclaim; settings.local.json is treated as local/ephemeral here.
+// resource. Gated on the `.maister-owned` ownership marker that `materialize`
+// writes next to the file: if the marker is absent, M14 does NOT own the current
+// settings.local.json (already reclaimed, or never materialized), so we never
+// touch it. This makes reclaim fully IDEMPOTENT — a repeated run-terminal or
+// cron-sweep pass can never re-remove a user's restored original (#data-loss).
+// When owned: a `.maister-bak` means the user had an original → restore it;
+// otherwise the file was M14-created → remove it. The marker is dropped either
+// way. NEVER throws.
 export async function reclaimWorktreeSettings(
   worktreePath: string,
   rm: typeof fsRm = fsRm,
 ): Promise<{ reclaimed: boolean }> {
   const target = path.join(worktreePath, ".claude", "settings.local.json");
   const bak = `${target}.maister-bak`;
+  const owned = `${target}${SETTINGS_OWNED_MARKER_SUFFIX}`;
 
   try {
+    if (!(await pathExists(owned))) {
+      return { reclaimed: false };
+    }
+
     if (await pathExists(bak)) {
       await copyFile(bak, target);
       await rm(bak, { force: true });
-
-      return { reclaimed: true };
-    }
-
-    if (await pathExists(target)) {
+    } else {
       await rm(target, { force: true });
-
-      return { reclaimed: true };
     }
+    await rm(owned, { force: true });
 
-    return { reclaimed: false };
+    return { reclaimed: true };
   } catch (err) {
     log.error(
       {

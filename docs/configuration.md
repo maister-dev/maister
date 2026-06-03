@@ -161,14 +161,14 @@ capability_imports:
 path builder `systemCapabilityCachePath` (the `assertFieldSafe` guard from
 `web/lib/flow-paths.ts`). An import `id` of `../evil`, `..`, or `a/b` is
 rejected at both layers and never reaches `~/.maister/capabilities/`. This
-mirrors the existing `flowIdSchema` / `versionSchema` pattern (see ADR-042).
+mirrors the existing `flowIdSchema` / `versionSchema` pattern (see ADR-043).
 
 **Install lifecycle:** On project registration, each `capability_imports[]`
 entry drives `installCapabilityRevision` (fetch → record SHA → resolve trust),
 followed by `runCapabilityRevisionSetup` (trust-gated, physically separate).
 The resolved import is then ingested into `capability_records` via
 `upsertCapabilitiesFromConfig` (source `flow-package`). See
-[`db/capabilities-domain.md`](db/capabilities-domain.md) and ADR-042.
+[`db/capabilities-domain.md`](db/capabilities-domain.md) and ADR-043.
 
 **Config-state symmetry (R-SYM):** Removing an entry from `capability_imports[]`
 disables the corresponding `capability_records` rows (`selectable=false`,
@@ -183,13 +183,13 @@ shape as `capabilities.mcps[]` / `capabilities.skills[]` but cover the
 | Array | Kind | Purpose |
 | ----- | ---- | ------- |
 | `capabilities.agent_definitions[]` | `agent_definition` | Named agent configuration profiles (e.g. a `claude-strict` settings profile). |
-| `capabilities.env_profiles[]` | `env_profile` | Named environment variable profiles; secrets reach the agent ONLY via `adapterLaunch.env` — never stored in `material` nor written into the worktree. |
+| `capabilities.env_profiles[]` | `env_profile` | Named environment variable profiles; the agent receives env-var **names** only — never stored in `material` nor written into the worktree. |
 
 These kinds flow through the existing `resolver` / `materializer` generically.
-`env_profile` secrets are channelled through `adapterLaunch.env` (the spawn
-env injection layer in `supervisor/src/spawn.ts:188–196`) and referenced from
-non-secret config files (e.g. `.mcp.json`) by env-var NAME only — never by
-literal value (R-SECRET).
+`env_profile` MCP servers are delivered over ACP `newSession params.mcpServers`
+carrying env-var **names** only; the supervisor resolves each name→value from its
+own `process.env` at session start (ADR-044). No secret value is ever written to
+disk or carried on the wire (R-SECRET).
 
 ### Planned Flow package lifecycle
 
@@ -214,11 +214,11 @@ rules, and restrictions from `maister.yaml`. These records are persisted to
 launcher, and snapshotted into a run-scoped profile before the supervisor
 session starts. Flow graph node settings capability refs are validated against
 this registry at launch and resolved to concrete agent artifacts at runtime
-(**Implemented, M14** — see ADR-040; capability config is delivered to the claude
+(**Implemented, M14** — see ADR-041; capability config is delivered to the claude
 agent via `<worktree>/.claude/settings.local.json` + ACP `newSession`
-`params.mcpServers`, the corrected channel per ADR-043, after the ADR-040 CLI-flag
+`params.mcpServers`, the corrected channel per ADR-044, after the CLI-flag
 mechanism was disproven). The `instructed → enforced` flip remains **deferred**,
-gated on the ADR-041 live-adapter spike. Public marketplace, organization policy,
+gated on the ADR-042 live-adapter spike. Public marketplace, organization policy,
 and cross-project promotion stay deferred (Phase 2).
 
 Each capability record has:
@@ -321,7 +321,7 @@ separate authorization model.
    must resolve to a project, Flow-shipped, or system capability record. An
    unknown ref, or a ref present in the registry but not supported by the selected
    executor agent, throws `MaisterError({ code: "CONFIG" })`. This is the
-   "carve-b" validation described in ADR-040.
+   "carve-b" validation described in ADR-041.
 
 Any failure throws `MaisterError({ code: "CONFIG" })` with the offending
 field path in the message.
@@ -419,11 +419,11 @@ boundary, the `enforcement` evaluator, the `enforcement_snapshot` audit record,
 and the time-limit watchdog are **Implemented (M11c subset)**. Capability-reference
 resolution against the project registry (carve-b), agent-aware name mapping, and
 per-session native materialization are **Implemented (M14)** — see
-ADR-040 in [`decisions.md`](decisions.md). The materialized config reaches the
+ADR-041 in [`decisions.md`](decisions.md). The materialized config reaches the
 claude agent via `<worktree>/.claude/settings.local.json` + ACP `newSession`
-`params.mcpServers` (the corrected channel per ADR-043; the ADR-040 CLI-flag
+`params.mcpServers` (the corrected channel per ADR-044; the CLI-flag
 mechanism was disproven against `claude-agent-acp@0.37.0`). The
-`instructed → enforced` flip remains **deferred**, gated on the ADR-041
+`instructed → enforced` flip remains **deferred**, gated on the ADR-042
 live-adapter spike — no cell is flipped. See
 [ADR-031](decisions.md) (typed settings) / [ADR-032](decisions.md) (refusal
 boundary) and the frozen enforcement spec in
@@ -623,7 +623,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
 | `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` returns 503 disabled) | (none) | **Server-only secret** for `GET`/`POST /api/cron/gc` auth — never logged or streamed (M19) |
 | `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
-| `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-042. |
+| `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
