@@ -153,7 +153,7 @@ M15's genuine gaps:
 <!-- Commit checkpoint: task 8 -->
 
 ### Phase 4 — Unified readiness DTO (TDD slice)
-- [ ] Task 10: Add `overridden` + unify `skipped` + adopt shared core in `getRunReadiness` (depends on 8)
+- [x] Task 10: Add `overridden` + unify `skipped` + adopt shared core in `getRunReadiness` (depends on 8)
 <!-- Commit checkpoint: task 10 -->
 
 ### Phase 5 — Merge-phase guard on scratch promote (TDD slice, M18-bound) — may run ∥ P4

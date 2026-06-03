@@ -261,9 +261,14 @@ describe("GET /api/v1/ext/runs/[runId]/readiness", () => {
     const body = await res.json();
 
     expect(body).toHaveProperty("readiness");
-    expect(["ready", "blocked", "stale", "failed", "waiting"]).toContain(
-      body.readiness,
-    );
+    expect([
+      "ready",
+      "blocked",
+      "stale",
+      "failed",
+      "waiting",
+      "overridden",
+    ]).toContain(body.readiness);
     expect(Array.isArray(body.externalGates)).toBe(true);
     expect(Array.isArray(body.requiredArtifacts)).toBe(true);
     expect(Array.isArray(body.reasons)).toBe(true);

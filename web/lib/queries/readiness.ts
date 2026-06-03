@@ -6,11 +6,16 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { getCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import { resolveManifest } from "@/lib/flows/graph/current-node-kind";
-import { collapseLatestExternalPerGate } from "@/lib/flows/graph/external-gate-readiness";
 import {
   getNodeAttemptsForRun,
   latestAttemptByNode,
 } from "@/lib/flows/graph/ledger";
+import {
+  collapseLatestExternalPerGate,
+  gateStatusContribution,
+  liveBlockingGates,
+  rollupReadiness,
+} from "@/lib/flows/graph/readiness-core";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { artifactInstances, gateResults, runs } =
@@ -74,7 +79,13 @@ export async function resolveGateExternalConfig(
 }
 
 export type ReadinessDTO = {
-  readiness: "ready" | "blocked" | "stale" | "failed" | "waiting";
+  readiness:
+    | "ready"
+    | "blocked"
+    | "stale"
+    | "failed"
+    | "waiting"
+    | "overridden";
   externalGates: {
     gateId: string;
     status: string;
@@ -158,15 +169,10 @@ export async function getRunReadiness(
     (g) => g.gateId,
   );
 
-  // blockingGates feeds the readiness rollup. External_check rows must be the
-  // collapsed representatives only (a leftover stale row must not skew the
-  // verdict); non-external blocking gates pass through unchanged.
-  const blockingGates = [
-    ...liveGates.filter(
-      (g) => g.mode === "blocking" && g.kind !== "external_check",
-    ),
-    ...externalGateRows.filter((g) => g.mode === "blocking"),
-  ];
+  // blockingGates feeds the readiness rollup. liveBlockingGates handles the
+  // live-attempt filter, mode=blocking filter, and external_check collapse to
+  // latest-per-gateId in one pass (SSOT from readiness-core).
+  const blockingGates = liveBlockingGates(allGateRows as any, liveAttemptIds);
 
   // Build externalGates projection. `description` is sourced from the flow
   // manifest gates[].external.description (M16 §F); url/commit come from the
@@ -266,110 +272,67 @@ export async function getRunReadiness(
     });
   }
 
-  // Deterministic rollup.
+  // Deterministic rollup via shared SSOT (readiness-core).
   const reasons: string[] = [];
 
-  // Blocking failed gates.
-  const failedBlockingGates = blockingGates.filter(
-    (g) => g.status === "failed",
-  );
-
-  if (failedBlockingGates.length > 0) {
-    for (const g of failedBlockingGates) {
-      reasons.push(`blocking gate "${g.gateId}" failed`);
-    }
-
-    return {
-      readiness: "failed",
-      externalGates,
-      requiredArtifacts: requiredArtifactsResult,
-      reasons,
-    };
-  }
-
-  // Stale blocking gates or stale required artifacts.
-  const staleBlockingGates = blockingGates.filter((g) => g.status === "stale");
+  // Artifact contributions: stale validity → "stale"; missing current → "blocked".
   const staleArtifacts = requiredArtifactsResult.filter(
     (a) => a.validity === "stale",
   );
-
-  if (staleBlockingGates.length > 0 || staleArtifacts.length > 0) {
-    for (const g of staleBlockingGates) {
-      reasons.push(`blocking gate "${g.gateId}" is stale`);
-    }
-    for (const a of staleArtifacts) {
-      reasons.push(`required artifact "${a.defId}" is stale`);
-    }
-
-    return {
-      readiness: "stale",
-      externalGates,
-      requiredArtifacts: requiredArtifactsResult,
-      reasons,
-    };
-  }
-
-  // Missing current required artifact.
   const missingArtifacts = requiredArtifactsResult.filter((a) => !a.present);
 
-  if (missingArtifacts.length > 0) {
-    for (const a of missingArtifacts) {
-      reasons.push(`required artifact "${a.defId}" has no current row`);
-    }
-
-    return {
-      readiness: "blocked",
-      externalGates,
-      requiredArtifacts: requiredArtifactsResult,
-      reasons,
-    };
+  for (const a of staleArtifacts) {
+    reasons.push(`required artifact "${a.defId}" is stale`);
   }
 
-  // Pending/running blocking gates.
-  const waitingGates = blockingGates.filter(
-    (g) => g.status === "pending" || g.status === "running",
+  for (const a of missingArtifacts) {
+    reasons.push(`required artifact "${a.defId}" has no current row`);
+  }
+
+  // Gate contributions: map each blocking gate status via gateStatusContribution.
+  for (const g of blockingGates) {
+    const contribution = gateStatusContribution(g.status as any);
+
+    if (contribution === "clear") continue;
+
+    switch (contribution) {
+      case "failed":
+        reasons.push(`blocking gate "${g.gateId}" failed`);
+        break;
+      case "stale":
+        reasons.push(`blocking gate "${g.gateId}" is stale`);
+        break;
+      case "blocked":
+        reasons.push(
+          `blocking gate "${g.gateId}" is skipped — not passed/overridden`,
+        );
+        break;
+      case "waiting":
+        reasons.push(`blocking gate "${g.gateId}" is ${g.status}`);
+        break;
+      case "overridden":
+        reasons.push(`blocking gate "${g.gateId}" is overridden`);
+        break;
+    }
+  }
+
+  // Collapse artifact contributions to a single contribution per severity.
+  const artifactContributions = [
+    ...staleArtifacts.map(() => "stale" as const),
+    ...missingArtifacts.map(() => "blocked" as const),
+  ];
+  const gateContributions = blockingGates.map((g) =>
+    gateStatusContribution(g.status as any),
   );
-
-  if (waitingGates.length > 0) {
-    for (const g of waitingGates) {
-      reasons.push(`blocking gate "${g.gateId}" is ${g.status}`);
-    }
-
-    return {
-      readiness: "waiting",
-      externalGates,
-      requiredArtifacts: requiredArtifactsResult,
-      reasons,
-    };
-  }
-
-  // A blocking external_check in `skipped` is NOT ready — mirrors
-  // assertEvidenceReady's passed/overridden allow-list (the read-model board /
-  // portfolio badges apply the same rule). Without this, a skipped external_check
-  // would fall through to "ready" while the authoritative gate still refuses.
-  const skippedExternalGates = blockingGates.filter(
-    (g) => g.kind === "external_check" && g.status === "skipped",
-  );
-
-  if (skippedExternalGates.length > 0) {
-    for (const g of skippedExternalGates) {
-      reasons.push(
-        `blocking external_check gate "${g.gateId}" is skipped — not passed/overridden`,
-      );
-    }
-
-    return {
-      readiness: "blocked",
-      externalGates,
-      requiredArtifacts: requiredArtifactsResult,
-      reasons,
-    };
-  }
+  const readiness = rollupReadiness([
+    ...artifactContributions,
+    ...gateContributions,
+  ]);
 
   return {
-    readiness: "ready",
+    readiness,
     externalGates,
     requiredArtifacts: requiredArtifactsResult,
-    reasons: [],
+    reasons,
   };
 }
