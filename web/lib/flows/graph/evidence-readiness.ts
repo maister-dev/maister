@@ -6,14 +6,15 @@ import pino from "pino";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { getCurrentArtifact } from "@/lib/flows/graph/artifact-store";
-import {
-  collapseLatestExternalPerGate,
-  isExternalGateReady,
-} from "@/lib/flows/graph/external-gate-readiness";
+import { isExternalGateReady } from "@/lib/flows/graph/external-gate-readiness";
 import {
   getNodeAttemptsForRun,
   latestAttemptByNode,
 } from "@/lib/flows/graph/ledger";
+import {
+  gateStatusContribution,
+  liveBlockingGates,
+} from "@/lib/flows/graph/readiness-core";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { artifactInstances, gateResults } = schemaModule as unknown as Record<
@@ -48,13 +49,16 @@ export type EvidenceReadinessResult = {
  *    `required_for: [phase]`, then for each def block iff NO `current` row of
  *    that def exists. Stale/superseded history is ignored — supersedePrior
  *    retires ALL prior rows when a def is re-produced (PR1/F2).
- * 2. Query all artifact_required gate_results for this run:
- *    - blocking + stale → always not ready (needs re-run)
- *    - blocking + failed → re-evaluate: if all inputArtifactRefs still missing
- *      the artifacts are not current → not ready
+ * 2. Scan ALL blocking gates on live attempts via liveBlockingGates (M15):
+ *    - artifact_required: stale → always not ready; failed → re-evaluate
+ *      inputArtifactRefs against current artifacts (if all current → clear;
+ *      else blocked). passed/overridden → clear via gateStatusContribution.
+ *    - external_check: collapsed to latest-per-gateId by liveBlockingGates;
+ *      passed/overridden → clear; else → not ready.
+ *    - command_check, ai_judgment, skill_check: contribution via
+ *      gateStatusContribution; non-clear → not ready (M15 new enforcement).
  * 3. Evidence is opt-in: a run that declares no required_for:[phase] artifacts
- *    and no blocking artifact_required gates is vacuously ready (nothing blocks
- *    it), so non-evidence / 1.1.0 flows are never marked not-ready.
+ *    and no blocking gates is vacuously ready (nothing blocks it).
  *
  * Returns `{ ready: true, reasons: [] }` when all checks pass.
  */
@@ -117,33 +121,31 @@ export async function assertEvidenceReady(
     }
   }
 
-  // Check 2: artifact_required gate_results for this run.
-  // stale blocking gates need a re-run — always not ready.
-  // failed blocking gates are re-evaluated: if all required artifacts are now
-  // current the gate would pass today, so we skip it; otherwise not ready.
-  const allGates: Array<{
+  // Check 2 (M15): scan ALL blocking gates on live attempts.
+  // liveBlockingGates handles: live-attempt filter, mode=blocking filter,
+  // and external_check collapse to latest-per-gateId.
+  const allGateRows: Array<{
     id: string;
     nodeAttemptId: string;
     gateId: string;
+    kind: string;
     mode: string;
     status: string;
     inputArtifactRefs: string[] | null;
+    createdAt: Date;
   }> = await d
     .select({
       id: gateResults.id,
       nodeAttemptId: gateResults.nodeAttemptId,
       gateId: gateResults.gateId,
+      kind: gateResults.kind,
       mode: gateResults.mode,
       status: gateResults.status,
       inputArtifactRefs: gateResults.inputArtifactRefs,
+      createdAt: gateResults.createdAt,
     })
     .from(gateResults)
-    .where(
-      and(
-        eq(gateResults.runId, runId),
-        eq(gateResults.kind, "artifact_required"),
-      ),
-    );
+    .where(eq(gateResults.runId, runId));
 
   // Only the latest attempt's gate verdict is live: a stale row left by a prior
   // attempt is retired once the node re-runs and re-evaluates its gate (mirrors
@@ -155,91 +157,82 @@ export async function assertEvidenceReady(
     ].map((a) => a.id),
   );
 
-  for (const gate of allGates) {
-    if (gate.mode !== "blocking") continue;
-    if (!liveAttemptIds.has(gate.nodeAttemptId)) continue;
+  const blocking = liveBlockingGates(allGateRows as any, liveAttemptIds);
 
-    if (gate.status === "stale") {
-      reasons.push(
-        `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) is stale — needs re-run`,
-      );
+  for (const gate of blocking) {
+    if (gate.kind === "artifact_required") {
+      // Preserve existing artifact_required nuance.
+      if (gate.status === "stale") {
+        reasons.push(
+          `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) is stale — needs re-run`,
+        );
+        continue;
+      }
+
+      if (gate.status === "failed") {
+        // Re-evaluate: check if all required artifacts are now current.
+        const refs = (gate as any).inputArtifactRefs ?? [];
+        let stillMissing = false;
+
+        for (const defId of refs) {
+          const artifact = await getCurrentArtifact(runId, defId, d);
+
+          if (!artifact) {
+            stillMissing = true;
+            break;
+          }
+        }
+
+        if (stillMissing || refs.length === 0) {
+          reasons.push(
+            `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) failed and required artifacts are not yet current`,
+          );
+        }
+
+        continue;
+      }
+
+      // passed/overridden/skipped/pending/running — use standard contribution.
+      // "clear" (passed) and "overridden" both allow promotion.
+      // (skipped/pending/running are unusual for artifact_required but handled.)
+      const contribution = gateStatusContribution(gate.status as any);
+
+      if (contribution !== "clear" && contribution !== "overridden") {
+        reasons.push(
+          `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) is ${gate.status}`,
+        );
+      }
 
       continue;
     }
 
-    if (gate.status === "failed") {
-      // Re-evaluate: check if all required artifacts are now current.
-      const refs = gate.inputArtifactRefs ?? [];
-      let stillMissing = false;
-
-      for (const defId of refs) {
-        const artifact = await getCurrentArtifact(runId, defId, d);
-
-        if (!artifact) {
-          stillMissing = true;
-          break;
-        }
-      }
-
-      if (stillMissing || refs.length === 0) {
+    if (gate.kind === "external_check") {
+      // external_check rows have been collapsed to latest-per-gateId by
+      // liveBlockingGates. Use the allow-list check identical to M16 §C.
+      if (!isExternalGateReady(gate.status)) {
         reasons.push(
-          `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) failed and required artifacts are not yet current`,
+          `blocking external_check gate "${gate.gateId}" (id=${gate.id}) is ${gate.status} — not passed/overridden`,
         );
       }
+
+      continue;
     }
-  }
 
-  // M16 §C: external_check awareness. A blocking external_check gate on the live
-  // attempt set gates review unless its verdict is passed/overridden (allow-list,
-  // NOT a deny-list). pending/failed/stale/skipped → not ready. Advisory
-  // external_check never blocks. Mirrors the artifact_required live-attempt
-  // filtering above.
-  //
-  // Supersede-on-new-commit leaves the prior `passed` row `stale` and appends a
-  // fresh row on the SAME (gateId, attempt). The LATEST report per gateId
-  // governs, so collapse the live-attempt external_check rows to the max-createdAt
-  // representative per gateId (tiebreak by id desc) and evaluate only that one.
-  const externalGates: Array<{
-    id: string;
-    nodeAttemptId: string;
-    gateId: string;
-    mode: string;
-    status: string;
-    createdAt: Date;
-  }> = await d
-    .select({
-      id: gateResults.id,
-      nodeAttemptId: gateResults.nodeAttemptId,
-      gateId: gateResults.gateId,
-      mode: gateResults.mode,
-      status: gateResults.status,
-      createdAt: gateResults.createdAt,
-    })
-    .from(gateResults)
-    .where(
-      and(eq(gateResults.runId, runId), eq(gateResults.kind, "external_check")),
-    );
+    // command_check, ai_judgment, skill_check — M15 new enforcement.
+    // "clear" (passed) and "overridden" both allow promotion; everything else blocks.
+    const contribution = gateStatusContribution(gate.status as any);
 
-  const latestExternalByGate = collapseLatestExternalPerGate(
-    externalGates.filter((gate) => liveAttemptIds.has(gate.nodeAttemptId)),
-    (gate) => gate.gateId,
-  );
-
-  for (const gate of latestExternalByGate) {
-    if (gate.mode !== "blocking") continue;
-
-    if (!isExternalGateReady(gate.status)) {
+    if (contribution !== "clear" && contribution !== "overridden") {
       reasons.push(
-        `blocking external_check gate "${gate.gateId}" (id=${gate.id}) is ${gate.status} — not passed/overridden`,
+        `blocking ${gate.kind} gate "${gate.gateId}" (id=${gate.id}) ${gate.status}`,
       );
     }
   }
 
   // Evidence is opt-in: a run that declares no required_for:[phase] artifacts
-  // and no blocking artifact_required gates is vacuously ready (nothing blocks
-  // it). This keeps non-evidence / 1.1.0 flows from being marked merge-blocked;
-  // flows opt into gating by declaring requiredFor artifacts or
-  // artifact_required gates.
+  // and no blocking gates is vacuously ready (nothing blocks it). This keeps
+  // non-evidence / 1.1.0 flows from being marked merge-blocked; flows opt into
+  // gating by declaring requiredFor artifacts or blocking gates.
   const ready = reasons.length === 0;
 
   log.info(

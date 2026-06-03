@@ -149,7 +149,7 @@ M15's genuine gaps:
 <!-- Commit checkpoint: task 6 -->
 
 ### Phase 3 — Shared readiness-core + authoritative evaluator (TDD slice)
-- [ ] Task 8: `readiness-core.ts` (single source of truth) + extend `assertEvidenceReady` to all evaluated kinds + runner integration test (depends on 3, 4, 5, 6)
+- [x] Task 8: `readiness-core.ts` (single source of truth) + extend `assertEvidenceReady` to all evaluated kinds + runner integration test (depends on 3, 4, 5, 6)
 <!-- Commit checkpoint: task 8 -->
 
 ### Phase 4 — Unified readiness DTO (TDD slice)
