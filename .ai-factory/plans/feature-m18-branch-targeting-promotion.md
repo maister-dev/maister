@@ -630,7 +630,7 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
 **Exit gate:** typecheck 0; full suite green; `m18` Playwright e2e green
 (authed, seeded).
 
-- [ ] **T4.1 — (RED) component + e2e specs.** unit
+- [x] **T4.1 — (RED) component + e2e specs.** unit
   `web/components/runs/__tests__/review-panel.test.tsx`
   (`renderToStaticMarkup`, no jsdom — per repo testing convention): renders
   base→run→target, readiness summary, raw diff, "Promote to `<target>`" naming
@@ -643,7 +643,7 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   workspace base/target set): diff visible → promote (`local_merge`) → `Done`;
   conflict path → assignment; PR-mode display with a pre-seeded `pr_url`
   (exec not run in CI). Register in `playwright.config.ts` authed project.
-- [ ] **T4.2 — `ReviewPanel`.** New `web/components/runs/review-panel.tsx` rendered
+- [x] **T4.2 — `ReviewPanel`.** New `web/components/runs/review-panel.tsx` rendered
   from `web/app/(app)/runs/[runId]/page.tsx` when `status==="Review"` &&
   `runKind==="flow"`: base branch, base commit, run branch (`workspace.branch`),
   target branch, promotion-mode selector (`local_merge|pull_request`), readiness
@@ -658,15 +658,15 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   (`project.default_branch`, `resolveBaseRef`) — never render a null branch or
   pass null into `diffRange`; if a fallback is impossible, show the
   `PRECONDITION` "relaunch to promote" state instead of the Promote action.
-- [ ] **T4.3 — Conflict handoff UX.** On `CONFLICT`, surface the manual-resolution
+- [x] **T4.3 — Conflict handoff UX.** On `CONFLICT`, surface the manual-resolution
   assignment (parent repo path, target branch, run branch, exact failing
   command) via the existing assignment card; resolve-by-hand returns through the
   normal assignment/artifact/gate path.
-- [ ] **T4.4 — Board flight-card + i18n.** Extend `flight-card.tsx` with the
+- [x] **T4.4 — Board flight-card + i18n.** Extend `flight-card.tsx` with the
   ready-to-promote / `PR #N` / merge-blocked badge; all new EN+RU keys in
   `en.json`/`ru.json` (`run.promoteTo`, `run.promotionMode`, `run.readiness*`,
   `run.prLink`, `run.targetDrift`, `run.promoteAnyway`, `board.readyToPromote`).
-- [ ] **T4.5 — (GREEN).** Seed helper + stub green; full e2e green; final doc-tag
+- [x] **T4.5 — (GREEN).** Seed helper + stub green; full e2e green; final doc-tag
   sweep; `pnpm validate:docs:all` + both OpenAPI lints green.
 
 ---

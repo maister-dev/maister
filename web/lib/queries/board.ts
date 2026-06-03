@@ -86,6 +86,12 @@ export interface FlightCard {
   // Only rendered when readiness !== "ready" AND status !== "done".
   // Done cards always read "ready" (mirrors the old done-zeroing).
   readiness: ReadinessState;
+  // M18 (T4.4): a flow run at `Review` whose unified readiness verdict is
+  // "ready" — the operator can promote it. Done cards read false.
+  readyToPromote: boolean;
+  // M18 (T4.4): the pre-seeded PR number for a `pull_request`-mode run (display
+  // only); null when no PR has been recorded.
+  prNumber: number | null;
 }
 
 export interface BoardColumnData {
@@ -221,6 +227,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       agent: executors.agent,
       branch: workspaces.branch,
       removedAt: workspaces.removedAt,
+      prNumber: workspaces.prNumber,
     })
     .from(runs)
     .innerJoin(executors, eq(executors.id, runs.executorId))
@@ -408,6 +415,14 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         cardStatus === "done"
           ? "ready"
           : (readinessByRun.get(run.runId) ?? "ready"),
+      // M18 (T4.4): promotable = a non-done Review run whose unified readiness
+      // verdict is "ready" (the M15 unification of the old !merge-blocked &&
+      // !evidence-stale && !external-gate-pending check).
+      readyToPromote:
+        cardStatus !== "done" &&
+        run.status === "Review" &&
+        (readinessByRun.get(run.runId) ?? "ready") === "ready",
+      prNumber: run.prNumber ?? null,
     });
 
     if (

@@ -86,6 +86,8 @@ export async function Board({
       waiting: tReadiness("waiting"),
       overridden: tReadiness("overridden"),
     },
+    // M18 (T4.4): ready-to-promote / PR badge label.
+    readyToPromote: t("readyToPromote"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"

@@ -22,6 +22,8 @@ export interface FlightCardLabels {
   // `readiness.<state>` i18n namespace. Replaces the M12 evidenceStale/
   // mergeBlocked + M16 externalGatePending labels with the unified summary.
   readiness: Record<ReadinessState, string>;
+  // M18 (T4.4): ready-to-promote / PR badge hint.
+  readyToPromote: string;
 }
 
 export interface FlightCardProps {
@@ -132,6 +134,15 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
               title={labels.readiness[card.readiness]}
             >
               {labels.readiness[card.readiness]}
+            </span>
+          ) : null}
+          {card.readyToPromote ? (
+            <span
+              aria-label={labels.readyToPromote}
+              className="rounded-full border border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-accent-4"
+              title={labels.readyToPromote}
+            >
+              {card.prNumber !== null ? `PR #${card.prNumber}` : "↗"}
             </span>
           ) : null}
           <span

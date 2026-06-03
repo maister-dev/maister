@@ -580,6 +580,58 @@ const M16_REVIEW_SCHEMA = {
   workspacePolicies: ["keep"],
 };
 
+// --- M18 fixture: flow runs at `Review` for branch-targeted promotion --------
+// ONE project with a REAL parent git repo (a `release` target branch + a base
+// commit) and THREE flow runs parked at `status='Review'`, each on its OWN run
+// branch + real worktree carrying a committed change so `diffRange` renders and
+// `promoteLocalMerge` (`git merge --no-ff`) actually runs:
+//   • `merge`    — run branch off `release` with a non-conflicting commit. The
+//     spec opens the ReviewPanel, asserts the diff + "Promote to release", clicks
+//     promote (local_merge) → run reaches `Done` (clean `--no-ff` merge).
+//   • `conflict` — run branch + `release` both edit the SAME line, so the
+//     `--no-ff` merge aborts → CONFLICT → the conflict/assignment card surfaces.
+//   • `pr`       — promotion_mode `pull_request` with a PRE-SEEDED `pr_url`/
+//     `pr_number` (PR exec is NOT run in CI — display only: the panel/board shows
+//     the PR link / `PR #N`).
+// No blocking gates on any run → readiness rolls up `ready` (the promote gate
+// passes). The flow manifest is the minimal implement→review shape (like M11a).
+
+const M18_SLUG = "e2e-m18";
+const M18_TARGET_BRANCH = "release";
+const M18_MERGE_BRANCH = "maister/e2e-m18-merge";
+const M18_CONFLICT_BRANCH = "maister/e2e-m18-conflict";
+const M18_PR_BRANCH = "maister/e2e-m18-pr";
+const M18_PR_URL = "https://github.com/maister/maister/pull/4242";
+const M18_PR_NUMBER = 4242;
+const M18_REVIEW_NODE = "review";
+
+const M18_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Promote (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      prompt: "implement {{ task.prompt }}",
+    },
+    {
+      id: M18_REVIEW_NODE,
+      type: "human",
+      decisions: ["approve", "rework"],
+      transitions: { approve: "done", rework: "implement" },
+    },
+  ],
+};
+
+const M18_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
+};
+
 function resetDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -2180,6 +2232,333 @@ async function seedM16Fixture(
   };
 }
 
+// The M18 fixture carries the three Review run ids (one per promotion scenario)
+// plus the target branch + the pre-seeded PR display fields, so the e2e spec can
+// navigate each run-detail page and assert the promote / conflict / PR-display
+// surfaces deterministically.
+type M18FixtureRecord = {
+  projectSlug: string;
+  repoPath: string;
+  targetBranch: string;
+  mergeRunId: string;
+  mergeBranch: string;
+  conflictRunId: string;
+  conflictBranch: string;
+  prRunId: string;
+  prBranch: string;
+  prUrl: string;
+  prNumber: number;
+};
+
+// Build one run-branch worktree per scenario, off the `release` target, carrying
+// a committed change. The base commit = the `release` HEAD the run branched from
+// (so `diffRange(base...runBranch)` shows only the run's change). For the
+// conflict scenario, `conflictOnRelease` advances `release` on the SAME line
+// AFTER the run branched — so the two diverge from their common ancestor and a
+// later `git merge --no-ff release ← runBranch` aborts on a textual conflict.
+async function provisionM18RunBranch(
+  repoPath: string,
+  branch: string,
+  worktreePath: string,
+  opts: { fileName: string; runLine: string; conflictOnRelease?: string },
+): Promise<{ baseCommit: string }> {
+  // Base = the current `release` HEAD (the common ancestor the run forks from).
+  const { stdout: baseSha } = await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "rev-parse",
+    M18_TARGET_BRANCH,
+  ]);
+  const baseCommit = baseSha.trim();
+
+  // The run branch + worktree, off `release`, with a committed change.
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    worktreePath,
+    M18_TARGET_BRANCH,
+  ]);
+  writeFileSync(path.join(worktreePath, opts.fileName), opts.runLine);
+  await execFileAsync("git", ["-C", worktreePath, "add", opts.fileName]);
+  await execFileAsync("git", [
+    "-C",
+    worktreePath,
+    "commit",
+    "-m",
+    `run change on ${branch}`,
+  ]);
+
+  // Conflict case: advance `release` on the SAME line AFTER the run branched, so
+  // the `--no-ff` merge of the run branch into `release` aborts.
+  if (opts.conflictOnRelease) {
+    const relWt = `${repoPath}/.worktrees/_rel-${randomUUID().slice(0, 8)}`;
+
+    await execFileAsync("git", [
+      "-C",
+      repoPath,
+      "worktree",
+      "add",
+      relWt,
+      M18_TARGET_BRANCH,
+    ]);
+    writeFileSync(path.join(relWt, opts.fileName), opts.conflictOnRelease);
+    await execFileAsync("git", ["-C", relWt, "add", opts.fileName]);
+    await execFileAsync("git", [
+      "-C",
+      relWt,
+      "commit",
+      "-m",
+      "release diverges on the shared line",
+    ]);
+    await execFileAsync("git", [
+      "-C",
+      repoPath,
+      "worktree",
+      "remove",
+      "--force",
+      relWt,
+    ]);
+  }
+
+  return { baseCommit };
+}
+
+async function seedM18Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M18FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    executor: randomUUID(),
+    flow: randomUUID(),
+    member: randomUUID(),
+    // per-scenario task/run/workspace/hitl/attempt ids
+    mergeTask: randomUUID(),
+    mergeRun: randomUUID(),
+    mergeWorkspace: randomUUID(),
+    mergeHitl: randomUUID(),
+    mergeImpl: randomUUID(),
+    mergeReview: randomUUID(),
+    conflictTask: randomUUID(),
+    conflictRun: randomUUID(),
+    conflictWorkspace: randomUUID(),
+    conflictHitl: randomUUID(),
+    conflictImpl: randomUUID(),
+    conflictReview: randomUUID(),
+    prTask: randomUUID(),
+    prRun: randomUUID(),
+    prWorkspace: randomUUID(),
+    prHitl: randomUUID(),
+    prImpl: randomUUID(),
+    prReview: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M18_SLUG]);
+
+  // Real parent repo + `release` target branch (points at base initially).
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  await createGitRepo(repoPath);
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "branch",
+    M18_TARGET_BRANCH,
+    "main",
+  ]);
+
+  // Scenario worktrees + run-branch commits.
+  const mergeWt = `${repoPath}/.worktrees/e2e-m18-merge`;
+  const conflictWt = `${repoPath}/.worktrees/e2e-m18-conflict`;
+  const prWt = `${repoPath}/.worktrees/e2e-m18-pr`;
+
+  const merge = await provisionM18RunBranch(repoPath, M18_MERGE_BRANCH, mergeWt, {
+    fileName: "feature-merge.txt",
+    runLine: "clean merge change\n",
+  });
+  const conflict = await provisionM18RunBranch(
+    repoPath,
+    M18_CONFLICT_BRANCH,
+    conflictWt,
+    {
+      fileName: "shared.txt",
+      runLine: "run side of the conflict\n",
+      conflictOnRelease: "release side of the conflict\n",
+    },
+  );
+  const pr = await provisionM18RunBranch(repoPath, M18_PR_BRANCH, prWt, {
+    fileName: "feature-pr.txt",
+    runLine: "pr-mode change\n",
+  });
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, provider, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', 'github', $5)`,
+    [ids.project, M18_SLUG, "MAIster E2E M18 Promotion", repoPath, `${repoPath}/maister.yaml`],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m18@v0.0.1`,
+      JSON.stringify(M18_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  // Plant one flow Review run per scenario. Each: task InFlight → run Review →
+  // workspace with base/target/promotion_mode → implement Succeeded + review
+  // NeedsInput→Review ledger → review HITL. No blocking gates → readiness ready.
+  type Scenario = {
+    taskTitle: string;
+    taskId: string;
+    runId: string;
+    workspaceId: string;
+    hitlId: string;
+    implId: string;
+    reviewId: string;
+    branch: string;
+    worktreePath: string;
+    baseCommit: string;
+    promotionMode: "local_merge" | "pull_request";
+    prUrl: string | null;
+    prNumber: number | null;
+  };
+
+  const scenarios: Scenario[] = [
+    {
+      taskTitle: "E2E M18 clean merge",
+      taskId: ids.mergeTask,
+      runId: ids.mergeRun,
+      workspaceId: ids.mergeWorkspace,
+      hitlId: ids.mergeHitl,
+      implId: ids.mergeImpl,
+      reviewId: ids.mergeReview,
+      branch: M18_MERGE_BRANCH,
+      worktreePath: mergeWt,
+      baseCommit: merge.baseCommit,
+      promotionMode: "local_merge",
+      prUrl: null,
+      prNumber: null,
+    },
+    {
+      taskTitle: "E2E M18 merge conflict",
+      taskId: ids.conflictTask,
+      runId: ids.conflictRun,
+      workspaceId: ids.conflictWorkspace,
+      hitlId: ids.conflictHitl,
+      implId: ids.conflictImpl,
+      reviewId: ids.conflictReview,
+      branch: M18_CONFLICT_BRANCH,
+      worktreePath: conflictWt,
+      baseCommit: conflict.baseCommit,
+      promotionMode: "local_merge",
+      prUrl: null,
+      prNumber: null,
+    },
+    {
+      taskTitle: "E2E M18 PR display",
+      taskId: ids.prTask,
+      runId: ids.prRun,
+      workspaceId: ids.prWorkspace,
+      hitlId: ids.prHitl,
+      implId: ids.prImpl,
+      reviewId: ids.prReview,
+      branch: M18_PR_BRANCH,
+      worktreePath: prWt,
+      baseCommit: pr.baseCommit,
+      promotionMode: "pull_request",
+      prUrl: M18_PR_URL,
+      prNumber: M18_PR_NUMBER,
+    },
+  ];
+
+  for (const s of scenarios) {
+    await pool.query(
+      `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+       VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+      [s.taskId, ids.project, s.taskTitle, "do the thing", ids.flow],
+    );
+    await pool.query(
+      `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+       VALUES ($1, $2, $3, $4, $5, 'Review', $6, 'v0.0.1', now())`,
+      [s.runId, s.taskId, ids.project, ids.flow, ids.executor, M18_REVIEW_NODE],
+    );
+    await pool.query(
+      `INSERT INTO workspaces
+         (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+          base_branch, base_commit, target_branch, promotion_mode,
+          pr_url, pr_number, promotion_state)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'none')`,
+      [
+        s.workspaceId,
+        s.runId,
+        ids.project,
+        s.branch,
+        s.worktreePath,
+        repoPath,
+        M18_TARGET_BRANCH,
+        s.baseCommit,
+        M18_TARGET_BRANCH,
+        s.promotionMode,
+        s.prUrl,
+        s.prNumber,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+       VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+      [s.implId, s.runId],
+    );
+    await pool.query(
+      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+       VALUES ($1, $2, $3, 'human', 1, 'NeedsInput', now())`,
+      [s.reviewId, s.runId, M18_REVIEW_NODE],
+    );
+    await pool.query(
+      `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+       VALUES ($1, $2, $3, 'human', $4, $5)`,
+      [
+        s.hitlId,
+        s.runId,
+        M18_REVIEW_NODE,
+        JSON.stringify(M18_REVIEW_SCHEMA),
+        "Review the implementation, then promote to the target branch.",
+      ],
+    );
+  }
+
+  return {
+    projectSlug: M18_SLUG,
+    repoPath,
+    targetBranch: M18_TARGET_BRANCH,
+    mergeRunId: ids.mergeRun,
+    mergeBranch: M18_MERGE_BRANCH,
+    conflictRunId: ids.conflictRun,
+    conflictBranch: M18_CONFLICT_BRANCH,
+    prRunId: ids.prRun,
+    prBranch: M18_PR_BRANCH,
+    prUrl: M18_PR_URL,
+    prNumber: M18_PR_NUMBER,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -2206,6 +2585,7 @@ async function main(): Promise<void> {
         M19_SLUG,
         M15_SLUG,
         M16_SLUG,
+        M18_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -2308,6 +2688,7 @@ async function main(): Promise<void> {
     const m19 = await seedM19Fixture(pool, admin.id);
     const m15 = await seedM15Fixture(pool, admin.id);
     const m16 = await seedM16Fixture(pool, admin.id);
+    const m18 = await seedM18Fixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -2345,6 +2726,7 @@ async function main(): Promise<void> {
         m19,
         m15,
         m16,
+        m18,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -2360,7 +2742,8 @@ async function main(): Promise<void> {
         `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})` +
         `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})` +
         `, m15 failed ${m15.failedRunId} overridden ${m15.overriddenRunId} (${M15_SLUG})` +
-        `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})`,
+        `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})` +
+        `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})`,
     );
   } finally {
     await pool.end();

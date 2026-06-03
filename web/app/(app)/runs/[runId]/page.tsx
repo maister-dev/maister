@@ -26,7 +26,12 @@ import {
 } from "@/components/board/run-timeline";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
+import {
+  ReviewPanel,
+  type ReviewPanelLabels,
+} from "@/components/runs/review-panel";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
+import { isMaisterError } from "@/lib/errors";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import { getRunReadiness } from "@/lib/queries/readiness";
 import {
@@ -35,8 +40,92 @@ import {
   getRunSettings,
   getRunTimeline,
 } from "@/lib/queries/run";
+import { diffRange, resolveBaseCommit, resolveBaseRef } from "@/lib/worktree";
 
 type RouteParams = { params: Promise<{ runId: string }> };
+
+type RunDetailForReview = Awaited<ReturnType<typeof getRunDetail>> & object;
+
+// Resolve the ReviewPanel props for a flow run at `Review`. Legacy-row safe
+// (§3.6): null branch metadata is filled from project defaults / merge-base;
+// when no safe diff base can be derived the panel renders the relaunch state.
+async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
+  baseBranch: string | null;
+  baseCommit: string | null;
+  targetBranch: string | null;
+  reviewedTargetCommit: string | null;
+  promotionMode: "local_merge" | "pull_request";
+  diff: string;
+  driftDetected: boolean;
+  legacyNeedsRelaunch: boolean;
+}> {
+  const targetBranch = detail.targetBranch ?? detail.projectMainBranch;
+  const promotionMode: "local_merge" | "pull_request" =
+    detail.promotionMode === "pull_request" ? "pull_request" : "local_merge";
+
+  // The diff base: the EXACT commit the run forked from (a stable point — the
+  // target branch may have advanced since), else the recorded base branch, else
+  // the merge-base of the run branch against the project main branch (M11b).
+  let diffBaseRef: string;
+
+  if (detail.baseCommit) {
+    diffBaseRef = detail.baseCommit;
+  } else if (detail.baseBranch) {
+    diffBaseRef = detail.baseBranch;
+  } else {
+    try {
+      diffBaseRef = await resolveBaseRef({
+        worktreePath: detail.worktreePath,
+        branch: detail.branch,
+        mainBranch: detail.projectMainBranch,
+      });
+    } catch {
+      // A pre-M18 run whose diff base cannot be derived → relaunch to promote.
+      return {
+        baseBranch: detail.baseBranch,
+        baseCommit: detail.baseCommit,
+        targetBranch: null,
+        reviewedTargetCommit: null,
+        promotionMode,
+        diff: "",
+        driftDetected: false,
+        legacyNeedsRelaunch: true,
+      };
+    }
+  }
+
+  const diff = await diffRange({
+    worktreePath: detail.worktreePath,
+    baseRef: diffBaseRef,
+    branch: detail.branch,
+  });
+
+  // The live target HEAD this surface is reviewed against — carried into the
+  // promote payload as the optimistic-concurrency drift token (§3.7). Drift is
+  // detected SERVER-SIDE at promote time (live HEAD ≠ this token), then the
+  // panel flips to the drift state — it is never pre-computed at render.
+  let reviewedTargetCommit: string | null = null;
+
+  try {
+    reviewedTargetCommit = await resolveBaseCommit({
+      projectRepoPath: detail.projectRepoPath,
+      baseRef: targetBranch,
+    });
+  } catch {
+    reviewedTargetCommit = null;
+  }
+
+  return {
+    baseBranch: detail.baseBranch ?? diffBaseRef,
+    baseCommit: detail.baseCommit,
+    targetBranch,
+    reviewedTargetCommit,
+    promotionMode,
+    diff,
+    driftDetected: false,
+    legacyNeedsRelaunch: false,
+  };
+}
 
 function offersTakeover(schema: unknown): boolean {
   if (!schema || typeof schema !== "object") return false;
@@ -171,6 +260,50 @@ export default async function RunDetailPage({
     detail.status === "NeedsInput" &&
     offersTakeover(detail.pendingHitl?.schema);
   const isHumanWorking = detail.status === "HumanWorking";
+
+  // M18 (T4.2): the base→run→target review surface for a flow run at `Review`.
+  const showReview = detail.status === "Review" && detail.runKind === "flow";
+  let reviewData: Awaited<ReturnType<typeof buildReviewPanelData>> | null =
+    null;
+  let reviewReadiness = null;
+
+  if (showReview) {
+    try {
+      reviewData = await buildReviewPanelData(detail);
+    } catch (err) {
+      // A derivation failure that is not a clean legacy-relaunch case (e.g. the
+      // worktree is gone): fall back to the relaunch state rather than crash.
+      if (isMaisterError(err)) {
+        reviewData = {
+          baseBranch: detail.baseBranch,
+          baseCommit: detail.baseCommit,
+          targetBranch: null,
+          reviewedTargetCommit: null,
+          promotionMode:
+            detail.promotionMode === "pull_request"
+              ? "pull_request"
+              : "local_merge",
+          diff: "",
+          driftDetected: false,
+          legacyNeedsRelaunch: true,
+        };
+      } else {
+        throw err;
+      }
+    }
+
+    reviewReadiness = await getRunReadiness(detail.runId, detail.projectId);
+  }
+
+  const reviewLabels: ReviewPanelLabels = {
+    promoteTo: t("promoteTo"),
+    promotionMode: t("promotionMode"),
+    readinessReady: t("readinessReady"),
+    readinessBlocked: t("readinessBlocked"),
+    prLink: t("prLink"),
+    targetDrift: t("targetDrift"),
+    promoteAnyway: t("promoteAnyway"),
+  };
 
   const timelineLabels: TimelineLabels = {
     title: t("timelineTitle"),
@@ -408,6 +541,27 @@ export default async function RunDetailPage({
         <CapabilityProfilePanel
           labels={capabilityLabels}
           nodes={capabilityNodes}
+        />
+      ) : null}
+
+      {showReview && reviewData ? (
+        <ReviewPanel
+          baseBranch={reviewData.baseBranch}
+          baseCommit={reviewData.baseCommit}
+          canPromote={canAct}
+          diff={reviewData.diff}
+          driftDetected={reviewData.driftDetected}
+          labels={reviewLabels}
+          legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
+          parentRepoPath={detail.parentRepoPath}
+          prNumber={detail.prNumber}
+          prUrl={detail.prUrl}
+          promotionMode={reviewData.promotionMode}
+          readiness={reviewReadiness}
+          reviewedTargetCommit={reviewData.reviewedTargetCommit}
+          runBranch={detail.branch}
+          runId={detail.runId}
+          targetBranch={reviewData.targetBranch}
         />
       ) : null}
     </div>

@@ -761,7 +761,7 @@ paths:
         (`PRECONDITION`). Response values are hints for the launcher;
         `POST /api/scratch-runs` revalidates every identifier from server state.
 
-        **(M18, Designed) Board launch branch source.** The board task-launch
+        **(M18, Implemented) Board launch branch source.** The board task-launch
         UI (the "Advanced" base/target branch selectors on `POST /api/runs`)
         reuses this **session-authed, project-read-scoped** route as its branch
         source — never an unauthenticated repo-metadata lookup. The board
@@ -3099,7 +3099,7 @@ components:
     BranchOptions:
       type: object
       description: |
-        (M18, Designed) The session-authed, project-read-scoped branch subset
+        (M18, Implemented) The session-authed, project-read-scoped branch subset
         the board task-launch UI consumes from
         `GET /api/scratch-runs/launch-options`. Field names match the live
         route (`branches`, `defaultBaseBranch`); `ScratchLaunchOptionsResponse`
@@ -3535,7 +3535,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (M18, Designed) The target-branch HEAD commit the ReviewPanel
+            (M18, Implemented) The target-branch HEAD commit the ReviewPanel
             rendered the promote surface against (commit-sha shape).
             **Required** — compared to the live target HEAD at claim time
             (optimistic concurrency). A mismatch is refused `PRECONDITION`
@@ -3545,7 +3545,7 @@ components:
           type: boolean
           default: false
           description: |
-            (M18, Designed) Explicit "Promote anyway" override. When true the
+            (M18, Implemented) Explicit "Promote anyway" override. When true the
             `reviewedTargetCommit`-vs-live-HEAD equality check is skipped,
             merging into the advanced target. A deliberate human action, never
             a default.

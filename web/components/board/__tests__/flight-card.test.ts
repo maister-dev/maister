@@ -25,6 +25,8 @@ const labels: FlightCardLabels = {
     waiting: "Waiting",
     overridden: "Overridden",
   },
+  // M18 Phase 4: ready-to-promote / PR badge label.
+  readyToPromote: "Ready to promote",
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -45,6 +47,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     refused: false,
     crashAction: null,
     readiness: "ready",
+    readyToPromote: false,
+    prNumber: null,
     ...over,
   };
 }
@@ -280,3 +284,34 @@ describe("FlightCard — unified readiness badge (M15, T15)", () => {
 // → REPLACE with readiness badge assertions for "waiting" state.
 //
 // (These replacements are documented in the unit test suite above.)
+
+// M18 Phase 4 (T4.4): the ready-to-promote / PR badge. A flow run at Review
+// that is promotable shows a distinct accent-4 chip carrying the translated
+// label as aria-label/title; with a pre-seeded `prNumber` it shows `PR #N`,
+// otherwise the ↗ glyph.
+describe("FlightCard — ready-to-promote / PR badge (M18 Phase 4)", () => {
+  it("renders the ready-to-promote badge (↗) when readyToPromote and no PR", () => {
+    const html = render(baseCard({ readyToPromote: true, prNumber: null }));
+
+    expect(html).toContain('aria-label="Ready to promote"');
+    expect(html).toContain('title="Ready to promote"');
+    expect(html).toContain("↗");
+  });
+
+  it("renders the PR number (PR #4242) when readyToPromote and a prNumber", () => {
+    const html = render(baseCard({ readyToPromote: true, prNumber: 4242 }));
+
+    expect(html).toContain('aria-label="Ready to promote"');
+    expect(html).toContain("PR #4242");
+    // The plain ↗ glyph is replaced by the PR label when a number is present.
+    expect(html).not.toContain("↗");
+  });
+
+  it("omits the badge when readyToPromote is false", () => {
+    const html = render(baseCard({ readyToPromote: false, prNumber: 4242 }));
+
+    expect(html).not.toContain("Ready to promote");
+    expect(html).not.toContain("PR #4242");
+    expect(html).not.toContain("↗");
+  });
+});

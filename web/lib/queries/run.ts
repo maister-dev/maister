@@ -81,6 +81,20 @@ export interface RunDetail {
   branch: string;
   worktreePath: string;
   agent: "claude" | "codex";
+  // M18: run kind drives the Review surface — only `flow` runs at `Review` get
+  // the ReviewPanel; scratch runs keep their own promote affordance.
+  runKind: "flow" | "scratch";
+  // M18: the parent repo path + workspace branch/promotion ledger (nullable on
+  // pre-M18 rows; the run-detail page derives safe fallbacks, see §3.6).
+  parentRepoPath: string;
+  projectMainBranch: string;
+  projectRepoPath: string;
+  baseBranch: string | null;
+  baseCommit: string | null;
+  targetBranch: string | null;
+  promotionMode: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
   pendingHitl: RunPendingHitl | null;
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
@@ -131,14 +145,24 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       runId: runs.id,
       projectId: runs.projectId,
       status: runs.status,
+      runKind: runs.runKind,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
       acpSessionId: runs.acpSessionId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       projectSlug: projects.slug,
+      projectMainBranch: projects.mainBranch,
+      projectRepoPath: projects.repoPath,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
+      parentRepoPath: workspaces.parentRepoPath,
+      baseBranch: workspaces.baseBranch,
+      baseCommit: workspaces.baseCommit,
+      targetBranch: workspaces.targetBranch,
+      promotionMode: workspaces.promotionMode,
+      prUrl: workspaces.prUrl,
+      prNumber: workspaces.prNumber,
       agent: executors.agent,
       endedAt: runs.endedAt,
       scheduledRemovalAt: workspaces.scheduledRemovalAt,
@@ -232,9 +256,19 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     projectId: row.projectId,
     projectSlug: row.projectSlug,
     status: row.status,
+    runKind: row.runKind,
     currentStepId: row.currentStepId,
     branch: row.branch,
     worktreePath: row.worktreePath,
+    parentRepoPath: row.parentRepoPath,
+    projectMainBranch: row.projectMainBranch,
+    projectRepoPath: row.projectRepoPath,
+    baseBranch: row.baseBranch,
+    baseCommit: row.baseCommit,
+    targetBranch: row.targetBranch,
+    promotionMode: row.promotionMode,
+    prUrl: row.prUrl,
+    prNumber: row.prNumber,
     agent: row.agent,
     takeoverOwnerUserId,
     recoverable,

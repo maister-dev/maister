@@ -486,7 +486,7 @@ flowchart LR
   before the side-effect); exactly one finalizes `Done`, the other gets `409
   CONFLICT`. Supersedes the prior single-writer assumption.
 - **(Implemented, M18) Target advanced since review (drift)** — `reviewedTargetCommit`
-  ≠ live target HEAD → `PRECONDITION`. **(Designed)** the panel re-renders against
+  ≠ live target HEAD → `PRECONDITION`. **(Implemented, M18)** the panel re-renders against
   the new HEAD and offers "Promote anyway" (`allowTargetDrift`).
 - **(Implemented, M18) Crash between claim and finalize** — a durable
   `promotion_state='claiming'` row; reclaimable past
