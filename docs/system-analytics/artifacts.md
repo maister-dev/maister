@@ -46,7 +46,9 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 - **Locator** — typed discriminated jsonb written server-side only. Six shapes:
   `git-range`, `git-log`, `file`, `gate-verdict`, `hitl-response`, `inline`.
 - **Producer** — who wrote the row: `runner | projector | takeover | gate |
-  human`.
+  human`. The `gate` producer also records a `test_report` artifact when an
+  `external_check` gate report is ingested via the M16 operations API, surfacing
+  the external verdict in the evidence graph.
 - **Artifact definition** (`artifact_def_id`) — manifest `output.produces[].id`
   for declared artifacts; `NULL` for default/projector-derived rows.
 - **Evidence-readiness guard** (`assertEvidenceReady`) — per-def-current: a

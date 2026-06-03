@@ -45,6 +45,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -55,10 +56,16 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: container.getConnectionUri() });
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
+  }
   await pool?.end();
   await container?.stop();
 });

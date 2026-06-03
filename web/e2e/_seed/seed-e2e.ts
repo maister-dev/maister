@@ -441,6 +441,69 @@ const M19_MANIFEST = {
   ],
 };
 
+// --- M16 fixture: external-operations API ------------------------------------
+// ONE launchable project carrying a Backlog task (token-auth task-create +
+// run-launch land a real 201/202 against the same enabled flow path the board
+// fixture uses) AND a SEPARATE review run parked at a `review` human node whose
+// pre_finish declares a BLOCKING `external_check` gate seeded `pending`. The
+// gate is the vehicle for the readiness / gate-report / re-stale / evidence
+// steps — all supervisor-independent, driven from seeded DB rows. The review
+// run's flow row carries M16_MANIFEST so resolveGateExternalConfig reads the
+// gate's `external` block (staleOnNewCommit) from nodes[].pre_finish.gates[].
+
+const M16_SLUG = "e2e-m16";
+const M16_REVIEW_BRANCH = "maister/e2e-m16-review";
+const M16_GATE_ID = "ci-test-report";
+
+const M16_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF External Check (e2e)",
+  compat: { engine_min: "1.2.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      pre_finish: {
+        gates: [
+          {
+            id: M16_GATE_ID,
+            kind: "external_check",
+            mode: "blocking",
+            external: {
+              description: "CI test report required",
+              staleOnNewCommit: true,
+            },
+          },
+        ],
+      },
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: "implement" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+const M16_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
+};
+
 function resetDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -1730,6 +1793,122 @@ async function seedM19Fixture(
   };
 }
 
+type M16FixtureRecord = ProjectFixture & {
+  launchTaskId: string;
+  runId: string;
+  hitlRequestId: string;
+  gateId: string;
+};
+
+async function seedM16Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M16FixtureRecord> {
+  // Reuse the launchable scaffolding (real git repo, enabled flow revision,
+  // Backlog task) so the token-auth task-create + run-launch reach 201/202.
+  const base = await seedLaunchableProjectFixture(pool, {
+    slug: M16_SLUG,
+    projectName: "E2E M16 External Ops",
+    userId,
+    repoPath: path.join(RUNTIME_ROOT, "repos", M16_SLUG),
+    task: {
+      title: "M16 backlog launch",
+      prompt: "Exercise the external-operations launch path.",
+      status: "Backlog",
+      stage: "Backlog",
+    },
+  });
+
+  // The parked review run lives on a SECOND flow row whose manifest carries the
+  // external_check gate (so resolveGateExternalConfig reads its `external`
+  // block). No on-disk worktree — the gate/readiness/evidence steps are pure
+  // DB reads + the report endpoint, supervisor-independent.
+  const ids = {
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    hitl: randomUUID(),
+    implAttempt: randomUUID(),
+    reviewAttempt: randomUUID(),
+    gate: randomUUID(),
+  };
+  const repoPath = base.repoPath;
+  const worktreePath = `${repoPath}/.worktrees/e2e-m16-review`;
+
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif-external', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      base.projectId,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-external@v0.0.1`,
+      JSON.stringify(M16_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, base.projectId, "M16 external review", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, base.projectId, ids.flow, base.executorId],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.workspace,
+      ids.run,
+      base.projectId,
+      M16_REVIEW_BRANCH,
+      worktreePath,
+      repoPath,
+    ],
+  );
+
+  // Ledger: implement Succeeded → review NeedsInput. The external_check gate
+  // hangs off the LIVE review attempt (latest attempt per node), so readiness
+  // and the report endpoint both resolve it.
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.implAttempt, ids.run],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.reviewAttempt, ids.run],
+  );
+  await pool.query(
+    `INSERT INTO gate_results (id, run_id, node_attempt_id, gate_id, kind, mode, status)
+     VALUES ($1, $2, $3, $4, 'external_check', 'blocking', 'pending')`,
+    [ids.gate, ids.run, ids.reviewAttempt, M16_GATE_ID],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, $4)`,
+    [
+      ids.hitl,
+      ids.run,
+      JSON.stringify(M16_REVIEW_SCHEMA),
+      "Review the implementation once the external check passes.",
+    ],
+  );
+
+  return {
+    ...base,
+    launchTaskId: base.taskId as string,
+    flowId: ids.flow,
+    runId: ids.run,
+    hitlRequestId: ids.hitl,
+    gateId: M16_GATE_ID,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -1754,6 +1933,7 @@ async function main(): Promise<void> {
         M11C_VISIBLE_SLUG,
         M11C_REFUSE_SLUG,
         M19_SLUG,
+        M16_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -1854,6 +2034,7 @@ async function main(): Promise<void> {
     const m11cVisible = await seedM11cVisibleFixture(pool, admin.id);
     const m11cRefuse = await seedM11cRefuseFixture(pool, admin.id);
     const m19 = await seedM19Fixture(pool, admin.id);
+    const m16 = await seedM16Fixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -1889,6 +2070,7 @@ async function main(): Promise<void> {
         m11cVisible,
         m11cRefuse,
         m19,
+        m16,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -1902,7 +2084,8 @@ async function main(): Promise<void> {
     console.log(
       `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, m12 ${m12.runId} (${M12_SLUG}), board ${board.projectSlug}, scratch ${scratch.projectSlug}` +
         `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})` +
-        `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})`,
+        `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})` +
+        `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})`,
     );
   } finally {
     await pool.end();

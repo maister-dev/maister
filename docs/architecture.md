@@ -122,6 +122,7 @@ C4Container
 | `claude-agent-acp` | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
 | `codex-acp` | Implemented | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
 | CCR daemon | Implemented | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, one daemon per supervisor process. |
+| MCP facade (`mcp/`) | Implemented | `@maister/mcp` — `@modelcontextprotocol/sdk`, Node | Standalone workspace package exposing 8 MCP tools as a thin REST client of `/api/v1/ext`. Streamable-HTTP (default, remote): forwards per-request inbound bearer to the REST layer; no ambient token. stdio (local): reads `MAISTER_PROJECT_TOKEN` from env. Zero DB/web coupling. See ADR-047. |
 
 **Inter-container contracts.**
 
@@ -270,6 +271,7 @@ These components are implemented unless the status column says otherwise:
 | `app/api/scratch-runs/[runId]/recover/route.ts` | Route Handler | Recover a crashed scratch session through the stored ACP session id. | Implemented |
 | Projector | `web/lib/projector/artifact-projector.ts` | Web-side. Derives event-stream evidence — the tool-call activity log + preview — from the per-run `run.events.jsonl`. Pull-based at runner sync points + startup catch-up. **Never drives run state.** | Implemented |
 | ArtifactStore | `web/lib/flows/graph/artifact-store.ts` | Web-side. CRUD + lifecycle (record / supersede / stale / fail) over the `artifact_instances` evidence index. | Implemented |
+| MCP facade | `mcp/src/` | Standalone `@maister/mcp` package. Registers 8 MCP tools (create/list/get/update task; launch/get run; get readiness; report gate), each a thin REST client of `/api/v1/ext`. Transport-scoped auth: Streamable-HTTP forwards inbound bearer; stdio reads `MAISTER_PROJECT_TOKEN`. See ADR-042 and [`configuration.md`](configuration.md#environment-variables-server-tier). | Implemented |
 
 ## Dependency rules
 

@@ -10,6 +10,7 @@ export type ProjectTab =
   | "prs"
   | "flows"
   | "packages"
+  | "integrations"
   | "mcps"
   | "settings";
 
@@ -25,6 +26,7 @@ const TABS: readonly ProjectTab[] = [
   "prs",
   "flows",
   "packages",
+  "integrations",
   "mcps",
   "settings",
 ];
@@ -42,6 +44,7 @@ export async function ProjectTabs({
     prs: t("prs"),
     flows: t("flows"),
     packages: t("packages"),
+    integrations: t("integrations"),
     mcps: t("mcps"),
     settings: t("settings"),
   };

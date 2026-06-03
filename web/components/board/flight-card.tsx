@@ -18,6 +18,8 @@ export interface FlightCardLabels {
   // M12 (ADR-037) Phase 7: evidence-graph badge hints.
   evidenceStale: string;
   mergeBlocked: string;
+  // M16 Phase 7: external_check gate-readiness badge hint.
+  externalGatePending: string;
 }
 
 export interface FlightCardProps {
@@ -133,6 +135,15 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
               title={labels.evidenceStale}
             >
               ≈
+            </span>
+          ) : null}
+          {card.externalGatePending ? (
+            <span
+              aria-label={labels.externalGatePending}
+              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
+              title={labels.externalGatePending}
+            >
+              ◉
             </span>
           ) : null}
           <span

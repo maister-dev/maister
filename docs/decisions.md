@@ -70,6 +70,9 @@
 | [ADR-042](#adr-042-conservative-spike-gated-enforcement-flip-claude-first) | Conservative spike-gated `instructed→enforced` flip; claude-first (codex stays instructed, `permissionMode` re-run live, contract only tightens) | Accepted | 2026-06-02 |
 | [ADR-043](#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline) | Capability import reuses the flow-install fetch→trust→execute pipeline (physically separate `setup.sh`, trust route ships, path-safety) | Accepted | 2026-06-02 |
 | [ADR-044](#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven) | Capability delivery via `<worktree>/.claude/settings.local.json` + ACP `newSession` params (the ADR-041 CLI-flag mechanism was disproven against `claude-agent-acp@0.37.0`; supersedes the delivery half of ADR-041) | Accepted | 2026-06-03 |
+| [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) | External_check enforcement via the Review chokepoint; M16/M15/M18 carve | Accepted | 2026-06-02 |
+| [ADR-046](#adr-046-project-api-token-model) | Project API token model | Accepted | 2026-06-02 |
+| [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) | Thin MCP facade as a standalone REST-client package | Accepted | 2026-06-02 |
 
 ---
 
@@ -869,7 +872,7 @@ verdicts and the typed taxonomy of ADR-008.
   human (or the Flow) remains the decider.
 - Audit attribution is mandatory for every external call — no anonymous writes.
 - HITL gains `confidence` / `criticality` fields (small schema add, M15-aligned).
-- Impl is `Designed` (M16), largely independent of M11/M12 but sequenced after
+- Impl is `Implemented` (M16, 2026-06-02), largely independent of M11/M12 but sequenced after
   the foundation.
 
 **Alternatives Considered:**
@@ -2384,6 +2387,167 @@ No new `MaisterError` code — `FLOW_INSTALL` carries import/path failures and
 - **Single-layer path validation (schema only):** a path built from a
   server-state id that bypassed the schema would be unchecked. Rejected —
   defence-in-depth at schema AND path builder.
+### ADR-045: External_check enforcement via the Review chokepoint; M16/M15/M18 carve
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** M11a ([ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)) stubbed
+`external_check` gates as `pending + TODO(M16)` — they are schema-valid and status-modelled but
+not executed. M16 must wire the stub to a real outcome without introducing new `runs.status` values
+or a suspend/resume cycle. The review chokepoint — `assertEvidenceReady(runId, phase, db)` in
+`web/lib/flows/graph/evidence-readiness.ts` — already blocks promotion for engine ≥ 1.2.0 (see
+[ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump)). ADR-024 deferred
+`confidence`/`criticality` on HITL requests to a later milestone; their exact milestone must be
+locked now to prevent double-engineering.
+
+**Decision:** Enforce `external_check` gates by **extending `assertEvidenceReady`** — no new
+`runs.status` value, no suspend/resume. A blocking `external_check` gate that is `pending | failed |
+stale | skipped` resolves as NOT ready; `passed` and `overridden` are the only allow-listed states.
+The report endpoint (`POST /api/v1/ext/runs/{runId}/gates/{gateId}/report`) flips the live gate
+result row and records a `test_report` artifact in one transaction. Staleness is event-driven only:
+(a) downstream rework via the existing `markDownstreamStale`; (b) `staleOnNewCommit` in the gate's
+`flow.yaml` `external` block when a new `commitSha` supersedes the prior passed report. No sweeper.
+Override path is the existing `markGateOverridden`. Milestone carve: **M16** owns the external-gate
+loop end-to-end through review and mechanical staleness; **M15** owns readiness DSL, verdict
+calibration, and readiness roll-up; **M18** promotion reuses the same readiness check without new
+gate logic. HITL `confidence`/`criticality` (ADR-024 clause) are re-scoped to **M17**, not M16.
+
+**Consequences:**
+
+- No new `runs.status` value; the existing `Review` chokepoint is the single enforcement gate for
+  all gate kinds including `external_check`.
+- `assertEvidenceReady` gains an `external_check` allow-list branch — the only code change in the
+  readiness evaluator.
+- `staleOnNewCommit` is evaluated at report time (event-driven); no background staleness sweeper is
+  introduced.
+- M15 and M18 can be designed and implemented without revisiting the `external_check` execution
+  model — the boundary is clean.
+- HITL `confidence`/`criticality` fields are deferred to M17; M16 route handlers and schemas must
+  not add them prematurely.
+
+**Alternatives Considered:**
+
+- **New `ExternalReview` run status (suspend/resume):** would require a new status enum value, a
+  new keep-alive path, and a new recovery sweep — significant scope for a gate whose outcome
+  already maps cleanly onto `passed`/`failed`/`stale`. Rejected — extend the existing chokepoint.
+- **Execute at promotion time only (not at review):** leaves the run in a `passed-review` state
+  with an unresolved external gate, which the readiness check must then re-evaluate at promotion.
+  Rejected — single evaluation point at the Review chokepoint is simpler and consistent with all
+  other gate kinds.
+- **Assign `confidence`/`criticality` to M16:** they belong to the HITL assessment taxonomy,
+  which is structurally aligned with M17 structured verdicts. Including them in M16 would
+  couple the external-gate feature to an unrelated HITL schema change. Rejected — M17.
+
+---
+
+### ADR-046: Project API token model
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** ADR-024 reserved a project-scoped token model for the external surface but left the
+implementation to M16. The token must be usable by CI pipelines, local scripts, and the MCP facade
+([ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package)) without piggybacking on
+an Auth.js session. The threat model is a compromised token: it must grant only the addressed
+project's API, must be revocable, and must leave an audit trail. The verification scheme must be
+timing-safe and must not require a pepper or bcrypt (which are slow and unnecessary for
+256-bit-random secrets).
+
+**Decision:** Tokens are **project-scoped, 256-bit random**, formatted as `mai_` + base64url(32 bytes).
+The first 12 characters of the full string serve as a `prefix` for indexed lookup. The secret is
+stored as `sha256_hex(fullToken)` — no pepper, no bcrypt. Verification: extract prefix → `SELECT
+WHERE prefix = ?` → `timingSafeEqual(sha256_hex(presented), row.token_hash)` → assert
+`revoked_at IS NULL` AND (`expires_at IS NULL` OR `expires_at > now()`) → cross-check the addressed
+resource's project against `token.projectId` (mismatch → 404, existence-hide). v1 tokens grant the
+**full project API** under `/api/v1/ext/...`; `scopes` is stored as a label list (default `["*"]`)
+for forward-compatibility with finer-grained enforcement in a future version. Every token-attributed
+call writes a row to `token_audit_log` — mandatory per ADR-024. Auth errors are modeled as
+`TokenAuthError(kind)` resolved by `httpStatusForTokenAuth(kind)` — **not** a `MaisterError` code
+([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed union), mirroring the existing
+`httpStatusForAuthz` pattern. Session-auth routes never accept tokens; token-auth routes never
+accept sessions. Business logic (`createTask`, `launchRun`) is **decoupled from auth** into
+`web/lib/services/*` so session-auth routes, token-auth routes, and the MCP facade all share one
+service core without duplicating domain logic.
+
+**Consequences:**
+
+- Two new tables (`project_tokens`, `token_audit_log`) in migration `0018_m16_api_tokens.sql`;
+  cascade chain: project → tokens → audit rows.
+- The plaintext token is returned once at creation and is never stored or re-derivable; loss
+  requires re-issuance.
+- `sha256` at rest is appropriate for 256-bit-random secrets (brute-force is infeasible);
+  bcrypt would add latency with no security benefit here.
+- Scope enforcement is binary in v1 (valid + active + project-matched → full project API); the
+  stored `scopes` label is an audit label and a forward-compat hook, not an enforced capability list.
+- The service-layer decoupling means MCP tool implementations are thin REST callers — they carry
+  no business logic and cannot exceed the token's authority, satisfying ADR-024's thin-facade
+  invariant.
+- 403 (scope) is reserved but unused in v1; 404 is used for wrong-project (existence-hide).
+
+**Alternatives Considered:**
+
+- **bcrypt for token storage:** bcrypt is designed for low-entropy passwords; a 256-bit random
+  token needs no stretching and bcrypt's latency would penalize every API call. Rejected — sha256.
+- **Server pepper:** adds operational complexity (pepper rotation, secret management) with no
+  material benefit for a 256-bit random secret. Rejected — no pepper.
+- **Granular scope enforcement in v1:** requires concrete external consumers to know which scopes
+  to request; none exist yet. A binary valid/invalid model is correct for v1. Rejected — scope
+  labels for forward-compat only.
+- **Session-token hybrid (accept either on all routes):** blurs the auth boundary, complicates
+  audit attribution, and makes it impossible to audit-trace which surface a call used. Rejected —
+  strict route-level separation.
+
+---
+
+### ADR-047: Thin MCP facade as a standalone REST-client package
+
+**Date:** 2026-06-02
+**Status:** Accepted
+**Context:** ADR-024 mandated a thin MCP facade over the REST service layer. The facade must expose
+MAIster capabilities to MCP-speaking clients (Claude Desktop, autonomous agents) without becoming
+a second orchestration backend, bypassing authorization, or holding secrets that belong to the
+web tier. The physical location of the package — inside the web package, in the supervisor, or as
+a standalone workspace package — determines its coupling surface and its ability to be deployed
+independently.
+
+**Decision:** The MCP facade is a **standalone top-level `mcp/` workspace package** (`@maister/mcp`,
+`@modelcontextprotocol/sdk`). It exposes 8 MCP tools (task CRUD, run launch/read/readiness,
+gate report) each implemented as a thin HTTP client of the corresponding `/api/v1/ext` route —
+no DB access, no Drizzle, no supervisor dependency. **Transport-scoped auth**: under
+**Streamable-HTTP** (the default, remote transport), the MCP server requires a per-request
+inbound bearer token from the caller and forwards it verbatim to `/api/v1/ext`; it holds no
+ambient token and returns 401 to the caller when the inbound bearer is absent or rejected by the
+REST layer. Under **stdio** (local-only transport), the server reads `MAISTER_PROJECT_TOKEN` from
+env. The two transports are explicitly separate; `MAISTER_PROJECT_TOKEN` is ignored under
+Streamable-HTTP. `MAISTER_API_BASE_URL` configures the target REST endpoint in both transports.
+Because all calls are proxied through `/api/v1/ext`, the audit trail in `token_audit_log` is
+complete — the MCP facade produces the same audit rows as a direct REST caller. The facade
+provably cannot exceed the token's authority (ADR-024 thin-facade invariant): it has no path
+to the DB and every action is constrained by the REST layer's auth and validation.
+
+**Consequences:**
+
+- Zero coupling between `mcp/` and `web/` beyond the REST contract
+  (`docs/api/external/operations.openapi.yaml`); the facade can be published and installed
+  independently.
+- No ambient token under Streamable-HTTP — each MCP tool invocation carries its own bearer,
+  so multi-project MCP clients can use different tokens in the same session.
+- The `stdio` transport is for local, trusted use (e.g. Claude Desktop on the same host);
+  `MAISTER_PROJECT_TOKEN` is NOT a web-tier secret and is documented accordingly.
+- Adding an MCP tool is adding one thin REST-call wrapper; no service logic lives in `mcp/`.
+- The same `token_audit_log` that records direct REST calls records MCP-originated calls —
+  one audit trail, no blind spots.
+
+**Alternatives Considered:**
+
+- **MCP facade inside `web/` (e.g. a route or a server-action):** couples the MCP transport to
+  the Next.js lifecycle, prevents independent deployment, and requires exposing the MCP wire
+  through Next.js middleware. Rejected — standalone package.
+- **MCP facade with direct DB access (bypass REST):** violates ADR-024's thin-facade invariant,
+  forks authorization and audit logic, and makes the facade a second control plane. Rejected —
+  REST client only.
+- **Single ambient token stored in the MCP server (no per-request bearer under Streamable-HTTP):**
+  a stolen server process leaks a long-lived credential; multiple projects cannot share one
+  running MCP server. Rejected — per-request inbound bearer, no ambient token.
 
 ---
 

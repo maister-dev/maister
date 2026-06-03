@@ -115,6 +115,7 @@ const fixtureManifest = {
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 let runtimeRoot: string;
 
 const sessionRef: { value: unknown } = { value: null };
@@ -435,6 +436,7 @@ beforeAll(async () => {
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
   runtimeRoot = await mkdtemp(path.join(tmpdir(), "m11b-fix-rt-"));
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 
   ({ POST: claimPOST } = await import("../claim/route"));
@@ -449,7 +451,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env.MAISTER_RUNTIME_ROOT;
-  delete process.env.DB_URL;
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
+  }
   await rm(runtimeRoot, { recursive: true, force: true });
   await pool?.end();
   await container?.stop();

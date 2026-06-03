@@ -7,6 +7,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { getCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import {
+  collapseLatestExternalPerGate,
+  isExternalGateReady,
+} from "@/lib/flows/graph/external-gate-readiness";
+import {
   getNodeAttemptsForRun,
   latestAttemptByNode,
 } from "@/lib/flows/graph/ledger";
@@ -182,6 +186,52 @@ export async function assertEvidenceReady(
           `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) failed and required artifacts are not yet current`,
         );
       }
+    }
+  }
+
+  // M16 §C: external_check awareness. A blocking external_check gate on the live
+  // attempt set gates review unless its verdict is passed/overridden (allow-list,
+  // NOT a deny-list). pending/failed/stale/skipped → not ready. Advisory
+  // external_check never blocks. Mirrors the artifact_required live-attempt
+  // filtering above.
+  //
+  // Supersede-on-new-commit leaves the prior `passed` row `stale` and appends a
+  // fresh row on the SAME (gateId, attempt). The LATEST report per gateId
+  // governs, so collapse the live-attempt external_check rows to the max-createdAt
+  // representative per gateId (tiebreak by id desc) and evaluate only that one.
+  const externalGates: Array<{
+    id: string;
+    nodeAttemptId: string;
+    gateId: string;
+    mode: string;
+    status: string;
+    createdAt: Date;
+  }> = await d
+    .select({
+      id: gateResults.id,
+      nodeAttemptId: gateResults.nodeAttemptId,
+      gateId: gateResults.gateId,
+      mode: gateResults.mode,
+      status: gateResults.status,
+      createdAt: gateResults.createdAt,
+    })
+    .from(gateResults)
+    .where(
+      and(eq(gateResults.runId, runId), eq(gateResults.kind, "external_check")),
+    );
+
+  const latestExternalByGate = collapseLatestExternalPerGate(
+    externalGates.filter((gate) => liveAttemptIds.has(gate.nodeAttemptId)),
+    (gate) => gate.gateId,
+  );
+
+  for (const gate of latestExternalByGate) {
+    if (gate.mode !== "blocking") continue;
+
+    if (!isExternalGateReady(gate.status)) {
+      reasons.push(
+        `blocking external_check gate "${gate.gateId}" (id=${gate.id}) is ${gate.status} — not passed/overridden`,
+      );
     }
   }
 

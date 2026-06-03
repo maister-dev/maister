@@ -75,6 +75,7 @@ export async function Board({
     settingsRefused: tRun("settingsRefusedHint"),
     evidenceStale: t("evidenceStale"),
     mergeBlocked: t("mergeBlocked"),
+    externalGatePending: t("externalGatePending"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"

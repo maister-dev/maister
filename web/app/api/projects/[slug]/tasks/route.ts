@@ -1,8 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -11,12 +9,10 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { createTask } from "@/lib/services/tasks";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/runs/route.ts).
-const { executors, flows, projects, tasks } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { projects } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-project-tasks",
@@ -90,7 +86,7 @@ export async function POST(
     // Auth-first: authenticate AND clear the forced-password-change gate
     // BEFORE resolving the URL slug, so unauthenticated or must-change callers
     // cannot probe project existence. Project membership is enforced below.
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as unknown as { select: any; insert: any };
 
@@ -108,51 +104,15 @@ export async function POST(
 
     await requireProjectAction(project.id, "createTask");
 
-    // Validate flowId belongs to THIS project (body-controlled).
-    const flowRows = await db
-      .select()
-      .from(flows)
-      .where(and(eq(flows.id, body.flowId), eq(flows.projectId, project.id)));
-
-    if (flowRows.length === 0) {
-      throw new MaisterError(
-        "CONFIG",
-        `flow ${body.flowId} is not configured for project ${slug}`,
-      );
-    }
-
-    // Validate executor override (when present) belongs to THIS project.
-    if (body.executorOverrideId) {
-      const executorRows = await db
-        .select()
-        .from(executors)
-        .where(
-          and(
-            eq(executors.id, body.executorOverrideId),
-            eq(executors.projectId, project.id),
-          ),
-        );
-
-      if (executorRows.length === 0) {
-        throw new MaisterError(
-          "CONFIG",
-          `executor ${body.executorOverrideId} is not registered for project ${slug}`,
-        );
-      }
-    }
-
-    const taskId = randomUUID();
-
-    await db.insert(tasks).values({
-      id: taskId,
-      projectId: project.id,
-      title: body.title,
-      prompt: body.prompt,
-      flowId: body.flowId,
-      executorOverrideId: body.executorOverrideId ?? null,
-      status: "Backlog",
-      stage: "Backlog",
-    });
+    const { taskId } = await createTask(
+      {
+        title: body.title,
+        prompt: body.prompt,
+        flowId: body.flowId,
+        executorOverrideId: body.executorOverrideId,
+      },
+      { projectId: project.id, actorUserId: user.id },
+    );
 
     log.info({ slug, taskId, flowId: body.flowId }, "task created");
 

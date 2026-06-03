@@ -15,6 +15,7 @@ import { ActivityPanel } from "@/components/board/panels/activity-panel";
 import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
 import { FlowsPanel } from "@/components/board/panels/flows-panel";
+import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
@@ -23,6 +24,7 @@ import { getFlowPackages } from "@/lib/queries/flow-packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { getPlatformStatus } from "@/lib/supervisor-client";
+import { listTokens } from "@/lib/tokens/list";
 
 const VALID_TABS: readonly ProjectTab[] = [
   "board",
@@ -30,6 +32,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "prs",
   "flows",
   "packages",
+  "integrations",
   "mcps",
   "settings",
 ];
@@ -223,6 +226,13 @@ export default async function ProjectBoardPage({
           isAdmin={isAdmin}
           packages={await getFlowPackages(project.id)}
           slug={slug}
+        />
+      ) : null}
+      {tab === "integrations" ? (
+        <IntegrationsPanel
+          isAdmin={isAdmin}
+          slug={slug}
+          tokens={isAdmin ? await listTokens(project.id) : []}
         />
       ) : null}
       {tab === "settings" ? (

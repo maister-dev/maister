@@ -141,6 +141,24 @@ the discriminated `code` field available on the narrowed branch.
 The `satisfies` assertion in the test prevents the test from silently
 ignoring a newly added code.
 
+## Token / external-API auth (M16 — Implemented)
+
+> These are **HTTP-level status codes**, NOT `MaisterError` codes. They mirror
+> `httpStatusForAuthz` and are implemented by `TokenAuthError(kind)` +
+> `httpStatusForTokenAuth(kind)` in the `/api/v1/ext/*` surface (ADR-046).
+> Body validation and config errors on those routes reuse the existing `CONFIG`
+> `MaisterError`, mapped to **422** (Unprocessable Entity) across the whole ext
+> surface by the shared `httpStatusForExtCode` — one canonical mapping, no
+> 422-vs-400 divergence between sibling routes.
+
+| HTTP status | When returned |
+| ----------- | ------------- |
+| **401** | Invalid, expired, or revoked project token. Also: missing or invalid inbound bearer on the Streamable-HTTP MCP transport. |
+| **403** | Reserved — scope enforcement, unused in v1 full-project-API model (ADR-041). |
+| **404** | Token's project ≠ addressed resource (existence-hide). Also: unknown or non-`external_check` gate; unknown task or run id. |
+| **409** | Domain conflict — a gate report on a terminal run (`Done`/`Abandoned`/`Crashed`/`Failed`), or a launch/create precondition conflict (`CONFLICT`/`PRECONDITION` from the shared service). |
+| **422** | Request body failed schema validation, or a `CONFIG` `MaisterError` from the shared service (unknown flow/executor, invalid config). Mapped by the shared `httpStatusForExtCode`. |
+
 ## See Also
 
 - [Database Schema](database-schema.md) — `runs.status` enum the UI

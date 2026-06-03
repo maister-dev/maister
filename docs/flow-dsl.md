@@ -322,7 +322,27 @@ status:
 | `human_review` | Captures approve/rework decisions through the review HITL. | **Executes** |
 | `skill_check` | Runs an internal slash command (e.g. `/aif-review`) via an agent session. | **Executes (best-effort)** — no capability scoping until M14 |
 | `artifact_required` | Verifies required evidence exists and is current. | **Stubbed** → `skipped` + WARN + `TODO(M12)` (needs M12 artifact instances) |
-| `external_check` | Waits for CI / another system to report through the operations API. | **Stubbed** → `pending` + WARN + `TODO(M16)` (no ingestion endpoint until M16) |
+| `external_check` | Waits for CI / another system to report through the operations API. | **Executes (M16)** → report ingestion via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report` flips `pending → passed\|failed` and records a `test_report` artifact |
+
+### `gates[].external` block (M16 — Implemented)
+
+`external_check` gates accept an optional additive `external` block. Old manifests without it remain valid; **no engine-version bump** is required.
+
+```yaml
+- id: ci
+  kind: external_check
+  mode: blocking
+  external:
+    description: "GitHub Actions full test suite on the run branch."   # optional
+    staleOnNewCommit: true                                             # optional; default true
+```
+
+| field | type | default | meaning |
+| ----- | ---- | ------- | ------- |
+| `description` | `string` (min 1) | (none) | Human-readable label surfaced in the `GET /api/v1/ext/runs/{runId}/readiness` response so CI consumers know what each gate expects. |
+| `staleOnNewCommit` | `boolean` | `true` | When `true` (or absent), a new gate report that carries a different `commitSha` than the current `passed` report supersedes the prior result and marks the gate `stale`. Set to `false` to opt out of commit-based staleness for gates whose result is commit-independent. |
+
+The block is meaningful only for `kind: external_check`. Placing it on any other gate kind is a manifest validation error (`CONFIG`).
 
 Every gate has `mode: blocking | advisory`, optional input artifacts, an
 optional produced artifact, stale-from dependencies, and a status:
@@ -435,10 +455,10 @@ the failed evidence (override-without-erasure itself ships in M11a).
 
 Verdict calibration tunes confidence thresholds per gate / Flow. `external_check`
 ingestion — the report contract that lets CI or another external system satisfy
-a `pending` gate — is delivered with the M16 operations API (see Planned M16
-below); M15 owns the readiness policy that consumes it.
+a `pending` gate — is delivered with the M16 operations API (see the M16
+operations-API section below); M15 owns the readiness policy that consumes it.
 
-## Planned M16: external operations API and MCP facade
+## External operations API and MCP facade (M16 — Implemented)
 
 Flow plugins may declare `external_check` gates when evidence must arrive from
 outside the runner: CI, a local script, a repository-hosted check, or another
@@ -446,19 +466,19 @@ tool. The runner creates the pending gate result and exposes a report contract
 through the project-scoped operations API. External systems do not mutate run
 state directly; they attach evidence to the gate.
 
-An external check report records:
+An external check report `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report`
+carries this body (the `gateId` is in the URL, not the body):
 
 | field | purpose |
 | ----- | ------- |
-| `gateId` | Flow-declared gate being satisfied or failed. |
-| `status` | `passed`, `failed`, or `skipped`; missing reports stay `pending`. |
-| `source` | Reporter label such as `github-actions`, `jenkins`, `local-ci`, or `agent-mcp`. |
+| `status` | `passed` or `failed`. A gate with no report stays `pending`. |
 | `externalRunUrl` | Optional URL to the external job/check. |
 | `commitSha` | Optional commit checked by the external system. Used for staleness. |
 | `summary` | Short human-readable result. |
 | `payload` | Structured reporter-specific details. |
-| `reportedBy` | API token or MCP actor id. |
-| `reportedAt` | Server timestamp. |
+
+The server records `reporterTokenId` and `reportedAt` in the gate verdict from
+the authenticated token — they are not client-supplied.
 
 The report becomes a normal artifact in the run evidence graph. If the
 dependent commit, upstream artifact, or gate input changes, the external check
@@ -466,8 +486,8 @@ becomes stale and must be reported again or overridden through human review.
 
 The MAIster MCP server exposes only a thin facade over the same operations:
 create/list/get/update task, launch run, get run, get readiness, and report a
-gate result where the token scope permits. MCP tools never bypass Flow
-validation, token scopes, readiness, or artifact recording.
+gate result where the token is authorized. MCP tools never bypass Flow
+validation, token authorization, readiness, or artifact recording.
 
 ### `cli` step
 

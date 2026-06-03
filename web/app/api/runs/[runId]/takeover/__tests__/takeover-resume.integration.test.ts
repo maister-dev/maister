@@ -114,6 +114,7 @@ const resumeManifest = {
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 let runtimeRoot: string;
 
 const sessionRef: { value: unknown } = { value: null };
@@ -351,6 +352,7 @@ beforeAll(async () => {
   process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
   // Make the runner's FOR-UPDATE takeover-resume claim use the Postgres row
   // lock (isPostgres() reads DB_URL; getDb() itself is mocked to `db`).
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 
   ({ POST: returnPOST } = await import("../return/route"));
@@ -358,7 +360,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env.MAISTER_RUNTIME_ROOT;
-  delete process.env.DB_URL;
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
+  }
   await rm(runtimeRoot, { recursive: true, force: true });
   await pool?.end();
   await container?.stop();

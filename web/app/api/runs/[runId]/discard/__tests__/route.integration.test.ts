@@ -55,6 +55,7 @@ const {
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 let projectId: string;
 let executorId: string;
 let flowId: string;
@@ -180,6 +181,7 @@ beforeAll(async () => {
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
   originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";
@@ -260,6 +262,11 @@ afterAll(async () => {
     delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
   } else {
     process.env.MAISTER_MAX_CONCURRENT_RUNS = originalCap;
+  }
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
   }
   await pool?.end();
   await container?.stop();

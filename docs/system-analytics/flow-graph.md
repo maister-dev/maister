@@ -85,7 +85,8 @@ stateDiagram-v2
     running --> passed: command exit 0 / verdict ok
     running --> failed: non-zero exit / unparseable verdict
     running --> skipped: artifact_required (TODO M12)
-    pending --> pending: external_check (TODO M16, no ingestion)
+    pending --> passed: external_check report (POST .../gates/{gateId}/report)
+    pending --> failed: external_check report (POST .../gates/{gateId}/report)
     passed --> stale: markDownstreamStale on rework
     failed --> stale: markDownstreamStale on rework
     stale --> running: re-run on next node attempt
@@ -190,7 +191,7 @@ flowchart TD
     K -- skill_check --> SK[slash command via agent<br/>best-effort, TODO M14 scoping]
     K -- human_review --> HR[emit review HITL]
     K -- artifact_required --> AR[skipped + WARN + TODO M12]
-    K -- external_check --> EC[pending + WARN + TODO M16]
+    K -- external_check --> EC[pending; flipped by external report endpoint]
     CC --> Mode{mode?}
     AI --> Mode
     SK --> Mode
@@ -269,8 +270,10 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
   union).
 - **`artifact_required` gate** → `skipped` + WARN + `TODO(M12)` (no artifact
-  instances until M12). **`external_check` gate** → `pending` + WARN +
-  `TODO(M16)` (no ingestion endpoint until M16).
+  instances until M12). **`external_check` gate** → starts `pending`; an external
+  runner flips it via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report`, which
+  drives the gate `pending → passed|failed`, records a `test_report` artifact, and
+  gates review through `assertEvidenceReady` (M16).
 - **Untrusted revision** → launch is refused by the M10 trust precondition
   ([ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility))
   **before** any gate command/agent runs — no gate side-effect occurs.

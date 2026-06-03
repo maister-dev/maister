@@ -297,21 +297,43 @@ const gateKindSchema = z.enum([
   "human_review",
 ]);
 
-export const gateSchema = z.object({
-  id: z.string().min(1),
-  kind: gateKindSchema,
-  mode: z.enum(["blocking", "advisory"]).default("blocking"),
-  command: z.string().min(1).optional(),
-  prompt: z.string().min(1).optional(),
-  skill: z.string().min(1).optional(),
-  inputArtifacts: z.array(z.string().min(1)).optional(),
-  output: z
-    .object({ id: z.string().min(1), kind: z.string().min(1) })
-    .passthrough()
-    .optional(),
-  // node ids whose rework marks this gate stale
-  staleFrom: z.array(z.string().min(1)).optional(),
-});
+// --- M16 §A: additive `external` block (only on kind: external_check) -------
+// Describes a CI/external system whose verdict is reported via the M16
+// operations API. Additive — NO engine bump. `staleOnNewCommit` defaults to
+// true so an omitted value re-stales a passed gate when a fresh commit arrives.
+const gateExternalSchema = z
+  .object({
+    description: z.string().min(1).optional(),
+    staleOnNewCommit: z.boolean().default(true),
+  })
+  .strict();
+
+export const gateSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: gateKindSchema,
+    mode: z.enum(["blocking", "advisory"]).default("blocking"),
+    command: z.string().min(1).optional(),
+    prompt: z.string().min(1).optional(),
+    skill: z.string().min(1).optional(),
+    inputArtifacts: z.array(z.string().min(1)).optional(),
+    output: z
+      .object({ id: z.string().min(1), kind: z.string().min(1) })
+      .passthrough()
+      .optional(),
+    // node ids whose rework marks this gate stale
+    staleFrom: z.array(z.string().min(1)).optional(),
+    external: gateExternalSchema.optional(),
+  })
+  .superRefine((gate, ctx) => {
+    if (gate.external && gate.kind !== "external_check") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["external"],
+        message: "`external` block is only valid on kind: external_check",
+      });
+    }
+  });
 
 const nodeInputSchema = z
   .object({

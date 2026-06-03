@@ -1,0 +1,755 @@
+openapi: 3.0.3
+info:
+  title: MAIster External Operations API
+  version: "1.0.0"
+  description: |
+    Token-authenticated external surface for MAIster (M16). All routes are
+    under `/api/v1/ext/` and require a project-scoped bearer token issued via
+    the token-management routes in `docs/api/web.openapi.yaml`.
+
+    **Security model.** Every call is authenticated by the `projectToken`
+    bearer scheme. The token is 256-bit random (`mai_` + base64url(32 bytes)),
+    stored as sha256 at rest, looked up by prefix, and compared with
+    `timingSafeEqual`. Token failure kinds all map to 401. Cross-project
+    resource access hides existence (404). v1 grants the full project API —
+    `scopes` are stored as labels for forward-compatibility only.
+
+    **Audit.** Every call writes a `token_audit_log` row. The gate-report
+    endpoint writes the success audit row inside the same database transaction
+    as the gate update and artifact; failure-path audit rows are written after
+    and do not mutate gate or artifact state.
+
+    **DTO policy.** Response DTOs NEVER include `acp_session_id`, absolute
+    worktree paths, `token_hash`, or supervisor-internal handles.
+
+    See also:
+      - [`../web.openapi.yaml`](../web.openapi.yaml) — token-management routes and session-auth surface
+      - [`../../decisions.md`](../../decisions.md) — ADR-045, ADR-046, ADR-047
+
+    **Milestone status: M16 (Implemented), as of 2026-06-02.**
+
+servers:
+  - url: http://localhost:3000
+    description: Local Next.js dev server (default).
+
+security:
+  - projectToken: []
+
+tags:
+  - name: tasks
+    description: Project task management via token auth.
+  - name: runs
+    description: Run launch and status via token auth.
+  - name: readiness
+    description: Run readiness check via token auth.
+  - name: gates
+    description: External gate report submission via token auth.
+
+paths:
+  /api/v1/ext/projects/{slug}/tasks:
+    post:
+      tags: [tasks]
+      summary: Create a task on a project board
+      description: |
+        Scope `tasks:create`. Creates a task in `Backlog` on the project
+        identified by `slug`. The `projectId` is derived server-side from the
+        URL slug and compared against the token's project — mismatch → 404.
+
+        Validates that `flowId` belongs to the project and, when
+        `executorOverrideId` is supplied, that it also belongs to the same
+        project. Both checks return 422 on failure.
+
+        Writes a `token_audit_log` row with scope `tasks:create` after success.
+      operationId: extCreateTask
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtCreateTaskBody" }
+      responses:
+        "201":
+          description: Task created in `Backlog`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taskId]
+                properties:
+                  taskId:
+                    type: string
+                    format: uuid
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+    get:
+      tags: [tasks]
+      summary: List tasks on a project board
+      description: |
+        Scope `tasks:read`. Returns all tasks for the project identified by
+        `slug`. The `projectId` is derived server-side from the URL slug and
+        compared against the token's project — mismatch → 404.
+
+        Writes a `token_audit_log` row with scope `tasks:read` after success.
+      operationId: extListTasks
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Task list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks:
+                    type: array
+                    items: { $ref: "#/components/schemas/TaskDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}:
+    get:
+      tags: [tasks]
+      summary: Get a single task
+      description: |
+        Scope `tasks:read`. Returns the task identified by `taskId` on the
+        project identified by `slug`. The `projectId` is derived server-side
+        from the URL slug and compared against the token's project — mismatch
+        → 404. `taskId` ownership is re-validated against the token's project.
+
+        Writes a `token_audit_log` row with scope `tasks:read` after success.
+      operationId: extGetTask
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Task detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      tags: [tasks]
+      summary: Update a task (Backlog-only fields)
+      description: |
+        Scope `tasks:update`. Updates `title`, `prompt`, and/or
+        `executorOverrideId` on a task in `Backlog` status. Fields not present
+        in the body are left unchanged. The `projectId` is derived server-side;
+        `taskId` ownership is re-validated against the token's project.
+
+        Returns the full updated `TaskDTO` on success. Writes a
+        `token_audit_log` row with scope `tasks:update` after success.
+      operationId: extUpdateTask
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtUpdateTaskBody" }
+      responses:
+        "200":
+          description: Updated task.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs:
+    post:
+      tags: [runs]
+      summary: Launch a run for a task
+      description: |
+        Scope `runs:launch`. Launches a run from a `Backlog` task. Mirrors the
+        same launch contract as the session-auth `POST /api/runs` (same
+        precondition checks, executor resolution, worktree creation, and
+        scheduler claim). The `projectId` is derived from the task row;
+        `taskId` ownership is re-validated against the token's project.
+
+        Returns 202 (may be `Pending` if the global concurrency cap is full,
+        or `Running` if a slot was free). Writes a `token_audit_log` row with
+        scope `runs:launch` after success.
+      operationId: extLaunchRun
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtLaunchRunBody" }
+      responses:
+        "202":
+          description: Run accepted. May be `Pending` (queued) or `Running`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, status]
+                properties:
+                  runId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [Pending, Running]
+                  queuePosition:
+                    type: integer
+                    minimum: 1
+                    description: Present iff `status == "Pending"`.
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: |
+            Executor or platform unavailable (`EXECUTOR_UNAVAILABLE`).
+            Supervisor unreachable or the executor is not registered/available.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
+  /api/v1/ext/runs/{runId}:
+    get:
+      tags: [runs]
+      summary: Get run status
+      description: |
+        Scope `runs:read`. Returns the `RunDTO` for the run identified by
+        `runId`. The run's `projectId` is re-validated against the token's
+        project — mismatch → 404 (existence-hide).
+
+        Writes a `token_audit_log` row with scope `runs:read` after success.
+      operationId: extGetRun
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Run status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/runs/{runId}/readiness:
+    get:
+      tags: [readiness]
+      summary: Get run readiness
+      description: |
+        Scope `readiness:read`. Returns the `ReadinessDTO` for the run —
+        whether the run is ready to be promoted, blocked by outstanding gates,
+        stale, failed, still waiting, or overridden. Includes external gate
+        status and required artifact presence/validity.
+
+        The run's `projectId` is re-validated against the token's project —
+        mismatch → 404. Writes a `token_audit_log` row with scope
+        `readiness:read` after success.
+      operationId: extGetRunReadiness
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Run readiness state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadinessDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/runs/{runId}/gates/{gateId}/report:
+    post:
+      tags: [gates]
+      summary: Report result for an external gate
+      description: |
+        Scope `gates:report`. Reports the result of an `external_check` gate
+        for the given run. The run's `projectId` is re-validated against the
+        token's project. The `gateId` must identify a live, non-terminal
+        `external_check` gate_result row for this run — unknown or non-external
+        gate → 404.
+
+        **Success path** (valid token, correct project, known external gate,
+        valid body): the gate_result row is flipped to `passed` or `failed`,
+        a `test_report` artifact is recorded (producer `gate`, locator inline),
+        and the success audit row is all written in one database transaction
+        (rollback-safe).
+
+        **Failure path** (bad/expired/revoked token → 401; cross-project →
+        404; non-external or unknown gate → 404; terminal run
+        (`Done`/`Abandoned`/`Crashed`/`Failed`) → 409; body invalid → 422):
+        only a failure audit row is written after response, and no gate or
+        artifact state is mutated.
+
+        Staleness: if `staleOnNewCommit` is set on the gate's manifest config
+        and a new report arrives with a different `commitSha`, the prior passed
+        report is superseded and the gate becomes stale. Concurrent reports for
+        the same run are serialized so a double-delivered webhook for the same
+        `commitSha` never appends duplicate superseding rows.
+
+        Writes a `token_audit_log` row with scope `gates:report`.
+      operationId: extReportGate
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: gateId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtGateReportBody" }
+      responses:
+        "200":
+          description: Gate report recorded, artifact created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtGateReportResponse" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+components:
+  securitySchemes:
+    projectToken:
+      type: http
+      scheme: bearer
+      description: |
+        Project-scoped API token. Format: `mai_` + base64url(randomBytes(32)).
+        Stored as sha256 hex at rest; never logged or streamed. Lookup is by
+        the 12-character prefix; verification uses `timingSafeEqual`. In v1 a
+        valid, active, non-expired, non-revoked token grants the full project
+        API (`scopes` stored as labels for forward-compat; enforcement is
+        binary). Token failures (invalid, expired, revoked, wrong-project) all
+        map to 401 or 404 per the existence-hide policy.
+
+  responses:
+    TokenUnauthorized:
+      description: |
+        Missing, invalid, expired, or revoked bearer token. All token failure
+        kinds (invalid prefix/hash mismatch, expired, revoked) return 401.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
+    NotFound:
+      description: |
+        Resource not found, or the token's project does not own the addressed
+        resource (existence-hide — cross-project access returns 404, not 403).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
+    UnprocessableEntity:
+      description: Request body failed schema validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
+    Conflict:
+      description: |
+        The request conflicts with current resource state — e.g. reporting a
+        gate on a run that has already finished (`Done`/`Abandoned`/`Crashed`/
+        `Failed`), or a task/run create/launch precondition conflict (task not
+        in `Backlog`, project archived, branch/worktree taken). Code `CONFLICT`
+        or `PRECONDITION`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
+  schemas:
+    ExtErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable error message.
+
+    TaskDTO:
+      type: object
+      description: |
+        External projection of a task. Never includes `acp_session_id`,
+        worktree paths, `token_hash`, or supervisor-internal handles.
+      required:
+        - id
+        - title
+        - prompt
+        - status
+        - stage
+        - flowId
+        - attemptNumber
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        prompt:
+          type: string
+        status:
+          type: string
+          description: Task lifecycle status on the board.
+          enum: [Backlog, InFlight, Done]
+        stage:
+          type: string
+          description: Finer-grained stage within the task lifecycle.
+        flowId:
+          type: string
+          description: ID of the flow configured for this task.
+        executorOverrideId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Optional executor override stored on the task.
+        latestRunId:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the most recent run launched for this task, if any.
+        attemptNumber:
+          type: integer
+          minimum: 0
+          description: Number of runs launched against this task (0 = never launched).
+        createdAt:
+          type: string
+          format: date-time
+
+    RunDTO:
+      type: object
+      description: |
+        External projection of a run. Never includes `acp_session_id`,
+        worktree paths, `token_hash`, or supervisor-internal handles.
+      required:
+        - id
+        - taskId
+        - projectId
+        - status
+        - flowId
+        - executorId
+        - startedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+        projectId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: Current run status.
+          enum:
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - Review
+            - Crashed
+            - Done
+            - Abandoned
+            - Failed
+        flowId:
+          type: string
+          nullable: true
+          description: Flow id used for this run (from the pinned revision at launch time).
+        executorId:
+          type: string
+          format: uuid
+          description: Resolved executor id used for this run.
+        currentStepId:
+          type: string
+          nullable: true
+          description: The id of the step currently executing, if any.
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ReadinessDTO:
+      type: object
+      description: |
+        Readiness roll-up for a run at the review chokepoint. Produced by
+        `assertEvidenceReady` extended with `external_check` gate awareness.
+      required:
+        - readiness
+        - externalGates
+        - requiredArtifacts
+        - reasons
+      properties:
+        readiness:
+          type: string
+          description: |
+            Overall readiness verdict.
+            - `ready` — all required gates passed, all required artifacts present and valid.
+            - `blocked` — one or more external gates are `pending`, `failed`, or `stale`.
+            - `stale` — previously ready but a downstream change made it stale.
+            - `failed` — a required gate or artifact failed irrecoverably.
+            - `waiting` — run has not yet reached the review chokepoint.
+          enum: [ready, blocked, stale, failed, waiting]
+        externalGates:
+          type: array
+          items:
+            type: object
+            required: [gateId, status]
+            properties:
+              gateId:
+                type: string
+                description: Gate id from the flow manifest.
+              status:
+                type: string
+                enum: [pending, passed, failed, stale, overridden, skipped]
+              description:
+                type: string
+                nullable: true
+                description: Gate description from `flow.yaml` `gates[].external.description`.
+              externalRunUrl:
+                type: string
+                nullable: true
+                description: URL of the external CI/CD run that reported this gate.
+              commitSha:
+                type: string
+                nullable: true
+                description: Commit SHA the last gate report was against.
+        requiredArtifacts:
+          type: array
+          items:
+            type: object
+            required: [defId, kind, present, validity]
+            properties:
+              defId:
+                type: string
+                description: Artifact definition id from the flow manifest.
+              kind:
+                type: string
+                description: Artifact kind.
+              present:
+                type: boolean
+                description: Whether the artifact exists in the evidence index.
+              validity:
+                type: string
+                nullable: true
+                description: Validity state of the artifact, if present.
+                enum: [current, stale, superseded, failed, skipped]
+        reasons:
+          type: array
+          description: Human-readable reasons explaining the readiness verdict.
+          items:
+            type: string
+
+    ExtCreateTaskBody:
+      type: object
+      required: [title, prompt, flowId]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        prompt:
+          type: string
+          minLength: 1
+        flowId:
+          type: string
+          minLength: 1
+          description: |
+            ID of a `flows` row belonging to the project identified by the URL
+            `slug`. Any other flow ID returns 422.
+        executorOverrideId:
+          type: string
+          minLength: 1
+          description: |
+            Optional. ID of an `executors` row belonging to this project.
+            Stored in `tasks.executor_override_id`. Any other executor ID
+            returns 422.
+
+    ExtUpdateTaskBody:
+      type: object
+      description: |
+        Partial update for a `Backlog` task. At least one field must be present.
+        Fields absent from the body are left unchanged.
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+        prompt:
+          type: string
+          minLength: 1
+        executorOverrideId:
+          type: string
+          nullable: true
+          description: |
+            Set to a valid executor ID to override, or `null` to clear the
+            existing override.
+
+    ExtLaunchRunBody:
+      type: object
+      required: [taskId]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+          description: |
+            ID of a `Backlog` task owned by the token's project. The
+            `projectId` is derived server-side from the task row; it is
+            re-validated against the token's project.
+        executorOverrideId:
+          type: string
+          minLength: 1
+          description: |
+            Optional per-launch executor override. Highest priority in the
+            five-level resolution chain.
+
+    ExtGateReportBody:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [passed, failed]
+          description: Outcome of the external check.
+        externalRunUrl:
+          type: string
+          nullable: true
+          description: |
+            URL of the external CI/CD run or check suite that produced this
+            report. Surfaced in `ReadinessDTO.externalGates[].externalRunUrl`.
+        commitSha:
+          type: string
+          nullable: true
+          description: |
+            Commit SHA this report applies to. When `staleOnNewCommit` is set
+            on the gate manifest config, a subsequent report with a different
+            `commitSha` supersedes this one and re-stales the gate.
+        summary:
+          type: string
+          nullable: true
+          description: Human-readable summary of the check result.
+        payload:
+          type: object
+          description: |
+            Arbitrary structured payload from the external reporter (e.g. test
+            counts, lint findings). Stored in the `test_report` artifact. Must
+            be a JSON-serializable object when present.
+          nullable: true
+          additionalProperties: true
+
+    ExtGateReportResponse:
+      type: object
+      required: [gateId, status, artifactId]
+      properties:
+        gateId:
+          type: string
+          description: The gate id that was updated.
+        status:
+          type: string
+          enum: [passed, failed]
+          description: The status the gate was set to.
+        artifactId:
+          type: string
+          format: uuid
+          description: ID of the `test_report` artifact created for this report.

@@ -1,6 +1,7 @@
 packages:
   - web
   - supervisor
+  - mcp
 
 dangerouslyAllowAllBuilds: true
 

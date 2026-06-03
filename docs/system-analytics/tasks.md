@@ -82,7 +82,7 @@ sequenceDiagram
     UI-->>U: card appears in Backlog column
 ```
 
-### Create a task from external operations (Planned M16)
+### Create a task from external operations (M16 — Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -201,9 +201,9 @@ flowchart TD
   returns to `Backlog` and Launch button re-appears.
 - `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
 - Title and prompt are non-empty at creation.
-- **(Planned M16)** External task creation uses the same validation as the UI
+- **(M16 — Implemented)** External task creation uses the same validation as the UI
   and records the API token or MCP actor as the creator/audit subject.
-- **(Planned M16)** The thin MCP facade can create/list/get/update tasks only
+- **(M16 — Implemented)** The thin MCP facade can create/list/get/update tasks only
   through the same domain path as the API; it cannot bypass token scopes,
   assignment rules, or run launch preconditions.
 - Launch runs precondition checks (clean repo, branch free, worktree

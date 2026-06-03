@@ -23,12 +23,18 @@ import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import * as schema from "@/lib/db/schema";
+import {
+  collapseLatestExternalPerGate,
+  isExternalGateReady,
+} from "@/lib/flows/graph/external-gate-readiness";
 
 const {
   assignments,
   executors,
   flows,
+  gateResults,
   hitlRequests,
+  nodeAttempts,
   projectMembers,
   projects,
   runs,
@@ -87,6 +93,10 @@ export interface PortfolioWorkspace {
   href: string;
   scratchDialogStatus?: ScratchDialogStatus | null;
   scratchAction?: ScratchWorkspaceAction;
+  // M16 Phase 7: the run has ≥1 BLOCKING external_check gate whose
+  // latest-per-gateId, live-attempt representative status is NOT passed|overridden
+  // (pending|failed|stale|skipped). Mirrors assertEvidenceReady's allow-list.
+  externalGatePending?: boolean;
 }
 
 export interface PortfolioRecentMerge {
@@ -415,6 +425,83 @@ export async function getPortfolio(
     backlogByProject.set(row.projectId, Number(row.value));
   }
 
+  // M16 Phase 7: external_check gate-readiness collapse for active runs.
+  // Mirrors board.ts: live-attempt collapse then latest-per-gateId collapse.
+  const externalGatePendingRunIds = new Set<string>();
+  const activeRunIds = activeRunRows.map((r) => r.runId);
+
+  if (activeRunIds.length > 0) {
+    const attemptRows: Array<{
+      id: string;
+      runId: string;
+      nodeId: string;
+      attempt: number;
+    }> = await client
+      .select({
+        id: nodeAttempts.id,
+        runId: nodeAttempts.runId,
+        nodeId: nodeAttempts.nodeId,
+        attempt: nodeAttempts.attempt,
+      })
+      .from(nodeAttempts)
+      .where(inArray(nodeAttempts.runId, activeRunIds));
+
+    const bestAttempt = new Map<string, { id: string; attempt: number }>();
+
+    for (const a of attemptRows) {
+      const key = `${a.runId}:${a.nodeId}`;
+      const cur = bestAttempt.get(key);
+
+      if (!cur || a.attempt > cur.attempt) {
+        bestAttempt.set(key, { id: a.id, attempt: a.attempt });
+      }
+    }
+
+    const liveAttemptIds = new Set([...bestAttempt.values()].map((v) => v.id));
+
+    const extGateRows: Array<{
+      runId: string;
+      nodeAttemptId: string;
+      gateId: string;
+      status: string;
+      createdAt: Date;
+      id: string;
+    }> = await client
+      .select({
+        runId: gateResults.runId,
+        nodeAttemptId: gateResults.nodeAttemptId,
+        gateId: gateResults.gateId,
+        status: gateResults.status,
+        createdAt: gateResults.createdAt,
+        id: gateResults.id,
+      })
+      .from(gateResults)
+      .where(
+        and(
+          inArray(gateResults.runId, activeRunIds),
+          eq(gateResults.kind, "external_check"),
+          eq(gateResults.mode, "blocking"),
+        ),
+      );
+
+    const liveExtRows = extGateRows.filter((r) =>
+      liveAttemptIds.has(r.nodeAttemptId),
+    );
+
+    // Latest-per-gate collapse (keyed on runId+gateId): max createdAt, tiebreak
+    // id desc. Allow-list (passed/overridden) lives in the shared helper.
+    const latestByRunGate = collapseLatestExternalPerGate(
+      liveExtRows,
+      (r) => `${r.runId}:${r.gateId}`,
+    );
+
+    for (const r of latestByRunGate) {
+      if (!isExternalGateReady(r.status)) {
+        externalGatePendingRunIds.add(r.runId);
+      }
+    }
+  }
+
   const workspacesByProject = new Map<string, PortfolioWorkspace[]>();
 
   for (const row of activeRunRows) {
@@ -444,6 +531,7 @@ export async function getPortfolio(
         dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
         acpSessionId: row.acpSessionId,
       }),
+      externalGatePending: externalGatePendingRunIds.has(row.runId),
     });
     workspacesByProject.set(row.projectId, list);
   }

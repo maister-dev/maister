@@ -50,6 +50,32 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
+| Table | Purpose | Cascades from |
+| ----- | ------- | ------------- |
+| `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`; `account_status` controls login eligibility. | (root) |
+| `accounts` | Auth.js OAuth account links (Drizzle adapter contract). | `users.id` |
+| `sessions` | Auth.js session tokens. | `users.id` |
+| `verification_tokens` | Auth.js email-verification tokens. PK `(identifier, token)`. | (root) |
+| `project_members` | Per-project role assignments. UNIQUE `(project_id, user_id)`. | `projects.id`, `users.id` |
+| `projects` | Registered repos. `slug` + `repo_path` both UNIQUE. | (root) |
+| `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
+| `flows` | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement. | `projects.id` |
+| `capability_records` | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings. | `projects.id` |
+| `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
+| `runs` | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
+| `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
+| `scratch_runs` | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. | `runs.id`, `projects.id`, `users.id`, optional `tasks.id` |
+| `scratch_messages` | Append-only dialog message ledger with monotonic sequence per scratch run. | `scratch_runs.run_id` |
+| `scratch_attachments` | Text note, file path, or issue URL attachments attached to a scratch run or message. | `scratch_runs.run_id`, optional `scratch_messages.id` |
+| `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path. | `scratch_runs.run_id` |
+| `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
+| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b) |
+| `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
+| `artifact_instances` | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
+| `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`. | `runs.id` |
+| `project_tokens` | **(M16 — Implemented, migration `0018_m16_api_tokens.sql`)** Project-scoped API tokens. `prefix` + `token_hash` (sha256) at rest; plaintext returned once. | `projects.id`, `users.id` (created_by, SET NULL) |
+| `token_audit_log` | **(M16 — Implemented, migration `0018_m16_api_tokens.sql`)** Append-only audit record per `/api/v1/ext` call. | `project_tokens.id`, `projects.id` |
+| `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
 
 ## `users`
 
@@ -842,6 +868,87 @@ emitted it. The `UNIQUE (run_id, scope)` constraint leaves room for a future
 secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
 `runs.id`.
 
+## `project_tokens`
+
+**(M16 — Implemented, migration `0018_m16_api_tokens.sql`.)** Project-scoped API
+tokens that grant external callers (CI, scripts, the MCP facade) access to the
+`/api/v1/ext` surface. See
+[`system-analytics/external-operations.md`](system-analytics/external-operations.md)
+for the token lifecycle FSM and [ADR-046](decisions.md#adr-046) for the model
+rationale.
+
+```ts
+{
+  id,                                       // uuid PK
+  projectId,                                // NOT NULL, FK -> projects.id, ON DELETE CASCADE
+  name,                                     // NOT NULL; human-readable label
+  prefix,                                   // NOT NULL, INDEX; first 12 chars of the full
+                                            //   token string (mai_...) — lookup key
+  tokenHash,                                // NOT NULL; sha256_hex(fullToken) — plaintext
+                                            //   returned once at creation, never stored
+  scopes (jsonb),                           // NOT NULL, DEFAULT '["*"]'; label list;
+                                            //   v1 enforcement is binary (full project API)
+  createdBy?,                               // nullable FK -> users.id, ON DELETE SET NULL
+  createdAt,                                // NOT NULL DEFAULT now()
+  lastUsedAt?,                              // updated after each successful verification
+  expiresAt?,                               // nullable; checked at verify time (no sweeper)
+  revokedAt?                                // nullable; set by DELETE token route (soft revoke)
+}
+```
+
+Token string format: `mai_` + base64url(randomBytes(32)). `prefix` = first 12
+chars of the full string. Verification: extract `prefix` → `SELECT WHERE prefix
+= ?` → `timingSafeEqual(sha256_hex(presented), row.token_hash)` → assert
+`revoked_at IS NULL` AND (`expires_at IS NULL` OR `expires_at > now()`). Failure
+kinds: invalid (no match or hash mismatch) → 401; expired → 401; revoked → 401;
+wrong-project (token's `project_id` ≠ addressed resource) → 404 (existence-hide).
+Modeled as `TokenAuthError(kind)` + `httpStatusForTokenAuth(kind)` — NOT a
+`MaisterError` code.
+
+Indexes: `project_tokens_prefix_idx` on `(prefix)`, `project_tokens_project_idx`
+on `(project_id)`. Cascade: `ON DELETE CASCADE` from `projects.id`;
+`created_by` is `ON DELETE SET NULL` — token rows survive user deletion.
+
+## `token_audit_log`
+
+**(M16 — Implemented, migration `0018_m16_api_tokens.sql`.)** Append-only audit
+record for every `/api/v1/ext` call made with an **identified** token — every
+success plus identified-token failures (expired / revoked / wrong-project /
+validation). `token_id` is `NOT NULL`: a request whose token cannot be
+identified (no `prefix` match or hash mismatch) returns `401` with **no** audit
+row — it is anonymous and cannot be attributed. See
+[`system-analytics/external-operations.md`](system-analytics/external-operations.md)
+and [ADR-041](decisions.md#adr-041).
+
+```ts
+{
+  id,                                       // uuid PK
+  tokenId,                                  // NOT NULL, FK -> project_tokens.id,
+                                            //   ON DELETE CASCADE
+  projectId,                                // NOT NULL, FK -> projects.id,
+                                            //   ON DELETE CASCADE; denormalized for
+                                            //   project-scoped audit queries
+  actorLabel,                               // NOT NULL; e.g. "token:<name>"
+  scopeUsed,                                // NOT NULL; logical label:
+                                            //   tasks:create | runs:launch |
+                                            //   gates:report | readiness:read | …
+  endpoint,                                 // NOT NULL; e.g. "POST /api/v1/ext/runs"
+  method,                                   // NOT NULL; HTTP verb
+  result,                                   // NOT NULL; "ok" | "error"
+  statusCode,                               // NOT NULL; HTTP status returned
+  createdAt                                 // NOT NULL DEFAULT now(), INDEX
+}
+```
+
+Every `/api/v1/ext` call MUST produce exactly one audit row — failure rows are
+written outside the success transaction (after-side), success rows are written
+inside the gate-report transaction (for the atomic gate+artifact+audit path) or
+after the handler returns (for all other endpoints).
+
+Indexes: `token_audit_token_idx` on `(token_id)`, `token_audit_project_created_idx`
+on `(project_id, created_at)`. Cascade chain: deleting a project drops all its
+`token_audit_log` rows; deleting a `project_tokens` row drops its audit rows.
+
 ## `hitl_requests`
 
 ```ts
@@ -989,6 +1096,16 @@ explicitly chooses that as a temporary bridge.
 | ~~`assignments`~~ → **M13 (Implemented)**                                                       | Claimable work persistence, runtime assignment creation, assignment actions, and run-detail ledger history landed as `assignments` + `assignment_events` in migration `0018`. See [`assignments`](#assignments) above. | `runs.id`, optional task         |
 | `api_tokens`                                                                                    | Hashed project-scoped service tokens with scopes, expiry, revocation, created-by, last-used metadata.                                                                                                                  | `projects.id`                    |
 | `external_operation_events`                                                                     | Audit/ledger records for token or MCP actions: task create, run launch, artifact attach, gate report, readiness read.                                                                                                  | `projects.id`, optional run/task |
+| Planned object | Why it exists | Likely parent |
+| -------------- | ------------- | ------------- |
+| `flow_package_revisions` | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary. | project or system cache |
+| `project_flow_enablements` | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs. | `projects.id`, package revision |
+| ~~`node_attempts`~~ → **M11a (Implemented)** | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above. | `runs.id` |
+| ~~`artifacts`~~ → **M12 (Implemented) as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above. | `runs.id`, `node_attempts.id` |
+| `artifact_edges` | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence. | `artifacts.id` |
+| ~~`gate_results`~~ → **M11a (Implemented)** | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. M15 adds the readiness policy that consumes them. | `runs.id`, `node_attempts.id` |
+| `assignments` | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits. | `runs.id`, optional task |
+| ~~`api_tokens`~~ → **M16 (Implemented) as `project_tokens` + `token_audit_log`** | Hashed project-scoped service tokens + per-call audit log. See [`project_tokens`](#project_tokens) and [`token_audit_log`](#token_audit_log) above. | `projects.id`, `users.id` |
 
 Launch-time snapshots remain mandatory for every mutable surface: Flow package
 revision, capability profile revision, branch target, gate policy, and executor
@@ -1035,6 +1152,9 @@ projects
   │                 │     └── scratch_attachments   (optional message FK)
   │                 ├── scratch_attachments         (run FK)
   │                 └── scratch_capability_profiles
+  ├── project_tokens     (FK projectId, cascade)  ← M16
+  │     └── token_audit_log  (FK tokenId, cascade)
+  ├── token_audit_log    (FK projectId, cascade)  ← M16 (also direct)
   ├── runs               (FK projectId, cascade)  ← also direct
   ├── assignments         (FK projectId, cascade)  ← also direct, M13
   ├── assignment_events   (FK projectId, cascade)  ← also direct, M13
@@ -1082,6 +1202,33 @@ Created via Drizzle:
 | `assignments`         | `assignments_hitl_request_idx`          | `(hitlRequestId)`                 | HITL assignment lookup                                             |
 | `assignment_events`   | `assignment_events_assignment_idx`      | `(assignmentId)`                  | Assignment event history                                           |
 | `assignment_events`   | `assignment_events_project_created_idx` | `(projectId, createdAt)`          | Project audit stream                                               |
+| Table | Index | Columns | Purpose |
+| ----- | ----- | ------- | ------- |
+| `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |
+| `users` | `users_account_status_idx` | `(accountStatus)` | Admin queue and status-filtered user management |
+| `tasks` | `tasks_project_status_idx` | `(projectId, status)` | Board queries |
+| `capability_records` | `capability_records_project_kind_idx` | `(projectId, kind, selectable)` | Scratch launch-options catalog lookup |
+| `runs` | `runs_project_status_idx` | `(projectId, status)` | Portfolio queries |
+| `runs` | `runs_task_idx` | `(taskId)` | Latest-attempt lookups |
+| `runs` | `runs_project_status_kind_idx` | `(projectId, status, runKind)` | Active workspace queries across Flow and scratch runs. |
+| `runs` | `runs_kind_task_idx` | `(runKind, taskId)` | Board/latest-attempt lookups that explicitly exclude scratch runs. |
+| `scratch_runs` | `scratch_runs_project_status_idx` | `(projectId, dialogStatus)` | Project scratch workspace lists. |
+| `scratch_attachments` | `scratch_attachments_run_idx` | `(runId)` | Run-level attachment lookup. |
+| `scratch_attachments` | `scratch_attachments_message_idx` | `(messageId)` | Message attachment lookup. |
+| `step_runs` | `step_runs_run_idx` | `(runId)` | Per-run step lookups (templating) |
+| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(runId, nodeId, attempt)` UNIQUE | **(M11a)** Append-only one row per (run, node, attempt) |
+| `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |
+| `gate_results` | `gate_results_run_idx` | `(runId)` | **(M11a)** Per-run gate lookups |
+| `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(M11a)** Gates for a node attempt |
+| `artifact_instances` | `artifact_instances_run_idx` | `(runId)` | **(M12)** Evidence index for a run |
+| `artifact_instances` | `artifact_instances_node_attempt_idx` | `(nodeAttemptId)` | **(M12)** All artifacts for a node attempt |
+| `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |
+| `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
+| `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification |
+| `project_tokens` | `project_tokens_project_idx` | `(projectId)` | **(M16)** List tokens for a project |
+| `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(M16)** Per-token audit trail |
+| `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16)** Chronological audit log per project |
+| `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,

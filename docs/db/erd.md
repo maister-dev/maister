@@ -4,16 +4,20 @@ All implemented tables in one diagram (M9 added `USERS`, `ACCOUNTS`, `SESSIONS`,
 `VERIFICATION_TOKENS`, `PROJECT_MEMBERS`), the two **M11a (Implemented)**
 execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 **M11b (migration `0011`, additive)** takeover columns and `HumanWorking`
-status, scratch-run persistence, the selectable capability catalog, and the
+status, scratch-run persistence, the selectable capability catalog, the
 **M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
 and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
 assignment tables, and the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
 column. For partial views by domain, see
+and `ARTIFACT_PROJECTION_CURSORS`, and the **M16 (Implemented, migration
+`0018_m16_api_tokens.sql`)** integrations tables `PROJECT_TOKENS` and
+`TOKEN_AUDIT_LOG`. For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md), [`artifacts-domain.md`](artifacts-domain.md),
 [`assignments-domain.md`](assignments-domain.md), and
 [`capabilities-domain.md`](capabilities-domain.md).
+[`integrations-domain.md`](integrations-domain.md).
 
 ```mermaid
 erDiagram
@@ -64,6 +68,11 @@ erDiagram
     SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments"
     SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments"
     SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot"
+
+    PROJECTS ||--o{ PROJECT_TOKENS : "project tokens (M16)"
+    PROJECTS ||--o{ TOKEN_AUDIT_LOG : "audit rows (M16)"
+    USERS ||--o{ PROJECT_TOKENS : "created_by SET NULL (M16)"
+    PROJECT_TOKENS ||--o{ TOKEN_AUDIT_LOG : "per-call audit (M16)"
 
     USERS {
         text id PK
@@ -472,6 +481,33 @@ erDiagram
         jsonb downgrade_notes
         timestamp created_at
     }
+
+    PROJECT_TOKENS {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
+        text name "NOT NULL"
+        text prefix "NOT NULL, INDEX — first 12 chars of the token string"
+        text token_hash "NOT NULL — sha256_hex(fullToken); never plaintext"
+        jsonb scopes "NOT NULL default [*]"
+        text created_by FK "NULL -> users(id) ON DELETE SET NULL"
+        timestamp created_at "NOT NULL default now()"
+        timestamp last_used_at "nullable"
+        timestamp expires_at "nullable"
+        timestamp revoked_at "nullable"
+    }
+
+    TOKEN_AUDIT_LOG {
+        text id PK "uuid"
+        text token_id FK "NOT NULL -> project_tokens(id) ON DELETE CASCADE"
+        text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
+        text actor_label "NOT NULL"
+        text scope_used "NOT NULL"
+        text endpoint "NOT NULL"
+        text method "NOT NULL"
+        text result "NOT NULL — ok | error"
+        integer status_code "NOT NULL"
+        timestamp created_at "NOT NULL default now(), INDEX"
+    }
 ```
 
 ## Planned roadmap extensions
@@ -487,6 +523,9 @@ migration `0019`)** `capability_imports` table and
 [`capabilities-domain.md`](capabilities-domain.md)). The remaining roadmap
 additive persistence — artifact edges, API tokens, and external operation
 events — is not drawn until its migrations exist. See
+[`artifacts-domain.md`](artifacts-domain.md)). The remaining M13-M18 additive persistence — artifact edges, assignments — is
+not drawn until its migrations exist. `project_tokens` and `token_audit_log`
+(M16, migration `0018_m16_api_tokens.sql`) are now drawn above. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes
@@ -532,5 +571,38 @@ events — is not drawn until its migrations exist. See
 | `executors`           | `executors_project_ref_uq`              | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace.                                                                                                  |
 | `flows`               | `flows_project_ref_uq`                  | `(project_id, flow_ref_id)` UNIQUE     | Per-project namespace.                                                                                                  |
 | `workspaces`          | implicit                                | `worktree_path` UNIQUE                 | Globally unique worktree path.                                                                                          |
+| Table | Index | Columns | Purpose |
+| ----- | ----- | ------- | ------- |
+| `users` | implicit | `email` UNIQUE | Auth lookup by email. |
+| `users` | `users_account_status_idx` | `(account_status)` | Admin approval queue and status filtering. |
+| `accounts` | implicit PK | `(provider, provider_account_id)` | Auth.js adapter dedup. |
+| `sessions` | implicit PK | `session_token` | Session lookup. |
+| `verification_tokens` | implicit PK | `(identifier, token)` | Token lookup. |
+| `project_members` | `project_members_project_user_uq` | `(project_id, user_id)` UNIQUE | One membership per user/project. |
+| `project_members` | `project_members_user_idx` | `(user_id)` | Per-user project listing / authz. |
+| `capability_records` | `capability_records_project_kind_idx` | `(project_id, kind, selectable)` | Scratch launch-options catalog lookup. |
+| `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
+| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
+| `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
+| `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
+| `runs` | `runs_project_status_kind_idx` | `(project_id, status, run_kind)` | Active workspace queries across Flow and scratch runs. |
+| `runs` | `runs_kind_task_idx` | `(run_kind, task_id)` | Board/latest-attempt lookups that explicitly exclude scratch runs. |
+| `scratch_runs` | `scratch_runs_project_status_idx` | `(project_id, dialog_status)` | Project scratch workspace lists. |
+| `scratch_attachments` | `scratch_attachments_run_idx` | `(run_id)` | Run-level attachment lookup. |
+| `scratch_attachments` | `scratch_attachments_message_idx` | `(message_id)` | Message attachment lookup. |
+| `step_runs` | `step_runs_run_idx` | `(run_id)` | Per-run step lookups. |
+| `node_attempts` | `node_attempts_run_step_attempt_uq` | `(run_id, node_id, attempt)` UNIQUE | **(M11a)** Append-only ledger uniqueness. |
+| `node_attempts` | `node_attempts_run_idx` | `(run_id)` | **(M11a)** Templating highest-attempt union. |
+| `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |
+| `gate_results` | `gate_results_node_attempt_idx` | `(node_attempt_id)` | **(M11a)** Gates for a node attempt. |
+| `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
+| `projects` | implicit | `slug`, `repo_path` UNIQUE | Registration collisions. |
+| `executors` | `executors_project_ref_uq` | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace. |
+| `flows` | `flows_project_ref_uq` | `(project_id, flow_ref_id)` UNIQUE | Per-project namespace. |
+| `workspaces` | implicit | `worktree_path` UNIQUE | Globally unique worktree path. |
+| `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification. |
+| `project_tokens` | `project_tokens_project_idx` | `(project_id)` | **(M16)** List tokens for a project. |
+| `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
+| `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
 
 Source: `web/lib/db/schema.ts`.

@@ -34,6 +34,7 @@ import {
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -98,6 +99,7 @@ beforeAll(async () => {
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
   savedToken = process.env.MAISTER_CRON_TOKEN;
 
@@ -108,6 +110,11 @@ afterAll(async () => {
   if (savedToken === undefined) delete process.env.MAISTER_CRON_TOKEN;
   else process.env.MAISTER_CRON_TOKEN = savedToken;
 
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
+  }
   await pool?.end();
   await container?.stop();
 });

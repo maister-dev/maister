@@ -236,6 +236,56 @@ Also back up `/etc/maister/maister.env` (secrets) and the project repos /
 - **Single host only.** Multi-host (supervisor on a separate machine) needs durable HTTP replay from `run.events.jsonl` — deferred ([ADR-022](decisions.md#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)).
 
+## Running the MCP facade
+
+The `mcp/` package (`@maister/mcp`) is a standalone MCP server that wraps the
+`/api/v1/ext/*` REST API. It is **separate from the web and supervisor
+processes** and is only needed when you want to expose MAIster tools to an MCP
+client (e.g. Claude Desktop, an agent harness).
+
+### stdio (local, env token)
+
+Suitable for local use where the MCP client and MAIster web tier run on the
+same machine. The token is read from the environment — it must be a valid
+project API token created in Project Settings.
+
+```bash
+export MAISTER_API_BASE_URL=http://localhost:3000
+export MAISTER_PROJECT_TOKEN=mai_<your-token>
+pnpm --filter @maister/mcp start --stdio
+```
+
+Or force the transport via env: `MCP_TRANSPORT=stdio`.
+
+**Security note:** `MAISTER_PROJECT_TOKEN` is scoped to a single project. Never
+use the stdio transport across a network boundary — the token would be exposed
+in transit. For remote use, use Streamable-HTTP instead.
+
+### Streamable-HTTP (remote, per-request inbound bearer)
+
+Default when `--stdio` / `MCP_TRANSPORT=stdio` is not set. The server listens
+on `:3001` (override with `MCP_PORT`) at `POST /mcp` and `GET /health`.
+
+```bash
+export MAISTER_API_BASE_URL=https://maister.example.com
+pnpm --filter @maister/mcp start
+```
+
+The MCP server **never holds an ambient token** under this transport. Each
+`POST /mcp` request must carry an `Authorization: Bearer <token>` header, which
+the server forwards verbatim to `/api/v1/ext`. A request without a bearer
+header returns an MCP tool error with status 401 and makes zero REST calls
+(ADR-042).
+
+**Binding / exposure:** the server binds `0.0.0.0:3001`. Put it behind your
+reverse proxy (e.g. nginx) and enforce TLS before exposing it externally. The
+`Authorization` header must be forwarded by the proxy (`proxy_pass_header
+Authorization` in nginx).
+
+**Reject-unauthenticated guarantee:** the server never falls back to an env
+token when the inbound bearer is missing. There is no `MAISTER_PROJECT_TOKEN`
+fallback under HTTP.
+
 ## Linked artifacts
 
 - [`deploy/`](../deploy) — systemd units, env template, nginx config.

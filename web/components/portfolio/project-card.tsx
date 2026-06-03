@@ -56,6 +56,7 @@ export async function ProjectCard({
   project,
 }: ProjectCardProps): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
+  const tBoard = await getTranslations("board");
 
   const accentStyle = ACCENT_VARS[project.accent];
   const visibleMembers = project.members.slice(0, 5);
@@ -220,7 +221,7 @@ export async function ProjectCard({
                 className="[&+li]:border-t [&+li]:border-line-soft"
               >
                 <Link
-                  className="grid cursor-pointer grid-cols-[10px_1fr_auto_auto_auto] items-center gap-2 px-2.5 py-2 font-mono text-[11px] transition-colors hover:bg-paper"
+                  className="grid cursor-pointer grid-cols-[10px_1fr_auto_auto_auto_auto] items-center gap-2 px-2.5 py-2 font-mono text-[11px] transition-colors hover:bg-paper"
                   href={ws.href}
                 >
                   <span
@@ -247,6 +248,15 @@ export async function ProjectCard({
                   >
                     {ws.runKind === "scratch" ? "scratch" : ws.agent}
                   </span>
+                  {ws.externalGatePending ? (
+                    <span
+                      aria-label={tBoard("externalGatePending")}
+                      className="rounded-full border border-amber-line bg-amber-soft px-1 py-px text-[9.5px] font-bold text-amber"
+                      title={tBoard("externalGatePending")}
+                    >
+                      ◉
+                    </span>
+                  ) : null}
                   <span
                     className={clsx(
                       "text-[10px] tracking-[0.04em]",

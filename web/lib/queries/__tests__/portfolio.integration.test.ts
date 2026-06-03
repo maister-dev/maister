@@ -422,4 +422,346 @@ describe("portfolio queries (integration)", () => {
       rail.find((workspace) => workspace.href === `/scratch-runs/${runId}`),
     ).toBeDefined();
   });
+
+  // T7 (M16 Phase 7): the external_check gate-readiness flag fanned into the
+  // portfolio. PortfolioWorkspace gains `externalGatePending?: boolean`,
+  // computed per active workspace's latest run with the SAME semantics as the
+  // board reader: true iff ≥1 BLOCKING external_check gate whose latest-per-
+  // gateId, live-attempt representative status is NOT passed|overridden
+  // (pending|failed|stale|skipped → true), mirroring assertEvidenceReady's
+  // passed/overridden allow-list. The field does not exist yet →
+  // RED (undefined at runtime). Existing portfolio tests are untouched.
+  async function seedRunWithExternalGate(opts: {
+    runStatus: "Review" | "Done" | "Abandoned";
+    gateStatus:
+      | "pending"
+      | "failed"
+      | "stale"
+      | "passed"
+      | "overridden"
+      | "skipped";
+    gateMode?: "blocking" | "advisory";
+  }): Promise<{ userId: string; projectId: string; runId: string }> {
+    const user = await createUser(`ext-${randomUUID().slice(0, 8)}@test.com`);
+    const project = await createProject("External Gate Project");
+    const flow = await createFlow(project);
+    const executorId = await createExecutor(project);
+
+    await addProjectMember(user, project, "member");
+
+    const taskId = await createTask(project, flow, "External Gate Task");
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      taskId,
+      projectId: project,
+      flowId: flow,
+      executorId,
+      status: opts.runStatus,
+      flowVersion: "v1.0.0",
+      currentStepId: "review",
+      startedAt: new Date(),
+      endedAt: opts.runStatus === "Review" ? undefined : new Date(),
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: `maister/ext-${runId.slice(0, 8)}`,
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/ext",
+    });
+    await db.insert(schema.nodeAttempts).values({
+      id: attemptId,
+      runId,
+      nodeId: "review",
+      nodeType: "check",
+      attempt: 1,
+      status: "Succeeded",
+      startedAt: new Date(),
+    });
+    await db.insert(schema.gateResults).values({
+      id: randomUUID(),
+      runId,
+      nodeAttemptId: attemptId,
+      gateId: "ext-ci",
+      kind: "external_check",
+      mode: opts.gateMode ?? "blocking",
+      status: opts.gateStatus,
+    });
+
+    return { userId: user, projectId: project, runId };
+  }
+
+  for (const gateStatus of ["pending", "failed", "stale", "skipped"] as const) {
+    it(`active workspace's externalGatePending=true for a blocking external_check that is ${gateStatus}`, async () => {
+      const { userId, projectId, runId } = await seedRunWithExternalGate({
+        runStatus: "Review",
+        gateStatus,
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.externalGatePending).toBe(true);
+    });
+  }
+
+  it("active workspace's externalGatePending=false for a passed blocking external_check", async () => {
+    const { userId, projectId, runId } = await seedRunWithExternalGate({
+      runStatus: "Review",
+      gateStatus: "passed",
+    });
+
+    const portfolio = await getPortfolio(userId, "member");
+    const proj = portfolio.projects.find((p) => p.id === projectId);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws).toBeDefined();
+    expect(ws?.externalGatePending).toBe(false);
+  });
+
+  it("a Done workspace is not active and never reads externalGatePending=true", async () => {
+    const { userId, projectId, runId } = await seedRunWithExternalGate({
+      runStatus: "Done",
+      gateStatus: "pending",
+    });
+
+    const portfolio = await getPortfolio(userId, "member");
+    const proj = portfolio.projects.find((p) => p.id === projectId);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws?.externalGatePending ?? false).toBe(false);
+  });
+
+  it("an Abandoned workspace is not active and never reads externalGatePending=true", async () => {
+    const { userId, projectId, runId } = await seedRunWithExternalGate({
+      runStatus: "Abandoned",
+      gateStatus: "pending",
+    });
+
+    const portfolio = await getPortfolio(userId, "member");
+    const proj = portfolio.projects.find((p) => p.id === projectId);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws?.externalGatePending ?? false).toBe(false);
+  });
+
+  // L2: advisory (non-blocking) external_check pending must NOT set the flag.
+  // Exercises the `mode === "blocking"` filter in the portfolio collapse path.
+  it("active workspace's externalGatePending=false for an advisory external_check that is pending", async () => {
+    const { userId, projectId, runId } = await seedRunWithExternalGate({
+      runStatus: "Review",
+      gateStatus: "pending",
+      gateMode: "advisory",
+    });
+
+    const portfolio = await getPortfolio(userId, "member");
+    const proj = portfolio.projects.find((p) => p.id === projectId);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws).toBeDefined();
+    expect(ws?.externalGatePending).toBe(false);
+  });
+
+  // M1: additional ready-status coverage. Only passed/overridden are ready;
+  // skipped is asserted as pending=true in the loop above (it blocks like
+  // assertEvidenceReady's passed/overridden allow-list).
+  for (const gateStatus of ["overridden"] as const) {
+    it(`active workspace's externalGatePending=false for a blocking external_check that is ${gateStatus}`, async () => {
+      const { userId, projectId, runId } = await seedRunWithExternalGate({
+        runStatus: "Review",
+        gateStatus,
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.externalGatePending).toBe(false);
+    });
+  }
+
+  // M1: supersede collapse — two rows on the same gateId, same live attempt.
+  // Seeds a run with TWO external_check gate rows sharing the same gateId but
+  // different createdAt so the latest-per-gateId collapse is exercised.
+  async function seedRunWithTwoGateRows(opts: {
+    olderStatus: "passed" | "stale";
+    newerStatus: "passed" | "stale";
+  }): Promise<{ userId: string; projectId: string; runId: string }> {
+    const user = await createUser(
+      `supersede-${randomUUID().slice(0, 8)}@test.com`,
+    );
+    const project = await createProject("Supersede Gate Project");
+    const flow = await createFlow(project);
+    const executorId = await createExecutor(project);
+
+    await addProjectMember(user, project, "member");
+
+    const taskId = await createTask(project, flow, "Supersede Gate Task");
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      taskId,
+      projectId: project,
+      flowId: flow,
+      executorId,
+      status: "Review",
+      flowVersion: "v1.0.0",
+      currentStepId: "review",
+      startedAt: new Date(),
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: `maister/sup-${runId.slice(0, 8)}`,
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/sup",
+    });
+    await db.insert(schema.nodeAttempts).values({
+      id: attemptId,
+      runId,
+      nodeId: "review",
+      nodeType: "check",
+      attempt: 1,
+      status: "Succeeded",
+      startedAt: new Date(),
+    });
+    // Older row on the same gateId.
+    await db.insert(schema.gateResults).values({
+      id: randomUUID(),
+      runId,
+      nodeAttemptId: attemptId,
+      gateId: "ext-ci",
+      kind: "external_check",
+      mode: "blocking",
+      status: opts.olderStatus,
+      createdAt: new Date("2026-05-31T10:00:00.000Z"),
+    });
+    // Newer row on the same gateId — must win the collapse.
+    await db.insert(schema.gateResults).values({
+      id: randomUUID(),
+      runId,
+      nodeAttemptId: attemptId,
+      gateId: "ext-ci",
+      kind: "external_check",
+      mode: "blocking",
+      status: opts.newerStatus,
+      createdAt: new Date("2026-05-31T12:00:00.000Z"),
+    });
+
+    return { userId: user, projectId: project, runId };
+  }
+
+  it("externalGatePending=false when older stale row is superseded by newer passed row on same gateId", async () => {
+    const { userId, projectId, runId } = await seedRunWithTwoGateRows({
+      olderStatus: "stale",
+      newerStatus: "passed",
+    });
+
+    const portfolio = await getPortfolio(userId, "member");
+    const proj = portfolio.projects.find((p) => p.id === projectId);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws).toBeDefined();
+    expect(ws?.externalGatePending).toBe(false);
+  });
+
+  it("externalGatePending=true when older passed row is superseded by newer stale row on same gateId", async () => {
+    const { userId, projectId, runId } = await seedRunWithTwoGateRows({
+      olderStatus: "passed",
+      newerStatus: "stale",
+    });
+
+    const portfolio = await getPortfolio(userId, "member");
+    const proj = portfolio.projects.find((p) => p.id === projectId);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws).toBeDefined();
+    expect(ws?.externalGatePending).toBe(true);
+  });
+
+  // M1: live-attempt collapse — a pending gate on a SUPERSEDED (non-live)
+  // attempt must not set the flag. Seeds two attempts on the same node; the
+  // gate row sits on attempt 1 (stale) while attempt 2 is live.
+  it("externalGatePending=false when the pending external gate sits on a stale (non-live) attempt", async () => {
+    const user = await createUser(
+      `stale-attempt-${randomUUID().slice(0, 8)}@test.com`,
+    );
+    const project = await createProject("Stale Attempt Gate Project");
+    const flow = await createFlow(project);
+    const executorId = await createExecutor(project);
+
+    await addProjectMember(user, project, "member");
+
+    const taskId = await createTask(project, flow, "Stale Attempt Gate Task");
+    const runId = randomUUID();
+    const staleAttemptId = randomUUID();
+    const liveAttemptId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: runId,
+      taskId,
+      projectId: project,
+      flowId: flow,
+      executorId,
+      status: "Review",
+      flowVersion: "v1.0.0",
+      currentStepId: "review",
+      startedAt: new Date(),
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId: project,
+      branch: `maister/sta-${runId.slice(0, 8)}`,
+      worktreePath: `/wt/${runId}`,
+      parentRepoPath: "/repos/sta",
+    });
+    // Superseded attempt (lower attempt number — not live).
+    await db.insert(schema.nodeAttempts).values({
+      id: staleAttemptId,
+      runId,
+      nodeId: "review",
+      nodeType: "check",
+      attempt: 1,
+      status: "Succeeded",
+      startedAt: new Date("2026-05-31T10:00:00.000Z"),
+    });
+    // Live attempt (higher attempt number).
+    await db.insert(schema.nodeAttempts).values({
+      id: liveAttemptId,
+      runId,
+      nodeId: "review",
+      nodeType: "check",
+      attempt: 2,
+      status: "Succeeded",
+      startedAt: new Date("2026-05-31T11:00:00.000Z"),
+    });
+    // Gate row sits on the STALE (non-live) attempt — must be ignored.
+    await db.insert(schema.gateResults).values({
+      id: randomUUID(),
+      runId,
+      nodeAttemptId: staleAttemptId,
+      gateId: "ext-ci",
+      kind: "external_check",
+      mode: "blocking",
+      status: "pending",
+    });
+
+    const portfolio = await getPortfolio(user, "member");
+    const proj = portfolio.projects.find((p) => p.id === project);
+    const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+    expect(ws).toBeDefined();
+    expect(ws?.externalGatePending).toBe(false);
+  });
 });

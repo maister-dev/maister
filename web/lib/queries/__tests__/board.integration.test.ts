@@ -71,7 +71,24 @@ type GateSeed = {
     | "external_check"
     | "human_review";
   mode: "blocking" | "advisory";
-  status: "pending" | "running" | "passed" | "failed" | "stale" | "skipped";
+  status:
+    | "pending"
+    | "running"
+    | "passed"
+    | "failed"
+    | "stale"
+    | "skipped"
+    | "overridden";
+  // T7 (M16 Phase 7): per-gate overrides so the external-gate collapse
+  // (latest-per-gateId + live-attempt) can be exercised. Defaults preserve the
+  // pre-existing single-gate fixture: gateId "artifact-gate", live attempt,
+  // monotonic createdAt.
+  gateId?: string;
+  createdAt?: Date;
+  // "live" → the run's live (latest) attempt; "stale" → a superseded older
+  // attempt on the SAME node (lower attempt number), so the gate row sits on a
+  // non-live attempt and must be ignored by the live-attempt collapse.
+  attemptLineage?: "live" | "stale";
 };
 
 // Seed a Review-status flow run (lands in the OnReview in-flight column),
@@ -80,6 +97,9 @@ type GateSeed = {
 async function seedReviewRun(opts: {
   artifacts?: ArtifactSeed[];
   gates?: GateSeed[];
+  // T7 (M16 Phase 7): override the run status so a Done card can be exercised
+  // (a done card must read externalGatePending=false even with a pending gate).
+  runStatus?: "Review" | "Done";
 }): Promise<{ projectId: string; runId: string }> {
   const projectId = randomUUID();
   const executorId = randomUUID();
@@ -129,9 +149,10 @@ async function seedReviewRun(opts: {
     projectId,
     flowId,
     executorId,
-    status: "Review",
+    status: opts.runStatus ?? "Review",
     flowVersion: "v1.0.0",
     currentStepId: "review",
+    endedAt: opts.runStatus === "Done" ? new Date() : undefined,
   });
   await db.insert(schema.workspaces).values({
     id: workspaceId,
@@ -150,6 +171,28 @@ async function seedReviewRun(opts: {
     status: "Succeeded",
     startedAt: new Date("2026-05-31T10:00:00.000Z"),
   });
+
+  // T7 (M16 Phase 7): if any seeded gate targets a STALE (superseded) attempt,
+  // we need a higher-numbered live attempt on the SAME node so attempt 1 is no
+  // longer the live representative. Created lazily.
+  const staleAttemptId = attemptId;
+  let liveAttemptId = attemptId;
+  const needsStaleLineage = (opts.gates ?? []).some(
+    (g) => g.attemptLineage === "stale",
+  );
+
+  if (needsStaleLineage) {
+    liveAttemptId = randomUUID();
+    await db.insert(schema.nodeAttempts).values({
+      id: liveAttemptId,
+      runId,
+      nodeId: "review",
+      nodeType: "check",
+      attempt: 2,
+      status: "Succeeded",
+      startedAt: new Date("2026-05-31T11:00:00.000Z"),
+    });
+  }
 
   for (const a of opts.artifacts ?? []) {
     await db.insert(schema.artifactInstances).values({
@@ -171,11 +214,13 @@ async function seedReviewRun(opts: {
     await db.insert(schema.gateResults).values({
       id: randomUUID(),
       runId,
-      nodeAttemptId: attemptId,
-      gateId: "artifact-gate",
+      nodeAttemptId:
+        g.attemptLineage === "stale" ? staleAttemptId : liveAttemptId,
+      gateId: g.gateId ?? "artifact-gate",
       kind: g.kind,
       mode: g.mode,
       status: g.status,
+      ...(g.createdAt ? { createdAt: g.createdAt } : {}),
     });
   }
 
@@ -187,6 +232,20 @@ async function flightCard(projectId: string, runId: string) {
   const flight = board.columns.OnReview.flight;
 
   return flight.find((c) => c.runId === runId);
+}
+
+// T7 (M16 Phase 7): a Done run lands in a different in-flight column
+// (InDelivery while the worktree survives), so search every column's flight.
+async function anyFlightCard(projectId: string, runId: string) {
+  const board = await getBoardData(projectId);
+
+  for (const col of Object.values(board.columns)) {
+    const hit = col.flight.find((c) => c.runId === runId);
+
+    if (hit) return hit;
+  }
+
+  return undefined;
 }
 
 describe("getBoardData — evidence badge flags (integration)", () => {
@@ -317,5 +376,176 @@ describe("getBoardData — evidence badge flags (integration)", () => {
 
     expect(card?.evidenceStale).toBe(false);
     expect(card?.mergeBlocked).toBe(true);
+  });
+});
+
+// T7.7 (RED): the external_check gate-readiness badge fanned into the board.
+//
+// Contract (Implementor extends FlightCard + getBoardData):
+//   FlightCard gains `externalGatePending: boolean`, computed in the same
+//   batched set-of-runIds style as mergeBlocked/evidenceStale:
+//     true  iff the card's latest run has ≥1 BLOCKING external_check gate
+//           whose LATEST-per-gateId, LIVE-attempt representative status is one
+//           of pending|failed|stale|skipped (allow-list: only passed|overridden
+//           are ready, hence false — mirrors assertEvidenceReady).
+//     false otherwise (incl. passed/overridden, advisory gates, and
+//           every done-status card).
+//   The reader MUST mirror readiness.ts: (a) the live-attempt collapse (max
+//   `attempt` per (runId,nodeId)), AND (b) the latest-per-gateId collapse
+//   (max createdAt per gateId, tiebreak id desc) so a leftover stale row from a
+//   supersede-on-new-commit never strands the run as blocked NOR lets it read
+//   ready falsely.
+//
+// `externalGatePending` does not exist on FlightCard yet → RED (undefined at
+// runtime; the assertions presuppose the impl). Existing tests are untouched.
+describe("getBoardData — external_check gate badge (M16 Phase 7)", () => {
+  for (const status of ["pending", "failed", "stale", "skipped"] as const) {
+    it(`externalGatePending=true for a blocking external_check gate that is ${status}`, async () => {
+      const { projectId, runId } = await seedReviewRun({
+        gates: [{ kind: "external_check", mode: "blocking", status }],
+      });
+
+      const card = await flightCard(projectId, runId);
+
+      expect(card).toBeDefined();
+      expect(card?.externalGatePending).toBe(true);
+    });
+  }
+
+  for (const status of ["passed", "overridden"] as const) {
+    it(`externalGatePending=false for a blocking external_check gate that is ${status}`, async () => {
+      const { projectId, runId } = await seedReviewRun({
+        gates: [{ kind: "external_check", mode: "blocking", status }],
+      });
+
+      const card = await flightCard(projectId, runId);
+
+      expect(card?.externalGatePending).toBe(false);
+    });
+  }
+
+  // SUPERSEDE case (critical, mirrors readiness.ts:147-164): two external_check
+  // rows on the SAME gateId + same live attempt. The LATEST report governs.
+  it("externalGatePending=false when an older stale row is superseded by a newer passed row on the same gateId", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      gates: [
+        {
+          kind: "external_check",
+          mode: "blocking",
+          status: "stale",
+          gateId: "ext-ci",
+          createdAt: new Date("2026-05-31T10:00:00.000Z"),
+        },
+        {
+          kind: "external_check",
+          mode: "blocking",
+          status: "passed",
+          gateId: "ext-ci",
+          createdAt: new Date("2026-05-31T12:00:00.000Z"),
+        },
+      ],
+    });
+
+    const card = await flightCard(projectId, runId);
+
+    expect(card?.externalGatePending).toBe(false);
+  });
+
+  it("externalGatePending=true when an older passed row is superseded by a newer stale row on the same gateId", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      gates: [
+        {
+          kind: "external_check",
+          mode: "blocking",
+          status: "passed",
+          gateId: "ext-ci",
+          createdAt: new Date("2026-05-31T10:00:00.000Z"),
+        },
+        {
+          kind: "external_check",
+          mode: "blocking",
+          status: "stale",
+          gateId: "ext-ci",
+          createdAt: new Date("2026-05-31T12:00:00.000Z"),
+        },
+      ],
+    });
+
+    const card = await flightCard(projectId, runId);
+
+    expect(card?.externalGatePending).toBe(true);
+  });
+
+  // Live-attempt collapse: a pending gate left on a SUPERSEDED (older) attempt
+  // is not live and must not set the flag.
+  it("externalGatePending=false when the only pending external gate sits on a stale (non-live) attempt", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      gates: [
+        {
+          kind: "external_check",
+          mode: "blocking",
+          status: "pending",
+          attemptLineage: "stale",
+        },
+      ],
+    });
+
+    const card = await flightCard(projectId, runId);
+
+    expect(card?.externalGatePending).toBe(false);
+  });
+
+  // A non-blocking (advisory) external_check pending does NOT set the flag.
+  it("externalGatePending=false for an advisory (non-blocking) external_check that is pending", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      gates: [{ kind: "external_check", mode: "advisory", status: "pending" }],
+    });
+
+    const card = await flightCard(projectId, runId);
+
+    expect(card?.externalGatePending).toBe(false);
+  });
+
+  // Orthogonality: a pending external gate alone does not flip evidenceStale or
+  // mergeBlocked; conversely a merge-blocking gate does not flip the external
+  // flag.
+  it("externalGatePending is orthogonal to evidenceStale and mergeBlocked", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      artifacts: [{ validity: "current" }],
+      gates: [{ kind: "external_check", mode: "blocking", status: "pending" }],
+    });
+
+    const card = await flightCard(projectId, runId);
+
+    expect(card?.externalGatePending).toBe(true);
+    expect(card?.evidenceStale).toBe(false);
+    expect(card?.mergeBlocked).toBe(false);
+  });
+
+  it("a merge-blocking artifact_required gate does not set externalGatePending", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      gates: [
+        { kind: "artifact_required", mode: "blocking", status: "failed" },
+      ],
+    });
+
+    const card = await flightCard(projectId, runId);
+
+    expect(card?.mergeBlocked).toBe(true);
+    expect(card?.externalGatePending).toBe(false);
+  });
+
+  // A done-status card reads false even with a pending blocking external gate.
+  it("externalGatePending=false on a done-status card even with a pending blocking external gate", async () => {
+    const { projectId, runId } = await seedReviewRun({
+      runStatus: "Done",
+      gates: [{ kind: "external_check", mode: "blocking", status: "pending" }],
+    });
+
+    const card = await anyFlightCard(projectId, runId);
+
+    expect(card).toBeDefined();
+    expect(card?.status).toBe("done");
+    expect(card?.externalGatePending).toBe(false);
   });
 });

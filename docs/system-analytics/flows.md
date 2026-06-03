@@ -232,10 +232,10 @@ flowchart LR
   `mode: blocking | advisory` and status `pending | running | passed |
   failed | stale | skipped | overridden`. M11a **executes**
   `command_check`/`ai_judgment`/`human_review` and `skill_check` (best-effort,
-  no capability scoping until M14); `artifact_required` → `skipped` + TODO(M12)
-  and `external_check` → `pending` + TODO(M16) are schema-valid but not executed.
+  no capability scoping until M14); `artifact_required` executes as of M12 and
+  `external_check` executes as of M16 (report ingestion via the operations API).
   See [`flow-graph.md`](flow-graph.md) §Gate execution.
-- **(Planned M16)** `external_check` gates are satisfied through the
+- **(M16 — Implemented)** `external_check` gates are satisfied through the
   token-authenticated operations API or the thin MCP facade. Reports become
   typed gate artifacts and participate in readiness, staleness, review, and
   promotion refusal like native gate results.

@@ -887,11 +887,19 @@ export const nodeAttempts = pgTable(
 );
 
 // Structured AI/skill gate verdict (ADR-028). Stored in gate_results.verdict.
+// M16: external_check reports carry CI metadata in the same jsonb (no migration).
 export type GateVerdict = {
-  verdict: string;
+  verdict?: string;
   confidence?: number;
   reasons?: string[];
   recommendedAction?: string;
+  // M16 §B: external_check report metadata.
+  externalRunUrl?: string;
+  commitSha?: string;
+  reporterTokenId?: string;
+  reportedAt?: string;
+  summary?: string | null;
+  payload?: Record<string, unknown> | null;
 };
 
 // One row per gate execution. lowercase status (gate-verdict vocabulary,
@@ -1381,3 +1389,78 @@ export type AssignmentStatus = Assignment["status"];
 export type AssignmentEvent = typeof assignmentEvents.$inferSelect;
 export type CapabilityImport = typeof capabilityImports.$inferSelect;
 export type CapabilityImportInsert = typeof capabilityImports.$inferInsert;
+
+// M16 (ADR-046): project-scoped API tokens (session-managed, sha256 at rest).
+// Snake_case JS keys (matching the accounts table pattern) so that column
+// accessors (eq(projectTokens.token_hash, ...)) and raw row keys align.
+export const projectTokens = pgTable(
+  "project_tokens",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    project_id: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    token_hash: text("token_hash").notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default(["*"]),
+    created_by: text("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    last_used_at: timestamp("last_used_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    expires_at: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    revoked_at: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxPrefix: index("project_tokens_prefix_idx").on(t.prefix),
+    idxProject: index("project_tokens_project_idx").on(t.project_id),
+  }),
+);
+
+// M16 (ADR-046): per-call audit trail for token-authenticated requests.
+// Columns use snake_case JS keys (matching the accounts table pattern) so that
+// eq(schema.tokenAuditLog.token_id, ...) works in tests and returned row keys
+// (which are always SQL column names) align with the JS property names.
+export const tokenAuditLog = pgTable(
+  "token_audit_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    token_id: text("token_id")
+      .notNull()
+      .references(() => projectTokens.id, { onDelete: "cascade" }),
+    project_id: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    actor_label: text("actor_label").notNull(),
+    scope_used: text("scope_used").notNull(),
+    endpoint: text("endpoint").notNull(),
+    method: text("method").notNull(),
+    result: text("result", { enum: ["ok", "error"] }).notNull(),
+    status_code: integer("status_code").notNull(),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxToken: index("token_audit_token_idx").on(t.token_id),
+    idxProjectCreated: index("token_audit_project_created_idx").on(
+      t.project_id,
+      t.created_at,
+    ),
+  }),
+);
+
+export type ProjectToken = typeof projectTokens.$inferSelect;
+export type ProjectTokenInsert = typeof projectTokens.$inferInsert;
+export type TokenAuditLogRow = typeof tokenAuditLog.$inferSelect;
+export type TokenAuditLogInsert = typeof tokenAuditLog.$inferInsert;

@@ -296,9 +296,9 @@ Each API token record has:
 | `id` | Internal stable identifier used for audit and gate reports. |
 | `name` | Human-readable label shown in Project Settings. |
 | `prefix` | Non-secret token prefix shown after creation for identification. |
-| `secret_hash` | One-way hash of the token secret. The raw secret is shown once. |
+| `token_hash` | SHA-256 hash of the token secret. The raw secret is shown once. |
 | `project_id` | The only project the token can operate on. |
-| `scopes` | Allowed operations: `tasks:create`, `tasks:read`, `tasks:update`, `runs:launch`, `runs:read`, `readiness:read`, `artifacts:attach`, `gates:report`. |
+| `scopes` | Forward-compat label list (default `["*"]`). v1 grants the **full project API** per token; scopes are recorded for the audit `scope_used` label and future granular enforcement, not enforced as allow-lists yet (see [ADR-046](decisions.md#adr-046)). |
 | `expires_at` | Optional expiry. Expired tokens fail closed. |
 | `revoked_at` | Revocation timestamp. Revoked tokens fail closed. |
 | `created_by` / `created_at` | Operator and time that created the token. |
@@ -622,6 +622,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) (M19) |
 | `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
 | `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` returns 503 disabled) | (none) | **Server-only secret** for `GET`/`POST /api/cron/gc` auth — never logged or streamed (M19) |
+| `MAISTER_API_BASE_URL` | no | `http://localhost:3000` | **(M16 — Implemented)** MCP facade: base URL of the MAIster REST API the `mcp/` package wraps (e.g. `http://localhost:3000` in dev; external HTTPS in prod). |
+| `MAISTER_PROJECT_TOKEN` | no | (none) | **(M16 — Implemented)** MCP facade **stdio/local-only** project token. **IGNORED** under the Streamable-HTTP transport, which requires a per-request inbound bearer forwarded verbatim to `/api/v1/ext`. Not a web-tier secret — never read by `web/` or `supervisor/`. |
+| `MCP_TRANSPORT` | no | (unset → `http`) | **(M16 — Implemented)** MCP facade transport select. Unset = Streamable-HTTP (remote; per-request inbound bearer, no ambient token). `stdio` (or `--stdio`) = local stdio transport reading `MAISTER_PROJECT_TOKEN`. |
+| `MCP_PORT` | no | `3001` | **(M16 — Implemented)** MCP facade HTTP bind port for the Streamable-HTTP transport. Unused under stdio. |
 | `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
 | `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |

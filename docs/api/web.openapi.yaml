@@ -1989,6 +1989,152 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tokens:
+    post:
+      tags: [projects]
+      summary: (M16) Create a project API token
+      description: |
+        (M16 — Implemented, ADR-041.) Requires project membership at `member` or
+        above with the `editSettings` action
+        (`requireProjectAction("editSettings")`). Creates a project-scoped API
+        token. The plaintext token is returned ONCE in the response body and
+        is never stored — only the sha256 hash is persisted. Store it
+        immediately.
+
+        `slug` is a URL parameter (server-state). Body-controlled fields are
+        `name` and optional `expiresAt`. All other fields (`id`, `prefix`,
+        `token_hash`, `projectId`, `createdAt`) are set server-side.
+
+        Source: `web/app/api/projects/[slug]/tokens/route.ts`.
+      operationId: createProjectToken
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProjectTokenBody" }
+      responses:
+        "201":
+          description: |
+            Token created. The plaintext `token` field is shown ONCE and is
+            not stored server-side. All subsequent list responses omit the
+            secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateProjectTokenResponse" }
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller lacks `editSettings` for this project (`UNAUTHORIZED`), or
+            must change password first (`PASSWORD_CHANGE_REQUIRED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Project not found or archived (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    get:
+      tags: [projects]
+      summary: (M16) List project API tokens
+      description: |
+        (M16 — Implemented, ADR-041.) Requires `editSettings` for this project.
+        Returns all non-deleted tokens for the project. NEVER returns
+        `token_hash` or the plaintext secret — only metadata fields.
+
+        Source: `web/app/api/projects/[slug]/tokens/route.ts`.
+      operationId: listProjectTokens
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Token list (no secrets).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListProjectTokensResponse" }
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: Caller lacks `editSettings` for this project (`UNAUTHORIZED`), or must change password first (`PASSWORD_CHANGE_REQUIRED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Project not found or archived (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/tokens/{tokenId}:
+    delete:
+      tags: [projects]
+      summary: (M16) Revoke a project API token
+      description: |
+        (M16 — Implemented, ADR-041.) Requires project membership at `member` or
+        above with the `editSettings` action. Sets `revoked_at` on the token
+        row (soft-delete). Returns 404 if the token's `project_id` does not
+        match the slug's project (existence-hide).
+
+        Source: `web/app/api/projects/[slug]/tokens/[tokenId]/route.ts`.
+      operationId: revokeProjectToken
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Token revoked (`revoked_at` set).
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller lacks `editSettings` for this project (`UNAUTHORIZED`), or
+            must change password first (`PASSWORD_CHANGE_REQUIRED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: Token not found, or its `project_id` does not match the slug's project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/cron/gc:
     get:
       tags: [reconciliation-gc]
@@ -2520,6 +2666,17 @@ components:
         Shared-secret header for the GC cron route, compared in constant time
         to `MAISTER_CRON_TOKEN`. Server-only secret — never logged or streamed.
         Unset token disables the route (503). Not an Auth.js session.
+    projectToken:
+      type: http
+      scheme: bearer
+      description: |
+        Project-scoped API token for the `/api/v1/ext/` surface (M16,
+        ADR-041). Format: `mai_` + base64url(randomBytes(32)). Stored as
+        sha256 hex at rest; compared with `timingSafeEqual`; never logged or
+        streamed. In v1 a valid, active, non-expired, non-revoked token grants
+        the full project API. Token failures all map to 401 or 404 per the
+        existence-hide policy. Used only by `docs/api/external/operations.openapi.yaml`
+        routes; session-auth routes do not accept tokens.
   responses:
     Unauthenticated:
       description: No valid session (`UNAUTHENTICATED`).
@@ -3599,3 +3756,90 @@ components:
         artifacts: { $ref: "#/components/schemas/ContractDiff" }
         capabilities: { $ref: "#/components/schemas/ContractDiff" }
         externalOps: { $ref: "#/components/schemas/ContractDiff" }
+
+    CreateProjectTokenBody:
+      type: object
+      description: (M16) Request body for creating a project API token.
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Human-readable label for the token (e.g. "CI pipeline").
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Optional expiry timestamp (ISO 8601). Omit or send `null` for a
+            non-expiring token. Tokens past `expiresAt` return 401 on use.
+
+    CreateProjectTokenResponse:
+      type: object
+      description: |
+        (M16) Created token metadata plus the plaintext secret. The `token`
+        field is shown ONCE — the server does not store it and cannot re-derive
+        it. Subsequent list responses omit `token`.
+      required: [id, name, prefix, token, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+          description: First 12 characters of the token string (used for lookup).
+        token:
+          type: string
+          description: |
+            Full plaintext token (`mai_` + base64url(32 bytes)). Returned ONCE.
+            Store it now — the server only keeps the sha256 hash.
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ProjectTokenListItem:
+      type: object
+      description: |
+        (M16) Token metadata for the list endpoint. NEVER includes `token_hash`
+        or the plaintext secret.
+      required: [id, name, prefix, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+          description: First 12 characters of the token string.
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ListProjectTokensResponse:
+      type: object
+      description: (M16) List of project API tokens without secrets.
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: "#/components/schemas/ProjectTokenListItem" }

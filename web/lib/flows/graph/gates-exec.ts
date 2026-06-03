@@ -329,7 +329,7 @@ async function runOneGate(
         return "failed";
       }
 
-      if (isPassVerdict(verdict.verdict)) {
+      if (isPassVerdict(verdict.verdict ?? "")) {
         await markGatePassed(id, verdict, ctx.db);
 
         return "passed";

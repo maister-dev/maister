@@ -9,11 +9,12 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches step-runs.ts idiom).
 const { gateResults } = schemaModule as unknown as Record<string, any>;
@@ -128,6 +129,186 @@ export async function markGateOverridden(
   db?: Db,
 ): Promise<void> {
   await transition(id, "overridden", { overriddenBy }, db);
+}
+
+// M16 §B: ingest an external_check report (CI/external system verdict). Finds
+// the latest LIVE external_check gate row for (runId, gateId) and either flips it
+// in place or — when a passed gate gets a report for a DIFFERENT commit and
+// staleOnNewCommit is not disabled — re-stales the prior passed row and appends a
+// fresh row. Records a `test_report` artifact carrying the inline report payload.
+// All writes go through the passed db/tx handle so the route can compose this in
+// its own transaction.
+const LIVE_EXTERNAL_STATUSES = [
+  "pending",
+  "stale",
+  "passed",
+  "failed",
+] as const;
+
+// Thrown when no live external_check gate row exists at report time — e.g. a
+// concurrent HITL override sealed the only row (status `overridden`, excluded
+// from LIVE_EXTERNAL_STATUSES) between the route's reportability pre-check and
+// this transaction. The route maps it to 404 "gate not reportable" instead of
+// letting a bare Error surface as 500.
+export class GateNotReportableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GateNotReportableError";
+  }
+}
+
+// CAS a live gate row from the EXACT status observed at SELECT time. Returns
+// false when no row matched — i.e. a writer that does NOT take the run-row lock
+// (HITL override → `overridden`, rework → `stale` via `markDownstreamStale`)
+// changed the row between the live-row SELECT in `reportExternalGate` and this
+// write. The route's run-row `FOR UPDATE` only serializes report-vs-report; this
+// status guard is what stops a late external report from overwriting
+// invalidated or sealed evidence on the gate row itself.
+async function casLiveTransition(
+  d: Db,
+  id: string,
+  fromStatus: GateResultStatus,
+  toStatus: GateResultStatus,
+  extra: Record<string, unknown>,
+): Promise<boolean> {
+  const updated = await d
+    .update(gateResults)
+    .set({ status: toStatus, endedAt: new Date(), ...extra })
+    .where(and(eq(gateResults.id, id), eq(gateResults.status, fromStatus)))
+    .returning({ id: gateResults.id });
+
+  return updated.length > 0;
+}
+
+export async function reportExternalGate(
+  args: {
+    runId: string;
+    gateId: string;
+    status: "passed" | "failed";
+    verdict: GateVerdict;
+    external?: { staleOnNewCommit?: boolean };
+  },
+  db?: Db,
+): Promise<{ artifactId: string; gateResultId: string }> {
+  const d = db ?? getDb();
+
+  const liveRows: GateResult[] = await d
+    .select()
+    .from(gateResults)
+    .where(
+      and(
+        eq(gateResults.runId, args.runId),
+        eq(gateResults.gateId, args.gateId),
+        eq(gateResults.kind, "external_check"),
+        inArray(
+          gateResults.status,
+          LIVE_EXTERNAL_STATUSES as unknown as string[],
+        ),
+      ),
+    )
+    .orderBy(desc(gateResults.createdAt), desc(gateResults.id));
+
+  const live = liveRows[0];
+
+  if (!live) {
+    throw new GateNotReportableError(
+      `reportExternalGate: no live external_check gate for run ${args.runId} gate ${args.gateId}`,
+    );
+  }
+
+  const staleOnNewCommit = args.external?.staleOnNewCommit !== false;
+  const priorCommit = (live.verdict as GateVerdict | null)?.commitSha;
+  const newCommit = args.verdict.commitSha;
+  const supersede =
+    live.status === "passed" &&
+    staleOnNewCommit &&
+    !!newCommit &&
+    newCommit !== priorCommit;
+
+  let gateResultId: string;
+
+  if (supersede) {
+    log.debug(
+      {
+        gateResultId: live.id,
+        runId: args.runId,
+        gateId: args.gateId,
+        priorCommit,
+        newCommit,
+      },
+      "external_check supersede-on-new-commit — re-staling prior passed result",
+    );
+
+    const restaled = await casLiveTransition(
+      d,
+      live.id,
+      live.status,
+      "stale",
+      {},
+    );
+
+    if (!restaled) {
+      throw new GateNotReportableError(
+        `reportExternalGate: live external_check gate for run ${args.runId} gate ${args.gateId} changed concurrently before re-stale`,
+      );
+    }
+
+    const fresh = await createGateResult({
+      runId: args.runId,
+      nodeAttemptId: live.nodeAttemptId,
+      gateId: args.gateId,
+      kind: "external_check",
+      mode: live.mode as GateMode,
+      status: args.status,
+      verdict: args.verdict,
+      db: d,
+    });
+
+    gateResultId = fresh.id;
+  } else {
+    const moved = await casLiveTransition(
+      d,
+      live.id,
+      live.status,
+      args.status,
+      {
+        verdict: args.verdict,
+      },
+    );
+
+    if (!moved) {
+      throw new GateNotReportableError(
+        `reportExternalGate: live external_check gate for run ${args.runId} gate ${args.gateId} changed concurrently before report`,
+      );
+    }
+
+    gateResultId = live.id;
+  }
+
+  const { id: artifactId } = await recordArtifact(
+    {
+      id: randomUUID(),
+      runId: args.runId,
+      nodeAttemptId: live.nodeAttemptId,
+      nodeId: null,
+      kind: "test_report",
+      producer: "gate",
+      locator: { kind: "inline", text: JSON.stringify(args.verdict) },
+    },
+    d,
+  );
+
+  log.info(
+    {
+      gateId: args.gateId,
+      runId: args.runId,
+      status: args.status,
+      commitSha: newCommit,
+    },
+    "external_check gate report ingested",
+  );
+
+  return { artifactId, gateResultId };
 }
 
 export async function getGateResultsForRun(

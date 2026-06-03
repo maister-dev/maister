@@ -332,6 +332,11 @@
       and running agents. The canonical contract is the HTTP API with managed API
       tokens; MCP is a thin agent-facing facade over the same service layer and
       audit model, not a second orchestration backend.
+- [x] **M16. External operations API, tokens, and thin MCP facade** — expose a
+  small project-scoped control surface for CI, local scripts, external tools,
+  and running agents. The canonical contract is the HTTP API with managed API
+  tokens; MCP is a thin agent-facing facade over the same service layer and
+  audit model, not a second orchestration backend.
 
   **Expectation: API-first integration.** External systems use REST endpoints
   secured by project-scoped tokens to create tasks, launch runs, read run
@@ -474,3 +479,9 @@
 | M13. Role-owned work queue and assignment UX                                 | 2026-06-02 |
 | M19. Reconciliation + GC                                                     | 2026-06-02 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
+| M11b. Manual takeover (local worktree handoff) + run-detail timeline | 2026-05-31 |
+| M21. Project repo onboarding (URL clone + configurable roots) | 2026-05-31 |
+| M11c. Node typed settings + runtime enforcement boundary | 2026-06-01 |
+| M12. Typed artifacts and evidence graph | 2026-06-02 |
+| M19. Reconciliation + GC | 2026-06-02 |
+| M16. External operations API, tokens, and thin MCP facade | 2026-06-02 |

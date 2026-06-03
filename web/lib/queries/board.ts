@@ -9,6 +9,10 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  collapseLatestExternalPerGate,
+  isExternalGateReady,
+} from "@/lib/flows/graph/external-gate-readiness";
 
 const {
   artifactInstances,
@@ -83,6 +87,11 @@ export interface FlightCard {
   // M12 (ADR-037) Phase 7: merge is blocked because a merge-required artifact
   // is non-current OR a blocking artifact_required gate failed/went stale.
   mergeBlocked: boolean;
+  // M16 Phase 7: the latest run has ≥1 BLOCKING external_check gate whose
+  // latest-per-gateId, live-attempt representative status is NOT passed|overridden
+  // (pending|failed|stale|skipped → true). Mirrors assertEvidenceReady's
+  // passed/overridden allow-list. Done cards always read false.
+  externalGatePending: boolean;
 }
 
 export interface BoardColumnData {
@@ -310,6 +319,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     for (const r of staleRows) evidenceStaleRunIds.add(r.runId);
   }
 
+  // M16 Phase 7: which latest runs have a pending blocking external_check gate.
+  const externalGatePendingRunIds = new Set<string>();
+
   // M12 (ADR-037) Phase 7: which latest runs are merge-blocked, via either
   // (a) a merge-required def that has NO current row (per-def-current — PR1/F2;
   //     stale/superseded history never blocks once the def is re-produced), or
@@ -436,6 +448,54 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
 
       mergeBlockedRunIds.add(r.runId);
     }
+
+    // M16 Phase 7: external_check gate-readiness collapse (mirrors readiness.ts:147-164).
+    // Only live-attempt rows count; among those, keep the latest-per-gateId representative
+    // (max createdAt, tiebreak id desc) — a superseded stale row must not strand the run.
+    const externalGateRawRows: Array<{
+      runId: string;
+      nodeAttemptId: string;
+      gateId: string;
+      mode: string;
+      status: string;
+      createdAt: Date;
+      id: string;
+    }> = await client
+      .select({
+        runId: gateResults.runId,
+        nodeAttemptId: gateResults.nodeAttemptId,
+        gateId: gateResults.gateId,
+        mode: gateResults.mode,
+        status: gateResults.status,
+        createdAt: gateResults.createdAt,
+        id: gateResults.id,
+      })
+      .from(gateResults)
+      .where(
+        and(
+          inArray(gateResults.runId, latestRunIds),
+          eq(gateResults.kind, "external_check"),
+          eq(gateResults.mode, "blocking"),
+        ),
+      );
+
+    // Live-attempt collapse: drop rows on superseded attempts.
+    const liveExternalRows = externalGateRawRows.filter((r) =>
+      liveAttemptIds.has(r.nodeAttemptId),
+    );
+
+    // Latest-per-gate collapse (keyed on runId+gateId): max createdAt, tiebreak
+    // id desc. Allow-list (passed/overridden) lives in the shared helper.
+    const latestByRunGate = collapseLatestExternalPerGate(
+      liveExternalRows,
+      (r) => `${r.runId}:${r.gateId}`,
+    );
+
+    for (const r of latestByRunGate) {
+      if (!isExternalGateReady(r.status)) {
+        externalGatePendingRunIds.add(r.runId);
+      }
+    }
   }
 
   // M11b (ADR-030): the active takeover claim per latest run — owner + the
@@ -540,6 +600,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       evidenceStale:
         cardStatus !== "done" && evidenceStaleRunIds.has(run.runId),
       mergeBlocked: cardStatus !== "done" && mergeBlockedRunIds.has(run.runId),
+      externalGatePending:
+        cardStatus !== "done" && externalGatePendingRunIds.has(run.runId),
     });
 
     if (

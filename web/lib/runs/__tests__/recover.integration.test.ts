@@ -69,6 +69,7 @@ const {
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 let projectId: string;
 let projectRepoPath: string;
 let executorId: string;
@@ -118,6 +119,7 @@ beforeAll(async () => {
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
   // The scheduler advisory lock only engages on a postgres DB_URL.
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 
   projectId = randomUUID();
@@ -183,6 +185,11 @@ afterAll(async () => {
     delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
   } else {
     process.env.MAISTER_MAX_CONCURRENT_RUNS = originalCap;
+  }
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
   }
   await pool?.end();
   await container?.stop();

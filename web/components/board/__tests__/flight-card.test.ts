@@ -17,6 +17,8 @@ const labels: FlightCardLabels = {
   settingsRefused: "Settings refused at launch",
   evidenceStale: "Evidence stale",
   mergeBlocked: "Merge blocked",
+  // M16 Phase 7: external_check gate-readiness badge label.
+  externalGatePending: "External gate pending",
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -38,6 +40,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     crashAction: null,
     evidenceStale: false,
     mergeBlocked: false,
+    externalGatePending: false,
     ...over,
   };
 }
@@ -128,5 +131,27 @@ describe("FlightCard — evidence badges (M12)", () => {
     expect(html).not.toContain("Evidence stale");
     expect(html).not.toContain("◆");
     expect(html).not.toContain("≈");
+  });
+});
+
+// T7.7 (RED): the external_check gate-pending badge (M16 Phase 7), rendered
+// like the existing evidence badges — a distinct glyph (◉, not already used by
+// ◆/≈/↺/⚠) with the translated label threaded into aria-label + title. The
+// `externalGatePending` field/label do not exist yet → RED (badge absent).
+describe("FlightCard — external gate badge (M16 Phase 7)", () => {
+  it("renders the external-gate-pending badge when the flag is set", () => {
+    const html = render(baseCard({ externalGatePending: true }));
+
+    expect(html).toContain('aria-label="External gate pending"');
+    expect(html).toContain('title="External gate pending"');
+    // A distinct glyph not already taken by ◆/≈/↺/⚠.
+    expect(html).toContain("◉");
+  });
+
+  it("omits the external-gate-pending badge when the flag is false", () => {
+    const html = render(baseCard({ externalGatePending: false }));
+
+    expect(html).not.toContain("External gate pending");
+    expect(html).not.toContain("◉");
   });
 });

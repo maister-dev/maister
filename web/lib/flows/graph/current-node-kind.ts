@@ -16,7 +16,7 @@ type Db = any;
 
 // Load the run's pinned manifest: `flow_revisions.manifest`, falling back to
 // live `flows.manifest`. Null when neither resolves.
-async function resolveManifest(
+export async function resolveManifest(
   db: Db,
   run: { flowRevisionId: string | null; flowId: string | null },
 ): Promise<FlowYamlV1 | null> {

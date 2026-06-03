@@ -28,6 +28,21 @@ export type E2ERegistrationFixture = {
   duplicateSlug: string;
 };
 
+// M16 Phase 8: external-operations API fixture. ONE project carrying both:
+//   • a LAUNCHABLE Backlog task (full on-disk git repo + enabled flow revision)
+//     so the token-authed task-create + run-launch reach a real 201/202; and
+//   • a review run parked at a `review` human node whose pre_finish declares a
+//     BLOCKING external_check gate seeded `pending` (gate_results) — the vehicle
+//     for the readiness / gate-report / re-stale / evidence steps with no agent.
+export type E2EM16Fixture = E2EProjectFixture & {
+  // The launchable Backlog task (token-auth task-create + run-launch targets).
+  launchTaskId: string;
+  // The seeded parked-review run + its external_check gate.
+  runId: string;
+  hitlRequestId: string;
+  gateId: string;
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -72,6 +87,7 @@ export type E2EFixtures = {
     liveCcr: E2EProjectFixture;
     registration: E2ERegistrationFixture;
     m19: E2EM19Fixture;
+    m16: E2EM16Fixture;
   };
 };
 
