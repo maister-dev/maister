@@ -1473,11 +1473,7 @@ export async function runGraph(
       // all of them must satisfy the evidence contract before the run is Review.
       // Refusal mirrors a blocking gate failure: node Failed → run Failed; the
       // reviewer re-attempts after refreshing evidence.
-      if (
-        artifactEnforcementActive &&
-        !isRework &&
-        resolveTransition(node, outcome) === null
-      ) {
+      if (!isRework && resolveTransition(node, outcome) === null) {
         const readiness = await assertEvidenceReady(runId, "review", db);
 
         if (!readiness.ready) {

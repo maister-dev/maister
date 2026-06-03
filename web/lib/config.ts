@@ -738,6 +738,9 @@ function validateGraphManifest(
     validateArtifacts(nodes, flowYamlPath);
   }
 
+  // Rule 6 (M15): blocking human_review gates deadlock promotion — reject always.
+  validateNoBlockingHumanReview(nodes, flowYamlPath);
+
   const capabilityRefIds = opts?.capabilityRefIds;
 
   for (const n of nodes) {
@@ -946,6 +949,26 @@ function validateArtifacts(nodes: NodeDef[], flowYamlPath: string): void {
             `artifact_required gate "${g.id}" inputArtifacts references unknown artifact id "${artId}" in ${flowYamlPath}`,
           );
         }
+      }
+    }
+  }
+}
+
+// Rule 6: blocking human_review gates are rejected at manifest validation.
+// A human_review gate always records as "skipped" by the executor, so a
+// blocking human_review would permanently prevent promotion (deadlock).
+// Advisory human_review is permitted.
+function validateNoBlockingHumanReview(
+  nodes: NodeDef[],
+  flowYamlPath: string,
+): void {
+  for (const n of nodes) {
+    for (const g of n.pre_finish?.gates ?? []) {
+      if (g.kind === "human_review" && g.mode === "blocking") {
+        throw new MaisterError(
+          "CONFIG",
+          `human_review gate "${g.id}" in node "${n.id}" must not be blocking — it would deadlock promotion; use mode: "advisory" in ${flowYamlPath}`,
+        );
       }
     }
   }

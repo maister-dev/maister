@@ -139,9 +139,9 @@ M15's genuine gaps:
 <!-- Commit checkpoint: tasks 1-2 -->
 
 ### Phase 1 — Schema & chokepoint contract (parallel batch: 3 ∥ 4 ∥ 5)
-- [ ] Task 3: Gate `calibration` schema + compile-time flow-default resolution + reject blocking `human_review` (depends on 2)
-- [ ] Task 4: Drop engine gating at the readiness chokepoint — all graph flows, no version bump (depends on 2)
-- [ ] Task 5: Extend `GateVerdict` type with `calibration` sub-object — no migration (depends on 2)
+- [x] Task 3: Gate `calibration` schema + compile-time flow-default resolution + reject blocking `human_review` (depends on 2)
+- [x] Task 4: Drop engine gating at the readiness chokepoint — all graph flows, no version bump (depends on 2)
+- [x] Task 5: Extend `GateVerdict` type with `calibration` sub-object — no migration (depends on 2)
 <!-- Commit checkpoint: tasks 3-5 -->
 
 ### Phase 2 — Verdict calibration at execution (TDD slice)

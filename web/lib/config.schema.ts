@@ -308,6 +308,13 @@ const gateExternalSchema = z
   })
   .strict();
 
+const gateCalibrationSchema = z
+  .object({
+    confidence_min: z.number().min(0).max(1).optional(),
+    allow_missing_confidence: z.boolean().optional(),
+  })
+  .strict();
+
 export const gateSchema = z
   .object({
     id: z.string().min(1),
@@ -324,6 +331,7 @@ export const gateSchema = z
     // node ids whose rework marks this gate stale
     staleFrom: z.array(z.string().min(1)).optional(),
     external: gateExternalSchema.optional(),
+    calibration: gateCalibrationSchema.optional(),
   })
   .superRefine((gate, ctx) => {
     if (gate.external && gate.kind !== "external_check") {
@@ -331,6 +339,18 @@ export const gateSchema = z
         code: z.ZodIssueCode.custom,
         path: ["external"],
         message: "`external` block is only valid on kind: external_check",
+      });
+    }
+
+    if (
+      gate.calibration &&
+      gate.kind !== "ai_judgment" &&
+      gate.kind !== "skill_check"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["calibration"],
+        message: `\`calibration\` block is only valid on kind: ai_judgment or skill_check (got: ${gate.kind})`,
       });
     }
   });
@@ -562,6 +582,12 @@ export const flowYamlV1Schema = z
     gates: z.array(z.string().min(1)).optional(),
     artifacts: z.array(z.string().min(1)).optional(),
     external_ops: z.array(z.string().min(1)).optional(),
+    // M15: flow-level calibration default, folded into each ai_judgment/skill_check
+    // gate's effective calibration at compile time.
+    verdict_calibration: z
+      .object({ confidence_min: z.number().min(0).max(1).optional() })
+      .strict()
+      .optional(),
     // Exactly one of `steps` (linear) or `nodes` (graph v1) is present —
     // enforced by the .refine below (ADR-026). `steps` was required before
     // M11a; it is now optional so the refine can reject both-absent.

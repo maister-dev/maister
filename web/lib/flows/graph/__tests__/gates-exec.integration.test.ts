@@ -204,9 +204,14 @@ describe("gate execution", () => {
 
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
 
-    // Neither gate is a blocking failure (artifact_required passes vacuously,
-    // external_check stays pending — not a terminal failure), so the node finishes.
-    expect((await getRun(seeded.runId)).status).toBe("Review");
+    // The node finishes (artifact_required passes vacuously, external_check
+    // stays pending — not a terminal failure at gate-exec time). However,
+    // after Task 4 the readiness chokepoint fires for ALL flows regardless of
+    // engine_min. The pending blocking external_check gate causes
+    // assertEvidenceReady to return ready=false → run ends Failed.
+    // (Pre-Task-4 the guard `artifactEnforcementActive &&` skipped the
+    // chokepoint for engine_min "1.1.0" < "1.2.0", so the run reached Review.)
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
     const gates = await getGates(seeded.runId);
 
     // artifact_required with no inputArtifacts: vacuously all present → passed (T4.2)

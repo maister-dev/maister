@@ -893,6 +893,15 @@ export type GateVerdict = {
   confidence?: number;
   reasons?: string[];
   recommendedAction?: string;
+  calibration?: {
+    confidenceMin: number;
+    rawVerdict: string;
+    outcome:
+      | "above_threshold"
+      | "below_threshold"
+      | "no_confidence"
+      | "missing_confidence_allowed";
+  };
   // M16 §B: external_check report metadata.
   externalRunUrl?: string;
   commitSha?: string;

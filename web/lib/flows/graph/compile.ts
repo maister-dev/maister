@@ -71,17 +71,42 @@ function compileLinear(steps: Step[]): FlowGraph {
   return { entry: steps[0].id, order, nodes };
 }
 
-function compileGraph(graphNodes: NodeDef[]): FlowGraph {
+function compileGraph(
+  graphNodes: NodeDef[],
+  flowVerdictCalibration: FlowYamlV1["verdict_calibration"],
+): FlowGraph {
   const order = graphNodes.map((n) => n.id);
   const nodes = new Map<string, CompiledNode>();
+  const flowConfidenceMin = flowVerdictCalibration?.confidence_min;
 
   for (const node of graphNodes) {
+    const rawGates = node.pre_finish?.gates ?? [];
+    const gates: GateDef[] = rawGates.map((g) => {
+      const isCalibrationKind =
+        g.kind === "ai_judgment" || g.kind === "skill_check";
+
+      // Only fold when: calibration-eligible kind, flow default is set,
+      // and the gate has no per-gate confidence_min override.
+      if (
+        isCalibrationKind &&
+        flowConfidenceMin !== undefined &&
+        g.calibration?.confidence_min === undefined
+      ) {
+        return {
+          ...g,
+          calibration: { ...g.calibration, confidence_min: flowConfidenceMin },
+        };
+      }
+
+      return g;
+    });
+
     nodes.set(node.id, {
       id: node.id,
       nodeType: node.type,
       source: { kind: "node", node },
       transitions: { ...(node.transitions ?? {}) },
-      gates: node.pre_finish?.gates ?? [],
+      gates,
       rework: node.rework,
       finishHuman: node.finish?.human,
       settings: node.settings,
@@ -99,7 +124,7 @@ function compileGraph(graphNodes: NodeDef[]): FlowGraph {
 // cross-references resolve), so this is a pure structural transform.
 export function compileManifest(manifest: FlowYamlV1): FlowGraph {
   if (manifest.nodes && manifest.nodes.length > 0) {
-    return compileGraph(manifest.nodes);
+    return compileGraph(manifest.nodes, manifest.verdict_calibration);
   }
   if (manifest.steps && manifest.steps.length > 0) {
     return compileLinear(manifest.steps);
