@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadFlowManifest } from "@/lib/config";
+import { compileManifest } from "@/lib/flows/graph/compile";
 
 const AIF_FLOW = resolve(__dirname, "../../../../plugins/aif/flow.yaml");
 
@@ -129,5 +130,40 @@ describe("aif flow.yaml — M12 declared-artifact migration", () => {
     expect(artifactGate).toBeDefined();
     expect(artifactGate?.mode).toBe("blocking");
     expect(artifactGate?.inputArtifacts).toContain("impl-diff");
+  });
+});
+
+// M15 (ADR-048): verdict calibration — flow-level default folds into the
+// advisory ai_judgment gate on the review node at compile time.
+describe("aif flow.yaml — M15 verdict calibration", () => {
+  it("declares flow-level verdict_calibration.confidence_min: 0.7", () => {
+    expect(manifest.verdict_calibration?.confidence_min).toBe(0.7);
+  });
+
+  it("review node has an advisory ai_judgment gate (ai-quality-advisory)", () => {
+    const review = (manifest.nodes ?? []).find((n) => n.id === "review");
+    const gates = review?.pre_finish?.gates ?? [];
+    const advisoryGate = gates.find((g) => g.id === "ai-quality-advisory");
+
+    expect(advisoryGate).toBeDefined();
+    expect(advisoryGate?.kind).toBe("ai_judgment");
+    expect(advisoryGate?.mode).toBe("advisory");
+  });
+
+  it("after compile, the advisory ai_judgment gate has effective calibration.confidence_min === 0.7 (folded from flow default)", () => {
+    const compiled = compileManifest(manifest);
+    const reviewNode = compiled.nodes.get("review");
+
+    expect(reviewNode).toBeDefined();
+
+    const advisoryGate = (reviewNode?.gates ?? []).find(
+      (g) => g.id === "ai-quality-advisory",
+    );
+
+    expect(advisoryGate).toBeDefined();
+    expect(
+      (advisoryGate as { calibration?: { confidence_min?: number } })
+        .calibration?.confidence_min,
+    ).toBe(0.7);
   });
 });

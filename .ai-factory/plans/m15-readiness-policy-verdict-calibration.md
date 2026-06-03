@@ -169,9 +169,9 @@ M15's genuine gaps:
 <!-- Commit checkpoint: tasks 14-18 -->
 
 ### Phase 7 — Bundled flow + docs as-built + final verify
-- [ ] Task 19: Update bundled `aif` Flow to exercise calibration (depends on 6, 8)
-- [ ] Task 20: Reconcile docs to as-built + flip ROADMAP M15 (depends on 12, 18, 19)
-- [ ] Task 21: Final verification gate (depends on 20, 18)
+- [x] Task 19: Update bundled `aif` Flow to exercise calibration (depends on 6, 8)
+- [x] Task 20: Reconcile docs to as-built + flip ROADMAP M15 (depends on 12, 18, 19)
+- [x] Task 21: Final verification gate (depends on 20, 18)
 <!-- Commit checkpoint: tasks 19-21 -->
 
 ## Key files (verified against code)

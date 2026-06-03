@@ -560,6 +560,61 @@ gate — is opt-in and requires `compat.engine_min ≥ 1.2.0`.
 | DEFAULT artifact recording (log, guard metrics, human/form answer, diff) | `1.1.0` | none | every run, always |
 | DECLARED-artifact contract (typed `produces`/`requires` validation + `artifact_required` gate) | `1.2.0` | declare `output.produces` / `input.requires` / `artifact_required` | Flows that opt in |
 
+**M15 readiness enforcement (Implemented).** `MAISTER_ENGINE_VERSION` stays `1.2.0`
+(no bump). The Review chokepoint readiness check (`assertEvidenceReady`) now applies to
+**all** graph flows — the prior engine-gate around it was removed — and evaluates **all**
+blocking gate kinds (`command_check`/`ai_judgment`/`skill_check`/`artifact_required`/
+`external_check`), not only the two artifact kinds. The new calibration fields below are
+optional/additive, so no engine floor change is required
+([ADR-048](decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)).
+
+### Verdict calibration (M15)
+
+`ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing
+verdict only clears when the agent is sufficiently confident. Two config surfaces:
+
+- **Per-gate** `calibration` (only valid on `ai_judgment` / `skill_check` gates):
+
+  ```yaml
+  pre_finish:
+    gates:
+      - id: quality
+        kind: ai_judgment
+        mode: blocking
+        prompt: "Assess the diff; reply {\"verdict\":...,\"confidence\":0-1,...}."
+        calibration:
+          confidence_min: 0.8            # 0..1; a pass below this → gate failed
+          allow_missing_confidence: false # default false (fail-closed); see below
+  ```
+
+- **Flow-level** `verdict_calibration.confidence_min` — a default folded into every
+  `ai_judgment` / `skill_check` gate that lacks its own `calibration.confidence_min`, at
+  compile time (`web/lib/flows/graph/compile.ts`):
+
+  ```yaml
+  schemaVersion: 1
+  name: aif
+  verdict_calibration:
+    confidence_min: 0.7                  # per-gate calibration.confidence_min overrides this
+  ```
+
+Calibration is applied **at gate execution** and decides the persisted
+`gate_results.status` (the readiness layer only ever reads `status`). Outcomes recorded in
+the `gate_results.verdict` JSONB `calibration` sub-object:
+
+| Passing verdict | `confidence_min` set | `confidence` present | `allow_missing_confidence` | Result | `outcome` |
+| --------------- | -------------------- | -------------------- | -------------------------- | ------ | --------- |
+| yes | no | — | — | passed | (none — legacy pass) |
+| yes | yes | `≥ min` | — | passed | `above_threshold` |
+| yes | yes | `< min` | — | **failed** | `below_threshold` |
+| yes | yes | absent | `false` (default) | **failed** | `no_confidence` |
+| yes | yes | absent | `true` | passed | `missing_confidence_allowed` |
+
+Fail-closed on missing confidence: a promotion-relevant gate must not pass an unverifiable
+verdict. Set `allow_missing_confidence: true` for gates that legitimately emit no
+confidence. A `blocking` `human_review` gate is rejected at validation (`CONFIG`) — it would
+deadlock promotion. See [`system-analytics/readiness.md`](system-analytics/readiness.md).
+
 ### Guard semantics
 
 `cost` / `time` / `regex` guard fields are parsed and evaluated as

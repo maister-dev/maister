@@ -286,7 +286,7 @@
     automated malicious-code scanning, container sandboxing, organization-wide
     capability policy, and cross-project capability promotion workflows.
 
-- [ ] **M15. Readiness policy and verdict calibration** — make readiness an
+- [x] **M15. Readiness policy and verdict calibration** — make readiness an
       explicit Flow-distributed contract that decides when a run may promote.
       **Re-scoped ([ADR-028](decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)):**
       gate _execution_ — the six gate kinds, the `pending|running|passed|failed|stale|skipped|overridden`
@@ -326,6 +326,35 @@
     deploy-environment gates, flaky-test intelligence, judge calibration lab,
     provider-specific CI apps, and external CI ingestion beyond the generic
     operations API/report contract.
+
+  **As-built (shipped 2026-06-03):** [ADR-048](decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)
+  + new domain doc [`docs/system-analytics/readiness.md`](../docs/system-analytics/readiness.md).
+  Required-gate signal = the existing `mode: blocking` (no new `readiness_policy`
+  grammar — the AC's "complex policy language" stays deferred). **No DB migration, no
+  new `MaisterError` code, no new `runs.status`, no engine bump** (`MAISTER_ENGINE_VERSION`
+  stays `1.2.0`). Delivered: gate `calibration { confidence_min, allow_missing_confidence }`
+  + flow-level `verdict_calibration` folded into each `ai_judgment`/`skill_check` gate at
+  compile time (`config.schema.ts`, `compile.ts`); blocking `human_review` rejected at
+  validation (`CONFIG`); calibration applied at execution (`gates-exec.ts` `calibrateVerdict`)
+  setting `gate_results.status` with a fail-closed `no_confidence` default + the
+  `verdict.calibration` JSONB record; the engine gate around the Review chokepoint removed so
+  enforcement applies to **all graph flows**, with `assertEvidenceReady` broadened from 2 to
+  **all** evaluated blocking gate kinds; a shared pure `web/lib/flows/graph/readiness-core.ts`
+  (per-kind allow-list + priority classifier `failed>stale>blocked>waiting>overridden>ready`
+  + live-attempt/external-collapse helpers) adopted by the enforcer, `getRunReadiness`
+  (now a 6-state DTO incl. `overridden`, `skipped`→`blocked` for all kinds), and the board +
+  portfolio bulk queries (no N+1); a unified readiness badge on run-detail (`ReadinessSummary`),
+  board flight-card (replacing the 3 bespoke badges), and portfolio card + EN/RU `readiness`
+  i18n; the bundled `aif` flow exercises calibration via a flow-level default + an advisory
+  `ai_judgment` gate. **Merge-refuse for flow runs is DEFERRED to M18** (Codex finding 2):
+  the only merge route is scratch-only and scratch runs carry no flow gates, so
+  `assertEvidenceReady(_, "merge")` is wired into the scratch promote route as the reusable,
+  vacuously-ready call site / future-proofing — M18 (flow-run promotion) enforces it for real,
+  reusing the same evaluator. Verified: typecheck 0; unit 1450; readiness/board/portfolio/
+  evidence integration green; `m15-readiness` Playwright e2e 2/2; SDD Phase-0 spec-freeze
+  (ADR + readiness.md) then per-task QA(RED)→implementor(GREEN)→reviewer TDD. **Deferred**:
+  per the AC list above, plus project-level `command_profiles`/`skill_mappings`/default-limits
+  (M14 already supplies env/agent/skill profiles).
 
 - [x] **M16. External operations API, tokens, and thin MCP facade** — expose a
   small project-scoped control surface for CI, local scripts, external tools,
@@ -509,4 +538,5 @@
 | M13. Role-owned work queue and assignment UX                                 | 2026-06-02 |
 | M19. Reconciliation + GC                                                     | 2026-06-02 |
 | M16. External operations API, tokens, and thin MCP facade                    | 2026-06-02 |
+| M15. Readiness policy and verdict calibration                                | 2026-06-03 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |

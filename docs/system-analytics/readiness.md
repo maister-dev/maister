@@ -1,11 +1,12 @@
 # Readiness domain (M15)
 
-> **Status: Designed (M15 spec-freeze), as of 2026-06-03.** This file is the frozen
-> readiness contract authored before code (SDD). The M11a gate-execution lifecycle, the
-> M12 artifact-validity rules, and the M16 `external_check` loop it builds on are
-> **Implemented**; the M15-specific behaviors (all-kind enforcement, verdict calibration,
-> the `overridden` summary state, and the shared classifier) are **Designed** here and
-> flipped to Implemented in the M15 as-built reconcile. Locked decisions:
+> **Status: Implemented (M15), as of 2026-06-03.** All-kind readiness enforcement at
+> the Review chokepoint, verdict calibration at gate execution, the shared
+> `readiness-core.ts` classifier, the `overridden` summary state, and the unified
+> readiness summary on run-detail / board / portfolio are shipped, on top of the M11a
+> gate-execution lifecycle, the M12 artifact-validity rules, and the M16 `external_check`
+> loop. The merge-refuse-for-flow-runs acceptance clause is **deferred to M18** (the
+> scratch-promote merge guard is the wired, vacuously-ready call site only). Locked decisions:
 > [ADR-048](../decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15),
 > bounded by [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)
 > and [ADR-045](../decisions.md#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve).
@@ -39,13 +40,13 @@ org-wide gate templates, and a judge-calibration lab (all deferred — ROADMAP M
 - **Gate calibration config** — per-gate `calibration.confidence_min` (0..1) and
   `allow_missing_confidence` (default `false`) in `gateSchema`, plus a flow-level
   `verdict_calibration.confidence_min` default in `flowYamlV1Schema`, folded into each
-  gate's effective `calibration` at compile time. (Designed — M15)
+  gate's effective `calibration` at compile time. (Implemented — M15)
 - **`GateVerdict.calibration`** — the observability sub-object persisted in the existing
   `gate_results.verdict` JSONB: `{ confidenceMin, rawVerdict, outcome }`. No migration.
-  (Designed — M15)
+  (Implemented — M15)
 - **`readiness-core.ts`** — the single pure classifier: live-attempt collection +
   external-gate collapse + the per-kind allow-list + the priority classifier. The one
-  source of truth shared by the enforcer, read-model, board, and portfolio. (Designed — M15)
+  source of truth shared by the enforcer, read-model, board, and portfolio. (Implemented — M15)
 - **`assertEvidenceReady(runId, phase)`** — the enforcer. Returns
   `{ ready: boolean; reasons: string[] }` (it does **not** throw); the runner converts a
   not-ready verdict into a `PRECONDITION` failure at the Review transition. (Implemented —
@@ -53,7 +54,7 @@ org-wide gate templates, and a judge-calibration lab (all deferred — ROADMAP M
 - **`getRunReadiness` → `ReadinessDTO`** — the read-model returning the unified summary
   and its evidence. (Implemented — M16; gains `overridden` + the shared core in M15)
 - **Readiness summary** — exactly one of `ready | blocked | stale | failed | waiting |
-  overridden`. (Designed — M15; `overridden` is new)
+  overridden`. (Implemented — M15; `overridden` is new)
 
 ## State machine
 
@@ -77,8 +78,10 @@ Per-status contribution of a single **blocking** gate on the live attempt:
 
 `artifact_required` `failed` is re-evaluated against current inputs (it blocks only when an
 `inputArtifactRefs` def is still non-current or `refs.length === 0`) — preserved from M12.
-Required-artifact presence/validity (`requiredFor` containing the phase) contributes
-`blocked` when missing and `stale` when `validity === "stale"` — preserved from M12.
+A required artifact (`requiredFor` non-empty) contributes `blocked` when it has no
+`validity="current"` instance (missing or stale-only). The `stale` readiness state comes from a
+blocking **gate** with `gate_results.status === "stale"` (gate staleness), not from
+artifact-instance validity (`getCurrentArtifact` returns only current-validity rows).
 
 ## Process flows
 
@@ -177,34 +180,40 @@ genuine flow-run merge enforcement deferred to M18.
   only when its `gate_results.status` is `passed` or `overridden`; every other status blocks.
 - `assertEvidenceReady(runId, phase)` MUST evaluate all executed blocking gate kinds
   (`command_check`, `ai_judgment`, `skill_check`, `artifact_required`, `external_check`),
-  not only `artifact_required` + `external_check`. (Designed — M15)
+  not only `artifact_required` + `external_check`. (Implemented — M15)
 - Review MUST refuse (node/run → `Failed` via `MaisterError("PRECONDITION")`) when any
   required blocking gate is missing, `pending`, `running`, `failed`, `stale`, or `skipped`.
 - The enforcer, `getRunReadiness`, the board query, and the portfolio query MUST classify
   through the single `readiness-core.ts`; no surface re-derives the verdict inline.
-  (Designed — M15)
+  (Implemented — M15)
 - The readiness summary MUST be exactly one of `ready | blocked | stale | failed | waiting |
   overridden`, resolved by priority `failed > stale > blocked > waiting > overridden > ready`.
 - Verdict calibration MUST be applied at gate execution and set `gate_results.status`; the
-  readiness layer MUST read only `status` and never re-read `confidence`. (Designed — M15)
+  readiness layer MUST read only `status` and never re-read `confidence`. (Implemented — M15)
 - A passing `ai_judgment`/`skill_check` verdict with `confidence` below the effective
   `calibration.confidence_min` MUST become `failed` with
-  `verdict.calibration.outcome = "below_threshold"`. (Designed — M15)
+  `verdict.calibration.outcome = "below_threshold"`. (Implemented — M15)
 - A passing verdict with no `confidence` while a threshold is configured MUST become
   `failed` (`outcome: "no_confidence"`) unless the gate sets `allow_missing_confidence: true`
-  (then `passed`, `outcome: "missing_confidence_allowed"`). (Designed — M15)
+  (then `passed`, `outcome: "missing_confidence_allowed"`). (Implemented — M15)
 - A flow-level `verdict_calibration.confidence_min` MUST be folded into each gate's effective
   `calibration` at compile time; `gates-exec.ts` MUST read only `gate.calibration`.
-  (Designed — M15)
+  (Implemented — M15)
 - A `blocking` `human_review` gate MUST be rejected at manifest validation with
-  `MaisterError("CONFIG")`; advisory `human_review` is permitted. (Designed — M15)
+  `MaisterError("CONFIG")`; advisory `human_review` is permitted. (Implemented — M15)
 - Board and portfolio readiness MUST be computed over bulk-fetched rows; neither MUST call
-  `getRunReadiness` per run (no N+1). (Designed — M15)
+  `getRunReadiness` per run (no N+1). (Implemented — M15)
 - M15 MUST NOT add a DB migration, a new `MaisterError` code, a new `runs.status` value, or
   bump `MAISTER_ENGINE_VERSION` (stays `1.2.0`).
 
 ## Edge cases
 
+- **Enforcer-only re-evaluation of `artifact_required` gates** — `assertEvidenceReady`
+  re-evaluates a `failed` blocking `artifact_required` gate against current
+  `inputArtifactRefs` and clears it when all inputs are current; the read-models
+  (`getRunReadiness`, board, portfolio) report the recorded `gate_results.status`
+  (`failed`) without re-evaluation. A run may therefore briefly read `failed` on a
+  card while the enforcer would already allow it; the enforcer is authoritative.
 - **Blocking `human_review` in a manifest** — rejected pre-run at `validateGraphManifest`
   with `MaisterError("CONFIG")`; it would otherwise deadlock promotion (executor always
   records `human_review` as `skipped`).

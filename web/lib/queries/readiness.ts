@@ -267,7 +267,10 @@ export async function getRunReadiness(
     requiredArtifactsResult.push({
       defId,
       kind: representative?.kind ?? "unknown",
-      present: current !== null,
+      // getCurrentArtifact returns ArtifactInstance | undefined (not null).
+      // Loose inequality treats both undefined and null as absent so a
+      // missing or stale-only required def correctly sets present=false.
+      present: current != null,
       validity: current?.validity ?? null,
     });
   }
@@ -275,15 +278,12 @@ export async function getRunReadiness(
   // Deterministic rollup via shared SSOT (readiness-core).
   const reasons: string[] = [];
 
-  // Artifact contributions: stale validity → "stale"; missing current → "blocked".
-  const staleArtifacts = requiredArtifactsResult.filter(
-    (a) => a.validity === "stale",
-  );
+  // A required artifact contributes "blocked" when it has no current row
+  // (missing or stale-only). The "stale" readiness state comes from a
+  // blocking GATE with status="stale", not from artifact-instance validity
+  // (getCurrentArtifact returns only validity="current" rows, so validity
+  // here is never "stale").
   const missingArtifacts = requiredArtifactsResult.filter((a) => !a.present);
-
-  for (const a of staleArtifacts) {
-    reasons.push(`required artifact "${a.defId}" is stale`);
-  }
 
   for (const a of missingArtifacts) {
     reasons.push(`required artifact "${a.defId}" has no current row`);
@@ -316,11 +316,8 @@ export async function getRunReadiness(
     }
   }
 
-  // Collapse artifact contributions to a single contribution per severity.
-  const artifactContributions = [
-    ...staleArtifacts.map(() => "stale" as const),
-    ...missingArtifacts.map(() => "blocked" as const),
-  ];
+  // Artifact contributions: missing current row → "blocked".
+  const artifactContributions = missingArtifacts.map(() => "blocked" as const);
   const gateContributions = blockingGates.map((g) =>
     gateStatusContribution(g.status as any),
   );
