@@ -157,7 +157,7 @@ M15's genuine gaps:
 <!-- Commit checkpoint: task 10 -->
 
 ### Phase 5 — Merge-phase guard on scratch promote (TDD slice, M18-bound) — may run ∥ P4
-- [ ] Task 12: Wire `assertEvidenceReady(_, "merge")` into scratch promote (co-located route test) (depends on 8)
+- [x] Task 12: Wire `assertEvidenceReady(_, "merge")` into scratch promote (co-located route test) (depends on 8)
 <!-- Commit checkpoint: task 12 -->
 
 ### Phase 6 — Readiness summary UI + i18n + e2e (parallel batch: 14 ∥ 15 ∥ 16 → 17 → 18)

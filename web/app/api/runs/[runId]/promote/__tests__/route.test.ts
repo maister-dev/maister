@@ -13,6 +13,7 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { branchExists, promoteLocalMerge } from "@/lib/worktree";
 
 type Row = Record<string, unknown>;
@@ -95,6 +96,10 @@ vi.mock("@/lib/assignments/service", () => ({
   systemCloseActiveAssignmentsForRun: vi.fn(async () => []),
 }));
 
+vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
+  assertEvidenceReady: vi.fn(async () => ({ ready: true, reasons: [] })),
+}));
+
 function seedScratchRun(
   overrides: Partial<{
     runKind: "flow" | "scratch";
@@ -165,6 +170,11 @@ beforeEach(() => {
   vi.mocked(findActiveAssignmentForRun).mockResolvedValue(null);
   vi.mocked(systemCloseActiveAssignmentsForRun).mockReset();
   vi.mocked(systemCloseActiveAssignmentsForRun).mockResolvedValue([]);
+  vi.mocked(assertEvidenceReady).mockReset();
+  vi.mocked(assertEvidenceReady).mockResolvedValue({
+    ready: true,
+    reasons: [],
+  });
 });
 
 describe("POST /api/runs/[runId]/promote", () => {
@@ -337,5 +347,77 @@ describe("POST /api/runs/[runId]/promote", () => {
     expect(res.status).toBe(400);
     expect(branchExists).not.toHaveBeenCalled();
     expect(promoteLocalMerge).not.toHaveBeenCalled();
+  });
+
+  // M15: merge-phase readiness guard for assertEvidenceReady
+
+  describe("readiness guard (assertEvidenceReady)", () => {
+    it("rejects promotion when assertEvidenceReady returns not-ready", async () => {
+      const runId = seedScratchRun();
+
+      vi.mocked(assertEvidenceReady).mockResolvedValueOnce({
+        ready: false,
+        reasons: ["blocking gate failed", "artifact missing"],
+      });
+
+      const res = await invokePost(runId, {
+        mode: "local_merge",
+        targetBranch: "main",
+      });
+
+      expect(res.status).toBe(409);
+      expect(assertEvidenceReady).toHaveBeenCalledWith(runId, "merge", fakeDb);
+      expect(promoteLocalMerge).not.toHaveBeenCalled();
+      // Run stays in Review, not flipped to Done
+      expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Review");
+      expect(dbState.tables.runs[0].status).toBe("Review");
+    });
+
+    it("allows promotion when assertEvidenceReady returns ready", async () => {
+      const runId = seedScratchRun();
+
+      vi.mocked(assertEvidenceReady).mockResolvedValueOnce({
+        ready: true,
+        reasons: [],
+      });
+
+      const res = await invokePost(runId, {
+        mode: "local_merge",
+        targetBranch: "main",
+      });
+
+      expect(res.status).toBe(200);
+      expect(assertEvidenceReady).toHaveBeenCalledWith(runId, "merge", fakeDb);
+      expect(promoteLocalMerge).toHaveBeenCalledWith({
+        projectRepoPath: "/repos/demo",
+        sourceBranch: "scratch/demo",
+        targetBranch: "main",
+      });
+      // Merge succeeded: run is Done
+      expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
+      expect(dbState.tables.runs[0].status).toBe("Done");
+    });
+
+    it("vacuously ready scratch run (no gates) proceeds to merge", async () => {
+      const runId = seedScratchRun();
+
+      // Scratch runs have no flow gates, so assertEvidenceReady is vacuously ready.
+      // Default mock returns ready: true.
+
+      const res = await invokePost(runId, {
+        mode: "local_merge",
+        targetBranch: "main",
+      });
+
+      expect(res.status).toBe(200);
+      expect(assertEvidenceReady).toHaveBeenCalledWith(runId, "merge", fakeDb);
+      expect(promoteLocalMerge).toHaveBeenCalledWith({
+        projectRepoPath: "/repos/demo",
+        sourceBranch: "scratch/demo",
+        targetBranch: "main",
+      });
+      expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
+      expect(dbState.tables.runs[0].status).toBe("Done");
+    });
   });
 });

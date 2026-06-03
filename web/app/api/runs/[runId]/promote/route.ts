@@ -15,6 +15,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays } from "@/lib/instance-config";
 import { branchExists, promoteLocalMerge } from "@/lib/worktree";
 
@@ -239,6 +240,15 @@ export async function POST(
     const targetBranch = targetBranchFor(body, scratch);
 
     assertPromotionTargetAllowed(scratch, targetBranch);
+
+    const readiness = await assertEvidenceReady(runId, "merge", db);
+
+    if (!readiness.ready) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `merge refused: evidence not ready — ${readiness.reasons.join("; ")}`,
+      );
+    }
 
     const targetExists = await branchExists({
       projectRepoPath: workspace.parentRepoPath,
