@@ -31,7 +31,12 @@ import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
 import { tryStartRun } from "@/lib/scheduler";
 import { checkSupervisorHealth } from "@/lib/supervisor-client";
-import { addWorktree, removeWorktree } from "@/lib/worktree";
+import {
+  addWorktree,
+  listBranches,
+  removeWorktree,
+  resolveBaseCommit,
+} from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -102,7 +107,29 @@ const LAUNCHABLE_ENABLEMENT_STATES = new Set<string>([
 export type LaunchRunInput = {
   taskId: string;
   executorOverrideId?: string;
+  baseBranch?: string;
+  targetBranch?: string;
 };
+
+export type PromotionMode = "local_merge" | "pull_request";
+
+// M18 §3.4: resolve the per-run promotion mode from the override chain. The
+// `local_merge` default is folded HERE (not as a per-key zod default), so a
+// CLEARed project value (null) resolves back to the default. Only the two
+// valid enum members are accepted; any other value falls through to the
+// default rather than being persisted as-is.
+export function resolvePromotionMode(args: {
+  launchOverride?: string | null;
+  projectPromotionMode?: string | null;
+}): PromotionMode {
+  const candidate = args.launchOverride ?? args.projectPromotionMode;
+
+  if (candidate === "local_merge" || candidate === "pull_request") {
+    return candidate;
+  }
+
+  return "local_merge";
+}
 
 export type LaunchRunContext = {
   actorUserId?: string | null;
@@ -417,6 +444,36 @@ export async function launchRun(
   const runId = randomUUID();
   const worktreePath = path.join(worktreeRoot, project.slug, runId);
 
+  // M18 §3.1: branch targeting. base defaults to the project default branch;
+  // target defaults to the resolved base. BOTH are body-controlled, so they
+  // MUST be validated against the project's real branch set (server-state
+  // allow-list) BEFORE any git side-effect — an unknown branch is a
+  // PRECONDITION refusal and no worktree is created.
+  const base = input.baseBranch ?? project.mainBranch;
+  const target = input.targetBranch ?? base;
+  const knownBranches = new Set(await listBranches(project.repoPath));
+
+  if (!knownBranches.has(base)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `base branch "${base}" does not exist in ${project.slug}`,
+    );
+  }
+  if (!knownBranches.has(target)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `target branch "${target}" does not exist in ${project.slug}`,
+    );
+  }
+
+  const baseCommit = await resolveBaseCommit({
+    projectRepoPath: project.repoPath,
+    baseRef: base,
+  });
+  const promotionMode = resolvePromotionMode({
+    projectPromotionMode: project.promotionMode,
+  });
+
   log.info(
     {
       taskId: task.id,
@@ -429,15 +486,21 @@ export async function launchRun(
     },
     "POST /api/runs preconditions ok",
   );
+  log.debug(
+    { runId, base, target, baseCommit, promotionMode },
+    "POST /api/runs branch targeting resolved",
+  );
 
   // Create the worktree BEFORE the DB transaction so a git failure
   // (branch already exists, dirty parent repo, missing path) does
   // NOT leave the task stuck in InFlight with an orphan run/workspace
-  // row. The task stays in Backlog and is launchable again.
+  // row. The task stays in Backlog and is launchable again. The worktree
+  // forks from the resolved base commit (M18 startPoint), not parent HEAD.
   await addWorktree({
     projectRepoPath: project.repoPath,
     branch,
     worktreePath,
+    startPoint: baseCommit,
   });
 
   try {
@@ -468,6 +531,10 @@ export async function launchRun(
         branch,
         worktreePath,
         parentRepoPath: project.repoPath,
+        baseBranch: base,
+        baseCommit,
+        targetBranch: target,
+        promotionMode,
       });
       await tx
         .update(tasks)

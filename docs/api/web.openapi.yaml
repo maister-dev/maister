@@ -2994,7 +2994,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (M18, Designed) Optional base branch the run worktree is created
+            (M18, Implemented) Optional base branch the run worktree is created
             from. Server-validated against the project's branch allow-list
             (`listBranches(project.repoPath)`) BEFORE use as a git
             `startPoint` — an unknown branch is refused `PRECONDITION` (409).
@@ -3003,7 +3003,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (M18, Designed) Optional branch the run is promoted into after
+            (M18, Implemented) Optional branch the run is promoted into after
             review. Server-validated against the same branch allow-list;
             unknown branch → `PRECONDITION` (409). Defaults to `baseBranch`.
     PostRunResponse:

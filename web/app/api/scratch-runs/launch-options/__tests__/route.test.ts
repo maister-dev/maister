@@ -141,6 +141,21 @@ function request(projectId?: string): NextRequest {
 }
 
 describe("GET /api/scratch-runs/launch-options", () => {
+  it("rejects an unauthenticated request with 401 and never reaches listBranches (M18 §3.1)", async () => {
+    const { MaisterError } = await import("@/lib/errors");
+
+    mocks.requireActiveSession.mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "no active session"),
+    );
+
+    const res = await GET(request());
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(401);
+    expect(body.code).toBe("UNAUTHENTICATED");
+    expect(mocks.listBranches).not.toHaveBeenCalled();
+  });
+
   it("returns only member-visible project options and project-scoped capabilities", async () => {
     const res = await GET(request());
     const body = (await res.json()) as {

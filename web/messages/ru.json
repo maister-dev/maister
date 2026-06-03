@@ -345,6 +345,11 @@
     "executorDefault": "По умолчанию проекта",
     "create": "Создать задачу"
   },
+  "launch": {
+    "advanced": "Расширенные параметры запуска",
+    "loading": "Загрузка веток…",
+    "optionsError": "Не удалось загрузить ветки. Повторите попытку."
+  },
   "run": {
     "eyebrow": "запуск",
     "backToBoard": "← Назад к доске",
@@ -357,6 +362,8 @@
     "submitting": "Отправка…",
     "errorInvalidJson": "Ответ должен быть корректным JSON.",
     "branch": "ветка",
+    "baseBranch": "Базовая ветка",
+    "targetBranch": "Целевая ветка",
     "step": "шаг",
     "reviewComments": "Комментарии ревью",
     "reviewCommentsPlaceholder": "Что нужно изменить? (необязательно)",

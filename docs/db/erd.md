@@ -131,6 +131,7 @@ erDiagram
         text branch_prefix
         text maister_yaml_path
         text default_executor_id
+        text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
         timestamp created_at
         timestamp archived_at
     }

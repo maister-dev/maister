@@ -465,7 +465,7 @@ confirms the spec set is the single source of truth the code phases can follow.
 launch tests migrated; e2e unaffected; Phase-1 doc tags flipped
 Designed→Implemented (DB ERD + launch OpenAPI).
 
-- [ ] **T1.1 — (RED) tests.** Name + place exactly:
+- [x] **T1.1 — (RED) tests.** Name + place exactly:
   - unit `web/lib/services/__tests__/runs-launch-branch.test.ts`: default
     resolution (base=`default_branch`, target=base); `promotion_mode` resolver
     SET/CLEAR/re-set (§3.4); unknown base/target rejected via `listBranches`
@@ -481,7 +481,7 @@ Designed→Implemented (DB ERD + launch OpenAPI).
     (matches `app/**/*.integration.test.ts`): real DB — workspace row persists
     `base_branch`/`base_commit`/`target_branch`/`promotion_mode`; ext launch
     with branch fields.
-- [ ] **T1.2 — Migration `0021_m18_workspace_branch_promotion.sql`.** Additive:
+- [x] **T1.2 — Migration `0021_m18_workspace_branch_promotion.sql`.** Additive:
   `workspaces` += `base_branch text`, `base_commit text`, `target_branch text`,
   `promotion_mode text`, `pr_url text`, `pr_number integer`, `promoted_at
   timestamp` (all nullable; PR cols populated Phase 3) **+ claim columns (Codex
@@ -493,17 +493,17 @@ Designed→Implemented (DB ERD + launch OpenAPI).
   target_branch = <project default_branch> WHERE promotion_mode IS NULL`**
   (`base_branch`/`base_commit` stay null — historically unknowable, handled by the
   §3.6 code fallback). Update `schema.ts`. DEBUG log on column population.
-- [ ] **T1.3 — launchRun service.** `web/lib/services/runs.ts`: `LaunchRunInput`
+- [x] **T1.3 — launchRun service.** `web/lib/services/runs.ts`: `LaunchRunInput`
   +`baseBranch?`/`targetBranch?`; resolve defaults; **validate both against
   `listBranches(project.repoPath)` (server-state allow-list) BEFORE worktree**
   (§3.1); `resolveBaseCommit(base)` → record; pass `startPoint=baseCommit` to
   `addWorktree`; resolve `promotion_mode` via the override chain (§3.4); persist
   branch/promotion columns on workspace insert. Verbose DEBUG: resolved base/
   target/commit/mode.
-- [ ] **T1.4 — route + ext route.** `web/app/api/runs/route.ts` body schema
+- [x] **T1.4 — route + ext route.** `web/app/api/runs/route.ts` body schema
   +`baseBranch`/`targetBranch`; `web/app/api/v1/ext/runs/launch/route.ts` (M16 ext
   launch) same; thread through the shared service; audit attribution unchanged.
-- [ ] **T1.5 — Board launch UI.** Convert `web/components/board/launch-button.tsx`
+- [x] **T1.5 — Board launch UI.** Convert `web/components/board/launch-button.tsx`
   one-click button → a compact `LaunchPopover` (default one-click preserved;
   "Advanced" disclosure → base-branch select + optional target-branch select,
   mirroring `web/components/scratch/scratch-launcher.tsx` branch pill). Branch
@@ -513,7 +513,7 @@ Designed→Implemented (DB ERD + launch OpenAPI).
   with the same auth) — **never a new unauthenticated branch lookup** (Codex F3);
   the route is in `web.openapi.yaml` (T0.4) with the auth tests (T1.1). i18n EN+RU
   (`run.baseBranch`, `run.targetBranch`, `launch.advanced`).
-- [ ] **T1.6 — (GREEN) + doc-tag flip.** Make the suite green; migrate any launch
+- [x] **T1.6 — (GREEN) + doc-tag flip.** Make the suite green; migrate any launch
   tests whose assertions the new fields touch; flip Phase-1 doc tags.
 
 ---

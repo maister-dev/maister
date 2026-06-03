@@ -3,10 +3,11 @@ import type { ReactElement } from "react";
 
 import clsx from "clsx";
 
-import { LaunchButton } from "@/components/board/launch-button";
+import { LaunchPopover } from "@/components/board/launch-popover";
 
 export interface TaskCardProps {
   card: BacklogCard;
+  projectId: string;
   canAct: boolean;
   launchLabel: string;
   launchDisabledLabel: string;
@@ -31,6 +32,7 @@ const FLOW_CHIP: Record<string, string> = {
 
 export function TaskCard({
   card,
+  projectId,
   canAct,
   launchDisabledLabel,
   launchDisabledReason,
@@ -65,10 +67,11 @@ export function TaskCard({
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
         <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute" />
         {canAct ? (
-          <LaunchButton
+          <LaunchPopover
             disabledLabel={launchDisabledLabel}
             disabledReason={launchDisabledReason}
             label={launchLabel}
+            projectId={projectId}
             taskId={card.taskId}
           />
         ) : null}

@@ -22,6 +22,7 @@ erDiagram
         text branch_prefix "default 'maister/'"
         text maister_yaml_path "where the manifest was loaded from"
         text default_executor_id "FK validated app-side"
+        text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         timestamp created_at
         timestamp archived_at "soft archive"
     }

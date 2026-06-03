@@ -188,6 +188,9 @@ as implicit `owner` of every project.
   mainBranch ('main'), branchPrefix ('maister/'),
   maisterYamlPath,
   defaultExecutorId,             // FK validated app-side (deferred)
+  promotionMode?,                // M18 (text, migration 0021) project-default
+                                 //   promotion mode (local_merge | pull_request);
+                                 //   source for the launch-time override chain (§3.4)
   createdAt, archivedAt?
 }
 ```
@@ -531,7 +534,7 @@ until all callers move to the typed index.
 
 One workspace per run. `worktreePath` is globally unique across the host.
 
-**(M18 — Designed, migration `0021`, additive. Code lands at Phase 1 HEAD.)**
+**(M18 — Implemented, migration `0021`, additive.)**
 Branch/promotion columns record the run ledger so branch-targeted promotion is
 explained without relying on naming conventions: `baseBranch`, `baseCommit`
 (the commit the worktree forked from), `targetBranch`, `promotionMode`

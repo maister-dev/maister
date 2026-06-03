@@ -708,7 +708,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (M18, Designed) Optional base branch the run worktree is created
+            (M18, Implemented) Optional base branch the run worktree is created
             from. Same semantics as the session-auth `POST /api/runs`
             `baseBranch`: server-validated against the project's branch
             allow-list before use as a git `startPoint` — unknown branch →
@@ -717,7 +717,7 @@ components:
           type: string
           minLength: 1
           description: |
-            (M18, Designed) Optional branch the run is promoted into after
+            (M18, Implemented) Optional branch the run is promoted into after
             review. Server-validated against the same branch allow-list;
             unknown branch → `PRECONDITION` (409). Defaults to `baseBranch`.
             Promotion itself stays internal/UI-only in M18 — the external

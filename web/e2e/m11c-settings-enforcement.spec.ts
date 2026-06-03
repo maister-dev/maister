@@ -17,7 +17,7 @@
 //     created (the task stays in Backlog).
 //
 // REFUSAL-ASSERTION PATH: the REAL UI Launch click (preferred). The board's
-// LaunchButton (components/board/launch-button.tsx) POSTs /api/runs and, on a
+// LaunchPopover (components/board/launch-popover.tsx) POSTs /api/runs and, on a
 // non-2xx, renders the typed `code` as the button label — so a CONFIG refusal
 // turns the button text into "CONFIG", which is deterministically assertable.
 // The same POST is intercepted to pin status 400 + body {code:"CONFIG"} and
@@ -124,7 +124,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
   expect(body.message).toContain(fx.nodeId); // "implement"
   expect(body.message).toContain(fx.refusedClass); // "mcps"
 
-  // The UI surfaces the refusal: the LaunchButton renders the typed code.
+  // The UI surfaces the refusal: the LaunchPopover renders the typed code.
   await expect(
     card.getByRole("button", { name: "CONFIG", exact: true }),
   ).toBeVisible();

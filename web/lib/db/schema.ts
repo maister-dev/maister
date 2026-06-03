@@ -109,6 +109,7 @@ export const projects = pgTable("projects", {
   branchPrefix: text("branch_prefix").notNull().default("maister/"),
   maisterYamlPath: text("maister_yaml_path").notNull(),
   defaultExecutorId: text("default_executor_id"),
+  promotionMode: text("promotion_mode"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),
@@ -548,6 +549,23 @@ export const workspaces = pgTable("workspaces", {
   }),
   archivedBranch: text("archived_branch"),
   archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+  baseBranch: text("base_branch"),
+  baseCommit: text("base_commit"),
+  targetBranch: text("target_branch"),
+  promotionMode: text("promotion_mode"),
+  prUrl: text("pr_url"),
+  prNumber: integer("pr_number"),
+  promotedAt: timestamp("promoted_at", { withTimezone: true, mode: "date" }),
+  promotionState: text("promotion_state").notNull().default("none"),
+  promotionClaimedAt: timestamp("promotion_claimed_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  promotionOwnerUserId: text("promotion_owner_user_id").references(
+    () => users.id,
+    { onDelete: "set null" },
+  ),
+  promotionAttemptId: text("promotion_attempt_id"),
 });
 
 export type ScratchDialogStatus =

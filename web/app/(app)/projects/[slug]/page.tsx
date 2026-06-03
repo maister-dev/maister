@@ -209,6 +209,7 @@ export default async function ProjectBoardPage({
               canAct={canAct}
               data={board}
               platformStatus={platformStatus}
+              projectId={project.id}
             />
           </BoardTools>
         </section>

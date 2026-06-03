@@ -345,6 +345,11 @@
     "executorDefault": "Project default",
     "create": "Create task"
   },
+  "launch": {
+    "advanced": "Advanced launch options",
+    "loading": "Loading branches…",
+    "optionsError": "Could not load branches. Try again."
+  },
   "run": {
     "eyebrow": "run",
     "backToBoard": "← Back to board",
@@ -357,6 +362,8 @@
     "submitting": "Submitting…",
     "errorInvalidJson": "Response must be valid JSON.",
     "branch": "branch",
+    "baseBranch": "Base branch",
+    "targetBranch": "Target branch",
     "step": "step",
     "reviewComments": "Review comments",
     "reviewCommentsPlaceholder": "What needs to change? (optional)",

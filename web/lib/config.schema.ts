@@ -152,6 +152,19 @@ export const maisterCapabilitiesSchema = z
   })
   .default({});
 
+// M18 (§3.4): project-level promotion defaults materialized at registration.
+// SPARSE — keys are `.optional()` with no per-key `.default()`; the
+// `local_merge` default is folded at the launch-time resolver
+// (resolvePromotionMode), not injected here, so an absent `mode` materializes
+// to NULL on projects.promotion_mode (SET/CLEAR symmetry). `remote` is parsed
+// now but consumed only in Phase 3 (PR mode).
+export const projectPromotionSchema = z
+  .object({
+    mode: z.enum(["local_merge", "pull_request"]).optional(),
+    remote: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const projectBlockSchema = z.object({
   name: z.string().min(1),
   repo_path: z
@@ -164,6 +177,7 @@ export const projectBlockSchema = z.object({
     .optional(),
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
+  promotion: projectPromotionSchema.optional(),
 });
 
 // A git-pinned capability package declared in `maister.yaml capability_imports[]`.

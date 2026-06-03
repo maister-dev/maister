@@ -254,6 +254,10 @@ async function register(
         mainBranch: config.project.main_branch,
         branchPrefix: config.project.branch_prefix,
         maisterYamlPath,
+        // M18 (§3.4) SET/CLEAR symmetry: a present promotion.mode materializes
+        // to projects.promotion_mode; an absent one resets to NULL (default)
+        // in the same write — the launch resolver folds the local_merge default.
+        promotionMode: config.project.promotion?.mode ?? null,
       });
 
       const { defaultExecutorId } = await upsertExecutorsFromConfig({

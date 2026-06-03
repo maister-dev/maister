@@ -81,6 +81,8 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
 vi.mock("@/lib/worktree", () => ({
   addWorktree: (input: unknown) => addWorktreeMock(input),
   removeWorktree: (input: unknown) => removeWorktreeMock(input),
+  listBranches: async () => ["main"],
+  resolveBaseCommit: async () => "0000000000000000000000000000000000000000",
 }));
 
 let POST: typeof import("@/app/api/runs/route").POST;

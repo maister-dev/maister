@@ -11,6 +11,7 @@ import { TaskCard } from "@/components/board/task-card";
 
 export interface BoardProps {
   data: BoardData;
+  projectId: string;
   canAct: boolean;
   platformStatus: PlatformStatus;
 }
@@ -61,6 +62,7 @@ const COLUMN_LABEL: Record<BoardColumn, string> = {
 
 export async function Board({
   data,
+  projectId,
   canAct,
   platformStatus,
 }: BoardProps): Promise<ReactElement> {
@@ -155,6 +157,7 @@ export async function Board({
                     launchDisabledLabel={t("launchUnavailable")}
                     launchDisabledReason={launchDisabledReason}
                     launchLabel={tCommon("launch")}
+                    projectId={projectId}
                   />
                 </div>
               ))}

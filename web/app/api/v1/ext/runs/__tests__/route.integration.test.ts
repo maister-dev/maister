@@ -35,6 +35,10 @@ vi.mock("@/lib/supervisor-client", () => ({
 vi.mock("@/lib/worktree", () => ({
   addWorktree: vi.fn(async () => {}),
   removeWorktree: vi.fn(async () => {}),
+  listBranches: vi.fn(async () => ["main"]),
+  resolveBaseCommit: vi.fn(
+    async () => "0000000000000000000000000000000000000000",
+  ),
 }));
 vi.mock("@/lib/scheduler", () => ({
   tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),

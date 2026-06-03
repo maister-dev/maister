@@ -23,6 +23,8 @@ const ENDPOINT = "POST /api/v1/ext/runs";
 const postBodySchema = z.object({
   taskId: z.string().min(1),
   executorOverrideId: z.string().min(1).optional(),
+  baseBranch: z.string().min(1).optional(),
+  targetBranch: z.string().min(1).optional(),
 });
 
 export async function POST(
@@ -79,6 +81,8 @@ export async function POST(
           {
             taskId: body.taskId,
             executorOverrideId: body.executorOverrideId,
+            baseBranch: body.baseBranch,
+            targetBranch: body.targetBranch,
           },
           {
             actorUserId: null,

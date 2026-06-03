@@ -16,6 +16,8 @@ const log = pino({
 const postBodySchema = z.object({
   taskId: z.string().min(1),
   executorOverrideId: z.string().min(1).optional(),
+  baseBranch: z.string().min(1).optional(),
+  targetBranch: z.string().min(1).optional(),
 });
 
 function errorResponse(err: unknown): NextResponse {
@@ -78,7 +80,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const user = await requireActiveSession();
 
     const result = await launchRun(
-      { taskId: body.taskId, executorOverrideId: body.executorOverrideId },
+      {
+        taskId: body.taskId,
+        executorOverrideId: body.executorOverrideId,
+        baseBranch: body.baseBranch,
+        targetBranch: body.targetBranch,
+      },
       {
         actorUserId: user.id,
         authorize: async (projectId) => {
