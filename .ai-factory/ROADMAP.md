@@ -327,16 +327,46 @@
     provider-specific CI apps, and external CI ingestion beyond the generic
     operations API/report contract.
 
-- [ ] **M16. External operations API, tokens, and thin MCP facade** — expose a
-      small project-scoped control surface for CI, local scripts, external tools,
-      and running agents. The canonical contract is the HTTP API with managed API
-      tokens; MCP is a thin agent-facing facade over the same service layer and
-      audit model, not a second orchestration backend.
 - [x] **M16. External operations API, tokens, and thin MCP facade** — expose a
   small project-scoped control surface for CI, local scripts, external tools,
   and running agents. The canonical contract is the HTTP API with managed API
   tokens; MCP is a thin agent-facing facade over the same service layer and
   audit model, not a second orchestration backend.
+
+  **As-built (shipped 2026-06-02):** ADR-045 (`external_check` enforced at the
+  Review chokepoint), ADR-046 (project API token model), ADR-047 (thin MCP
+  facade as a standalone REST-client package); migration
+  `0020_m16_api_tokens.sql`. Phase 1 extracted `createTask`/`launchRun` into
+  auth-decoupled services (`web/lib/services/{tasks,runs}.ts`). Phase 2 shipped
+  project API tokens (`web/lib/tokens/*`: hashed secret, `issue`/`verify`/
+  `revoke`/`list`, audit) with name/prefix/scopes/expiry/last-used and a
+  once-shown secret, the `/api/projects/[slug]/tokens[/{tokenId}]` management
+  routes, and the Integrations panel (`integrations-panel.tsx` +
+  `token-actions.tsx`, EN+RU). Phase 3 added the token-authed `/api/v1/ext/*`
+  surface (create/list/get/update task, launch/get run, get readiness, report
+  gate), each route attributing token id/actor/scope/result in the audit trail
+  and hiding cross-project existence behind a uniform 404. Phase 4 wired the
+  `external_check` gate loop: a CI report records a typed gate artifact (status,
+  source, external run URL, commit SHA, summary, payload, reporter token,
+  reported-at) that joins the same readiness summary, staleness-on-new-commit
+  rules, evidence graph, and review/promotion refusal path as native gates, with
+  external-gate readiness fanned to board and portfolio via the shared
+  `external-gate-readiness.ts` collapse helper. The thin MCP facade (`mcp/`
+  package) is a token-scoped REST client over the same `/api/v1/ext` surface that
+  cannot exceed token scope and (ADR-047) never falls back to an env token under
+  HTTP. Contracts: `docs/api/external/operations.openapi.yaml` +
+  `web.openapi.yaml`, `docs/db/integrations-domain.md`, error-taxonomy
+  (`CONFIG`→422, `PRECONDITION`/`CONFLICT`→409). A deep `/aif-verify` adversarial
+  pass then fixed an OpenAPI↔code status drift, a cross-tenant existence-hide
+  leak on the ext `/runs` route, quadruplicated readiness logic (→ shared
+  helper), and a manifest-config test gap. Verified: typecheck/lint 0, unit 1189,
+  integration 489, `validate:docs:all` 104/104, both OpenAPI specs lint-clean,
+  M16 Playwright e2e (`web/e2e/m16-external-operations.spec.ts`) green. Landed on
+  `main` as the squashed `459a948` (pre-rebase linear history preserved at
+  `backup/m16-pre-rebase-linear`). **Deferred:** OAuth apps, user impersonation,
+  full RBAC, granular per-scope token grants, outbound webhooks,
+  provider-specific GitHub/GitLab/Jenkins apps, external board sync, and
+  public-internet webhook hardening beyond token/HMAC.
 
   **Expectation: API-first integration.** External systems use REST endpoints
   secured by project-scoped tokens to create tasks, launch runs, read run
@@ -478,10 +508,5 @@
 | M12. Typed artifacts and evidence graph                                      | 2026-06-02 |
 | M13. Role-owned work queue and assignment UX                                 | 2026-06-02 |
 | M19. Reconciliation + GC                                                     | 2026-06-02 |
+| M16. External operations API, tokens, and thin MCP facade                    | 2026-06-02 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
-| M11b. Manual takeover (local worktree handoff) + run-detail timeline | 2026-05-31 |
-| M21. Project repo onboarding (URL clone + configurable roots) | 2026-05-31 |
-| M11c. Node typed settings + runtime enforcement boundary | 2026-06-01 |
-| M12. Typed artifacts and evidence graph | 2026-06-02 |
-| M19. Reconciliation + GC | 2026-06-02 |
-| M16. External operations API, tokens, and thin MCP facade | 2026-06-02 |
