@@ -134,8 +134,8 @@ M15's genuine gaps:
 (IDs match the tracked task list; each implementation task is a self-contained TDD slice.)
 
 ### Phase 0 — SDD spec-freeze (solo, before code)
-- [ ] Task 1: Author ADR for M15 readiness policy & verdict calibration → `docs/decisions.md`
-- [ ] Task 2: Freeze readiness contract & truth tables → `docs/system-analytics/readiness.md` (depends on 1)
+- [x] Task 1: Author ADR for M15 readiness policy & verdict calibration → `docs/decisions.md`
+- [x] Task 2: Freeze readiness contract & truth tables → `docs/system-analytics/readiness.md` (depends on 1)
 <!-- Commit checkpoint: tasks 1-2 -->
 
 ### Phase 1 — Schema & chokepoint contract (parallel batch: 3 ∥ 4 ∥ 5)

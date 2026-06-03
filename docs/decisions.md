@@ -2551,6 +2551,121 @@ to the DB and every action is constrained by the REST layer's auth and validatio
 
 ---
 
+### ADR-048: Readiness enforcement over all blocking gate kinds + verdict calibration (M15)
+
+**Date:** 2026-06-03
+**Status:** Accepted
+**Context:** M11a ([ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)) ships
+full gate _execution_ — the six gate kinds, the
+`pending|running|passed|failed|stale|skipped|overridden` status lifecycle, `blocking|advisory`
+modes, structured verdicts (incl. a parsed `confidence`), staleness propagation, and
+override-without-erasure. M16 ([ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve))
+added `external_check` ingestion and enforcement at the Review chokepoint via
+`assertEvidenceReady(runId, "review")`. But three gaps remain, which are M15's scope:
+
+1. **Partial enforcement.** `assertEvidenceReady` only consults two of the six gate kinds
+   (`artifact_required` + `external_check`), and only when the engine gate
+   `artifactEnforcementActive` (`compat.engine_min ≥ 1.2.0`, `runner-graph.ts`) is true. A blocking
+   `ai_judgment`/`skill_check`/`command_check` gate that _executed and failed_ does not block
+   promotion today.
+2. **Verdict calibration is dead.** `parseVerdict` extracts a numeric `confidence` from
+   `ai_judgment`/`skill_check` output and stores it on `GateVerdict`, but nothing ever consults it —
+   a low-confidence "pass" passes.
+3. **Fragmented readiness summary.** The board carries three bespoke badges
+   (`externalGatePending`/`mergeBlocked`/`evidenceStale`), portfolio carries only
+   `externalGatePending`, run-detail carries none, and `getRunReadiness` rolls up five states with
+   no `overridden`. Each surface re-derives the verdict inline, risking divergence.
+
+Bounded by [ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped) (gate execution is
+M11a, not re-built here) and [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve)
+(the `external_check` loop is M16; **flow-run merge** enforcement is M18, which reuses this evaluator).
+
+**Decision:**
+
+- **Required-gate signal = the existing `mode: blocking`.** No new `readiness_policy` grammar (the AC
+  defers a "complex policy language"). `blocking` already means "execution-abort on failure"; M15
+  additionally reads it as "promotion-required". This conflation is accepted; a future
+  `readiness_policy` block is purely additive.
+- **Verdict calibration** = a per-gate `calibration.confidence_min` (0..1) plus an optional flow-level
+  `verdict_calibration.confidence_min` default. The flow default is **folded into each gate's
+  effective `calibration` at compile time** (`compile.ts`), so `gates-exec.ts` only ever reads
+  `gate.calibration`. Calibration is applied **at execution** in the shared `ai_judgment` +
+  `skill_check` case: it sets `gate_results.status` to the calibrated truth and persists the outcome in
+  the existing `verdict` JSONB as `calibration: { confidenceMin, rawVerdict, outcome }` for
+  observability. Because calibration decides `status` at execution time, the readiness evaluator only
+  ever reads `status` and never needs to understand confidence.
+  - **Fail-closed on missing confidence.** A pass-string with `confidence` **below** the threshold →
+    `failed` (`outcome: "below_threshold"`). A pass-string with **no** `confidence` while a threshold
+    is configured → **`failed`** (`outcome: "no_confidence"`) — fail-closed, because a promotion gate
+    must not pass an unverifiable verdict (a fail-open here would be invisible downstream, since the
+    evaluator reads only `status`). A per-gate `allow_missing_confidence: true` restores the lenient
+    pass (intended for `skill_check` gates that legitimately emit no confidence). No threshold
+    configured → unchanged legacy pass (`isPassVerdict`).
+- **Drop the engine gate at the readiness chokepoint; enforce for all graph flows.** The
+  `artifactEnforcementActive` guard wrapping the `assertEvidenceReady` call in `runner-graph.ts` is
+  removed (surgically — only that call site), and the evaluator is extended from two kinds to **all
+  evaluated blocking gate kinds**. `MAISTER_ENGINE_VERSION` stays **1.2.0** (no bump). Justified by
+  "no production flows yet" and by the new fields being optional/additive. Linear `steps[]` flows
+  (old `runner.ts`) never call the evaluator and are unaffected.
+- **Blocking `human_review` is rejected at validation (`CONFIG`).** `gates-exec.ts` always records a
+  `human_review` gate as `skipped` (the real human decision happens at node finish), so a _blocking_
+  one would make the run permanently un-promotable. `validateGraphManifest` now rejects it. Advisory
+  `human_review` is allowed; the bundled `aif` flow uses a human _node_, not a `human_review` gate.
+- **Single source of truth: `readiness-core.ts`.** A new pure module owns live-attempt collection,
+  external-gate collapse, the per-kind allow-list (`passed`/`overridden` clear a blocking gate), and
+  the priority classifier. It is consumed by the enforcer (`assertEvidenceReady`), the read-model
+  (`getRunReadiness`), and the board/portfolio bulk queries — so all four classify identically. The
+  board and portfolio call it over **bulk-fetched** rows (no per-run `getRunReadiness`, no N+1).
+- **`overridden` is a distinct surfaced state.** The unified summary is
+  `ready | blocked | stale | failed | waiting | overridden`, with priority
+  **`failed > stale > blocked > waiting > overridden > ready`**.
+- **Merge-phase guard is wired into the scratch promote route as a reusable call site only.**
+  `assertEvidenceReady(runId, "merge")` is invoked in the scratch promote route for future-proofing
+  and call-site reuse. This is **NOT** M15 coverage of the AC's "merge refuse" clause: scratch runs
+  carry no flow gates, so the check is vacuously ready in production. Real flow-run merge enforcement
+  is **deferred to M18**, which owns flow-run promotion and reuses this same evaluator.
+- **No schema migration, no new error code, no new run status.** Calibration rides the existing
+  `verdict` JSONB; `gate_results.status` already includes `overridden`; the existing `CONFIG` and
+  `PRECONDITION` codes cover the new failures.
+
+**Consequences:**
+
+- A blocking gate of any executed kind (`command_check`/`ai_judgment`/`skill_check`/
+  `artifact_required`/`external_check`) that is missing, pending, running, failed, stale, or skipped
+  now refuses Review for **every** graph flow — not just the two kinds, not just engine-gated flows.
+  Existing integration tests asserting the old two-kind / engine-gated behavior are updated in lockstep.
+- `assertEvidenceReady` returns `{ ready, reasons }` (it does not throw); the runner converts a
+  not-ready verdict into a `PRECONDITION` node/run failure at the Review transition — unchanged call
+  convention, broadened inputs.
+- Calibration changing `status` at execution means a calibrated-down `ai_judgment` shows as `failed`
+  everywhere (board badge, run-detail, read-model) with no extra wiring, because every surface reads
+  `status` through the shared core.
+- Fail-closed missing-confidence can surprise a flow author who sets a threshold but whose agent emits
+  no `confidence`; `allow_missing_confidence` and the `no_confidence` outcome string make the failure
+  self-explaining.
+- The scratch merge guard is honest future-proofing; the M15 as-built note and the readiness domain
+  doc both record that genuine merge enforcement is M18.
+
+**Alternatives Considered:**
+
+- **A new `readiness_policy` DSL block (per-gate required/optional, phase lists).** Rejected for M15 —
+  the AC explicitly defers a complex policy language; `mode: blocking` already carries the signal.
+  Additive later.
+- **Calibrate in the readiness evaluator (read confidence at Review time).** Rejected — it would force
+  the evaluator, the read-model, and both bulk card queries to each re-implement the
+  confidence→status mapping, multiplying the divergence risk the shared core exists to remove.
+  Deciding `status` once at execution keeps every downstream reader confidence-agnostic.
+- **Fail-open on missing confidence.** Rejected — a promotion gate that passes an unverifiable verdict
+  defeats its purpose, and the failure would be invisible downstream. Fail-closed with an explicit
+  opt-in is the conservative default.
+- **Bump `MAISTER_ENGINE_VERSION` and gate enforcement on the new version.** Rejected — there are no
+  production flows to protect, the new config fields are optional, and a version gate would silently
+  exempt every existing flow from the very enforcement M15 adds.
+- **Per-card `getRunReadiness` for board/portfolio badges.** Rejected — N+1 over every active run.
+  The shared classifier runs over bulk-fetched rows instead.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.
