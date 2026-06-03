@@ -265,9 +265,6 @@
     "assignmentStaleEvidence": "stale evidence: {count}",
     "return": "Return",
     "elapsed": "claimed for",
-    "evidenceStale": "Evidence stale",
-    "mergeBlocked": "Merge blocked",
-    "externalGatePending": "External gate pending",
     "addTask": "add · paste gh issue",
     "filterFlow": "flow",
     "filterAgent": "agent",
@@ -456,6 +453,16 @@
     "kindArtifact": "Artifact",
     "kindGate": "Gate",
     "kindDecision": "Decision"
+  },
+  "readiness": {
+    "summary": "Readiness",
+    "reasons": "Reasons",
+    "ready": "Ready",
+    "blocked": "Blocked",
+    "stale": "Stale",
+    "failed": "Failed",
+    "waiting": "Waiting",
+    "overridden": "Overridden"
   },
   "changePassword": {
     "title": "Change your password",

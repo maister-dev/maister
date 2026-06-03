@@ -25,8 +25,10 @@ import {
   type TimelineLabels,
 } from "@/components/board/run-timeline";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
+import { ReadinessSummary } from "@/components/run/readiness-summary";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
+import { getRunReadiness } from "@/lib/queries/readiness";
 import {
   getRunCapabilityProfiles,
   getRunDetail,
@@ -84,7 +86,9 @@ export default async function RunDetailPage({
   const settings = await getRunSettings(runId);
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
   const evidence = await buildEvidenceGraph(runId);
+  const readiness = await getRunReadiness(runId, detail.projectId);
   const tEvidence = await getTranslations("evidence");
+  const tReadiness = await getTranslations("readiness");
 
   const evidenceLabels: EvidenceGraphLabels = {
     title: tEvidence("title"),
@@ -220,6 +224,27 @@ export default async function RunDetailPage({
           ) : null}
         </div>
       </header>
+
+      {readiness ? (
+        <div className="mb-6">
+          <ReadinessSummary
+            labels={{
+              state: {
+                ready: tReadiness("ready"),
+                blocked: tReadiness("blocked"),
+                stale: tReadiness("stale"),
+                failed: tReadiness("failed"),
+                waiting: tReadiness("waiting"),
+                overridden: tReadiness("overridden"),
+              },
+              summary: tReadiness("summary"),
+              reasons: tReadiness("reasons"),
+            }}
+            reasons={readiness.reasons}
+            state={readiness.readiness}
+          />
+        </div>
+      ) : null}
 
       {detail.status === "Crashed" ? (
         <section

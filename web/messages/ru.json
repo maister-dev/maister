@@ -265,9 +265,6 @@
     "assignmentStaleEvidence": "устаревшие свидетельства: {count}",
     "return": "Вернуть",
     "elapsed": "в работе",
-    "evidenceStale": "Свидетельства устарели",
-    "mergeBlocked": "Слияние заблокировано",
-    "externalGatePending": "Внешняя проверка ожидается",
     "addTask": "добавить · вставить gh issue",
     "filterFlow": "флоу",
     "filterAgent": "агент",
@@ -456,6 +453,16 @@
     "kindArtifact": "Артефакт",
     "kindGate": "Гейт",
     "kindDecision": "Решение"
+  },
+  "readiness": {
+    "summary": "Готовность",
+    "reasons": "Причины",
+    "ready": "Готово",
+    "blocked": "Заблокировано",
+    "stale": "Устарело",
+    "failed": "Провалено",
+    "waiting": "Ожидание",
+    "overridden": "Переопределено"
   },
   "changePassword": {
     "title": "Смените пароль",

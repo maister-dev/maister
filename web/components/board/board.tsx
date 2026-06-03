@@ -67,15 +67,23 @@ export async function Board({
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
   const tRun = await getTranslations("run");
+  const tReadiness = await getTranslations("readiness");
   const flightLabels = {
     reworking: tRun("reworking"),
     claimedBy: t("claimedBy"),
     takeoverReturn: t("return"),
     elapsed: t("elapsed"),
     settingsRefused: tRun("settingsRefusedHint"),
-    evidenceStale: t("evidenceStale"),
-    mergeBlocked: t("mergeBlocked"),
-    externalGatePending: t("externalGatePending"),
+    // T15 (M15): unified readiness badge labels from the `readiness.<state>`
+    // namespace, replacing the old evidenceStale/mergeBlocked/externalGatePending.
+    readiness: {
+      ready: tReadiness("ready"),
+      blocked: tReadiness("blocked"),
+      stale: tReadiness("stale"),
+      failed: tReadiness("failed"),
+      waiting: tReadiness("waiting"),
+      overridden: tReadiness("overridden"),
+    },
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"

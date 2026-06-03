@@ -1,4 +1,5 @@
 import type { PortfolioProject } from "@/lib/queries/portfolio";
+import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { CSSProperties, ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
@@ -8,6 +9,19 @@ import clsx from "clsx";
 export interface ProjectCardProps {
   project: PortfolioProject;
 }
+
+// T16 (M15): per-state readiness badge styling, mirroring the board flight-card
+// READINESS_BADGE forest-token map (dark-mode-safe) for visual consistency.
+const READINESS_BADGE: Record<ReadinessState, string> = {
+  ready: "border-good bg-good-soft text-good",
+  blocked:
+    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
+  failed:
+    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
+  stale: "border-amber-line bg-amber-soft text-amber",
+  waiting: "border-amber-line bg-amber-soft text-amber",
+  overridden: "border-line bg-ivory text-ink-2",
+};
 
 const ACCENT_VARS: Record<1 | 2 | 3 | 4, CSSProperties> = {
   1: {
@@ -56,7 +70,7 @@ export async function ProjectCard({
   project,
 }: ProjectCardProps): Promise<ReactElement> {
   const t = await getTranslations("portfolio");
-  const tBoard = await getTranslations("board");
+  const tReadiness = await getTranslations("readiness");
 
   const accentStyle = ACCENT_VARS[project.accent];
   const visibleMembers = project.members.slice(0, 5);
@@ -248,13 +262,17 @@ export async function ProjectCard({
                   >
                     {ws.runKind === "scratch" ? "scratch" : ws.agent}
                   </span>
-                  {ws.externalGatePending ? (
+                  {ws.readiness !== "ready" ? (
                     <span
-                      aria-label={tBoard("externalGatePending")}
-                      className="rounded-full border border-amber-line bg-amber-soft px-1 py-px text-[9.5px] font-bold text-amber"
-                      title={tBoard("externalGatePending")}
+                      aria-label={tReadiness(ws.readiness)}
+                      className={clsx(
+                        "rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.04em]",
+                        READINESS_BADGE[ws.readiness],
+                      )}
+                      data-readiness={ws.readiness}
+                      title={tReadiness(ws.readiness)}
                     >
-                      ◉
+                      {tReadiness(ws.readiness)}
                     </span>
                   ) : null}
                   <span

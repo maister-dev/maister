@@ -1,18 +1,24 @@
 import "server-only";
 
 import type { BoardColumn, CrashAction } from "@/lib/board";
-import type { RunStatus, StepRun } from "@/lib/db/schema";
+import type { GateResultStatus, RunStatus, StepRun } from "@/lib/db/schema";
+import type {
+  ReadinessContribution,
+  ReadinessState,
+} from "@/lib/flows/graph/readiness-core";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
-  collapseLatestExternalPerGate,
-  isExternalGateReady,
-} from "@/lib/flows/graph/external-gate-readiness";
+  gateStatusContribution,
+  latestAttemptIdsByNode,
+  liveBlockingGates,
+  rollupReadiness,
+} from "@/lib/flows/graph/readiness-core";
 
 const {
   artifactInstances,
@@ -81,17 +87,15 @@ export interface FlightCard {
   // `discard`); null on every non-Crashed card. The raw session id is NEVER
   // surfaced to the client.
   crashAction: CrashAction | null;
-  // M12 (ADR-037) Phase 7: the latest run has ≥1 stale artifact (evidence
-  // invalidated by rework — a soft signal to re-check the evidence graph).
-  evidenceStale: boolean;
-  // M12 (ADR-037) Phase 7: merge is blocked because a merge-required artifact
-  // is non-current OR a blocking artifact_required gate failed/went stale.
-  mergeBlocked: boolean;
-  // M16 Phase 7: the latest run has ≥1 BLOCKING external_check gate whose
-  // latest-per-gateId, live-attempt representative status is NOT passed|overridden
-  // (pending|failed|stale|skipped → true). Mirrors assertEvidenceReady's
-  // passed/overridden allow-list. Done cards always read false.
-  externalGatePending: boolean;
+  // T15 (M15): unified readiness summary badge, replacing the three separate
+  // booleans (evidenceStale, mergeBlocked, externalGatePending). Computed over
+  // the same bulk-fetched gate_results + artifact_instances + node_attempts rows
+  // using readiness-core.ts (SSOT shared with assertEvidenceReady,
+  // getRunReadiness) — no per-run getRunReadiness call, no N+1.
+  // State = "ready" | "blocked" | "stale" | "failed" | "waiting" | "overridden".
+  // Only rendered when readiness !== "ready" AND status !== "done".
+  // Done cards always read "ready" (mirrors the old done-zeroing).
+  readiness: ReadinessState;
 }
 
 export interface BoardColumnData {
@@ -173,6 +177,153 @@ function priorityFor(index: number): CardPriority {
 
 function emptyColumn(column: BoardColumn): BoardColumnData {
   return { column, backlog: [], flight: [], total: 0 };
+}
+
+// T15 (M15, ADR-048): the unified readiness state per run, batched across all
+// latest runs (no per-run query, no N+1). Bulk-fetches node_attempts +
+// gate_results + artifact_instances once, groups by runId in memory, and
+// classifies each run through the shared readiness-core SSOT — the same gate
+// contributions assertEvidenceReady / getRunReadiness apply, plus the
+// review-phase required-artifact stale/missing contributions.
+async function computeReadinessByRun(
+  client: NodePgDatabase<typeof schema>,
+  latestRunIds: string[],
+): Promise<Map<string, ReadinessState>> {
+  const readinessByRun = new Map<string, ReadinessState>();
+
+  if (latestRunIds.length === 0) return readinessByRun;
+
+  // Live-attempt lineage: latest attempt per (runId, nodeId). nodeIds repeat
+  // across runs, so grouping must stay run-scoped.
+  const attemptRows: Array<{
+    id: string;
+    runId: string;
+    nodeId: string;
+    attempt: number;
+  }> = await client
+    .select({
+      id: nodeAttempts.id,
+      runId: nodeAttempts.runId,
+      nodeId: nodeAttempts.nodeId,
+      attempt: nodeAttempts.attempt,
+    })
+    .from(nodeAttempts)
+    .where(inArray(nodeAttempts.runId, latestRunIds));
+
+  // All gate_results on the latest runs (every kind, every status). The
+  // blocking + live-attempt + external-collapse filtering happens in
+  // liveBlockingGates (SSOT).
+  const gateRows: Array<{
+    id: string;
+    runId: string;
+    nodeAttemptId: string;
+    gateId: string;
+    kind: string;
+    mode: string;
+    status: GateResultStatus;
+    createdAt: Date;
+  }> = await client
+    .select({
+      id: gateResults.id,
+      runId: gateResults.runId,
+      nodeAttemptId: gateResults.nodeAttemptId,
+      gateId: gateResults.gateId,
+      kind: gateResults.kind,
+      mode: gateResults.mode,
+      status: gateResults.status,
+      createdAt: gateResults.createdAt,
+    })
+    .from(gateResults)
+    .where(inArray(gateResults.runId, latestRunIds));
+
+  // Required-artifact rows for the review phase, plus the validity of each
+  // (runId, defId)'s current row. requiredFor is JSONB; filter in JS so the
+  // computation is dialect-agnostic.
+  const artifactRows: Array<{
+    runId: string;
+    artifactDefId: string | null;
+    validity: string;
+    requiredFor: string[] | null;
+  }> = await client
+    .select({
+      runId: artifactInstances.runId,
+      artifactDefId: artifactInstances.artifactDefId,
+      validity: artifactInstances.validity,
+      requiredFor: artifactInstances.requiredFor,
+    })
+    .from(artifactInstances)
+    .where(inArray(artifactInstances.runId, latestRunIds));
+
+  const attemptsByRun = new Map<string, typeof attemptRows>();
+  const gatesByRun = new Map<string, typeof gateRows>();
+  const artifactsByRun = new Map<string, typeof artifactRows>();
+
+  for (const a of attemptRows) {
+    (
+      attemptsByRun.get(a.runId) ?? attemptsByRun.set(a.runId, []).get(a.runId)!
+    ).push(a);
+  }
+  for (const g of gateRows) {
+    (gatesByRun.get(g.runId) ?? gatesByRun.set(g.runId, []).get(g.runId)!).push(
+      g,
+    );
+  }
+  for (const r of artifactRows) {
+    (
+      artifactsByRun.get(r.runId) ??
+      artifactsByRun.set(r.runId, []).get(r.runId)!
+    ).push(r);
+  }
+
+  for (const runId of latestRunIds) {
+    const liveAttemptIds = latestAttemptIdsByNode(
+      attemptsByRun.get(runId) ?? [],
+    );
+    const blocking = liveBlockingGates(
+      gatesByRun.get(runId) ?? [],
+      liveAttemptIds,
+    );
+    const gateContributions: ReadinessContribution[] = blocking.map((g) =>
+      gateStatusContribution(g.status),
+    );
+
+    // Required-artifact classification mirrors getRunReadiness (current-row
+    // presence only). Task 21 reconciles both to the contract's stale→"stale" +
+    // phase-aware rules via readiness-core.
+    //
+    // A required def is satisfied iff a validity="current" row exists for it.
+    // Any def with requiredFor non-empty (any phase) is in scope — identical to
+    // getRunReadiness's requiredFor NON-EMPTY filter.
+    const requiredRows = (artifactsByRun.get(runId) ?? []).filter(
+      (r) =>
+        r.artifactDefId &&
+        Array.isArray(r.requiredFor) &&
+        r.requiredFor.length > 0,
+    );
+    const requiredDefIds = new Set(
+      requiredRows.map((r) => r.artifactDefId as string),
+    );
+    const presentDefIds = new Set<string>();
+
+    for (const r of artifactsByRun.get(runId) ?? []) {
+      if (r.artifactDefId && r.validity === "current") {
+        presentDefIds.add(r.artifactDefId);
+      }
+    }
+
+    const artifactContributions: ReadinessContribution[] = [];
+
+    for (const defId of requiredDefIds) {
+      if (!presentDefIds.has(defId)) artifactContributions.push("blocked");
+    }
+
+    readinessByRun.set(
+      runId,
+      rollupReadiness([...artifactContributions, ...gateContributions]),
+    );
+  }
+
+  return readinessByRun;
 }
 
 export async function getBoardData(projectId: string): Promise<BoardData> {
@@ -302,201 +453,15 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     }
   }
 
-  // M12 (ADR-037) Phase 7: which latest runs carry ≥1 stale artifact.
-  const evidenceStaleRunIds = new Set<string>();
-
-  if (latestRunIds.length > 0) {
-    const staleRows: Array<{ runId: string }> = await client
-      .select({ runId: artifactInstances.runId })
-      .from(artifactInstances)
-      .where(
-        and(
-          inArray(artifactInstances.runId, latestRunIds),
-          eq(artifactInstances.validity, "stale"),
-        ),
-      );
-
-    for (const r of staleRows) evidenceStaleRunIds.add(r.runId);
-  }
-
-  // M16 Phase 7: which latest runs have a pending blocking external_check gate.
-  const externalGatePendingRunIds = new Set<string>();
-
-  // M12 (ADR-037) Phase 7: which latest runs are merge-blocked, via either
-  // (a) a merge-required def that has NO current row (per-def-current — PR1/F2;
-  //     stale/superseded history never blocks once the def is re-produced), or
-  // (b) a blocking artifact_required gate that failed or went stale.
-  const mergeBlockedRunIds = new Set<string>();
-
-  if (latestRunIds.length > 0) {
-    // Distinct (runId, defId) pairs any row marks merge-required.
-    const requiredDefRows: Array<{
-      runId: string;
-      artifactDefId: string | null;
-    }> = await client
-      .select({
-        runId: artifactInstances.runId,
-        artifactDefId: artifactInstances.artifactDefId,
-      })
-      .from(artifactInstances)
-      .where(
-        and(
-          inArray(artifactInstances.runId, latestRunIds),
-          sql`${artifactInstances.requiredFor} @> ${JSON.stringify(["merge"])}::jsonb`,
-        ),
-      );
-
-    // (runId, defId) pairs that DO have a current row.
-    const currentPairs = new Set<string>();
-    const currentRows: Array<{
-      runId: string;
-      artifactDefId: string | null;
-    }> = await client
-      .select({
-        runId: artifactInstances.runId,
-        artifactDefId: artifactInstances.artifactDefId,
-      })
-      .from(artifactInstances)
-      .where(
-        and(
-          inArray(artifactInstances.runId, latestRunIds),
-          eq(artifactInstances.validity, "current"),
-        ),
-      );
-
-    for (const r of currentRows) {
-      if (r.artifactDefId) currentPairs.add(`${r.runId}:${r.artifactDefId}`);
-    }
-
-    for (const r of requiredDefRows) {
-      if (
-        r.artifactDefId &&
-        !currentPairs.has(`${r.runId}:${r.artifactDefId}`)
-      ) {
-        mergeBlockedRunIds.add(r.runId);
-      }
-    }
-
-    // Only the latest attempt's gate verdict is live: a stale row left by a
-    // prior attempt is retired once the node re-runs and re-evaluates its gate
-    // (mirrors per-def-current for artifacts). Keyed on node-attempt lineage.
-    const attemptRows: Array<{
-      id: string;
-      runId: string;
-      nodeId: string;
-      attempt: number;
-    }> = await client
-      .select({
-        id: nodeAttempts.id,
-        runId: nodeAttempts.runId,
-        nodeId: nodeAttempts.nodeId,
-        attempt: nodeAttempts.attempt,
-      })
-      .from(nodeAttempts)
-      .where(inArray(nodeAttempts.runId, latestRunIds));
-
-    const bestAttempt = new Map<string, { id: string; attempt: number }>();
-
-    for (const a of attemptRows) {
-      const key = `${a.runId}:${a.nodeId}`;
-      const cur = bestAttempt.get(key);
-
-      if (!cur || a.attempt > cur.attempt) {
-        bestAttempt.set(key, { id: a.id, attempt: a.attempt });
-      }
-    }
-
-    const liveAttemptIds = new Set([...bestAttempt.values()].map((v) => v.id));
-
-    const blockedGateRows: Array<{
-      runId: string;
-      nodeAttemptId: string;
-      status: string;
-      inputArtifactRefs: string[] | null;
-    }> = await client
-      .select({
-        runId: gateResults.runId,
-        nodeAttemptId: gateResults.nodeAttemptId,
-        status: gateResults.status,
-        inputArtifactRefs: gateResults.inputArtifactRefs,
-      })
-      .from(gateResults)
-      .where(
-        and(
-          inArray(gateResults.runId, latestRunIds),
-          eq(gateResults.kind, "artifact_required"),
-          eq(gateResults.mode, "blocking"),
-          inArray(gateResults.status, ["failed", "stale"]),
-        ),
-      );
-
-    for (const r of blockedGateRows) {
-      if (!liveAttemptIds.has(r.nodeAttemptId)) continue;
-
-      // Mirror assertEvidenceReady Check 2: a `failed` gate whose required
-      // inputs are ALL current again would pass today, so it no longer blocks
-      // merge. A `stale` gate always blocks (needs a re-run). Keeps the board
-      // badge consistent with the authoritative readiness verdict.
-      if (r.status === "failed") {
-        const refs = r.inputArtifactRefs ?? [];
-        const stillMissing =
-          refs.length === 0 ||
-          refs.some((ref) => !currentPairs.has(`${r.runId}:${ref}`));
-
-        if (!stillMissing) continue;
-      }
-
-      mergeBlockedRunIds.add(r.runId);
-    }
-
-    // M16 Phase 7: external_check gate-readiness collapse (mirrors readiness.ts:147-164).
-    // Only live-attempt rows count; among those, keep the latest-per-gateId representative
-    // (max createdAt, tiebreak id desc) — a superseded stale row must not strand the run.
-    const externalGateRawRows: Array<{
-      runId: string;
-      nodeAttemptId: string;
-      gateId: string;
-      mode: string;
-      status: string;
-      createdAt: Date;
-      id: string;
-    }> = await client
-      .select({
-        runId: gateResults.runId,
-        nodeAttemptId: gateResults.nodeAttemptId,
-        gateId: gateResults.gateId,
-        mode: gateResults.mode,
-        status: gateResults.status,
-        createdAt: gateResults.createdAt,
-        id: gateResults.id,
-      })
-      .from(gateResults)
-      .where(
-        and(
-          inArray(gateResults.runId, latestRunIds),
-          eq(gateResults.kind, "external_check"),
-          eq(gateResults.mode, "blocking"),
-        ),
-      );
-
-    // Live-attempt collapse: drop rows on superseded attempts.
-    const liveExternalRows = externalGateRawRows.filter((r) =>
-      liveAttemptIds.has(r.nodeAttemptId),
-    );
-
-    // Latest-per-gate collapse (keyed on runId+gateId): max createdAt, tiebreak
-    // id desc. Allow-list (passed/overridden) lives in the shared helper.
-    const latestByRunGate = collapseLatestExternalPerGate(
-      liveExternalRows,
-      (r) => `${r.runId}:${r.gateId}`,
-    );
-
-    for (const r of latestByRunGate) {
-      if (!isExternalGateReady(r.status)) {
-        externalGatePendingRunIds.add(r.runId);
-      }
-    }
-  }
+  // T15 (M15, ADR-048): the unified readiness state per latest run, replacing
+  // the M12 evidenceStale/mergeBlocked + M16 externalGatePending booleans.
+  // Computed over the SAME bulk-fetched node_attempts + gate_results +
+  // artifact_instances rows via the shared readiness-core classifier
+  // (gateStatusContribution + liveBlockingGates + rollupReadiness) — no per-run
+  // getRunReadiness call, no N+1. The review-phase required-artifact contributions
+  // mirror getRunReadiness: a stale required-artifact row → "stale"; a required
+  // def with no current row → "blocked".
+  const readinessByRun = await computeReadinessByRun(client, latestRunIds);
 
   // M11b (ADR-030): the active takeover claim per latest run — owner + the
   // claim time (the takeover node_attempts.started_at). Drives the
@@ -597,11 +562,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         runStatus: run.status,
         acpSessionId: run.acpSessionId,
       }),
-      evidenceStale:
-        cardStatus !== "done" && evidenceStaleRunIds.has(run.runId),
-      mergeBlocked: cardStatus !== "done" && mergeBlockedRunIds.has(run.runId),
-      externalGatePending:
-        cardStatus !== "done" && externalGatePendingRunIds.has(run.runId),
+      // Done cards always read "ready" — terminal, no actionable readiness badge.
+      readiness:
+        cardStatus === "done"
+          ? "ready"
+          : (readinessByRun.get(run.runId) ?? "ready"),
     });
 
     if (

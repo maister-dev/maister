@@ -10,6 +10,7 @@ import * as schema from "@/lib/db/schema";
 import {
   ACTIVE_RUN_STATUSES,
   type AgentRole,
+  computeReadinessByRun,
   type PortfolioWorkspace,
   relativeTime,
   runStatusToWorkspace,
@@ -201,6 +202,13 @@ export async function getProjectPageData(
     name: m.name ?? m.email ?? "?",
     isAdmin: m.role === "owner" || m.role === "admin",
   }));
+  // T16 (M15, ADR-048): unified readiness per active run via the shared
+  // readiness-core SSOT (same classifier the portfolio + board use) — no per-run
+  // getRunReadiness, no N+1.
+  const readinessByRun = await computeReadinessByRun(
+    client,
+    activeRunRows.map((row) => row.runId),
+  );
   const activeWorkspaces: PortfolioWorkspace[] = activeRunRows.map((row) => ({
     runId: row.runId,
     runKind: row.runKind as RunKind,
@@ -219,6 +227,8 @@ export async function getProjectPageData(
       dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
       acpSessionId: row.acpSessionId,
     }),
+    // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
+    readiness: readinessByRun.get(row.runId) ?? "ready",
   }));
 
   const defaultExecutor = project.defaultExecutorId

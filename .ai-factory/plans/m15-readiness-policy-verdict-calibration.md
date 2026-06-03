@@ -161,11 +161,11 @@ M15's genuine gaps:
 <!-- Commit checkpoint: task 12 -->
 
 ### Phase 6 — Readiness summary UI + i18n + e2e (parallel batch: 14 ∥ 15 ∥ 16 → 17 → 18)
-- [ ] Task 14: Run-detail readiness summary panel + component tests (depends on 10)
-- [ ] Task 15: Unify board flight-card to one readiness badge via shared core over bulk rows (depends on 10)
-- [ ] Task 16: Portfolio card readiness state via shared core over bulk rows (depends on 10)
-- [ ] Task 17: EN+RU i18n (`web/messages/en.json` + `ru.json`) for readiness states & panel (depends on 14, 15, 16)
-- [ ] Task 18: Playwright e2e — blocking gate → blocked → resolve → ready/overridden (depends on 12, 15, 17)
+- [x] Task 14: Run-detail readiness summary panel + component tests (depends on 10)
+- [x] Task 15: Unify board flight-card to one readiness badge via shared core over bulk rows (depends on 10)
+- [x] Task 16: Portfolio card readiness state via shared core over bulk rows (depends on 10)
+- [x] Task 17: EN+RU i18n (`web/messages/en.json` + `ru.json`) for readiness states & panel (depends on 14, 15, 16)
+- [x] Task 18: Playwright e2e — blocking gate → blocked → resolve → ready/overridden (depends on 12, 15, 17)
 <!-- Commit checkpoint: tasks 14-18 -->
 
 ### Phase 7 — Bundled flow + docs as-built + final verify

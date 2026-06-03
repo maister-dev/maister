@@ -281,6 +281,17 @@ type M12FixtureRecord = FixtureRecord & {
   gateResultId: string;
 };
 
+// The M15 readiness fixture carries two run IDs (failed + overridden) to test
+// the readiness badge and panel with different gate statuses.
+type M15FixtureRecord = {
+  projectSlug: string;
+  failedRunId: string;
+  failedHitlRequestId: string;
+  overriddenRunId: string;
+  overriddenHitlRequestId: string;
+  gateId: string;
+};
+
 // The M11c refusal fixture has no run yet (the whole point is that launching it
 // is refused before a run exists), so it carries the task id and the node/class
 // the refusal message must name instead of a runId.
@@ -439,6 +450,71 @@ const M19_MANIFEST = {
       transitions: { success: "done" },
     },
   ],
+};
+
+// --- M15 fixture: readiness summary badge & panel coverage ------------------
+// ONE project carrying TWO seeded runs to demonstrate readiness badge on
+// board/portfolio cards and the run-detail ReadinessSummary panel:
+//   • A run in Review with a BLOCKING gate seeded `failed` → board/portfolio
+//     show [data-readiness="failed"]; run-detail panel shows "Failed" state +
+//     reason.
+//   • A run in Review with the SAME gate OVERRIDDEN → board/portfolio show
+//     [data-readiness="overridden"]; panel shows "Overridden" state.
+// Both runs use a manifest with a blocking gate, no worktree provisioned
+// (readiness is pure DB gate_results read, supervisor-independent).
+
+const M15_SLUG = "e2e-m15";
+const M15_FAILED_BRANCH = "maister/e2e-m15-failed";
+const M15_OVERRIDDEN_BRANCH = "maister/e2e-m15-overridden";
+const M15_GATE_ID = "quality-check";
+
+const M15_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Readiness (e2e)",
+  compat: { engine_min: "1.2.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      pre_finish: {
+        gates: [
+          {
+            id: M15_GATE_ID,
+            kind: "external_check",
+            mode: "blocking",
+            external: {
+              description: "Quality check required",
+              staleOnNewCommit: false,
+            },
+          },
+        ],
+      },
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: "implement" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+const M15_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
 };
 
 // --- M16 fixture: external-operations API ------------------------------------
@@ -1793,6 +1869,201 @@ async function seedM19Fixture(
   };
 }
 
+async function seedM15Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M15FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    executor: randomUUID(),
+    flow: randomUUID(),
+    failedTask: randomUUID(),
+    failedRun: randomUUID(),
+    failedWorkspace: randomUUID(),
+    failedHitl: randomUUID(),
+    failedImplAttempt: randomUUID(),
+    failedReviewAttempt: randomUUID(),
+    failedGate: randomUUID(),
+    overriddenTask: randomUUID(),
+    overriddenRun: randomUUID(),
+    overriddenWorkspace: randomUUID(),
+    overriddenHitl: randomUUID(),
+    overriddenImplAttempt: randomUUID(),
+    overriddenReviewAttempt: randomUUID(),
+    overriddenGate: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const failedWorktreePath = `${repoPath}/.worktrees/e2e-m15-failed`;
+  const overriddenWorktreePath = `${repoPath}/.worktrees/e2e-m15-overridden`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M15_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project,
+      M15_SLUG,
+      "MAIster E2E M15 Readiness",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor, ids.project],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-readiness@v0.0.1`,
+      JSON.stringify(M15_MANIFEST),
+    ],
+  );
+
+  // Fixture 1: A run in Review with a BLOCKING gate seeded `failed`.
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.failedTask,
+      ids.project,
+      "E2E readiness failed",
+      "do the thing",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'Review', 'review', 'v0.0.1', now())`,
+    [ids.failedRun, ids.failedTask, ids.project, ids.flow, ids.executor],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.failedWorkspace,
+      ids.failedRun,
+      ids.project,
+      M15_FAILED_BRANCH,
+      failedWorktreePath,
+      repoPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.failedImplAttempt, ids.failedRun],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.failedReviewAttempt, ids.failedRun],
+  );
+  await pool.query(
+    `INSERT INTO gate_results (id, run_id, node_attempt_id, gate_id, kind, mode, status, created_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'external_check', 'blocking', 'failed', now(), now())`,
+    [ids.failedGate, ids.failedRun, ids.failedReviewAttempt, M15_GATE_ID],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, $4)`,
+    [
+      ids.failedHitl,
+      ids.failedRun,
+      JSON.stringify(M15_REVIEW_SCHEMA),
+      "Review the implementation.",
+    ],
+  );
+
+  // Fixture 2: A run in Review with the SAME gate OVERRIDDEN.
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.overriddenTask,
+      ids.project,
+      "E2E readiness overridden",
+      "do the thing",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'Review', 'review', 'v0.0.1', now())`,
+    [
+      ids.overriddenRun,
+      ids.overriddenTask,
+      ids.project,
+      ids.flow,
+      ids.executor,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.overriddenWorkspace,
+      ids.overriddenRun,
+      ids.project,
+      M15_OVERRIDDEN_BRANCH,
+      overriddenWorktreePath,
+      repoPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.overriddenImplAttempt, ids.overriddenRun],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.overriddenReviewAttempt, ids.overriddenRun],
+  );
+  await pool.query(
+    `INSERT INTO gate_results (id, run_id, node_attempt_id, gate_id, kind, mode, status, created_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'external_check', 'blocking', 'overridden', now(), now())`,
+    [
+      ids.overriddenGate,
+      ids.overriddenRun,
+      ids.overriddenReviewAttempt,
+      M15_GATE_ID,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, $4)`,
+    [
+      ids.overriddenHitl,
+      ids.overriddenRun,
+      JSON.stringify(M15_REVIEW_SCHEMA),
+      "Review the implementation.",
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    projectSlug: M15_SLUG,
+    failedRunId: ids.failedRun,
+    failedHitlRequestId: ids.failedHitl,
+    overriddenRunId: ids.overriddenRun,
+    overriddenHitlRequestId: ids.overriddenHitl,
+    gateId: M15_GATE_ID,
+  };
+}
+
 type M16FixtureRecord = ProjectFixture & {
   launchTaskId: string;
   runId: string;
@@ -1933,6 +2204,7 @@ async function main(): Promise<void> {
         M11C_VISIBLE_SLUG,
         M11C_REFUSE_SLUG,
         M19_SLUG,
+        M15_SLUG,
         M16_SLUG,
       ],
     ]);
@@ -2034,6 +2306,7 @@ async function main(): Promise<void> {
     const m11cVisible = await seedM11cVisibleFixture(pool, admin.id);
     const m11cRefuse = await seedM11cRefuseFixture(pool, admin.id);
     const m19 = await seedM19Fixture(pool, admin.id);
+    const m15 = await seedM15Fixture(pool, admin.id);
     const m16 = await seedM16Fixture(pool, admin.id);
 
     await pool.query(
@@ -2070,6 +2343,7 @@ async function main(): Promise<void> {
         m11cVisible,
         m11cRefuse,
         m19,
+        m15,
         m16,
       },
     };
@@ -2085,6 +2359,7 @@ async function main(): Promise<void> {
       `seed-e2e: seeded m11a ${m11a.runId}, m11b ${m11b.runId}, m12 ${m12.runId} (${M12_SLUG}), board ${board.projectSlug}, scratch ${scratch.projectSlug}` +
         `, m11c-visible ${m11cVisible.runId} (${M11C_VISIBLE_SLUG}), m11c-refuse ${m11cRefuse.taskId} (${M11C_REFUSE_SLUG})` +
         `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})` +
+        `, m15 failed ${m15.failedRunId} overridden ${m15.overriddenRunId} (${M15_SLUG})` +
         `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})`,
     );
   } finally {

@@ -423,14 +423,12 @@ describe("portfolio queries (integration)", () => {
     ).toBeDefined();
   });
 
-  // T7 (M16 Phase 7): the external_check gate-readiness flag fanned into the
-  // portfolio. PortfolioWorkspace gains `externalGatePending?: boolean`,
-  // computed per active workspace's latest run with the SAME semantics as the
-  // board reader: true iff ≥1 BLOCKING external_check gate whose latest-per-
-  // gateId, live-attempt representative status is NOT passed|overridden
-  // (pending|failed|stale|skipped → true), mirroring assertEvidenceReady's
-  // passed/overridden allow-list. The field does not exist yet →
-  // RED (undefined at runtime). Existing portfolio tests are untouched.
+  // T16 (M15, ADR-048): MIGRATED from the M16 externalGatePending boolean to the
+  // unified `readiness: ReadinessState`. A blocking external_check gate now
+  // contributes through gateStatusContribution like every other kind:
+  // pending|running → waiting, failed → failed, stale → stale, skipped → blocked,
+  // passed → ready, overridden → overridden. The critical live-attempt +
+  // latest-per-gateId collapse semantics (via liveBlockingGates) are preserved.
   async function seedRunWithExternalGate(opts: {
     runStatus: "Review" | "Done" | "Abandoned";
     gateStatus:
@@ -495,8 +493,20 @@ describe("portfolio queries (integration)", () => {
     return { userId: user, projectId: project, runId };
   }
 
-  for (const gateStatus of ["pending", "failed", "stale", "skipped"] as const) {
-    it(`active workspace's externalGatePending=true for a blocking external_check that is ${gateStatus}`, async () => {
+  const EXTERNAL_STATUS_TO_READINESS = {
+    pending: "waiting",
+    failed: "failed",
+    stale: "stale",
+    skipped: "blocked",
+  } as const;
+
+  for (const [gateStatus, expected] of Object.entries(
+    EXTERNAL_STATUS_TO_READINESS,
+  ) as [
+    keyof typeof EXTERNAL_STATUS_TO_READINESS,
+    (typeof EXTERNAL_STATUS_TO_READINESS)[keyof typeof EXTERNAL_STATUS_TO_READINESS],
+  ][]) {
+    it(`active workspace's readiness='${expected}' for a blocking external_check that is ${gateStatus}`, async () => {
       const { userId, projectId, runId } = await seedRunWithExternalGate({
         runStatus: "Review",
         gateStatus,
@@ -507,11 +517,11 @@ describe("portfolio queries (integration)", () => {
       const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
       expect(ws).toBeDefined();
-      expect(ws?.externalGatePending).toBe(true);
+      expect(ws?.readiness).toBe(expected);
     });
   }
 
-  it("active workspace's externalGatePending=false for a passed blocking external_check", async () => {
+  it("active workspace's readiness='ready' for a passed blocking external_check", async () => {
     const { userId, projectId, runId } = await seedRunWithExternalGate({
       runStatus: "Review",
       gateStatus: "passed",
@@ -522,10 +532,10 @@ describe("portfolio queries (integration)", () => {
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
     expect(ws).toBeDefined();
-    expect(ws?.externalGatePending).toBe(false);
+    expect(ws?.readiness).toBe("ready");
   });
 
-  it("a Done workspace is not active and never reads externalGatePending=true", async () => {
+  it("a Done workspace is not active (readiness not assessed)", async () => {
     const { userId, projectId, runId } = await seedRunWithExternalGate({
       runStatus: "Done",
       gateStatus: "pending",
@@ -535,10 +545,10 @@ describe("portfolio queries (integration)", () => {
     const proj = portfolio.projects.find((p) => p.id === projectId);
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
-    expect(ws?.externalGatePending ?? false).toBe(false);
+    expect(ws).toBeUndefined();
   });
 
-  it("an Abandoned workspace is not active and never reads externalGatePending=true", async () => {
+  it("an Abandoned workspace is not active (readiness not assessed)", async () => {
     const { userId, projectId, runId } = await seedRunWithExternalGate({
       runStatus: "Abandoned",
       gateStatus: "pending",
@@ -548,12 +558,12 @@ describe("portfolio queries (integration)", () => {
     const proj = portfolio.projects.find((p) => p.id === projectId);
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
-    expect(ws?.externalGatePending ?? false).toBe(false);
+    expect(ws).toBeUndefined();
   });
 
-  // L2: advisory (non-blocking) external_check pending must NOT set the flag.
-  // Exercises the `mode === "blocking"` filter in the portfolio collapse path.
-  it("active workspace's externalGatePending=false for an advisory external_check that is pending", async () => {
+  // L2: advisory (non-blocking) external_check pending must NOT contribute.
+  // Exercises the `mode === "blocking"` filter in liveBlockingGates.
+  it("active workspace's readiness='ready' for an advisory external_check that is pending", async () => {
     const { userId, projectId, runId } = await seedRunWithExternalGate({
       runStatus: "Review",
       gateStatus: "pending",
@@ -565,14 +575,12 @@ describe("portfolio queries (integration)", () => {
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
     expect(ws).toBeDefined();
-    expect(ws?.externalGatePending).toBe(false);
+    expect(ws?.readiness).toBe("ready");
   });
 
-  // M1: additional ready-status coverage. Only passed/overridden are ready;
-  // skipped is asserted as pending=true in the loop above (it blocks like
-  // assertEvidenceReady's passed/overridden allow-list).
+  // M1: overridden clears enforcement but still flags the override in the summary.
   for (const gateStatus of ["overridden"] as const) {
-    it(`active workspace's externalGatePending=false for a blocking external_check that is ${gateStatus}`, async () => {
+    it(`active workspace's readiness='overridden' for a blocking external_check that is ${gateStatus}`, async () => {
       const { userId, projectId, runId } = await seedRunWithExternalGate({
         runStatus: "Review",
         gateStatus,
@@ -583,7 +591,7 @@ describe("portfolio queries (integration)", () => {
       const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
       expect(ws).toBeDefined();
-      expect(ws?.externalGatePending).toBe(false);
+      expect(ws?.readiness).toBe("overridden");
     });
   }
 
@@ -661,7 +669,7 @@ describe("portfolio queries (integration)", () => {
     return { userId: user, projectId: project, runId };
   }
 
-  it("externalGatePending=false when older stale row is superseded by newer passed row on same gateId", async () => {
+  it("readiness='ready' when older stale row is superseded by newer passed row on same gateId", async () => {
     const { userId, projectId, runId } = await seedRunWithTwoGateRows({
       olderStatus: "stale",
       newerStatus: "passed",
@@ -672,10 +680,10 @@ describe("portfolio queries (integration)", () => {
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
     expect(ws).toBeDefined();
-    expect(ws?.externalGatePending).toBe(false);
+    expect(ws?.readiness).toBe("ready");
   });
 
-  it("externalGatePending=true when older passed row is superseded by newer stale row on same gateId", async () => {
+  it("readiness='stale' when older passed row is superseded by newer stale row on same gateId", async () => {
     const { userId, projectId, runId } = await seedRunWithTwoGateRows({
       olderStatus: "passed",
       newerStatus: "stale",
@@ -686,13 +694,13 @@ describe("portfolio queries (integration)", () => {
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
     expect(ws).toBeDefined();
-    expect(ws?.externalGatePending).toBe(true);
+    expect(ws?.readiness).toBe("stale");
   });
 
   // M1: live-attempt collapse — a pending gate on a SUPERSEDED (non-live)
-  // attempt must not set the flag. Seeds two attempts on the same node; the
+  // attempt must not contribute. Seeds two attempts on the same node; the
   // gate row sits on attempt 1 (stale) while attempt 2 is live.
-  it("externalGatePending=false when the pending external gate sits on a stale (non-live) attempt", async () => {
+  it("readiness='ready' when the pending external gate sits on a stale (non-live) attempt", async () => {
     const user = await createUser(
       `stale-attempt-${randomUUID().slice(0, 8)}@test.com`,
     );
@@ -762,6 +770,325 @@ describe("portfolio queries (integration)", () => {
     const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
 
     expect(ws).toBeDefined();
-    expect(ws?.externalGatePending).toBe(false);
+    expect(ws?.readiness).toBe("ready");
+  });
+
+  // T16 (M15, ADR-048): portfolio readiness unification. The `externalGatePending`
+  // boolean is replaced with a unified `readiness: ReadinessState` computed via
+  // readiness-core over the same bulk-fetched node_attempts + gate_results +
+  // artifact_instances rows. The classifier is SSOT shared with board.ts,
+  // getRunReadiness, and assertEvidenceReady — no per-run calls, no N+1.
+  //
+  // MIGRATED from externalGatePending assertions: a case that had externalGatePending=true
+  // for pending external_check → readiness="waiting" (see test labels below);
+  // externalGatePending=false for passed/overridden → readiness="ready";
+  // externalGatePending=false for other gates → no readiness impact on that dimension.
+  //
+  // NEW readiness cases (mirroring board.integration.test.ts):
+  // - external_check status → readiness contribution (via gateStatusContribution).
+  // - required-artifact presence/validity → readiness contribution.
+  // - rollup priority: failed > stale > blocked > waiting > overridden > ready.
+  describe("portfolio readiness (T16)", () => {
+    async function seedReviewRun(opts: {
+      runStatus: string;
+      gates?: Array<{
+        kind: string;
+        mode: "blocking" | "advisory";
+        status: string;
+      }>;
+    }): Promise<{ userId: string; projectId: string; runId: string }> {
+      const uniqueId = randomUUID().slice(0, 8);
+      const user = await createUser(`portfolio-readiness-${uniqueId}@test.com`);
+      const project = await createProject(
+        `Portfolio Readiness Test ${uniqueId}`,
+      );
+      const executor = await createExecutor(project);
+      const flow = await createFlow(project);
+      const task = await createTask(project, flow, "Readiness Test");
+
+      await addProjectMember(user, project, "member");
+
+      const runId = randomUUID();
+      const workspaceId = randomUUID();
+      const nodeAttemptId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        projectId: project,
+        taskId: task,
+        flowId: flow,
+        runKind: "flow",
+        executorId: executor,
+        status: opts.runStatus,
+        flowVersion: "v1.0.0",
+        startedAt: new Date(),
+      });
+
+      await db.insert(schema.workspaces).values({
+        id: workspaceId,
+        projectId: project,
+        runId,
+        branch: "readiness-test",
+        worktreePath: `/tmp/test-ws-${randomUUID().slice(0, 8)}`,
+        parentRepoPath: `/repos/${randomUUID().slice(0, 8)}`,
+      });
+
+      await db.insert(schema.nodeAttempts).values({
+        id: nodeAttemptId,
+        runId,
+        nodeId: "test-node",
+        nodeType: "agent",
+        attempt: 1,
+        status: "Running",
+        startedAt: new Date(),
+      });
+
+      if (opts.gates && opts.gates.length > 0) {
+        for (const g of opts.gates) {
+          await db.insert(schema.gateResults).values({
+            id: randomUUID(),
+            runId,
+            nodeAttemptId,
+            gateId: randomUUID(),
+            kind: g.kind,
+            mode: g.mode,
+            status: g.status,
+            createdAt: new Date(),
+          });
+        }
+      }
+
+      return { userId: user, projectId: project, runId };
+    }
+
+    // Case 1: MIGRATED — external_check pending → readiness="waiting"
+    // (formerly externalGatePending=true). Asserts the blocking external_check's
+    // pending status flows through gateStatusContribution → "waiting".
+    it("readiness='waiting' for a blocking external_check gate that is pending", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "pending",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("waiting");
+    });
+
+    // Case 2: MIGRATED — external_check passed → readiness="ready"
+    // (formerly externalGatePending=false). Asserts passed status clears.
+    it("readiness='ready' for a blocking external_check gate that is passed", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "passed",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("ready");
+    });
+
+    // Case 3: external_check failed → readiness="failed"
+    // Asserts failed status blocks via priority (failed > all others).
+    it("readiness='failed' for a blocking external_check gate that is failed", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "failed",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("failed");
+    });
+
+    // Case 4: external_check stale → readiness="stale"
+    // Asserts stale status blocks via priority (stale > blocked, waiting, overridden).
+    it("readiness='stale' for a blocking external_check gate that is stale", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "stale",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("stale");
+    });
+
+    // Case 5: external_check skipped → readiness="blocked"
+    // Asserts skipped status (non-executed gate) blocks.
+    it("readiness='blocked' for a blocking external_check gate that is skipped", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "skipped",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("blocked");
+    });
+
+    // Case 6: external_check overridden → readiness="overridden"
+    // Asserts overridden status allows promotion but flags override.
+    it("readiness='overridden' for a blocking external_check gate that is overridden", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "overridden",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("overridden");
+    });
+
+    // Case 7: advisory (non-blocking) external_check pending → readiness="ready"
+    // Asserts non-blocking gates don't contribute to readiness (filtered out).
+    it("readiness='ready' for an advisory external_check gate that is pending", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "advisory",
+            status: "pending",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("ready");
+    });
+
+    // Case 8: multiple gates with priority rollup (failed > stale > blocked)
+    // Two gates: one pending (waiting), one failed (failed) → failed wins.
+    it("readiness='failed' when multiple gates include failed (highest priority)", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "pending",
+          },
+          {
+            kind: "command_check",
+            mode: "blocking",
+            status: "failed",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("failed");
+    });
+
+    // Case 9: multiple gates with priority rollup (stale > blocked, waiting)
+    // Two gates: one waiting, one stale → stale wins.
+    it("readiness='stale' when multiple gates include stale (higher priority than waiting)", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Review",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "pending",
+          },
+          {
+            kind: "command_check",
+            mode: "blocking",
+            status: "stale",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeDefined();
+      expect(ws?.readiness).toBe("stale");
+    });
+
+    // Case 10: Done/Abandoned workspaces are not active and should not appear
+    // in activeWorkspaces, so readiness is not asserted on them.
+    it("Done run is not in activeWorkspaces (readiness not assessed)", async () => {
+      const { userId, projectId, runId } = await seedReviewRun({
+        runStatus: "Done",
+        gates: [
+          {
+            kind: "external_check",
+            mode: "blocking",
+            status: "pending",
+          },
+        ],
+      });
+
+      const portfolio = await getPortfolio(userId, "member");
+      const proj = portfolio.projects.find((p) => p.id === projectId);
+      const ws = proj?.activeWorkspaces.find((w) => w.runId === runId);
+
+      expect(ws).toBeUndefined();
+    });
   });
 });

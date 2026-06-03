@@ -227,12 +227,11 @@ describe("F2: rework re-produce clears merge-block (per-def-current)", () => {
     expect(merge.ready).toBe(true);
     expect(merge.reasons).toHaveLength(0);
 
-    // (b) board flags clear.
+    // (b) board readiness clears (T15: unified state, all current → ready).
     const card = await flightCard(seeded.projectId, seeded.runId);
 
     expect(card).toBeDefined();
-    expect(card?.mergeBlocked).toBe(false);
-    expect(card?.evidenceStale).toBe(false);
+    expect(card?.readiness).toBe("ready");
 
     // (c) the orphaned attempt-1 row is retired to superseded, not left stale.
     arts = await getArtifacts(seeded.runId);
@@ -259,8 +258,9 @@ describe("F2: rework re-produce clears merge-block (per-def-current)", () => {
 
     const card = await flightCard(seeded.projectId, seeded.runId);
 
-    expect(card?.mergeBlocked).toBe(true);
-    expect(card?.evidenceStale).toBe(true);
+    // T15: a stale-only required def (no current row) rolls up to "blocked"
+    // (mirrors getRunReadiness current-row-presence SSOT).
+    expect(card?.readiness).toBe("blocked");
   });
 });
 
@@ -301,7 +301,8 @@ describe("F2-gate: re-run gate clears merge-block (latest-attempt gate)", () => 
 
     const card = await flightCard(seeded.projectId, seeded.runId);
 
-    expect(card?.mergeBlocked).toBe(false);
+    // T15: the live (attempt-2) gate passed → readiness clears to "ready".
+    expect(card?.readiness).toBe("ready");
   });
 
   it("negative control: a stale gate on the LATEST attempt (no re-pass) still blocks", async () => {
@@ -317,6 +318,7 @@ describe("F2-gate: re-run gate clears merge-block (latest-attempt gate)", () => 
 
     const card = await flightCard(seeded.projectId, seeded.runId);
 
-    expect(card?.mergeBlocked).toBe(true);
+    // T15: the live (attempt-2) artifact_required gate is stale → "stale".
+    expect(card?.readiness).toBe("stale");
   });
 });

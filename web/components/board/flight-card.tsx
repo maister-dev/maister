@@ -2,6 +2,7 @@ import type {
   FlightCard as FlightCardData,
   SpineSegment,
 } from "@/lib/queries/board";
+import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
@@ -15,12 +16,24 @@ export interface FlightCardLabels {
   elapsed: string;
   // M11c (ADR-032) Phase 4.3: refused-at-launch settings indicator hint.
   settingsRefused: string;
-  // M12 (ADR-037) Phase 7: evidence-graph badge hints.
-  evidenceStale: string;
-  mergeBlocked: string;
-  // M16 Phase 7: external_check gate-readiness badge hint.
-  externalGatePending: string;
+  // T15 (M15, ADR-048): per-state readiness badge labels, sourced from the
+  // `readiness.<state>` i18n namespace. Replaces the M12 evidenceStale/
+  // mergeBlocked + M16 externalGatePending labels with the unified summary.
+  readiness: Record<ReadinessState, string>;
 }
+
+// T15 (M15): per-state badge styling, mirroring the run-detail
+// ReadinessSummary STATE_BADGE forest-token map for visual consistency.
+const READINESS_BADGE: Record<ReadinessState, string> = {
+  ready: "border-good bg-good-soft text-good",
+  blocked:
+    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
+  failed:
+    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
+  stale: "border-amber-line bg-amber-soft text-amber",
+  waiting: "border-amber-line bg-amber-soft text-amber",
+  overridden: "border-line bg-ivory text-ink-2",
+};
 
 export interface FlightCardProps {
   card: FlightCardData;
@@ -119,31 +132,17 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
               ↺
             </span>
           ) : null}
-          {card.mergeBlocked ? (
+          {!isDone && card.readiness !== "ready" ? (
             <span
-              aria-label={labels.mergeBlocked}
-              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
-              title={labels.mergeBlocked}
+              aria-label={labels.readiness[card.readiness]}
+              className={clsx(
+                "rounded-full border px-2 py-[3px] font-mono text-[10px] font-bold uppercase tracking-[0.04em]",
+                READINESS_BADGE[card.readiness],
+              )}
+              data-readiness={card.readiness}
+              title={labels.readiness[card.readiness]}
             >
-              ◆
-            </span>
-          ) : null}
-          {card.evidenceStale ? (
-            <span
-              aria-label={labels.evidenceStale}
-              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
-              title={labels.evidenceStale}
-            >
-              ≈
-            </span>
-          ) : null}
-          {card.externalGatePending ? (
-            <span
-              aria-label={labels.externalGatePending}
-              className="rounded-full border border-amber-line bg-amber-soft px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-amber"
-              title={labels.externalGatePending}
-            >
-              ◉
+              {labels.readiness[card.readiness]}
             </span>
           ) : null}
           <span

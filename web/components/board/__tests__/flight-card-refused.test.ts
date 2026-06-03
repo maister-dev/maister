@@ -52,6 +52,9 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     owner: null,
     // M11c Phase 4.3 — new field, RED until the implementor adds it.
     refused: true,
+    // T15 (M15): unified readiness state — "ready" so the badge stays hidden,
+    // keeping this suite focused on the refused indicator.
+    readiness: "ready",
     ...over,
   } as FlightCardData;
 }

@@ -4,20 +4,21 @@ import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
 
 // ---------------------------------------------------------------------------
-// CONTRACT under test — M16 Phase 7 i18n key for the board external_check
-// gate-readiness badge.
+// TOMBSTONE — M17 removal of board.externalGatePending.
 //
-// Namespace decision: the badge string lives under the EXISTING `board`
-// namespace, alongside the sibling evidence-badge strings
-// (board.evidenceStale, board.mergeBlocked) it mirrors.
+// The key was added in M16 Phase 7 for an external-check readiness badge.
+// Task 15 unified all readiness badge labels under the `readiness` namespace
+// (readiness.ready / .blocked / .stale / .failed / .waiting / .overridden).
+// Task 16 removed the portfolio consumer; Task 15 removed the board consumer.
+// No live t("externalGatePending") or tBoard("externalGatePending") call
+// remains — confirmed by grep in M17.
 //
-// Required key (EN + RU, identical):
-//   board.externalGatePending   (badge aria-label / title text)
-//
-// The key does not exist yet → this test is RED until both catalogs gain it.
+// This test guards the removal: the key must NOT exist in either catalog.
+// If it reappears, the unified readiness namespace becomes the source of
+// truth and this duplicate should be deleted again.
 // ---------------------------------------------------------------------------
 
-const BOARD_KEY = "externalGatePending";
+const REMOVED_KEY = "externalGatePending";
 
 type Catalog = Record<string, Record<string, unknown>>;
 
@@ -25,26 +26,16 @@ function boardNs(cat: Catalog): Record<string, unknown> {
   return (cat.board ?? {}) as Record<string, unknown>;
 }
 
-describe("i18n — M16 Phase 7 board.externalGatePending key", () => {
-  it(`en.board.${BOARD_KEY} is a non-empty string`, () => {
+describe("i18n — board.externalGatePending is removed (superseded by readiness namespace)", () => {
+  it("en.board does NOT contain the removed externalGatePending key", () => {
     const ns = boardNs(en as unknown as Catalog);
 
-    expect(typeof ns[BOARD_KEY]).toBe("string");
-    expect((ns[BOARD_KEY] as string).length).toBeGreaterThan(0);
+    expect(Object.prototype.hasOwnProperty.call(ns, REMOVED_KEY)).toBe(false);
   });
 
-  it(`ru.board.${BOARD_KEY} is a non-empty string`, () => {
+  it("ru.board does NOT contain the removed externalGatePending key", () => {
     const ns = boardNs(ru as unknown as Catalog);
 
-    expect(typeof ns[BOARD_KEY]).toBe("string");
-    expect((ns[BOARD_KEY] as string).length).toBeGreaterThan(0);
-  });
-
-  it("the key is present in BOTH catalogs (no missing translation)", () => {
-    const enKeys = new Set(Object.keys(boardNs(en as unknown as Catalog)));
-    const ruKeys = new Set(Object.keys(boardNs(ru as unknown as Catalog)));
-
-    expect(enKeys.has(BOARD_KEY)).toBe(true);
-    expect(ruKeys.has(BOARD_KEY)).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(ns, REMOVED_KEY)).toBe(false);
   });
 });

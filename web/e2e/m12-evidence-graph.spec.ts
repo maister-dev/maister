@@ -11,8 +11,9 @@
 //   2. clicking the impl-diff artifact node opens the payload drawer and the
 //      REAL payload API returns the inline diff text.
 //   3. flipping impl-diff → stale + the gate → failed in-DB surfaces `stale` on
-//      the node and the mergeBlocked / evidenceStale pills on the board card;
-//      re-producing (current / passed) clears the pills.
+//      the node and the unified readiness badge (T15: "Failed" — the failed
+//      blocking gate dominates) on the board card; re-producing (current /
+//      passed) clears the badge.
 //
 // (4) The runner-side approve→done REFUSAL (blocking pre_finish gate prevents
 //     Done while impl-diff is not current) is NOT e2e-drivable here: the m12
@@ -61,7 +62,7 @@ async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   }
 }
 
-test("evidence graph renders, artifact payload opens, and board pills track stale/merge-blocked", async ({
+test("evidence graph renders, artifact payload opens, and the board readiness badge tracks stale/merge-blocked", async ({
   page,
 }) => {
   const fx = loadM12Fixture();
@@ -123,13 +124,11 @@ test("evidence graph renders, artifact payload opens, and board pills track stal
       ),
     ).toHaveAttribute("data-state", "stale");
 
-    // The board card now shows BOTH the merge-blocked and evidence-stale pills.
+    // The board card now shows the unified readiness badge. T15: a failed
+    // blocking gate dominates the rollup, so the badge reads "Failed".
     await page.goto(`/projects/${fx.projectSlug}`);
     await expect(
-      page.getByLabel("Merge blocked", { exact: true }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByLabel("Evidence stale", { exact: true }).first(),
+      page.getByLabel("Failed", { exact: true }).first(),
     ).toBeVisible();
   } finally {
     // (3b) Re-produce: impl-diff current + gate passed. In `finally` so a failure
@@ -147,14 +146,9 @@ test("evidence graph renders, artifact payload opens, and board pills track stal
     });
   }
 
-  // The re-produced run clears both pills.
+  // The re-produced run (current artifact + passed gate) is ready → no badge at all.
   await page.goto(`/projects/${fx.projectSlug}`);
-  await expect(page.getByLabel("Merge blocked", { exact: true })).toHaveCount(
-    0,
-  );
-  await expect(page.getByLabel("Evidence stale", { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(page.locator("[data-readiness]")).toHaveCount(0);
 });
 
 // (4) Runner-side approve→done refusal: NOT e2e-drivable under the stub
