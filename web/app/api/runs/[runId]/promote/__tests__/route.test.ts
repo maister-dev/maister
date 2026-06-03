@@ -25,6 +25,7 @@ type Tables = {
 type FakeDb = {
   select: () => ReturnType<typeof selectChain>;
   update: (table: unknown) => ReturnType<typeof updateChain>;
+  execute: () => Promise<undefined>;
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
 };
 
@@ -39,10 +40,21 @@ function tableOf(t: unknown): keyof Tables {
   throw new Error("unknown table");
 }
 
+// The durable promotion claim (M18 Phase 2) locks the workspace with `SELECT …
+// FOR UPDATE`, so the select chain must resolve whether the caller terminates on
+// `.where(...)` OR chains `.where(...).for("update")`.
 const selectChain = () => ({
-  from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
-  }),
+  from: (table: unknown) => {
+    const rows = dbState.tables[tableOf(table)];
+    const whereResult = {
+      for: async (_mode: string) => rows,
+      then: (resolve: (value: Row[]) => unknown) => resolve(rows),
+    };
+
+    return {
+      where: () => whereResult,
+    };
+  },
 });
 
 const updateChain = (table: unknown) => ({
@@ -58,12 +70,17 @@ const updateChain = (table: unknown) => ({
 const fakeDb: FakeDb = {
   select: selectChain,
   update: updateChain,
+  execute: async () => undefined,
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>): Promise<T> =>
     fn(fakeDb),
 };
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
+}));
+
+vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
+  assertEvidenceReady: vi.fn(async () => ({ ready: true, reasons: [] })),
 }));
 
 vi.mock("@/lib/authz", () => ({
@@ -138,6 +155,16 @@ function seedScratchRun(
     branch: "scratch/demo",
     parentRepoPath: "/repos/demo",
     removedAt: overrides.removedAt ?? null,
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    targetBranch: "main",
+    promotionMode: "local_merge",
+    promotionState: "none",
+    promotionClaimedAt: null,
+    promotionAttemptId: null,
+    promotionOwnerUserId: null,
+    promotedAt: null,
+    scheduledRemovalAt: null,
   });
 
   return runId;
@@ -312,16 +339,30 @@ describe("POST /api/runs/[runId]/promote", () => {
     expect(createAssignment).not.toHaveBeenCalled();
   });
 
-  it("rejects non-scratch runs", async () => {
+  // The route now serves flow runs too (M18 Phase 2): a flow run dispatches into
+  // the shared promoteRun service rather than being rejected on a kind guard.
+  // This asserts the dispatch genuinely engages — the flow path runs the merge
+  // and flips the run to Done. (The full flow contract — readiness, drift,
+  // durable claim, two-racer — is covered by promote-flow.integration.test.ts
+  // and promote-service.test.ts.) allowTargetDrift bypasses the live-HEAD drift
+  // resolve, which is unmocked in this scratch-focused fake.
+  it("dispatches a flow run through the shared promotion service to Done", async () => {
     const runId = seedScratchRun({ runKind: "flow" });
 
     const res = await invokePost(runId, {
       mode: "local_merge",
       targetBranch: "main",
+      allowTargetDrift: true,
     });
 
-    expect(res.status).toBe(409);
-    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(promoteLocalMerge).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      sourceBranch: "scratch/demo",
+      targetBranch: "main",
+    });
+    expect(dbState.tables.runs[0].status).toBe("Done");
+    expect(dbState.tables.workspaces[0].promotionState).toBe("done");
   });
 
   it("rejects promotion before the scratch run reaches Review", async () => {

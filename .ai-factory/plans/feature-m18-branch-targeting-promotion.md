@@ -523,7 +523,7 @@ Designed→Implemented (DB ERD + launch OpenAPI).
 **Exit gate:** typecheck 0; full suite green; the 8 existing scratch promote
 tests stay green (regression pin); Phase-2 doc tags flipped.
 
-- [ ] **T2.1 — (RED) tests.**
+- [x] **T2.1 — (RED) tests.**
   - unit `web/lib/runs/__tests__/promote-service.test.ts`: terminal allow-list
     guard (non-`Review` flow → 409); readiness-not-ready → `PRECONDITION`, **git
     spy NOT called**; **target-drift (`reviewedTargetCommit` ≠ live HEAD) →
@@ -549,7 +549,7 @@ tests stay green (regression pin); Phase-2 doc tags flipped.
     success OR typed `PRECONDITION` (Codex F4, §3.6).
   - keep `web/app/api/runs/[runId]/promote/__tests__/route.test.ts` green (scratch
     regression).
-- [ ] **T2.2 — Shared service + durable claim.** Extract `web/lib/runs/promote.ts`
+- [x] **T2.2 — Shared service + durable claim.** Extract `web/lib/runs/promote.ts`
   `promoteRun(runId, {mode, targetBranch?, reviewedTargetCommit, allowTargetDrift?},
   ctx)`; the route dispatches on `runKind`. Implement the **durable promotion
   claim** (§3.2, Codex F1/F5): claim tx asserts terminal allow-list + readiness +
@@ -560,19 +560,19 @@ tests stay green (regression pin); Phase-2 doc tags flipped.
   on `promotion_attempt_id`** `claiming→done`/`failed` (token mismatch → `CONFLICT`,
   write nothing — Codex F5). Concurrency serialized by the attempt-id claim CAS, not
   a held `SELECT FOR UPDATE`. Legacy-row fallback per §3.6.
-- [ ] **T2.3 — Promote-time readiness.** Call `assertEvidenceReady(runId,"review")`
+- [x] **T2.3 — Promote-time readiness.** Call `assertEvidenceReady(runId,"review")`
   for flow runs after the lock, before git (§3.2 step 2); overridden gates count
   via the `{passed,overridden}` allow-list. Verbose DEBUG: readiness verdict +
   blocking reasons.
-- [ ] **T2.4 — Two-phase finalize + artifact.** Implement §3.2 steps 3-5 as the
+- [x] **T2.4 — Two-phase finalize + artifact.** Implement §3.2 steps 3-5 as the
   ordered side-effect → single finalize tx; record the promotion `diff`/
   `commit_set` artifact (`recordArtifact`, locator `git-range` base→run). Relax
   `assertPromotionTargetAllowed` for flow runs (validated target may differ from
   base). Enumerate the crash-window recovery (§3.3) in code comments (WHY-only).
-- [ ] **T2.5 — Consumer fan-out (§3.5).** Board + portfolio read models reflect flow
+- [x] **T2.5 — Consumer fan-out (§3.5).** Board + portfolio read models reflect flow
   promotion → `Done` + a ready-to-promote indicator; verify slot release +
   `promoteNextPending`.
-- [ ] **T2.6 — (GREEN) + i18n + doc-tag flip.**
+- [x] **T2.6 — (GREEN) + i18n + doc-tag flip.**
 
 ---
 

@@ -146,17 +146,18 @@ invariants bind it to the run machine:
    resumes it on slot-free. `POST /api/runs/{runId}/discard` marks `Abandoned`
    and enters the GC countdown (no synchronous worktree removal).
 
-### M18 flow-run `Review → Done` promotion (Designed)
+### M18 flow-run `Review → Done` promotion (Implemented)
 
-Today a **flow** run dead-ends at `Review` (`Running→Review` is CAS-guarded; no
-promote path flips it terminal — only scratch runs promote). M18
+Before M18 a **flow** run dead-ended at `Review` (`Running→Review` is
+CAS-guarded; no promote path flipped it terminal — only scratch runs promoted).
+M18
 ([ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
 wires the **existing** `Review → Done` edge for flow runs through a **shared
 `promoteRun` service** that drives both run kinds. This adds **NO new
-`runs.status` value** — both promotion modes (`local_merge` and `pull_request`)
-terminate at the existing `Done`; a `pull_request` promotion records
-`pr_url`/`pr_number` on the workspace but MAIster does not track the PR to merge
-in M18. The full claim → side-effect → finalize contract (the durable
+`runs.status` value** — `local_merge` terminates at the existing `Done`. The
+`pull_request` mode (which also lands at `Done` and records `pr_url`/`pr_number`
+on the workspace but is not tracked to merge) is **Designed** for a later phase.
+The full claim → side-effect → finalize contract (the durable
 `promotion_state` claim + per-attempt `promotion_attempt_id` token, idempotency,
 and the crash windows) lives in [`workspaces.md`](workspaces.md). Four
 invariants bind it to the run machine:
@@ -235,12 +236,13 @@ sequenceDiagram
 
 > The "verify required gates" step above is the readiness re-gate. In **M11a**
 > the graph runner *records* `gate_results` (pass/fail/stale/overridden) but does
-> **not** gate promotion on them. **(Designed, M18)** the promote service enforces
+> **not** gate promotion on them. **(Implemented, M18)** the promote service enforces
 > readiness here by calling `assertEvidenceReady(runId, "review")` a **second**
 > time (a deliberate M16 reuse, no M15 dependency —
 > [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve));
-> overridden gates satisfy it. Both `local_merge` and `pull_request` finalize at
-> `Done`. See [`flow-graph.md`](flow-graph.md) and [`workspaces.md`](workspaces.md).
+> overridden gates satisfy it. `local_merge` finalizes at `Done`; `pull_request`
+> is **(Designed)** for a later phase. See [`flow-graph.md`](flow-graph.md) and
+> [`workspaces.md`](workspaces.md).
 
 ### NeedsInput and keep-alive cycle
 
@@ -382,12 +384,12 @@ flowchart TD
   returns `CONFIG` until repository-hosting integration is wired. Promotion
   targets the selected target branch after readiness gates pass or are
   explicitly overridden. No deploy or release management is implied.
-- **(Designed, M18)** A **flow** run MUST be promotable from `Review` through the
-  shared `promoteRun` service to the existing terminal `Done` — both
-  `local_merge` and `pull_request` finalize at `Done` (no new `runs.status`); a
-  `pull_request` promotion records `pr_url`/`pr_number` but does NOT track the PR
-  to merge in M18.
-- **(Designed, M18)** Promotion MUST re-check readiness at promote time via
+- **(Implemented, M18)** A **flow** run MUST be promotable from `Review` through the
+  shared `promoteRun` service to the existing terminal `Done` — `local_merge`
+  finalizes at `Done` (no new `runs.status`). The `pull_request` mode (also
+  landing at `Done`, recording `pr_url`/`pr_number` but not tracking the PR to
+  merge) is **(Designed)** for a later phase.
+- **(Implemented, M18)** Promotion MUST re-check readiness at promote time via
   `assertEvidenceReady(runId, "review")`; a not-ready/stale gate refuses
   `PRECONDITION` (run stays `Review`, no side-effect) and overridden gates
   satisfy it (`{passed, overridden}` allow-list) — the M16 chokepoint reused, no
@@ -527,7 +529,7 @@ matching rows.
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
   [ADR-048 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (Designed, M18).
+  (Implemented, M18).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`Environment variables (server tier)` —

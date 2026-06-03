@@ -30,6 +30,23 @@ const DEFAULT_GC_WARNING_DAYS = 2;
 const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
+const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
+
+// M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
+// this window is considered abandoned (crashed mid-promote) and is reclaimable
+// by the next promote attempt. Env override, sane default, floor at 1.
+export function promotionClaimTimeoutSeconds(): number {
+  const raw = process.env.MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS;
+
+  if (!raw) return DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS;
+  }
+
+  return parsed;
+}
 
 // M19 Phase 1 (T1.C): how long after a run's endedAt its Abandoned/Done
 // workspace is scheduled for removal. Env override, sane default, floor at 1.
