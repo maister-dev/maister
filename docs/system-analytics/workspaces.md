@@ -16,9 +16,33 @@ reconciliation on host or process restart.
   prefix plus a task/run slug. Scratch runs may use a validated
   operator-provided branch/workspace name.
 - **Base branch** — branch selected at launch; the run branch is created from
-  this branch's launch-time commit.
+  this branch's launch-time commit. Validated against `listBranches` before use.
+- **Base commit** — the resolved launch-time commit of the base branch
+  (`resolveBaseCommit`), recorded as `workspaces.base_commit` and passed as the
+  `startPoint` to `git worktree add`. The run branch forks from this exact commit.
 - **Target branch** — branch selected for promotion. Defaults to the base
-  branch but can differ for engineer-controlled workflows.
+  branch but can differ for engineer-controlled workflows. For **flow** runs M18
+  relaxes the scratch hard-lock that pinned the target to the base
+  (`assertPromotionTargetAllowed`). Must exist (validated on launch and promote).
+- **Promotion mode** — `local_merge | pull_request` (`workspaces.promotion_mode`).
+  Resolved at launch from the override chain (launch override > project
+  `promotion.mode` > default `local_merge`); a per-run snapshot, not live-synced.
+- **Durable promotion claim (Designed, M18)** — the serialization point for
+  idempotent promotion, held on the workspace row (1:1 with the run):
+  - `promotion_state` — `none | claiming | done | failed`. CAS'd to `claiming`
+    in a short tx **committed BEFORE any side-effect**; the single concurrency
+    gate (not a held row lock).
+  - `promotion_attempt_id` — a fresh opaque token (e.g. `crypto.randomUUID()`)
+    minted on each claim. The finalize transaction is keyed on it, so a slow or
+    crashed attempt whose token was re-minted by a stale reclaim cannot
+    double-finalize.
+  - `promotion_claimed_at` — claim timestamp; a `claiming` row older than
+    `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` (default 300) is reclaimable.
+  - `promotion_owner_user_id` — actor who claimed the promotion.
+  - `pr_url` / `pr_number` — recorded on a successful `pull_request` promotion;
+    `pr_url` is also the idempotency key that turns a re-promote into a PR
+    update rather than a duplicate.
+  - `promoted_at` — set in the finalize tx alongside `runs.status = Done`.
 - **Parent repo** — `projects.repo_path`. The worktree shares `.git`
   with the parent.
 - **Active workspace group** — Implemented. The left rail groups active Flow
@@ -96,34 +120,156 @@ sequenceDiagram
     W->>DB: INSERT workspaces { run_id, project_id, branch, base_branch, base_commit, target_branch, worktree_path, parent_repo_path }
 ```
 
-### Promote on Review (Implemented local merge; PR designed)
+### Promote on Review — shared service over both run kinds (Designed, M18)
+
+Promotion is the product action after `Review`. Today it exists for **scratch**
+runs only (`local_merge`); flow runs dead-end at `Review`. M18
+([ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
+introduces a **shared `promoteRun` service** that drives **both** run kinds and
+adds the `pull_request` mode
+([ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)).
+Both modes terminate at the existing `Done` (no new `runs.status`). The service
+is retry-safe through a **durable promotion claim**: a fresh
+`promotion_attempt_id` is minted and `promotion_state` is CAS'd to `claiming`
+in a short transaction **committed BEFORE any git/PR side-effect**, then the
+side-effect runs with **no lock held**, then a finalize transaction **keyed on
+the attempt token** flips `Done`. The claim — not a held row lock — is the
+single serialization point (§ *Concurrent promote & stale-claim reclaim* below).
+
+#### `local_merge` promotion (Designed, M18)
 
 ```mermaid
 sequenceDiagram
     actor U as Operator
-    participant W as Web tier
-    participant FS as Filesystem
+    participant W as promoteRun (web tier)
     participant DB as Postgres
+    participant FS as git (host)
 
-    U->>W: POST /api/runs/[id]/promote
-    W->>DB: lookup run + workspace + project
-    W->>W: verify readiness gates current/pass/overridden
-    alt mode = local_merge
-        W->>FS: git -C {repo_path} checkout {target_branch}
-        W->>FS: git -C {repo_path} merge --no-ff {workspace.branch}
-    else mode = pull_request
-        W-->>U: 422 CONFIG<br/>(PR hosting not wired)
+    U->>W: POST /api/runs/[id]/promote (mode=local_merge, reviewedTargetCommit)
+    Note over W,DB: Claim tx (short, commits BEFORE side-effect)
+    W->>DB: SELECT workspace FOR UPDATE
+    W->>DB: assert status=Review and readiness ready/overridden
+    W->>DB: assert reviewedTargetCommit == live target HEAD (unless allowTargetDrift)
+    W->>DB: assert promotion_state in none/failed (or stale claiming)
+    alt guard fails
+        W->>DB: ROLLBACK
+        W-->>U: 409 PRECONDITION or CONFLICT (run stays Review, no claim)
+    else claim ok
+        W->>DB: mint promotion_attempt_id, CAS promotion_state=claiming, COMMIT
     end
-    alt promotion succeeds
+    Note over W,FS: Side-effect (NO lock held)
+    W->>FS: git switch target then git merge --no-ff run branch
+    alt merge clean
         FS-->>W: exit 0
-        W->>DB: runs.status=Done, runs.ended_at=now
-        W-->>U: 200 Done
+        Note over W,DB: Finalize tx, keyed on attempt token
+        W->>DB: SELECT FOR UPDATE, assert promotion_state=claiming AND attempt_id matches
+        alt token superseded
+            W-->>U: 409 CONFLICT (superseded by newer attempt, writes nothing)
+        else token matches
+            W->>DB: CAS Done, promoted_at, scheduledRemovalAt, record commit_set artifact
+            W-->>U: 200 Done
+        end
     else conflict
         FS-->>W: non-zero exit
-        W->>FS: git -C {repo_path} merge --abort
-        W-->>U: 409 CONFLICT<br/>(run stays Review)
+        W->>FS: git merge --abort
+        W->>DB: CAS promotion_state=failed (token-matched), createMergeConflictAssignment
+        W-->>U: 409 CONFLICT (run stays Review, conflict assignment created)
     end
 ```
+
+#### `pull_request` promotion (Designed, M18)
+
+```mermaid
+sequenceDiagram
+    actor U as Operator
+    participant W as promoteRun (web tier)
+    participant DB as Postgres
+    participant FS as git (host)
+    participant PA as PrAdapter
+
+    U->>W: POST /api/runs/[id]/promote (mode=pull_request, reviewedTargetCommit)
+    Note over W,DB: Claim tx (mints attempt token, commits BEFORE side-effect)
+    W->>DB: SELECT workspace FOR UPDATE, assert status/readiness/drift/no-active-claim
+    W->>DB: mint promotion_attempt_id, CAS promotion_state=claiming, COMMIT
+    Note over W,PA: Side-effect (NO lock held)
+    W->>PA: preflight by provider (CLI on PATH or token set, remote configured)
+    alt provider generic or preflight fails
+        W->>DB: finalize CAS promotion_state=failed (token-matched)
+        W-->>U: 409 PRECONDITION (run stays Review)
+    end
+    W->>FS: pushBranch run branch (host credentials)
+    W->>PA: createOrUpdatePr (idempotent by stored pr_url or provider query)
+    alt push rejected or PR-API 5xx (transient)
+        PA-->>W: failure
+        W-->>U: 503 EXECUTOR_UNAVAILABLE (run stays Review, no pr_url, leave claiming)
+    else ok
+        PA-->>W: { url, number }
+        Note over W,DB: Finalize tx, keyed on attempt token
+        W->>DB: SELECT FOR UPDATE, assert promotion_state=claiming AND attempt_id matches
+        W->>DB: CAS Done, promoted_at, pr_url, pr_number, record commit_set artifact (pr_url in payload)
+        W-->>U: 200 Done (pullRequestUrl, prNumber)
+    end
+```
+
+#### Promotion outcomes (Designed, M18)
+
+| Outcome | HTTP | Run / claim effect |
+|---------|------|--------------------|
+| Success (`local_merge` clean / PR created-or-updated) | 200 | `runs.status = Done`, `promotion_state = done`, `promoted_at` set; PR mode adds `pr_url`/`pr_number` |
+| Readiness not ready/stale | 409 `PRECONDITION` | no claim; run stays `Review` (retry after gate passes/overridden) |
+| Target advanced since review (drift, no override) | 409 `PRECONDITION` | no claim; run stays `Review` (re-review, then `allowTargetDrift`) |
+| Target branch invalid/missing | 409 `PRECONDITION` | run stays `Review` |
+| `local_merge` conflict | 409 `CONFLICT` | `promotion_state = failed`; run stays `Review` + conflict assignment (no auto-resolve) |
+| PR preflight fail (CLI/token/remote missing, `generic` provider) | 409 `PRECONDITION` | `promotion_state = failed`; run stays `Review` |
+| Concurrent promote (a fresh active `claiming` already present) | 409 `CONFLICT` | unchanged; wait for the in-flight promotion |
+| Push rejected / PR-API 5xx (transient) | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; run stays `Review`, **no `pr_url`**; idempotently retryable |
+| Finalize superseded by a same-user stale reclaim | 409 `CONFLICT` | superseded attempt writes NOTHING; the reclaiming attempt owns finalize |
+| Already `Done` / non-`Review` (retry after success) | 409 | terminal — no re-attempt |
+
+No new `MaisterError` code is added — the closed union
+([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror)) already
+covers `PRECONDITION`, `CONFLICT`, and `EXECUTOR_UNAVAILABLE`.
+
+#### Concurrent promote & stale-claim reclaim (Designed, M18)
+
+The durable claim + per-attempt token guarantees **exactly one side-effect** per
+promotion even under concurrency and crash. Two mechanisms compose: the
+attempt-token CAS prevents a **double finalize**; the stored `pr_url` (+ a
+provider query) prevents a **double side-effect** for PR mode. A `local_merge`
+re-merge of an already-merged source is a no-op (`Already up to date`).
+
+```mermaid
+flowchart TD
+    Start([promote attempt]) --> Claim{promotion_state?}
+    Claim -- claiming, fresh --> Reject[409 CONFLICT: promotion already in progress]
+    Claim -- none or failed --> Mint[mint fresh promotion_attempt_id, CAS to claiming, COMMIT]
+    Claim -- claiming, older than CLAIM_TIMEOUT --> Reclaim[re-mint promotion_attempt_id, overwrite stale token, COMMIT]
+    Mint --> Side[run side-effect, no lock held]
+    Reclaim --> Side
+    Side --> Final{finalize: attempt_id still matches?}
+    Final -- yes --> Done[CAS Done, promoted_at, pr_url, write artifact]
+    Final -- no, re-minted by a reclaim --> Superseded[409 CONFLICT: write nothing, reclaiming attempt owns finalize]
+```
+
+Two crash windows live **between the claim commit and the finalize commit**,
+recovered by the timeout reclaim + idempotent side-effect (no held lock, no
+background sweeper):
+
+- **`local_merge`** — the target may already carry the `--no-ff` merge commit
+  while the run is still `Review`, `promotion_state = claiming`. Once the claim
+  ages past `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`, a re-promote reclaims it;
+  the re-merge is a no-op and the attempt finalizes `Done`.
+- **`pull_request`** — the PR may be pushed/created while `pr_url` is not yet
+  stored, `promotion_state = claiming`. The reclaiming re-promote's
+  `createOrUpdatePr` detects the existing PR for `(run branch → target)` via the
+  provider (`gh pr list --head` / `glab mr list` / Gitea `GET …/pulls`) and
+  **updates instead of duplicating**, then finalizes. `pr_url`/`promoted_at` are
+  AFTER-side writes, so a crash never strands a half-recorded PR.
+
+A stale reclaim **re-mints** `promotion_attempt_id` and overwrites the prior
+token, so even if the crashed/slow original attempt later resumes, its finalize
+CAS no longer matches and is refused `409 CONFLICT` — a second `Done` or `pr_url`
+is impossible.
 
 ### Reconciliation on startup (Designed)
 
@@ -260,8 +406,27 @@ flowchart LR
 - Local promotion merge policy is `git merge --no-ff` ONLY; conflict always
   invokes `git merge --abort`, leaves the run in `Review`, and creates a
   manual-resolution assignment.
-- Pull-request promotion is designed. The implemented route currently returns
-  `CONFIG` for `pull_request` until repository-hosting integration is wired.
+- **(Designed, M18)** A **flow** run MUST be promotable from `Review` through the
+  shared `promoteRun` service; both `local_merge` and `pull_request` finalize at
+  the existing `Done` (no new `runs.status`) and the scratch path stays
+  behavior-identical (regression-pinned).
+- **(Designed, M18)** Promotion MUST be idempotent: a fresh `promotion_attempt_id`
+  is minted and `promotion_state` is CAS'd to `claiming` and **committed BEFORE**
+  any git/PR side-effect; the finalize tx is keyed on that token so a superseded
+  attempt writes NOTHING; `pr_url` is the PR dedup key (re-promote updates, never
+  duplicates).
+- **(Designed, M18)** Two concurrent promotes of the same run MUST yield exactly
+  ONE side-effect — one `Done`, one `409 CONFLICT`; a `claiming` claim older than
+  `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` is reclaimable and re-minting the
+  token blocks a crashed/slow original from double-finalizing.
+- **(Designed, M18)** Promotion MUST refuse `PRECONDITION` (no claim, run stays
+  `Review`) when readiness is not ready/stale (`assertEvidenceReady(runId,
+  "review")`, overridden gates satisfy it) or when the target advanced since
+  review (`reviewedTargetCommit` ≠ live target HEAD) unless `allowTargetDrift`.
+- Pull-request promotion is designed (M18). The current scratch-only route returns
+  `CONFIG` for `pull_request` until the hybrid provider `PrAdapter` lands; PR
+  creation is then provider-dispatched (github→`gh`, gitlab→`glab`,
+  gitea+gitverse→Gitea REST API, generic→`PRECONDITION`).
 - Full Flow reconciliation across Next.js boot, supervisor boot, git worktrees,
   and live sessions is designed. Scratch recovery is implemented through the
   explicit recover route for crashed scratch sessions.
@@ -305,20 +470,46 @@ flowchart LR
   (Phase 2 will define).
 - **`CONFLICT`** — `git merge --no-ff` exited non-zero. Run stays
   `Review`, worktree stays Active, parent repo is restored via
-  `git merge --abort`.
+  `git merge --abort`. **(Designed, M18)** a stale-claim reclaim that finalizes
+  after a same-user re-mint also surfaces `CONFLICT` ("superseded by a newer
+  attempt") and writes nothing.
 - **`git worktree remove` fails** (locked worktree, missing dir) — GC
   logs and continues; row stays without `removed_at`. Operator can
   force-cleanup manually.
-- **Concurrent promotions on the same `target_branch`** — current target trusts
-  the parent repo is single-writer (one operator). Phase 2 may add a promotion
-  queue.
+- **(Designed, M18) Concurrent promotions of the same run** — serialized by the
+  durable `promotion_state` claim keyed on `promotion_attempt_id` (committed
+  before the side-effect); exactly one finalizes `Done`, the other gets `409
+  CONFLICT`. Supersedes the prior single-writer assumption.
+- **(Designed, M18) Target advanced since review (drift)** — `reviewedTargetCommit`
+  ≠ live target HEAD → `PRECONDITION`; the panel re-renders against the new HEAD
+  and offers "Promote anyway" (`allowTargetDrift`).
+- **(Designed, M18) Crash between claim and finalize** — a durable
+  `promotion_state='claiming'` row; reclaimable past
+  `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`, the idempotent side-effect makes the
+  re-promote a no-op (local merge) or a PR update (provider query), then it
+  finalizes `Done`.
+- **(Designed, M18) Legacy pre-M18 workspace (null branch metadata)** — promote
+  derives fallbacks (`target_branch ?? project.default_branch`, diff base via
+  `resolveBaseRef`) or refuses `PRECONDITION` ("relaunch to promote"); never a
+  silent null into git.
 
 ## Linked artifacts
 
 - ADRs: [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
-  [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict).
-- ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table).
-- Related: [`runs.md`](runs.md), [`projects.md`](projects.md).
+  [ADR-012 Local promotion merge policy](../decisions.md#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict),
+  [ADR-048 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
+  (Designed, M18),
+  [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
+  (Designed, M18).
+- ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
+  target/promotion + claim columns, Designed M18).
+- Config reference: [`../configuration.md`](../configuration.md)
+  (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
+- Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
+  [`projects.md`](projects.md),
+  [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
+  [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact).
 - Source: `web/lib/worktree.ts`; scratch recovery routes under
-  `web/app/api/scratch-runs/[runId]/recover/`. Full Flow reconciliation remains
-  designed.
+  `web/app/api/scratch-runs/[runId]/recover/`. **(Designed, M18)**
+  `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
+  Full Flow reconciliation remains designed.

@@ -127,12 +127,46 @@ flows:
 | `project.repo_path` | derived | Optional and ignored since [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots). `projects.repo_path` is the **resolved on-disk dir** (the clone target under `MAISTER_REPOS_ROOT`, or the existing local dir), not this manifest field. |
 | `project.default_branch` | `main` | Default base branch for new runs and default target branch for promotion. `project.main_branch` remains accepted as a backwards-compatible alias until the branch-targeting migration lands. |
 | `project.branch_prefix` | `maister/` | Run-branch prefix; combined with the slug. |
-| `promotion.mode` | `local_merge` | Planned M18. `local_merge` merges the run branch into the target branch locally; `pull_request` creates/updates a PR from the run branch into the target branch. |
-| `promotion.remote` | unset | Planned M18. Remote name used by pull-request mode. |
+| `promotion.mode` | `local_merge` | **(Designed, M18 — ADR-048/049; Implemented at Phase 3 HEAD.)** `local_merge` merges the run branch into the target branch locally; `pull_request` creates/updates a PR from the run branch into the target branch. Resolved at launch via the override chain (launch override > project `promotion.mode` > default `local_merge`) and snapshotted to `workspaces.promotion_mode`. `pull_request` mode has the per-provider host prerequisites below. |
+| `promotion.remote` | unset | **(Designed, M18 — ADR-049; Implemented at Phase 3 HEAD.)** Remote name used by `pull_request` mode (the `git push` target and the PR base remote). |
 | `executors[].env` | `null` | Map of env vars passed to the spawned agent (env-router pattern). |
 | `executors[].router` | unset | `ccr` enables `@musistudio/claude-code-router` multi-provider routing inside the session. |
 | `flows[].executor_override` | unset | When set, must reference an `id` in `executors[]`. Persisted to `flows.executor_override_id` by `upsertExecutorsFromConfig()` and slots into the override chain at tier 3 (between task override and project default). |
 | `flow_roles[]` | `[]` | M13 Flow routing registry. Each `ref` is project-scoped and may be used by `finish.human.role` or human-node `settings.roles[]`. Flow roles are not RBAC and never replace `project_members.role`. |
+
+#### `pull_request` promotion mode — per-provider host prerequisites (Designed, M18 — ADR-049)
+
+`pull_request` promotion runs in the **web tier** (the promote route shells a
+provider CLI *or* calls a Gitea-compatible REST API, plus `git push`). The
+prerequisites depend on the run's detected provider (`projects.provider`), and are
+required **only** when a run promotes via `pull_request` — `local_merge` needs **none**
+of them. (Credential **model B**: host git credentials + provider CLI/token, no secrets
+stored in MAIster.)
+
+| Provider | PR-mode prerequisite on the web host |
+| -------- | ------------------------------------ |
+| `github` | `gh` CLI on `PATH` + host auth (`gh auth login`, or `GH_TOKEN` in the web-tier env). |
+| `gitlab` | `glab` CLI on `PATH` + host auth (`glab auth login`, or `GITLAB_TOKEN` in the web-tier env). |
+| `gitea` | `GITEA_TOKEN` in the web-tier env (the shared Gitea-compatible REST adapter; no CLI). |
+| `gitverse` | `GITVERSE_TOKEN` in the web-tier env (same Gitea-compatible REST adapter). |
+| `generic` | **Unsupported** — `pull_request` mode refuses with `PRECONDITION`; use `local_merge`. |
+| **all of the above** | A host **git push credential helper** (SSH key or HTTPS credential helper) for the run's remote. |
+
+The `GH_TOKEN`/`GITLAB_TOKEN`/`GITEA_TOKEN`/`GITVERSE_TOKEN` values are
+**server-only secrets** — read from the web-tier process env, never logged, never
+streamed via SSE, never embedded in `session/update` payloads. They are documented in
+`.env.example`. A missing CLI / unset token / unconfigured remote surfaces as
+`PRECONDITION` (HTTP 409) at promote time; the run stays `Review`.
+
+> **Compose skew (documented per ADR-023).** The default compose stays
+> **Postgres-only** — `web` and `supervisor` run on the host. The default compose does
+> **NOT** provision provider CLIs (`gh`/`glab`), API tokens, or git push credentials in
+> the web container: PR-mode promotion is a **host-operator concern**. Per the run's
+> provider the operator must supply `gh`/`glab` on `PATH` (github/gitlab) or
+> `GITEA_TOKEN`/`GITVERSE_TOKEN` env (gitea-family), plus a git push credential helper.
+> `local_merge` needs none. No silent dev/prod skew. See
+> [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)
+> and [`deployment.md`](deployment.md).
 
 #### `capability_imports[]` (Implemented, M14)
 
@@ -674,6 +708,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) (M19) |
 | `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
 | `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` returns 503 disabled) | (none) | **Server-only secret** for `GET`/`POST /api/cron/gc` auth — never logged or streamed (M19) |
+| `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` | no | `300` | **(Designed, M18 — ADR-048, Codex F1.)** Stale-`claiming` promotion-claim reclaim window (seconds). A `workspaces.promotion_state='claiming'` claim older than this is reclaimable by the next promote attempt (crash recovery), which re-mints `promotion_attempt_id`. Read by the web tier's shared `promoteRun` service. Host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
 | `MAISTER_API_BASE_URL` | no | `http://localhost:3000` | **(M16 — Implemented)** MCP facade: base URL of the MAIster REST API the `mcp/` package wraps (e.g. `http://localhost:3000` in dev; external HTTPS in prod). |
 | `MAISTER_PROJECT_TOKEN` | no | (none) | **(M16 — Implemented)** MCP facade **stdio/local-only** project token. **IGNORED** under the Streamable-HTTP transport, which requires a per-request inbound bearer forwarded verbatim to `/api/v1/ext`. Not a web-tier secret — never read by `web/` or `supervisor/`. |
 | `MCP_TRANSPORT` | no | (unset → `http`) | **(M16 — Implemented)** MCP facade transport select. Unset = Streamable-HTTP (remote; per-request inbound bearer, no ambient token). `stdio` (or `--stdio`) = local stdio transport reading `MAISTER_PROJECT_TOKEN`. |

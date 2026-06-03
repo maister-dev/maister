@@ -6,21 +6,35 @@ Git integration is the host-credential, provider-neutral git layer MAIster
 uses to clone repos, initialize them, read remotes, and run worktree /
 merge operations. The boundary covers how MAIster talks to git and how it
 auto-detects a provider tag from a URL — NOT the project lifecycle that
-consumes it (see [`projects.md`](projects.md)) and NOT push/PR mode (M18).
-MAIster holds zero git provider secrets; auth is the host's. See
+consumes it (see [`projects.md`](projects.md)). The layer is host-credential
+only: clone/push use the host's SSH key or git credential helper and MAIster
+holds zero git provider secrets (credential **model B**). See
 [ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
+M18 extends this layer with `git push` and **conditional, provider-dispatched
+PR creation** for `pull_request` promotion (**Designed**) — see
+[ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant).
 
 ## Domain entities
 
 - **Provider tag** — `github | gitlab | gitea | gitverse | generic`,
-  derived from the URL host by `detectProvider()`. Best-effort metadata
-  for future PR-mode and web links; GitVerse is Gitea-family.
+  derived from the URL host by `detectProvider()`. Metadata for web links and,
+  from M18, the **PR-mode dispatch key**; GitVerse is Gitea-family.
 - **Host credentials** — the OS user's SSH key (`~/.ssh`) or git
   credential helper. Owned by the host, never by MAIster.
 - **Generic git-ops layer** — the provider-neutral operations in
   `web/lib/repo-source.ts`: `cloneRepo`, `gitInit`, `readRemoteOrigin`,
   `isGitRepo`, `assertGitAvailable` (plus the worktree / merge wrappers
   elsewhere). All run against a resolved local path.
+- **Branch push (`pushBranch`)** — **Designed (M18)**. Pushes the run branch
+  to the configured remote via the host git credential helper (no MAIster
+  secret). Used by `pull_request` promotion before PR creation.
+- **`PrAdapter` (provider PR dispatch)** — **Designed (M18)**. One interface,
+  three implementations selected by the project's provider tag:
+  `github`→`GhCliAdapter` (`gh` CLI), `gitlab`→`GlabCliAdapter` (`glab` CLI),
+  `gitea`+`gitverse`→a shared `GiteaApiAdapter` (Gitea-compatible REST API,
+  host-env bearer token `GITEA_TOKEN`/`GITVERSE_TOKEN`). `generic` (unknown
+  host) → `PRECONDITION` "PR mode unsupported for provider". See
+  [ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant).
 
 ## State machine
 
@@ -77,6 +91,55 @@ sequenceDiagram
 
 Status: **Implemented** — `web/lib/repo-source.ts`.
 
+### Push + provider-dispatched PR creation (Designed, M18)
+
+`pull_request` promotion pushes the run branch (host credentials) and then
+dispatches PR creation on the project's provider tag. The CLI adapters shell
+`gh`/`glab` with array args + `--end-of-options` (no shell interpolation); the
+Gitea adapter calls the REST API with a host-env bearer token. The operation is
+idempotent: when a PR already exists for `(run branch → target)` it is updated,
+never duplicated (the promotion service stores `pr_url`; the provider query is
+the crash-window fallback — see [`workspaces.md`](workspaces.md)). Tokens,
+credentials, and secret-bearing URLs are NEVER logged.
+
+```mermaid
+sequenceDiagram
+    participant PS as promoteRun (web tier)
+    participant GIT as git (host)
+    participant PA as PrAdapter
+    participant PROV as Provider (gh/glab/Gitea API)
+
+    PS->>PS: preflight by provider tag (CLI on PATH or token set, remote configured)
+    alt provider = generic
+        PS-->>PS: throw MaisterError(PRECONDITION) PR mode unsupported
+    end
+    PS->>GIT: pushBranch(repoPath, remote, runBranch) via host credential helper
+    alt push rejected (transient)
+        GIT-->>PS: non-zero
+        PS-->>PS: throw MaisterError(EXECUTOR_UNAVAILABLE) 503
+    end
+    PS->>PA: createOrUpdatePr(source to target)
+    PA->>PROV: list existing PR for run branch to target
+    alt PR exists (or stored pr_url)
+        PROV-->>PA: existing PR
+        PA->>PROV: update PR (push commits)
+    else no PR
+        PA->>PROV: create PR (run branch to target)
+    end
+    alt provider 5xx (transient)
+        PROV-->>PA: 5xx
+        PA-->>PS: throw MaisterError(EXECUTOR_UNAVAILABLE) 503
+    else ok
+        PROV-->>PA: { url, number }
+        PA-->>PS: { pr_url, pr_number }
+    end
+```
+
+Status: **Designed (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
+`web/lib/runs/pr-adapter.ts` (`GhCliAdapter`, `GlabCliAdapter`,
+`GiteaApiAdapter`). Wired by the shared promotion service in
+[`workspaces.md`](workspaces.md).
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential
@@ -89,7 +152,17 @@ Status: **Implemented** — `web/lib/repo-source.ts`.
   an error message.
 - Provider detection is best-effort metadata and NEVER gates cloning;
   `detectProvider()` returns `generic` on any unrecognized host.
-- `gh` is NEVER invoked by the git layer.
+- **(Designed, M18)** `gh`/`glab` and the Gitea REST API are invoked ONLY for
+  `pull_request` promotion, dispatched on the provider tag: `github`→`gh`,
+  `gitlab`→`glab`, `gitea`+`gitverse`→Gitea REST API, `generic`→`PRECONDITION`
+  unsupported. `local_merge` promotion and every clone/worktree/merge path
+  NEVER invoke a provider CLI or PR API.
+- **(Designed, M18)** PR creation MUST be idempotent: an existing PR for
+  `(run branch → target)` is updated, never duplicated; the run's stored
+  `pr_url` plus a provider query are the dedup keys.
+- **(Designed, M18)** `git push` and PR creation MUST use host credentials /
+  host-env provider tokens only (credential model B); no provider secret is
+  stored by MAIster, and tokens / secret-bearing URLs are NEVER logged.
 
 ## Edge cases
 
@@ -102,15 +175,26 @@ Status: **Implemented** — `web/lib/repo-source.ts`.
   choice, not a MAIster-managed secret); the Add-Project form warns when
   credentials are present and recommends host SSH keys / a credential helper.
 - **Self-hosted GitLab / Gitea host** → classified as `generic`; cloning is
-  unaffected (provider is metadata only).
+  unaffected (provider is metadata only). **(Designed, M18)** a `generic`
+  provider cannot use `pull_request` promotion (`PRECONDITION`); `local_merge`
+  is always available.
 - **Cloned default branch ≠ `project.main_branch`** → not caught here;
   surfaces at Launch when the run branch base is resolved.
+- **(Designed, M18) PR-mode prerequisite missing** → `gh`/`glab` absent on PATH
+  (github/gitlab) or `GITEA_TOKEN`/`GITVERSE_TOKEN` unset (gitea-family), or no
+  configured remote → `PRECONDITION`; the run stays `Review`.
+- **(Designed, M18) push rejected / PR-API 5xx** → transient →
+  `EXECUTOR_UNAVAILABLE` (HTTP 503); the promotion is idempotently retryable.
 
 ## Linked artifacts
 
-- ADR: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
+- ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
+  [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
+  (Designed, M18).
 - Deployment (host credentials, `known_hosts` seeding):
   [`../deployment.md`](../deployment.md).
 - Related domains: [`projects.md`](projects.md),
-  [`instance-config.md`](instance-config.md).
-- Source: `web/lib/repo-source.ts`.
+  [`instance-config.md`](instance-config.md) (gh/glab + Gitea-API token status),
+  [`workspaces.md`](workspaces.md) (promotion service that drives push + PR).
+- Source: `web/lib/repo-source.ts`; **(Designed, M18)** `web/lib/worktree.ts`
+  (`pushBranch`), `web/lib/runs/pr-adapter.ts`.

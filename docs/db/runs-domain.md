@@ -25,6 +25,7 @@ erDiagram
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
+    USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
     TASKS ||--o{ SCRATCH_RUNS : "optional link"
     SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES : "dialog ledger"
@@ -79,6 +80,17 @@ erDiagram
         timestamp scheduled_removal_at "GC prune deadline (M19)"
         text archived_branch "preserved archive ref name (M19)"
         timestamp archived_at "when archive branch created (M19)"
+        text base_branch "M18 0021 run base branch (null pre-M18)"
+        text base_commit "M18 0021 base commit forked from (null pre-M18)"
+        text target_branch "M18 0021 promotion target branch"
+        text promotion_mode "M18 0021 local_merge|pull_request"
+        text pr_url "M18 0021 populated on PR-mode promotion"
+        integer pr_number "M18 0021"
+        timestamp promoted_at "M18 0021"
+        text promotion_state "M18 0021 none|claiming|done|failed (NOT NULL DEFAULT none)"
+        timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
+        text promotion_owner_user_id FK "M18 0021 users.id, nullable"
+        text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
     }
 
     STEP_RUNS {

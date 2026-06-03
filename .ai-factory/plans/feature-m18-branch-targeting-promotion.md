@@ -404,7 +404,7 @@ supplies it from the live render); a body that omits it (non-UI caller) is refus
 `docs/api/external/operations.openapi.yaml` lint-clean; adversarial reviewer
 confirms the spec set is the single source of truth the code phases can follow.
 
-- **T0.1 — ADR-048 + ADR-049.** `docs/decisions.md`.
+- [x] **T0.1 — ADR-048 + ADR-049.** `docs/decisions.md`.
   - ADR-048 "Branch targeting at launch, shared promotion service, promote-time
     readiness re-gate (M18/M15 carve)": workspace ledger columns; shared
     `promoteRun` over both run kinds; reuse M16 `assertEvidenceReady` at promote
@@ -417,7 +417,7 @@ confirms the spec set is the single source of truth the code phases can follow.
     per-provider preflight; idempotent PR by stored `pr_url` (+ provider query as
     crash-window fallback); model-C credential storage explicitly deferred.
     Logging: DEBUG on each ADR-referenced decision point (never log tokens).
-- **T0.2 — system-analytics.** Rewrite `workspaces.md` (base/target/promotion-mode
+- [x] **T0.2 — system-analytics.** Rewrite `workspaces.md` (base/target/promotion-mode
   domain entities, Promote-on-Review for flow runs, `local_merge` **and** PR
   sequence diagrams, state machine, concurrent-promote edge case from §3.2-3.3);
   update `runs.md` (flow `Review→Done` promotion path, promote-time readiness
@@ -425,14 +425,14 @@ confirms the spec set is the single source of truth the code phases can follow.
   "NEVER invoked" line); `instance-config.md` (`gh`/`glab` informational →
   required-for-PR); `artifacts.md` (promotion diff/PR artifact). All per docs R5,
   tagged `Designed`.
-- **T0.3 — DB ERD + narrative.** Add `base_branch,base_commit,target_branch,
+- [x] **T0.3 — DB ERD + narrative.** Add `base_branch,base_commit,target_branch,
   promotion_mode,pr_url,pr_number,promoted_at` **plus the claim columns
   `promotion_state,promotion_claimed_at,promotion_owner_user_id,
   promotion_attempt_id` (Codex F1/F5)** to `WORKSPACES` in `docs/db/runs-domain.md`
   AND `docs/db/erd.md` (both — skill-rule) AND the `docs/database-schema.md`
   narrative (flip the "Planned M18" para to the column list + the durable-claim +
   attempt-token note, tagged `Designed` until Phase 1 HEAD).
-- **T0.4 — OpenAPI (both specs).** `web.openapi.yaml`: `PostRunBody`
+- [x] **T0.4 — OpenAPI (both specs).** `web.openapi.yaml`: `PostRunBody`
   +`baseBranch?`/`targetBranch?`; `PromoteRunBody` +`reviewedTargetCommit`
   +`allowTargetDrift?` (Codex F6 drift guard) / `PromoteRunResponse` (PR fields
   + remove "returns CONFIG"); promote description = serves flow + scratch;
@@ -441,7 +441,7 @@ confirms the spec set is the single source of truth the code phases can follow.
   (Codex F3)** with its session/project-read security requirement.
   `external/operations.openapi.yaml`: `ExtLaunchRunBody`
   +`baseBranch?`/`targetBranch?`. Redocly lint green.
-- **T0.5 — error-taxonomy.** `docs/error-taxonomy.md`: add promote/PR caller rows
+- [x] **T0.5 — error-taxonomy.** `docs/error-taxonomy.md`: add promote/PR caller rows
   to `CONFLICT` (merge conflict / promotion superseded by a stale reclaim — Codex
   F5), `PRECONDITION` (CLI-missing / remote-unset / provider-unsupported /
   push-rejected-config / target-invalid / target-drift / readiness-not-ready), and
@@ -449,7 +449,7 @@ confirms the spec set is the single source of truth the code phases can follow.
   add the `EXECUTOR_UNAVAILABLE→503` case to the route's `httpStatusForCode`)**;
   state the no-new-code decision (ADR-008 closed union — `EXECUTOR_UNAVAILABLE` is
   an existing member, not an addition).
-- **T0.6 — configuration / getting-started / deployment / .env.example.** Flip
+- [x] **T0.6 — configuration / getting-started / deployment / .env.example.** Flip
   `promotion.mode`/`promotion.remote` from "Planned M18" → Implemented (Designed
   tag until Phase 3 HEAD); add the `gh`/`glab` PATH + push-credentials
   prerequisite and the **compose-skew note** from §1; `.env.example` optional
@@ -465,7 +465,7 @@ confirms the spec set is the single source of truth the code phases can follow.
 launch tests migrated; e2e unaffected; Phase-1 doc tags flipped
 Designed→Implemented (DB ERD + launch OpenAPI).
 
-- **T1.1 — (RED) tests.** Name + place exactly:
+- [ ] **T1.1 — (RED) tests.** Name + place exactly:
   - unit `web/lib/services/__tests__/runs-launch-branch.test.ts`: default
     resolution (base=`default_branch`, target=base); `promotion_mode` resolver
     SET/CLEAR/re-set (§3.4); unknown base/target rejected via `listBranches`
@@ -481,7 +481,7 @@ Designed→Implemented (DB ERD + launch OpenAPI).
     (matches `app/**/*.integration.test.ts`): real DB — workspace row persists
     `base_branch`/`base_commit`/`target_branch`/`promotion_mode`; ext launch
     with branch fields.
-- **T1.2 — Migration `0021_m18_workspace_branch_promotion.sql`.** Additive:
+- [ ] **T1.2 — Migration `0021_m18_workspace_branch_promotion.sql`.** Additive:
   `workspaces` += `base_branch text`, `base_commit text`, `target_branch text`,
   `promotion_mode text`, `pr_url text`, `pr_number integer`, `promoted_at
   timestamp` (all nullable; PR cols populated Phase 3) **+ claim columns (Codex
@@ -493,17 +493,17 @@ Designed→Implemented (DB ERD + launch OpenAPI).
   target_branch = <project default_branch> WHERE promotion_mode IS NULL`**
   (`base_branch`/`base_commit` stay null — historically unknowable, handled by the
   §3.6 code fallback). Update `schema.ts`. DEBUG log on column population.
-- **T1.3 — launchRun service.** `web/lib/services/runs.ts`: `LaunchRunInput`
+- [ ] **T1.3 — launchRun service.** `web/lib/services/runs.ts`: `LaunchRunInput`
   +`baseBranch?`/`targetBranch?`; resolve defaults; **validate both against
   `listBranches(project.repoPath)` (server-state allow-list) BEFORE worktree**
   (§3.1); `resolveBaseCommit(base)` → record; pass `startPoint=baseCommit` to
   `addWorktree`; resolve `promotion_mode` via the override chain (§3.4); persist
   branch/promotion columns on workspace insert. Verbose DEBUG: resolved base/
   target/commit/mode.
-- **T1.4 — route + ext route.** `web/app/api/runs/route.ts` body schema
+- [ ] **T1.4 — route + ext route.** `web/app/api/runs/route.ts` body schema
   +`baseBranch`/`targetBranch`; `web/app/api/v1/ext/runs/launch/route.ts` (M16 ext
   launch) same; thread through the shared service; audit attribution unchanged.
-- **T1.5 — Board launch UI.** Convert `web/components/board/launch-button.tsx`
+- [ ] **T1.5 — Board launch UI.** Convert `web/components/board/launch-button.tsx`
   one-click button → a compact `LaunchPopover` (default one-click preserved;
   "Advanced" disclosure → base-branch select + optional target-branch select,
   mirroring `web/components/scratch/scratch-launcher.tsx` branch pill). Branch
@@ -513,7 +513,7 @@ Designed→Implemented (DB ERD + launch OpenAPI).
   with the same auth) — **never a new unauthenticated branch lookup** (Codex F3);
   the route is in `web.openapi.yaml` (T0.4) with the auth tests (T1.1). i18n EN+RU
   (`run.baseBranch`, `run.targetBranch`, `launch.advanced`).
-- **T1.6 — (GREEN) + doc-tag flip.** Make the suite green; migrate any launch
+- [ ] **T1.6 — (GREEN) + doc-tag flip.** Make the suite green; migrate any launch
   tests whose assertions the new fields touch; flip Phase-1 doc tags.
 
 ---
@@ -523,7 +523,7 @@ Designed→Implemented (DB ERD + launch OpenAPI).
 **Exit gate:** typecheck 0; full suite green; the 8 existing scratch promote
 tests stay green (regression pin); Phase-2 doc tags flipped.
 
-- **T2.1 — (RED) tests.**
+- [ ] **T2.1 — (RED) tests.**
   - unit `web/lib/runs/__tests__/promote-service.test.ts`: terminal allow-list
     guard (non-`Review` flow → 409); readiness-not-ready → `PRECONDITION`, **git
     spy NOT called**; **target-drift (`reviewedTargetCommit` ≠ live HEAD) →
@@ -549,7 +549,7 @@ tests stay green (regression pin); Phase-2 doc tags flipped.
     success OR typed `PRECONDITION` (Codex F4, §3.6).
   - keep `web/app/api/runs/[runId]/promote/__tests__/route.test.ts` green (scratch
     regression).
-- **T2.2 — Shared service + durable claim.** Extract `web/lib/runs/promote.ts`
+- [ ] **T2.2 — Shared service + durable claim.** Extract `web/lib/runs/promote.ts`
   `promoteRun(runId, {mode, targetBranch?, reviewedTargetCommit, allowTargetDrift?},
   ctx)`; the route dispatches on `runKind`. Implement the **durable promotion
   claim** (§3.2, Codex F1/F5): claim tx asserts terminal allow-list + readiness +
@@ -560,19 +560,19 @@ tests stay green (regression pin); Phase-2 doc tags flipped.
   on `promotion_attempt_id`** `claiming→done`/`failed` (token mismatch → `CONFLICT`,
   write nothing — Codex F5). Concurrency serialized by the attempt-id claim CAS, not
   a held `SELECT FOR UPDATE`. Legacy-row fallback per §3.6.
-- **T2.3 — Promote-time readiness.** Call `assertEvidenceReady(runId,"review")`
+- [ ] **T2.3 — Promote-time readiness.** Call `assertEvidenceReady(runId,"review")`
   for flow runs after the lock, before git (§3.2 step 2); overridden gates count
   via the `{passed,overridden}` allow-list. Verbose DEBUG: readiness verdict +
   blocking reasons.
-- **T2.4 — Two-phase finalize + artifact.** Implement §3.2 steps 3-5 as the
+- [ ] **T2.4 — Two-phase finalize + artifact.** Implement §3.2 steps 3-5 as the
   ordered side-effect → single finalize tx; record the promotion `diff`/
   `commit_set` artifact (`recordArtifact`, locator `git-range` base→run). Relax
   `assertPromotionTargetAllowed` for flow runs (validated target may differ from
   base). Enumerate the crash-window recovery (§3.3) in code comments (WHY-only).
-- **T2.5 — Consumer fan-out (§3.5).** Board + portfolio read models reflect flow
+- [ ] **T2.5 — Consumer fan-out (§3.5).** Board + portfolio read models reflect flow
   promotion → `Done` + a ready-to-promote indicator; verify slot release +
   `promoteNextPending`.
-- **T2.6 — (GREEN) + i18n + doc-tag flip.**
+- [ ] **T2.6 — (GREEN) + i18n + doc-tag flip.**
 
 ---
 
@@ -583,7 +583,7 @@ exec AND the Gitea-API `fetch` — is **mocked** in CI; live `gh`/`glab` push+PR
 and a live Gitea/GitVerse PR are exercised only in manual verification, logged
 explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
 
-- **T3.1 — (RED) tests** `web/lib/runs/__tests__/promote-pr.test.ts` +
+- [ ] **T3.1 — (RED) tests** `web/lib/runs/__tests__/promote-pr.test.ts` +
   `web/lib/runs/__tests__/pr-adapter.test.ts` (the `child_process` exec boundary
   AND the Gitea-API `fetch` both mocked): dispatch over all four providers —
   github→`gh` CLI, gitlab→`glab` CLI, gitea+gitverse→Gitea REST adapter,
@@ -596,7 +596,7 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   the code AND the mapped status via `httpStatusForCode`; stays `Review`, no
   `pr_url`; crash-window (PR upstream exists, `pr_url` unset) → re-promote detects
   (provider query) + updates, no duplicate (§3.3).
-- **T3.2 — push + `PrAdapter` interface.** `web/lib/worktree.ts`:
+- [ ] **T3.2 — push + `PrAdapter` interface.** `web/lib/worktree.ts`:
   `pushBranch(repoPath, remote, branch)` (host git creds). New
   `web/lib/runs/pr-adapter.ts`: a `PrAdapter` interface
   `createOrUpdatePr({repoPath, remote, sourceBranch, targetBranch, title, body})
@@ -609,16 +609,16 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   API via typed `fetch`; never log tokens / credentials / secret-bearing URLs.
   Per-provider preflight. **Verify GitVerse Gitea-API compatibility here**
   (fallback: a `gitverse` branch on the shared `GiteaApiAdapter`).
-- **T3.3 — promoteRun PR branch.** Wire the PR side-effect into `promoteRun`
+- [ ] **T3.3 — promoteRun PR branch.** Wire the PR side-effect into `promoteRun`
   (§3.2 step 4 `pull_request` + step 5 PR finalize). Idempotency by stored
   `workspace.pr_url`; failure classification table (§3.2) — terminal-config →
   `PRECONDITION` 409, transient → **`EXECUTOR_UNAVAILABLE` 503 (Codex F7); add the
   `EXECUTOR_UNAVAILABLE→503` case to the route `httpStatusForCode`**.
-- **T3.4 — error-taxonomy finalize + PR artifact.** Flip the Phase-0 `Designed`
+- [ ] **T3.4 — error-taxonomy finalize + PR artifact.** Flip the Phase-0 `Designed`
   taxonomy rows → Implemented; record the PR as a `commit_set`/`generic_file`
   artifact carrying `pr_url`/`pr_number` in the payload (no new artifact kind —
   Q3).
-- **T3.5 — (GREEN) + doc-tag flip + skew note.** Flip `git-integration.md` /
+- [ ] **T3.5 — (GREEN) + doc-tag flip + skew note.** Flip `git-integration.md` /
   `instance-config.md` / `deployment.md` / `configuration.md` PR rows to
   Implemented; the plan's manual-verification note records that live `gh`/`glab`
   push+PR was (or must be) exercised outside CI on a real remote.
@@ -630,7 +630,7 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
 **Exit gate:** typecheck 0; full suite green; `m18` Playwright e2e green
 (authed, seeded).
 
-- **T4.1 — (RED) component + e2e specs.** unit
+- [ ] **T4.1 — (RED) component + e2e specs.** unit
   `web/components/runs/__tests__/review-panel.test.tsx`
   (`renderToStaticMarkup`, no jsdom — per repo testing convention): renders
   base→run→target, readiness summary, raw diff, "Promote to `<target>`" naming
@@ -643,7 +643,7 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   workspace base/target set): diff visible → promote (`local_merge`) → `Done`;
   conflict path → assignment; PR-mode display with a pre-seeded `pr_url`
   (exec not run in CI). Register in `playwright.config.ts` authed project.
-- **T4.2 — `ReviewPanel`.** New `web/components/runs/review-panel.tsx` rendered
+- [ ] **T4.2 — `ReviewPanel`.** New `web/components/runs/review-panel.tsx` rendered
   from `web/app/(app)/runs/[runId]/page.tsx` when `status==="Review"` &&
   `runKind==="flow"`: base branch, base commit, run branch (`workspace.branch`),
   target branch, promotion-mode selector (`local_merge|pull_request`), readiness
@@ -658,15 +658,15 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   (`project.default_branch`, `resolveBaseRef`) — never render a null branch or
   pass null into `diffRange`; if a fallback is impossible, show the
   `PRECONDITION` "relaunch to promote" state instead of the Promote action.
-- **T4.3 — Conflict handoff UX.** On `CONFLICT`, surface the manual-resolution
+- [ ] **T4.3 — Conflict handoff UX.** On `CONFLICT`, surface the manual-resolution
   assignment (parent repo path, target branch, run branch, exact failing
   command) via the existing assignment card; resolve-by-hand returns through the
   normal assignment/artifact/gate path.
-- **T4.4 — Board flight-card + i18n.** Extend `flight-card.tsx` with the
+- [ ] **T4.4 — Board flight-card + i18n.** Extend `flight-card.tsx` with the
   ready-to-promote / `PR #N` / merge-blocked badge; all new EN+RU keys in
   `en.json`/`ru.json` (`run.promoteTo`, `run.promotionMode`, `run.readiness*`,
   `run.prLink`, `run.targetDrift`, `run.promoteAnyway`, `board.readyToPromote`).
-- **T4.5 — (GREEN).** Seed helper + stub green; full e2e green; final doc-tag
+- [ ] **T4.5 — (GREEN).** Seed helper + stub green; full e2e green; final doc-tag
   sweep; `pnpm validate:docs:all` + both OpenAPI lints green.
 
 ---

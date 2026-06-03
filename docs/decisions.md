@@ -73,6 +73,8 @@
 | [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) | External_check enforcement via the Review chokepoint; M16/M15/M18 carve | Accepted | 2026-06-02 |
 | [ADR-046](#adr-046-project-api-token-model) | Project API token model | Accepted | 2026-06-02 |
 | [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) | Thin MCP facade as a standalone REST-client package | Accepted | 2026-06-02 |
+| [ADR-048](#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
+| [ADR-049](#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant) | PR promotion via a hybrid provider `PrAdapter` (credential model B); reverses the "gh is never invoked" invariant | Accepted | 2026-06-03 |
 
 ---
 
@@ -2739,6 +2741,247 @@ Whether the delivered config actually CONSTRAINS the agent is still gated on the
 - **Keep delivering secret VALUES via `adapterLaunch.env`/`.mcp.json` placeholders.** Rejected — both
   put secret material on the wire or on disk; resolving env names host-side in the supervisor keeps
   secrets in `process.env` only.
+
+---
+
+### ADR-048: Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve)
+
+**Date:** 2026-06-03
+**Status:** Accepted
+**Context:** Before M18 a run's worktree always forked the parent repo `HEAD` and promotion existed
+only for **scratch** runs in `local_merge` mode: `POST /api/runs/{runId}/promote` rejects
+`runKind !== "scratch"`, `mode: "pull_request"` throws `CONFIG` "not implemented", and
+`assertPromotionTargetAllowed` hard-locks the target to the scratch base branch. **Flow** runs
+dead-end at `Review` — `promoteAfterExit` only schedules the next pending run, nothing promotes the
+current one. The branch fields needed to record what a run was built from and merges into
+(`baseBranch`/`baseCommit`/`targetBranch`/`promotionMode`) live on `scratch_runs` and are absent from
+the flow run ledger; `database-schema.md` already pre-declares them as "Planned M18" on `workspaces`.
+The existing promote route is also **not retry-safe**: it loads rows with no `FOR UPDATE` and no
+terminal-status guard, then calls `promoteLocalMerge()` outside any transaction, so two concurrent
+promotes can both pass the load-time `Review` check and both run the merge. M18 must (a) let launch
+pick where a run builds from and merges into, (b) generalize promotion to flow runs across both
+modes, (c) re-check readiness at promote time because gates can go stale between Review-entry and the
+promote click, and (d) close the concurrency hole — all without introducing a new `runs.status`
+value and its all-consumers fan-out. The readiness machinery itself (M16 `assertEvidenceReady`,
+`getRunReadiness`) already exists; the M15 readiness-policy DSL does not, and M18 must not depend on
+it ([ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) drew the
+M16/M15/M18 carve).
+
+**Decision:** Ship branch targeting and a shared promotion service for M18, against pre-M15 readiness
+semantics:
+
+- **Branch targeting at launch.** Launch picks a **base branch** (default `project.default_branch`)
+  plus an optional **target branch** (default = base); the normal path stays one-click via an
+  advanced disclosure. The worktree is created **from the selected base commit** (`addWorktree`'s
+  existing `startPoint`, wired through from `resolveBaseCommit(base)`). The run ledger
+  (`workspaces` table) records `base_branch`, `base_commit` (the resolved commit), the run branch
+  (`workspaces.branch`), `target_branch`, and `promotion_mode`. Both `baseBranch` and `targetBranch`
+  are body-controlled and MUST be validated against `listBranches(project.repoPath)` (a server-state
+  allow-list) before any use as a git ref or `startPoint`; an unknown branch is refused
+  `PRECONDITION`. Branch names are never shell-interpolated.
+- **Shared `promoteRun` service drives BOTH run kinds.** The route dispatches on `runKind`; one
+  service generalizes today's scratch-only `local_merge` to flow runs and (per
+  [ADR-049](#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant))
+  `pull_request`. `assertPromotionTargetAllowed` is relaxed for flow runs (the validated target may
+  differ from base). The pre-M18 **scratch behavior is pinned by regression tests** — the existing
+  scratch promote suite stays green.
+- **Promote-time readiness re-gate reuses the M16 chokepoint.** Promotion calls the same
+  `assertEvidenceReady(runId, "review")` as a **second** enforcement point (the first is at
+  Review-entry); gates can go stale between Review-entry and the promote click. Overridden gates
+  satisfy promotion via the existing `{passed, overridden}` allow-list — that is the "explicitly
+  overridden" path. This is an **ADR-045-consistent M18/M15 carve, NOT an implementation of M15**:
+  the M15 readiness-policy DSL, verdict calibration, and `external_check` ingestion semantics beyond
+  the M16 generic report contract are explicitly out of M18 scope. When M15 lands, its readiness
+  policy plugs into the same chokepoint with no rework of the promote path.
+- **Terminal status stays `Done` for both modes.** M18 adds **NO** new `runs.status` value — this
+  deliberately avoids the all-consumers fan-out blast radius. `local_merge` success → `Done` (matches
+  scratch and the `runs.md` state machine). `pull_request` success → `Done` with `pr_url`/`pr_number`
+  recorded; MAIster does not track the PR to merge in M18 (deferred).
+- **Two-phase commit + idempotency contract.** The serialization point is a **durable promotion
+  claim committed BEFORE any side-effect**, not a held row lock (a held lock cannot span the slow
+  git/PR call without becoming a long transaction around external I/O). The claim lives on
+  `workspace.promotion_state` (`none | claiming | done | failed`); the workspace is 1:1 with the run,
+  so a per-row CAS is race-safe without a partial index. **Claim tx** (short, commits before any
+  side-effect): `SELECT … FOR UPDATE` the workspace, assert the run terminal allow-list
+  (`status = "Review"`), readiness (`assertEvidenceReady`), the target-drift guard (below), and no
+  active claim; then **mint a fresh `promotion_attempt_id`** (opaque token, e.g.
+  `crypto.randomUUID()`) and CAS `promotion_state → 'claiming'`; `COMMIT`. A concurrent promote loses
+  the CAS → `409 CONFLICT` "promotion already in progress". **Side-effects** run with no lock held.
+  **Finalize tx** is keyed on `promotion_attempt_id`: if the token no longer matches (a stale reclaim
+  re-minted it while this slow side-effect ran), the attempt was **superseded** — write nothing
+  (no `Done`, no `pr_url`, no `failed`) and return `409 CONFLICT`; the newer attempt owns
+  finalization. The idempotency markers (`promotion_state`, `pr_url`, `promoted_at`) are **AFTER-side
+  writes** — never set before the side-effect succeeds. A stale `claiming` claim is reclaimable once
+  older than `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` (default 300); a reclaim **re-mints** the
+  token, so a crashed or slow original attempt can never double-finalize. The attempt-token CAS
+  prevents a double **finalize**; the stored `pr_url` plus a provider query (see ADR-049) prevent a
+  double **side-effect** — the two mechanisms compose.
+- **Target-drift guard (optimistic concurrency on the target HEAD).** The `ReviewPanel` server-render
+  resolves the live target HEAD and embeds it in the promote form as `reviewedTargetCommit`; the
+  claim tx re-resolves the live target HEAD and refuses `PRECONDITION` ("target advanced since
+  review") on a mismatch, leaving the run in `Review`. An explicit "Promote anyway"
+  (`allowTargetDrift: true`) skips the equality assertion. `local_merge` still catches *textual*
+  conflicts independently; this guard adds the **semantic** protection (a clean merge into an
+  unexpected target state) and keeps the readiness evidence honest. A non-UI caller that omits
+  `reviewedTargetCommit` is refused `PRECONDITION` rather than promoted blind.
+- **Legacy-row compatibility.** Migration `0021` adds the branch/promotion columns **nullable** and
+  backfills the derivable ones (`promotion_mode := project default ?? 'local_merge'`,
+  `target_branch := project default_branch`); `base_branch`/`base_commit` are historically unknowable
+  and stay null. At read time the promote service and `ReviewPanel` derive safe fallbacks
+  (`targetBranch := override ?? workspace.target_branch ?? project.default_branch`; diff base via the
+  existing `resolveBaseRef`); if a required value genuinely cannot be derived they refuse with a typed
+  `PRECONDITION` ("legacy run lacks branch metadata — relaunch to promote"), never a silent null into
+  git.
+
+The decision is **Accepted** now (docs-first spec freeze); the corresponding code lands later this
+milestone and is tagged `Designed` in the system-analytics and DB docs until each phase's HEAD.
+
+**Consequences:**
+
+- No new `runs.status` value; `Review → Done` is the only added transition for flow promotion, so no
+  consumer of the status enum fans out. Promote guards are written as a `status ∈ {Review}`
+  allow-list, not `if (!terminal)`, so a future status is rejected by default.
+- `workspaces` gains `base_branch`, `base_commit`, `target_branch`, `promotion_mode`, `pr_url`,
+  `pr_number`, `promoted_at` plus the claim columns `promotion_state`, `promotion_claimed_at`,
+  `promotion_owner_user_id`, `promotion_attempt_id` (migration `0021`, additive + backfill).
+- One `promoteRun` service serves both scratch and flow runs; the scratch regression suite is the
+  guard against behavior drift.
+- M18 promotion ships against pre-M15 readiness semantics by design; the M15 policy DSL is a clean
+  later plug-in at the same `assertEvidenceReady` chokepoint with no promote-path rework.
+- Concurrency is closed by the durable attempt-token claim, not a long-held lock around external I/O;
+  the crash window (claim committed, finalize not reached) is recovered by the timeout reclaim plus
+  an idempotent side-effect, so no background sweeper is added.
+- A new env var `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` (default 300) tunes the stale-claim reclaim
+  window; per [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres) the default compose stays
+  Postgres-only and this is a host/service-env concern.
+
+**Alternatives Considered:**
+
+- **A new `runs.status` (e.g. `Promoting`/`Promoted`) for the promotion lifecycle:** would force every
+  consumer of the status enum (board, portfolio, scheduler, reconciler, SSE, i18n) to fan out for a
+  state whose outcome already maps cleanly onto `Done`. Rejected — terminal stays `Done`, no new
+  status.
+- **A held `SELECT … FOR UPDATE` row lock spanning the git/PR side-effect:** turns the promotion into
+  a long transaction wrapping external calls (merge, push, PR API), holding a DB connection for the
+  full latency and risking lock-timeout cascades. Rejected — durable claim committed before the
+  side-effect, lock released immediately.
+- **Committing the guard before the side-effect without an attempt token:** releases the
+  serialization point while the run is still `Review`, so a concurrent or reclaiming promote could
+  pass the same guard and duplicate the merge/PR or double-finalize. Rejected — the per-attempt
+  `promotion_attempt_id` token gates finalize, so a superseded attempt writes nothing.
+- **Depending on the M15 readiness-policy DSL for the promote gate:** couples M18 delivery to an
+  unscheduled milestone for a check the M16 chokepoint already performs. Rejected — reuse
+  `assertEvidenceReady`; M15 plugs in later (ADR-045 carve).
+- **Validating only that the target branch still exists at promote time:** a clean merge into a target
+  that advanced since review would pass silently with stale readiness evidence. Rejected — optimistic
+  concurrency on the target HEAD via `reviewedTargetCommit`, with an explicit `allowTargetDrift`
+  override.
+- **Making the branch/promotion columns `NOT NULL` and backfilling all of them:** `base_branch`/
+  `base_commit` for pre-M18 runs are historically unknowable, so a non-null constraint would either
+  fabricate data or block the migration. Rejected — nullable columns with derivable backfill and a
+  typed `PRECONDITION` fallback for genuinely unrecoverable cases.
+
+---
+
+### ADR-049: PR promotion via a hybrid provider `PrAdapter` (credential model B); reverses the "gh is never invoked" invariant
+
+**Date:** 2026-06-03
+**Status:** Accepted
+**Context:** ADR-048 generalizes promotion to flow runs across `local_merge` **and** `pull_request`
+modes, but until M18 there is **no git push and no PR creation anywhere** in the platform:
+`web/lib/repo-source.ts` detects the provider (`github | gitlab | gitea | gitverse | generic`) but
+only records it, `cloneRepo` is a plain `git clone` on host credentials, and the promote route throws
+`CONFIG` "not implemented" for `pull_request`. `docs/system-analytics/git-integration.md` documents
+an explicit invariant that **"gh is NEVER invoked"**. M18 must implement PR promotion for the
+configured providers while keeping the credential surface minimal — the milestone deliberately
+**defers** in-platform credential storage (SSH-key / password / token vaulting, "model C"),
+deploy/release management, and PR-to-merge tracking (confirmed with the user 2026-06-03). The
+`MaisterError` union ([ADR-008](#adr-008-typed-error-taxonomy-maistererror)) is closed; PR failures
+must map onto existing codes, and the route's `httpStatusForCode` is code-only, so a config error and
+a retryable-transient error cannot share one code if they need different HTTP statuses.
+
+**Decision:** Implement `pull_request` promotion behind a single `PrAdapter` interface
+(`createOrUpdatePr({ repoPath, remote, sourceBranch, targetBranch, title, body }) → { url, number }`),
+dispatched on `projects.provider`, under **credential model B**:
+
+- **Provider dispatch (hybrid).** `github` → `gh` CLI; `gitlab` → `glab` CLI; `gitea` + `gitverse` →
+  one shared **Gitea-compatible REST adapter** (`GET`/`POST /api/v1/repos/{owner}/{repo}/pulls`, with
+  the API base and `owner`/`repo` derived from the repo's remote URL, bearer token from the host-env
+  `GITEA_TOKEN`/`GITVERSE_TOKEN`); `generic` (unknown host) → unsupported, refused `PRECONDITION`
+  "PR mode unsupported for provider" (`local_merge` is always available).
+- **Credential model B — no secrets stored in-platform.** Authentication is host git credentials plus
+  a provider CLI on PATH (`gh`/`glab`, with `gh auth` / `GH_TOKEN` / `GITLAB_TOKEN`) or a host-env
+  token (`GITEA_TOKEN`/`GITVERSE_TOKEN`) for the REST adapter. `git push` **always** uses the host git
+  credential helper. Model C (in-platform SSH-key / password / token storage), deploy/release
+  management, and PR-merge tracking are explicitly **deferred** (confirmed 2026-06-03).
+- **Per-provider preflight before any side-effect.** Assert the provider CLI is present (github/gitlab)
+  or the `*_TOKEN` is set and the API is reachable (gitea/gitverse), and that the remote is configured
+  — each failure refuses `PRECONDITION` before the durable claim's side-effect phase touches the
+  remote.
+- **Idempotent PR by stored `workspace.pr_url`.** If `pr_url` is set, the adapter **updates** the
+  existing PR (pushes commits), never creating a duplicate. The crash-window fallback (PR created
+  upstream but `pr_url` not yet persisted, because the markers are AFTER-side writes per ADR-048) is a
+  provider query — `gh pr list --head` / `glab mr list --source-branch` / Gitea
+  `GET …/pulls` — to detect an existing upstream PR for `(run branch → target)` and update instead of
+  duplicating.
+- **Reverses a documented invariant.** This explicitly reverses the
+  `docs/system-analytics/git-integration.md` "gh is NEVER invoked" line: provider PR creation is now
+  invoked conditionally on `pull_request` promotion. The reversal is recorded here and in
+  `git-integration.md`.
+- **Hardening.** CLI calls use array args plus `--end-of-options` (no shell interpolation); the REST
+  adapter uses a typed `fetch`; tokens, credentials, and secret-bearing URLs are **never** logged
+  (the verbose DEBUG on each provider invocation redacts them).
+- **Error-code mapping (reuse the closed union, no new code).** Config / conflict / drift errors
+  (CLI missing, remote unset, provider unsupported, push-rejected-config, target invalid, target
+  drift, readiness not ready, promotion superseded) → `PRECONDITION`/`CONFLICT` → HTTP 409. A
+  **retryable transient** push rejection or PR-API 5xx → **`EXECUTOR_UNAVAILABLE` → HTTP 503**, which
+  is an existing member of the ADR-008 union — the run stays `Review` with **no `pr_url`** and the
+  attempt is idempotently retryable. No new error code is added; `EXECUTOR_UNAVAILABLE` carries the
+  retryable status because `httpStatusForCode` maps by code and `PRECONDITION` can only yield 409.
+
+GitVerse's Gitea-API compatibility is **verified in Phase 3** (the implementation phase); the fallback
+if it diverges is a dedicated `gitverse` branch on the shared REST adapter. PR-mode dependencies land
+in the **web tier** (the Next.js promote route shells `gh`/`glab` or calls the Gitea API, plus
+`git push`); per [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres) the default compose stays
+Postgres-only and does **not** provision provider CLIs, API tokens, or push credentials in the web
+container — PR promotion is a **host-operator concern**, documented as such with no silent dev/prod
+skew. The decision is **Accepted** now; the code lands in Phase 3 and is tagged `Designed` in the
+provider/config docs until that phase's HEAD.
+
+**Consequences:**
+
+- The "gh is NEVER invoked" invariant is reversed; `git-integration.md` and `instance-config.md` move
+  `gh`/`glab` and the Gitea-API token from informational to required-for-PR.
+- No in-platform secret storage: a compromised MAIster process exposes no PR/push credentials beyond
+  what the host already grants the operator; the cost is that the operator must provision CLIs/tokens
+  on the host (no new bound port, no new sidecar, no Dockerfile change).
+- PR promotion is idempotent across retries — stored `pr_url` plus a provider query prevent duplicate
+  PRs even across a crash between push and marker persistence.
+- A retryable transient failure is observably distinct from a config failure at the HTTP layer
+  (503 vs 409), so callers can retry the former and must fix the latter.
+- `generic` provider repos cannot use `pull_request` (refused `PRECONDITION`), but `local_merge`
+  remains available for them.
+- New optional server-only env vars `GH_TOKEN`/`GITLAB_TOKEN`/`GITEA_TOKEN`/`GITVERSE_TOKEN` are
+  documented in `.env.example` and `configuration.md`; they are never logged.
+
+**Alternatives Considered:**
+
+- **In-platform credential storage (model C) for M18:** introduces a secret-vaulting surface,
+  rotation, and a new threat model far beyond the milestone's wedge. Rejected — model B (host
+  credentials + host-env tokens), model C deferred.
+- **A per-provider native SDK instead of CLI + one shared REST adapter:** triples the dependency
+  surface and the auth-config matrix for four providers, two of which (gitea, gitverse) share a wire
+  protocol. Rejected — `gh`/`glab` CLIs for github/gitlab, one Gitea-compatible REST adapter for the
+  gitea family.
+- **A new `MaisterError` code for PR failures:** the union is closed (ADR-008) and the existing
+  `PRECONDITION`/`CONFLICT`/`EXECUTOR_UNAVAILABLE` members already cover config, conflict, and
+  retryable-transient cases with the right HTTP statuses. Rejected — reuse the closed union.
+- **Mapping transient push/PR-API 5xx to `PRECONDITION`:** `httpStatusForCode` maps by code, so
+  `PRECONDITION` can only yield 409, hiding the retryable nature of a transient failure from callers.
+  Rejected — `EXECUTOR_UNAVAILABLE` → 503 for the retryable case.
+- **Shell-interpolating branch/title/body into the provider CLI:** opens command-injection on
+  attacker-influenceable branch names or PR bodies. Rejected — array args plus `--end-of-options`,
+  typed `fetch` for the REST path.
 
 ---
 

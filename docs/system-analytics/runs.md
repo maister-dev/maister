@@ -146,6 +146,40 @@ invariants bind it to the run machine:
    resumes it on slot-free. `POST /api/runs/{runId}/discard` marks `Abandoned`
    and enters the GC countdown (no synchronous worktree removal).
 
+### M18 flow-run `Review → Done` promotion (Designed)
+
+Today a **flow** run dead-ends at `Review` (`Running→Review` is CAS-guarded; no
+promote path flips it terminal — only scratch runs promote). M18
+([ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
+wires the **existing** `Review → Done` edge for flow runs through a **shared
+`promoteRun` service** that drives both run kinds. This adds **NO new
+`runs.status` value** — both promotion modes (`local_merge` and `pull_request`)
+terminate at the existing `Done`; a `pull_request` promotion records
+`pr_url`/`pr_number` on the workspace but MAIster does not track the PR to merge
+in M18. The full claim → side-effect → finalize contract (the durable
+`promotion_state` claim + per-attempt `promotion_attempt_id` token, idempotency,
+and the crash windows) lives in [`workspaces.md`](workspaces.md). Four
+invariants bind it to the run machine:
+
+1. **No new status.** Both modes land on the existing terminal `Done`; the
+   `Review → Review` self-edge still absorbs a `local_merge` conflict (run stays
+   `Review` + a manual-resolution assignment is created). This deliberately
+   avoids the new-status consumer fan-out.
+2. **Promote-time readiness re-gate.** The promote service calls
+   `assertEvidenceReady(runId, "review")` a **second** time, at promote time —
+   the M16 chokepoint already enforces it once at Review-entry, but gates can go
+   stale between Review-entry and the promote click. A not-ready/stale gate
+   refuses promotion `PRECONDITION` (run stays `Review`, no side-effect);
+   **overridden** gates satisfy it via the existing `{passed, overridden}`
+   allow-list (`isExternalGateReady`). This **reuses M16, with no M15
+   dependency** — an ADR-045-consistent M18 carve, not an M15 implementation.
+3. **Allow-list guard.** The promote guard is `status ∈ {Review}` (flow) /
+   `dialogStatus = "Review"` (scratch), NOT `if (!terminal)` — a future status is
+   rejected by default.
+4. **Terminal write is atomic + idempotent.** `Review → Done` is one finalize
+   transaction keyed on the attempt token; a retry after success returns `409`
+   (already `Done`), never a second promotion.
+
 ## Process flows
 
 ### Happy path — launch to Review, promote after Review (Implemented)
@@ -199,10 +233,14 @@ sequenceDiagram
     end
 ```
 
-> The "verify required gates" step above is the **M15/M18** readiness policy. In
-> **M11a** the graph runner *records* `gate_results` (pass/fail/stale/overridden)
-> but does **not** gate promotion on them — promotion-gating is out of M11a
-> scope. See [`flow-graph.md`](flow-graph.md).
+> The "verify required gates" step above is the readiness re-gate. In **M11a**
+> the graph runner *records* `gate_results` (pass/fail/stale/overridden) but does
+> **not** gate promotion on them. **(Designed, M18)** the promote service enforces
+> readiness here by calling `assertEvidenceReady(runId, "review")` a **second**
+> time (a deliberate M16 reuse, no M15 dependency —
+> [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve));
+> overridden gates satisfy it. Both `local_merge` and `pull_request` finalize at
+> `Done`. See [`flow-graph.md`](flow-graph.md) and [`workspaces.md`](workspaces.md).
 
 ### NeedsInput and keep-alive cycle
 
@@ -340,10 +378,20 @@ flowchart TD
   carrier so the terminal write can branch
   `CRASH → Crashed | other failure → Failed | success → Review`.
 - **(Implemented)** Promotion is the product action after Review. The current
-  implementation supports `local_merge`; `pull_request` is a designed mode and
+  implementation promotes **scratch** runs via `local_merge`; `pull_request`
   returns `CONFIG` until repository-hosting integration is wired. Promotion
   targets the selected target branch after readiness gates pass or are
   explicitly overridden. No deploy or release management is implied.
+- **(Designed, M18)** A **flow** run MUST be promotable from `Review` through the
+  shared `promoteRun` service to the existing terminal `Done` — both
+  `local_merge` and `pull_request` finalize at `Done` (no new `runs.status`); a
+  `pull_request` promotion records `pr_url`/`pr_number` but does NOT track the PR
+  to merge in M18.
+- **(Designed, M18)** Promotion MUST re-check readiness at promote time via
+  `assertEvidenceReady(runId, "review")`; a not-ready/stale gate refuses
+  `PRECONDITION` (run stays `Review`, no side-effect) and overridden gates
+  satisfy it (`{passed, overridden}` allow-list) — the M16 chokepoint reused, no
+  M15 dependency.
 - **(Implemented)** Local promotion uses `git merge --no-ff`; conflicts always
   abort the merge, leave the run in `Review`, and create/keep a manual
   resolution path. The legacy `merge` route name is superseded by
@@ -477,7 +525,9 @@ matching rows.
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
-  [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n).
+  [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
+  [ADR-048 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
+  (Designed, M18).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`Environment variables (server tier)` —

@@ -751,13 +751,23 @@ paths:
   /api/scratch-runs/launch-options:
     get:
       tags: [scratch-runs]
-      summary: Implemented — list scratch-run launch choices
+      summary: Implemented — list scratch-run launch choices (also the M18 board branch source)
       description: |
-        Requires an active session. Returns only projects, executors, base
-        branches, and capabilities visible to the caller. Optional
-        `projectId` filters the response after membership is verified.
-        Response values are hints for the launcher; `POST /api/scratch-runs`
-        revalidates every identifier from server state.
+        Requires an active session (`requireActiveSession` — session-authed and
+        project-read-scoped; an unauthenticated request returns `401`). Returns
+        only projects, executors, base branches, and capabilities visible to the
+        caller. Optional `projectId` filters the response after membership is
+        verified — a project outside the caller's visible set returns `409`
+        (`PRECONDITION`). Response values are hints for the launcher;
+        `POST /api/scratch-runs` revalidates every identifier from server state.
+
+        **(M18, Designed) Board launch branch source.** The board task-launch
+        UI (the "Advanced" base/target branch selectors on `POST /api/runs`)
+        reuses this **session-authed, project-read-scoped** route as its branch
+        source — never an unauthenticated repo-metadata lookup. The board
+        consumes the `branches` + `defaultBaseBranch` subset, formalized as the
+        `BranchOptions` schema; the full launch-options DTO is a superset of
+        that shape.
       operationId: getScratchRunLaunchOptions
       parameters:
         - name: projectId
@@ -766,10 +776,16 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Launch options visible to the caller.
+          description: |
+            Launch options visible to the caller. The `branches` +
+            `defaultBaseBranch` subset is the `BranchOptions` shape the M18
+            board task-launch UI consumes (the full DTO is a superset).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ScratchLaunchOptionsResponse" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BranchOptions"
+                  - $ref: "#/components/schemas/ScratchLaunchOptionsResponse"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -1259,11 +1275,30 @@ paths:
       tags: [runs]
       summary: Implemented — promote run branch to target branch
       description: |
-        Requires project membership at `member` or above. Body controls only
-        promotion mode and optional target branch. Run id, workspace path,
-        source branch, base commit, and default target branch are derived from
-        server state. Current implementation supports `local_merge`;
-        `pull_request` returns `CONFIG` until PR hosting is wired.
+        Requires project membership at `member` or above. Serves **both flow
+        and scratch** runs (M18 — a shared promotion service dispatches on
+        `runKind`; previously scratch-only). Body controls only promotion mode,
+        optional target-branch override, the reviewed target HEAD, and the
+        drift override. Run id, workspace path, source branch, base commit, and
+        the default target branch are derived from server state.
+
+        Both `local_merge` and `pull_request` modes are implemented (M18,
+        Designed). `local_merge` runs `git merge --no-ff`; a textual conflict
+        aborts the merge, opens a manual-resolution assignment, and leaves the
+        run in `Review`. `pull_request` pushes the run branch and creates (or
+        idempotently updates) a provider pull/merge request — `github`→`gh`,
+        `gitlab`→`glab`, `gitea`/`gitverse`→Gitea REST API; a `generic`
+        provider is unsupported and refused `PRECONDITION`.
+
+        Promotion is gated at promote time by the M16 readiness chokepoint
+        (`assertEvidenceReady(runId, "review")`) and by a target-drift guard:
+        `reviewedTargetCommit` MUST equal the live target HEAD unless
+        `allowTargetDrift` is set, else `PRECONDITION` (the target advanced
+        since review). A body omitting `reviewedTargetCommit` is refused
+        `PRECONDITION` — never promoted blind.
+
+        On success both modes terminate the run at `Done` (no new run status);
+        `pull_request` additionally records `pullRequestUrl`/`prNumber`.
       operationId: promoteRun
       parameters:
         - name: runId
@@ -1286,7 +1321,27 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Run/workspace not found, merge conflict, removed workspace, terminal state, invalid promotion target, or evidence-not-ready (M15 merge-readiness guard) (`PRECONDITION` / `CONFLICT`).
+          description: |
+            Promotion refused (`PRECONDITION` / `CONFLICT`). `PRECONDITION`:
+            run/workspace not found, removed workspace, non-`Review` terminal
+            state, readiness not ready/stale, invalid/missing target branch,
+            target advanced since review without `allowTargetDrift`, PR-mode
+            preflight failure (provider CLI missing / `*_TOKEN` unset / remote
+            not configured / `generic` provider). `CONFLICT`: `local_merge`
+            textual conflict (a manual-resolution assignment is created and the
+            run stays `Review`), a concurrent promotion already in progress, or
+            a promotion superseded by a stale-claim reclaim.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Retryable transient failure (`EXECUTOR_UNAVAILABLE`) — a `git push`
+            rejection or a provider PR-API 5xx during `pull_request` promotion.
+            No `pullRequestUrl` is stored; the run stays `Review` and the
+            promotion is idempotent on retry. Reuses the closed `MaisterError`
+            union (ADR-008) — `EXECUTOR_UNAVAILABLE` is an existing member, no
+            new error code.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2935,6 +2990,22 @@ components:
             Per-launch executor override. Highest priority in the
             five-level resolution chain (see
             `docs/system-analytics/executors.md`).
+        baseBranch:
+          type: string
+          minLength: 1
+          description: |
+            (M18, Designed) Optional base branch the run worktree is created
+            from. Server-validated against the project's branch allow-list
+            (`listBranches(project.repoPath)`) BEFORE use as a git
+            `startPoint` — an unknown branch is refused `PRECONDITION` (409).
+            Defaults to the project's `default_branch`.
+        targetBranch:
+          type: string
+          minLength: 1
+          description: |
+            (M18, Designed) Optional branch the run is promoted into after
+            review. Server-validated against the same branch allow-list;
+            unknown branch → `PRECONDITION` (409). Defaults to `baseBranch`.
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -3025,6 +3096,30 @@ components:
           type: string
           format: uuid
           nullable: true
+    BranchOptions:
+      type: object
+      description: |
+        (M18, Designed) The session-authed, project-read-scoped branch subset
+        the board task-launch UI consumes from
+        `GET /api/scratch-runs/launch-options`. Field names match the live
+        route (`branches`, `defaultBaseBranch`); `ScratchLaunchOptionsResponse`
+        is a superset of this shape.
+      required: [branches, defaultBaseBranch]
+      properties:
+        branches:
+          type: array
+          description: |
+            All branches in the selected project's repository
+            (`listBranches(project.repoPath)`), the server-state allow-list a
+            base/target branch is validated against at launch and promote.
+          items: { type: string }
+        defaultBaseBranch:
+          type: string
+          nullable: true
+          description: |
+            The project's default branch — the base-branch default when the
+            launcher leaves the advanced selector untouched. Null only when no
+            project is visible/selected.
     ScratchLaunchOptionsResponse:
       type: object
       required:
@@ -3422,7 +3517,7 @@ components:
         diff: { type: string }
     PromoteRunBody:
       type: object
-      required: [mode]
+      required: [mode, reviewedTargetCommit]
       additionalProperties: false
       properties:
         mode:
@@ -3432,6 +3527,28 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+          description: |
+            Optional target-branch override. Server-validated against the
+            project branch allow-list; for flow runs it may differ from the
+            base branch. Defaults to the workspace's stored target branch.
+        reviewedTargetCommit:
+          type: string
+          minLength: 1
+          description: |
+            (M18, Designed) The target-branch HEAD commit the ReviewPanel
+            rendered the promote surface against (commit-sha shape).
+            **Required** — compared to the live target HEAD at claim time
+            (optimistic concurrency). A mismatch is refused `PRECONDITION`
+            ("target advanced since review") unless `allowTargetDrift` is set;
+            a body omitting it is refused `PRECONDITION`, never promoted blind.
+        allowTargetDrift:
+          type: boolean
+          default: false
+          description: |
+            (M18, Designed) Explicit "Promote anyway" override. When true the
+            `reviewedTargetCommit`-vs-live-HEAD equality check is skipped,
+            merging into the advanced target. A deliberate human action, never
+            a default.
     PromoteRunResponse:
       type: object
       required: [ok, mode]
@@ -3439,7 +3556,21 @@ components:
         ok: { type: boolean, enum: [true] }
         mode: { type: string, enum: [local_merge, pull_request] }
         commit: { type: string, nullable: true }
-        pullRequestUrl: { type: string, nullable: true }
+        pullRequestUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            (M18, Designed) URL of the created/updated pull or merge request.
+            Present (non-null) only for successful `pull_request` promotions;
+            null for `local_merge`.
+        prNumber:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: |
+            (M18, Designed) Provider-assigned PR/MR number. Present only for
+            successful `pull_request` promotions.
     HitlResponseBody:
       type: object
       description: |

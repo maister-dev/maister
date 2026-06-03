@@ -36,7 +36,7 @@ exposed publicly. Only `:443` (and `:22`) face the internet.
 - **OS**: any modern Linux with systemd.
 - **Node 24** ([ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
 - **git** and **Docker** (Docker only runs Postgres here).
-- **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required** by MAIster.
+- **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Exception (Designed, M18 — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
 - A dedicated unprivileged user **`maister`** that owns the checkout, the agent credentials (`~/.claude`, `~/.codex`), and the git credentials.
 
 ```bash
@@ -291,4 +291,4 @@ fallback under HTTP.
 - [`deploy/`](../deploy) — systemd units, env template, nginx config.
 - [`configuration.md`](configuration.md) — full environment variable reference.
 - [`getting-started.md`](getting-started.md) — local dev setup + seeded credentials.
-- ADR-023 (host-run topology), ADR-025 (repo onboarding), ADR-022 (run-data projection).
+- ADR-023 (host-run topology), ADR-025 (repo onboarding), ADR-022 (run-data projection), ADR-049 (PR-mode promotion — host `gh`/`glab` / Gitea-API token prerequisites).

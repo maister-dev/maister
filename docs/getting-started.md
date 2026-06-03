@@ -24,6 +24,16 @@ two long-running Node processes:
 - **Docker** (only for `compose up postgres` and the `testcontainers`
   integration test suite)
 - **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
+- **PR-mode promotion (Designed, M18) — only needed for `pull_request` promotion;
+  `local_merge` needs none.** Per the run's provider: `gh` CLI on `PATH` (github),
+  `glab` CLI on `PATH` (gitlab) — each with host auth (`gh auth` / `glab auth`, or
+  `GH_TOKEN` / `GITLAB_TOKEN` in the env); or `GITEA_TOKEN` / `GITVERSE_TOKEN` in the
+  env (gitea / gitverse, via the Gitea-compatible REST adapter — no CLI). All providers
+  also need a host **git push credential helper** (SSH key or HTTPS helper) for the
+  run's remote. **Not provisioned in the default compose** — the default compose stays
+  Postgres-only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)),
+  so these are a host-operator concern. See [`configuration.md`](configuration.md) for
+  the per-provider table.
 
 Check versions:
 

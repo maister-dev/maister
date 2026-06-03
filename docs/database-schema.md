@@ -505,15 +505,50 @@ until all callers move to the typed index.
                                  //   will prune; see below
   archivedBranch?,               // M19 (text, migration 0015) preserved
                                  //   archive ref name
-  archivedAt?                    // M19 (timestamptz, migration 0015) when the
+  archivedAt?,                   // M19 (timestamptz, migration 0015) when the
                                  //   archive branch was created
+  baseBranch?,                   // M18 (text, migration 0021) run base branch;
+                                 //   null on pre-M18 rows
+  baseCommit?,                   // M18 (text, migration 0021) base commit the
+                                 //   worktree forked from; null on pre-M18 rows
+  targetBranch?,                 // M18 (text, migration 0021) promotion target
+  promotionMode?,                // M18 (text, migration 0021)
+                                 //   local_merge | pull_request
+  prUrl?,                        // M18 (text, migration 0021) populated on
+                                 //   PR-mode promotion (Phase 3)
+  prNumber?,                     // M18 (integer, migration 0021)
+  promotedAt?,                   // M18 (timestamptz, migration 0021)
+  promotionState,                // M18 (text NOT NULL DEFAULT 'none', migration
+                                 //   0021) none | claiming | done | failed
+  promotionClaimedAt?,           // M18 (timestamptz, migration 0021)
+                                 //   durable-claim timestamp
+  promotionOwnerUserId?,         // M18 (text, migration 0021) FK -> users.id,
+                                 //   nullable
+  promotionAttemptId?            // M18 (text, migration 0021) per-attempt
+                                 //   CAS-identity token (opaque), nullable
 }
 ```
 
 One workspace per run. `worktreePath` is globally unique across the host.
-Planned M18 adds `baseBranch`, `baseCommit`, `targetBranch`, and
-`promotionMode` metadata so the run ledger can explain branch-targeted
-promotion without relying on naming conventions.
+
+**(M18 — Designed, migration `0021`, additive. Code lands at Phase 1 HEAD.)**
+Branch/promotion columns record the run ledger so branch-targeted promotion is
+explained without relying on naming conventions: `baseBranch`, `baseCommit`
+(the commit the worktree forked from), `targetBranch`, `promotionMode`
+(`local_merge` | `pull_request`), `prUrl`, `prNumber`, `promotedAt`. All are
+nullable; the PR columns are populated only on PR-mode promotion (Phase 3).
+Migration `0021` backfills existing rows — `promotionMode := <project default ??
+'local_merge'>` and `targetBranch := <project default_branch>`; `baseBranch`/
+`baseCommit` stay null (historically unknowable, handled by the promote-service
+code fallback). A second group implements the **durable promotion claim**
+([ADR-048](decisions.md)): `promotionState` (`none | claiming | done | failed`,
+`NOT NULL DEFAULT 'none'`), `promotionClaimedAt`, `promotionOwnerUserId`
+(FK → `users.id`, nullable), and `promotionAttemptId` — a per-attempt
+CAS-identity token (opaque) minted fresh on each claim. Promotion serializes on
+a CAS over `promotionState` keyed by `promotionAttemptId`, committed before any
+git/PR side-effect; the finalize transaction writes only when the stored
+`promotionAttemptId` still matches the attempt's minted token, so a superseded
+(stale-reclaimed) attempt can never double-finalize.
 
 **(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns
 drive the worktree TTL lifecycle. `scheduledRemovalAt` (`timestamptz`) is the
