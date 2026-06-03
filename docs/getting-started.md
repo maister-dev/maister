@@ -24,7 +24,7 @@ two long-running Node processes:
 - **Docker** (only for `compose up postgres` and the `testcontainers`
   integration test suite)
 - **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
-- **PR-mode promotion (Designed, M18) — only needed for `pull_request` promotion;
+- **PR-mode promotion (Implemented, M18) — only needed for `pull_request` promotion;
   `local_merge` needs none.** Per the run's provider: `gh` CLI on `PATH` (github),
   `glab` CLI on `PATH` (gitlab) — each with host auth (`gh auth` / `glab auth`, or
   `GH_TOKEN` / `GITLAB_TOKEN` in the env); or `GITEA_TOKEN` / `GITVERSE_TOKEN` in the

@@ -21,7 +21,7 @@ decision.
 Domain boundary: the artifact write paths (runner-inline + ADR-022 projector),
 the validity lifecycle, the read-only evidence API, and the review-refusal
 mechanism. The **promotion artifact** (M18) is in scope here as a *recorded
-output* (Designed) — the flow-merge / PR promotion *control flow* lives in
+output* (Implemented) — the flow-merge / PR promotion *control flow* lives in
 [`workspaces.md`](workspaces.md). Out of scope: content-addressed blob storage,
 external ingestion beyond M16, capability enforcement
 (`visibility`/`retention` — M14).
@@ -51,7 +51,7 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   human`. The `gate` producer also records a `test_report` artifact when an
   `external_check` gate report is ingested via the M16 operations API, surfacing
   the external verdict in the evidence graph.
-- **Promotion artifact (Designed, M18)** — when a flow run is promoted from
+- **Promotion artifact (Implemented, M18)** — when a flow run is promoted from
   `Review` the promotion service records the promoted change as a **`commit_set`**
   (and/or **`diff`**) artifact over the `base→run` range (locator `git-range`),
   carrying `pr_url`/`pr_number` **in the payload** for `pull_request` promotions.
@@ -219,7 +219,7 @@ The merge refusal guard (`assertEvidenceReady(runId, "merge")`) is **shipped
 and unit-tested in M12** but wired at the flow-promotion path in M18. The M12
 `promote` route is scratch-only and is NOT modified.
 
-**(Designed, M18) Promotion-artifact recording.** When the shared promotion
+**(Implemented, M18) Promotion-artifact recording.** When the shared promotion
 service finalizes a flow run (`Review → Done`), it records a `commit_set`
 (and/or `diff`) artifact over the `base→run` range via the existing
 `recordArtifact` + `git-range` locator path — exactly the same write path M12
@@ -321,7 +321,7 @@ All logs use the module-local pino logger per the existing pattern
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (promotion artifact via `commit_set`/`diff`, Designed M18).
+  (promotion artifact via `commit_set`/`diff`, Implemented M18).
 - DB ERD: [`../db/artifacts-domain.md`](../db/artifacts-domain.md),
   [`../db/erd.md`](../db/erd.md).
 - DB narrative: [`../database-schema.md`](../database-schema.md)
@@ -338,7 +338,7 @@ All logs use the module-local pino logger per the existing pattern
 - Related domains: [`flow-graph.md`](flow-graph.md) (gate machinery, staleness),
   [`manual-takeover.md`](manual-takeover.md) (takeover-return artifact recording),
   [`workspaces.md`](workspaces.md) (promotion service that records the promotion
-  artifact, Designed M18).
+  artifact, Implemented M18).
 - Source files (Implemented): `web/lib/db/schema.ts` (new tables),
   `web/lib/flows/graph/artifact-store.ts`, `web/lib/projector/artifact-projector.ts`,
   `web/lib/flows/graph/evidence-readiness.ts`,

@@ -38,6 +38,8 @@ function httpStatusForCode(code: string): number {
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
+    case "EXECUTOR_UNAVAILABLE":
+      return 503;
     default:
       return 500;
   }

@@ -1282,8 +1282,8 @@ paths:
         drift override. Run id, workspace path, source branch, base commit, and
         the default target branch are derived from server state.
 
-        Both `local_merge` and `pull_request` modes are implemented (M18,
-        Designed). `local_merge` runs `git merge --no-ff`; a textual conflict
+        Both `local_merge` and `pull_request` modes are implemented (M18).
+        `local_merge` runs `git merge --no-ff`; a textual conflict
         aborts the merge, opens a manual-resolution assignment, and leaves the
         run in `Review`. `pull_request` pushes the run branch and creates (or
         idempotently updates) a provider pull/merge request — `github`→`gh`,
@@ -3561,7 +3561,7 @@ components:
           format: uri
           nullable: true
           description: |
-            (M18, Designed) URL of the created/updated pull or merge request.
+            (M18, Implemented) URL of the created/updated pull or merge request.
             Present (non-null) only for successful `pull_request` promotions;
             null for `local_merge`.
         prNumber:
@@ -3569,7 +3569,7 @@ components:
           minimum: 1
           nullable: true
           description: |
-            (M18, Designed) Provider-assigned PR/MR number. Present only for
+            (M18, Implemented) Provider-assigned PR/MR number. Present only for
             successful `pull_request` promotions.
     HitlResponseBody:
       type: object

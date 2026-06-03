@@ -508,16 +508,8 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
   });
 });
 
-describe("promoteRun — pull_request mode (Phase 2 not-yet)", () => {
-  it("refuses pull_request mode with a typed error in Phase 2", async () => {
-    const runId = seedFlowRun();
-
-    await expect(
-      callPromote(runId, {
-        mode: "pull_request",
-        reviewedTargetCommit: "tip00000",
-      }),
-    ).rejects.toBeInstanceOf(MaisterError);
-    expect(promoteLocalMerge).not.toHaveBeenCalled();
-  });
-});
+// Note: the `pull_request` mode contract (preflight → push → createOrUpdatePr →
+// finalize, idempotency, crash-window, retryable-vs-config split) is exercised
+// in promote-pr.test.ts, which carries the proper PR harness (project table +
+// pr-adapter / pushBranch spies). The Phase-2 "PR refused as not-yet" case it
+// replaced was removed when PR mode landed (M18 Phase 3).

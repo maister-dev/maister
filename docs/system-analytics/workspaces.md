@@ -40,7 +40,7 @@ reconciliation on host or process restart.
     `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` (default 300) is reclaimable.
   - `promotion_owner_user_id` — actor who claimed the promotion.
   - `pr_url` / `pr_number` — recorded on a successful `pull_request` promotion
-    (**Designed**, PR mode lands in a later phase); `pr_url` is also the
+    (**Implemented, M18**); `pr_url` is also the
     idempotency key that turns a re-promote into a PR update rather than a
     duplicate.
   - `promoted_at` — set in the finalize tx alongside `runs.status = Done`.
@@ -128,7 +128,7 @@ Promotion is the product action after `Review`. M18
 introduces a **shared `promoteRun` service** that drives **both** scratch and
 flow run kinds for `local_merge`; the `pull_request` mode
 ([ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant))
-is **Designed** and lands in a later phase. Both modes terminate at the existing
+is **Implemented (M18)**. Both modes terminate at the existing
 `Done` (no new `runs.status`). The service is retry-safe through a **durable
 promotion claim**: a fresh `promotion_attempt_id` is minted and
 `promotion_state` is CAS'd to `claiming` in a short transaction **committed
@@ -178,7 +178,7 @@ sequenceDiagram
     end
 ```
 
-#### `pull_request` promotion (Designed, M18)
+#### `pull_request` promotion (Implemented, M18)
 
 ```mermaid
 sequenceDiagram
@@ -212,18 +212,18 @@ sequenceDiagram
     end
 ```
 
-#### Promotion outcomes (M18; `local_merge` rows Implemented, `pull_request` rows Designed)
+#### Promotion outcomes (Implemented, M18; both `local_merge` and `pull_request` rows)
 
 | Outcome | HTTP | Run / claim effect |
 |---------|------|--------------------|
-| Success (`local_merge` clean / PR created-or-updated) | 200 | `runs.status = Done`, `promotion_state = done`, `promoted_at` set; PR mode (Designed) adds `pr_url`/`pr_number` |
+| Success (`local_merge` clean / PR created-or-updated) | 200 | `runs.status = Done`, `promotion_state = done`, `promoted_at` set; PR mode adds `pr_url`/`pr_number` |
 | Readiness not ready/stale | 409 `PRECONDITION` | no claim; run stays `Review` (retry after gate passes/overridden) |
 | Target advanced since review (drift, no override) | 409 `PRECONDITION` | no claim; run stays `Review` (re-review, then `allowTargetDrift`) |
 | Target branch invalid/missing | 409 `PRECONDITION` | run stays `Review` |
 | `local_merge` conflict | 409 `CONFLICT` | `promotion_state = failed`; run stays `Review` + conflict assignment (no auto-resolve) |
-| PR preflight fail (CLI/token/remote missing, `generic` provider) — **Designed** | 409 `PRECONDITION` | `promotion_state = failed`; run stays `Review` |
+| PR preflight fail (CLI/token/remote missing, `generic` provider) | 409 `PRECONDITION` | `promotion_state = failed`; run stays `Review` |
 | Concurrent promote (a fresh active `claiming` already present) | 409 `CONFLICT` | unchanged; wait for the in-flight promotion |
-| Push rejected / PR-API 5xx (transient) — **Designed** | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; run stays `Review`, **no `pr_url`**; idempotently retryable |
+| Push rejected / PR-API 5xx (transient) | **503 `EXECUTOR_UNAVAILABLE`** | leaves `claiming`; run stays `Review`, **no `pr_url`**; idempotently retryable |
 | Finalize superseded by a same-user stale reclaim | 409 `CONFLICT` | superseded attempt writes NOTHING; the reclaiming attempt owns finalize |
 | Already `Done` / non-`Review` (retry after success) | 409 | terminal — no re-attempt |
 
@@ -236,8 +236,8 @@ covers `PRECONDITION`, `CONFLICT`, and `EXECUTOR_UNAVAILABLE`.
 The durable claim + per-attempt token guarantees **exactly one side-effect** per
 promotion even under concurrency and crash. Two mechanisms compose: the
 attempt-token CAS prevents a **double finalize**; the stored `pr_url` (+ a
-provider query) prevents a **double side-effect** for PR mode (**Designed**, PR
-mode lands in a later phase). A `local_merge` re-merge of an already-merged
+provider query) prevents a **double side-effect** for PR mode (**Implemented,
+M18**). A `local_merge` re-merge of an already-merged
 source is a no-op (`Already up to date`).
 
 ```mermaid
@@ -261,7 +261,7 @@ background sweeper):
   while the run is still `Review`, `promotion_state = claiming`. Once the claim
   ages past `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`, a re-promote reclaims it;
   the re-merge is a no-op and the attempt finalizes `Done`.
-- **`pull_request`** (**Designed**, PR mode lands in a later phase) — the PR may
+- **`pull_request`** (**Implemented, M18**) — the PR may
   be pushed/created while `pr_url` is not yet stored, `promotion_state =
   claiming`. The reclaiming re-promote's `createOrUpdatePr` detects the existing
   PR for `(run branch → target)` via the provider (`gh pr list --head` / `glab
@@ -412,12 +412,11 @@ flowchart LR
 - **(Implemented, M18)** A **flow** run MUST be promotable from `Review` through
   the shared `promoteRun` service; `local_merge` finalizes at the existing `Done`
   (no new `runs.status`) and the scratch path stays behavior-identical
-  (regression-pinned). `pull_request` finalizing at `Done` is **(Designed)** for a
-  later phase.
+  (regression-pinned). `pull_request` also finalizes at `Done`.
 - **(Implemented, M18)** Promotion MUST be idempotent: a fresh `promotion_attempt_id`
   is minted and `promotion_state` is CAS'd to `claiming` and **committed BEFORE**
   any git/PR side-effect; the finalize tx is keyed on that token so a superseded
-  attempt writes NOTHING. **(Designed)** `pr_url` is the PR dedup key (re-promote
+  attempt writes NOTHING. `pr_url` is the PR dedup key (re-promote
   updates, never duplicates).
 - **(Implemented, M18)** Two concurrent promotes of the same run MUST yield exactly
   ONE side-effect — one `Done`, one `409 CONFLICT`; a `claiming` claim older than
@@ -427,10 +426,12 @@ flowchart LR
   `Review`) when readiness is not ready/stale (`assertEvidenceReady(runId,
   "review")`, overridden gates satisfy it) or when the target advanced since
   review (`reviewedTargetCommit` ≠ live target HEAD) unless `allowTargetDrift`.
-- Pull-request promotion is designed (M18). The current scratch-only route returns
-  `CONFIG` for `pull_request` until the hybrid provider `PrAdapter` lands; PR
-  creation is then provider-dispatched (github→`gh`, gitlab→`glab`,
-  gitea+gitverse→Gitea REST API, generic→`PRECONDITION`).
+- **(Implemented, M18)** Pull-request promotion is provider-dispatched through the
+  hybrid `PrAdapter` (github→`gh`, gitlab→`glab`, gitea+gitverse→Gitea REST API,
+  generic→`PRECONDITION`); PR creation MUST be idempotent (existing PR updated, not
+  duplicated). The provider boundary (`gh`/`glab` exec + Gitea-API `fetch`) is
+  MOCKED in CI and exercised live in manual verification (see
+  [`git-integration.md`](git-integration.md)).
 - Full Flow reconciliation across Next.js boot, supervisor boot, git worktrees,
   and live sessions is designed. Scratch recovery is implemented through the
   explicit recover route for crashed scratch sessions.
@@ -490,8 +491,8 @@ flowchart LR
 - **(Implemented, M18) Crash between claim and finalize** — a durable
   `promotion_state='claiming'` row; reclaimable past
   `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`, the idempotent side-effect makes the
-  re-promote a no-op (local merge) — or a PR update (provider query) once PR mode
-  ships (**Designed**) — then it finalizes `Done`.
+  re-promote a no-op (local merge) — or a PR update (provider query) for
+  `pull_request` — then it finalizes `Done`.
 - **(Implemented, M18) Legacy pre-M18 workspace (null branch metadata)** — promote
   derives fallbacks (`target_branch ?? project.default_branch`, diff base via
   `resolveBaseRef`) or refuses `PRECONDITION` ("relaunch to promote"); never a
@@ -504,7 +505,7 @@ flowchart LR
   [ADR-048 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
   (Implemented, M18),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Designed, M18).
+  (Implemented, M18).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
   target/promotion + claim columns, Implemented M18).
 - Config reference: [`../configuration.md`](../configuration.md)
@@ -515,5 +516,5 @@ flowchart LR
   [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact).
 - Source: `web/lib/worktree.ts`; scratch recovery routes under
   `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented, M18)**
-  `web/lib/runs/promote.ts` (shared `promoteRun`). **(Designed, M18)**
-  `web/lib/runs/pr-adapter.ts`. Full Flow reconciliation remains designed.
+  `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.
+  Full Flow reconciliation remains designed.

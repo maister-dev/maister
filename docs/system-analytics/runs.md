@@ -156,7 +156,7 @@ wires the **existing** `Review → Done` edge for flow runs through a **shared
 `promoteRun` service** that drives both run kinds. This adds **NO new
 `runs.status` value** — `local_merge` terminates at the existing `Done`. The
 `pull_request` mode (which also lands at `Done` and records `pr_url`/`pr_number`
-on the workspace but is not tracked to merge) is **Designed** for a later phase.
+on the workspace but is not tracked to merge) is **Implemented (M18)**.
 The full claim → side-effect → finalize contract (the durable
 `promotion_state` claim + per-attempt `promotion_attempt_id` token, idempotency,
 and the crash windows) lives in [`workspaces.md`](workspaces.md). Four
@@ -241,7 +241,7 @@ sequenceDiagram
 > time (a deliberate M16 reuse, no M15 dependency —
 > [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve));
 > overridden gates satisfy it. `local_merge` finalizes at `Done`; `pull_request`
-> is **(Designed)** for a later phase. See [`flow-graph.md`](flow-graph.md) and
+> is **(Implemented, M18)**. See [`flow-graph.md`](flow-graph.md) and
 > [`workspaces.md`](workspaces.md).
 
 ### NeedsInput and keep-alive cycle
@@ -379,16 +379,16 @@ flowchart TD
   error observed across the step loop in a local `runErrorCode`
   carrier so the terminal write can branch
   `CRASH → Crashed | other failure → Failed | success → Review`.
-- **(Implemented)** Promotion is the product action after Review. The current
-  implementation promotes **scratch** runs via `local_merge`; `pull_request`
-  returns `CONFIG` until repository-hosting integration is wired. Promotion
+- **(Implemented)** Promotion is the product action after Review through the
+  shared `promoteRun` service, which promotes both **scratch** and **flow** runs
+  via `local_merge` or `pull_request`. Promotion
   targets the selected target branch after readiness gates pass or are
   explicitly overridden. No deploy or release management is implied.
 - **(Implemented, M18)** A **flow** run MUST be promotable from `Review` through the
   shared `promoteRun` service to the existing terminal `Done` — `local_merge`
   finalizes at `Done` (no new `runs.status`). The `pull_request` mode (also
   landing at `Done`, recording `pr_url`/`pr_number` but not tracking the PR to
-  merge) is **(Designed)** for a later phase.
+  merge) is **(Implemented, M18)**.
 - **(Implemented, M18)** Promotion MUST re-check readiness at promote time via
   `assertEvidenceReady(runId, "review")`; a not-ready/stale gate refuses
   `PRECONDITION` (run stays `Review`, no side-effect) and overridden gates

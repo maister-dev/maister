@@ -8,8 +8,18 @@ import pino from "pino";
 import { z } from "zod";
 
 import { MaisterError } from "@/lib/errors";
+import { redactUrl } from "@/lib/repo-source";
 
 const execFileAsync = promisify(execFile);
+
+// Hardened env mirroring repo-source's network git: a missing credential helper
+// or unknown host key fails fast (no interactive prompt) instead of blocking
+// until the 60s timeout. Applied ONLY to the network push, not local git.
+const NETWORK_GIT_ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+};
 
 const log = pino({
   name: "worktree",
@@ -66,6 +76,13 @@ const gitCommitSchema = z
   .min(7)
   .max(64)
   .regex(/^[0-9a-fA-F]+$/, "commit must be hex");
+
+const remoteNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9_./-]+$/, "remote must match /^[A-Za-z0-9_./-]+$/")
+  .refine((r) => !r.startsWith("-"), "remote must not start with '-'");
 
 const DIFF_TRUNCATED_MARKER =
   "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n";
@@ -403,6 +420,53 @@ export async function promoteLocalMerge(
       }
     }
   });
+}
+
+export type PushBranchArgs = {
+  projectRepoPath: string;
+  remote: string;
+  branch: string;
+};
+
+// Push a run branch to its remote using the host git credential helper (no
+// token in argv). A push failure is transient by classification — the PR
+// promotion caller maps it to EXECUTOR_UNAVAILABLE (retryable), distinct from a
+// config PRECONDITION.
+export async function pushBranch(args: PushBranchArgs): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const remote = validate(remoteNameSchema, args.remote, "remote");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  log.info({ projectRepoPath: repo, remote, branch }, "pushBranch");
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "git",
+      ["-C", repo, "push", "--end-of-options", remote, branch],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env: NETWORK_GIT_ENV,
+      },
+    );
+
+    log.debug({ stdout, stderr }, "pushBranch done");
+  } catch (err) {
+    // git stderr embeds the resolved remote URL mid-message, which may carry
+    // `https://user:token@host/…` creds (validateUrl accepts cred-bearing
+    // remotes). redactUrl scrubs them before the message reaches the client/log.
+    const stderrText = errorText(err) || asError(err).message;
+
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `git push ${remote} ${branch} failed: ${redactUrl(stderrText)}`,
+      { cause: asError(err) },
+    );
+  }
 }
 
 async function currentBranch(repo: string): Promise<string | null> {

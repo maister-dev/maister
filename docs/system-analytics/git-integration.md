@@ -11,7 +11,7 @@ only: clone/push use the host's SSH key or git credential helper and MAIster
 holds zero git provider secrets (credential **model B**). See
 [ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
 M18 extends this layer with `git push` and **conditional, provider-dispatched
-PR creation** for `pull_request` promotion (**Designed**) — see
+PR creation** for `pull_request` promotion (**Implemented (M18)**) — see
 [ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant).
 
 ## Domain entities
@@ -25,10 +25,10 @@ PR creation** for `pull_request` promotion (**Designed**) — see
   `web/lib/repo-source.ts`: `cloneRepo`, `gitInit`, `readRemoteOrigin`,
   `isGitRepo`, `assertGitAvailable` (plus the worktree / merge wrappers
   elsewhere). All run against a resolved local path.
-- **Branch push (`pushBranch`)** — **Designed (M18)**. Pushes the run branch
+- **Branch push (`pushBranch`)** — **Implemented (M18)**. Pushes the run branch
   to the configured remote via the host git credential helper (no MAIster
   secret). Used by `pull_request` promotion before PR creation.
-- **`PrAdapter` (provider PR dispatch)** — **Designed (M18)**. One interface,
+- **`PrAdapter` (provider PR dispatch)** — **Implemented (M18)**. One interface,
   three implementations selected by the project's provider tag:
   `github`→`GhCliAdapter` (`gh` CLI), `gitlab`→`GlabCliAdapter` (`glab` CLI),
   `gitea`+`gitverse`→a shared `GiteaApiAdapter` (Gitea-compatible REST API,
@@ -91,7 +91,7 @@ sequenceDiagram
 
 Status: **Implemented** — `web/lib/repo-source.ts`.
 
-### Push + provider-dispatched PR creation (Designed, M18)
+### Push + provider-dispatched PR creation (Implemented, M18)
 
 `pull_request` promotion pushes the run branch (host credentials) and then
 dispatches PR creation on the project's provider tag. The CLI adapters shell
@@ -135,10 +135,18 @@ sequenceDiagram
     end
 ```
 
-Status: **Designed (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
+Status: **Implemented (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
 `web/lib/runs/pr-adapter.ts` (`GhCliAdapter`, `GlabCliAdapter`,
 `GiteaApiAdapter`). Wired by the shared promotion service in
 [`workspaces.md`](workspaces.md).
+
+> **Manual verification (not in CI).** The provider boundary is MOCKED in CI:
+> the `gh`/`glab` CLI exec AND the Gitea-API `fetch` are stubbed, so no real
+> remote is touched. A live `gh`/`glab` push + PR and a live Gitea/GitVerse PR
+> MUST be exercised in manual verification against a real remote (credential
+> **model B** — host credentials + provider tooling). GitVerse's
+> Gitea-API compatibility was confirmed: `gitverse` rides the shared
+> `GiteaApiAdapter`; only the token var (`GITVERSE_TOKEN`) and `apiBase` differ.
 
 ## Expectations
 
@@ -152,15 +160,15 @@ Status: **Designed (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
   an error message.
 - Provider detection is best-effort metadata and NEVER gates cloning;
   `detectProvider()` returns `generic` on any unrecognized host.
-- **(Designed, M18)** `gh`/`glab` and the Gitea REST API are invoked ONLY for
+- **(Implemented, M18)** `gh`/`glab` and the Gitea REST API are invoked ONLY for
   `pull_request` promotion, dispatched on the provider tag: `github`→`gh`,
   `gitlab`→`glab`, `gitea`+`gitverse`→Gitea REST API, `generic`→`PRECONDITION`
   unsupported. `local_merge` promotion and every clone/worktree/merge path
   NEVER invoke a provider CLI or PR API.
-- **(Designed, M18)** PR creation MUST be idempotent: an existing PR for
+- **(Implemented, M18)** PR creation MUST be idempotent: an existing PR for
   `(run branch → target)` is updated, never duplicated; the run's stored
   `pr_url` plus a provider query are the dedup keys.
-- **(Designed, M18)** `git push` and PR creation MUST use host credentials /
+- **(Implemented, M18)** `git push` and PR creation MUST use host credentials /
   host-env provider tokens only (credential model B); no provider secret is
   stored by MAIster, and tokens / secret-bearing URLs are NEVER logged.
 
@@ -175,26 +183,26 @@ Status: **Designed (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
   choice, not a MAIster-managed secret); the Add-Project form warns when
   credentials are present and recommends host SSH keys / a credential helper.
 - **Self-hosted GitLab / Gitea host** → classified as `generic`; cloning is
-  unaffected (provider is metadata only). **(Designed, M18)** a `generic`
+  unaffected (provider is metadata only). **(Implemented, M18)** a `generic`
   provider cannot use `pull_request` promotion (`PRECONDITION`); `local_merge`
   is always available.
 - **Cloned default branch ≠ `project.main_branch`** → not caught here;
   surfaces at Launch when the run branch base is resolved.
-- **(Designed, M18) PR-mode prerequisite missing** → `gh`/`glab` absent on PATH
+- **(Implemented, M18) PR-mode prerequisite missing** → `gh`/`glab` absent on PATH
   (github/gitlab) or `GITEA_TOKEN`/`GITVERSE_TOKEN` unset (gitea-family), or no
   configured remote → `PRECONDITION`; the run stays `Review`.
-- **(Designed, M18) push rejected / PR-API 5xx** → transient →
+- **(Implemented, M18) push rejected / PR-API 5xx** → transient →
   `EXECUTOR_UNAVAILABLE` (HTTP 503); the promotion is idempotently retryable.
 
 ## Linked artifacts
 
 - ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Designed, M18).
+  (Implemented, M18).
 - Deployment (host credentials, `known_hosts` seeding):
   [`../deployment.md`](../deployment.md).
 - Related domains: [`projects.md`](projects.md),
   [`instance-config.md`](instance-config.md) (gh/glab + Gitea-API token status),
   [`workspaces.md`](workspaces.md) (promotion service that drives push + PR).
-- Source: `web/lib/repo-source.ts`; **(Designed, M18)** `web/lib/worktree.ts`
+- Source: `web/lib/repo-source.ts`; **(Implemented, M18)** `web/lib/worktree.ts`
   (`pushBranch`), `web/lib/runs/pr-adapter.ts`.

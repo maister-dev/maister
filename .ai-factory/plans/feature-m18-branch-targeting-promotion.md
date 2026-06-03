@@ -583,7 +583,7 @@ exec AND the Gitea-API `fetch` — is **mocked** in CI; live `gh`/`glab` push+PR
 and a live Gitea/GitVerse PR are exercised only in manual verification, logged
 explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
 
-- [ ] **T3.1 — (RED) tests** `web/lib/runs/__tests__/promote-pr.test.ts` +
+- [x] **T3.1 — (RED) tests** `web/lib/runs/__tests__/promote-pr.test.ts` +
   `web/lib/runs/__tests__/pr-adapter.test.ts` (the `child_process` exec boundary
   AND the Gitea-API `fetch` both mocked): dispatch over all four providers —
   github→`gh` CLI, gitlab→`glab` CLI, gitea+gitverse→Gitea REST adapter,
@@ -596,7 +596,7 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   the code AND the mapped status via `httpStatusForCode`; stays `Review`, no
   `pr_url`; crash-window (PR upstream exists, `pr_url` unset) → re-promote detects
   (provider query) + updates, no duplicate (§3.3).
-- [ ] **T3.2 — push + `PrAdapter` interface.** `web/lib/worktree.ts`:
+- [x] **T3.2 — push + `PrAdapter` interface.** `web/lib/worktree.ts`:
   `pushBranch(repoPath, remote, branch)` (host git creds). New
   `web/lib/runs/pr-adapter.ts`: a `PrAdapter` interface
   `createOrUpdatePr({repoPath, remote, sourceBranch, targetBranch, title, body})
@@ -609,16 +609,16 @@ explicitly per skill-rule "no silent caps"); Phase-3 doc tags flipped.
   API via typed `fetch`; never log tokens / credentials / secret-bearing URLs.
   Per-provider preflight. **Verify GitVerse Gitea-API compatibility here**
   (fallback: a `gitverse` branch on the shared `GiteaApiAdapter`).
-- [ ] **T3.3 — promoteRun PR branch.** Wire the PR side-effect into `promoteRun`
+- [x] **T3.3 — promoteRun PR branch.** Wire the PR side-effect into `promoteRun`
   (§3.2 step 4 `pull_request` + step 5 PR finalize). Idempotency by stored
   `workspace.pr_url`; failure classification table (§3.2) — terminal-config →
   `PRECONDITION` 409, transient → **`EXECUTOR_UNAVAILABLE` 503 (Codex F7); add the
   `EXECUTOR_UNAVAILABLE→503` case to the route `httpStatusForCode`**.
-- [ ] **T3.4 — error-taxonomy finalize + PR artifact.** Flip the Phase-0 `Designed`
+- [x] **T3.4 — error-taxonomy finalize + PR artifact.** Flip the Phase-0 `Designed`
   taxonomy rows → Implemented; record the PR as a `commit_set`/`generic_file`
   artifact carrying `pr_url`/`pr_number` in the payload (no new artifact kind —
   Q3).
-- [ ] **T3.5 — (GREEN) + doc-tag flip + skew note.** Flip `git-integration.md` /
+- [x] **T3.5 — (GREEN) + doc-tag flip + skew note.** Flip `git-integration.md` /
   `instance-config.md` / `deployment.md` / `configuration.md` PR rows to
   Implemented; the plan's manual-verification note records that live `gh`/`glab`
   push+PR was (or must be) exercised outside CI on a real remote.

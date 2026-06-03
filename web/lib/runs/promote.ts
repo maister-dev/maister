@@ -17,9 +17,12 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
+import { selectPrAdapter } from "@/lib/runs/pr-adapter";
+import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
   branchExists,
   promoteLocalMerge,
+  pushBranch,
   resolveBaseCommit,
 } from "@/lib/worktree";
 
@@ -228,13 +231,6 @@ async function promoteFlowRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
-  // Refuse pull_request BEFORE minting a claim (mirrors the scratch pre-check):
-  // no spurious claiming→failed cycle, no readiness/drift git for an unsupported
-  // mode. Phase 3 replaces this with the hybrid gh/glab/Gitea PR adapter.
-  if (input.mode === "pull_request") {
-    throw new MaisterError("CONFIG", "pull_request promotion lands in Phase 3");
-  }
-
   // ---- Claim tx: short, commits BEFORE any side-effect (§3.2 step 1). The
   // SELECT … FOR UPDATE row lock serializes concurrent claims: the second waits
   // for the first to commit, then sees a fresh `claiming` and is refused.
@@ -367,8 +363,16 @@ async function promoteFlowRun(
     };
   });
 
-  // ---- Side-effects: NO lock held (§3.2 step 2). resolvedMode is local_merge
-  // here — pull_request was refused before the claim was minted.
+  // ---- Side-effects: NO lock held (§3.2 step 2).
+  if (claim.resolvedMode === "pull_request") {
+    return promotePullRequestSideEffect({
+      runId,
+      ctx,
+      db,
+      claim,
+    });
+  }
+
   let commit: string;
 
   try {
@@ -501,6 +505,215 @@ async function promoteFlowRun(
   return result;
 }
 
+type FlowClaim = {
+  attemptId: string;
+  run: any;
+  workspace: any;
+  resolvedMode: "local_merge" | "pull_request";
+  resolvedTarget: string;
+  baseCommit: string | null;
+};
+
+// PR-mode side-effect (§3.2 step 4/5): preflight → push → createOrUpdatePr →
+// finalize. Classification mirrors the table in §3.2:
+//   - preflight / unsupported-provider → PRECONDITION: terminal-config, the
+//     claim is CAS'd to `failed` (token-scoped, reclaimable), run stays Review.
+//   - push rejected / PR-API 5xx → EXECUTOR_UNAVAILABLE: transient, the claim is
+//     LEFT `claiming` (a same-attempt retry / stale reclaim resumes), no pr_url.
+async function promotePullRequestSideEffect(args: {
+  runId: string;
+  ctx: PromoteRunContext;
+  db: Db;
+  claim: FlowClaim;
+}): Promise<PromoteRunResult> {
+  const { runId, ctx, db, claim } = args;
+  const project = await loadProject(db, claim.run.projectId);
+  const remoteUrl =
+    project?.repoUrl ??
+    (await readRemoteOrigin(claim.workspace.parentRepoPath));
+  const provider =
+    project?.provider ?? (remoteUrl ? detectProvider(remoteUrl) : "generic");
+
+  // Preflight / dispatch failures are terminal-config (PRECONDITION): mark the
+  // claim failed (token-scoped) so a later attempt can reclaim, then rethrow.
+  try {
+    const adapter = selectPrAdapter(provider, { remoteUrl });
+
+    await adapter.preflight();
+
+    // Push then open/update the PR — both are transient on failure (the helpers
+    // throw EXECUTOR_UNAVAILABLE), so the claim is intentionally LEFT claiming.
+    await pushBranch({
+      projectRepoPath: claim.workspace.parentRepoPath,
+      remote: "origin",
+      branch: claim.workspace.branch,
+    });
+
+    const pr = await adapter.createOrUpdatePr({
+      repoPath: claim.workspace.parentRepoPath,
+      remote: "origin",
+      sourceBranch: claim.workspace.branch,
+      targetBranch: claim.resolvedTarget,
+      title: prTitle(claim),
+      body: prBody(claim),
+    });
+
+    return finalizePullRequest({ runId, ctx, db, claim, pr });
+  } catch (err) {
+    if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+      // Transient: leave the claim `claiming`; do NOT mark failed, do NOT write
+      // pr_url. A same-attempt retry resumes; a stale claim is reclaimed later.
+      throw err;
+    }
+
+    // Terminal-config (PRECONDITION / unsupported provider): release the claim.
+    await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+    throw err;
+  }
+}
+
+function prTitle(claim: FlowClaim): string {
+  return `MAIster: promote ${claim.workspace.branch} → ${claim.resolvedTarget}`;
+}
+
+function prBody(claim: FlowClaim): string {
+  return `Promotes \`${claim.workspace.branch}\` into \`${claim.resolvedTarget}\` (run ${claim.run.id}).`;
+}
+
+async function finalizePullRequest(args: {
+  runId: string;
+  ctx: PromoteRunContext;
+  db: Db;
+  claim: FlowClaim;
+  pr: { url: string; number: number };
+}): Promise<PromoteRunResult> {
+  const { runId, db, claim, pr } = args;
+
+  const result = await db.transaction(async (tx: Db) => {
+    const ws = await loadWorkspaceForUpdate(tx, runId);
+
+    if (
+      ws.promotionState !== "claiming" ||
+      ws.promotionAttemptId !== claim.attemptId
+    ) {
+      log.warn(
+        {
+          runId,
+          minted: claim.attemptId,
+          observed: ws.promotionAttemptId,
+          state: ws.promotionState,
+        },
+        "promote PR finalize superseded by a newer attempt",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        "promotion superseded by a newer attempt",
+      );
+    }
+
+    const now = new Date();
+    const scheduledRemovalAt = new Date(
+      now.getTime() + gcAgeDays() * 86_400_000,
+    );
+
+    await tx
+      .update(runs)
+      .set({
+        status: "Done",
+        acpSessionId: null,
+        currentStepId: null,
+        endedAt: now,
+      })
+      .where(eq(runs.id, runId));
+    await tx
+      .update(workspaces)
+      .set({
+        promotionState: "done",
+        promotedAt: now,
+        scheduledRemovalAt,
+        prUrl: pr.url,
+        prNumber: pr.number,
+      })
+      .where(
+        and(
+          eq(workspaces.id, claim.workspace.id),
+          eq(workspaces.promotionAttemptId, claim.attemptId),
+        ),
+      );
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "run promoted to Done",
+    });
+
+    log.info(
+      {
+        runId,
+        mode: "pull_request",
+        prUrl: pr.url,
+        prNumber: pr.number,
+        targetBranch: claim.resolvedTarget,
+      },
+      "flow run promoted to Done via pull request",
+    );
+
+    return {
+      ok: true as const,
+      mode: "pull_request" as const,
+      pullRequestUrl: pr.url,
+      prNumber: pr.number,
+    };
+  });
+
+  // PR artifact AFTER the finalize commit — same decoupling as the diff artifact.
+  await recordPrArtifact({
+    db,
+    run: claim.run,
+    workspace: claim.workspace,
+    pr,
+  });
+
+  return result;
+}
+
+// Best-effort PR-evidence artifact carrying pr_url/pr_number in its payload (no
+// new artifact kind — Q3). Never fails the finalize.
+async function recordPrArtifact(args: {
+  db: Db;
+  run: any;
+  workspace: any;
+  pr: { url: string; number: number };
+}): Promise<void> {
+  try {
+    await recordArtifact(
+      {
+        runId: args.run.id,
+        nodeId: null,
+        nodeAttemptId: null,
+        artifactDefId: null,
+        kind: "commit_set",
+        producer: "runner",
+        id: `promote:${args.run.id}:pr`,
+        locator: {
+          kind: "inline",
+          text: JSON.stringify({
+            pr_url: args.pr.url,
+            pr_number: args.pr.number,
+            branch: args.workspace.branch,
+          }),
+        },
+        uri: args.pr.url,
+      },
+      args.db,
+    );
+  } catch (err) {
+    log.warn(
+      { runId: args.run.id, err: (err as Error).message },
+      "promotion PR artifact record failed (non-fatal)",
+    );
+  }
+}
+
 async function markPromotionFailed(
   db: Db,
   workspaceId: string,
@@ -535,8 +748,13 @@ async function promoteScratchRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
+  // Scratch runs are ephemeral and target-locked to their base branch; PR mode
+  // is a flow-run promotion only (§3.2). Refuse before minting a claim.
   if (input.mode === "pull_request") {
-    throw new MaisterError("CONFIG", "pull_request promotion lands in Phase 3");
+    throw new MaisterError(
+      "PRECONDITION",
+      "pull_request promotion is not supported for scratch runs",
+    );
   }
 
   const claim = await db.transaction(async (tx: Db) => {

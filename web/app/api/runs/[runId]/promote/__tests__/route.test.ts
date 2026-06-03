@@ -377,7 +377,11 @@ describe("POST /api/runs/[runId]/promote", () => {
     expect(promoteLocalMerge).not.toHaveBeenCalled();
   });
 
-  it("reports pull_request mode as not implemented", async () => {
+  // M18 Phase 3: PR mode is implemented for flow runs (see promote-pr.test.ts +
+  // route-status.test.ts). Scratch runs remain target-locked, local-merge-only,
+  // so a scratch pull_request request is refused PRECONDITION → 409 (no longer
+  // the Phase-2 CONFIG → 400).
+  it("refuses pull_request mode for a scratch run (PRECONDITION → 409)", async () => {
     const runId = seedScratchRun();
 
     const res = await invokePost(runId, {
@@ -385,7 +389,7 @@ describe("POST /api/runs/[runId]/promote", () => {
       targetBranch: "main",
     });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     expect(branchExists).not.toHaveBeenCalled();
     expect(promoteLocalMerge).not.toHaveBeenCalled();
   });
