@@ -75,6 +75,7 @@
 | [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) | Thin MCP facade as a standalone REST-client package | Accepted | 2026-06-02 |
 | [ADR-048](#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
 | [ADR-049](#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant) | PR promotion via a hybrid provider `PrAdapter` (credential model B); reverses the "gh is never invoked" invariant | Accepted | 2026-06-03 |
+| [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars) | Platform ACP runners, adapter provisioners, and router sidecars | Accepted | 2026-06-03 |
 
 ---
 
@@ -2666,23 +2667,6 @@ M11a, not re-built here) and [ADR-045](#adr-045-external_check-enforcement-via-t
 - **Per-card `getRunReadiness` for board/portfolio badges.** Rejected — N+1 over every active run.
   The shared classifier runs over bulk-fetched rows instead.
 
----
-
-## Open questions
-
-These are tracked as TODOs against future ADRs. They are NOT decisions.
-
-- **Per-host vs global concurrency cap when multi-host lands.** Revisit
-  ADR-009 in Phase 2.
-- **Plugin sandbox / trust UI for third-party Flow sources.** Defers
-  ADR-010's "trust all internal sources" caveat.
-- **Custom ACP extensions vs artifact-based structured HITL.** Stage 1
-  is artifact-only; revisit if the standard ACP surface grows.
-- **Cost / time / regex guard *enforcement* (kill-on-cap).** Today it's
-  metric-only. Revisit when Phase 2 data shows guard breaches are real.
-
----
-
 ### ADR-044: Capability delivery via `settings.local.json` + ACP `newSession` (CLI-flag mechanism disproven)
 
 **Date:** 2026-06-03
@@ -2982,6 +2966,103 @@ provider/config docs until that phase's HEAD.
 - **Shell-interpolating branch/title/body into the provider CLI:** opens command-injection on
   attacker-influenceable branch names or PR bodies. Rejected — array args plus `--end-of-options`,
   typed `fetch` for the REST path.
+
+---
+
+### ADR-050: Platform ACP runners, adapter provisioners, and router sidecars
+
+**Date:** 2026-06-03
+**Status:** Accepted
+**Context:** MAIster is moving from project-scoped executor rows to operator-managed ACP launch
+configuration. The same platform must support Claude Code direct, Claude Code through Claude Code
+Router (CCR), Claude Code with explicit dangerous permission policy, Codex with OpenAI-compatible
+providers such as z.ai GLM/Qwen, and future adapters such as Gemini or OpenCode. Treating all of
+that as one `{agent, model, env, router}` object would blur three different responsibilities:
+selecting a named launch profile, translating MAIster restrictions into adapter-specific launch
+material, and operating long-lived router daemons such as CCR.
+
+**Decision:** ACP launch configuration has three separate layers.
+
+1. **Platform ACP Runner.** Runners are platform-level catalog entries, not project-owned launch
+   definitions. They carry a `runner_type`, currently `acp`, so future non-ACP/headless CLI
+   runners can be added without overloading ACP semantics. The platform MUST have exactly one valid
+   default runner. Projects, platform Flow defaults, project Flow defaults, Flow-step target runner
+   ids, and workspace launch overrides all reference runner ids from this catalog when
+   `runner_type=acp`. Runtime resolution is allow-listed in this order: launch/workspace override
+   -> AI-coding step target -> project Flow default -> platform Flow default -> project default ->
+   platform default. Missing referenced runner ids never silently fall back; platform Flow load and
+   project Flow attachment block on a reconfiguration dialog.
+2. **Runner Adapter.** Each adapter family (`claude`, `codex`, and future `gemini`/`opencode`) owns
+   validation, readiness, provisioning, spawn mapping, and cleanup for its concrete runner. The
+   adapter translates typed MAIster constraints (permission policy, MCP refs, settings/restriction
+   profiles, provider env refs, model/provider shape) into the exact files, ACP `newSession` params,
+   env vars, and argv the adapter actually supports. Unsupported combinations fail before child
+   spawn with existing `CONFIG` or `EXECUTOR_UNAVAILABLE` semantics; MAIster does not pretend a
+   restriction is enforced unless the adapter proves the delivery path.
+3. **Router Sidecar.** CCR and similar routers are platform router instances, not per-run ACP
+   profiles. A runner may reference a router instance id such as `ccr-default`. The supervisor owns
+   lifecycle for each configured instance: typed command preset, config path, port/base URL,
+   healthcheck, auth/env refs, provider config refs, `ensureRunning` before spawn, and shutdown with
+   the supervisor. The default target is one CCR instance per supervisor host; multiple instances
+   are allowed only when explicitly configured for distinct configs/ports/providers.
+
+Launch options are typed and allow-listed. Platform runner and sidecar configuration is admin-only.
+The UI MUST NOT accept arbitrary shell scripts, raw argv, or raw token values. Dangerous modes are
+explicit enum policies, visible in readiness, and adapter verified before being offered as ready.
+Secrets are always secret refs (`env:NAME`, or a future secret-store ref) and are resolved only at
+the supervisor boundary.
+
+The web tier resolves runner ids and sends a normalized, versioned spawn intent. The supervisor is
+the only layer that turns the intent into child-process env/argv and router sidecar lifecycle.
+Supervisor `/health` stays focused on liveness/readiness and may carry only a compact availability
+summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separate typed endpoints.
+
+**Consequences:**
+
+- The platform has one canonical ACP runner catalog; projects and Flows carry references and
+  inheritance state instead of duplicating launch definitions.
+- CCR moves from an executor flag/singleton assumption to a typed platform sidecar resource while
+  preserving the current singleton-as-default operational model.
+- Router sidecars need first-class DB/API/UI support because they are operator-managed platform
+  resources with lifecycle and readiness. Adapter families are code-owned registry entries in the
+  first slice: exposed through API/UI for diagnostics, not created as arbitrary DB rows.
+- Per-adapter provisioners become the boundary for enforcement truth. Claude, Codex, Gemini, and
+  OpenCode can support different concrete mechanisms without weakening the product contract.
+- Flow import/attach UX must include required ACP remapping for unknown step targets; launch-time
+  fallback is not an acceptable recovery path.
+- Deployment docs/config must include router instance paths, env refs, readiness checks, and
+  supervisor lifecycle behavior.
+- Codex/Claude provider presets are ready only after source-backed adapter verification; unsupported
+  exact provider/model endpoints remain visible as `NotReady` rather than being silently mapped.
+
+**Alternatives Considered:**
+
+- **Keep project-scoped executor definitions:** duplicates launch definitions across projects and
+  cannot express platform default inheritance. Rejected.
+- **One generic adapter mapper:** hides the fact that Claude, Codex, Gemini, and OpenCode accept
+  different files, env vars, ACP params, and safety controls. Rejected.
+- **Make CCR a per-runner/per-run process:** wastes startup time, complicates ports, and turns a
+  shared router config into repeated process state. Rejected; runners reference platform sidecars.
+- **Only support externally managed CCR:** makes readiness invisible to MAIster and prevents truthful
+  launch gating. Rejected; external-only can be a future mode, but managed typed instances are the
+  product default.
+- **Allow arbitrary scripts/argv from the UI:** creates injection and reproducibility risk. Rejected;
+  only typed, allow-listed lifecycle commands and adapter policies are accepted.
+
+---
+
+## Open questions
+
+These are tracked as TODOs against future ADRs. They are NOT decisions.
+
+- **Per-host vs global concurrency cap when multi-host lands.** Revisit
+  ADR-009 in Phase 2.
+- **Plugin sandbox / trust UI for third-party Flow sources.** Defers
+  ADR-010's "trust all internal sources" caveat.
+- **Custom ACP extensions vs artifact-based structured HITL.** Stage 1
+  is artifact-only; revisit if the standard ACP surface grows.
+- **Cost / time / regex guard *enforcement* (kill-on-cap).** Today it's
+  metric-only. Revisit when Phase 2 data shows guard breaches are real.
 
 ---
 
