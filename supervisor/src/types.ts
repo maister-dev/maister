@@ -38,6 +38,15 @@ export const AdapterLaunchSchema = z
   })
   .strict();
 
+export const McpServerInputSchema = z
+  .object({
+    name: z.string().min(1).max(128),
+    command: z.string().min(1).max(1024),
+    args: z.array(launchArgSchema).max(64),
+    envKeys: z.array(z.string().min(1).max(256)).max(64),
+  })
+  .strict();
+
 export const StartSessionRequestSchema = z
   .object({
     runId: z
@@ -68,6 +77,7 @@ export const StartSessionRequestSchema = z
       .optional(),
     capabilityProfilePath: worktreePathSchema.optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
+    mcpServers: z.array(McpServerInputSchema).max(64).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -100,6 +110,7 @@ export type ExecutorAgent = z.infer<typeof ExecutorAgentSchema>;
 export type ExecutorRouter = z.infer<typeof ExecutorRouterSchema>;
 export type Executor = z.infer<typeof ExecutorSchema>;
 export type AdapterLaunch = z.infer<typeof AdapterLaunchSchema>;
+export type McpServerInput = z.infer<typeof McpServerInputSchema>;
 export type StartSessionRequest = z.infer<typeof StartSessionRequestSchema>;
 export type SendPromptRequest = z.infer<typeof SendPromptRequestSchema>;
 

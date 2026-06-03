@@ -39,6 +39,8 @@ const selectableKinds = [
   "setting",
   "restriction",
   "tool",
+  "agent_definition",
+  "env_profile",
 ] as const satisfies readonly CapabilityKind[];
 
 function asError(err: unknown): Error {
@@ -61,11 +63,14 @@ function redactedEnv(env: Record<string, string> | undefined): string[] {
 function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
   switch (c.kind) {
     case "mcp":
+      // NEVER store `config` — it is arbitrary user YAML
+      // (z.record(z.string(), z.unknown())) that can carry literal secret VALUES,
+      // and nothing downstream reads it. Mirrors the env→envKeys redaction:
+      // `env` is reduced to key NAMES, `config` is dropped entirely (ISSUE 2).
       return {
         command: c.command ?? null,
         args: c.args ?? [],
         envKeys: redactedEnv(c.env),
-        config: c.config ?? {},
       };
     case "skill":
       return {
@@ -80,6 +85,13 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
       return { agent: c.agent, path: c.path };
     case "tool":
       return {};
+    case "agent_definition":
+      return {};
+    case "env_profile":
+      // NEVER store env values — only key names (mirrors mcp env redaction).
+      return {
+        envKeys: redactedEnv(c.env),
+      };
     default:
       return {};
   }
@@ -115,6 +127,8 @@ export function capabilityInputsFromConfig(
     ...config.restrictions,
     ...config.settings,
     ...config.tools,
+    ...config.agent_definitions,
+    ...config.env_profiles,
   ];
   const platformCapabilities: readonly ProjectCapabilityConfig[] =
     config.platformMcps ?? [];

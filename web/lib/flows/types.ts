@@ -74,6 +74,7 @@ export type RunContext = {
 export type AcpSessionState = {
   currentSessionId: string | null;
   lastSeenMonotonicId: number;
+  profileDigest?: string;
 };
 
 export type GuardKind = "pre" | "post" | "standalone";

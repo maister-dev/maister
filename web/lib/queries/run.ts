@@ -4,10 +4,12 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
   Assignment,
   AssignmentEvent,
+  CapabilityImport,
   EnforcementSnapshotEntry,
   GateResult,
   GateVerdict,
   HitlRequest,
+  MaterializationPlan,
   NodeAttempt,
   NodeAttemptType,
 } from "@/lib/db/schema";
@@ -15,7 +17,7 @@ import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -32,6 +34,7 @@ const {
   actorIdentities,
   assignmentEvents,
   assignments,
+  capabilityImports,
   executors,
   flowRevisions,
   flows,
@@ -548,4 +551,118 @@ export async function getRunSettings(
     : null;
 
   return { nodes: view, refusalReason };
+}
+
+// --- M14 T6.1 (ADR-040/041): run-detail capability-profile read model ---------
+
+// A resolved capability revision with its project-scoped trust verdict attached
+// from capability_imports. `trustStatus` is null when no import row matches
+// (e.g. a built-in capability) — the view never blocks on trust.
+export interface CapabilityProfileRevisionView {
+  refId: string;
+  kind: string;
+  sha: string;
+  trustStatus: CapabilityImport["trustStatus"] | null;
+}
+
+// One ai_coding/judge node attempt's recorded materialization plan (what was
+// resolved + materialized at launch), plus its enforcement snapshot. This is
+// the HONEST current state: classes are recorded; live enforcement is pending
+// verification (ADR-041 — verdicts are still `instructed`). Never surfaces any
+// secret — only digests, shas, refIds, kinds, and class names.
+export interface CapabilityProfileNode {
+  nodeId: string;
+  nodeType: NodeAttempt["nodeType"];
+  attempt: number;
+  enforcementSnapshot: EnforcementSnapshotEntry[] | null;
+  plan: Omit<MaterializationPlan, "resolvedRevisions"> & {
+    resolvedRevisions: CapabilityProfileRevisionView[];
+  };
+}
+
+export interface RunCapabilityProfiles {
+  nodes: CapabilityProfileNode[];
+}
+
+function trustKey(refId: string, sha: string): string {
+  return `${refId}@${sha}`;
+}
+
+// The capability-profile view for the run-detail panel: every ai_coding/judge
+// node_attempt that carries a recorded materialization_plan, in attempt order,
+// with each resolved revision's project-scoped trust verdict attached. Returns
+// null when the run has no such node (no capability materialization happened).
+export async function getRunCapabilityProfiles(
+  runId: string,
+): Promise<RunCapabilityProfiles | null> {
+  const client = db();
+
+  const runRows = await client
+    .select({ projectId: runs.projectId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const run = runRows[0];
+
+  if (!run) return null;
+
+  const attemptRows = await client
+    .select({
+      nodeId: nodeAttempts.nodeId,
+      nodeType: nodeAttempts.nodeType,
+      attempt: nodeAttempts.attempt,
+      enforcementSnapshot: nodeAttempts.enforcementSnapshot,
+      materializationPlan: nodeAttempts.materializationPlan,
+    })
+    .from(nodeAttempts)
+    .where(
+      and(
+        eq(nodeAttempts.runId, runId),
+        inArray(nodeAttempts.nodeType, ["ai_coding", "judge"]),
+        isNotNull(nodeAttempts.materializationPlan),
+      ),
+    )
+    .orderBy(asc(nodeAttempts.attempt));
+
+  if (attemptRows.length === 0) return null;
+
+  const trustRows = await client
+    .select({
+      capabilityRefId: capabilityImports.capabilityRefId,
+      resolvedRevision: capabilityImports.resolvedRevision,
+      trustStatus: capabilityImports.trustStatus,
+    })
+    .from(capabilityImports)
+    .where(eq(capabilityImports.projectId, run.projectId));
+
+  const trustByRevision = new Map<string, CapabilityImport["trustStatus"]>();
+
+  for (const t of trustRows) {
+    trustByRevision.set(
+      trustKey(t.capabilityRefId, t.resolvedRevision),
+      t.trustStatus,
+    );
+  }
+
+  const nodes: CapabilityProfileNode[] = attemptRows.map((r) => {
+    const plan = r.materializationPlan as MaterializationPlan;
+
+    return {
+      nodeId: r.nodeId,
+      nodeType: r.nodeType,
+      attempt: r.attempt,
+      enforcementSnapshot: r.enforcementSnapshot ?? null,
+      plan: {
+        ...plan,
+        resolvedRevisions: plan.resolvedRevisions.map((rev) => ({
+          refId: rev.refId,
+          kind: rev.kind,
+          sha: rev.sha,
+          trustStatus:
+            trustByRevision.get(trustKey(rev.refId, rev.sha)) ?? null,
+        })),
+      },
+    };
+  });
+
+  return { nodes };
 }

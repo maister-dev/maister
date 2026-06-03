@@ -69,6 +69,7 @@
 | [ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization) | Capability registry refs + agent-aware mapping + runner-owned native materialization (`node_attempts.materialization_plan` ledger column, no new artifact kind, secret-channel boundary, recoverable cleanup) | Accepted | 2026-06-02 |
 | [ADR-042](#adr-042-conservative-spike-gated-enforcement-flip-claude-first) | Conservative spike-gated `instructed→enforced` flip; claude-first (codex stays instructed, `permissionMode` re-run live, contract only tightens) | Accepted | 2026-06-02 |
 | [ADR-043](#adr-043-capability-import-reuses-the-flow-install-fetchtrustexecute-pipeline) | Capability import reuses the flow-install fetch→trust→execute pipeline (physically separate `setup.sh`, trust route ships, path-safety) | Accepted | 2026-06-02 |
+| [ADR-044](#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven) | Capability delivery via `<worktree>/.claude/settings.local.json` + ACP `newSession` params (the ADR-041 CLI-flag mechanism was disproven against `claude-agent-acp@0.37.0`; supersedes the delivery half of ADR-041) | Accepted | 2026-06-03 |
 
 ---
 
@@ -2112,7 +2113,7 @@ incoherent).
 
 1. **AD-1 — Materialization plan lives in the ledger, not a new artifact kind.**
    The resolved + materialized per-node plan is stored as a
-   **`node_attempts.materialization_plan` jsonb column** (migration `0018`),
+   **`node_attempts.materialization_plan` jsonb column** (migration `0019`),
    mirroring the existing `enforcement_snapshot` column — NOT an
    `artifact_instances` row and NOT a new `kind`. This satisfies "records it in
    the run ledger" and the snapshot-immutability requirement without touching
@@ -2162,7 +2163,7 @@ cover the new failure modes. Imports reuse the flow-install pipeline per
 
 **Consequences:**
 
-- One migration (`0018`) adds the `capability_imports` table AND the
+- One migration (`0019`) adds the `capability_imports` table AND the
   `node_attempts.materialization_plan` column (the cleanup substate rides in the
   same jsonb — no extra column for cleanup tracking).
 - The closed M12 artifact catalog is untouched: no `materialization_plan` kind,
@@ -2398,6 +2399,67 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
   is artifact-only; revisit if the standard ACP surface grows.
 - **Cost / time / regex guard *enforcement* (kill-on-cap).** Today it's
   metric-only. Revisit when Phase 2 data shows guard breaches are real.
+
+---
+
+### ADR-044: Capability delivery via `settings.local.json` + ACP `newSession` (CLI-flag mechanism disproven)
+
+**Date:** 2026-06-03
+**Status:** Accepted
+**Context:** [ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
+specified native materialization as writing per-node config files and passing them to the claude
+adapter via CLI flags (`--settings`, `--mcp-config`, `--permission-mode`). Before the Phase-5 flip, a
+code-level spike against the installed `@agentclientprotocol/claude-agent-acp@0.37.0` +
+`@anthropic-ai/claude-agent-sdk@0.3.146` **disproved that mechanism**: the adapter entry
+(`dist/index.js`) only checks `--cli` and ignores every other argv in ACP mode; the supervisor's
+`newSession` hardcoded `mcpServers: []`; and the SDK reads settings only from
+`<cwd>/.claude/{settings.json,settings.local.json}` (cwd = the worktree) and MCP servers from ACP
+`newSession params.mcpServers`. So the ADR-041 materialized files/flags were written but never
+applied — the agent ran unconstrained. R-CONSERVATIVE forbids flipping a disproven mechanism.
+
+**Decision:** Deliver capability config through the channels the adapter actually reads. This
+**supersedes the delivery half of ADR-041** (the registry/resolver/ledger/cleanup machinery of
+ADR-041 stands unchanged; only the agent-facing delivery surface changes):
+
+- **`tools` + `permissionMode`** → written into `<worktree>/.claude/settings.local.json` (the SDK
+  "local" settings tier; highest-precedence, conventionally gitignored, MAIster-owned, easy cleanup).
+  `permissions.allow` = the node's `tools.<agent>` allow-list; `permissions.defaultMode` maps the
+  node `permissionMode` `ask→default`, `allow→bypassPermissions`, `deny→plan`. A pre-existing
+  settings.local.json is backed up once (`.maister-bak`) and restored at run-terminal cleanup.
+- **`mcps`** → ACP `newSession params.mcpServers`. The web→supervisor `StartSessionRequest.mcpServers`
+  carries env-var **names only** (`envKeys`); the supervisor resolves each name → value from its OWN
+  `process.env` at spawn time. Secrets therefore never travel the web→supervisor wire, never hit disk
+  (no `.mcp.json` in the worktree), and are never logged/persisted — a net R-SECRET improvement over
+  ADR-041's `adapterLaunch.env` value-on-wire path, which this removes.
+- The dead `--settings`/`--mcp-config`/`--permission-mode` `preArgs` are removed.
+- `skills`, `restrictions`, `workspaceAccess` map to settings.local.json fields the adapter supports
+  (`skillOverrides`, `permissions.deny`, `permissions.additionalDirectories`) but are NOT emitted this
+  milestone — they stay `instructed` (Phase 2 / follow-up).
+
+The delivery **mechanism** is CI-verified (the runner writes the correct settings.local.json and the
+supervisor forwards the resolved `mcpServers` to `newSession` — asserted by mock-adapter tests).
+Whether the delivered config actually CONSTRAINS the agent is still gated on the
+[ADR-042](#adr-042-conservative-spike-gated-enforcement-flip-claude-first) live spike.
+
+**Consequences:**
+
+- settings.local.json / `.maister-bak` live in the agent worktree root and are reclaimed once per run
+  by `cleanupRunMaterializations`; they cannot reach a `local_merge`/PR promotion (merge uses committed
+  history; the run diff is commit-range) — a defensive `.git/info/exclude` is a tracked follow-up.
+- `allow→bypassPermissions` silently degrades to `default` when the supervisor runs as root (the
+  adapter disables bypass as root) — the live spike must run non-root to verify the `allow` path.
+- MCP server definitions are passed transiently over ACP, never written to the worktree.
+
+**Alternatives Considered:**
+
+- **Patch/fork the adapter to parse `--settings`.** Rejected — forking a pinned upstream binary for a
+  flag it deliberately ignores; the SDK already reads `.claude/settings.local.json` natively.
+- **`.mcp.json` at the worktree root for MCP.** Rejected — `.mcp.json` is conventionally committed, so
+  writing/removing it clobbers the project's real MCP config and risks promotion leakage; ACP
+  `params.mcpServers` is transient and clobber-free.
+- **Keep delivering secret VALUES via `adapterLaunch.env`/`.mcp.json` placeholders.** Rejected — both
+  put secret material on the wire or on disk; resolving env names host-side in the supervisor keeps
+  secrets in `process.env` only.
 
 ---
 

@@ -9,6 +9,7 @@ import {
   ensureUserActor,
 } from "@/lib/assignments/service";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { runFlow } from "@/lib/flows/runner";
@@ -20,7 +21,7 @@ import {
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants — Db handle.
 type Db = any;
@@ -133,6 +134,17 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+
+    // Run is now Abandoned (terminal) — reclaim its per-node capability dirs.
+    const wsRows = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
+    const wtPath = wsRows[0]?.worktreePath;
+
+    if (wtPath) {
+      await cleanupRunMaterializations({ runId, worktreePath: wtPath, db });
     }
 
     // A claimed/running slot just freed — promote the next queued Pending run.

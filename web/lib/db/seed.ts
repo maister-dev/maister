@@ -106,8 +106,11 @@ async function main() {
         restrictions: [],
         settings: [],
         tools: [],
+        agent_definitions: [],
+        env_profiles: [],
       },
       flow_roles: [{ ref: "maintainer", label: "Maintainer" }],
+      capability_imports: [],
       flows: [
         {
           id: "bugfix",

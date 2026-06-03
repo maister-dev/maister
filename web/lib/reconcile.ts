@@ -8,6 +8,7 @@ import type { WorktreeInfo } from "@/lib/worktree";
 import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
+import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
@@ -469,6 +470,11 @@ export async function runReconcileSweep(
           });
         } else {
           await crashRunningRun(cand.runId, mapReasonToCrashReason(reason), {
+            db,
+          });
+          await cleanupRunMaterializations({
+            runId: cand.runId,
+            worktreePath: cand.worktreePath,
             db,
           });
         }

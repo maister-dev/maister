@@ -30,6 +30,8 @@ function emptyCapabilities(): MaisterCapabilitiesConfig {
     restrictions: [],
     settings: [],
     tools: [],
+    agent_definitions: [],
+    env_profiles: [],
   };
 }
 
@@ -129,6 +131,33 @@ describe("capabilityInputsFromConfig", () => {
       envKeys: ["GITHUB_TOKEN"],
     });
     expect(JSON.stringify(inputs)).not.toContain("raw-token");
+  });
+
+  it("omits the mcp config blob from material — config can carry secret values (ISSUE 2)", () => {
+    const inputs = capabilityInputsFromConfig({
+      ...emptyCapabilities(),
+      mcps: [
+        {
+          id: "github",
+          kind: "mcp",
+          source: "project",
+          command: "github-mcp",
+          config: {
+            token: "CFG_SECRET_value",
+            nested: { auth: "CFG_SECRET_value" },
+          },
+          agents: ["claude"],
+          enforceability: "enforced",
+          selected_by_default: true,
+        },
+      ],
+    });
+
+    const gh = inputs.find((i) => i.capabilityRefId === "github");
+
+    expect(gh).toBeDefined();
+    expect("config" in (gh!.material as Record<string, unknown>)).toBe(false);
+    expect(JSON.stringify(inputs)).not.toContain("CFG_SECRET_value");
   });
 
   it("rejects duplicate ids in the same source/kind scope", () => {
@@ -236,7 +265,7 @@ describe("upsertCapabilitiesFromConfig", () => {
     });
 
     expect(result.upsertedCount).toBe(3);
-    expect(result.disabledScopes).toBe(18);
+    expect(result.disabledScopes).toBe(24);
     expect(insertCalls[0].values).toMatchObject({
       capabilityRefId: "github",
       kind: "mcp",
@@ -261,7 +290,7 @@ describe("upsertCapabilitiesFromConfig", () => {
           call.conflictTarget.length === 4,
       ),
     ).toBe(true);
-    expect(updateCalls).toHaveLength(18);
+    expect(updateCalls).toHaveLength(24);
     expect(
       updateCalls.every(
         (call) =>

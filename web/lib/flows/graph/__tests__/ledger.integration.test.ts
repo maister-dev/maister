@@ -24,6 +24,7 @@ import {
   markNodeSucceeded,
   nextAttemptFor,
   recordTakeoverReturn,
+  setMaterializationPlan,
 } from "@/lib/flows/graph/ledger";
 import {
   blockingGatesSatisfied,
@@ -229,6 +230,46 @@ describe("node_attempts ledger (append-only)", () => {
     expect(row?.status).toBe("Reworked");
     expect(row?.decision).toBe("rework");
     expect(row?.workspacePolicy).toBe("keep");
+  });
+
+  it("setMaterializationPlan is write-once: the second call does not overwrite the first plan (T4.4)", async () => {
+    const runId = await seedRun();
+    const na = await appendNodeAttempt({
+      runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      db,
+    });
+
+    const first = {
+      profileDigest: "digest-first",
+      resolvedRevisions: [{ refId: "github", kind: "mcp", sha: "sha-1111" }],
+      materializedFiles: ["/tmp/profile.json"],
+      enforcedClasses: ["github"],
+      instructedClasses: [],
+      refusedClasses: [],
+      cleanup: { status: "pending" as const },
+    };
+    const second = {
+      profileDigest: "digest-second",
+      resolvedRevisions: [{ refId: "other", kind: "skill", sha: "sha-9999" }],
+      materializedFiles: ["/tmp/other.json"],
+      enforcedClasses: [],
+      instructedClasses: ["other"],
+      refusedClasses: [],
+      cleanup: { status: "pending" as const },
+    };
+
+    await setMaterializationPlan(na.id, first, db);
+    await setMaterializationPlan(na.id, second, db);
+
+    const row = (await getNodeAttemptsForRun(runId, db)).find(
+      (r) => r.id === na.id,
+    );
+
+    // The column-IS-NULL guard preserves the run-start snapshot: a resumed
+    // attempt re-running the materialize path never rewrites the plan body.
+    expect(row?.materializationPlan).toEqual(first);
   });
 });
 

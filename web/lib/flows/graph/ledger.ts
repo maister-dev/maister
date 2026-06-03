@@ -3,6 +3,7 @@ import "server-only";
 import type { MaisterErrorCode } from "@/lib/errors";
 import type {
   EnforcementSnapshotEntry,
+  MaterializationPlan,
   NodeAttempt,
   NodeAttemptStatus,
   NodeAttemptType,
@@ -216,6 +217,73 @@ export async function setEnforcementSnapshot(
   log.debug(
     { nodeAttemptId, classes: entries.length, written: updated.length > 0 },
     "node-attempt enforcement snapshot (write-once)",
+  );
+}
+
+// M14 T4.2 (ADR-040): persist the resolved per-node capability materialization
+// plan on the attempt. Write-once on the column-IS-NULL guard, mirroring
+// setEnforcementSnapshot: a NeedsInput resume reuses the same attempt row, so
+// the original run-start snapshot (resolvedRevisions / dispositions) is
+// preserved (T4.4). The `cleanup` sub-object is seeded `pending` here; T4.3
+// mutates it later via a separate path — the column IS NULL guard only blocks
+// re-writing the plan BODY, never the post-run cleanup transition.
+export async function setMaterializationPlan(
+  nodeAttemptId: string,
+  plan: MaterializationPlan,
+  db?: Db,
+): Promise<void> {
+  const d = db ?? getDb();
+
+  const updated = await d
+    .update(nodeAttempts)
+    .set({ materializationPlan: plan })
+    .where(
+      and(
+        eq(nodeAttempts.id, nodeAttemptId),
+        isNull(nodeAttempts.materializationPlan),
+      ),
+    )
+    .returning({ id: nodeAttempts.id });
+
+  log.debug(
+    { nodeAttemptId, digest: plan.profileDigest, written: updated.length > 0 },
+    "node-attempt materialization plan (write-once)",
+  );
+}
+
+// M14 T4.3 (R-DEFER): mutate ONLY the .cleanup sub-object of an attempt's
+// materialization plan. Drizzle has no jsonb-path update, so this is a
+// read-modify-write that spreads the existing plan body and overwrites .cleanup.
+// MUTABLE by design (no IS NULL guard) — the post-run cleanup transition fires
+// after the write-once plan body is set, and only ever touches .cleanup.
+export async function updateMaterializationCleanup(
+  nodeAttemptId: string,
+  cleanup: MaterializationPlan["cleanup"],
+  db?: Db,
+): Promise<void> {
+  const d = db ?? getDb();
+
+  const rows = await d
+    .select({ plan: nodeAttempts.materializationPlan })
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  const plan = rows[0]?.plan;
+
+  if (!plan) {
+    log.warn({ nodeAttemptId }, "updateMaterializationCleanup: no plan");
+
+    return;
+  }
+
+  await d
+    .update(nodeAttempts)
+    .set({ materializationPlan: { ...plan, cleanup } })
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  log.debug(
+    { nodeAttemptId, cleanupStatus: cleanup.status },
+    "materialization plan cleanup updated",
   );
 }
 

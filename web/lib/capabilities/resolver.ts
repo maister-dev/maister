@@ -95,7 +95,10 @@ function supportsAgent(
   return agents[executorAgent] !== undefined;
 }
 
-function asEntry(record: CapabilityCatalogRecord): CapabilityProfileEntry {
+function asEntry(
+  record: CapabilityCatalogRecord,
+  executorAgent: CapabilityAgent,
+): CapabilityProfileEntry {
   return {
     id: record.id,
     capabilityRefId: record.capabilityRefId,
@@ -103,6 +106,10 @@ function asEntry(record: CapabilityCatalogRecord): CapabilityProfileEntry {
     source: record.source,
     label: record.label,
     enforceability: record.enforceability,
+    revision: record.revision,
+    agentName: Array.isArray(record.agents)
+      ? null
+      : (record.agents[executorAgent] ?? null),
     material: record.material,
   };
 }
@@ -190,7 +197,7 @@ export function resolveCapabilityProfile(
   const downgraded: ResolvedCapabilityProfile["downgraded"] = [];
 
   for (const record of selected) {
-    const entry = asEntry(record);
+    const entry = asEntry(record, args.executorAgent);
     const supportedByAgent = supportsAgent(record.agents, args.executorAgent);
 
     if (supportedByAgent) {

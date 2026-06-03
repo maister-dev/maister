@@ -105,8 +105,11 @@ function baseConfig(over: Partial<MaisterYamlV2> = {}): MaisterYamlV2 {
       restrictions: [],
       settings: [],
       tools: [],
+      agent_definitions: [],
+      env_profiles: [],
     },
     flow_roles: [],
+    capability_imports: [],
     flows: [],
   };
 
@@ -298,8 +301,11 @@ describe("upsertExecutorsFromConfig (unit)", () => {
         restrictions: [],
         settings: [],
         tools: [],
+        agent_definitions: [],
+        env_profiles: [],
       },
       flow_roles: [],
+      capability_imports: [],
       flows: [],
     };
 

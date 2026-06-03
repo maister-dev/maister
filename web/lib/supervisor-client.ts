@@ -4,6 +4,7 @@ import type {
   PlatformStatus,
   PlatformUnavailableReason,
 } from "@/types/platform-status";
+import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 
 import { cache } from "react";
 import pino from "pino";
@@ -41,6 +42,7 @@ export type CreateSessionInput = {
   resumeSessionId?: string;
   capabilityProfilePath?: string;
   adapterLaunch?: SupervisorAdapterLaunchInput;
+  mcpServers?: AgentMcpServer[];
 };
 
 export type CreateSessionResult = {

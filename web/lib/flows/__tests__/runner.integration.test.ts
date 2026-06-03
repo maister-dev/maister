@@ -126,6 +126,24 @@ beforeAll(async () => {
   });
 
   aifFlowId = aifInstall.flowRowId;
+
+  // T4.1 setup migration: the aif `implement` ai_coding node declares
+  // `skills: [aif-implement]`, which the runner now resolves against the
+  // selectable-capability catalog before spawning. Seed the matching record so
+  // resolveCapabilityProfile does not throw CONFIG for an unknown skill id.
+  await db.insert(schema.capabilityRecords).values({
+    id: randomUUID(),
+    projectId,
+    capabilityRefId: "aif-implement",
+    kind: "skill",
+    label: "AIF Implement",
+    source: "project",
+    agents: ["claude", "codex"],
+    enforceability: "instructed",
+    selectable: true,
+    selectedByDefault: false,
+    material: {},
+  });
 }, 180_000);
 
 afterAll(async () => {

@@ -865,6 +865,12 @@ export const nodeAttempts = pgTable(
     enforcementSnapshot: jsonb("enforcement_snapshot").$type<
       EnforcementSnapshotEntry[]
     >(),
+    // M14 (ADR-040): scoped capability materialization plan written by the
+    // launch pipeline before ACP session spawn. Null for pre-M14 rows and
+    // node types that do not trigger capability materialization (cli/check).
+    materializationPlan: jsonb(
+      "materialization_plan",
+    ).$type<MaterializationPlan | null>(),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -1259,6 +1265,70 @@ export const projectMembers = pgTable(
   }),
 );
 
+// --- M14 (ADR-040): scoped capability materialization -------------------------------------
+
+// Written by the launch pipeline; records what was resolved and applied for an
+// ai_coding / judge node attempt. Stored in node_attempts.materialization_plan.
+export type MaterializationPlan = {
+  profileDigest: string;
+  resolvedRevisions: { refId: string; kind: string; sha: string }[];
+  materializedFiles: string[];
+  enforcedClasses: string[];
+  instructedClasses: string[];
+  refusedClasses: string[];
+  cleanup: {
+    status: "pending" | "done" | "failed";
+    error?: string;
+    at?: string;
+  };
+};
+
+// Immutable per-(project, capabilityRefId, resolvedRevision) capability bundle record.
+// Mirrors flowRevisions in structure: one row per resolved git revision,
+// globally content-addressed, project-scoped (capabilities live per project).
+export const capabilityImports = pgTable(
+  "capability_imports",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    capabilityRefId: text("capability_ref_id").notNull(),
+    source: text("source").notNull(),
+    versionTag: text("version_tag").notNull(),
+    resolvedRevision: text("resolved_revision").notNull(),
+    manifestDigest: text("manifest_digest").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    installedPath: text("installed_path").notNull(),
+    setupStatus: text("setup_status", {
+      enum: ["not_required", "pending", "done", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    packageStatus: text("package_status", {
+      enum: ["Discovered", "Installing", "Installed", "Failed", "Removed"],
+    })
+      .notNull()
+      .default("Installing"),
+    trustStatus: text("trust_status", {
+      enum: ["untrusted", "trusted", "trusted_by_policy"],
+    })
+      .notNull()
+      .default("untrusted"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectRefRevision: unique(
+      "capability_imports_project_ref_revision_uq",
+    ).on(t.projectId, t.capabilityRefId, t.resolvedRevision),
+  }),
+);
+
 export type User = typeof users.$inferSelect;
 export type AccountStatus = User["accountStatus"];
 export type Account = typeof accounts.$inferSelect;
@@ -1309,3 +1379,5 @@ export type ArtifactProjectionCursorInsert =
 export type Assignment = typeof assignments.$inferSelect;
 export type AssignmentStatus = Assignment["status"];
 export type AssignmentEvent = typeof assignmentEvents.$inferSelect;
+export type CapabilityImport = typeof capabilityImports.$inferSelect;
+export type CapabilityImportInsert = typeof capabilityImports.$inferInsert;

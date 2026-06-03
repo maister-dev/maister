@@ -134,6 +134,13 @@
       "when": 1780370100000,
       "tag": "0018_m13_assignment_actors",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1780444947686,
+      "tag": "0019_m14_capability_materialization",
+      "breakpoints": true
     }
   ]
 }

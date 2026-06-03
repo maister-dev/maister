@@ -811,6 +811,7 @@ export async function launchScratchRun(args: {
       },
       capabilityProfilePath: materialized.profilePath,
       adapterLaunch: materialized.adapterLaunch,
+      mcpServers: materialized.mcpServers,
     });
 
     await db.transaction(async (tx: Db) => {

@@ -6,11 +6,14 @@ execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 **M11b (migration `0011`, additive)** takeover columns and `HumanWorking`
 status, scratch-run persistence, the selectable capability catalog, and the
 **M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
-and `ARTIFACT_PROJECTION_CURSORS`, and **M13 (Implemented, migration `0018`)**
-assignment tables. For partial views by domain, see
+and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
+assignment tables, and the **M14 (Designed, migration `0019`)**
+`CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
+column. For partial views by domain, see
 [`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
 [`hitl-domain.md`](hitl-domain.md), [`artifacts-domain.md`](artifacts-domain.md),
-and [`assignments-domain.md`](assignments-domain.md).
+[`assignments-domain.md`](assignments-domain.md), and
+[`capabilities-domain.md`](capabilities-domain.md).
 
 ```mermaid
 erDiagram
@@ -22,6 +25,7 @@ erDiagram
     PROJECTS ||--o{ EXECUTORS : has
     PROJECTS ||--o{ FLOWS : has
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
+    PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
     PROJECTS ||--o{ PROJECT_FLOW_ROLES : "flow routing labels"
     PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
     PROJECTS ||--o{ TASKS : has
@@ -192,6 +196,23 @@ erDiagram
         timestamp updated_at
     }
 
+    CAPABILITY_IMPORTS {
+        text id PK "uuid v4"
+        text project_id FK "NOT NULL → projects(id) ON DELETE CASCADE"
+        text capability_ref_id "id from maister.yaml capability_imports[]; SAFE_PATH_SEGMENT"
+        text source "git URL (SAFE_PATH_SEGMENT validated)"
+        text version_tag "tag pin (SAFE_PATH_SEGMENT validated)"
+        text resolved_revision "40-hex git SHA; immutable cache key"
+        text manifest_digest "sha256 of canonical manifest JSON"
+        jsonb manifest "parsed capability manifest (nullable)"
+        text installed_path "~/.maister/capabilities/<id>@<sha12>/"
+        text setup_status "not_required|pending|done|failed"
+        text package_status "Discovered|Installing|Installed|Failed|Removed"
+        text trust_status "untrusted|trusted|trusted_by_policy"
+        timestamp created_at
+        timestamp updated_at
+    }
+
     TASKS {
         text id PK
         text project_id FK
@@ -274,6 +295,7 @@ erDiagram
         text returned_commits "M11b 0011 raw git log base..branch"
         text returned_diff "M11b 0011 raw git diff base..branch"
         jsonb enforcement_snapshot "M11c 0013 append-only verdict audit"
+        jsonb materialization_plan "M14 0019 Designed: resolved profile + cleanup substate"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"
@@ -458,8 +480,11 @@ The ERD shows implemented tables, M11a `node_attempts` / `gate_results`
 (migration `0010`), scratch-run persistence, `capability_records`, and the
 M12 (Implemented, migration `0015`) `artifact_instances` /
 `artifact_projection_cursors` typed-evidence tables (see
-[`artifacts-domain.md`](artifacts-domain.md)) and M13 assignment persistence
-(see [`assignments-domain.md`](assignments-domain.md)). The remaining roadmap
+[`artifacts-domain.md`](artifacts-domain.md)), M13 assignment persistence
+(see [`assignments-domain.md`](assignments-domain.md)), and the **M14 (Designed,
+migration `0019`)** `capability_imports` table and
+`node_attempts.materialization_plan` column (see
+[`capabilities-domain.md`](capabilities-domain.md)). The remaining roadmap
 additive persistence — artifact edges, API tokens, and external operation
 events — is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
@@ -476,6 +501,9 @@ events — is not drawn until its migrations exist. See
 | `project_members`     | `project_members_project_user_uq`       | `(project_id, user_id)` UNIQUE         | One membership per user/project.                                                                                        |
 | `project_members`     | `project_members_user_idx`              | `(user_id)`                            | Per-user project listing / authz.                                                                                       |
 | `capability_records`  | `capability_records_project_kind_idx`   | `(project_id, kind, selectable)`       | Scratch launch-options catalog lookup.                                                                                  |
+| `capability_imports`  | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Designed)** One row per (project, import id, resolved git SHA). |
+| `capability_imports`  | `capability_imports_project_ref_idx`    | `(project_id, capability_ref_id)`      | **(M14 Designed)** Trust route + catalog upsert lookups. |
+| `capability_imports`  | `capability_imports_package_status_idx` | `(package_status)`                     | **(M14 Designed)** Startup reconcile finds `Installing` rows to flip `Failed`. |
 | `project_flow_roles`  | `project_flow_roles_project_key_uq`     | `(project_id, role_ref)` UNIQUE        | One Flow role ref per project.                                                                                          |
 | `project_flow_roles`  | `project_flow_roles_project_idx`        | `(project_id)`                         | Project Flow role lookup.                                                                                               |
 | `actor_identities`    | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE         | One user actor per project.                                                                                             |

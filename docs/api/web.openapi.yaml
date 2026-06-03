@@ -7,9 +7,9 @@ info:
     by the MAIster UI and (in M7+) by any process that wants to drive HITL
     or stream run events without bypassing the web tier's trust boundary.
 
-    **Milestone status: M10.**
+    **Milestone status: M10 (+ M14 Designed routes).**
 
-    Routes shipped to date:
+    Routes shipped to date (plus routes Designed for M14, tagged inline):
 
     - `POST /api/projects/{slug}/flow-packages/install` and the
       `{flowRefId}/enable|disable|upgrade|rollback|trust`,
@@ -104,6 +104,8 @@ tags:
     description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
   - name: reconciliation-gc
     description: Crash recover/discard and the token-guarded GC cron route (M19, ADR-033..036).
+  - name: capabilities
+    description: Capability import trust-confirm route (M14, Designed, ADR-042).
 paths:
   /api/projects:
     post:
@@ -2400,6 +2402,122 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Precondition" }
         "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/capabilities/{capabilityRefId}/trust:
+    post:
+      tags: [capabilities]
+      summary: Trust-confirm a capability import and run its setup
+      description: |
+        **Designed (M14, Phase 0 spec).** Admin-only
+        (`requireProjectAction("managePackages")`). Establishes explicit trust
+        for a `capability_imports[]` entry and, when trust is granted, executes
+        the import's `setup.sh` (if present and not yet run).
+
+        **Identifiers.** `slug` is a url-param resolved to a `projects` row
+        (server-state). `capabilityRefId` is a url-param validated against the
+        project's `capability_imports` rows (server-state) — it is NOT derived
+        from the body.
+
+        **Two-phase, retry-safe semantics (R-2PC).** The idempotency marker is
+        `setupStatus`, NOT `trustStatus`. When `confirm: true`:
+
+        1. Under `SELECT … FOR UPDATE`, write `trustStatus = 'trusted'` (BEFORE
+           the side-effect).
+        2. Execute `runCapabilityRevisionSetup` (the trust-gated, physically
+           separate function — never called from `installCapabilityRevision`).
+        3. Write `setupStatus = 'done'` (AFTER the side-effect).
+
+        On any setup failure `setupStatus` is flipped to `'failed'` and the route
+        returns 502 (`FLOW_INSTALL`, retryable via re-POST). Because `runCapabilityRevisionSetup` re-runs when
+        `setupStatus ∈ {pending, failed}`, a re-POST restarts setup without a
+        spurious 409. `409` is returned **ONLY** when `setupStatus = 'done'` or
+        `'not_required'` (genuinely nothing to do), and NEVER merely because
+        `trustStatus` is already `'trusted'`.
+
+        When `confirm: false`, `trustStatus` is set back to `'untrusted'` (revoke
+        trust). Revocation is refused with 409 if the import is referenced by a
+        running run (`package_status = 'Installed'` and active `node_attempts`).
+
+        Source (Designed): `web/app/api/projects/[slug]/capabilities/[capabilityRefId]/trust/route.ts`.
+        See [ADR-042](../decisions.md) and
+        [`configuration.md`](../configuration.md#capability_imports).
+      operationId: confirmCapabilityImportTrust
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - name: capabilityRefId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            pattern: '^[A-Za-z0-9._-]+$'
+            description: |
+              Validated against SAFE_PATH_SEGMENT on the server; url-param only —
+              not accepted from the body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+                  description: |
+                    `true` — grant trust and run setup (if pending/failed).
+                    `false` — revoke trust (refused if referenced by a live run).
+      responses:
+        "200":
+          description: |
+            Trust established and setup completed (`setupStatus = 'done'` or
+            `'not_required'`). When `confirm: false`, trust has been revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, setupStatus, trustStatus]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  setupStatus:
+                    type: string
+                    enum: [not_required, done]
+                  trustStatus:
+                    type: string
+                    enum: [untrusted, trusted, trusted_by_policy]
+        "400":
+          description: |
+            Body is malformed or `capabilityRefId` fails `SAFE_PATH_SEGMENT`
+            validation (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: |
+            Project or capability import not found for this project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            Setup is already `done` or `not_required` (nothing to do), or
+            trust revocation is blocked by an active run referencing this import
+            (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "502":
+          description: |
+            `setup.sh` execution failed (`setupStatus` flipped to `'failed'`).
+            `trustStatus` remains `'trusted'` so a re-POST will retry setup
+            (`FLOW_INSTALL`, retryable via re-POST). Carries structured detail
+            `{source, version, stage:'setup', exitStatus, output}` in the message.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
 components:
   securitySchemes:
     cronToken:

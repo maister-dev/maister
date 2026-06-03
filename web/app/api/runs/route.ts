@@ -11,7 +11,12 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { firstUnknownExecutorRef } from "@/lib/config";
+import {
+  capabilityRefIdSetsFromRecords,
+  firstUnknownExecutorRef,
+  firstUnknownCapabilityRef,
+  type CapabilityRefRecord,
+} from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -33,6 +38,7 @@ import { addWorktree, removeWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
+  capabilityRecords,
   executors,
   flowRevisions,
   flows,
@@ -374,6 +380,38 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       let configuredNodes = 0;
 
+      // M14 T1.4: rebuild the capability ref registry from the hydrated
+      // capability_records catalog (the DB mirror of buildCapabilityRefIds —
+      // maister.yaml is NOT re-read here, its path may be absent). Only
+      // non-disabled rows count, so a CLEARed capability (R-SYM) no longer
+      // resolves. Imports (kind agent_definition / source flow-package) resolve
+      // for any node settings kind.
+      const capRecordRows: CapabilityRefRecord[] = await db
+        .select({
+          capabilityRefId: capabilityRecords.capabilityRefId,
+          kind: capabilityRecords.kind,
+          source: capabilityRecords.source,
+        })
+        .from(capabilityRecords)
+        .where(
+          and(
+            eq(capabilityRecords.projectId, project.id),
+            isNull(capabilityRecords.disabledAt),
+          ),
+        );
+      const capabilityRefIds = capabilityRefIdSetsFromRecords(capRecordRows);
+
+      log.debug(
+        {
+          projectId: project.id,
+          mcp: capabilityRefIds.mcp.size,
+          skill: capabilityRefIds.skill.size,
+          restriction: capabilityRefIds.restriction.size,
+          setting: capabilityRefIds.setting.size,
+        },
+        "POST /api/runs capability ref registry built",
+      );
+
       for (const node of compiled.nodes.values()) {
         if (node.nodeType !== "ai_coding" && node.nodeType !== "judge") {
           continue;
@@ -399,6 +437,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               `node "${node.id}" settings.executors references unknown executor id "${unknownRef}" not registered for project ${project.slug}`,
             );
           }
+        }
+
+        // M14 carve-b: reject node settings.mcps/skills/restrictions/
+        // settingsProfile refs absent from the project capability registry
+        // (CONFIG → 400), matching install-time validation (T1.3/T1.4).
+        const unknownCapability = firstUnknownCapabilityRef(
+          node.nodeType,
+          settings,
+          capabilityRefIds,
+        );
+
+        if (unknownCapability !== null) {
+          throw new MaisterError(
+            "CONFIG",
+            `node "${node.id}" unknown ${unknownCapability.kind} capability ref "${unknownCapability.ref}" not registered for project ${project.slug}`,
+          );
         }
 
         assertNodeLaunchable(

@@ -24,7 +24,9 @@ until migrations exist.
 | [`projects-domain.md`](projects-domain.md) | Projects + Executors + Flows. |
 | [`runs-domain.md`](runs-domain.md) | Tasks + Runs + Workspaces + scratch-run tables. |
 | [`hitl-domain.md`](hitl-domain.md) | HITL Requests + form-schema shape. |
+| [`artifacts-domain.md`](artifacts-domain.md) | Typed artifact instances + projection cursors (M12). |
 | [`assignments-domain.md`](assignments-domain.md) | M13 Flow roles, actors, assignments, and assignment events. |
+| [`capabilities-domain.md`](capabilities-domain.md) | Capability records + git-pinned imports + materialization plan column (M14, Designed). |
 
 ## Cardinality notation
 

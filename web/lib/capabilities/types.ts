@@ -1,7 +1,9 @@
 import type {
+  AgentDefinitionCapabilityConfig,
   CapabilityAgent,
   CapabilityEnforceability,
   CapabilityKind,
+  EnvProfileCapabilityConfig,
   McpCapabilityConfig,
   MaisterCapabilitiesConfig,
   RestrictionCapabilityConfig,
@@ -41,6 +43,8 @@ export type CapabilityProfileEntry = {
   source: LaunchCapabilitySource;
   label: string;
   enforceability: CapabilityCatalogRecord["enforceability"];
+  revision: string | null;
+  agentName: string | null;
   material: CapabilityMaterial;
 };
 
@@ -70,7 +74,9 @@ export type ProjectCapabilityConfig =
   | RuleCapabilityConfig
   | RestrictionCapabilityConfig
   | SettingCapabilityConfig
-  | ToolCapabilityConfig;
+  | ToolCapabilityConfig
+  | AgentDefinitionCapabilityConfig
+  | EnvProfileCapabilityConfig;
 
 export type PlatformMcpCapability = McpCapabilityConfig & {
   source: "platform";

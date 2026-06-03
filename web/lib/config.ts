@@ -139,6 +139,18 @@ export async function loadProjectConfig(
     }
   }
 
+  const importIds = new Set<string>();
+
+  for (const imp of cfg.capability_imports) {
+    if (importIds.has(imp.id)) {
+      throw new MaisterError(
+        "CONFIG",
+        `Duplicate capability_imports id "${imp.id}" in ${maisterYamlPath}`,
+      );
+    }
+    importIds.add(imp.id);
+  }
+
   validateCapabilityIds(cfg, maisterYamlPath);
   validateFlowRoleRefs(cfg, maisterYamlPath);
 
@@ -176,6 +188,8 @@ function validateCapabilityIds(
     ["restriction", cfg.capabilities.restrictions],
     ["setting", cfg.capabilities.settings],
     ["tool", cfg.capabilities.tools],
+    ["agent_definition", cfg.capabilities.agent_definitions],
+    ["env_profile", cfg.capabilities.env_profiles],
   ];
 
   for (const [kind, entries] of groups) {
@@ -201,6 +215,125 @@ function validateCapabilityIds(
     },
     "maister.yaml capabilities parsed",
   );
+}
+
+/**
+ * Build a CapabilityRefIdSets map from a parsed MaisterYamlV2 capabilities
+ * block plus its capability_imports[]. Used at parse-time (loadProjectConfig)
+ * and launch-time (POST /api/runs) to enforce node
+ * settings.mcps/skills/restrictions/settingsProfile refs.
+ *
+ * A `capability_imports[]` entry is an opaque git-pinned package — there is no
+ * manifest parsing yet (T2.2 stores `manifest: {}`), so the package's kind is
+ * unknown at this layer. An import id therefore satisfies a node ref of ANY
+ * kind: it is folded into every bucket. The catalog ingests it as a concrete
+ * `agent_definition` capability_record (see installAndIngestCapabilityImports).
+ */
+export function buildCapabilityRefIds(cfg: MaisterYamlV2): CapabilityRefIdSets {
+  const importIds = cfg.capability_imports.map((i) => i.id);
+
+  return {
+    mcp: new Set([...cfg.capabilities.mcps.map((c) => c.id), ...importIds]),
+    skill: new Set([...cfg.capabilities.skills.map((c) => c.id), ...importIds]),
+    restriction: new Set([
+      ...cfg.capabilities.restrictions.map((c) => c.id),
+      ...importIds,
+    ]),
+    setting: new Set([
+      ...cfg.capabilities.settings.map((c) => c.id),
+      ...importIds,
+    ]),
+  };
+}
+
+// A capability_records row reduced to the fields needed to rebuild the ref-id
+// registry at launch time (when maister.yaml is not re-read from disk).
+export type CapabilityRefRecord = {
+  capabilityRefId: string;
+  kind: CapabilityKind;
+  source: string;
+};
+
+/**
+ * Build the CapabilityRefIdSets registry from hydrated `capability_records`
+ * rows. This is the launch-time (DB-backed) mirror of buildCapabilityRefIds:
+ * the launch gate cannot re-read maister.yaml (the path may be absent), so it
+ * derives the same registry from the catalog the register flow upserted.
+ *
+ * Bucketing matches buildCapabilityRefIds exactly:
+ *  - mcp/skill/restriction/setting records land in their own bucket;
+ *  - an import (ingested as kind `agent_definition`, source `flow-package`) is
+ *    an opaque package and lands in EVERY bucket, so it can back a node ref of
+ *    any kind (see buildCapabilityRefIds + installAndIngestCapabilityImports).
+ * Callers pass only non-disabled rows (disabled_at IS NULL) so a CLEARed
+ * capability (R-SYM) no longer resolves.
+ */
+export function capabilityRefIdSetsFromRecords(
+  rows: readonly CapabilityRefRecord[],
+): CapabilityRefIdSets {
+  const mcp = new Set<string>();
+  const skill = new Set<string>();
+  const restriction = new Set<string>();
+  const setting = new Set<string>();
+
+  for (const r of rows) {
+    if (r.kind === "mcp") mcp.add(r.capabilityRefId);
+    else if (r.kind === "skill") skill.add(r.capabilityRefId);
+    else if (r.kind === "restriction") restriction.add(r.capabilityRefId);
+    else if (r.kind === "setting") setting.add(r.capabilityRefId);
+    else if (r.kind === "agent_definition" && r.source === "flow-package") {
+      mcp.add(r.capabilityRefId);
+      skill.add(r.capabilityRefId);
+      restriction.add(r.capabilityRefId);
+      setting.add(r.capabilityRefId);
+    }
+  }
+
+  return { mcp, skill, restriction, setting };
+}
+
+/**
+ * First node-settings capability ref absent from the registry, or null when
+ * every ref resolves. Shared by the manifest loader (validateNodeSettings,
+ * parse/install-time) and the launch precondition (POST /api/runs) so the two
+ * gates agree on what "unknown ref" means (R-CONTRACT). `settingsProfile` is an
+ * ai_coding-only field.
+ */
+export function firstUnknownCapabilityRef(
+  nodeType: "ai_coding" | "judge",
+  settings:
+    | {
+        mcps?: readonly string[];
+        skills?: readonly string[];
+        restrictions?: readonly string[];
+        settingsProfile?: string;
+      }
+    | undefined,
+  capabilityRefIds: CapabilityRefIdSets,
+): { kind: "mcp" | "skill" | "restriction" | "setting"; ref: string } | null {
+  for (const ref of settings?.mcps ?? []) {
+    if (!capabilityRefIds.mcp.has(ref)) return { kind: "mcp", ref };
+  }
+
+  for (const ref of settings?.skills ?? []) {
+    if (!capabilityRefIds.skill.has(ref)) return { kind: "skill", ref };
+  }
+
+  for (const ref of settings?.restrictions ?? []) {
+    if (!capabilityRefIds.restriction.has(ref)) {
+      return { kind: "restriction", ref };
+    }
+  }
+
+  if (nodeType === "ai_coding") {
+    const profile = settings?.settingsProfile;
+
+    if (profile !== undefined && !capabilityRefIds.setting.has(profile)) {
+      return { kind: "setting", ref: profile };
+    }
+  }
+
+  return null;
 }
 
 export async function loadPlatformMcpCapabilities(
@@ -268,11 +401,40 @@ export async function loadPlatformMcpCapabilities(
   return capabilities;
 }
 
+export type CapabilityRefIdsInput = {
+  mcp?: readonly string[] | ReadonlySet<string>;
+  skill?: readonly string[] | ReadonlySet<string>;
+  restriction?: readonly string[] | ReadonlySet<string>;
+  setting?: readonly string[] | ReadonlySet<string>;
+};
+
+export type CapabilityRefIdSets = {
+  mcp: ReadonlySet<string>;
+  skill: ReadonlySet<string>;
+  restriction: ReadonlySet<string>;
+  setting: ReadonlySet<string>;
+};
+
+function toCapabilityRefIdSets(
+  input: CapabilityRefIdsInput,
+): CapabilityRefIdSets {
+  const toSet = (v: readonly string[] | ReadonlySet<string> | undefined) =>
+    v instanceof Set ? v : new Set(v ?? []);
+
+  return {
+    mcp: toSet(input.mcp),
+    skill: toSet(input.skill),
+    restriction: toSet(input.restriction),
+    setting: toSet(input.setting),
+  };
+}
+
 export async function loadFlowManifest(
   flowYamlPath: string,
   opts?: {
     executorIds?: readonly string[] | ReadonlySet<string>;
     roleRefs?: readonly string[] | ReadonlySet<string>;
+    capabilityRefIds?: CapabilityRefIdsInput;
   },
 ): Promise<FlowYamlV1> {
   let raw: string;
@@ -317,7 +479,16 @@ export async function loadFlowManifest(
 
   // M11a graph manifest (`nodes[]`): validate the graph, then return.
   if (manifest.nodes) {
-    validateGraphManifest(manifest, manifest.nodes, flowYamlPath, opts);
+    const capabilityRefIdSets =
+      opts?.capabilityRefIds !== undefined
+        ? toCapabilityRefIdSets(opts.capabilityRefIds)
+        : undefined;
+
+    validateGraphManifest(manifest, manifest.nodes, flowYamlPath, {
+      executorIds: opts?.executorIds,
+      roleRefs: opts?.roleRefs,
+      capabilityRefIds: capabilityRefIdSets,
+    });
 
     return manifest;
   }
@@ -495,6 +666,7 @@ function validateGraphManifest(
   opts?: {
     executorIds?: readonly string[] | ReadonlySet<string>;
     roleRefs?: readonly string[] | ReadonlySet<string>;
+    capabilityRefIds?: CapabilityRefIdSets;
   },
 ): void {
   // Graph flows must declare a sufficient engine_min.
@@ -566,6 +738,8 @@ function validateGraphManifest(
     validateArtifacts(nodes, flowYamlPath);
   }
 
+  const capabilityRefIds = opts?.capabilityRefIds;
+
   for (const n of nodes) {
     validateNodeRoleRefs(n, flowYamlPath, roleRefs);
 
@@ -577,6 +751,7 @@ function validateGraphManifest(
         executorIds,
         roleRefs,
         enforcementTally,
+        capabilityRefIds,
       );
     }
 
@@ -780,7 +955,10 @@ function validateArtifacts(nodes: NodeDef[], flowYamlPath: string): void {
 // the typed settings shape per node type; this enforces the intra-manifest /
 // server-state cross-references zod cannot express: executor refs (against the
 // project's executors[] set when provided), human decisions (against the node's
-// declared transitions). Capability-registry ref resolution is M14 (carve b).
+// declared transitions), and capability-registry refs (M14 carve b:
+// settings.mcps/skills/restrictions/settingsProfile against the project
+// registry when capabilityRefIds is supplied; wired into the real load path
+// in M14 T2.4 once resolved capability_imports complete the registry).
 // Returns the first `settings.executors[]` ref id absent from the supplied
 // project executor ref-id set, or null when every ref resolves. Shared by the
 // manifest loader (parse-time, when a ref set is supplied) and the launch
@@ -805,6 +983,7 @@ function validateNodeSettings(
   executorIds: ReadonlySet<string> | undefined,
   roleRefs: ReadonlySet<string> | undefined,
   enforcementTally: Record<string, number>,
+  capabilityRefIds?: CapabilityRefIdSets,
 ): void {
   if (executorIds && n.type === "ai_coding") {
     const unknownRef = firstUnknownExecutorRef(
@@ -838,6 +1017,26 @@ function validateNodeSettings(
     n.settings?.enforcement
   ) {
     enforcementTally[n.id] = Object.keys(n.settings.enforcement).length;
+  }
+
+  // M14 carve-b: validate capability ref ids when the registry is provided.
+  // When capabilityRefIds is undefined (back-compat callers with no project
+  // context), skip the check entirely.
+  if (capabilityRefIds === undefined) return;
+
+  if (n.type === "ai_coding" || n.type === "judge") {
+    const unknown = firstUnknownCapabilityRef(
+      n.type,
+      n.settings,
+      capabilityRefIds,
+    );
+
+    if (unknown !== null) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${n.id}" unknown ${unknown.kind} capability ref "${unknown.ref}" in ${flowYamlPath}`,
+      );
+    }
   }
 }
 

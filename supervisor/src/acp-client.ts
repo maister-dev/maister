@@ -22,6 +22,7 @@ import {
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   SupervisorError,
+  type McpServerInput,
   type PermissionOptionDescriptor,
   type SessionEvent,
   type SessionRecord,
@@ -36,6 +37,7 @@ export type CreateAcpConnectionArgs = {
   emitter: EventEmitter;
   logger: Logger;
   pendingPermissions?: PendingPermissionRegistry;
+  mcpServers?: McpServerInput[];
 };
 
 export type CreateAcpConnectionResult = {
@@ -160,9 +162,16 @@ export async function createAcpConnection(
     "acp initialized",
   );
 
+  const acpMcpServers = (args.mcpServers ?? []).map((s) => ({
+    name: s.name,
+    command: s.command,
+    args: s.args,
+    env: s.envKeys.map((k) => ({ name: k, value: process.env[k] ?? "" })),
+  }));
+
   const newSessionResp = await connection.newSession({
     cwd: worktreePath,
-    mcpServers: [],
+    mcpServers: acpMcpServers as acp.McpServer[],
   });
 
   logger.info(

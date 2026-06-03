@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
-import { loadFlowManifest } from "@/lib/config";
+import { loadFlowManifest, type CapabilityRefIdsInput } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -70,6 +70,11 @@ export type InstallFlowPluginArgs = {
   flowId: string;
   workspaceRoot?: string;
   roleRefs?: readonly string[];
+  // Project capability registry (block + capability_imports), built by the
+  // register flow via buildCapabilityRefIds(cfg). When supplied, the manifest
+  // loader rejects node settings refs absent from it (M14 carve-b). Omitted by
+  // generic callers (enable/upgrade) that have no project context → no check.
+  capabilityRefIds?: CapabilityRefIdsInput;
   // FIXME(any): dual drizzle-orm peer-dep variants. Caller may pass
   // either a node-postgres or better-sqlite3 drizzle client.
   db?: any;
@@ -395,11 +400,15 @@ async function loadManifestOrThrow(
   flowYamlPath: string,
   source: string,
   version: string,
-  opts: { roleRefs?: readonly string[] } = {},
+  opts: {
+    roleRefs?: readonly string[];
+    capabilityRefIds?: CapabilityRefIdsInput;
+  } = {},
 ): Promise<FlowYamlV1> {
   try {
     return await loadFlowManifest(flowYamlPath, {
       roleRefs: opts.roleRefs,
+      capabilityRefIds: opts.capabilityRefIds,
     });
   } catch (err) {
     throw wrapInstallStage({
@@ -510,10 +519,11 @@ export async function installRevision(opts: {
   version: string;
   flowId: string;
   roleRefs?: readonly string[];
+  capabilityRefIds?: CapabilityRefIdsInput;
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstalledRevision> {
-  const { source, version, flowId, roleRefs, signal } = opts;
+  const { source, version, flowId, roleRefs, signal, capabilityRefIds } = opts;
   const db = opts.db ?? getDb();
 
   const sourceKind = await isLocalDirectorySource(source);
@@ -528,7 +538,7 @@ export async function installRevision(opts: {
       join(sourceKind.absPath, "flow.yaml"),
       source,
       version,
-      { roleRefs },
+      { roleRefs, capabilityRefIds },
     );
     resolvedRevision = manifestDigest(manifestForIntent).slice(
       0,
@@ -553,7 +563,7 @@ export async function installRevision(opts: {
         join(tmpDir, "flow.yaml"),
         source,
         version,
-        { roleRefs },
+        { roleRefs, capabilityRefIds },
       );
     } catch (err) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -590,7 +600,7 @@ export async function installRevision(opts: {
         join(target, "flow.yaml"),
         source,
         version,
-        { roleRefs },
+        { roleRefs, capabilityRefIds },
       );
       const setupRow: Array<{ setupStatus: InstalledRevision["setupStatus"] }> =
         await db
@@ -635,7 +645,7 @@ export async function installRevision(opts: {
       join(target, "flow.yaml"),
       source,
       version,
-      { roleRefs },
+      { roleRefs, capabilityRefIds },
     );
 
     // SECURITY (ADR-021): NEVER execute a package's setup.sh during install —
@@ -814,6 +824,7 @@ async function installFlowPluginImpl(
     roleRefs,
     db,
     signal,
+    capabilityRefIds: args.capabilityRefIds,
   });
 
   const trustStatus = resolveTrust(source);

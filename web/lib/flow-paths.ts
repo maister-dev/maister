@@ -100,6 +100,23 @@ export function systemCachePath(flowRefId: string, revision: string): string {
   return path.join(os.homedir(), ".maister", "flows", `${id}@${short}`);
 }
 
+// Produce the absolute path to the immutable per-revision capability bundle
+// in the system cache. Format: ~/.maister/capabilities/<capabilityRefId>@<sha[:12]>/.
+// The revision MUST be a 40-hex git SHA. The same (capabilityRefId, revision)
+// pair always resolves to the same path — re-installs at a new commit land at a
+// different directory, so materializaton plans pinned to the old revision keep
+// reading the old bytes.
+export function systemCapabilityCachePath(
+  capabilityRefId: string,
+  revision: string,
+): string {
+  const id = validate(flowIdSchema, capabilityRefId, "capabilityRefId");
+  const rev = validate(flowRevisionSchema, revision, "revision");
+  const short = rev.slice(0, REVISION_SHORT_LEN);
+
+  return path.join(os.homedir(), ".maister", "capabilities", `${id}@${short}`);
+}
+
 export function projectFlowSymlinkPath(
   workspaceRoot: string,
   projectSlug: string,

@@ -9,6 +9,11 @@ import { AssignmentActions } from "@/components/board/assignment-actions";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
 import { type EvidenceGraphLabels } from "@/components/board/evidence-graph";
 import {
+  CapabilityProfilePanel,
+  type CapabilityProfileNodeView,
+  type CapabilityProfilePanelLabels,
+} from "@/components/board/panels/capability-profile-panel";
+import {
   FlowSettingsPanel,
   type FlowSettingsPanelLabels,
 } from "@/components/board/panels/flow-settings-panel";
@@ -23,6 +28,7 @@ import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import {
+  getRunCapabilityProfiles,
   getRunDetail,
   getRunSettings,
   getRunTimeline,
@@ -76,6 +82,7 @@ export default async function RunDetailPage({
 
   const timeline = await getRunTimeline(runId);
   const settings = await getRunSettings(runId);
+  const capabilityProfiles = await getRunCapabilityProfiles(runId);
   const evidence = await buildEvidenceGraph(runId);
   const tEvidence = await getTranslations("evidence");
 
@@ -123,6 +130,38 @@ export default async function RunDetailPage({
     refusalReason: t("settingsRefusalReason"),
     classLabel: (cls) => settingsClassLabel[cls],
   };
+
+  const capabilityLabels: CapabilityProfilePanelLabels = {
+    title: t("capabilityTitle"),
+    subtitle: t("capabilitySubtitle"),
+    digestLabel: t("capabilityDigest"),
+    revisionLabel: t("capabilityRevision"),
+    enforcedLabel: t("capabilityEnforced"),
+    instructedLabel: t("capabilityInstructed"),
+    refusedLabel: t("capabilityRefused"),
+    cleanupFailedLabel: t("capabilityCleanupFailed"),
+    trustThirdParty: t("capabilityThirdParty"),
+    noProfiles: t("capabilityNoProfiles"),
+    // Capability classes are already human-readable ref ids — identity label.
+    classLabel: (c) => c,
+  };
+
+  const capabilityNodes: CapabilityProfileNodeView[] =
+    capabilityProfiles?.nodes.map((n) => ({
+      nodeId: n.nodeId,
+      nodeType: n.nodeType,
+      profileDigest: n.plan.profileDigest,
+      resolvedRevisions: n.plan.resolvedRevisions.map((rev) => ({
+        refId: rev.refId,
+        kind: rev.kind,
+        sha: rev.sha,
+        trustStatus: rev.trustStatus,
+      })),
+      enforcedClasses: n.plan.enforcedClasses,
+      instructedClasses: n.plan.instructedClasses,
+      refusedClasses: n.plan.refusedClasses,
+      cleanupFailed: n.plan.cleanup.status === "failed",
+    })) ?? [];
 
   const canClaim =
     detail.status === "NeedsInput" &&
@@ -337,6 +376,13 @@ export default async function RunDetailPage({
           labels={settingsLabels}
           nodes={settings.nodes}
           refusalReason={settings.refusalReason}
+        />
+      ) : null}
+
+      {capabilityProfiles ? (
+        <CapabilityProfilePanel
+          labels={capabilityLabels}
+          nodes={capabilityNodes}
         />
       ) : null}
     </div>

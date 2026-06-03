@@ -10,10 +10,12 @@ import {
   runs as runsTable,
 } from "@/lib/db/schema";
 import {
+  assertSessionProfileConsistent,
   runAgentStep,
   type RunAgentStepCtx,
   type SupervisorApi,
 } from "@/lib/flows/runner-agent";
+import { isMaisterError } from "@/lib/errors";
 
 const baseFlowCtx: FlowContext = {
   task: { id: "t1", title: "T", prompt: "go", attemptNumber: 1 },
@@ -518,5 +520,191 @@ describe("runner-agent — session.exited.reason handling (M8 Codex fix #1)", ()
 
     expect(result.ok).toBe(false);
     expect(result.errorCode).toBe("STEP_CHECKPOINTED");
+  });
+});
+
+// M14 T4.5: long-living session profile-consistency guard (AC #5/#9).
+// A session that already ran one resolved capability profile must not
+// silently serve a node with a DIFFERENT resolved profile. The guard is
+// an allow-list: reuse permitted iff the digests are equal (or either is
+// undefined). The pure helper encapsulates that allow-list; the guard in
+// runSlashInExisting calls it.
+describe("runner-agent — assertSessionProfileConsistent (M14 T4.5 pure guard)", () => {
+  it("equal digests → does NOT throw", () => {
+    expect(() =>
+      assertSessionProfileConsistent("digest-A", "digest-A"),
+    ).not.toThrow();
+  });
+
+  it("different digests → throws MaisterError code CONFIG", () => {
+    let caught: unknown;
+
+    try {
+      assertSessionProfileConsistent("digest-A", "digest-B");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(isMaisterError(caught)).toBe(true);
+    expect((caught as { code?: string }).code).toBe("CONFIG");
+  });
+
+  it("existing undefined, incoming defined → does NOT throw (first materialized node)", () => {
+    expect(() =>
+      assertSessionProfileConsistent(undefined, "digest-A"),
+    ).not.toThrow();
+  });
+
+  it("existing defined, incoming undefined → does NOT throw (non-capability node reuse)", () => {
+    expect(() =>
+      assertSessionProfileConsistent("digest-A", undefined),
+    ).not.toThrow();
+  });
+
+  it("both undefined → does NOT throw", () => {
+    expect(() =>
+      assertSessionProfileConsistent(undefined, undefined),
+    ).not.toThrow();
+  });
+});
+
+describe("runner-agent — runSlashInExisting profile-consistency guard (M14 T4.5 wiring)", () => {
+  it("reuse with matching digest → proceeds (no throw)", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [update(1, "reused"), exited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const ctx = makeCtx(db, {
+      sessionState: {
+        currentSessionId: "sup-session-1",
+        lastSeenMonotonicId: 0,
+        profileDigest: "digest-A",
+      },
+      profileDigest: "digest-A",
+    });
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "slash-in-existing", prompt: "go" },
+      ctx,
+      api,
+    );
+
+    // Session is reused, driven to completion — no createSession on reuse.
+    expect(api.createSession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.errorCode).toBeUndefined();
+  });
+
+  it("reuse with mismatched digest → throws MaisterError code CONFIG", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [update(1, "should-not-run"), exited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const ctx = makeCtx(db, {
+      sessionState: {
+        currentSessionId: "sup-session-1",
+        lastSeenMonotonicId: 0,
+        profileDigest: "digest-A",
+      },
+      profileDigest: "digest-B",
+    });
+
+    let caught: unknown;
+
+    try {
+      await runAgentStep(
+        { id: "plan", type: "agent", mode: "slash-in-existing", prompt: "go" },
+        ctx,
+        api,
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(isMaisterError(caught)).toBe(true);
+    expect((caught as { code?: string }).code).toBe("CONFIG");
+    // Mismatch must throw BEFORE any session I/O on the reused session.
+    expect(api.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("fresh seed records the incoming digest on the session state", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [update(1, "seeded"), exited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    const ctx = makeCtx(db, {
+      sessionState: {
+        currentSessionId: null,
+        lastSeenMonotonicId: 0,
+      },
+      profileDigest: "digest-X",
+    });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "slash-in-existing", prompt: "go" },
+      ctx,
+      api,
+    );
+
+    expect((ctx.sessionState as { profileDigest?: string }).profileDigest).toBe(
+      "digest-X",
+    );
+  });
+
+  it("adopts the first MATERIALIZED digest on a reuse of a profile-less session, then rejects a different one", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({
+      events: [update(1, "reused"), exited(2)],
+      promptStopReason: "end_turn",
+    });
+
+    // A long-living session seeded by a profile-LESS node (stored digest undefined).
+    const ctx = makeCtx(db, {
+      sessionState: {
+        currentSessionId: "sup-session-1",
+        lastSeenMonotonicId: 0,
+        profileDigest: undefined,
+      },
+      profileDigest: "digest-A",
+    });
+
+    // First MATERIALIZED node reuses the session — permitted (stored undefined),
+    // and the session must ADOPT digest-A so the pin tracks first-materialized,
+    // not first-seed.
+    const first = await runAgentStep(
+      { id: "n1", type: "agent", mode: "slash-in-existing", prompt: "go" },
+      ctx,
+      api,
+    );
+
+    expect(first.ok).toBe(true);
+    expect((ctx.sessionState as { profileDigest?: string }).profileDigest).toBe(
+      "digest-A",
+    );
+
+    // A later node with a DIFFERENT profile now mismatches the adopted digest
+    // (without the adopt, it would compare against undefined and slip through).
+    ctx.profileDigest = "digest-B";
+
+    let caught: unknown;
+
+    try {
+      await runAgentStep(
+        { id: "n2", type: "agent", mode: "slash-in-existing", prompt: "go" },
+        ctx,
+        api,
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(isMaisterError(caught)).toBe(true);
+    expect((caught as { code?: string }).code).toBe("CONFIG");
   });
 });

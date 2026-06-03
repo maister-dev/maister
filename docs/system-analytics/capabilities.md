@@ -52,7 +52,7 @@ sources, cross-project capability promotion, codex enforced mapping
   `manifestDigest`, `manifest` (jsonb), `installedPath`, `setupStatus`,
   `packageStatus`, `trustStatus`, `createdAt`/`updatedAt`. Records a git-pinned
   capability package fetched into `~/.maister/capabilities/<id>@<sha[:12]>/`.
-  Migration `0018`. See [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
+  Migration `0019`. See [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
 - **Resolved capability profile** (Designed (M14)). The in-memory output of
   `resolveCapabilityProfile` — a deterministic, agent-support-gated selection of
   per-kind capabilities plus a `profileDigest` (stable across runs, changes when
@@ -68,7 +68,7 @@ sources, cross-project capability promotion, codex enforced mapping
   fully; codex is `instructed`-only (profile/instructions handoff, no enforced
   artifacts) this milestone.
 - **Materialization plan** (`node_attempts.materialization_plan` jsonb, **NEW** —
-  Designed (M14), migration `0018`). The ledger record of what was resolved and
+  Designed (M14), migration `0019`). The ledger record of what was resolved and
   materialized for one node attempt (AD-1):
   `{ profileDigest, resolvedRevisions:[{refId,kind,sha}], materializedFiles:[paths],
   enforcedClasses, instructedClasses, refusedClasses, cleanup:{status,error?,at} }`.

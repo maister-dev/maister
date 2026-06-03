@@ -106,7 +106,12 @@ local dir**. With a `repoUrl`, MAIster clones into `MAISTER_REPOS_ROOT`
 init`-s it if it is not yet a repo). Run worktrees live under
 `MAISTER_WORKTREES_ROOT` (default `~/.maister/worktrees`; the deprecated
 `MAISTER_WORKTREE_ROOT` is accepted as a fallback). Both roots are surfaced
-read-only on the admin `/settings` page. MAIster's git work (clone, worktree
+read-only on the admin `/settings` page. Installed Flow packages and git-pinned
+capability imports are cached system-wide under `~/.maister/flows/` and
+`~/.maister/capabilities/` (content-addressed by resolved git SHA); on the
+host-run deployment these live on the operator's filesystem (no container
+mount). Auto-trust policy for capability imports is set via
+`MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` (see `configuration.md`). MAIster's git work (clone, worktree
 create/remove, flow-finish merge) is **local and provider-neutral** — it never
 contacts the provider beyond the clone/fetch. GitHub, GitLab, Gitea, and
 GitVerse are all just git.

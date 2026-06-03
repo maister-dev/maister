@@ -212,6 +212,9 @@ beforeEach(async () => {
       "/tmp/maister-worktrees/demo/run/.maister/capabilities/run/profile.json",
     instructionsPath:
       "/tmp/maister-worktrees/demo/run/.maister/capabilities/run/instructions.md",
+    settingsLocalPath: null,
+    mcpServers: [],
+    materializedFiles: [],
     adapterLaunch: {
       env: { MAISTER_CAPABILITY_PROFILE_PATH: "/profile.json" },
     },

@@ -113,6 +113,7 @@ erDiagram
         text returned_commits "M11b 0011 raw git log base..branch"
         text returned_diff "M11b 0011 raw git diff base..branch"
         jsonb enforcement_snapshot "M11c 0013 append-only verdict audit"
+        jsonb materialization_plan "M14 0019 Designed: resolved profile snapshot + cleanup substate"
         text acp_session_id
         text stdout "truncated to 1 MiB"
         jsonb vars "DEFAULT {}"
@@ -341,8 +342,20 @@ only for explicit HITL or permission waits.
   edges, assignments, external operation events — are still future work and not
   drawn until their migrations exist.
 
+> **(M14 — Designed, migration `0018`, additive.)** `NODE_ATTEMPTS` gains
+> `materialization_plan` (jsonb, nullable) — the resolved capability profile
+> snapshot written once at the time the node transitions to `Running`. The
+> column holds `{ profileDigest, resolvedRevisions, materializedFiles,
+> enforcedClasses, instructedClasses, refusedClasses, cleanup }`. Write-once
+> (mirrors `enforcement_snapshot`); the `cleanup` sub-object carries a
+> recoverable `status: pending|done|failed` + optional `error` + `at` timestamp.
+> See [`capabilities-domain.md`](capabilities-domain.md) for the full
+> jsonb shape and [`../database-schema.md`](../database-schema.md#node_attempts)
+> for the narrative. ADR-040 in [`../decisions.md`](../decisions.md).
+
 ## Linked artifacts
 
 - Process flows: [`../system-analytics/tasks.md`](../system-analytics/tasks.md),
   [`../system-analytics/runs.md`](../system-analytics/runs.md).
+- Capabilities: [`capabilities-domain.md`](capabilities-domain.md).
 - Source: `web/lib/db/schema.ts`.

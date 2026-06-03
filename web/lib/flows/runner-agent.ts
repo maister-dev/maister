@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ScratchAdapterLaunch } from "@/lib/db/schema";
+import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { GuardConfig } from "./guards";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
@@ -17,6 +19,7 @@ import {
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import { hitlRequests, runs } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   cancelPermission,
@@ -66,6 +69,10 @@ export type RunAgentStepCtx = {
   };
   context: FlowContext;
   sessionState: AcpSessionState;
+  capabilityProfilePath?: string;
+  adapterLaunch?: ScratchAdapterLaunch;
+  mcpServers?: AgentMcpServer[];
+  profileDigest?: string;
   db?: DbClientLike;
 };
 
@@ -86,6 +93,28 @@ const defaultSupervisor: SupervisorApi = {
   cancelPermission,
   deliverPermission,
 };
+
+// M14 T4.5: a long-living (slash-in-existing) session may not silently serve a
+// second AI node whose resolved capability profile differs from the one the
+// session was materialized with. Allow-list: reuse permitted iff the digests
+// are equal, or either side is undefined (a non-capability node, or the first
+// materialized node seeding a fresh session). Mismatch ⇒ CONFIG: the Flow author
+// must declare a session boundary.
+export function assertSessionProfileConsistent(
+  existingDigest: string | undefined,
+  incomingDigest: string | undefined,
+): void {
+  if (
+    existingDigest !== undefined &&
+    incomingDigest !== undefined &&
+    existingDigest !== incomingDigest
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `capability profile changed mid-session (session digest ${existingDigest} != node digest ${incomingDigest}); a long-living session requires a declared session boundary`,
+    );
+  }
+}
 
 function synthesizePermissionPrompt(toolCall: unknown): string {
   const tc = (toolCall ?? {}) as { title?: string };
@@ -492,6 +521,9 @@ async function runNewSession(
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
       executor: executorToSupervisorInput(ctx.executor),
+      capabilityProfilePath: ctx.capabilityProfilePath,
+      adapterLaunch: ctx.adapterLaunch,
+      mcpServers: ctx.mcpServers,
     });
 
     consumer = startEventConsumer(session.sessionId, api, {
@@ -605,9 +637,19 @@ async function runSlashInExisting(
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
       executor: executorToSupervisorInput(ctx.executor),
+      capabilityProfilePath: ctx.capabilityProfilePath,
+      adapterLaunch: ctx.adapterLaunch,
+      mcpServers: ctx.mcpServers,
     });
 
     ctx.sessionState.currentSessionId = session.sessionId;
+    // First-MATERIALIZED pin: the session is bound to the first capability
+    // profile digest it actually carries. A profile-LESS first node seeds this
+    // `undefined`; the reuse branch below then ADOPTS the first reuse that
+    // carries a digest (the `??=`), so the consistency guard tracks
+    // first-materialized rather than first-seed. (Dormant today — the graph
+    // runner forces new-session, so reuse is unreachable; M14 T4.5.)
+    ctx.sessionState.profileDigest = ctx.profileDigest;
     log.info(
       {
         runId: ctx.runId,
@@ -617,6 +659,16 @@ async function runSlashInExisting(
       },
       "slash-in-existing primary session seeded",
     );
+  } else {
+    assertSessionProfileConsistent(
+      ctx.sessionState.profileDigest,
+      ctx.profileDigest,
+    );
+    // Adopt the first-materialized digest: once a permitted reuse arrives with a
+    // defined digest on a session that was seeded profile-less, pin to it so a
+    // LATER node with a different profile is rejected instead of comparing
+    // against `undefined` and silently slipping through (M14 T4.5).
+    ctx.sessionState.profileDigest ??= ctx.profileDigest;
   }
 
   const sessionId = ctx.sessionState.currentSessionId;

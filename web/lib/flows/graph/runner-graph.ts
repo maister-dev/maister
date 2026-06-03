@@ -1,6 +1,12 @@
 import "server-only";
 
-import type { Run as RunRow } from "@/lib/db/schema";
+import type {
+  MaterializationPlan,
+  Run as RunRow,
+  ScratchAdapterLaunch,
+} from "@/lib/db/schema";
+import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
+import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { AcpSessionState, FlowContext, StepResult } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
@@ -31,6 +37,7 @@ import {
   markNodeRunning,
   markNodeSucceeded,
   setEnforcementSnapshot,
+  setMaterializationPlan,
 } from "./ledger";
 import {
   failArtifact,
@@ -47,6 +54,12 @@ import {
   capabilityBearingSettings,
   evaluateNodeEnforcement,
 } from "@/lib/flows/enforcement";
+import {
+  loadSelectableCapabilities,
+  resolveCapabilityProfile,
+} from "@/lib/capabilities/resolver";
+import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
+import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
 import { atomicWriteJson } from "@/lib/atomic";
 import {
   createHitlAssignmentForRun,
@@ -291,6 +304,10 @@ async function executeNodeAction(
     worktreePath: string;
     sessionState: AcpSessionState;
     supervisorApi?: SupervisorApi;
+    capabilityProfilePath?: string;
+    adapterLaunch?: ScratchAdapterLaunch;
+    mcpServers?: AgentMcpServer[];
+    profileDigest?: string;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -339,6 +356,10 @@ async function executeNodeAction(
             router: loaded.executor.router ?? undefined,
           },
           sessionState: ctx.sessionState,
+          capabilityProfilePath: ctx.capabilityProfilePath,
+          adapterLaunch: ctx.adapterLaunch,
+          mcpServers: ctx.mcpServers,
+          profileDigest: ctx.profileDigest,
         },
         ctx.supervisorApi,
       );
@@ -389,6 +410,104 @@ export function downstreamOf(
   visited.delete(startNodeId);
 
   return [...visited];
+}
+
+// M14 T4.1: resolve + materialize a capability profile for a capability-declaring
+// ai_coding/judge node. Returns undefined (no materialization, current behavior)
+// when the node declares no capability-bearing settings. Writes NO secrets — mcp
+// creds resolve from the host env via `${NAME}` placeholders the materializer
+// emits (R-SECRET). Does NOT write the materialization ledger (that is T4.2).
+async function materializeNodeCapabilities(
+  node: CompiledNode,
+  loaded: LoadedRun,
+  worktreePath: string,
+  nodeAttemptId: string,
+  catalog: CapabilityCatalogRecord[],
+  logger: pino.Logger,
+): Promise<
+  | {
+      capabilityProfilePath: string;
+      adapterLaunch: ScratchAdapterLaunch;
+      mcpServers: AgentMcpServer[];
+      plan: MaterializationPlan;
+    }
+  | undefined
+> {
+  const settings = capabilityBearingSettings(node.nodeType, node.settings);
+
+  if (!settings) return undefined;
+
+  const agent = loaded.executor.agent;
+  const declares = !!(
+    settings.mcps?.length ||
+    settings.skills?.length ||
+    settings.restrictions?.length ||
+    settings.tools?.[agent]?.length ||
+    settings.permissionMode
+  );
+
+  if (!declares) return undefined;
+
+  const profile = resolveCapabilityProfile({
+    projectId: loaded.run.projectId,
+    executorAgent: agent,
+    selectedMcpIds: settings.mcps,
+    selectedSkillIds: settings.skills,
+    selectedRestrictionIds: settings.restrictions,
+    planMode: "off",
+    catalog,
+  });
+
+  const m = await materializeCapabilityProfile({
+    runId: loaded.run.id,
+    worktreePath,
+    profile,
+    nodeAttemptId,
+    tools: settings.tools?.[agent],
+    permissionMode: settings.permissionMode,
+    executor: {
+      executorRefId: loaded.executor.id,
+      agent,
+      model: loaded.executor.model,
+      router: loaded.executor.router ?? null,
+    },
+  });
+
+  const plan: MaterializationPlan = {
+    profileDigest: profile.profileDigest,
+    resolvedRevisions: profile.supported.map((e) => ({
+      refId: e.capabilityRefId,
+      kind: e.kind,
+      sha: e.revision ?? "",
+    })),
+    materializedFiles: m.materializedFiles,
+    enforcedClasses: profile.enforced.map((e) => e.capabilityRefId),
+    // `profile.instructed` includes downgraded (unsupported, silently-dropped)
+    // caps; source from supported-but-not-enforced so the immutable plan never
+    // lists a dropped capability as instructed (symmetric with enforcedClasses,
+    // consistent with resolvedRevisions which uses profile.supported).
+    instructedClasses: profile.supported
+      .filter((e) => e.enforceability !== "enforced")
+      .map((e) => e.capabilityRefId),
+    refusedClasses: profile.refused.map((e) => e.capabilityRefId),
+    cleanup: { status: "pending" },
+  };
+
+  logger.info(
+    {
+      nodeId: node.id,
+      profileDigest: profile.profileDigest,
+      matPath: m.profilePath,
+    },
+    "[runner.graph] node materialized",
+  );
+
+  return {
+    capabilityProfilePath: m.profilePath,
+    adapterLaunch: m.adapterLaunch,
+    mcpServers: m.mcpServers,
+    plan,
+  };
 }
 
 // Graph runner (M11a). Walks the compiled FlowGraph writing the append-only
@@ -636,6 +755,11 @@ export async function runGraph(
     lastSeenMonotonicId: 0,
   };
 
+  // M14 T4.1: the selectable-capability catalog is loaded ONCE per run and
+  // reused for every node's resolve. T4.4 will persist an immutable snapshot;
+  // a single per-run load is correct and forward-compatible until then.
+  const catalog = await loadSelectableCapabilities(loaded.run.projectId, db);
+
   // On a rework jump, the reviewer's comments are injected into the rework
   // target's next-attempt context under the node's `commentsVar`; consumed by
   // the immediately-following node, then cleared.
@@ -831,6 +955,54 @@ export async function runGraph(
         if (failed) break;
       }
 
+      // M14 T4.1: for capability-declaring ai_coding/judge nodes, resolve +
+      // materialize the per-node capability profile and hand its path +
+      // adapterLaunch to executeNodeAction → createSession. Settings-less nodes
+      // get undefined (no materialization). A resolve/materialize throw is
+      // handled here like the enforcement gate above (markNodeFailed + break) so
+      // the in-flight attempt never stays stale at Running on the outer catch.
+      let materialized:
+        | {
+            capabilityProfilePath: string;
+            adapterLaunch: ScratchAdapterLaunch;
+            mcpServers: AgentMcpServer[];
+            plan: MaterializationPlan;
+          }
+        | undefined;
+
+      if (node.nodeType === "ai_coding" || node.nodeType === "judge") {
+        try {
+          materialized = await materializeNodeCapabilities(
+            node,
+            loaded,
+            worktreePath,
+            nodeAttemptId,
+            catalog,
+            log2,
+          );
+
+          // T4.2: persist the run-start materialization plan (write-once).
+          if (materialized) {
+            await setMaterializationPlan(nodeAttemptId, materialized.plan, db);
+          }
+        } catch (err) {
+          const e = isMaisterError(err)
+            ? err
+            : new MaisterError("CRASH", asError(err).message, {
+                cause: asError(err),
+              });
+
+          log2.warn(
+            { nodeId: node.id, code: e.code },
+            "node capability materialization failed — Failed (no agent spawned)",
+          );
+          await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
+          failed = true;
+          runErrorCode = e.code;
+          break;
+        }
+      }
+
       let result: NodeResult;
 
       try {
@@ -839,6 +1011,10 @@ export async function runGraph(
           worktreePath,
           sessionState,
           supervisorApi: opts.supervisorApi,
+          capabilityProfilePath: materialized?.capabilityProfilePath,
+          adapterLaunch: materialized?.adapterLaunch,
+          mcpServers: materialized?.mcpServers,
+          profileDigest: materialized?.plan.profileDigest,
           db,
         });
       } catch (err) {
@@ -1386,6 +1562,15 @@ export async function runGraph(
           },
           db,
         );
+
+        if (materialized) {
+          await cleanupNodeMaterialization({
+            nodeAttemptId,
+            runId: loaded.run.id,
+            worktreePath,
+            db,
+          });
+        }
       }
 
       const next = resolveTransition(node, outcome);

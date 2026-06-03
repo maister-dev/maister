@@ -54,7 +54,10 @@ const seedConfig = {
     restrictions: [],
     settings: [],
     tools: [],
+    agent_definitions: [],
+    env_profiles: [],
   },
+  capability_imports: [],
 };
 
 vi.mock("@/lib/authz", () => ({
@@ -68,6 +71,12 @@ vi.mock("@/lib/authz", () => ({
 vi.mock("@/lib/config", () => ({
   loadPlatformMcpCapabilities: vi.fn(async () => []),
   loadProjectConfig: vi.fn(async () => seedConfig),
+  buildCapabilityRefIds: vi.fn(() => ({
+    mcp: new Set<string>(),
+    skill: new Set<string>(),
+    restriction: new Set<string>(),
+    setting: new Set<string>(),
+  })),
 }));
 
 vi.mock("@/lib/flows", () => ({

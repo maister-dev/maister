@@ -1,14 +1,37 @@
 # Flow node settings & the enforcement boundary (M11c)
 
-> **Status:** Implemented (M11c subset). The typed settings schema, node-level
-> shape validation, the launch-time **refusal boundary**, the
-> `enforcement_snapshot` audit record, the time-limit watchdog, and the
-> run-detail visibility panel are **Implemented** in M11c. Capability-reference
-> resolution against a registry, agent-aware mapping, and per-session
-> materialization are **M14 (Designed)** — see
-> [ADR-031](decisions.md) / [ADR-032](decisions.md). This file FREEZES the
-> `ENFORCEABILITY_BY_AGENT` table and the `evaluateNodeEnforcement` truth table
-> as a code-shaped spec; the M11c unit tests encode both verbatim.
+> **Status:** Implemented (M11c subset). M14 materialization **Implemented through
+> Phase 4.5** (delivery mechanism built + CI-verified); the enforcement flip is
+> **deferred**.
+>
+> The typed settings schema, node-level shape validation, the launch-time
+> **refusal boundary**, the `enforcement_snapshot` audit record, the time-limit
+> watchdog, and the run-detail visibility panel are **Implemented** in M11c.
+> Capability-reference resolution against a registry (carve-b), agent-aware
+> mapping, and per-session native materialization are **Implemented (M14)** — see
+> ADR-040 / ADR-041 / ADR-042 in [`decisions.md`](decisions.md). Capability config
+> is now genuinely **delivered** to the claude agent via
+> `<worktree>/.claude/settings.local.json` (`tools` → `permissions.allow`,
+> `permissionMode` → `permissions.defaultMode`) and ACP `newSession`
+> `params.mcpServers` (env resolved supervisor-side); the ADR-040 CLI-flag channel
+> was disproven against `claude-agent-acp@0.37.0` and corrected — see ADR-043.
+> Per-class delivery: `tools`, `permissionMode`, `mcps` are **delivered**
+> (mechanism CI-verified); `skills`, `restrictions`, `workspaceAccess` are **not
+> emitted this milestone** (stay `instructed`, Phase 2); all `codex` classes stay
+> `instructed` (Phase 2).
+>
+> **M14 enforcement note:** delivery is built, but the `instructed → enforced`
+> flip is **deferred** — no cell is flipped this milestone. The flip is gated on a
+> **live-adapter spike that cannot run in CI** (see ADR-041), so
+> `ENFORCEABILITY_BY_AGENT` stays **all `instructed`**. The run-detail UI labels
+> dispositions as "Enforced (plan)" / "Instructed (plan)", NOT live verdicts. Do
+> NOT flip `ENFORCEABILITY_BY_AGENT` cells in this file — only a passing live spike
+> (claude-first; codex stays `instructed`) may flip a cell, and the
+> `permissionMode` cell MUST be re-run live.
+>
+> This file FREEZES the `ENFORCEABILITY_BY_AGENT` table and the
+> `evaluateNodeEnforcement` truth table as a code-shaped spec; the M11c unit
+> tests encode both verbatim.
 
 ## Purpose
 
@@ -62,11 +85,16 @@ stateDiagram-v2
     Refused --> [*]: verdict = refused -> launch throws
 ```
 
-## FROZEN SPEC — `ENFORCEABILITY_BY_AGENT` (M11c seed)
+## FROZEN SPEC — `ENFORCEABILITY_BY_AGENT` (still all `instructed`; flip deferred pending live spike)
 
-The M11c table is **all `instructed`** (no `enforced` cell). The Phase-3 RED
-tests assert this table value-for-value. M14 flips cells to `enforced` as
-materialization lands; every cell carries a `TODO(M14)` in code.
+The table is **all `instructed`** (no `enforced` cell) and remains so through M14:
+the delivery mechanism is built and CI-verified (capability config is materialized
+and delivered via settings.local.json + ACP `mcpServers`, see ADR-043), but the
+`instructed → enforced` flip is **deferred** — it is gated on a live-adapter spike
+that cannot run in CI (see ADR-041). A cell flips to `enforced` only after a
+per-class/per-agent live spike proves enforcement. Every cell carries a `TODO(M14)`
+in code. **Codex stays `instructed` for all six classes in M14** (Q2 decision, see
+ADR-041).
 
 | agent → class | `mcps` | `tools` | `skills` | `restrictions` | `permissionMode` | `workspaceAccess` |
 | ------------- | ------ | ------- | -------- | -------------- | ---------------- | ----------------- |
@@ -101,12 +129,17 @@ export const ENFORCEABILITY_BY_AGENT: Record<
 
 ### Spike 0.10 verdict (permissionMode)
 
-**Verdict: NOT verified in M11c — no live adapter.** `claude-agent-acp@0.37.0`
-honoring `--permission-mode deny|ask` end-to-end was not verifiable without a
-live adapter, so the `permissionMode`-on-`claude` cell stays `instructed`. A
-wrongly-`enforced` cell would let a `strict permissionMode` declaration PASS the
-launch gate while nothing enforces it — the exact silent escape hatch criterion
-#6 forbids. Re-run the spike in M14 before flipping the cell.
+**Verdict: still not verified — flip deferred pending a live-adapter spike.** The
+M11c `--permission-mode` CLI mechanism was disproven against
+`claude-agent-acp@0.37.0` (the adapter ignores those flags); `permissionMode` is
+now delivered via `<worktree>/.claude/settings.local.json` `permissions.defaultMode`
+(`ask→default`/`allow→bypassPermissions`/`deny→plan`, see ADR-043). Whether the
+delivered value actually CONSTRAINS the agent end-to-end remains unverified without
+a live adapter (it cannot run in CI, see ADR-041), so the
+`permissionMode`-on-`claude` cell stays `instructed`. A wrongly-`enforced` cell
+would let a `strict permissionMode` declaration PASS the launch gate while nothing
+enforces it — the exact silent escape hatch criterion #6 forbids. Re-run the live
+spike before flipping the cell.
 
 ## FROZEN SPEC — `evaluateNodeEnforcement` truth table
 

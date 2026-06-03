@@ -173,6 +173,91 @@ describe("maisterYamlV2Schema", () => {
   });
 });
 
+describe("maisterYamlV2Schema — capability_imports[] (M14 T2.4)", () => {
+  it("defaults capability_imports to an empty array when absent", () => {
+    const parsed = maisterYamlV2Schema.parse(goldenMaisterYaml);
+
+    expect(parsed.capability_imports).toEqual([]);
+  });
+
+  it("parses a valid capability_imports entry", () => {
+    const parsed = maisterYamlV2Schema.parse({
+      ...goldenMaisterYaml,
+      capability_imports: [
+        {
+          id: "aif-skills",
+          source: "github.com/org/aif-skills",
+          version: "v1.0.0",
+        },
+      ],
+    });
+
+    expect(parsed.capability_imports[0]).toMatchObject({
+      id: "aif-skills",
+      source: "github.com/org/aif-skills",
+      version: "v1.0.0",
+    });
+  });
+
+  it("accepts the optional trust: explicit flag", () => {
+    const parsed = maisterYamlV2Schema.parse({
+      ...goldenMaisterYaml,
+      capability_imports: [
+        {
+          id: "custom-mcps",
+          source: "github.com/org/custom-mcps",
+          version: "v2.1.0",
+          trust: "explicit",
+        },
+      ],
+    });
+
+    expect(parsed.capability_imports[0].trust).toBe("explicit");
+  });
+
+  it("rejects an import id with a path-traversal segment", () => {
+    expect(() =>
+      maisterYamlV2Schema.parse({
+        ...goldenMaisterYaml,
+        capability_imports: [
+          { id: "../evil", source: "github.com/org/x", version: "v1.0.0" },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an import version with a path-traversal segment", () => {
+    expect(() =>
+      maisterYamlV2Schema.parse({
+        ...goldenMaisterYaml,
+        capability_imports: [
+          { id: "aif-skills", source: "github.com/org/x", version: ".." },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a missing source", () => {
+    expect(() =>
+      maisterYamlV2Schema.parse({
+        ...goldenMaisterYaml,
+        capability_imports: [{ id: "aif-skills", version: "v1.0.0" }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown trust value", () => {
+    expect(() =>
+      maisterYamlV2Schema.parse({
+        ...goldenMaisterYaml,
+        capability_imports: [
+          { id: "aif-skills", source: "g", version: "v1.0.0", trust: "always" },
+        ],
+      }),
+    ).toThrow();
+  });
+});
+
 describe("maisterCapabilitiesSchema", () => {
   it("defaults every capability group to an empty list", () => {
     expect(maisterCapabilitiesSchema.parse({})).toEqual({
@@ -182,6 +267,8 @@ describe("maisterCapabilitiesSchema", () => {
       restrictions: [],
       settings: [],
       tools: [],
+      agent_definitions: [],
+      env_profiles: [],
     });
   });
 });

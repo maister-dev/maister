@@ -1,5 +1,25 @@
 import { z } from "zod";
 
+// Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
+// (and its transitive MaisterError dep) into config.schema.ts, which must remain
+// importable in any context (tests, client-adjacent shared modules).
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+const notCapDotRef = (s: string): boolean =>
+  s !== "." && s !== ".." && !s.includes("..");
+
+// Safe identifier for capability ref ids — mirrors flowIdSchema from flow-paths.ts
+// but with a wider max (128 chars) to accommodate longer capability names.
+export const capabilityRefIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(SAFE_PATH_SEGMENT, "capabilityRefId must match /^[A-Za-z0-9._-]+$/")
+  .refine(
+    notCapDotRef,
+    "capabilityRefId must not be '.', '..' or contain '..'",
+  );
+
 export const executorSchema = z.object({
   id: z.string().min(1),
   agent: z.enum(["claude", "codex"]),
@@ -61,7 +81,7 @@ const capabilityAgentsSchema = z
   .default(["claude", "codex"]);
 
 const capabilityCommonSchema = z.object({
-  id: z.string().min(1),
+  id: capabilityRefIdSchema,
   label: z.string().min(1).optional(),
   source: capabilitySourceSchema.default("project"),
   version: z.string().min(1).optional(),
@@ -110,6 +130,15 @@ export const toolCapabilitySchema = capabilityCommonSchema.extend({
   kind: z.literal("tool").default("tool"),
 });
 
+export const agentDefinitionCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("agent_definition").default("agent_definition"),
+});
+
+export const envProfileCapabilitySchema = capabilityCommonSchema.extend({
+  kind: z.literal("env_profile").default("env_profile"),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
 export const maisterCapabilitiesSchema = z
   .object({
     mcps: z.array(mcpCapabilitySchema).default([]),
@@ -118,6 +147,8 @@ export const maisterCapabilitiesSchema = z
     restrictions: z.array(restrictionCapabilitySchema).default([]),
     settings: z.array(settingCapabilitySchema).default([]),
     tools: z.array(toolCapabilitySchema).default([]),
+    agent_definitions: z.array(agentDefinitionCapabilitySchema).default([]),
+    env_profiles: z.array(envProfileCapabilitySchema).default([]),
   })
   .default({});
 
@@ -135,6 +166,17 @@ export const projectBlockSchema = z.object({
   branch_prefix: z.string().min(1).default("maister/"),
 });
 
+// A git-pinned capability package declared in `maister.yaml capability_imports[]`.
+// `id` and `version` both flow into git operations / filesystem paths, so both
+// use capabilityRefIdSchema (SAFE_PATH_SEGMENT + notDotRef) — validated here at
+// the Zod layer and again inside systemCapabilityCachePath (R-PATH, ADR-042).
+export const capabilityImportEntrySchema = z.object({
+  id: capabilityRefIdSchema,
+  source: z.string().min(1),
+  version: capabilityRefIdSchema,
+  trust: z.enum(["explicit"]).optional(),
+});
+
 export const maisterYamlV2Schema = z.object({
   schemaVersion: z.literal(2),
   project: projectBlockSchema,
@@ -142,6 +184,7 @@ export const maisterYamlV2Schema = z.object({
   default_executor: z.string().min(1),
   capabilities: maisterCapabilitiesSchema,
   flow_roles: z.array(flowRoleSchema).default([]),
+  capability_imports: z.array(capabilityImportEntrySchema).default([]),
   flows: z.array(flowEntrySchema),
 });
 
@@ -524,6 +567,7 @@ export const formSchemaSchema = z.object({
 export type MaisterYamlV2 = z.infer<typeof maisterYamlV2Schema>;
 export type ExecutorConfig = z.infer<typeof executorSchema>;
 export type FlowEntry = z.infer<typeof flowEntrySchema>;
+export type CapabilityImportEntry = z.infer<typeof capabilityImportEntrySchema>;
 export type CapabilityAgent = z.infer<typeof capabilityAgentSchema>;
 export type CapabilitySource = z.infer<typeof capabilitySourceSchema>;
 export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
@@ -538,6 +582,12 @@ export type RestrictionCapabilityConfig = z.infer<
 >;
 export type SettingCapabilityConfig = z.infer<typeof settingCapabilitySchema>;
 export type ToolCapabilityConfig = z.infer<typeof toolCapabilitySchema>;
+export type AgentDefinitionCapabilityConfig = z.infer<
+  typeof agentDefinitionCapabilitySchema
+>;
+export type EnvProfileCapabilityConfig = z.infer<
+  typeof envProfileCapabilitySchema
+>;
 export type MaisterCapabilitiesConfig = z.infer<
   typeof maisterCapabilitiesSchema
 >;

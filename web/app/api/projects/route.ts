@@ -10,9 +10,13 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { loadPlatformMcpCapabilities, loadProjectConfig } from "@/lib/config";
+import {
+  buildCapabilityRefIds,
+  loadPlatformMcpCapabilities,
+  loadProjectConfig,
+} from "@/lib/config";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
-import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
+import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -258,13 +262,6 @@ async function register(
         db: tx,
       });
 
-      await upsertCapabilitiesFromConfig({
-        projectId,
-        config: config.capabilities,
-        platformMcps,
-        db: tx,
-      });
-
       await syncProjectFlowRolesFromConfig({
         projectId,
         roles: flowRoles,
@@ -313,6 +310,12 @@ async function register(
   // is intentionally left — it is reused across projects and across retries.
   // The clone we created (if any) is cleaned up by POST's outer catch.
   try {
+    // Complete capability registry (capabilities block + capability_imports),
+    // derived from the manifest so the flow loader rejects node settings refs
+    // unknown to this project at install time (M14 carve-b, T1.4). Inside the
+    // try so any failure is compensated by the project rollback below.
+    const capabilityRefIds = buildCapabilityRefIds(config);
+
     for (const flow of config.flows) {
       await installFlowPlugin({
         source: flow.source,
@@ -321,9 +324,22 @@ async function register(
         projectSlug: slug,
         flowId: flow.id,
         roleRefs: configuredRoleRefs,
+        capabilityRefIds,
         db,
       });
     }
+
+    // Install git-pinned capability imports (clone → trust → trust-gated setup)
+    // and ingest the resolved set into capability_records ALONGSIDE the
+    // capabilities block in one SET/CLEAR upsert. Lives here (not in the phase-c
+    // tx) because each import is a clone side-effect FK-ing the committed
+    // project row; a failure is compensated by the project rollback below.
+    await installAndIngestCapabilityImports({
+      config,
+      projectId,
+      platformMcps,
+      db,
+    });
 
     // Re-apply per-flow executor overrides now that flow rows exist (the
     // first upsert call warned + skipped them — see executors.ts doc).

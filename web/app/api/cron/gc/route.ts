@@ -8,6 +8,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 
@@ -64,6 +65,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const errors: string[] = [];
   let workspace: WorkspaceGcSummary | null = null;
   let revision: RevisionGcSummary | null = null;
+  let capabilities: Awaited<
+    ReturnType<typeof runCapabilitiesCleanupSweep>
+  > | null = null;
 
   try {
     workspace = await runWorkspaceGcSweep();
@@ -83,6 +87,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     log.error({ err: message }, "cron GC: revision sweep threw");
   }
 
+  try {
+    capabilities = await runCapabilitiesCleanupSweep();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    errors.push(`capabilities sweep failed: ${message}`);
+    log.error({ err: message }, "cron GC: capabilities sweep threw");
+  }
+
   if (workspace && workspace.skippedUnpreserved > 0) {
     errors.push(
       `${workspace.skippedUnpreserved} workspace(s) skipped: preserve failed (left for retry)`,
@@ -96,7 +109,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       `${revision.failed} revision cache dir(s) failed to remove (row deleted, dir orphaned on disk)`,
     );
   }
+  if (capabilities && capabilities.failed > 0) {
+    errors.push(
+      `${capabilities.failed} capability dir(s) failed to remove (left for retry)`,
+    );
+  }
 
+  // The capabilities sweep result stays out of the GcSweepSummary response DTO
+  // (OpenAPI: worktrees/revisions + errors only); it surfaces via this log line
+  // and a 207-triggering error on partial failure, mirroring the revision sweep.
   const summary = {
     worktreesPreserved: workspace?.preserved ?? 0,
     worktreesRemoved: workspace?.pruned ?? 0,
@@ -105,7 +126,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   };
 
   log.info(
-    { ...summary, errorCount: errors.length },
+    { ...summary, capabilities, errorCount: errors.length },
     "cron GC sweep completed",
   );
 

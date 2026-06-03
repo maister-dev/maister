@@ -49,6 +49,51 @@ defined as a string union in `web/lib/errors.ts`.
 
 > **M12 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). Beyond the `CONFIG` / `PRECONDITION` reuses above, two M12 outcomes have **no thrown code at all**: an unsatisfied `artifact_required` gate records `gate_results.status = "failed"` (the gate-result lifecycle, not an exception); a `human_review` refusal driven by a failed blocking gate is a blocking gate failure (no HTTP code). Neither maps to an HTTP status.
 
+> **M14 adds NO new `MaisterError` code** (ADR-008 closed union). M14 reuses
+> three existing codes at new call sites (all Designed, M14, Phase 0 spec):
+>
+> **`CONFIG` new call sites (M14, Designed):**
+> - **Unknown/unsupported capability ref at validate or launch** — `loadProjectConfig()`
+>   (carve-b: `validateNodeSettings` rejects any `settings.mcps[]`, `skills[]`,
+>   `restrictions[]`, `settingsProfile`, or `tools` ref not present in the project
+>   `capability_records`, or present but with `agents` not including the selected
+>   executor agent). HTTP 400 from both the project-register and run-launch paths.
+>   Names the offending node id + ref + capability kind in the message.
+> - **Long-living session profile-digest mismatch** — runner rejects reuse of an
+>   existing ACP session when `materialization_plan.profileDigest` of the new node
+>   differs from the session's recorded digest and no session boundary is declared.
+>   HTTP 400 from the graph runner before `spawnSession`. Names both digests.
+>
+> **`EXECUTOR_UNAVAILABLE` new call site (M14, Designed):**
+> - **Newly reachable once a `claude` cell flips to `enforced`** — when a node
+>   declares `enforcement: strict` on a capability class that IS `enforced` for
+>   `claude` but the resolved executor uses `codex` (which stays `instructed`), the
+>   launch gate throws `MaisterError("EXECUTOR_UNAVAILABLE")` (HTTP 503) per the
+>   existing `assertNodeLaunchable` code path. This path was unreachable with the
+>   M11c all-`instructed` table; it becomes reachable as Phase 5 flips cells. Names
+>   the node id + class + resolved agent + suggests an executor whose agent enforces
+>   the class.
+>
+> **`FLOW_INSTALL` new call sites (M14, Designed):**
+> - **Capability import path-safety failure** — `installCapabilityRevision` calls
+>   `assertFieldSafe` (the same guard used by `web/lib/flow-paths.ts:77`) on the
+>   import `id` and `version` inside the path builder. A traversal value (`../evil`,
+>   `..`, `a/b`) throws `MaisterError("FLOW_INSTALL")` and writes nothing to disk or
+>   the DB. Surfaces as HTTP 502 from the registration route.
+> - **Capability import clone failure** — `git clone --branch <version>` fails (not
+>   found, network error, auth). Throws `MaisterError("FLOW_INSTALL")` with the
+>   structured detail `{source, version, stage:'clone', exitStatus, output}`.
+>   Surfaces as HTTP 502; registration compensates (removes the project row) as with
+>   Flow plugin install failures.
+> - **Trust-route setup-execution failure** — `runCapabilityRevisionSetup` executes
+>   `setup.sh` after trust is granted; the script exits non-zero. Throws
+>   `MaisterError("FLOW_INSTALL")` with structured detail
+>   `{source, version, stage:'setup', exitStatus, output}`. Surfaces as **HTTP 502**
+>   from `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Sets
+>   `setupStatus = 'failed'`; `trustStatus` remains `'trusted'` so a re-POST retries
+>   setup without a spurious 409. NOT `EXECUTOR_UNAVAILABLE` — capability setup is a
+>   package install operation, not a supervisor/executor availability failure.
+
 ## Construction
 
 ```ts
