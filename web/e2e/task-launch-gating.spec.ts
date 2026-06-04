@@ -43,7 +43,7 @@ test("task creation works and a backlog card exposes a launch control", async ({
     .locator("[data-board]")
     .getByText(title)
     .locator("xpath=ancestor::article")
-    .getByRole("button", { name: "launch" });
+    .getByRole("button", { name: "launch", exact: true });
 
   await expect(launchControl).toBeVisible();
   await expect(launchControl).toBeEnabled();

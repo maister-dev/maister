@@ -1603,6 +1603,18 @@ async function seedM11cRefuseFixture(
      VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
     [ids.executor, ids.project],
   );
+  // M14 capability registry: register the `github` mcp the manifest's `implement`
+  // node declares in `settings.mcps`. Without it the M14 capability-ref check
+  // (firstUnknownCapabilityRef) rejects the launch with CONFIG "unknown mcp
+  // capability ref github" BEFORE the M11c settings-enforcement gate runs — so
+  // the launch never reaches the gate this fixture exists to exercise (`mcps:
+  // strict` refusal). agents `[]` + the column defaults keep the row minimal.
+  await pool.query(
+    `INSERT INTO capability_records
+       (id, project_id, capability_ref_id, kind, label, source, agents)
+     VALUES ($1, $2, 'github', 'mcp', 'GitHub', 'project', '[]'::jsonb)`,
+    [randomUUID(), ids.project],
+  );
   // The enabled revision the launch path resolves the manifest from. Installed +
   // setup done + supported schema + engine-compatible so launch reaches the
   // settings-enforcement gate rather than failing an earlier precondition.

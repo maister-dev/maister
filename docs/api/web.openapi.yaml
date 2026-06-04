@@ -2915,6 +2915,7 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         assigneeActor:
+          type: object
           nullable: true
           allOf:
             - $ref: "#/components/schemas/AssignmentActor"

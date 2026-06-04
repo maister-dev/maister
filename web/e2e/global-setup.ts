@@ -39,6 +39,28 @@ async function ensureDatabase(url: string): Promise<void> {
   }
 }
 
+// Reset the dedicated, disposable e2e database to a clean slate so its schema
+// ALWAYS matches the current migration files. A persistent e2e DB silently
+// drifts when migrations are squashed/renumbered: drizzle's incremental
+// migrator records applied migrations in `drizzle.__drizzle_migrations`, so a
+// DB carrying a stale history (e.g. 24 recorded entries against 22 current
+// files) gets NO new migrations applied and keeps serving an out-of-date schema
+// (observed: a `tasks` table missing `executor_override_id` → POST /tasks 500).
+// Dropping both schemas forces `migrate.ts` to re-apply every migration from
+// 0000. Safe: runs before the webServer boots, so no app connection holds the
+// schema, and the e2e DB carries only fixture data.
+async function resetSchema(url: string): Promise<void> {
+  const pool = new Pool({ connectionString: url });
+
+  try {
+    await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
+    await pool.query("CREATE SCHEMA public");
+    await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE");
+  } finally {
+    await pool.end();
+  }
+}
+
 export default async function globalSetup(): Promise<() => Promise<void>> {
   if (!E2E_DB_URL.startsWith("postgres")) {
     throw new Error(
@@ -55,6 +77,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
         `(${(err as Error).message})`,
     );
   }
+
+  // Reset BEFORE migrating so a stale persistent e2e DB (drifted migration
+  // history) can never silently serve an out-of-date schema.
+  console.log("global-setup: resetting e2e schema…");
+  await resetSchema(E2E_DB_URL);
 
   const env = { ...process.env, DB_URL: E2E_DB_URL };
 
