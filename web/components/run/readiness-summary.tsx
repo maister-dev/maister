@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 
 import clsx from "clsx";
 
+import { READINESS_BADGE } from "@/components/readiness-badge";
+
 export interface ReadinessSummaryLabels {
   state: Record<ReadinessState, string>;
   summary: string;
@@ -14,17 +16,6 @@ export interface ReadinessSummaryProps {
   reasons: string[];
   labels: ReadinessSummaryLabels;
 }
-
-const STATE_BADGE: Record<ReadinessState, string> = {
-  ready: "border-good bg-good-soft text-good",
-  blocked:
-    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
-  failed:
-    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
-  stale: "border-amber-line bg-amber-soft text-amber",
-  waiting: "border-amber-line bg-amber-soft text-amber",
-  overridden: "border-line bg-ivory text-ink-2",
-};
 
 export function ReadinessSummary({
   state,
@@ -43,7 +34,7 @@ export function ReadinessSummary({
           aria-label={stateLabel}
           className={clsx(
             "rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em]",
-            STATE_BADGE[state],
+            READINESS_BADGE[state],
           )}
           data-readiness={state}
           title={stateLabel}

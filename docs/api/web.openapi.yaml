@@ -1286,7 +1286,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Run/workspace not found, merge conflict, removed workspace, terminal state, or invalid promotion target (`PRECONDITION` / `CONFLICT`).
+          description: Run/workspace not found, merge conflict, removed workspace, terminal state, invalid promotion target, or evidence-not-ready (M15 merge-readiness guard) (`PRECONDITION` / `CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

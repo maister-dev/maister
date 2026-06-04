@@ -591,7 +591,8 @@ components:
             - `stale` — previously ready but a downstream change made it stale.
             - `failed` — a required gate or artifact failed irrecoverably.
             - `waiting` — run has not yet reached the review chokepoint.
-          enum: [ready, blocked, stale, failed, waiting]
+            - `overridden` — a human override cleared an otherwise-blocking gate; promotion is permitted.
+          enum: [ready, blocked, stale, failed, waiting, overridden]
         externalGates:
           type: array
           items:

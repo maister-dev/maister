@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { GateResultStatus } from "@/lib/db/schema";
+
 import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
@@ -11,8 +13,8 @@ import {
   latestAttemptByNode,
 } from "@/lib/flows/graph/ledger";
 import {
+  blockingGateContribution,
   collapseLatestExternalPerGate,
-  gateStatusContribution,
   liveBlockingGates,
   rollupReadiness,
 } from "@/lib/flows/graph/readiness-core";
@@ -137,7 +139,9 @@ export async function getRunReadiness(
     gateId: string;
     kind: string;
     mode: string;
-    status: string;
+    status: GateResultStatus;
+    inputArtifactRefs: string[] | null;
+    // FIXME(any): verdict is an open JSONB payload; shape varies per gate kind.
     verdict: any;
     createdAt: Date;
   }> = await d
@@ -148,6 +152,7 @@ export async function getRunReadiness(
       kind: gateResults.kind,
       mode: gateResults.mode,
       status: gateResults.status,
+      inputArtifactRefs: gateResults.inputArtifactRefs,
       verdict: gateResults.verdict,
       createdAt: gateResults.createdAt,
     })
@@ -172,7 +177,7 @@ export async function getRunReadiness(
   // blockingGates feeds the readiness rollup. liveBlockingGates handles the
   // live-attempt filter, mode=blocking filter, and external_check collapse to
   // latest-per-gateId in one pass (SSOT from readiness-core).
-  const blockingGates = liveBlockingGates(allGateRows as any, liveAttemptIds);
+  const blockingGates = liveBlockingGates(allGateRows, liveAttemptIds);
 
   // Build externalGates projection. `description` is sourced from the flow
   // manifest gates[].external.description (M16 §F); url/commit come from the
@@ -275,6 +280,24 @@ export async function getRunReadiness(
     });
   }
 
+  // Def ids with a validity="current" row — shared by the failed
+  // artifact_required re-eval (a gate ref may be a produced-but-not-required
+  // def) so the DTO verdict matches the merge guard (assertEvidenceReady).
+  const currentDefRows: Array<{ artifactDefId: string | null }> = await d
+    .select({ artifactDefId: artifactInstances.artifactDefId })
+    .from(artifactInstances)
+    .where(
+      and(
+        eq(artifactInstances.runId, runId),
+        eq(artifactInstances.validity, "current"),
+      ),
+    );
+  const currentDefIds = new Set<string>();
+
+  for (const r of currentDefRows) {
+    if (r.artifactDefId) currentDefIds.add(r.artifactDefId);
+  }
+
   // Deterministic rollup via shared SSOT (readiness-core).
   const reasons: string[] = [];
 
@@ -289,9 +312,10 @@ export async function getRunReadiness(
     reasons.push(`required artifact "${a.defId}" has no current row`);
   }
 
-  // Gate contributions: map each blocking gate status via gateStatusContribution.
+  // Gate contributions: map each blocking gate via blockingGateContribution
+  // (the shared SSOT, incl. the failed artifact_required re-eval).
   for (const g of blockingGates) {
-    const contribution = gateStatusContribution(g.status as any);
+    const contribution = blockingGateContribution(g, currentDefIds);
 
     if (contribution === "clear") continue;
 
@@ -319,7 +343,7 @@ export async function getRunReadiness(
   // Artifact contributions: missing current row → "blocked".
   const artifactContributions = missingArtifacts.map(() => "blocked" as const);
   const gateContributions = blockingGates.map((g) =>
-    gateStatusContribution(g.status as any),
+    blockingGateContribution(g, currentDefIds),
   );
   const readiness = rollupReadiness([
     ...artifactContributions,

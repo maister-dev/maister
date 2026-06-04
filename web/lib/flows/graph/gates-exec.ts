@@ -161,6 +161,27 @@ export function calibrateVerdict(
   const rawVerdict = parsed.verdict!;
 
   if (typeof parsed.confidence === "number") {
+    // Agent-emitted confidence MUST lie in the documented 0..1 domain. A
+    // malformed value (NaN, ±Infinity, <0, >1) is fail-closed as
+    // `invalid_confidence` — it must NEVER clear the threshold (e.g. `2 >= 0.8`)
+    // and must NOT be rescued by allow_missing_confidence (it is present, just
+    // out of range). config-side confidence_min is already bounded by zod
+    // (config.schema.ts z.number().min(0).max(1)); this guards the untrusted side.
+    if (
+      !Number.isFinite(parsed.confidence) ||
+      parsed.confidence < 0 ||
+      parsed.confidence > 1
+    ) {
+      return {
+        pass: false,
+        calibration: {
+          confidenceMin,
+          rawVerdict,
+          outcome: "invalid_confidence",
+        },
+      };
+    }
+
     if (parsed.confidence >= confidenceMin) {
       return {
         pass: true,
@@ -382,6 +403,19 @@ async function runOneGate(
 
       if (isPassVerdict(verdict.verdict ?? "")) {
         const cal = calibrateVerdict(verdict, gate.calibration);
+
+        if (cal.calibration?.outcome === "invalid_confidence") {
+          log.warn(
+            {
+              runId: loaded.run.id,
+              nodeId: node.id,
+              gateId: gate.id,
+              confidence: verdict.confidence,
+            },
+            "gate verdict confidence outside 0..1 domain — failing closed (invalid_confidence)",
+          );
+        }
+
         const verdictToStore = cal.calibration
           ? { ...verdict, calibration: cal.calibration }
           : verdict;

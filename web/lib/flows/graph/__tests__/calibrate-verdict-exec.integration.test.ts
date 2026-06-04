@@ -347,4 +347,35 @@ describe("calibrate-verdict-exec (M15) — verdict calibration at gate execution
       outcome: "above_threshold",
     });
   }, 60_000);
+
+  it("(f) confidence_min: 0.8, agent returns confidence: 2 (out of 0..1) → status=failed, outcome=invalid_confidence", async () => {
+    const gateConfig = {
+      id: "judge",
+      kind: "ai_judgment",
+      mode: "blocking",
+      prompt: "judge this",
+      calibration: { confidence_min: 0.8 },
+    };
+    const seeded = await seedGraphRun(oneNodeWithAiJudgmentGate(gateConfig));
+    const supervisorApi = makeSupervisorMockForVerdict(
+      '{"verdict": "pass", "confidence": 2}',
+    );
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi,
+    });
+
+    const gates = await getGates(seeded.runId);
+    const gate = gates.find((g) => g.gateId === "judge");
+
+    expect(gate?.status).toBe("failed");
+    expect(gate?.verdict).toBeDefined();
+    expect((gate?.verdict as any)?.calibration).toEqual({
+      confidenceMin: 0.8,
+      rawVerdict: "pass",
+      outcome: "invalid_confidence",
+    });
+  }, 60_000);
 });

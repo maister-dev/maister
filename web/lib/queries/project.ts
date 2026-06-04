@@ -7,10 +7,10 @@ import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import {
   ACTIVE_RUN_STATUSES,
   type AgentRole,
-  computeReadinessByRun,
   type PortfolioWorkspace,
   relativeTime,
   runStatusToWorkspace,

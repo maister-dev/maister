@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { GateResultStatus } from "@/lib/db/schema";
+
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -12,6 +14,7 @@ import {
   latestAttemptByNode,
 } from "@/lib/flows/graph/ledger";
 import {
+  blockingGateContribution,
   gateStatusContribution,
   liveBlockingGates,
 } from "@/lib/flows/graph/readiness-core";
@@ -130,7 +133,7 @@ export async function assertEvidenceReady(
     gateId: string;
     kind: string;
     mode: string;
-    status: string;
+    status: GateResultStatus;
     inputArtifactRefs: string[] | null;
     createdAt: Date;
   }> = await d
@@ -157,7 +160,7 @@ export async function assertEvidenceReady(
     ].map((a) => a.id),
   );
 
-  const blocking = liveBlockingGates(allGateRows as any, liveAttemptIds);
+  const blocking = liveBlockingGates(allGateRows, liveAttemptIds);
 
   for (const gate of blocking) {
     if (gate.kind === "artifact_required") {
@@ -170,20 +173,18 @@ export async function assertEvidenceReady(
       }
 
       if (gate.status === "failed") {
-        // Re-evaluate: check if all required artifacts are now current.
-        const refs = (gate as any).inputArtifactRefs ?? [];
-        let stillMissing = false;
+        // Re-evaluate via the shared SSOT: a failed artifact_required gate
+        // whose inputArtifactRefs are all current again no longer blocks.
+        const refs = gate.inputArtifactRefs ?? [];
+        const currentRefDefIds = new Set<string>();
 
         for (const defId of refs) {
-          const artifact = await getCurrentArtifact(runId, defId, d);
-
-          if (!artifact) {
-            stillMissing = true;
-            break;
+          if (await getCurrentArtifact(runId, defId, d)) {
+            currentRefDefIds.add(defId);
           }
         }
 
-        if (stillMissing || refs.length === 0) {
+        if (blockingGateContribution(gate, currentRefDefIds) !== "clear") {
           reasons.push(
             `blocking artifact_required gate "${gate.gateId}" (id=${gate.id}) failed and required artifacts are not yet current`,
           );
@@ -195,7 +196,7 @@ export async function assertEvidenceReady(
       // passed/overridden/skipped/pending/running — use standard contribution.
       // "clear" (passed) and "overridden" both allow promotion.
       // (skipped/pending/running are unusual for artifact_required but handled.)
-      const contribution = gateStatusContribution(gate.status as any);
+      const contribution = gateStatusContribution(gate.status);
 
       if (contribution !== "clear" && contribution !== "overridden") {
         reasons.push(
@@ -220,7 +221,7 @@ export async function assertEvidenceReady(
 
     // command_check, ai_judgment, skill_check — M15 new enforcement.
     // "clear" (passed) and "overridden" both allow promotion; everything else blocks.
-    const contribution = gateStatusContribution(gate.status as any);
+    const contribution = gateStatusContribution(gate.status);
 
     if (contribution !== "clear" && contribution !== "overridden") {
       reasons.push(

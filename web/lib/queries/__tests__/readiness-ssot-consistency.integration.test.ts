@@ -20,6 +20,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { getRunReadiness } from "@/lib/queries/readiness";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -60,10 +61,12 @@ async function seedRunWithGatesAndArtifacts(opts: {
     kind: string;
     mode: "blocking" | "advisory";
     status: string;
+    inputArtifactRefs?: string[];
   }>;
   artifacts?: Array<{
     validity: "current" | "stale" | "failed";
     requiredFor: string[] | null;
+    artifactDefId?: string;
   }>;
 }): Promise<{ runId: string; projectId: string; userId: string }> {
   const userId = randomUUID();
@@ -159,11 +162,12 @@ async function seedRunWithGatesAndArtifacts(opts: {
       kind: g.kind,
       mode: g.mode,
       status: g.status,
+      inputArtifactRefs: g.inputArtifactRefs ?? null,
     });
   }
 
   for (const a of opts.artifacts ?? []) {
-    const defId = `def-${randomUUID().slice(0, 8)}`;
+    const defId = a.artifactDefId ?? `def-${randomUUID().slice(0, 8)}`;
 
     await db.insert(schema.artifactInstances).values({
       id: randomUUID(),
@@ -321,5 +325,99 @@ describe("SSOT-invariant: getRunReadiness == board == portfolio for every readin
     expect(readinessQuery).toBe("ready");
     expect(readinessBoard).toBe("ready");
     expect(readinessPortfolio).toBe("ready");
+  });
+
+  it("stale: blocking gate stale → all three surfaces agree on 'stale'", async () => {
+    const { runId, projectId, userId } = await seedRunWithGatesAndArtifacts({
+      gates: [{ kind: "external_check", mode: "blocking", status: "stale" }],
+    });
+
+    const { readinessQuery, readinessBoard, readinessPortfolio } =
+      await readinessFromAllSurfaces(runId, projectId, userId);
+
+    expect(readinessQuery).toBe("stale");
+    expect(readinessBoard).toBe("stale");
+    expect(readinessPortfolio).toBe("stale");
+  });
+
+  // Task 21: a failed artifact_required gate whose inputArtifactRefs are all
+  // current again must read CLEAR on every surface AND on the merge guard —
+  // assertEvidenceReady re-evaluates, so the read models must too or the badge
+  // shows "failed" for a run the engine will merge.
+  it("re-eval ready: failed artifact_required gate with refs now current → merge guard + all three surfaces agree on 'ready'", async () => {
+    const defId = `def-${randomUUID().slice(0, 8)}`;
+    const { runId, projectId, userId } = await seedRunWithGatesAndArtifacts({
+      gates: [
+        {
+          kind: "artifact_required",
+          mode: "blocking",
+          status: "failed",
+          inputArtifactRefs: [defId],
+        },
+      ],
+      artifacts: [
+        { validity: "current", requiredFor: null, artifactDefId: defId },
+      ],
+    });
+
+    const { readinessQuery, readinessBoard, readinessPortfolio } =
+      await readinessFromAllSurfaces(runId, projectId, userId);
+    const guard = await assertEvidenceReady(runId, "merge", db);
+
+    expect(guard.ready).toBe(true);
+    expect(readinessQuery).toBe("ready");
+    expect(readinessBoard).toBe("ready");
+    expect(readinessPortfolio).toBe("ready");
+  });
+
+  it("re-eval blocked: failed artifact_required gate with refs still missing → merge guard + all three surfaces agree on 'failed'", async () => {
+    const { runId, projectId, userId } = await seedRunWithGatesAndArtifacts({
+      gates: [
+        {
+          kind: "artifact_required",
+          mode: "blocking",
+          status: "failed",
+          inputArtifactRefs: [`def-${randomUUID().slice(0, 8)}`],
+        },
+      ],
+    });
+
+    const { readinessQuery, readinessBoard, readinessPortfolio } =
+      await readinessFromAllSurfaces(runId, projectId, userId);
+    const guard = await assertEvidenceReady(runId, "merge", db);
+
+    expect(guard.ready).toBe(false);
+    expect(readinessQuery).toBe("failed");
+    expect(readinessBoard).toBe("failed");
+    expect(readinessPortfolio).toBe("failed");
+  });
+
+  // Finding 2 (codex adversarial review): the read-models are an any-phase
+  // fail-closed SUPERSET of the phase-scoped enforcer. A merge-only required
+  // artifact (no current row) blocks all three read-model badges, but the
+  // phase-scoped Review enforcer ignores it (it is not requiredFor:["review"]).
+  // The merge enforcer DOES block. This divergence is intentional and documented
+  // in readiness.md (Readiness classifier → artifact phase-scope). Pinning it
+  // here prevents the any-phase read-model semantics from being silently narrowed.
+  it("merge-only missing artifact: read-models 'blocked', review enforcer ready, merge enforcer blocked [Finding 2]", async () => {
+    const { runId, projectId, userId } = await seedRunWithGatesAndArtifacts({
+      // requiredFor: ["merge"] only; stale (no current row) → not satisfied.
+      artifacts: [{ validity: "stale", requiredFor: ["merge"] }],
+    });
+
+    const { readinessQuery, readinessBoard, readinessPortfolio } =
+      await readinessFromAllSurfaces(runId, projectId, userId);
+    const reviewGuard = await assertEvidenceReady(runId, "review", db);
+    const mergeGuard = await assertEvidenceReady(runId, "merge", db);
+
+    // Any-phase read-models: a merge-required missing artifact still blocks the badge.
+    expect(readinessQuery).toBe("blocked");
+    expect(readinessBoard).toBe("blocked");
+    expect(readinessPortfolio).toBe("blocked");
+
+    // Phase-scoped enforcer: Review does NOT require the merge-only artifact…
+    expect(reviewGuard.ready).toBe(true);
+    // …but Merge does.
+    expect(mergeGuard.ready).toBe(false);
   });
 });

@@ -102,7 +102,9 @@ flowchart TD
     E -->|no| G{allow_missing_confidence?}
     G -->|no| F3[markGateFailed: no_confidence]
     G -->|yes| P2[markGatePassed: missing_confidence_allowed]
-    E -->|yes| H{confidence greater-or-equal confidence_min?}
+    E -->|yes| V{confidence in range 0 to 1?}
+    V -->|no| F5[markGateFailed: invalid_confidence]
+    V -->|yes| H{confidence greater-or-equal confidence_min?}
     H -->|yes| P3[markGatePassed: above_threshold]
     H -->|no| F4[markGateFailed: below_threshold]
 ```
@@ -116,6 +118,7 @@ emit):
 | yes             | no            | —          | —                  | —                          | `passed`           | (legacy pass; no `calibration`) |
 | yes             | yes           | present    | yes                | —                          | `passed`           | `above_threshold` |
 | yes             | yes           | present    | no                 | —                          | `failed`           | `below_threshold` |
+| yes             | yes           | out of `0..1` (non-finite, `<0`, or `>1`) | — | —              | `failed`           | `invalid_confidence` |
 | yes             | yes           | absent     | —                  | `false` (default)          | `failed`           | `no_confidence` |
 | yes             | yes           | absent     | —                  | `true`                     | `passed`           | `missing_confidence_allowed` |
 
@@ -126,13 +129,25 @@ When a `calibration` object is recorded it carries `{ confidenceMin, rawVerdict,
 
 The single classifier consumed by the enforcer, read-model, board, and portfolio. It runs
 over the live node attempt's blocking gates (external gates collapsed to latest-per-gate)
-and the artifacts `requiredFor` the phase.
+and the required artifacts.
+
+**Artifact phase-scope differs by caller — and the difference is intentional (the filter is
+caller-side, not in the shared core).** The enforcer `assertEvidenceReady(runId, phase)`
+counts only artifacts `requiredFor` **that phase** (`requiredFor` contains `phase`); the
+read-models (`getRunReadiness`, board, portfolio, project) count every artifact
+`requiredFor` **any phase** (`requiredFor` non-empty) — a deliberate fail-closed superset so
+a badge surfaces a later-phase blocker (e.g. a `requiredFor: ["merge"]` artifact still
+missing at Review) early. Consequence: a badge MAY read `blocked` while the current-phase
+enforcer would pass; it NEVER reads `ready`/`overridden` while that enforcer blocks (the
+read-model set is a superset of every phase's required set). The blocking-**gate**
+contribution, by contrast, is fully shared through `readiness-core.ts` and is identical on
+every surface.
 
 ```mermaid
 flowchart TD
     S[Collect blocking gates and required artifacts on live attempt] --> A{any blocking gate failed?}
     A -->|yes| RF[failed]
-    A -->|no| B{any blocking gate stale OR required artifact stale?}
+    A -->|no| B{any blocking gate stale?}
     B -->|yes| RS[stale]
     B -->|no| C{any required artifact missing OR any blocking gate skipped?}
     C -->|yes| RB[blocked]
@@ -190,9 +205,11 @@ genuine flow-run merge enforcement deferred to M18.
   overridden`, resolved by priority `failed > stale > blocked > waiting > overridden > ready`.
 - Verdict calibration MUST be applied at gate execution and set `gate_results.status`; the
   readiness layer MUST read only `status` and never re-read `confidence`. (Implemented — M15)
-- A passing `ai_judgment`/`skill_check` verdict with `confidence` below the effective
-  `calibration.confidence_min` MUST become `failed` with
-  `verdict.calibration.outcome = "below_threshold"`. (Implemented — M15)
+- A passing `ai_judgment`/`skill_check` verdict whose `confidence` is below the effective
+  `calibration.confidence_min` MUST become `failed` (`outcome: "below_threshold"`); a
+  `confidence` outside the `0..1` domain (non-finite, `<0`, or `>1`) MUST become `failed`
+  (`outcome: "invalid_confidence"`) and MUST NOT be rescued by `allow_missing_confidence`.
+  (Implemented — M15)
 - A passing verdict with no `confidence` while a threshold is configured MUST become
   `failed` (`outcome: "no_confidence"`) unless the gate sets `allow_missing_confidence: true`
   (then `passed`, `outcome: "missing_confidence_allowed"`). (Implemented — M15)
@@ -208,12 +225,15 @@ genuine flow-run merge enforcement deferred to M18.
 
 ## Edge cases
 
-- **Enforcer-only re-evaluation of `artifact_required` gates** — `assertEvidenceReady`
-  re-evaluates a `failed` blocking `artifact_required` gate against current
-  `inputArtifactRefs` and clears it when all inputs are current; the read-models
-  (`getRunReadiness`, board, portfolio) report the recorded `gate_results.status`
-  (`failed`) without re-evaluation. A run may therefore briefly read `failed` on a
-  card while the enforcer would already allow it; the enforcer is authoritative.
+- **`failed` `artifact_required` gate re-evaluates to ready uniformly** — a `failed`
+  blocking `artifact_required` gate whose `inputArtifactRefs` are all current again (a
+  `validity="current"` row exists for each) contributes `clear` through the shared
+  `blockingGateContribution`, so it reads ready/clear on the enforcer (`assertEvidenceReady`),
+  the readiness DTO (`getRunReadiness`), and the board, portfolio, and project read-models
+  alike — even though `gate_results.status` is still `failed`. The recorded `failed` is never
+  erased; the live artifact state overrides it on every surface, so no read-model diverges
+  from the merge guard. It blocks (`failed`) only while some ref is still non-current or
+  `inputArtifactRefs` is empty.
 - **Blocking `human_review` in a manifest** — rejected pre-run at `validateGraphManifest`
   with `MaisterError("CONFIG")`; it would otherwise deadlock promotion (executor always
   records `human_review` as `skipped`).
@@ -246,8 +266,9 @@ genuine flow-run merge enforcement deferred to M18.
   `web/lib/flows/graph/compile.ts`, `web/lib/config.schema.ts`, `web/lib/config.ts`,
   `web/lib/db/schema.ts` (`GateVerdict`, `gate_results`).
 - **Source (read-model + surfaces):** `web/lib/queries/readiness.ts`,
-  `web/lib/queries/board.ts`, `web/components/board/flight-card.tsx`,
-  `web/lib/queries/portfolio.ts`, `web/components/portfolio/project-card.tsx`,
+  `web/lib/queries/readiness-batch.ts`, `web/lib/queries/board.ts`,
+  `web/components/board/flight-card.tsx`, `web/lib/queries/portfolio.ts`,
+  `web/lib/queries/project.ts`, `web/components/portfolio/project-card.tsx`,
   `web/app/api/runs/[runId]/promote/route.ts`.
 - **Related domains:** [`flow-graph.md`](flow-graph.md) (gate lifecycle),
   [`artifacts.md`](artifacts.md) (artifact validity),

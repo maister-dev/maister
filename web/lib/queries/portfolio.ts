@@ -1,16 +1,12 @@
 import "server-only";
 
 import type {
-  GateResultStatus,
   GlobalRole,
   ProjectRole,
   RunKind,
   ScratchDialogStatus,
 } from "@/lib/db/schema";
-import type {
-  ReadinessContribution,
-  ReadinessState,
-} from "@/lib/flows/graph/readiness-core";
+import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import {
@@ -28,21 +24,13 @@ import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import * as schema from "@/lib/db/schema";
-import {
-  gateStatusContribution,
-  latestAttemptIdsByNode,
-  liveBlockingGates,
-  rollupReadiness,
-} from "@/lib/flows/graph/readiness-core";
+import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 
 const {
-  artifactInstances,
   assignments,
   executors,
   flows,
-  gateResults,
   hitlRequests,
-  nodeAttempts,
   projectMembers,
   projects,
   runs,
@@ -219,151 +207,6 @@ export function scratchActionForWorkspace(input: {
   }
 
   return "open";
-}
-
-// T16 (M15, ADR-048): the unified readiness state per active run, batched across
-// all active runs (no per-run query, no N+1). Byte-equivalent in logic to
-// board.ts computeReadinessByRun — bulk-fetches node_attempts + gate_results +
-// artifact_instances once, groups by runId in memory, and classifies each run
-// through the shared readiness-core SSOT (latestAttemptIdsByNode +
-// liveBlockingGates + gateStatusContribution + rollupReadiness). The required-
-// artifact contributions mirror getRunReadiness: a required def (requiredFor
-// non-empty) with no validity="current" row → "blocked".
-export async function computeReadinessByRun(
-  client: NodePgDatabase<typeof schema>,
-  runIds: string[],
-): Promise<Map<string, ReadinessState>> {
-  const readinessByRun = new Map<string, ReadinessState>();
-
-  if (runIds.length === 0) return readinessByRun;
-
-  // Live-attempt lineage: latest attempt per (runId, nodeId). nodeIds repeat
-  // across runs, so grouping must stay run-scoped.
-  const attemptRows: Array<{
-    id: string;
-    runId: string;
-    nodeId: string;
-    attempt: number;
-  }> = await client
-    .select({
-      id: nodeAttempts.id,
-      runId: nodeAttempts.runId,
-      nodeId: nodeAttempts.nodeId,
-      attempt: nodeAttempts.attempt,
-    })
-    .from(nodeAttempts)
-    .where(inArray(nodeAttempts.runId, runIds));
-
-  // All gate_results on the active runs (every kind, every status). The blocking
-  // + live-attempt + external-collapse filtering happens in liveBlockingGates
-  // (SSOT).
-  const gateRows: Array<{
-    id: string;
-    runId: string;
-    nodeAttemptId: string;
-    gateId: string;
-    kind: string;
-    mode: string;
-    status: GateResultStatus;
-    createdAt: Date;
-  }> = await client
-    .select({
-      id: gateResults.id,
-      runId: gateResults.runId,
-      nodeAttemptId: gateResults.nodeAttemptId,
-      gateId: gateResults.gateId,
-      kind: gateResults.kind,
-      mode: gateResults.mode,
-      status: gateResults.status,
-      createdAt: gateResults.createdAt,
-    })
-    .from(gateResults)
-    .where(inArray(gateResults.runId, runIds));
-
-  // Required-artifact rows for the review phase, plus the validity of each
-  // (runId, defId)'s current row. requiredFor is JSONB; filter in JS so the
-  // computation is dialect-agnostic.
-  const artifactRows: Array<{
-    runId: string;
-    artifactDefId: string | null;
-    validity: string;
-    requiredFor: string[] | null;
-  }> = await client
-    .select({
-      runId: artifactInstances.runId,
-      artifactDefId: artifactInstances.artifactDefId,
-      validity: artifactInstances.validity,
-      requiredFor: artifactInstances.requiredFor,
-    })
-    .from(artifactInstances)
-    .where(inArray(artifactInstances.runId, runIds));
-
-  const attemptsByRun = new Map<string, typeof attemptRows>();
-  const gatesByRun = new Map<string, typeof gateRows>();
-  const artifactsByRun = new Map<string, typeof artifactRows>();
-
-  for (const a of attemptRows) {
-    (
-      attemptsByRun.get(a.runId) ?? attemptsByRun.set(a.runId, []).get(a.runId)!
-    ).push(a);
-  }
-  for (const g of gateRows) {
-    (gatesByRun.get(g.runId) ?? gatesByRun.set(g.runId, []).get(g.runId)!).push(
-      g,
-    );
-  }
-  for (const r of artifactRows) {
-    (
-      artifactsByRun.get(r.runId) ??
-      artifactsByRun.set(r.runId, []).get(r.runId)!
-    ).push(r);
-  }
-
-  for (const runId of runIds) {
-    const liveAttemptIds = latestAttemptIdsByNode(
-      attemptsByRun.get(runId) ?? [],
-    );
-    const blocking = liveBlockingGates(
-      gatesByRun.get(runId) ?? [],
-      liveAttemptIds,
-    );
-    const gateContributions: ReadinessContribution[] = blocking.map((g) =>
-      gateStatusContribution(g.status),
-    );
-
-    // A required def is satisfied iff a validity="current" row exists for it.
-    // Any def with requiredFor non-empty (any phase) is in scope — identical to
-    // getRunReadiness's requiredFor NON-EMPTY filter.
-    const requiredRows = (artifactsByRun.get(runId) ?? []).filter(
-      (r) =>
-        r.artifactDefId &&
-        Array.isArray(r.requiredFor) &&
-        r.requiredFor.length > 0,
-    );
-    const requiredDefIds = new Set(
-      requiredRows.map((r) => r.artifactDefId as string),
-    );
-    const presentDefIds = new Set<string>();
-
-    for (const r of artifactsByRun.get(runId) ?? []) {
-      if (r.artifactDefId && r.validity === "current") {
-        presentDefIds.add(r.artifactDefId);
-      }
-    }
-
-    const artifactContributions: ReadinessContribution[] = [];
-
-    for (const defId of requiredDefIds) {
-      if (!presentDefIds.has(defId)) artifactContributions.push("blocked");
-    }
-
-    readinessByRun.set(
-      runId,
-      rollupReadiness([...artifactContributions, ...gateContributions]),
-    );
-  }
-
-  return readinessByRun;
 }
 
 const ACCENTS: readonly (1 | 2 | 3 | 4)[] = [1, 3, 2, 4];
@@ -583,10 +426,9 @@ export async function getPortfolio(
   }
 
   // T16 (M15, ADR-048): the unified readiness state per active run, replacing
-  // the M16 externalGatePending boolean. Computed over the SAME bulk-fetched
-  // node_attempts + gate_results + artifact_instances rows via the shared
-  // readiness-core classifier — byte-equivalent in logic to board.ts
-  // computeReadinessByRun (no per-run getRunReadiness, no N+1).
+  // the M16 externalGatePending boolean, via the shared computeReadinessByRun
+  // (readiness-batch) — the same classifier the board and project pages use,
+  // no per-run getRunReadiness call, no N+1.
   const activeRunIds = activeRunRows.map((r) => r.runId);
   const readinessByRun = await computeReadinessByRun(client, activeRunIds);
 

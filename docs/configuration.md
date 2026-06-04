@@ -599,21 +599,18 @@ verdict only clears when the agent is sufficiently confident. Two config surface
   ```
 
 Calibration is applied **at gate execution** and decides the persisted
-`gate_results.status` (the readiness layer only ever reads `status`). Outcomes recorded in
-the `gate_results.verdict` JSONB `calibration` sub-object:
+`gate_results.status` (the readiness layer only ever reads `status`). The full outcome
+matrix — every `(passing verdict, threshold, confidence, allow_missing_confidence)`
+combination and the `verdict.calibration.outcome` string it records — is the canonical
+**calibration truth table** in
+[`system-analytics/readiness.md` → Verdict calibration at gate execution](system-analytics/readiness.md#verdict-calibration-at-gate-execution-ai_judgment--skill_check);
+it is not restated here so the two surfaces cannot drift.
 
-| Passing verdict | `confidence_min` set | `confidence` present | `allow_missing_confidence` | Result | `outcome` |
-| --------------- | -------------------- | -------------------- | -------------------------- | ------ | --------- |
-| yes | no | — | — | passed | (none — legacy pass) |
-| yes | yes | `≥ min` | — | passed | `above_threshold` |
-| yes | yes | `< min` | — | **failed** | `below_threshold` |
-| yes | yes | absent | `false` (default) | **failed** | `no_confidence` |
-| yes | yes | absent | `true` | passed | `missing_confidence_allowed` |
-
-Fail-closed on missing confidence: a promotion-relevant gate must not pass an unverifiable
-verdict. Set `allow_missing_confidence: true` for gates that legitimately emit no
-confidence. A `blocking` `human_review` gate is rejected at validation (`CONFIG`) — it would
-deadlock promotion. See [`system-analytics/readiness.md`](system-analytics/readiness.md).
+Fail-closed is the rule: a promotion-relevant gate must not pass an unverifiable verdict.
+Set `allow_missing_confidence: true` only for gates that legitimately emit no `confidence` —
+it rescues an *absent* confidence, never one *present* but out of the `0..1` domain. A
+`blocking` `human_review` gate is rejected at validation (`CONFIG`) — it would deadlock
+promotion.
 
 ### Guard semantics
 

@@ -8,6 +8,8 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { READINESS_BADGE } from "@/components/readiness-badge";
+
 export interface FlightCardLabels {
   reworking: string;
   // M11b (ADR-030) takeover surface, `board`-namespace strings.
@@ -21,19 +23,6 @@ export interface FlightCardLabels {
   // mergeBlocked + M16 externalGatePending labels with the unified summary.
   readiness: Record<ReadinessState, string>;
 }
-
-// T15 (M15): per-state badge styling, mirroring the run-detail
-// ReadinessSummary STATE_BADGE forest-token map for visual consistency.
-const READINESS_BADGE: Record<ReadinessState, string> = {
-  ready: "border-good bg-good-soft text-good",
-  blocked:
-    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
-  failed:
-    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
-  stale: "border-amber-line bg-amber-soft text-amber",
-  waiting: "border-amber-line bg-amber-soft text-amber",
-  overridden: "border-line bg-ivory text-ink-2",
-};
 
 export interface FlightCardProps {
   card: FlightCardData;

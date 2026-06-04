@@ -1,11 +1,8 @@
 import "server-only";
 
 import type { BoardColumn, CrashAction } from "@/lib/board";
-import type { GateResultStatus, RunStatus, StepRun } from "@/lib/db/schema";
-import type {
-  ReadinessContribution,
-  ReadinessState,
-} from "@/lib/flows/graph/readiness-core";
+import type { RunStatus, StepRun } from "@/lib/db/schema";
+import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -13,18 +10,11 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import {
-  gateStatusContribution,
-  latestAttemptIdsByNode,
-  liveBlockingGates,
-  rollupReadiness,
-} from "@/lib/flows/graph/readiness-core";
+import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 
 const {
-  artifactInstances,
   executors,
   flows,
-  gateResults,
   nodeAttempts,
   runs,
   stepRuns,
@@ -179,153 +169,6 @@ function emptyColumn(column: BoardColumn): BoardColumnData {
   return { column, backlog: [], flight: [], total: 0 };
 }
 
-// T15 (M15, ADR-048): the unified readiness state per run, batched across all
-// latest runs (no per-run query, no N+1). Bulk-fetches node_attempts +
-// gate_results + artifact_instances once, groups by runId in memory, and
-// classifies each run through the shared readiness-core SSOT — the same gate
-// contributions assertEvidenceReady / getRunReadiness apply, plus the
-// review-phase required-artifact stale/missing contributions.
-async function computeReadinessByRun(
-  client: NodePgDatabase<typeof schema>,
-  latestRunIds: string[],
-): Promise<Map<string, ReadinessState>> {
-  const readinessByRun = new Map<string, ReadinessState>();
-
-  if (latestRunIds.length === 0) return readinessByRun;
-
-  // Live-attempt lineage: latest attempt per (runId, nodeId). nodeIds repeat
-  // across runs, so grouping must stay run-scoped.
-  const attemptRows: Array<{
-    id: string;
-    runId: string;
-    nodeId: string;
-    attempt: number;
-  }> = await client
-    .select({
-      id: nodeAttempts.id,
-      runId: nodeAttempts.runId,
-      nodeId: nodeAttempts.nodeId,
-      attempt: nodeAttempts.attempt,
-    })
-    .from(nodeAttempts)
-    .where(inArray(nodeAttempts.runId, latestRunIds));
-
-  // All gate_results on the latest runs (every kind, every status). The
-  // blocking + live-attempt + external-collapse filtering happens in
-  // liveBlockingGates (SSOT).
-  const gateRows: Array<{
-    id: string;
-    runId: string;
-    nodeAttemptId: string;
-    gateId: string;
-    kind: string;
-    mode: string;
-    status: GateResultStatus;
-    createdAt: Date;
-  }> = await client
-    .select({
-      id: gateResults.id,
-      runId: gateResults.runId,
-      nodeAttemptId: gateResults.nodeAttemptId,
-      gateId: gateResults.gateId,
-      kind: gateResults.kind,
-      mode: gateResults.mode,
-      status: gateResults.status,
-      createdAt: gateResults.createdAt,
-    })
-    .from(gateResults)
-    .where(inArray(gateResults.runId, latestRunIds));
-
-  // Required-artifact rows for the review phase, plus the validity of each
-  // (runId, defId)'s current row. requiredFor is JSONB; filter in JS so the
-  // computation is dialect-agnostic.
-  const artifactRows: Array<{
-    runId: string;
-    artifactDefId: string | null;
-    validity: string;
-    requiredFor: string[] | null;
-  }> = await client
-    .select({
-      runId: artifactInstances.runId,
-      artifactDefId: artifactInstances.artifactDefId,
-      validity: artifactInstances.validity,
-      requiredFor: artifactInstances.requiredFor,
-    })
-    .from(artifactInstances)
-    .where(inArray(artifactInstances.runId, latestRunIds));
-
-  const attemptsByRun = new Map<string, typeof attemptRows>();
-  const gatesByRun = new Map<string, typeof gateRows>();
-  const artifactsByRun = new Map<string, typeof artifactRows>();
-
-  for (const a of attemptRows) {
-    (
-      attemptsByRun.get(a.runId) ?? attemptsByRun.set(a.runId, []).get(a.runId)!
-    ).push(a);
-  }
-  for (const g of gateRows) {
-    (gatesByRun.get(g.runId) ?? gatesByRun.set(g.runId, []).get(g.runId)!).push(
-      g,
-    );
-  }
-  for (const r of artifactRows) {
-    (
-      artifactsByRun.get(r.runId) ??
-      artifactsByRun.set(r.runId, []).get(r.runId)!
-    ).push(r);
-  }
-
-  for (const runId of latestRunIds) {
-    const liveAttemptIds = latestAttemptIdsByNode(
-      attemptsByRun.get(runId) ?? [],
-    );
-    const blocking = liveBlockingGates(
-      gatesByRun.get(runId) ?? [],
-      liveAttemptIds,
-    );
-    const gateContributions: ReadinessContribution[] = blocking.map((g) =>
-      gateStatusContribution(g.status),
-    );
-
-    // Required-artifact classification mirrors getRunReadiness (current-row
-    // presence only). Task 21 reconciles both to the contract's stale→"stale" +
-    // phase-aware rules via readiness-core.
-    //
-    // A required def is satisfied iff a validity="current" row exists for it.
-    // Any def with requiredFor non-empty (any phase) is in scope — identical to
-    // getRunReadiness's requiredFor NON-EMPTY filter.
-    const requiredRows = (artifactsByRun.get(runId) ?? []).filter(
-      (r) =>
-        r.artifactDefId &&
-        Array.isArray(r.requiredFor) &&
-        r.requiredFor.length > 0,
-    );
-    const requiredDefIds = new Set(
-      requiredRows.map((r) => r.artifactDefId as string),
-    );
-    const presentDefIds = new Set<string>();
-
-    for (const r of artifactsByRun.get(runId) ?? []) {
-      if (r.artifactDefId && r.validity === "current") {
-        presentDefIds.add(r.artifactDefId);
-      }
-    }
-
-    const artifactContributions: ReadinessContribution[] = [];
-
-    for (const defId of requiredDefIds) {
-      if (!presentDefIds.has(defId)) artifactContributions.push("blocked");
-    }
-
-    readinessByRun.set(
-      runId,
-      rollupReadiness([...artifactContributions, ...gateContributions]),
-    );
-  }
-
-  return readinessByRun;
-}
-
 export async function getBoardData(projectId: string): Promise<BoardData> {
   const now = new Date();
   const client = db();
@@ -454,13 +297,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   }
 
   // T15 (M15, ADR-048): the unified readiness state per latest run, replacing
-  // the M12 evidenceStale/mergeBlocked + M16 externalGatePending booleans.
-  // Computed over the SAME bulk-fetched node_attempts + gate_results +
-  // artifact_instances rows via the shared readiness-core classifier
-  // (gateStatusContribution + liveBlockingGates + rollupReadiness) — no per-run
-  // getRunReadiness call, no N+1. The review-phase required-artifact contributions
-  // mirror getRunReadiness: a stale required-artifact row → "stale"; a required
-  // def with no current row → "blocked".
+  // the M12 evidenceStale/mergeBlocked + M16 externalGatePending booleans, via
+  // the shared computeReadinessByRun (readiness-batch) — no per-run
+  // getRunReadiness call, no N+1. A required def with no validity="current" row
+  // contributes "blocked" (never "stale"); the "stale" state comes only from a
+  // blocking gate with status="stale".
   const readinessByRun = await computeReadinessByRun(client, latestRunIds);
 
   // M11b (ADR-030): the active takeover claim per latest run — owner + the

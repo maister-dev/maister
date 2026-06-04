@@ -171,6 +171,49 @@ describe("calibrateVerdict", () => {
     });
   });
 
+  describe("threshold set, confidence out of 0..1 domain → fail-closed invalid_confidence", () => {
+    it.each([
+      2,
+      1.5,
+      -0.5,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      NaN,
+    ])(
+      "confidence %p (out of domain) → fail with invalid_confidence outcome",
+      (confidence) => {
+        const parsed = { verdict: "pass", confidence };
+        const result = calibrateVerdict(parsed, { confidence_min: 0.8 });
+
+        expect(result.pass).toBe(false);
+        expect(result.calibration).toEqual({
+          confidenceMin: 0.8,
+          rawVerdict: "pass",
+          outcome: "invalid_confidence",
+        });
+      },
+    );
+
+    it("out-of-domain confidence is NOT rescued by allow_missing_confidence (present, just invalid)", () => {
+      const parsed = { verdict: "pass", confidence: 2 };
+      const result = calibrateVerdict(parsed, {
+        confidence_min: 0.8,
+        allow_missing_confidence: true,
+      });
+
+      expect(result.pass).toBe(false);
+      expect(result.calibration?.outcome).toBe("invalid_confidence");
+    });
+
+    it("boundary: confidence exactly 1 is in-domain → above_threshold", () => {
+      const parsed = { verdict: "pass", confidence: 1 };
+      const result = calibrateVerdict(parsed, { confidence_min: 0.8 });
+
+      expect(result.pass).toBe(true);
+      expect(result.calibration?.outcome).toBe("above_threshold");
+    });
+  });
+
   describe("various pass verdicts normalized", () => {
     it.each([
       "pass",

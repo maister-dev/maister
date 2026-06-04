@@ -900,7 +900,8 @@ export type GateVerdict = {
       | "above_threshold"
       | "below_threshold"
       | "no_confidence"
-      | "missing_confidence_allowed";
+      | "missing_confidence_allowed"
+      | "invalid_confidence";
   };
   // M16 §B: external_check report metadata.
   externalRunUrl?: string;

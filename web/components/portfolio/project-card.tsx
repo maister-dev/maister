@@ -1,27 +1,15 @@
 import type { PortfolioProject } from "@/lib/queries/portfolio";
-import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { CSSProperties, ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { READINESS_BADGE } from "@/components/readiness-badge";
+
 export interface ProjectCardProps {
   project: PortfolioProject;
 }
-
-// T16 (M15): per-state readiness badge styling, mirroring the board flight-card
-// READINESS_BADGE forest-token map (dark-mode-safe) for visual consistency.
-const READINESS_BADGE: Record<ReadinessState, string> = {
-  ready: "border-good bg-good-soft text-good",
-  blocked:
-    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
-  failed:
-    "border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
-  stale: "border-amber-line bg-amber-soft text-amber",
-  waiting: "border-amber-line bg-amber-soft text-amber",
-  overridden: "border-line bg-ivory text-ink-2",
-};
 
 const ACCENT_VARS: Record<1 | 2 | 3 | 4, CSSProperties> = {
   1: {

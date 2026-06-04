@@ -97,6 +97,36 @@ export function gateStatusContribution(
   }
 }
 
+// A blocking gate's readiness contribution, accounting for the
+// `artifact_required` failed re-evaluation: a `failed` artifact_required gate
+// whose `inputArtifactRefs` are ALL currently present (a validity="current"
+// row exists for each) reads as `clear` — the recorded failure is stale, the
+// artifacts having since been re-produced. Every other gate maps straight
+// through gateStatusContribution. `currentDefIds` is the set of artifact def
+// ids with a current row for the run. This is the SSOT for the re-eval rule:
+// the merge guard (assertEvidenceReady), the readiness DTO (getRunReadiness),
+// and the board/portfolio batch classifier all call it, so a `failed`
+// artifact_required gate can never read `ready` on the merge path while showing
+// `failed` on a badge. (M15, Task 21)
+export function blockingGateContribution(
+  gate: {
+    kind: GateKind | string;
+    status: GateResultStatus;
+    inputArtifactRefs?: readonly string[] | null;
+  },
+  currentDefIds: ReadonlySet<string>,
+): ReadinessContribution {
+  if (gate.kind === "artifact_required" && gate.status === "failed") {
+    const refs = gate.inputArtifactRefs ?? [];
+
+    return refs.length > 0 && refs.every((r) => currentDefIds.has(r))
+      ? "clear"
+      : "failed";
+  }
+
+  return gateStatusContribution(gate.status);
+}
+
 // Collapse contributions to the highest-priority ReadinessState.
 // [] → ready; all "clear" → ready; "clear" maps to "ready" and is lowest.
 export function rollupReadiness(
