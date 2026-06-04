@@ -355,18 +355,18 @@ Global phase gate:
 
 ### Phase 1 - Pure Metrics Core + Batched Read Models
 
-- [ ] **T1.1 (RED) - Pure formula tests.** Add unit tests under
+- [x] **T1.1 (RED) - Pure formula tests.** Add unit tests under
   `web/lib/queries/__tests__/observatory-core.test.ts` for `correctionRate`,
   `autonomyScore`, explicit `now` injection, overlapping HITL interval union,
   Review-dwell exclusion, `latestAttemptsByNode`, artifact grouping, pressure
   ratio > 1 rendering metadata, and empty/legacy inputs. Runner: vitest `unit`
   (`*.test.ts`). Confirm include glob. **Logging:** n/a for pure functions.
-- [ ] **T1.2 (GREEN) - `observatory-core.ts`.** Add
+- [x] **T1.2 (GREEN) - `observatory-core.ts`.** Add
   `web/lib/queries/observatory-core.ts` with typed pure functions:
   `rollupCorrectionMetrics`, `rollupAutonomyMetrics`,
   `groupArtifactContributions`, `rankSignalClusters`. No `any`, no DB, no IO,
   no mutation of input arrays. **Logging:** none in pure functions.
-- [ ] **T1.3 (RED) - Integration tests for batched queries.** Add
+- [x] **T1.3 (RED) - Integration tests for batched queries.** Add
   `web/lib/queries/__tests__/observatory.integration.test.ts` using
   testcontainers Postgres. Seed multiple projects/runs/nodes/gates/HITL rows and
   assert portfolio/project/node aggregates, access filtering, active-run time
@@ -376,7 +376,7 @@ Global phase gate:
   Runner: integration project (`*.integration.test.ts`). Confirm both sides:
   `vitest --project integration --list` includes the file and
   `vitest --project unit --list` excludes `*.integration.test.ts`.
-- [ ] **T1.4 (GREEN) - Query module.** Add `web/lib/queries/observatory.ts`
+- [x] **T1.4 (GREEN) - Query module.** Add `web/lib/queries/observatory.ts`
   with:
   `getPortfolioObservatory(userId, globalRole, filters)`,
   `getProjectObservatory(projectId, filters)`,
@@ -386,7 +386,7 @@ Global phase gate:
   logic from `portfolio.ts` and pure reductions from T1.2. **Logging:** DEBUG
   scope/filter counts; INFO final aggregate counts; WARN only for legacy
   no-ledger rows.
-- [ ] **T1.5 (REVIEW) - Read-only and performance review.** Reviewer checks
+- [x] **T1.5 (REVIEW) - Read-only and performance review.** Reviewer checks
   for accidental writes, raw SQL injection, project visibility leaks, per-run
   query loops, formula mismatch with Phase 0, and missing typed DTOs. **Verify:**
   typecheck, unit, integration green.
