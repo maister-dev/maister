@@ -84,6 +84,7 @@
 | [ADR-056](#adr-056-flat-runner-on_rejectgoto_step-atomic-execution--single-tx-repark-dedicated-comments-channel-window-sentinel-invalidation) | Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation | Accepted | 2026-06-05 |
 | [ADR-057](#adr-057-hitl-hybrid-surface-composition--cross-project-inbox-block-inline-response-component-numeric-needs-you-n-badge) | HITL hybrid-surface composition — cross-project Inbox block, inline response component, numeric "Needs you (N)" badge | Accepted | 2026-06-05 |
 | [ADR-058](#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
+| [ADR-059](#adr-059-read-only-observatory-formulas-and-harvest-priority) | Read-only Observatory formulas and harvest priority | Accepted | 2026-06-05 |
 
 ---
 
@@ -3478,6 +3479,81 @@ machinery.
   testability.
 - **Per-card `getHitlInbox` calls for the cross-project view.** Rejected — N+1 over every project; a
   single membership-scoped batched query mirrors `getPortfolio`.
+
+### ADR-059: Read-only Observatory formulas and harvest priority
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** Wave-1 E2 introduces an Observatory surface to prove whether MAIster's
+existing ledgers contain repeatable correction and autonomy signals before the product
+builds a write-side harvester or proposal inbox. The data already spans `runs`,
+`node_attempts`, `gate_results`, `hitl_requests`, `artifact_instances`, Flow package
+metadata, and M15 readiness verdict calibration. The milestone must not quietly add
+background actors, mutable learning state, raw prompt inspection, migrations, or new
+public API contracts. It also must not depend on M17 `criticality` or `human_confidence`,
+which are future priority multipliers rather than prerequisites.
+
+**Decision:** Implement M23 Observatory as a read-only read-model surface with three
+frozen contracts:
+
+1. **Correction rate.** `correction_rate = (rework_count + retry_count) / run_count`,
+   grouped by flow, node, and artifact. `run_count` is the distinct set of flow runs in
+   scope that have at least one `node_attempts` row. `retry_count` is the sum of
+   `max(node_attempts.attempt) - 1` per `(run_id, node_id)`. `rework_count` is sourced
+   from the writer path, not observed row folklore: the graph runner classifies a
+   human decision as rework only when the selected transition target is in
+   `node.rework.allowedTargets`, and `markNodeReworked` persists
+   `node_attempts.status = 'Reworked'`. The UI renders the resulting value as an
+   unbounded pressure ratio, never as a percentage.
+2. **Autonomy Score.** `autonomy_score = 1 - sum(gate_wait_time) / total_run_time`.
+   Formula helpers receive an explicit `now` value. HITL waits are intervals from
+   `hitl_requests.created_at` to `coalesce(responded_at, now)`, clamped to the run's
+   `[started_at, coalesce(ended_at, now)]` interval and merged before summing so
+   overlapping waits cannot exceed run duration. Review or promotion dwell without an
+   open `hitl_requests` row is out of M23 and is labeled as excluded metadata.
+3. **Harvestable signals.** Signal clusters are observations, not recommendations.
+   M23 clusters structured metadata first: rework `decision`, `rework_target`,
+   `workspace_policy`, `step_id`, joined `runs.flow_id`; gate kind/id/status/verdict
+   calibration fields; retry flow/node/error/exit metadata; and artifact kind/definition
+   ids where linked. Raw HITL responses, prompts, artifact payloads, cost payloads,
+   env values, and token-like strings are not read. Free-text extraction remains off
+   unless a later ADR approves a bounded, redacted subset. Priority is driven by
+   repeatability (`occurrenceCount`, `affectedRunCount`, `affectedProjectCount`) with
+   extra weight for blocking failed/stale gates. M17 fields may multiply priority later
+   but are optional slots, not part of the M23 formula contract.
+
+M23 adds no DB tables, columns, indexes, env vars, supervisor behavior, agent behavior,
+state-changing routes, cron jobs, or external HTTP API by default. If Phase 0 or RED
+tests prove an index is required for the pre-dogfood volume target, that becomes an
+explicit migration task with `docs/database-schema.md` and `docs/db/*.md` updates.
+Server components call typed read-model helpers directly; public responses remain DTO
+projections and never leak server-only handles.
+
+**Consequences:**
+
+- Observatory can be implemented with batched Drizzle reads and pure rollup helpers,
+  reusing the M15 readiness SSOT pattern without adding a state machine.
+- Active runs are included but marked volatile because open waits and attempts can still
+  change their numerator and denominator.
+- `tasks.attempt_number` stays a mutable board high-water mark and is not used as retry
+  evidence for M23.
+- Drill-down reconciliation distinguishes additive event counts from distinct run sets:
+  child `runCount` values reconcile by set union, not by numeric sum.
+- The write half of learning remains future work. The UI must say "signals" or
+  "patterns", not "recommended fixes" or "auto-improvements".
+
+**Alternatives Considered:**
+
+- **Use sampled `hitl_requests.decision` strings to infer rework:** decisions are
+  manifest-defined labels, not a global enum. Rejected; the writer path's
+  `Reworked` node-attempt status is the durable source of truth.
+- **Count raw wait durations without interval union:** overlapping HITL rows can make
+  wait time exceed total run time and produce false zero-autonomy readings. Rejected.
+- **Inspect HITL comments and artifact payloads in v1:** it may improve clustering, but
+  it risks surfacing code, credentials, or user-sensitive context before redaction
+  policy exists. Rejected for M23.
+- **Persist signal clusters or recommendations now:** that starts the write half of the
+  learning loop and introduces proposal lifecycle semantics. Rejected; M23 is read-only.
 
 ---
 

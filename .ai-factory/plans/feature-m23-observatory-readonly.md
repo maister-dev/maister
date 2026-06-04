@@ -309,7 +309,7 @@ Global phase gate:
 
 ### Phase 0 - SDD Spec Freeze (docs-first, no feature code)
 
-- [ ] **T0.1 - ADR-051: Observatory formula contract.** Append ADR-051 to
+- [x] **T0.1 - ADR-051: Observatory formula contract.** Append ADR-051 to
   `docs/decisions.md`: read-only Observatory; formulas for correction rate and
   Autonomy Score; grouping keys; M23 milestone scope; no migration/default no
   new API; no write-half harvester; M17 `criticality`/`human_confidence` as
@@ -317,26 +317,26 @@ Global phase gate:
   (`markNodeReworked` -> `node_attempts.status='Reworked'`), not from sampled
   production rows.
   **Logging:** n/a. **Verify:** ADR number follows ADR-050; docs render.
-- [ ] **T0.2 - New system analytics artifact.** Create
+- [x] **T0.2 - New system analytics artifact.** Create
   `docs/system-analytics/observatory.md` per `docs/CLAUDE.md` R5: Purpose,
   Domain entities, Process flows, Expectations, Edge cases, Linked artifacts.
   Include Mermaid diagrams for aggregate read path and signal clustering.
   Explicit status tags: `Designed` during Phase 0, flipped to `Implemented` in
   final docs reconciliation. **Logging:** n/a. **Verify:** `pnpm validate:docs:all`.
-- [ ] **T0.3 - Formula freeze with examples.** In `observatory.md`, freeze
+- [x] **T0.3 - Formula freeze with examples.** In `observatory.md`, freeze
   worked examples for: no runs, active run with open HITL, rework + retry on
   same node, stale blocking gate, artifact grouping with null `artifact_def_id`,
   legacy run with no `node_attempts`, overlapping HITL waits that must be merged
   before summing, and Review dwell that has no `hitl_requests` row and is
   therefore excluded in M23. Every worked example supplies an explicit `now`.
   **Logging:** n/a. **Verify:** examples are mirrored by RED tests in Phase 1.
-- [ ] **T0.4 - Contract surface and no-migration verification.** Document that
+- [x] **T0.4 - Contract surface and no-migration verification.** Document that
   the UI uses server-component read models and no external HTTP API in M23.
   Confirm `docs/api/web.openapi.yaml`, `docs/database-schema.md`, and
   `docs/db/*.md` remain unchanged unless Phase 0 discovers a required contract
   change. **Logging:** n/a. **Verify:** reviewer sign-off that no spec file is
   missing from the trace.
-- [ ] **T0.5 - Privacy/redaction rules.** Freeze structured-metadata-first
+- [x] **T0.5 - Privacy/redaction rules.** Freeze structured-metadata-first
   signal clustering: `decision`, `rework_target`, `workspace_policy`,
   `step_id`, joined `runs.flow_id`, gate ids/status/verdict fields, retry
   error/exit metadata. Free-text HITL comments are deferred by default; if Phase
@@ -344,7 +344,7 @@ Global phase gate:
   RED tests. No raw prompt, raw artifact payload, cost payload, env, token, or
   secret-bearing fields. **Logging:** n/a. **Verify:** redaction rules become
   Phase 2 tests.
-- [ ] **T0.6 - Acceptance criteria.** Add an explicit acceptance list to the
+- [x] **T0.6 - Acceptance criteria.** Add an explicit acceptance list to the
   plan and `observatory.md`: formulas match examples; no N+1; portfolio/project
   views agree on shared totals; drill-down reconciles to parent row; EN/RU
   parity; no DB writes; empty states are useful; M17 fields can slot in later.
