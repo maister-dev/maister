@@ -457,7 +457,7 @@
 
 - [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11a's typed decisions, M11b's manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
 
-- [ ] **M18. Branch targeting, diff review, and manual promotion** — replace
+- [x] **M18. Branch targeting, diff review, and manual promotion** — replace
       the narrow "merge to main" assumption with engineer-controlled branch
       targeting. A run starts from a selected base branch, works in a MAIster run
       branch/worktree, then promotes that result to a selected target branch by PR
@@ -510,6 +510,30 @@
     automation, semantic version inference, approval chains, changelog
     generation beyond a promotion summary, and production environment control.
 
+  **As-built (shipped 2026-06-04):** ADR-048 (branch targeting at launch + shared
+  promotion service + promote-time readiness re-gate; M18/M15 carve) + ADR-049 (PR
+  promotion via a hybrid provider `PrAdapter`, credential model B — reverses the
+  "gh is never invoked" invariant). Launch accepts optional `baseBranch`/`targetBranch`
+  (`app/api/runs/route.ts`), both validated against the live repo via `listBranches`
+  before any git side-effect (`lib/services/runs.ts`); worktree is created from the
+  resolved base commit (`startPoint`, not hard-coded `main`) and the workspace ledger
+  records base branch/commit, run branch, target branch, and promotion mode. Shared
+  promotion service (`lib/runs/promote.ts`) re-gates readiness at promote time
+  (`assertEvidenceReady`, reusing the M15 evaluator), then dispatches `local_merge`
+  (`promoteLocalMerge` `git merge --no-ff`; conflict → abort + `createMergeConflictAssignment`
+  carrying parent repo path, target branch, run branch, and failing command, run stays
+  `Review`) or `pull_request` (`lib/runs/pr-adapter.ts` — `gh`/`glab` CLI + Gitea REST
+  with bounded pagination; push → idempotent create-or-update one PR per run/target pair;
+  PR url/number recorded as artifact + ledger). Idempotency via a durable
+  `promotionAttemptId` CAS claim (stale-claim reclaim, token-scoped finalize) so retryable
+  failures never duplicate PRs/promotion records. Review surface (`components/runs/review-panel.tsx`)
+  renders the base → run → target spine with base commit, promotion mode, and readiness
+  summary, and the final action names the exact target. Verified: all 7 acceptance criteria
+  green with file-level evidence; seeded authenticated Playwright e2e
+  (`web/e2e/m18-branch-promotion.spec.ts`: merge, conflict-handoff, and PR scenarios).
+  **Deferred:** per-launch promotion-mode override (project-level in M18), managed
+  per-project PR credentials (model C), and the M18.Phase-2 items in the AC list above.
+
 - [x] **M19. Reconciliation + GC** — shipped 2026-06-02 via `claude/suspicious-chatelet-2b3a22`. Crash reconciliation + graceful garbage collection for stranded runs and old worktrees; also closes the M10 deferred follow-up (automatic GC of unreferenced `Removed` flow_revisions). **As-built** (`92ef0f4`…`ab881a6`, six phase-checkpoint commits): ADR-033 (crash-reconciliation model — allow-list `Running`-only classifier with grace guard + retry-safety split), ADR-034 (recovery semantics — durable-marker-first `--resume` hybrid + cap re-admission), ADR-035 (preserve-then-prune workspace GC), ADR-036 (flow-revision GC). Additive migration `0015_glorious_moondragon.sql`: `runs.resume_started_at` + `workspaces.{scheduled_removal_at,archived_branch,archived_at}` (no `gc_state` enum — UI TTL state derived). **Reconcile engine** (`web/lib/reconcile.ts`): pure `classifyRunReconcile` implementing the §0.3 table (worktree-gone / agent-session-gone-past-grace / `cli`-not-retry-safe → CRASH; session-less `check`/`judge` → re-dispatch; live → re-attach; `listSessions` failure → skip the whole tick) + `runReconcileSweep` (per-project, disjoint from `resume-recovery`/`takeover-return` via a `node_attempts` anti-join, bounded concurrency) + `startReconcileSweeper` singleton, both booted from `instrumentation.ts`. **Transition** `crashRunningRun` (CAS `Running→Crashed`, clears `resume_started_at`/`current_step_id`) + scheduler resume-on-promote (a promoted `Pending`+`acpSessionId` resumes via `driveResume`, not a fresh launch — closing the queued-resume loop) + `scheduled_removal_at` stamping on Abandoned/Done. **Recover/discard** (`web/lib/runs/recover.ts` + `POST /api/runs/{runId}/recover|discard`; new `recoverRun`=member RBAC action): §3.2 durable-marker-before-side-effect under the scheduler advisory lock, cap-full → `Crashed→Pending` queued (202, no over-spawn — Codex F2), transient → leave `Running` no rollback (503), `CHECKPOINT` → re-crash (410); discard = `markAbandoned` + GC countdown, no synchronous removal. **GC** (`web/lib/gc/*`): `preserveWorktree` (Codex F1 — `statusPorcelain` → snapshot commit captures tracked+untracked → `maister/archive/<runId>` branch + optional push, never merge-to-main; any git failure → `{ok:false}`, removal gated on preserve success), `runWorkspaceGcSweep` (effective deadline `scheduled_removal_at ?? ended_at+AGE` — Codex F3 backfill-free; pruned-not-marked crash window self-heals), `runRevisionGcSweep` (dual-FK re-assert under `FOR UPDATE` → delete + `rm`), `startGcSweeper` + token-guarded `GET`/`POST /api/cron/gc` (constant-time `X-Maister-Cron-Token`; empty→503, mismatch→401, 200/207, token never logged). **UI**: distinct Crashed board column + run-detail Crashed section with accessible Recover/Discard confirm dialogs (Recover warns it re-runs the current node — Codex F4; cap-full → queued state); left-rail worktree TTL color-ramp (green→amber→red via the effective deadline) + archived indication; EN+RU i18n. Seven env vars (`MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`/`_GRACE_SECONDS`, `MAISTER_GC_SWEEP_INTERVAL_SECONDS`/`_AGE_DAYS`/`_WARNING_DAYS`/`_ARCHIVE_PUSH`, `MAISTER_CRON_TOKEN`) in `.env.example` + `docs/configuration.md` (compose stays Postgres-only per ADR-023). Docs: ADR-033..036 + new `docs/system-analytics/reconciliation-gc.md` + runs/workspaces/flow-packages updates + `web.openapi.yaml`/ERD/error-taxonomy. Verified: typecheck 0, unit 966, integration 260, `validate:docs:all` 95/95, all 5 M19 Playwright specs green; SDD docs-first Phase 0 + per-phase QA(RED)→implementor(GREEN)→adversarial-reviewer TDD with executable phase gates. **Deferred**: on-disk ACP `.jsonl` pruning, an immediate force-delete affordance, and a manifest `retry_safe: true` opt-in to widen `cli` auto-redispatch (all → Phase 2).
 
 - [ ] **M20. Dogfood + external validation** — register MAIster repo in itself, ship ≥1 non-trivial PR through the **aif Flow plugin** against own backlog (validates aif-as-plugin end-to-end, Flow package lifecycle, review-driven rework, manual takeover, evidence graph review, role-owned assignments, capability registry, gate readiness, external operations API/MCP facade, and retry loop on a real task). Then onboard 3 installations on external repos using either `aif` or `superpowers` plugins, ≥1 PR shipped end-to-end on each within T+21d after dogfood. 0/3 → thesis not validated, reassess wedge.
@@ -539,4 +563,5 @@
 | M19. Reconciliation + GC                                                     | 2026-06-02 |
 | M16. External operations API, tokens, and thin MCP facade                    | 2026-06-02 |
 | M15. Readiness policy and verdict calibration                                | 2026-06-03 |
+| M18. Branch targeting, diff review, and manual promotion                     | 2026-06-04 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
