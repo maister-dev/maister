@@ -395,31 +395,31 @@ Global phase gate:
 
 ### Phase 2 - Signal Harvesting Heuristic
 
-- [ ] **T2.1 (RED) - Signal cluster tests.** Add unit cases for normalized
+- [x] **T2.1 (RED) - Signal cluster tests.** Add unit cases for normalized
   structured rework metadata, optional-comment rejection/redaction,
   repeatability scoring, blocking-gate weighting, retry cluster grouping, and
   M17 slot placeholders. Include adversarial text with env-like/token-like
   substrings only if Phase 0 admits text extraction. Runner: vitest `unit`.
-- [ ] **T2.2 (GREEN) - Harvesting helpers.** Add
+- [x] **T2.2 (GREEN) - Harvesting helpers.** Add
   `web/lib/queries/observatory-signals.ts` with pure helpers:
   `normalizeSignalText`, `redactSignalText`, `clusterReworkSignals`,
   `clusterGateSignals`, `clusterRetrySignals`, `rankSignals`. Keep text
   extraction disabled by default unless Phase 0 explicitly enables it; structured
   metadata must work without text. **Logging:** none in pure helpers.
-- [ ] **T2.3 (RED) - Query integration for signal clusters.** Extend
+- [x] **T2.3 (RED) - Query integration for signal clusters.** Extend
   `observatory.integration.test.ts`: repeated structured rework metadata outranks
   one-off events; repeated failed gates outrank passed/advisory noise; retries on
   the same node cluster by flow/node/error; inaccessible project signals never
   leak. Verify HITL signals use real join paths:
   `hitl_requests.run_id -> runs.flow_id`, `hitl_requests.step_id` as node scope,
   and optional `node_attempts` context via `(run_id, node_id=step_id)`.
-- [ ] **T2.4 (GREEN) - Wire signals into read models.** Extend
+- [x] **T2.4 (GREEN) - Wire signals into read models.** Extend
   `getPortfolioObservatory` and `getProjectObservatory` to return
   `topSignals: SignalCluster[]`, each carrying `kind`, `title`, `scope`,
   `occurrenceCount`, `affectedRunCount`, `affectedProjectCount`, `priorityScore`,
   `examples` (redacted, max N), and drill-down params. **Logging:** DEBUG cluster
   candidate counts and discarded unsafe text counts.
-- [ ] **T2.5 (REVIEW) - Privacy and false-certainty review.** Reviewer checks
+- [x] **T2.5 (REVIEW) - Privacy and false-certainty review.** Reviewer checks
   that signals are labeled as observations, not recommendations; no raw prompts
   or artifact payloads are surfaced; redaction is tested; M17 fields are optional
   and absent-safe. **Verify:** typecheck, unit, integration green.

@@ -30,6 +30,13 @@ import {
   type ObservatoryRunInput,
   type ObservatoryTimedRunInput,
 } from "@/lib/queries/observatory-core";
+import {
+  clusterGateSignals,
+  clusterRetrySignals,
+  clusterReworkSignals,
+  rankSignals,
+  type SignalCluster,
+} from "@/lib/queries/observatory-signals";
 
 const {
   artifactInstances,
@@ -102,6 +109,7 @@ export interface ObservatoryPortfolio {
   flows: ObservatoryFlowSummary[];
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
+  topSignals: SignalCluster[];
 }
 
 export interface ObservatoryProject {
@@ -110,6 +118,7 @@ export interface ObservatoryProject {
   flows: ObservatoryFlowSummary[];
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
+  topSignals: SignalCluster[];
 }
 
 export interface ObservatoryNodeDetail {
@@ -260,6 +269,7 @@ export async function getProjectObservatory(
     flows: portfolio.flows,
     nodes: portfolio.nodes,
     artifacts: portfolio.artifacts,
+    topSignals: portfolio.topSignals,
   };
 }
 
@@ -565,6 +575,7 @@ function buildPortfolio(
   rows: {
     runs: RunRow[];
     attempts: AttemptRow[];
+    gates: GateRow[];
     hitl: HitlRow[];
     artifacts: ArtifactRow[];
   },
@@ -574,6 +585,7 @@ function buildPortfolio(
   const projectsById = new Map(projectScope.map((project) => [project.id, project]));
   const flowGroups = groupBy(rows.runs, (run) => run.flowId);
   const nodeGroups = groupBy(rows.attempts, (attempt) => attempt.nodeId);
+  const topSignals = buildTopSignals(rows);
   const projectSummaries = projectScope.map((project) => {
     const projectRuns = rows.runs.filter((run) => run.projectId === project.id);
     const projectRunSet = new Set(projectRuns.map((run) => run.id));
@@ -647,7 +659,106 @@ function buildPortfolio(
       })
       .sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
     artifacts: summarizeArtifacts(groupArtifactContributions(rows.artifacts)),
+    topSignals,
   };
+}
+
+function buildTopSignals(rows: {
+  runs: RunRow[];
+  attempts: AttemptRow[];
+  gates: GateRow[];
+  hitl: HitlRow[];
+  artifacts: ArtifactRow[];
+}): SignalCluster[] {
+  const runById = new Map(rows.runs.map((run) => [run.id, run]));
+  const attemptById = new Map(rows.attempts.map((attempt) => [attempt.id, attempt]));
+  const artifactsByAttemptId = groupBy(
+    rows.artifacts.filter((artifact) => artifact.nodeAttemptId !== null),
+    (artifact) => artifact.nodeAttemptId ?? "",
+  );
+  const reworkSignals = clusterReworkSignals(
+    rows.hitl.flatMap((hitl) => {
+      const run = runById.get(hitl.runId);
+      if (!run) return [];
+
+      return [
+        {
+          id: hitl.id,
+          projectId: run.projectId,
+          runId: hitl.runId,
+          flowId: run.flowId,
+          stepId: hitl.stepId,
+          decision: hitl.decision,
+          reworkTarget: hitl.reworkTarget,
+          workspacePolicy: hitl.workspacePolicy,
+        },
+      ];
+    }),
+  );
+  const gateSignals = clusterGateSignals(
+    rows.gates.flatMap((gate) => {
+      const run = runById.get(gate.runId);
+      const attempt = attemptById.get(gate.nodeAttemptId);
+      if (!run || !attempt) return [];
+
+      return [
+        {
+          id: gate.id,
+          projectId: run.projectId,
+          runId: gate.runId,
+          flowId: run.flowId,
+          nodeId: attempt.nodeId,
+          gateId: gate.gateId,
+          kind: gate.kind,
+          mode: gate.mode,
+          status: gate.status,
+          verdict: gate.verdict,
+        },
+      ];
+    }),
+  );
+  const retrySignals = clusterRetrySignals(
+    rows.attempts.flatMap((attempt) => {
+      const run = runById.get(attempt.runId);
+      if (!run) return [];
+
+      const firstArtifact = artifactsByAttemptId.get(attempt.id)?.[0];
+
+      return [
+        {
+          id: attempt.id,
+          projectId: run.projectId,
+          runId: attempt.runId,
+          flowId: run.flowId,
+          nodeId: attempt.nodeId,
+          nodeType: attempt.nodeType,
+          attempt: attempt.attempt,
+          errorCode: attempt.errorCode ?? null,
+          exitCode: attempt.exitCode ?? null,
+          artifactKind: firstArtifact?.kind ?? null,
+          artifactDefId: firstArtifact?.artifactDefId ?? null,
+        },
+      ];
+    }),
+  );
+  const topSignals = rankSignals([
+    ...reworkSignals,
+    ...gateSignals,
+    ...retrySignals,
+  ]).slice(0, 10);
+
+  log.debug(
+    {
+      reworkCandidateCount: reworkSignals.length,
+      gateCandidateCount: gateSignals.length,
+      retryCandidateCount: retrySignals.length,
+      returnedSignalCount: topSignals.length,
+      discardedUnsafeTextCount: 0,
+    },
+    "observatory signal clusters ranked",
+  );
+
+  return topSignals;
 }
 
 function summarizeArtifacts(
@@ -672,6 +783,7 @@ function emptyProject(projectId: string, now: Date): ObservatoryProject {
     flows: [],
     nodes: [],
     artifacts: [],
+    topSignals: [],
   };
 }
 

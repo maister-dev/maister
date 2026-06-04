@@ -234,6 +234,115 @@ describe("observatory read models", () => {
     expect(detail.attempts.map((row) => row.attempt)).toEqual([1, 2]);
     expect(counted.count()).toBeLessThanOrEqual(14);
   });
+
+  it("ranks repeated visible signals without leaking inaccessible project signals", async () => {
+    const first = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "signals-first",
+    });
+    const second = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "signals-second",
+    });
+    const hidden = await seedRun({
+      projectId: hiddenProjectId,
+      flowId: hiddenFlowId,
+      suffix: "signals-hidden",
+    });
+
+    await db.insert(schema.nodeAttempts).values([
+      attempt(first.runId, "checks", "check", 1, "Failed", "signals-checks-1", {
+        errorCode: "TEST_FAIL",
+        exitCode: 1,
+      }),
+      attempt(first.runId, "checks", "check", 2, "Succeeded", "signals-checks-2", {
+        errorCode: "TEST_FAIL",
+      }),
+      attempt(second.runId, "checks", "check", 2, "Succeeded", "signals-checks-3", {
+        errorCode: "TEST_FAIL",
+      }),
+      attempt(hidden.runId, "deploy", "check", 2, "Failed", "hidden-deploy-1", {
+        errorCode: "DEPLOY_FAIL",
+      }),
+    ]);
+    await db.insert(schema.hitlRequests).values([
+      {
+        id: "signals-hitl-1",
+        runId: first.runId,
+        stepId: "review",
+        kind: "human",
+        prompt: "Review",
+        decision: "rework",
+        reworkTarget: "implement",
+        workspacePolicy: "keep",
+        createdAt: new Date("2026-06-05T11:10:00.000Z"),
+        respondedAt: new Date("2026-06-05T11:20:00.000Z"),
+      },
+      {
+        id: "signals-hitl-2",
+        runId: second.runId,
+        stepId: "review",
+        kind: "human",
+        prompt: "Review",
+        decision: "rework",
+        reworkTarget: "implement",
+        workspacePolicy: "keep",
+        createdAt: new Date("2026-06-05T11:15:00.000Z"),
+        respondedAt: new Date("2026-06-05T11:25:00.000Z"),
+      },
+    ]);
+    await db.insert(schema.gateResults).values([
+      {
+        id: "signals-gate-1",
+        runId: first.runId,
+        nodeAttemptId: "signals-checks-1",
+        gateId: "unit",
+        kind: "command_check",
+        mode: "blocking",
+        status: "failed",
+        verdict: { verdict: "fail", reasons: ["ACCESS_TOKEN=abc failed"] },
+      },
+      {
+        id: "signals-gate-2",
+        runId: second.runId,
+        nodeAttemptId: "signals-checks-3",
+        gateId: "unit",
+        kind: "command_check",
+        mode: "blocking",
+        status: "failed",
+        verdict: { verdict: "fail", recommendedAction: "rerun tests" },
+      },
+      {
+        id: "hidden-gate-1",
+        runId: hidden.runId,
+        nodeAttemptId: "hidden-deploy-1",
+        gateId: "deploy",
+        kind: "command_check",
+        mode: "blocking",
+        status: "failed",
+        verdict: { verdict: "fail", reasons: ["hidden"] },
+      },
+    ]);
+
+    const result = await getPortfolioObservatory(
+      memberUserId,
+      "member",
+      { now: NOW },
+      db,
+    );
+
+    expect(result.topSignals.map((signal) => signal.key)).toContain(
+      `gate:${visibleFlowId}:checks:unit:failed`,
+    );
+    expect(result.topSignals.some((signal) => signal.key.includes(hiddenFlowId))).toBe(
+      false,
+    );
+    expect(result.topSignals.flatMap((signal) => signal.examples)).toContain(
+      "access_token=[redacted] failed",
+    );
+  });
 });
 
 async function seedRun(input: {
