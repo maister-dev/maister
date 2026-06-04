@@ -363,6 +363,47 @@ describe("promoteRun — target-drift gate (flow, Codex F6)", () => {
 
     expect(promoteLocalMerge).not.toHaveBeenCalled();
   });
+
+  it("allowTargetDrift:true WITHOUT reviewedTargetCommit is still refused (never promote blind)", async () => {
+    const runId = seedFlowRun();
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "local_merge", allowTargetDrift: true }),
+      "PRECONDITION",
+    );
+
+    // The reviewed-SHA requirement precedes target resolution and the claim.
+    expect(resolveBaseCommit).not.toHaveBeenCalled();
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("none");
+  });
+
+  it("allowTargetDrift:true still validates target existence — a missing target is PRECONDITION, not a merge conflict", async () => {
+    const runId = seedFlowRun();
+
+    // A target that does not resolve to a commit (missing branch): the real
+    // resolveBaseCommit throws PRECONDITION. This must surface as-is, BEFORE the
+    // claim and BEFORE any merge — never as a misclassified merge conflict.
+    vi.mocked(resolveBaseCommit).mockRejectedValue(
+      new MaisterError(
+        "PRECONDITION",
+        "base ref does not resolve to a commit: main",
+      ),
+    );
+
+    await expectMaisterCode(
+      callPromote(runId, {
+        mode: "local_merge",
+        reviewedTargetCommit: "tip00000",
+        allowTargetDrift: true,
+      }),
+      "PRECONDITION",
+    );
+
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(createAssignment).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("none");
+  });
 });
 
 describe("promoteRun — finalize attempt-token mismatch (Codex F5)", () => {

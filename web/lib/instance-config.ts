@@ -132,8 +132,9 @@ export type HostTool = {
   version: string | null;
 };
 
-// gh is informational-only: absence does not block any flow, so a probe
-// failure degrades to { available: false } rather than throwing.
+// Host CLI probes are informational: a probe failure degrades to
+// { available: false } rather than throwing. The PR-mode prerequisite
+// (gh/glab presence per provider) is enforced at promote time, not here.
 export async function probeTool(name: string): Promise<HostTool> {
   try {
     const { stdout } = await execFileAsync(name, ["--version"], {
@@ -147,5 +148,9 @@ export async function probeTool(name: string): Promise<HostTool> {
 }
 
 export async function hostToolStatus(): Promise<HostTool[]> {
-  return [await probeTool("git"), await probeTool("gh")];
+  return [
+    await probeTool("git"),
+    await probeTool("gh"),
+    await probeTool("glab"),
+  ];
 }

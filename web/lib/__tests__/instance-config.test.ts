@@ -86,6 +86,12 @@ describe("hostToolStatus", () => {
     expect(git?.version).not.toBeNull();
   });
 
+  it("reports git, gh and glab as the host-tool set", async () => {
+    const tools = await hostToolStatus();
+
+    expect(tools.map((t) => t.name)).toEqual(["git", "gh", "glab"]);
+  });
+
   it("degrades a missing tool to unavailable without throwing", async () => {
     const probe = await probeTool("maister-nonexistent-binary-xyz");
 

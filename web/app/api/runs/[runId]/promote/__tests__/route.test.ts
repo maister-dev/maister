@@ -104,6 +104,7 @@ vi.mock("@/lib/authz", () => ({
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
   promoteLocalMerge: vi.fn(async () => "def5678"),
+  resolveBaseCommit: vi.fn(async () => "tip00000"),
 }));
 
 vi.mock("@/lib/assignments/service", () => ({
@@ -341,18 +342,19 @@ describe("POST /api/runs/[runId]/promote", () => {
 
   // The route now serves flow runs too (M18 Phase 2): a flow run dispatches into
   // the shared promoteRun service rather than being rejected on a kind guard.
-  // This asserts the dispatch genuinely engages — the flow path runs the merge
-  // and flips the run to Done. (The full flow contract — readiness, drift,
-  // durable claim, two-racer — is covered by promote-flow.integration.test.ts
-  // and promote-service.test.ts.) allowTargetDrift bypasses the live-HEAD drift
-  // resolve, which is unmocked in this scratch-focused fake.
+  // This asserts the dispatch genuinely engages — the flow path resolves the
+  // target, runs the merge, and flips the run to Done. (The full flow contract —
+  // readiness, drift, durable claim, two-racer — is covered by
+  // promote-flow.integration.test.ts and promote-service.test.ts.)
+  // reviewedTargetCommit matches the mocked live target HEAD, so there is no
+  // drift; the target always resolves (proving it exists) regardless.
   it("dispatches a flow run through the shared promotion service to Done", async () => {
     const runId = seedScratchRun({ runKind: "flow" });
 
     const res = await invokePost(runId, {
       mode: "local_merge",
       targetBranch: "main",
-      allowTargetDrift: true,
+      reviewedTargetCommit: "tip00000",
     });
 
     expect(res.status).toBe(200);

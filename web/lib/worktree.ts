@@ -39,7 +39,7 @@ const absolutePathSchema = z
     "must be absolute with no '..' segments",
   );
 
-const branchNameSchema = z
+export const branchNameSchema = z
   .string()
   .min(1)
   .max(255)

@@ -7,6 +7,7 @@ import pino from "pino";
 
 import { MaisterError } from "@/lib/errors";
 import { type Provider, redactUrl } from "@/lib/repo-source";
+import { branchNameSchema } from "@/lib/worktree";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +18,9 @@ const log = pino({
 
 const EXEC_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+
+// Safety bound on the Gitea open-PR pagination sweep (see findOpenPr).
+const PR_LOOKUP_MAX_PAGES = 200;
 
 // A single safe URL path segment (mirrors repo-source's deriveRepoName guard).
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -63,6 +67,28 @@ function execEnv(
   return { ...process.env, [tokenVar]: token };
 }
 
+// Reject any branch ref that is not a safe git branch name BEFORE it reaches a
+// gh/glab argv or the Gitea REST body. BOTH refs are swept (sibling-field rule):
+// sourceBranch is server-generated, but targetBranch is request-derived and on
+// the allowTargetDrift path bypasses the local-merge regex, so the PR boundary
+// must guard it itself. Same `branchNameSchema` as worktree → one rule, all
+// three adapters.
+function assertSafeBranchRefs(args: CreateOrUpdatePrArgs): void {
+  for (const [label, value] of [
+    ["sourceBranch", args.sourceBranch],
+    ["targetBranch", args.targetBranch],
+  ] as const) {
+    const parsed = branchNameSchema.safeParse(value);
+
+    if (!parsed.success) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `unsafe ${label} for pull request: ${parsed.error.issues[0]?.message ?? "invalid branch name"}`,
+      );
+    }
+  }
+}
+
 // ---- CLI adapters (github / gitlab) ---------------------------------------
 
 abstract class CliPrAdapter implements PrAdapter {
@@ -76,11 +102,18 @@ abstract class CliPrAdapter implements PrAdapter {
     return process.env[this.tokenVar] || undefined;
   }
 
+  // gh/glab infer the repository from the process CWD. A PR promotion MUST run
+  // against the target project's checkout (args.repoPath), never the MAIster
+  // server's own working directory — so every list/create call passes cwd. The
+  // repo-independent `--version` preflight passes none.
   protected async exec(
     args: readonly string[],
+    cwd?: string,
   ): Promise<{ stdout: string; stderr: string }> {
+    log.debug({ bin: this.bin, cwd }, "[FIX] pr cli exec");
+
     return execFileAsync(this.bin, args, {
-      cwd: undefined,
+      cwd,
       signal: AbortSignal.timeout(EXEC_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
       env: execEnv(this.token, this.tokenVar),
@@ -131,22 +164,27 @@ export class GhCliAdapter extends CliPrAdapter {
   protected readonly displayName = "gh";
 
   async createOrUpdatePr(args: CreateOrUpdatePrArgs): Promise<PrResult> {
+    assertSafeBranchRefs(args);
+
     let listOut: string;
 
     try {
-      const { stdout } = await this.exec([
-        "pr",
-        "list",
-        "--head",
-        args.sourceBranch,
-        "--base",
-        args.targetBranch,
-        "--state",
-        "open",
-        "--json",
-        "url,number,baseRefName",
-        "--end-of-options",
-      ]);
+      const { stdout } = await this.exec(
+        [
+          "pr",
+          "list",
+          "--head",
+          args.sourceBranch,
+          "--base",
+          args.targetBranch,
+          "--state",
+          "open",
+          "--json",
+          "url,number,baseRefName",
+          "--end-of-options",
+        ],
+        args.repoPath,
+      );
 
       listOut = stdout;
     } catch (err) {
@@ -158,19 +196,22 @@ export class GhCliAdapter extends CliPrAdapter {
     if (existing) return existing;
 
     try {
-      const { stdout } = await this.exec([
-        "pr",
-        "create",
-        "--base",
-        args.targetBranch,
-        "--head",
-        args.sourceBranch,
-        "--title",
-        args.title,
-        "--body",
-        args.body,
-        "--end-of-options",
-      ]);
+      const { stdout } = await this.exec(
+        [
+          "pr",
+          "create",
+          "--base",
+          args.targetBranch,
+          "--head",
+          args.sourceBranch,
+          "--title",
+          args.title,
+          "--body",
+          args.body,
+          "--end-of-options",
+        ],
+        args.repoPath,
+      );
 
       return parseCreatedPrUrl(stdout);
     } catch (err) {
@@ -185,20 +226,25 @@ export class GlabCliAdapter extends CliPrAdapter {
   protected readonly displayName = "glab";
 
   async createOrUpdatePr(args: CreateOrUpdatePrArgs): Promise<PrResult> {
+    assertSafeBranchRefs(args);
+
     let listOut: string;
 
     try {
-      const { stdout } = await this.exec([
-        "mr",
-        "list",
-        "--source-branch",
-        args.sourceBranch,
-        "--target-branch",
-        args.targetBranch,
-        "--output",
-        "json",
-        "--end-of-options",
-      ]);
+      const { stdout } = await this.exec(
+        [
+          "mr",
+          "list",
+          "--source-branch",
+          args.sourceBranch,
+          "--target-branch",
+          args.targetBranch,
+          "--output",
+          "json",
+          "--end-of-options",
+        ],
+        args.repoPath,
+      );
 
       listOut = stdout;
     } catch (err) {
@@ -210,19 +256,22 @@ export class GlabCliAdapter extends CliPrAdapter {
     if (existing) return existing;
 
     try {
-      const { stdout } = await this.exec([
-        "mr",
-        "create",
-        "--source-branch",
-        args.sourceBranch,
-        "--target-branch",
-        args.targetBranch,
-        "--title",
-        args.title,
-        "--description",
-        args.body,
-        "--end-of-options",
-      ]);
+      const { stdout } = await this.exec(
+        [
+          "mr",
+          "create",
+          "--source-branch",
+          args.sourceBranch,
+          "--target-branch",
+          args.targetBranch,
+          "--title",
+          args.title,
+          "--description",
+          args.body,
+          "--end-of-options",
+        ],
+        args.repoPath,
+      );
 
       return parseCreatedPrUrl(stdout);
     } catch (err) {
@@ -328,6 +377,8 @@ export class GiteaApiAdapter implements PrAdapter {
   }
 
   async createOrUpdatePr(args: CreateOrUpdatePrArgs): Promise<PrResult> {
+    assertSafeBranchRefs(args);
+
     if (!this.remoteUrl) {
       throw new MaisterError("PRECONDITION", "remote not configured");
     }
@@ -346,33 +397,51 @@ export class GiteaApiAdapter implements PrAdapter {
     collection: string,
     args: CreateOrUpdatePrArgs,
   ): Promise<PrResult | null> {
-    // limit=50 is the Gitea per-page max — a single page can otherwise omit the
-    // existing (head,base) match on a busy repo, causing a duplicate POST.
-    const url = `${collection}?state=open&limit=50`;
-    const res = await this.fetchOrThrow(url, { method: "GET" }, "PR lookup");
-    const list = (await res.json()) as unknown;
+    // Gitea's pulls list has no head/base filter, so page through open PRs
+    // (limit=50 is the per-page max) until the (head,base) match is found or a
+    // short page signals the last one. A single page can otherwise omit the
+    // existing PR on a busy repo, causing a duplicate POST.
+    //
+    // PR_LOOKUP_MAX_PAGES bounds a server that never returns a short page (a bug
+    // or a hostile remote would otherwise loop forever, with no per-request
+    // timeout on `fetch`). 200 pages = 10k open PRs, far beyond any real repo.
+    // Hitting the cap is a REFUSAL, not a "no match": returning null here would
+    // re-open the duplicate-POST gap pagination closes, so we throw instead of
+    // creating blind — Promote stays retryable, no duplicate.
+    const limit = 50;
 
-    if (!Array.isArray(list)) return null;
+    for (let page = 1; page <= PR_LOOKUP_MAX_PAGES; page++) {
+      const url = `${collection}?state=open&limit=${limit}&page=${page}`;
+      const res = await this.fetchOrThrow(url, { method: "GET" }, "PR lookup");
+      const list = (await res.json()) as unknown;
 
-    for (const item of list) {
-      const pr = item as {
-        html_url?: string;
-        number?: number;
-        head?: { ref?: string };
-        base?: { ref?: string };
-      };
+      if (!Array.isArray(list)) return null;
 
-      if (
-        pr.head?.ref === args.sourceBranch &&
-        pr.base?.ref === args.targetBranch &&
-        typeof pr.html_url === "string" &&
-        typeof pr.number === "number"
-      ) {
-        return { url: pr.html_url, number: pr.number };
+      for (const item of list) {
+        const pr = item as {
+          html_url?: string;
+          number?: number;
+          head?: { ref?: string };
+          base?: { ref?: string };
+        };
+
+        if (
+          pr.head?.ref === args.sourceBranch &&
+          pr.base?.ref === args.targetBranch &&
+          typeof pr.html_url === "string" &&
+          typeof pr.number === "number"
+        ) {
+          return { url: pr.html_url, number: pr.number };
+        }
       }
+
+      if (list.length < limit) return null;
     }
 
-    return null;
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `Gitea PR lookup exceeded ${PR_LOOKUP_MAX_PAGES} pages without a conclusive result — refusing to create to avoid a duplicate`,
+    );
   }
 
   private async createPr(

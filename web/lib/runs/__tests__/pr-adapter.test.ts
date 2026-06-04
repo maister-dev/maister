@@ -221,6 +221,46 @@ describe("selectPrAdapter — provider dispatch", () => {
 });
 
 // =============================================================================
+// branch-name hygiene — unsafe refs are rejected at the PR boundary, before any
+// gh/glab argv or Gitea REST call, on all three adapters (one shared rule).
+// =============================================================================
+
+describe("createOrUpdatePr — branch-name validation", () => {
+  const REMOTE = {
+    github: "https://github.com/org/repo.git",
+    gitlab: "https://gitlab.com/org/repo.git",
+    gitea: "https://gitea.example.com/org/repo.git",
+  } as const;
+
+  for (const provider of ["github", "gitlab", "gitea"] as const) {
+    it(`${provider}: rejects an unsafe targetBranch with PRECONDITION and never calls the provider`, async () => {
+      const { selectPrAdapter } = await loadAdapter();
+      const adapter = selectPrAdapter(provider, {
+        remoteUrl: REMOTE[provider],
+      });
+
+      await expect(
+        adapter.createOrUpdatePr({ ...PR_ARGS, targetBranch: "main\n--evil" }),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+      expect(execCalls).toHaveLength(0);
+      expect(fetchCalls).toHaveLength(0);
+    });
+  }
+
+  it("rejects an unsafe sourceBranch (leading dash) before any provider call", async () => {
+    const { selectPrAdapter } = await loadAdapter();
+    const adapter = selectPrAdapter("github", { remoteUrl: REMOTE.github });
+
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS, sourceBranch: "-x" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect(execCalls).toHaveLength(0);
+  });
+});
+
+// =============================================================================
 // preflight failures → PRECONDITION
 // =============================================================================
 
@@ -787,6 +827,171 @@ describe("token redaction (NEVER log/leak the token)", () => {
 // no shell — exec is invoked with an ARGS ARRAY (execFile-style), never a
 // single shell string
 // =============================================================================
+
+// =============================================================================
+// repo context — gh/glab MUST run against the TARGET project repo (args.repoPath
+// as cwd), never the MAIster server's own working directory. Otherwise the CLI
+// infers the wrong repository from the process CWD and can list/create PRs
+// against the wrong repo.
+// =============================================================================
+
+describe("CLI adapters — every invocation runs in the target repo cwd", () => {
+  it("gh: every pr list/create exec uses args.repoPath as cwd", async () => {
+    const { selectPrAdapter } = await loadAdapter();
+
+    execImpls["gh"] = async (args) => {
+      const argv = args as readonly string[];
+
+      if (argv.includes("list")) return { stdout: "[]", stderr: "" };
+
+      return { stdout: "https://github.com/org/repo/pull/1\n", stderr: "" };
+    };
+
+    const adapter = selectPrAdapter("github", {
+      remoteUrl: "https://github.com/org/repo.git",
+    });
+
+    await adapter.createOrUpdatePr({ ...PR_ARGS });
+
+    expect(execCalls.length).toBeGreaterThan(0);
+    for (const call of execCalls) {
+      expect((call.opts as { cwd?: string }).cwd).toBe(PR_ARGS.repoPath);
+    }
+  });
+
+  it("glab: every mr list/create exec uses args.repoPath as cwd", async () => {
+    const { selectPrAdapter } = await loadAdapter();
+
+    execImpls["glab"] = async (args) => {
+      const argv = args as readonly string[];
+
+      if (argv.includes("list")) return { stdout: "[]", stderr: "" };
+
+      return {
+        stdout: "https://gitlab.com/org/repo/-/merge_requests/1\n",
+        stderr: "",
+      };
+    };
+
+    const adapter = selectPrAdapter("gitlab", {
+      remoteUrl: "https://gitlab.com/org/repo.git",
+    });
+
+    await adapter.createOrUpdatePr({ ...PR_ARGS });
+
+    expect(execCalls.length).toBeGreaterThan(0);
+    for (const call of execCalls) {
+      expect((call.opts as { cwd?: string }).cwd).toBe(PR_ARGS.repoPath);
+    }
+  });
+});
+
+// =============================================================================
+// Gitea pagination — the (head,base) match may live beyond the first page on a
+// busy repo. findOpenPr MUST page until it finds the match (or exhausts the open
+// PRs) rather than POST a duplicate when a full first page omits the match.
+// =============================================================================
+
+describe("GiteaApiAdapter — paginates the open-PR lookup", () => {
+  it("finds a matching PR on page 2 and does NOT create a duplicate", async () => {
+    process.env.GITEA_TOKEN = "tkn-gitea";
+    const { selectPrAdapter } = await loadAdapter();
+
+    // A full first page (50 non-matching open PRs) forces a second page fetch.
+    const fullPage = Array.from({ length: 50 }, (_unused, i) => ({
+      html_url: `https://gitea.example.com/org/repo/pulls/${i + 100}`,
+      number: i + 100,
+      head: { ref: "someone/other" },
+      base: { ref: "main" },
+    }));
+    const matchPage = [
+      {
+        html_url: "https://gitea.example.com/org/repo/pulls/200",
+        number: 200,
+        head: { ref: "maister/feature" },
+        base: { ref: "main" },
+      },
+    ];
+
+    fetchHandler = (url, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET") {
+        return {
+          status: 200,
+          json: url.includes("page=1") ? fullPage : matchPage,
+        };
+      }
+
+      // A POST here would be the duplicate-create bug.
+      return { status: 500, json: { message: "POST must not happen" } };
+    };
+
+    const adapter = selectPrAdapter("gitea", {
+      remoteUrl: "https://gitea.example.com/org/repo.git",
+    });
+    const result = await adapter.createOrUpdatePr({ ...PR_ARGS });
+
+    expect(result).toEqual({
+      url: "https://gitea.example.com/org/repo/pulls/200",
+      number: 200,
+    });
+
+    const gets = fetchCalls.filter(
+      (c) => (c.init?.method ?? "GET").toUpperCase() === "GET",
+    );
+    const posts = fetchCalls.filter(
+      (c) => (c.init?.method ?? "GET").toUpperCase() === "POST",
+    );
+
+    expect(gets.length).toBe(2);
+    expect(posts.length).toBe(0);
+  });
+
+  it("refuses (no duplicate POST) when the open-PR list never pages out", async () => {
+    process.env.GITEA_TOKEN = "tkn-gitea";
+    const { selectPrAdapter } = await loadAdapter();
+
+    // A server that ALWAYS returns a full, non-matching page never signals a
+    // last page. The sweep must terminate at the page cap and REFUSE rather
+    // than POST a blind (possibly duplicate) create.
+    const fullPage = Array.from({ length: 50 }, (_unused, i) => ({
+      html_url: `https://gitea.example.com/org/repo/pulls/${i + 1}`,
+      number: i + 1,
+      head: { ref: "someone/other" },
+      base: { ref: "main" },
+    }));
+
+    fetchHandler = (_url, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (method === "GET") return { status: 200, json: fullPage };
+
+      // A POST here would be the duplicate-create bug the cap must prevent.
+      return { status: 500, json: { message: "POST must not happen" } };
+    };
+
+    const adapter = selectPrAdapter("gitea", {
+      remoteUrl: "https://gitea.example.com/org/repo.git",
+    });
+
+    await expect(adapter.createOrUpdatePr({ ...PR_ARGS })).rejects.toMatchObject(
+      { code: "EXECUTOR_UNAVAILABLE" },
+    );
+
+    const gets = fetchCalls.filter(
+      (c) => (c.init?.method ?? "GET").toUpperCase() === "GET",
+    );
+    const posts = fetchCalls.filter(
+      (c) => (c.init?.method ?? "GET").toUpperCase() === "POST",
+    );
+
+    // Bounded sweep (the 200-page cap), then a refusal — never an infinite loop
+    // and never a blind create.
+    expect(gets.length).toBe(200);
+    expect(posts.length).toBe(0);
+  });
+});
 
 describe("no shell — execFile-style array args (no shell interpolation)", () => {
   it("every gh invocation passes an args ARRAY, never a single shell command string", async () => {

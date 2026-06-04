@@ -294,36 +294,37 @@ async function promoteFlowRun(
       );
     }
 
-    // Target-drift gate (Codex F6, §3.7). The non-UI / blind caller that omits
-    // reviewedTargetCommit is refused rather than promoted blind.
-    if (!input.allowTargetDrift) {
-      if (!input.reviewedTargetCommit) {
-        throw new MaisterError(
-          "PRECONDITION",
-          "reviewedTargetCommit is required (omit only with allowTargetDrift)",
-        );
-      }
+    // Target-drift gate (Codex F6, §3.7). reviewedTargetCommit is required on
+    // EVERY flow promotion (never promote blind), and the target is ALWAYS
+    // resolved — proving it exists before a claim or any side-effect.
+    // allowTargetDrift waives ONLY the SHA-equality comparison; it never skips
+    // the reviewed-SHA input or the target-existence check.
+    if (!input.reviewedTargetCommit) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "reviewedTargetCommit is required",
+      );
+    }
 
-      const liveTip = await resolveBaseCommit({
-        projectRepoPath: workspace.parentRepoPath,
-        baseRef: resolvedTarget,
-      });
+    const liveTip = await resolveBaseCommit({
+      projectRepoPath: workspace.parentRepoPath,
+      baseRef: resolvedTarget,
+    });
 
-      if (liveTip !== input.reviewedTargetCommit) {
-        log.debug(
-          {
-            runId,
-            resolvedTarget,
-            liveTip,
-            reviewedTargetCommit: input.reviewedTargetCommit,
-          },
-          "promote target-drift refusal",
-        );
-        throw new MaisterError(
-          "PRECONDITION",
-          "target advanced since review — re-review or override",
-        );
-      }
+    if (!input.allowTargetDrift && liveTip !== input.reviewedTargetCommit) {
+      log.debug(
+        {
+          runId,
+          resolvedTarget,
+          liveTip,
+          reviewedTargetCommit: input.reviewedTargetCommit,
+        },
+        "promote target-drift refusal",
+      );
+      throw new MaisterError(
+        "PRECONDITION",
+        "target advanced since review — re-review or override",
+      );
     }
 
     if (!canReclaim(workspace)) {
