@@ -157,6 +157,12 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
 
 ## Phase 2
 
+> **Sequencing & delivery waves:** see
+> [`pv/improvement-roadmap.md`](pv/improvement-roadmap.md) — it places every
+> pillar below into parallel delivery waves, records the foundational primitives
+> they share, and maps each pillar to a wave. This section stays the canonical
+> Phase-2 **scope** (the *what*); the roadmap owns **sequencing** (the *when/how*).
+
 Phase 2 matures the operating harness after the current package/graph/gate
 foundation exists. The goal is not "more integrations" first. The goal is to
 let one owner or a small team run more parallel agent work without babysitting
