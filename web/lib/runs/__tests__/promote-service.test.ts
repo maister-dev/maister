@@ -517,14 +517,20 @@ describe("promoteRun — happy path (flow local_merge)", () => {
 });
 
 describe("promoteRun — scratch dispatch (behavior preserved)", () => {
-  it("routes a scratch run through the scratch path: target locked to base, no readiness, no drift", async () => {
+  it("routes a scratch run through the scratch path: target locked to base, M15 merge-readiness gated, no drift", async () => {
     const runId = seedScratchRun();
 
     const res = await callPromote(runId, { mode: "local_merge" });
 
     expect(res.ok).toBe(true);
-    // Scratch path does NOT run the flow readiness gate or the drift guard.
-    expect(assertEvidenceReady).not.toHaveBeenCalled();
+    // Scratch path runs the M15 merge-readiness gate (phase "merge", preserved
+    // across the M18 refactor-to-service) but NOT the flow drift guard — the
+    // target is locked to the scratch base branch.
+    expect(assertEvidenceReady).toHaveBeenCalledWith(
+      runId,
+      "merge",
+      expect.anything(),
+    );
     expect(resolveBaseCommit).not.toHaveBeenCalled();
     // Target locked to the scratch base branch.
     expect(promoteLocalMerge).toHaveBeenCalledWith(
@@ -535,6 +541,23 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
     );
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
     expect(dbState.tables.runs[0].status).toBe("Done");
+  });
+
+  it("refuses a not-ready scratch promotion (M15 merge-readiness guard, no claim)", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(assertEvidenceReady).mockResolvedValueOnce({
+      ready: false,
+      reasons: ["merge-required artifact stale"],
+    });
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "local_merge" }),
+      "PRECONDITION",
+    );
+
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("none");
   });
 
   it("rejects a scratch promotion target outside the scratch base policy", async () => {
