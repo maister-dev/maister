@@ -1,14 +1,16 @@
 import "server-only";
 
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
-import type {
-  CreateSessionInput,
-  SupervisorExecutorInput,
-} from "@/lib/supervisor-client";
+import type { CreateSessionInput } from "@/lib/supervisor-client";
 
 import { and, count, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  mergeRunnerAdapterLaunch,
+  runnerExecutorInput,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -26,8 +28,10 @@ export { classifyRecover };
 export type { NodeKind, RecoverPlan } from "@/lib/runs/recover-classify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, projects, runs, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const { projects, runs, workspaces } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -49,6 +53,20 @@ function capFromEnv(): number {
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_CAP;
 
   return parsed;
+}
+
+export function recoveredRunLaunchInput(run: {
+  runnerSnapshot: Parameters<typeof runnerExecutorInput>[0] | null;
+}): Pick<CreateSessionInput, "adapterLaunch" | "executor" | "runner"> | null {
+  if (run.runnerSnapshot) {
+    return {
+      executor: runnerExecutorInput(run.runnerSnapshot),
+      runner: runnerSupervisorInput({ snapshot: run.runnerSnapshot }),
+      adapterLaunch: mergeRunnerAdapterLaunch(run.runnerSnapshot),
+    };
+  }
+
+  return null;
 }
 
 // --- T3.2: resumeCrashedRun + driveResume ---------------------------------
@@ -230,21 +248,16 @@ export async function driveResume(
       acpSessionId: runs.acpSessionId,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
-      executorId: runs.executorId,
+      runnerSnapshot: runs.runnerSnapshot,
       projectId: runs.projectId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       worktreePath: workspaces.worktreePath,
       projectSlug: projects.slug,
-      agent: executors.agent,
-      model: executors.model,
-      env: executors.env,
-      router: executors.router,
     })
     .from(runs)
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .innerJoin(projects, eq(projects.id, runs.projectId))
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .where(eq(runs.id, runId));
   const run = rows[0];
 
@@ -294,12 +307,14 @@ export async function driveResume(
   }
 
   // resume-agent: re-issue the prior session via --resume <acpSessionId>.
-  const executor: SupervisorExecutorInput = {
-    agent: run.agent,
-    model: run.model,
-    ...(run.env ? { env: run.env } : {}),
-    ...(run.router ? { router: run.router } : {}),
-  };
+  const launch = recoveredRunLaunchInput(run);
+
+  if (!launch) {
+    log.error({ runId }, "driveResume: no runner snapshot or legacy executor");
+    await crashRunningRun(runId, "agent-session-gone", { db });
+
+    return { state: "unresumable" };
+  }
   const stepId = run.currentStepId ?? "resume";
 
   try {
@@ -308,8 +323,10 @@ export async function driveResume(
       projectSlug: run.projectSlug,
       worktreePath: run.worktreePath,
       stepId,
-      executor,
+      executor: launch.executor,
+      runner: launch.runner,
       resumeSessionId: run.acpSessionId ?? undefined,
+      adapterLaunch: launch.adapterLaunch,
     };
     const result = await createSessionFn(input);
 

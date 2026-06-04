@@ -1,269 +1,372 @@
-# Executors domain
+# ACP runners domain
 
 ## Purpose
 
-An **executor** is the identity tuple `{agent, model, env?, router?}`
-that names which coding-agent CLI MAIster spawns and which LLM provider
-backs it. Executors are project-scoped. The Flow Engine resolves which
-executor a given step should use via a five-level chain.
+An **ACP runner** is a platform-level launch profile. It tells MAIster which
+ACP adapter to spawn, which model/provider route to use, which typed permission
+policy applies, and which optional router sidecar must be ready before launch.
+
+Runners are not project-scoped. Projects, Flow packages, Flow attachments,
+AI-coding steps, task launches, scratch launches, and historical run snapshots
+reference platform runner ids.
 
 ## Domain entities
 
-- **Executor row** — persisted as `executors` row, scoped to a project.
-- **Executor agent** — `'claude' | 'codex'` today. Drives binary
-  dispatch in `supervisor/src/spawn.ts`.
-- **Model** — free-form string. The adapter validates against its own
-  provider.
-- **Env block** — optional `Record<string, string>` overlaid on the
-  supervisor's process env when spawning the child. Used for env-router
-  routing (e.g. `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`).
-- **Router** — optional `'ccr'`. When set, the executor uses
-  `@musistudio/claude-code-router@2.0.0` for in-session multi-provider
-  routing.
+- **Platform ACP runner** - operator-managed launch profile. Stored in
+  `platform_acp_runners`.
+- **Platform default runner** - exactly one enabled runner referenced from
+  platform runtime settings. It is required.
+- **Runner adapter** - code-owned support entry such as `claude` or `codex`.
+  It exposes supported provider kinds, permission policies, diagnostics, and
+  the stable `capability_agent` used by capability enforcement.
+- **Router sidecar** - platform-managed helper process such as CCR. Stored in
+  `platform_router_sidecars`; runners reference it by id.
+- **Runner snapshot** - immutable JSON captured on run/workspace start. It
+  contains the resolved launch profile, `capability_agent`, provider shape,
+  sidecar reference, readiness decision, and safe display labels. It never
+  stores raw secret values.
+- **Usage reference** - a centralized index entry explaining why a runner or
+  sidecar cannot be disabled/deleted or where it is used.
 
-## Binary dispatch
+## Platform config shape
+
+Platform runtime configuration is separate from project `maister.yaml`.
+
+```yaml
+platform:
+  default_runner: claude-code
+
+router_instances:
+  - id: ccr-default
+    kind: ccr
+    lifecycle: managed
+    command_preset: ccr_start
+    config_path: ~/.claude-code-router/config.json
+    base_url: http://127.0.0.1:3456
+    healthcheck_url: http://127.0.0.1:3456/health
+    auth_token: env:MAISTER_CCR_AUTH_TOKEN
+
+acp_runners:
+  - id: claude-code
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
+    permission_policy: default
+
+  - id: claude-code-ccr
+    adapter: claude
+    model: glm-5.1
+    provider:
+      kind: anthropic_compatible
+    router_instance: ccr-default
+    permission_policy: default
+
+  - id: claude-code-dangerous
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
+    permission_policy: dangerously_skip_permissions
+
+  - id: codex-openai
+    adapter: codex
+    model: gpt-5-codex
+    provider:
+      kind: openai
+    permission_policy: default
+
+  - id: codex-qwen
+    adapter: codex
+    model: qwen3.6-plus
+    provider:
+      kind: openai_compatible
+      base_url: https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1
+      api_key: env:DASHSCOPE_API_KEY
+      wire_api: responses
+    permission_policy: default
+    readiness: NotReady
+```
+
+Rules:
+
+- Runner ids are safe ids and unique platform-wide.
+- Adapter ids resolve against the code-owned adapter registry.
+- `capability_agent` is derived from the adapter registry and snapshotted on
+  launch; it is not an operator-entered field.
+- Sidecar refs must resolve to `router_instances[]`.
+- Secret fields are references such as `env:NAME`, never literal tokens.
+- The platform default cannot be disabled or deleted while it is default.
+- A disabled runner can remain referenced by historical snapshots, but it
+  cannot be selected for new launches.
+
+## Project and Flow bindings
+
+Project manifests reference platform runners; they do not define runner launch
+profiles.
+
+```yaml
+schemaVersion: 2
+project:
+  name: myapp
+  default_runner: inherit # or claude-code-ccr
+
+flows:
+  - id: bugfix
+    source: github.com/org/flow-bugfix
+    version: v1.2.3
+    runner: inherit # or codex-openai
+```
+
+Flow package metadata may target a runner for an AI-coding step:
+
+```yaml
+nodes:
+  - id: implement
+    type: ai_coding
+    runner_type: acp
+    runner: claude-code-ccr
+```
+
+`runner_type` defaults to `acp` for this slice. Keeping the field explicit in
+new Flow packages preserves room for future `cli` or headless runner families.
+
+## Runtime resolution chain
+
+MAIster resolves the runner for an AI-coding workspace/run with a strict
+allow-list chain. It never guesses from a missing reference.
 
 ```mermaid
 flowchart LR
-    Spawn[supervisor/src/spawn.ts] --> Dispatch{executor.agent}
-    Dispatch -- claude --> Claude[claude-agent-acp<br/>from @agentclientprotocol/claude-agent-acp@0.37.0]
-    Dispatch -- codex --> Codex[codex-acp<br/>from @agentclientprotocol/codex-acp@0.0.44]
-    Claude --> Anthro[Anthropic API<br/>or env-router URL]
-    Codex --> OpenAI[OpenAI Codex API]
+    L1["1. Launch override<br/>POST /api/runs body.runnerId"] --> Resolve
+    L2["2. AI-coding step target<br/>nodes[].runner"] --> Resolve
+    L3["3. Project Flow default<br/>project attachment runner"] --> Resolve
+    L4["4. Platform Flow default<br/>platform catalog runner"] --> Resolve
+    L5["5. Project default<br/>projects.default_runner_id"] --> Resolve
+    L6["6. Platform default<br/>platform_runtime.default_runner_id"] --> Resolve
+    Resolve["Pick first enabled, referenced runner"] --> Check{valid and ready?}
+    Check -- no --> Err["refuse before worktree/DB side effects"]
+    Check -- yes --> OK["snapshot runner and launch"]
 ```
 
-## Model routing modes
+Resolution returns `{ runnerId, tier }`, where `tier` is one of
+`launchOverride`, `stepTarget`, `projectFlowDefault`, `platformFlowDefault`,
+`projectDefault`, or `platformDefault`.
 
-```mermaid
-flowchart TD
-    Exec[Executor row] --> Mode{env or router?}
+## Flow load and attach remapping
 
-    Mode -- env vars present --> EnvRouter[env-router]
-    Mode -- router=ccr --> Ccr[CCR multi-provider]
-    Mode -- neither --> Default[Direct Anthropic / OpenAI]
+When a Flow package is loaded into the platform catalog or attached to a
+project, MAIster inspects AI-coding nodes. For `runner_type: acp`, each
+`runner` value must resolve to a platform runner id or a persisted remapping.
 
-    EnvRouter --> SetEnv[child env merge:<br/>ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN<br/>or provider-specific vars]
-    SetEnv --> Spawn[spawn adapter]
+Missing target behavior:
 
-    Ccr --> CcrMgr[supervisor ccr-manager singleton<br/>lazy ensureRunning on first router=ccr spawn]
-    CcrMgr --> Spawn
+- Create a pending Flow reconfiguration requirement.
+- Block platform Flow enablement or project Flow attachment until the operator
+  maps the missing id to an existing platform runner or edits the Flow default.
+- Log `{flowId, stepId, missingRunnerId}` at warning level.
+- Do not silently fall back to platform or project defaults.
 
-    Default --> Spawn
+## Adapter registry
 
-    Spawn --> LLM[LLM provider]
+Adapter support is code-owned; operators cannot create arbitrary adapter
+families in this slice.
+
+| Adapter | Capability agent | Spawn binary | Ready launch families |
+| --- | --- | --- | --- |
+| `claude` | `claude` | `claude-agent-acp` | Claude direct, Claude CCR, Claude dangerous policy after adapter flag smoke |
+| `codex` | `codex` | `codex-acp` | Codex OpenAI direct; third-party Responses-wire routes only after endpoint smoke |
+
+The adapter registry is the only source for `capability_agent`. Capability
+selection, capability enforcement, native materialization, run detail, resume,
+and recovery read the resolved runner snapshot or registry-derived identity.
+No runtime path should read the retired `executors.agent` value as launch
+truth.
+
+## Source-verified launch implications
+
+Source references checked for this feature:
+
+- Claude Code permission modes:
+  <https://code.claude.com/docs/en/permission-modes>
+- Codex config reference:
+  <https://developers.openai.com/codex/config-reference/#configtoml>
+- Codex custom-provider issue confirming project-local provider keys can be
+  ignored and user-level config is the reliable route:
+  <https://github.com/openai/codex/issues/21769>
+- Z.AI Chat Completion endpoint:
+  <https://docs.z.ai/api-reference/llm/chat-completion>
+- Qwen Cloud OpenAI compatibility:
+  <https://docs.qwencloud.com/api-reference/toolkitframework/openai-compatible/overview>
+
+### Claude Code
+
+Claude Code documents `--dangerously-skip-permissions` as equivalent to
+`--permission-mode bypassPermissions`, and documents `--permission-mode` values
+including `bypassPermissions`.
+
+MAIster stores the policy as:
+
+```yaml
+permission_policy: dangerously_skip_permissions
 ```
 
-env-router is the default path — zero extra dependencies, configured
-via `executor.env` in `maister.yaml`. CCR is opt-in per executor when
-intelligent multi-provider routing within one session is required;
-the supervisor owns the daemon lifecycle (see below).
+The adapter provisioner maps this to an allow-listed argument sequence only
+after the installed `claude-agent-acp` pass-through behavior is smoke-tested.
+Until that smoke is green, dangerous-policy presets are visible but `NotReady`.
 
-### CCR lifecycle (router=ccr)
+### Codex
+
+Codex provider configuration belongs in user-level `CODEX_HOME` config/profile
+files. Project-local `.codex/config.toml` files cannot override provider
+selection, `model_provider`, or `model_providers`.
+
+Codex custom providers use:
+
+```toml
+model = "qwen3.6-plus"
+model_provider = "qwen"
+
+[model_providers.qwen]
+name = "Qwen Responses"
+base_url = "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"
+env_key = "DASHSCOPE_API_KEY"
+wire_api = "responses"
+```
+
+`wire_api = "responses"` is the only supported Codex value and is the default
+when omitted. MAIster must materialize an isolated `CODEX_HOME` or selected
+profile per runner launch rather than relying on project-local config to switch
+providers.
+
+### z.ai GLM
+
+Z.AI documents OpenAI-compatible Chat Completions endpoints at
+`https://api.z.ai/api/paas/v4/` and a GLM Coding Plan endpoint at
+`https://api.z.ai/api/coding/paas/v4`. Those docs show
+`/chat/completions`, not a verified Responses API endpoint. Therefore GLM
+presets are stored as candidates but remain `NotReady` for Codex ACP until a
+Responses-wire bridge or exact endpoint smoke passes.
+
+### Qwen
+
+Qwen Cloud documents both Chat Completions and a Responses-compatible endpoint.
+Responses uses
+`https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1`
+and `/responses`. Qwen Codex presets may become ready only after the installed
+`codex-acp` launch path runs successfully with the generated isolated
+`CODEX_HOME` profile and the selected model.
+
+### CCR
+
+CCR stores runtime configuration in `~/.claude-code-router/config.json`.
+Documented fields include `HOST`, `APIKEY`, `Providers`, `Router`,
+`NON_INTERACTIVE_MODE`, and env interpolation. The current supervisor manager
+already validates `/health` instead of generic `/` to avoid mistaking another
+process on the port for CCR.
+
+In the first platform-admin slice, sidecar config is intentionally flexible for
+admins:
+
+- typed command preset, not raw shell strings;
+- lifecycle mode (`managed`, `external`);
+- config path;
+- base URL/port;
+- healthcheck URL;
+- auth token env ref;
+- provider config refs;
+- readiness state and refresh action.
+
+Raw secret values and raw arbitrary commands are not accepted.
+
+## Spawn intent
+
+The web tier resolves a runner and sends a normalized, supervisor-safe intent.
+The supervisor remains the only process that maps that intent to child
+environment and argv.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Spawn as spawn.ts
-    participant CCR as ccrManager (singleton)
-    participant CFG as ~/.claude-code-router/config.json
-    participant Bin as ccr binary
-    participant HC as health-check (GET /)
-    participant Child as adapter (claude-agent-acp / codex-acp)
+    participant UI as Launch UI
+    participant Web as web runner resolver
+    participant DB as Platform runtime DB
+    participant Sup as Supervisor
+    participant Child as ACP adapter
 
-    Spawn->>CCR: ensureRunning()
-    alt state == idle
-        CCR->>CFG: fs.access(R_OK)
-        CFG-->>CCR: ok
-        CCR->>CFG: readFile + JSON.parse → {host, port}
-        CCR->>Bin: spawn("ccr", ["start"])
-        Bin-->>CCR: child pid
-        loop exponential backoff (≤10s)
-            CCR->>HC: fetch http://host:port/
-            HC-->>CCR: status<500 → ready
-        end
-        Note over CCR: state=ready
-    else state == ready
-        Note over CCR: no-op, return immediately
+    UI->>Web: launch task/scratch with optional runnerId
+    Web->>DB: resolve runner + sidecar + usage/readiness
+    alt not ready or missing
+        Web-->>UI: EXECUTOR_UNAVAILABLE / CONFIG before side effects
+    else ready
+        Web->>DB: insert run/workspace with runner_id + runner_snapshot
+        Web->>Sup: POST /sessions with runner intent
+        Sup->>Child: spawn allow-listed adapter args/env
     end
-    CCR-->>Spawn: ready
-    Spawn->>Spawn: childEnv = { ...process.env,<br/>ANTHROPIC_BASE_URL=http://host:port,<br/>ANTHROPIC_AUTH_TOKEN=<resolved>,<br/>...executor.env }
-    Spawn->>Child: spawn adapter with injected env
 ```
 
-### CCR setup
+Spawn logs include runner id, adapter id, model label, provider kind, sidecar
+boolean, permission policy, and readiness reason codes. They never include env
+values, token values, parsed sidecar config content, or generated config file
+bodies.
 
-CCR's own configuration file is the **single source of truth** for
-host and port. MAIster reads it; MAIster NEVER writes it.
+## Usage references
 
-| What | Where |
-| ---- | ----- |
-| Provider keys, default model, routing rules | `~/.claude-code-router/config.json` (user-managed) |
-| Host (default `127.0.0.1`) | top-level `HOST` key in that file |
-| Port (default `3456`) | top-level `PORT` key in that file |
-| Auth token sent to the adapter | `executor.env.ANTHROPIC_AUTH_TOKEN` ∨ `MAISTER_CCR_AUTH_TOKEN` env var |
-| Test-only config path override | `MAISTER_CCR_CONFIG_PATH` env var |
+Runner and sidecar management uses one usage-reference service. It returns
+typed references for:
 
-There is **no** `MAISTER_CCR_PORT` env hatch. The port lives in the
-config file; switching ports means editing `config.json` (and
-restarting the supervisor so the manager re-reads it).
+- platform default runner;
+- project default runners;
+- platform Flow defaults;
+- project Flow attachment defaults;
+- Flow-step remaps;
+- active runs/workspaces;
+- scratch runs;
+- historical run snapshots;
+- runner -> sidecar refs.
 
-The auth token sent into the adapter as `ANTHROPIC_AUTH_TOKEN` MUST
-be non-empty. CCR currently accepts any non-empty value because its
-routing decisions are config-driven, not auth-driven, but the adapter
-itself refuses to start without a token.
+Disable/delete guards, usage panels, readiness summaries, and future caches
+must call this service. If a cache is introduced, rebuild/invalidation must be
+deterministic on runner, sidecar, project, Flow, remapping, run, and workspace
+writes.
 
-Failure modes — all surface as `EXECUTOR_UNAVAILABLE` (503) on the
-web tier via the supervisor-client translation:
+## Readiness
 
-| Failure | Where it fires | Message contains |
-| ------- | -------------- | ---------------- |
-| Config file missing | `ccr-manager.ts` pre-flight before spawn | path + `docs/system-analytics/executors.md#ccr-setup` |
-| Config file malformed JSON | parse step | parse reason |
-| Daemon won't start (spawn error) | child `error` event | spawn error |
-| Health check times out (10s) | exponential-backoff `GET /` | `failed to become ready within Xms` |
-| `ANTHROPIC_AUTH_TOKEN` missing for `router=ccr` executor | `spawn.ts` after `ensureRunning()` | `set MAISTER_CCR_AUTH_TOKEN or put it in executor.env` |
+Runner readiness combines:
 
-The daemon is process-life-of-the-supervisor — spawned at most once
-per supervisor process, killed on supervisor SIGTERM/SIGINT via the
-existing shutdown handler (`main.ts`).
+- adapter binary availability;
+- adapter support for provider kind and permission policy;
+- sidecar existence and readiness when referenced;
+- required env refs present in supervisor environment;
+- no disabled/default constraint violations;
+- no unsupported capability-agent materialization path;
+- source-verified provider wire shape.
 
-## Override resolution chain
-
-The executor used by an `agent` step is the highest-priority value
-that resolves to a registered executor for the project. The chain is
-five tiers — per-task choice wins over per-flow rule (`task` tier 2 >
-`flowOverride` tier 3).
-
-```mermaid
-flowchart LR
-    L1["1. Run launcher override<br/>POST /api/runs body.executorOverrideId"] --> Resolve
-    L2["2. Task override<br/>tasks.executor_override_id"] --> Resolve
-    L3["3. Project per-flow override<br/>flows.executor_override_id<br/>from maister.yaml flows().executor_override"] --> Resolve
-    L4["4. Project default<br/>projects.default_executor_id<br/>from maister.yaml default_executor"] --> Resolve
-    L5["5. Flow recommended<br/>flows.recommended_executor_id<br/>from flow.yaml recommended_executor"] --> Resolve
-    Resolve["Pick first match"] --> Check{registered?}
-    Check -- no --> Err["throw MaisterError EXECUTOR_UNAVAILABLE"]
-    Check -- yes --> OK["Use this executor"]
-```
-
-### Computed vs launched executor
-
-`resolveExecutor()` lives in `web/lib/executors.ts` and returns
-`{executorId, tier}`. It is **pure** — no DB access, no logging side
-effects. Callers fetch the rows and log the returned tier.
-
-The function is callable two ways:
-
-- **Launched executor** — `POST /api/runs` passes `override:
-  body.executorOverrideId`. Tier 1 fires when the user picked an
-  override at Launch click; otherwise the chain falls through to the
-  highest tier that resolves.
-- **Computed executor** — callers pass `override: undefined` (tier 1
-  skipped). This is the contract for a task-card "computed executor"
-  badge calls to render *which executor a task would resolve to right
-  now* without launching anything. The returned `tier` (`task`,
-  `flowOverride`, `projectDefault`, or `flowRecommended`) drives the
-  badge label.
-
-Both paths share the same code; the only difference is whether tier 1
-is supplied. Throws `EXECUTOR_UNAVAILABLE` when all available tiers
-are nullish.
-
-## Env merge semantics
-
-```mermaid
-sequenceDiagram
-    participant CFG as maister.yaml
-    participant CCR as ccr-manager
-    participant SV as Supervisor process env
-    participant CH as Child (adapter) env
-
-    CFG-->>SV: parsed (not merged yet)
-    SV->>CH: childEnv = { ...process.env }
-    opt executor.router == "ccr"
-        CCR->>CH: childEnv += { ANTHROPIC_BASE_URL=<proxy>, ANTHROPIC_AUTH_TOKEN=<resolved> }
-    end
-    CFG->>CH: childEnv = { ...childEnv, ...executor.env }
-    Note over CH: executor.env wins on key collision<br/>(both for plain env-router and router=ccr —<br/>operators can still pin a different token per executor).
-```
-
-Source of truth: `supervisor/src/spawn.ts` —
-`const childEnv = { ...process.env, ...ccrLayer, ...(request.executor.env ?? {}) };`.
-
-## Expectations
-
-- Executor identity tuple is `{agent, model, env?, router?}`; `agent`
-  enum is exactly `claude | codex` today.
-- Executors are project-scoped; `executors.id` is unique within a
-  project, NEVER shared across projects.
-- Adapter binary dispatch is deterministic from `executor.agent` via
-  `BINARY_BY_AGENT` in `supervisor/src/spawn.ts` — no ambient lookup.
-- Child env is `{ ...process.env, ...ccrLayer, ...executor.env }`;
-  `executor.env` always wins on key collision (`ccrLayer` is empty
-  unless `executor.router === "ccr"`).
-- Override resolution is total: every `agent` step resolves to exactly
-  one registered executor or fails with `EXECUTOR_UNAVAILABLE` (503).
-- Override priority is exactly five tiers: launcher → task → per-flow
-  → project default → flow recommended; per-task choice ALWAYS wins
-  over per-flow rule.
-- `resolveExecutor()` is pure (no DB / no logging) and callable with
-  `override: undefined` for a task-card computed-executor badge.
-- env-router is the default mode and requires zero extra dependencies;
-  CCR is opt-in only when `router: ccr` is set on the executor.
-- CCR daemon lifecycle is supervisor-owned: lazy `ensureRunning()` on
-  first `router=ccr` spawn, at most one daemon per supervisor process,
-  graceful shutdown on supervisor SIGTERM/SIGINT.
-- CCR host+port are read exclusively from
-  `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`);
-  the only env hatch is `MAISTER_CCR_CONFIG_PATH` for tests.
-- Supervisor logs MUST record `hasEnv: boolean` and `routerInjected`
-  for spawn telemetry; env values, API keys, tokens, and parsed CCR
-  config content are NEVER logged or streamed.
-- Adding a new `agent` enum value requires a coordinated change to
-  `ExecutorAgentSchema` AND `BINARY_BY_AGENT` (Phase 2).
+Unsupported configurations are shown as `NotReady` with reason codes. Launch
+refuses before `git worktree add`, before run/workspace DB side effects, and
+before supervisor child spawn.
 
 ## Edge cases
 
-- **Executor not registered** → `MaisterError("EXECUTOR_UNAVAILABLE")`
-  (503). UI shows the registered list and lets the operator pick.
-- **`agent` enum drift** — adding a third agent (`cursor`, `aider`)
-  requires:
-  1. Adding it to `ExecutorAgentSchema` in `supervisor/src/types.ts`.
-  2. Adding the binary to `BINARY_BY_AGENT` in
-     `supervisor/src/spawn.ts`.
-  3. Phase 2 scope.
-- **Adapter binary missing on PATH** → `MaisterError("SPAWN")` with
-  `ENOENT` in the message.
-- **`executor.env` contains a secret-looking key** — the supervisor
-  logs only `hasEnv: true|false`, never the values. Verified by the
-  integration test sentinel.
-- **CCR config missing** → `ccr-manager` pre-flight throws
-  `SupervisorError("EXECUTOR_UNAVAILABLE", "CCR config not found at
-  …")` BEFORE the daemon spawns. Web tier surfaces 503 with the docs
-  pointer (`docs/system-analytics/executors.md#ccr-setup`). Run
-  stays in `Backlog`, the worktree is removed.
-- **CCR config malformed JSON** → pre-flight parse fails with
-  `EXECUTOR_UNAVAILABLE` carrying the parse reason; daemon never
-  spawned.
-- **CCR daemon won't reach ready in 10s** (e.g. port already bound,
-  missing provider key) → child SIGTERMed, state `failed`,
-  `EXECUTOR_UNAVAILABLE` with `failed to become ready within Xms`.
-- **CCR daemon crashes mid-session** — the next `router=ccr` spawn
-  re-runs `ensureRunning()` and brings a fresh daemon up; the
-  previous adapter session sees ECONNREFUSED on its next request.
-- **`ANTHROPIC_AUTH_TOKEN` missing for `router=ccr`** → after a
-  successful `ensureRunning()`, `spawn.ts` throws
-  `EXECUTOR_UNAVAILABLE` with the message naming both fallbacks
-  (`MAISTER_CCR_AUTH_TOKEN` env OR `executor.env`).
+- **No platform default** - startup/bootstrap and settings save fail with
+  `CONFIG`.
+- **Default runner disabled** - save is refused; existing historical runs keep
+  rendering from snapshots.
+- **Runner id missing from Flow step** - Flow enable/attach creates required
+  remap dialog; launch does not fall through.
+- **Sidecar referenced by runner** - sidecar disable/delete is refused while
+  runner usage references exist.
+- **Raw token in config/API** - request is rejected at validation boundary.
+- **Codex provider is Chat Completions-only** - preset remains `NotReady`
+  because Codex requires Responses wire.
+- **Historical runner edited/deleted** - run detail, board, portfolio, resume,
+  and recovery use `runner_snapshot` instead of joining mutable runner rows.
 
 ## Linked artifacts
 
-- ADRs: [ADR-003 ACP as runtime protocol](../decisions.md#adr-003-acp-as-the-agent-runtime-protocol),
-  [ADR-004 Multi-executor](../decisions.md#adr-004-multi-executor-claude--codex-on-poc),
-  [ADR-005 Model routing](../decisions.md#adr-005-model-routing-env-router-default-ccr-optional).
-- Config reference: [`../configuration.md`](../configuration.md) §`maister.yaml v2`.
-- ERD: [`../db/projects-domain.md`](../db/projects-domain.md) (executors table).
-- API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml)
-  (`Executor` component).
-- Source: `supervisor/src/types.ts` (Zod schemas),
-  `supervisor/src/spawn.ts` (binary dispatch + env merge).
+- [Configuration](../configuration.md)
+- [Supervisor](../supervisor.md)
+- [Flow DSL](../flow-dsl.md)
+- [Database schema](../database-schema.md)
+- [Error taxonomy](../error-taxonomy.md)
+- [ADR-045](../decisions.md#adr-045-platform-acp-runners-adapter-provisioners-and-router-sidecars)

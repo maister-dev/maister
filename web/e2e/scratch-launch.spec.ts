@@ -10,7 +10,6 @@ test("scratch launch controls render, while capacity guard fails without durable
 }, testInfo) => {
   const fixtures = loadFixtures().byKey;
   const fx = fixtures.scratch;
-  const boardFx = fixtures.board;
   const branchName = `${fx.projectSlug}/scratch/unreachable-supervisor-${Date.now()}`;
   const uploadPath = testInfo.outputPath("scratch-upload.txt");
 
@@ -23,7 +22,11 @@ test("scratch launch controls render, while capacity guard fails without durable
     })
     .click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByLabel("Project")).toHaveValue(boardFx.projectId);
+  await expect(
+    page.getByRole("heading", {
+      name: "Start scratch workspace in E2E Acceptance Board",
+    }),
+  ).toBeVisible();
 
   await page.goto(`/scratch-runs/new?projectId=${fx.projectId}`);
 
@@ -34,7 +37,7 @@ test("scratch launch controls render, while capacity guard fails without durable
   await expect(page.getByLabel("Base branch")).toHaveValue("main");
   await expect(page.getByLabel("Branch name")).toHaveValue("");
 
-  await expect(page.getByLabel("ACP profile")).toHaveValue(fx.executorId);
+  await expect(page.getByLabel("Runner")).toHaveValue(fx.runnerId);
 
   await page.getByLabel("Work mode").selectOption("plan_first");
   await page.getByLabel("Reasoning effort").selectOption("extra");

@@ -1,7 +1,5 @@
 import "@/lib/load-env";
 
-import type { MaisterYamlV2 } from "@/lib/config.schema";
-
 import { randomUUID } from "node:crypto";
 
 import bcrypt from "bcryptjs";
@@ -13,11 +11,22 @@ import pino from "pino";
 import * as schemaModule from "./schema";
 
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
-import { upsertExecutorsFromConfig } from "@/lib/executors";
+import {
+  defaultPlatformRunnerId,
+  platformRunnerPresetRows,
+  routerSidecarPresetRows,
+} from "@/lib/acp-runners/presets";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
-const { flows, projectMembers, projects, users } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  flows,
+  platformAcpRunners,
+  platformRouterSidecars,
+  platformRuntimeSettings,
+  projectMembers,
+  projects,
+  users,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({ name: "db:seed" });
 
@@ -55,6 +64,30 @@ async function ensureAdminUser(
   return id;
 }
 
+async function ensurePlatformRuntimeDefaults(
+  db: ReturnType<typeof drizzle>,
+): Promise<void> {
+  await db
+    .insert(platformRouterSidecars)
+    .values(routerSidecarPresetRows())
+    .onConflictDoNothing();
+
+  await db
+    .insert(platformAcpRunners)
+    .values(platformRunnerPresetRows())
+    .onConflictDoNothing();
+
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: defaultPlatformRunnerId })
+    .onConflictDoNothing();
+
+  log.info(
+    { defaultRunnerId: defaultPlatformRunnerId, sidecarId: "ccr-default" },
+    "platform runtime defaults ensured",
+  );
+}
+
 async function main() {
   const url = process.env.DB_URL;
 
@@ -68,6 +101,8 @@ async function main() {
 
   try {
     const adminUserId = await ensureAdminUser(db);
+
+    await ensurePlatformRuntimeDefaults(db);
 
     const existing = await db
       .select()
@@ -86,31 +121,15 @@ async function main() {
     const projectId = randomUUID();
     const flowId = randomUUID();
 
-    const seedConfig: MaisterYamlV2 = {
-      schemaVersion: 2,
+    const seedConfig = {
       project: {
         name: "MAIster Dev",
         repo_path: "/repos/maister-dev",
         main_branch: "main",
         branch_prefix: "maister/",
-      },
-      executors: [
-        { id: "claude-sonnet", agent: "claude", model: "claude-sonnet-4-6" },
-        { id: "codex-default", agent: "codex", model: "gpt-5-codex" },
-      ],
-      default_executor: "claude-sonnet",
-      capabilities: {
-        mcps: [],
-        skills: [],
-        rules: [],
-        restrictions: [],
-        settings: [],
-        tools: [],
-        agent_definitions: [],
-        env_profiles: [],
+        default_runner: "claude-code",
       },
       flow_roles: [{ ref: "maintainer", label: "Maintainer" }],
-      capability_imports: [],
       flows: [
         {
           id: "bugfix",
@@ -126,6 +145,7 @@ async function main() {
       name: seedConfig.project.name,
       repoPath: seedConfig.project.repo_path,
       maisterYamlPath: "/repos/maister-dev/maister.yaml",
+      defaultRunnerId: seedConfig.project.default_runner,
     });
     log.info(
       { table: "projects", id: projectId, slug: DEV_PROJECT_SLUG },
@@ -143,21 +163,6 @@ async function main() {
       schemaVersion: 1,
     });
     log.info({ table: "flows", id: flowId, refId: "bugfix" }, "inserted");
-
-    const { defaultExecutorId } = await upsertExecutorsFromConfig({
-      projectId,
-      config: seedConfig,
-      db,
-    });
-
-    await db
-      .update(projects)
-      .set({ defaultExecutorId })
-      .where(eq(projects.id, projectId));
-    log.info(
-      { table: "projects", id: projectId, defaultExecutorId },
-      "updated default_executor_id",
-    );
 
     await syncProjectFlowRolesFromConfig({
       db,

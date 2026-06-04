@@ -7,6 +7,7 @@ import type {
   ScratchReasoningEffort,
   ScratchWorkMode,
 } from "@/lib/db/schema";
+import type { CapabilityAgent } from "@/lib/config.schema";
 import type {
   ScratchLaunchInput,
   ScratchMessageInput,
@@ -22,6 +23,15 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireProjectAction } from "@/lib/authz";
+import {
+  resolveRunner,
+  type RunnerCatalogEntry,
+} from "@/lib/acp-runners/resolve";
+import {
+  mergeRunnerAdapterLaunch,
+  runnerExecutorInput,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import {
   loadSelectableCapabilities,
@@ -70,7 +80,9 @@ import {
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
-  executors,
+  platformAcpRunners,
+  platformRouterSidecars,
+  platformRuntimeSettings,
   projects,
   runs,
   scratchAttachments,
@@ -83,6 +95,18 @@ const {
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
+
+type ScratchResolvedRunner = {
+  resolution: ReturnType<typeof resolveRunner>;
+  executor: {
+    id: string;
+    agent: CapabilityAgent;
+    model: string;
+    executorRefId: string;
+    env: null;
+    router: "ccr" | null;
+  };
+};
 
 const log = pino({
   name: "scratch-service",
@@ -194,26 +218,99 @@ async function loadProject(db: Db, projectId: string) {
   return project;
 }
 
-async function loadExecutor(db: Db, body: ScratchLaunchInput, project: any) {
-  const rows = await db
-    .select()
-    .from(executors)
-    .where(
-      and(
-        eq(executors.id, body.executorId),
-        eq(executors.projectId, project.id),
-      ),
-    );
-  const executor = rows[0];
+function runnerProviderKind(provider: unknown): string {
+  if (
+    provider &&
+    typeof provider === "object" &&
+    "kind" in provider &&
+    typeof provider.kind === "string"
+  ) {
+    return provider.kind;
+  }
 
-  if (!executor) {
+  throw new MaisterError(
+    "CONFIG",
+    `platform ACP runner has invalid provider payload: ${JSON.stringify(provider)}`,
+  );
+}
+
+function runnerCatalogEntry(
+  row: Record<string, any>,
+  sidecarById: ReadonlyMap<string, Record<string, any>>,
+): RunnerCatalogEntry {
+  const sidecar = row.sidecarId ? sidecarById.get(row.sidecarId) : undefined;
+
+  return {
+    id: row.id,
+    adapter: row.adapter,
+    capabilityAgent: row.capabilityAgent,
+    model: row.model,
+    provider: row.provider,
+    providerKind: runnerProviderKind(row.provider),
+    permissionPolicy: row.permissionPolicy,
+    sidecar: sidecar
+      ? {
+          id: sidecar.id,
+          kind: sidecar.kind,
+          lifecycle: sidecar.lifecycle,
+          configPath: sidecar.configPath,
+          baseUrl: sidecar.baseUrl,
+          healthcheckUrl: sidecar.healthcheckUrl,
+          authTokenRef: sidecar.authTokenRef,
+        }
+      : null,
+    sidecarId: row.sidecarId,
+    enabled: row.enabled,
+    ready: row.readinessStatus === "Ready",
+  };
+}
+
+async function resolveScratchRunner(
+  db: Db,
+  body: ScratchLaunchInput,
+  project: any,
+): Promise<ScratchResolvedRunner> {
+  const runtimeRows = await db
+    .select()
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"));
+  const platformRuntime = runtimeRows[0];
+
+  if (!platformRuntime) {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `executor ${body.executorId} not registered for project ${project.slug}`,
+      "platform default ACP runner is not configured",
     );
   }
 
-  return executor;
+  const runnerRows = await db.select().from(platformAcpRunners);
+  const sidecarRows = await db.select().from(platformRouterSidecars);
+  const sidecarById = new Map<string, Record<string, any>>(
+    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
+  );
+  const resolution = resolveRunner({
+    launchOverrideRunnerId: body.runnerId,
+    step: { runnerId: null },
+    projectFlow: { defaultRunnerId: null },
+    platformFlow: { defaultRunnerId: null },
+    project: { defaultRunnerId: project.defaultRunnerId },
+    platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+    runners: runnerRows.map((row: Record<string, any>) =>
+      runnerCatalogEntry(row, sidecarById),
+    ),
+  });
+
+  return {
+    resolution,
+    executor: {
+      id: resolution.runnerId,
+      agent: resolution.capabilityAgent as CapabilityAgent,
+      model: resolution.runnerSnapshot.model,
+      executorRefId: resolution.runnerId,
+      env: null,
+      router: resolution.runnerSnapshot.sidecarId ? "ccr" : null,
+    },
+  };
 }
 
 async function validateLinkedTask(
@@ -555,7 +652,11 @@ export async function launchScratchRun(args: {
 
   await requireProjectAction(project.id, "launchRun");
 
-  const executor = await loadExecutor(db, args.body, project);
+  const { executor, resolution: runnerResolution } = await resolveScratchRunner(
+    db,
+    args.body,
+    project,
+  );
 
   await validateLinkedTask(db, args.body.linkedTaskId, project.id);
 
@@ -670,7 +771,10 @@ export async function launchScratchRun(args: {
         taskId: null,
         projectId: project.id,
         flowId: null,
-        executorId: executor.id,
+        runnerId: runnerResolution.runnerId,
+        runnerResolutionTier: runnerResolution.runnerResolutionTier,
+        capabilityAgent: runnerResolution.capabilityAgent,
+        runnerSnapshot: runnerResolution.runnerSnapshot,
         status: "Running",
         currentStepId: scratchStepId(),
         flowVersion: "scratch",
@@ -803,14 +907,15 @@ export async function launchScratchRun(args: {
       projectSlug: project.slug,
       worktreePath,
       stepId: scratchStepId(),
-      executor: {
-        agent: executor.agent,
-        model: executor.model,
-        env: executor.env ?? undefined,
-        router: executor.router ?? undefined,
-      },
+      executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
+      runner: runnerSupervisorInput({
+        snapshot: runnerResolution.runnerSnapshot,
+      }),
       capabilityProfilePath: materialized.profilePath,
-      adapterLaunch: materialized.adapterLaunch,
+      adapterLaunch: mergeRunnerAdapterLaunch(
+        runnerResolution.runnerSnapshot,
+        materialized.adapterLaunch,
+      ),
       mcpServers: materialized.mcpServers,
     });
 
@@ -838,7 +943,8 @@ export async function launchScratchRun(args: {
         {
           runId,
           projectId: project.id,
-          executorId: executor.id,
+          runnerId: runnerResolution.runnerId,
+          runnerResolutionTier: runnerResolution.runnerResolutionTier,
           createdByUserId: args.userId,
           workMode: policy.workMode,
           reasoningEffort: policy.reasoningEffort,
@@ -882,7 +988,8 @@ export async function launchScratchRun(args: {
       {
         runId,
         projectId: project.id,
-        executorId: executor.id,
+        runnerId: runnerResolution.runnerId,
+        runnerResolutionTier: runnerResolution.runnerResolutionTier,
         createdByUserId: args.userId,
         workMode: policy.workMode,
         reasoningEffort: policy.reasoningEffort,

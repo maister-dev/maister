@@ -29,13 +29,13 @@ import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
+import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
   actorIdentities,
   assignmentEvents,
   assignments,
   capabilityImports,
-  executors,
   flowRevisions,
   flows,
   gateResults,
@@ -163,7 +163,8 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       promotionMode: workspaces.promotionMode,
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
-      agent: executors.agent,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
       endedAt: runs.endedAt,
       scheduledRemovalAt: workspaces.scheduledRemovalAt,
       archivedBranch: workspaces.archivedBranch,
@@ -172,7 +173,6 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .where(eq(runs.id, runId));
   const row = rows[0];
 
@@ -269,7 +269,11 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     promotionMode: row.promotionMode,
     prUrl: row.prUrl,
     prNumber: row.prNumber,
-    agent: row.agent,
+    agent: runnerAgentFromFields({
+      capabilityAgent: row.capabilityAgent,
+      runnerSnapshot: row.runnerSnapshot,
+      context: row.runId,
+    }),
     takeoverOwnerUserId,
     recoverable,
     ttlState: ttl.ttlState,
@@ -522,10 +526,11 @@ export async function getRunSettings(
     .select({
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
-      agent: executors.agent,
+      runId: runs.id,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
     })
     .from(runs)
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .where(eq(runs.id, runId));
   const row = rows[0];
 
@@ -577,7 +582,12 @@ export async function getRunSettings(
     settings: n.settings,
   }));
 
-  const view = buildSettingsView(nodes, row.agent, snapshotByNode);
+  const agent = runnerAgentFromFields({
+    capabilityAgent: row.capabilityAgent,
+    runnerSnapshot: row.runnerSnapshot,
+    context: row.runId,
+  });
+  const view = buildSettingsView(nodes, agent, snapshotByNode);
 
   const refused = firstRefused(snapshotByNode);
   const refusalReason = refused

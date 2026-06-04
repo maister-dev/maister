@@ -20,12 +20,14 @@ type Db = any;
 
 const ENDPOINT = "POST /api/v1/ext/runs";
 
-const postBodySchema = z.object({
-  taskId: z.string().min(1),
-  executorOverrideId: z.string().min(1).optional(),
-  baseBranch: z.string().min(1).optional(),
-  targetBranch: z.string().min(1).optional(),
-});
+const postBodySchema = z
+  .object({
+    taskId: z.string().min(1),
+    runnerId: z.string().min(1).optional(),
+    baseBranch: z.string().min(1).optional(),
+    targetBranch: z.string().min(1).optional(),
+  })
+  .strict();
 
 export async function POST(
   req: NextRequest,
@@ -80,7 +82,7 @@ export async function POST(
         const result = await launchRun(
           {
             taskId: body.taskId,
-            executorOverrideId: body.executorOverrideId,
+            runnerId: body.runnerId,
             baseBranch: body.baseBranch,
             targetBranch: body.targetBranch,
           },

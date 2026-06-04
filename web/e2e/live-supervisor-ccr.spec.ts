@@ -28,7 +28,7 @@ test("live CCR scratch run creates a supervisor session and visible dialog state
     page.getByRole("heading", { name: "Start a scratch run." }),
   ).toBeVisible();
   await expect(page.getByLabel("Project")).toHaveValue(fx.projectId);
-  await expect(page.getByLabel("ACP profile")).toHaveValue(fx.executorId);
+  await expect(page.getByLabel("Runner")).toHaveValue(fx.runnerId);
 
   await page.getByLabel("Workspace name").fill("Live CCR smoke");
   await page.getByLabel("Branch name").fill(branchName);

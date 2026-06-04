@@ -20,6 +20,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import {
   createHitlAssignment,
   ensureUserActor,
@@ -93,13 +94,7 @@ async function seedProject(
     maisterYamlPath: `/tmp/${slug}/maister.yaml`,
   });
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId: id,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(schema.flows).values({
     id: flowId,
@@ -163,7 +158,9 @@ async function seedAssignment(): Promise<{
       taskId,
       projectId: realProjectId,
       flowId: real.flowId,
-      executorId: real.executorId,
+      runnerId: real.executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(real.executorId),
       status: "NeedsInput",
       flowVersion: "v1.0.0",
     },
@@ -171,7 +168,9 @@ async function seedAssignment(): Promise<{
       id: otherRunId,
       projectId: otherProjectId,
       flowId: other.flowId,
-      executorId: other.executorId,
+      runnerId: other.executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(other.executorId),
       status: "NeedsInput",
       flowVersion: "v1.0.0",
     },

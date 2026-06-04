@@ -10,10 +10,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
-const { executors, flows, runs, tasks } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { flows, runs, tasks } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -27,7 +24,6 @@ export type CreateTaskInput = {
   title: string;
   prompt: string;
   flowId: string;
-  executorOverrideId?: string;
 };
 
 export type CreateTaskContext = {
@@ -55,26 +51,6 @@ export async function createTask(
     );
   }
 
-  // Validate executor override (when present) belongs to THIS project.
-  if (input.executorOverrideId) {
-    const executorRows = await _db
-      .select()
-      .from(executors)
-      .where(
-        and(
-          eq(executors.id, input.executorOverrideId),
-          eq(executors.projectId, ctx.projectId),
-        ),
-      );
-
-    if (executorRows.length === 0) {
-      throw new MaisterError(
-        "CONFIG",
-        `executor ${input.executorOverrideId} is not registered for project`,
-      );
-    }
-  }
-
   const taskId = randomUUID();
 
   await _db.insert(tasks).values({
@@ -83,7 +59,6 @@ export async function createTask(
     title: input.title,
     prompt: input.prompt,
     flowId: input.flowId,
-    executorOverrideId: input.executorOverrideId ?? null,
     status: "Backlog",
     stage: "Backlog",
   });
@@ -103,7 +78,6 @@ export type TaskDTO = {
   status: string;
   stage: string;
   flowId: string;
-  executorOverrideId: string | null;
   latestRunId: string | null;
   attemptNumber: number;
   createdAt: Date;
@@ -127,7 +101,6 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
     status: row.status,
     stage: row.stage,
     flowId: row.flowId,
-    executorOverrideId: row.executorOverrideId ?? null,
     latestRunId: runRows[0]?.id ?? null,
     attemptNumber: row.attemptNumber,
     createdAt: row.createdAt,
@@ -167,7 +140,6 @@ export async function listTaskDTOs(
 export type UpdateTaskInput = {
   title?: string;
   prompt?: string;
-  executorOverrideId?: string | null;
 };
 
 export async function updateTask(
@@ -195,35 +167,10 @@ export async function updateTask(
     );
   }
 
-  // Validate executorOverrideId belongs to the project when provided.
-  if (
-    input.executorOverrideId !== undefined &&
-    input.executorOverrideId !== null
-  ) {
-    const executorRows = await (_db as any)
-      .select()
-      .from(executors)
-      .where(
-        and(
-          eq(executors.id, input.executorOverrideId),
-          eq(executors.projectId, projectId),
-        ),
-      );
-
-    if (executorRows.length === 0) {
-      throw new MaisterError(
-        "CONFIG",
-        `executor ${input.executorOverrideId} is not registered for project`,
-      );
-    }
-  }
-
   const patch: Record<string, unknown> = { updatedAt: new Date() };
 
   if (input.title !== undefined) patch.title = input.title;
   if (input.prompt !== undefined) patch.prompt = input.prompt;
-  if ("executorOverrideId" in input)
-    patch.executorOverrideId = input.executorOverrideId ?? null;
 
   await (_db as any)
     .update(tasks)

@@ -20,6 +20,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -87,6 +88,24 @@ function request(taskId: string): NextRequest {
   });
 }
 
+async function seedPlatformDefaultRunner(): Promise<void> {
+  await db.insert(schema.platformAcpRunners).values({
+    id: "claude-default",
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "claude-sonnet-4-6",
+    provider: { kind: "anthropic" },
+    permissionPolicy: "default",
+    readinessStatus: "Ready",
+    readinessReasons: [],
+    enabled: true,
+  });
+  await db.insert(schema.platformRuntimeSettings).values({
+    id: "singleton",
+    defaultRunnerId: "claude-default",
+  });
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("runs_tb_test")
@@ -115,10 +134,24 @@ beforeAll(async () => {
     passwordHash: "x",
     mustChangePassword: true,
   });
+  await seedPlatformDefaultRunner();
   for (const [id, slug] of [
     ["proj-a", "proj-a"],
     ["proj-b", "proj-b"],
   ] as const) {
+    const manifest = {
+      schemaVersion: 1,
+      name: "Bugfix",
+      nodes: [
+        {
+          id: "implement",
+          type: "ai_coding",
+          action: { prompt: "do it" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+
     await db.insert(schema.projects).values({
       id,
       slug,
@@ -138,7 +171,7 @@ beforeAll(async () => {
       versionLabel: "v1.0.0",
       resolvedRevision: (id === "proj-a" ? "a" : "b").repeat(40),
       manifestDigest: `digest-${id}`,
-      manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+      manifest,
       schemaVersion: 1,
       installedPath: `/cache/${id}`,
       setupStatus: "not_required",
@@ -151,7 +184,7 @@ beforeAll(async () => {
       source: "github.com/x/y",
       version: "v1.0.0",
       installedPath: `/cache/${id}`,
-      manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+      manifest,
       schemaVersion: 1,
       enabledRevisionId: revisionId,
       enablementState: "Enabled",
@@ -164,16 +197,10 @@ beforeAll(async () => {
     userId: "u-member-a",
     role: "member",
   });
-  await db.insert(schema.executors).values({
-    id: "exec-a",
-    projectId: "proj-a",
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow("exec-a", "claude"));
   await db
     .update(schema.projects)
-    .set({ defaultExecutorId: "exec-a" })
+    .set({ defaultRunnerId: "exec-a" })
     .where(eq(schema.projects.id, "proj-a"));
   await db.insert(schema.tasks).values({
     id: "task-in-a",

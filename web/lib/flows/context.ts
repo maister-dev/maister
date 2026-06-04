@@ -2,7 +2,6 @@ import "server-only";
 
 import type {
   ArtifactInstance as ArtifactInstanceRow,
-  Executor as ExecutorRow,
   NodeAttempt as NodeAttemptRow,
   Run as RunRow,
   StepRun as StepRunRow,
@@ -146,7 +145,12 @@ function reduceLedger(
 export type BuildContextArgs = {
   task: Pick<TaskRow, "id" | "title" | "prompt" | "attemptNumber">;
   run: Pick<RunRow, "id">;
-  executor: Pick<ExecutorRow, "id" | "agent" | "model" | "router">;
+  executor: {
+    id: string;
+    agent: "claude" | "codex";
+    model: string;
+    router?: "ccr" | null;
+  };
   stepRuns: StepRunRow[];
   // M11a: graph runner passes node_attempts; they overlay step_runs in the
   // highest-attempt-wins union (ADR-027). Optional so linear callers are

@@ -11,9 +11,10 @@ import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
+import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
-  executors,
+  artifactInstances,
   flows,
   nodeAttempts,
   runs,
@@ -224,13 +225,13 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       acpSessionId: runs.acpSessionId,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
-      agent: executors.agent,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
       branch: workspaces.branch,
       removedAt: workspaces.removedAt,
       prNumber: workspaces.prNumber,
     })
     .from(runs)
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, taskIds)))
     .orderBy(desc(runs.startedAt));
@@ -388,7 +389,13 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       taskId: task.taskId,
       runId: run.runId,
       branch: run.branch,
-      agent: takeover ? "dev" : run.agent,
+      agent: takeover
+        ? "dev"
+          : runnerAgentFromFields({
+            capabilityAgent: run.capabilityAgent,
+            runnerSnapshot: run.runnerSnapshot,
+            context: run.runId,
+          }),
       status: cardStatus,
       stepLabel: current?.stepId ?? run.status.toLowerCase(),
       stepBody: current?.stepType ? `${current.stepType} step` : task.title,

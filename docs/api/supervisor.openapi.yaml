@@ -64,16 +64,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorHealthResponse" }
+  /diagnostics:
+    get:
+      tags: [health]
+      summary: Inspect runtime launch diagnostics
+      description: |
+        Read-only diagnostics for remote supervisor runtime configuration:
+        adapter binary availability, sidecar readiness state, env-ref presence,
+        and launcher version metadata. Does not return raw secret values.
+      operationId: getSupervisorDiagnostics
+      responses:
+        "200":
+          description: Runtime diagnostics snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupervisorDiagnosticsResponse"
   /sessions:
     post:
       tags: [sessions]
       summary: Start a new agent session
       description: |
-        Spawns the adapter binary determined by `executor.agent`
-        (`claude-agent-acp` for `claude`, `codex-acp` for `codex`), with
-        `cwd = worktreePath`. Returns after the adapter process starts and the
-        ACP handshake returns an `acpSessionId`; everything after that is
-        observable via the SSE stream.
+        Spawns the adapter binary determined by the versioned `runner.adapter`
+        when present, otherwise by legacy `executor.agent` (`claude-agent-acp`
+        for `claude`, `codex-acp` for `codex`), with `cwd = worktreePath`.
+        Returns after the adapter process starts and the ACP handshake returns
+        an `acpSessionId`; everything after that is observable via the SSE
+        stream.
 
         Capability launch fields are server-derived by the web tier:
         `capabilityProfilePath` points at the run-scoped profile snapshot
@@ -437,6 +454,53 @@ components:
         checkedAt:
           type: string
           format: date-time
+    SupervisorDiagnosticsResponse:
+      type: object
+      required: [status, version, checkedAt, adapters, sidecars, envRefs]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ready]
+        version:
+          type: string
+          minLength: 1
+        checkedAt:
+          type: string
+          format: date-time
+        adapters:
+          type: array
+          items:
+            type: object
+            required: [id, binary, available]
+            additionalProperties: false
+            properties:
+              id: { $ref: "#/components/schemas/ExecutorAgent" }
+              binary: { type: string, minLength: 1 }
+              available: { type: boolean }
+        sidecars:
+          type: array
+          items:
+            type: object
+            required: [id, kind, state]
+            additionalProperties: false
+            properties:
+              id: { type: string, minLength: 1 }
+              kind: { type: string, enum: [ccr] }
+              state:
+                type: string
+                enum: [idle, starting, ready, failed, stopping]
+        envRefs:
+          type: array
+          items:
+            type: object
+            required: [name, present]
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+              present: { type: boolean }
     SupervisorSessionCounts:
       type: object
       required: [live, exited, crashed]
@@ -480,6 +544,101 @@ components:
             for env-router routing (e.g. `ANTHROPIC_BASE_URL`,
             `ANTHROPIC_AUTH_TOKEN`).
         router: { $ref: "#/components/schemas/ExecutorRouter" }
+    RunnerProvider:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [anthropic] }
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [anthropic_compatible] }
+            baseUrl: { type: string, format: uri }
+            authTokenEnv:
+              type: string
+              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [openai] }
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [openai_compatible] }
+            baseUrl: { type: string, format: uri }
+            apiKeyEnv:
+              type: string
+              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+            wireApi: { type: string, enum: [responses] }
+      description: |
+        Versioned runner provider intent. Secret fields are env variable names
+        already resolved by the web tier from `env:NAME` references; raw secret
+        values are not accepted.
+    RunnerSidecar:
+      type: object
+      additionalProperties: false
+      required: [id, kind]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+        kind: { type: string, enum: [ccr] }
+        lifecycle: { type: string, enum: [managed, external] }
+        configPath:
+          type: string
+          description: Absolute config path for managed CCR sidecar instances.
+        baseUrl:
+          type: string
+          format: uri
+          description: Proxy base URL for external CCR sidecar instances.
+        healthcheckUrl:
+          type: string
+          format: uri
+          description: Optional healthcheck URL for external CCR sidecars.
+        authTokenEnv:
+          type: string
+          pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+      description: Optional keyed router sidecar intent.
+    RunnerLaunch:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - runnerId
+        - adapter
+        - capabilityAgent
+        - model
+        - provider
+        - permissionPolicy
+      properties:
+        version: { type: integer, enum: [1] }
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+        adapter: { $ref: "#/components/schemas/ExecutorAgent" }
+        capabilityAgent: { $ref: "#/components/schemas/ExecutorAgent" }
+        model:
+          type: string
+          minLength: 1
+        provider: { $ref: "#/components/schemas/RunnerProvider" }
+        permissionPolicy:
+          type: string
+          enum: [default, dangerously_skip_permissions]
+        sidecar: { $ref: "#/components/schemas/RunnerSidecar" }
+      description: |
+        Platform ACP runner launch intent. When present, the supervisor maps it
+        through allow-listed provisioners and overwrites the legacy `executor`
+        shape before spawning. `executor` stays required temporarily for
+        backward compatibility.
     StartSessionRequest:
       type: object
       required: [runId, projectSlug, worktreePath, stepId, executor]
@@ -515,6 +674,7 @@ components:
             Flow step id. Step log lands at `<runId>/<stepId>.log`. Constrained
             to safe filesystem characters.
         executor: { $ref: "#/components/schemas/Executor" }
+        runner: { $ref: "#/components/schemas/RunnerLaunch" }
         capabilityProfilePath:
           type: string
           minLength: 1

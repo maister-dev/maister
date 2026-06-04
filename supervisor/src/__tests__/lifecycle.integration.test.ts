@@ -246,6 +246,50 @@ describe("supervisor lifecycle integration", () => {
     expect(live.sessions).toEqual({ live: 1, exited: 0, crashed: 0 });
   });
 
+  it("GET /diagnostics reports adapters, sidecars, and env-ref presence without secret values", async () => {
+    const previous = process.env.MAISTER_CCR_AUTH_TOKEN;
+
+    process.env.MAISTER_CCR_AUTH_TOKEN = "diagnostic-secret";
+    const { url } = await bootFor(["--hang"]);
+    let res: Response;
+
+    try {
+      res = await fetch(`${url}/diagnostics`);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.MAISTER_CCR_AUTH_TOKEN;
+      } else {
+        process.env.MAISTER_CCR_AUTH_TOKEN = previous;
+      }
+    }
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      adapters: Array<{ id: string; binary: string; available: boolean }>;
+      sidecars: Array<{ id: string; kind: string; state: string }>;
+      envRefs: Array<{ name: string; present: boolean; value?: string }>;
+    };
+
+    expect(body.status).toBe("ready");
+    expect(body.adapters.map((item) => item.id).sort()).toEqual([
+      "claude",
+      "codex",
+    ]);
+    expect(body.adapters.every((item) => typeof item.available === "boolean"))
+      .toBe(true);
+    expect(body.sidecars).toContainEqual({
+      id: "ccr-default",
+      kind: "ccr",
+      state: "idle",
+    });
+    expect(body.envRefs).toContainEqual({
+      name: "MAISTER_CCR_AUTH_TOKEN",
+      present: true,
+    });
+    expect(JSON.stringify(body)).not.toContain("diagnostic-secret");
+  });
+
   it("POST /sessions returns 201 with sessionId+pid; GET /sessions lists it", async () => {
     const { url } = await bootFor(["--hang"]);
     const sessionId = await createSession(url);

@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "local:blast-maister-state": "node scripts/blast-maister-local-state.mjs",
+    "test:local-reset": "node --test scripts/blast-maister-local-state.test.mjs",
     "validate:docs": "node scripts/validate-docs-mermaid.mjs",
     "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all"
   },

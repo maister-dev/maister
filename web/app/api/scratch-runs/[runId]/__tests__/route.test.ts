@@ -83,7 +83,18 @@ function seedScratchRun(): string {
     {
       id: runId,
       projectId: "project-1",
-      executorId: "executor-1",
+      runnerId: "runner-claude",
+      runnerResolutionTier: "projectDefault",
+      capabilityAgent: "claude",
+      runnerSnapshot: {
+        id: "runner-claude",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "sonnet",
+        providerKind: "anthropic",
+        permissionPolicy: "default",
+        sidecarId: null,
+      },
       runKind: "scratch",
       status: "Running",
       acpSessionId: "acp-secret",
@@ -191,6 +202,21 @@ describe("GET /api/scratch-runs/[runId]", () => {
 
     expect(res.status).toBe(200);
     expect(body.run).not.toHaveProperty("acpSessionId");
+    expect(body.run).not.toHaveProperty("executorId");
+    expect(body.run).toMatchObject({
+      runnerId: "runner-claude",
+      runnerResolutionTier: "projectDefault",
+      capabilityAgent: "claude",
+      runnerSnapshot: {
+        id: "runner-claude",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "sonnet",
+        providerKind: "anthropic",
+        permissionPolicy: "default",
+        sidecarId: null,
+      },
+    });
     expect(body.scratch).not.toHaveProperty("supervisorSessionId");
     expect(body).toMatchObject({
       workspace: {

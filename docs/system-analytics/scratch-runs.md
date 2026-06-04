@@ -14,15 +14,14 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   `workspaces`, supervisor sessions, HITL rows, diff/promote routes, and active
   workspace queries already shared with Flow runs.
 - **Scratch run** - Implemented. A `runs` row with
-  `run_kind = "scratch"`, one project, one configured executor profile, nullable
+  `run_kind = "scratch"`, one project, one effective platform runner, nullable
   `task_id`, nullable `flow_id`, nullable `flow_revision_id`,
   `flow_version = "scratch"`, `flow_revision = "manual"`, and
   `created_by_user_id`.
-- **Executor profile / runner** - Implemented. The selected runner is the
-  chosen `executors.id`, not the `agent` family. Multiple executor rows may use
-  the same ACP adapter agent with different `executor_ref_id`, `model`,
-  `router`, or `env` settings, such as several Claude Code profiles routed
-  through CCR.
+- **Runner profile** - Implemented. The selected runner is a
+  `platform_acp_runners.id`, not the adapter/capability agent family. Multiple
+  runners may use the same ACP adapter with different model, provider,
+  permission policy, or sidecar settings.
 - **Scratch workspace** - Implemented. One `workspaces` row and one
   MAIster-created git worktree for the scratch branch. The workspace stays
   outside board attempts and appears in project-grouped active workspace views.
@@ -250,7 +249,7 @@ secret material.
 
 | Event | Level | Required context |
 | --- | --- | --- |
-| `scratch_run.launch.requested` | INFO | `projectId`, `userId`, `executorId`, `baseBranch`, optional branch presence, work mode, reasoning effort, attachment counts and bytes |
+| `scratch_run.launch.requested` | INFO | `projectId`, `userId`, effective `runnerId`, resolution tier, `baseBranch`, optional branch presence, work mode, reasoning effort, attachment counts and bytes |
 | `scratch_run.launch.rejected` | WARN | `projectId`, `userId`, `code`, field/reason, proof no later side effect occurred when applicable |
 | `scratch_run.upload.stored` | INFO | `runId`, `messageId` or `launch`, `projectId`, `userId`, `fileName`, `byteSize`, `sha256` |
 | `scratch_run.upload.rejected` | WARN | `runId` when available, `projectId`, `userId`, `code`, limit/path reason |
@@ -261,15 +260,15 @@ secret material.
 
 ## Expectations
 
-- Scratch launch MUST select an executor profile by `executors.id` and MUST NOT
-  collapse profiles that share the same ACP adapter `agent`.
+- Scratch launch MUST select an effective platform ACP runner and MUST NOT
+  collapse runners that share the same ACP adapter or capability agent.
 - Scratch launch UI MUST keep the prompt as the primary surface and MUST NOT
   expose runner, file, policy, and capability selectors as one large always-open
   form.
 - Scratch launch MUST accept an empty `branchName` and derive the generated
   scratch branch fallback from server state.
-- Scratch launch MUST reject invisible projects, missing/out-of-project
-  executors, invalid branches, existing scratch branches, full capacity, empty
+- Scratch launch MUST reject invisible projects, missing/unready runner
+  overrides, invalid branches, existing scratch branches, full capacity, empty
   prompts, invalid capability ids, and upload limit violations before unsafe
   side effects.
 - Scratch launch MUST store uploaded files under the run artifact tree and MUST
@@ -297,7 +296,7 @@ secret material.
 | Case | Response / behavior |
 | --- | --- |
 | Invisible project or project without membership | `409 PRECONDITION`; no filesystem or supervisor side effects. |
-| Missing executor, executor outside project, or unsupported runner profile | `409 PRECONDITION` or `503 EXECUTOR_UNAVAILABLE` depending on validation vs runtime availability. |
+| Missing/unready runner override or unsupported runner profile | `409 PRECONDITION` or `503 EXECUTOR_UNAVAILABLE` depending on validation vs runtime availability. |
 | Empty prompt or malformed JSON/multipart payload | `400 CONFIG`; no launch/message side effects. |
 | Invalid base branch or branch name | `409 PRECONDITION`; no worktree is created. |
 | Scratch branch already exists or worktree path is occupied | `409 PRECONDITION` or `409 CONFLICT`; no supervisor session is started. |
@@ -316,7 +315,7 @@ secret material.
 - Command-box scratch launch shows optional name/branch fields above the
   prompt, machine label plus project/base-branch selectors in the footer, and a
   launch button in the same composer surface.
-- Executor profile, attachment controls, work mode, reasoning effort, and
+- Runner selector, attachment controls, work mode, reasoning effort, and
   capability selections are reachable through compact expandable controls and
   are not all expanded by default.
 - Launch from a project-group `+` opens scratch launch with that project

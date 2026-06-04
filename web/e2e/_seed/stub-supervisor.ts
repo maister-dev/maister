@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
-// Minimal stub supervisor used by the e2e suite. It answers ONLY `GET /health`
-// with the exact shape `SupervisorHealthSchema` (lib/supervisor-client.ts)
-// accepts, so `checkSupervisorHealth()` resolves `{ kind: "ready" }` for the
-// app under test.
+// Minimal stub supervisor used by the e2e suite. It answers `GET /health` and
+// `GET /diagnostics` with the exact shapes lib/supervisor-client.ts accepts, so
+// the app under test can exercise readiness and platform runtime diagnostics
+// without spawning real agents.
 //
 // Why this exists: two e2e flows need the supervisor to read as *ready* without
 // ever spawning a real agent —
@@ -32,6 +32,36 @@ export function startStubSupervisor(): Promise<Server> {
         uptimeMs: 0,
         checkedAt: new Date().toISOString(),
         sessions: { live: 0, exited: 0, crashed: 0 },
+      });
+
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(body);
+
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/diagnostics") {
+      const body = JSON.stringify({
+        status: "ready",
+        version: "e2e-stub",
+        checkedAt: new Date().toISOString(),
+        adapters: [
+          {
+            id: "claude",
+            binary: "claude-agent-acp",
+            available: true,
+          },
+          {
+            id: "codex",
+            binary: "codex-acp",
+            available: true,
+          },
+        ],
+        sidecars: [{ id: "ccr-default", kind: "ccr", state: "ready" }],
+        envRefs: [
+          { name: "MAISTER_CCR_AUTH_TOKEN", present: true },
+          { name: "ZAI_API_KEY", present: false },
+        ],
       });
 
       res.writeHead(200, { "content-type": "application/json" });

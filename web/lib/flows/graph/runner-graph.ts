@@ -48,6 +48,10 @@ import {
 import { recordDefaultArtifacts } from "./default-artifacts";
 import { assertEvidenceReady } from "./evidence-readiness";
 
+import {
+  mergeRunnerAdapterLaunch,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { semverGte } from "@/lib/flows/engine-version";
 import {
   assertNodeLaunchable,
@@ -355,9 +359,13 @@ async function executeNodeAction(
               | undefined,
             router: loaded.executor.router ?? undefined,
           },
+          runner: runnerSupervisorInput({ snapshot: loaded.runner }),
           sessionState: ctx.sessionState,
           capabilityProfilePath: ctx.capabilityProfilePath,
-          adapterLaunch: ctx.adapterLaunch,
+          adapterLaunch: mergeRunnerAdapterLaunch(
+            loaded.runner,
+            ctx.adapterLaunch,
+          ),
           mcpServers: ctx.mcpServers,
           profileDigest: ctx.profileDigest,
         },

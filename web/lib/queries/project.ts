@@ -16,10 +16,13 @@ import {
   runStatusToWorkspace,
   scratchActionForWorkspace,
 } from "@/lib/queries/portfolio";
+import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
-  executors,
+  flowRunnerRemaps,
   flows,
+  platformAcpRunners,
+  platformRuntimeSettings,
   projectMembers,
   projects,
   runs,
@@ -41,15 +44,25 @@ export interface ProjectFlow {
   source: string;
   version: string;
   stepCount: number;
-  overrideRef: string | null;
 }
 
-export interface ProjectExecutor {
+export interface ProjectRunner {
   id: string;
-  ref: string;
   agent: ProjectAgent;
-  model: string;
-  router: "ccr" | null;
+  label: string;
+  readinessStatus: "Unknown" | "Ready" | "NotReady";
+  enabled: boolean;
+}
+
+export interface ProjectFlowRunnerRemap {
+  id: string;
+  flowId: string | null;
+  flowRef: string;
+  flowRevisionId: string;
+  stepId: string;
+  sourceRunnerId: string;
+  mappedRunnerId: string | null;
+  status: "Pending" | "Mapped";
 }
 
 export interface ProjectMemberView {
@@ -61,11 +74,15 @@ export interface ProjectMemberView {
 export interface ProjectPageData {
   project: Project;
   flows: ProjectFlow[];
-  executors: ProjectExecutor[];
+  runners: ProjectRunner[];
+  flowRunnerRemaps: ProjectFlowRunnerRemap[];
   members: ProjectMemberView[];
   activeWorkspaces: PortfolioWorkspace[];
+  defaultRunnerId: string | null;
+  effectiveDefaultRunnerId: string | null;
+  defaultRunnerSource: "project" | "platform" | null;
   defaultAgent: ProjectAgent | null;
-  defaultExecutorRef: string | null;
+  defaultRunnerLabel: string | null;
 }
 
 function initialsOf(name: string | null, email: string | null): string {
@@ -115,70 +132,82 @@ export async function getProjectPageData(
   const client = db();
 
   const now = new Date();
-  const [flowRows, executorRows, memberRows, activeRunRows] = await Promise.all(
-    [
-      client
-        .select({
-          id: flows.id,
-          ref: flows.flowRefId,
-          source: flows.source,
-          version: flows.version,
-          manifest: flows.manifest,
-          overrideId: flows.executorOverrideId,
-        })
-        .from(flows)
-        .where(eq(flows.projectId, project.id))
-        .orderBy(asc(flows.createdAt)),
+  const [
+    flowRows,
+    runnerRows,
+    platformRuntimeRows,
+    memberRows,
+    activeRunRows,
+  ] = await Promise.all([
+    client
+      .select({
+        id: flows.id,
+        ref: flows.flowRefId,
+        source: flows.source,
+        version: flows.version,
+        manifest: flows.manifest,
+        enabledRevisionId: flows.enabledRevisionId,
+      })
+      .from(flows)
+      .where(eq(flows.projectId, project.id))
+      .orderBy(asc(flows.createdAt)),
+    client
+      .select({
+        id: platformAcpRunners.id,
+        agent: platformAcpRunners.capabilityAgent,
+        adapter: platformAcpRunners.adapter,
+        model: platformAcpRunners.model,
+        readinessStatus: platformAcpRunners.readinessStatus,
+        enabled: platformAcpRunners.enabled,
+      })
+      .from(platformAcpRunners)
+      .orderBy(asc(platformAcpRunners.createdAt)),
 
-      client
-        .select({
-          id: executors.id,
-          ref: executors.executorRefId,
-          agent: executors.agent,
-          model: executors.model,
-          router: executors.router,
-        })
-        .from(executors)
-        .where(eq(executors.projectId, project.id))
-        .orderBy(asc(executors.createdAt)),
+    client.select().from(platformRuntimeSettings),
 
-      client
-        .select({
-          name: users.name,
-          email: users.email,
-          role: projectMembers.role,
-        })
-        .from(projectMembers)
-        .innerJoin(users, eq(users.id, projectMembers.userId))
-        .where(eq(projectMembers.projectId, project.id)),
+    client
+      .select({
+        name: users.name,
+        email: users.email,
+        role: projectMembers.role,
+      })
+      .from(projectMembers)
+      .innerJoin(users, eq(users.id, projectMembers.userId))
+      .where(eq(projectMembers.projectId, project.id)),
 
-      client
-        .select({
-          runId: runs.id,
-          status: runs.status,
-          runKind: runs.runKind,
-          acpSessionId: runs.acpSessionId,
-          agent: executors.agent,
-          branch: workspaces.branch,
-          startedAt: runs.startedAt,
-          scratchDialogStatus: scratchRuns.dialogStatus,
-        })
-        .from(runs)
-        .innerJoin(executors, eq(executors.id, runs.executorId))
-        .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-        .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
-        .where(
-          and(
-            eq(runs.projectId, project.id),
-            inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-            isNull(workspaces.removedAt),
-          ),
-        )
-        .orderBy(desc(runs.startedAt)),
-    ],
+    client
+      .select({
+        runId: runs.id,
+        status: runs.status,
+        runKind: runs.runKind,
+        acpSessionId: runs.acpSessionId,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
+        branch: workspaces.branch,
+        startedAt: runs.startedAt,
+        scratchDialogStatus: scratchRuns.dialogStatus,
+      })
+      .from(runs)
+      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+      .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+      .where(
+        and(
+          eq(runs.projectId, project.id),
+          inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+          isNull(workspaces.removedAt),
+        ),
+      )
+      .orderBy(desc(runs.startedAt)),
+  ]);
+
+  const flowByRevisionId = new Map(
+    flowRows
+      .filter((flow) => flow.enabledRevisionId)
+      .map((flow) => [
+        flow.enabledRevisionId as string,
+        { id: flow.id, ref: flow.ref },
+      ]),
   );
-
-  const refById = new Map(executorRows.map((e) => [e.id, e.ref]));
 
   const projectFlows: ProjectFlow[] = flowRows.map((f) => ({
     id: f.id,
@@ -186,16 +215,43 @@ export async function getProjectPageData(
     source: f.source,
     version: f.version,
     stepCount: stepCountOf(f.manifest),
-    overrideRef: f.overrideId ? (refById.get(f.overrideId) ?? null) : null,
   }));
 
-  const projectExecutors: ProjectExecutor[] = executorRows.map((e) => ({
-    id: e.id,
-    ref: e.ref,
-    agent: e.agent,
-    model: e.model,
-    router: e.router,
+  const projectRunners: ProjectRunner[] = runnerRows.map((runner) => ({
+    id: runner.id,
+    agent: runner.agent,
+    label: `${runner.id} · ${runner.adapter} · ${runner.model}`,
+    readinessStatus: runner.readinessStatus,
+    enabled: runner.enabled,
   }));
+  const remapRows = await client
+    .select({
+      id: flowRunnerRemaps.id,
+      flowRevisionId: flowRunnerRemaps.flowRevisionId,
+      stepId: flowRunnerRemaps.stepId,
+      sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
+      mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
+      status: flowRunnerRemaps.status,
+    })
+    .from(flowRunnerRemaps)
+    .where(eq(flowRunnerRemaps.projectId, project.id))
+    .orderBy(asc(flowRunnerRemaps.stepId));
+  const projectFlowRunnerRemaps: ProjectFlowRunnerRemap[] = remapRows.map(
+    (remap) => {
+      const flow = flowByRevisionId.get(remap.flowRevisionId);
+
+      return {
+        id: remap.id,
+        flowId: flow?.id ?? null,
+        flowRef: flow?.ref ?? remap.flowRevisionId,
+        flowRevisionId: remap.flowRevisionId,
+        stepId: remap.stepId,
+        sourceRunnerId: remap.sourceRunnerId,
+        mappedRunnerId: remap.mappedRunnerId,
+        status: remap.status as "Pending" | "Mapped",
+      };
+    },
+  );
 
   const members: ProjectMemberView[] = memberRows.map((m) => ({
     initials: initialsOf(m.name, m.email),
@@ -213,7 +269,11 @@ export async function getProjectPageData(
     runId: row.runId,
     runKind: row.runKind as RunKind,
     branch: row.branch,
-    agent: row.agent as AgentRole,
+    agent: runnerAgentFromFields({
+      capabilityAgent: row.capabilityAgent,
+      runnerSnapshot: row.runnerSnapshot,
+      context: row.runId,
+    }) as AgentRole,
     status: runStatusToWorkspace(row.status),
     time: relativeTime(row.startedAt, now),
     href:
@@ -231,17 +291,30 @@ export async function getProjectPageData(
     readiness: readinessByRun.get(row.runId) ?? "ready",
   }));
 
-  const defaultExecutor = project.defaultExecutorId
-    ? projectExecutors.find((e) => e.id === project.defaultExecutorId)
+  const platformDefaultRunnerId =
+    platformRuntimeRows[0]?.defaultRunnerId ?? null;
+  const effectiveDefaultRunnerId =
+    project.defaultRunnerId ?? platformDefaultRunnerId;
+  const defaultRunner = effectiveDefaultRunnerId
+    ? projectRunners.find((runner) => runner.id === effectiveDefaultRunnerId)
     : undefined;
+  const defaultRunnerSource = project.defaultRunnerId
+    ? "project"
+    : platformDefaultRunnerId
+      ? "platform"
+      : null;
 
   return {
     project,
     flows: projectFlows,
-    executors: projectExecutors,
+    runners: projectRunners,
+    flowRunnerRemaps: projectFlowRunnerRemaps,
     members,
     activeWorkspaces,
-    defaultAgent: defaultExecutor?.agent ?? null,
-    defaultExecutorRef: defaultExecutor?.ref ?? null,
+    defaultRunnerId: project.defaultRunnerId,
+    effectiveDefaultRunnerId,
+    defaultRunnerSource,
+    defaultAgent: defaultRunner?.agent ?? null,
+    defaultRunnerLabel: defaultRunner?.label ?? null,
   };
 }

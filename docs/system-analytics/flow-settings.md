@@ -252,8 +252,10 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
   only ever flips `instructed → enforced` (the contract tightens, never loosens).
 - Node-level validation MUST reject unknown `permissionMode` / `failureClass` /
   `thinkingEffort` / `environmentPolicy` / `enforcement` enum values, malformed
-  `tools` map, out-of-range `limits`, `settings.executors[]` ids absent from
-  `maister.yaml executors[]`, and `human.decisions[]` absent from `transitions`.
+  `tools` map, out-of-range `limits`, legacy `settings.executors[]`, and
+  `human.decisions[]` absent from `transitions`. AI-coding nodes use
+  `settings.runner` as the portable runner target; project/platform remapping
+  happens when the Flow is loaded or attached.
 - M11c MUST NOT validate MCP/tool/skill/agent/restriction *registry* references
   (M14) nor `human` role refs against a registry (M13).
 - The trust gate MUST run before the enforcement evaluator: an `untrusted`

@@ -17,10 +17,10 @@ import {
 } from "@/lib/config";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
+import { syncFlowRunnerReconfigurationRequirements } from "@/lib/acp-runners/flow-reconfiguration";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { upsertExecutorsFromConfig } from "@/lib/executors";
 import { projectSlugSchema } from "@/lib/flow-paths";
 import { installFlowPlugin } from "@/lib/flows";
 import { withRegistrationLock } from "@/lib/registration-lock";
@@ -31,11 +31,9 @@ import {
 } from "@/lib/repo-source";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches usage in
-// web/app/api/runs/route.ts, web/lib/flows.ts, web/lib/executors.ts).
-const { projectMembers, projects } = schemaModule as unknown as Record<
-  string,
-  any
->;
+// web/app/api/runs/route.ts and web/lib/flows.ts).
+const { flows, platformAcpRunners, projectMembers, projects } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-projects",
@@ -237,11 +235,35 @@ async function register(
   }
 
   const projectId = randomUUID();
+  const defaultRunnerId = config.project.default_runner ?? null;
 
-  // Phase (c): project + executors + default-executor + owner membership in
+  if (defaultRunnerId) {
+    const runnerRows = await db
+      .select({
+        id: platformAcpRunners.id,
+        enabled: platformAcpRunners.enabled,
+        readinessStatus: platformAcpRunners.readinessStatus,
+      })
+      .from(platformAcpRunners)
+      .where(eq(platformAcpRunners.id, defaultRunnerId));
+    const runner = runnerRows[0];
+
+    if (!runner) {
+      throw new MaisterError(
+        "CONFIG",
+        `project.default_runner "${defaultRunnerId}" is not configured as a platform runner`,
+      );
+    }
+    if (runner.enabled === false || runner.readinessStatus !== "Ready") {
+      throw new MaisterError(
+        "CONFIG",
+        `project.default_runner "${defaultRunnerId}" is not a ready platform runner`,
+      );
+    }
+  }
+
+  // Phase (c): project + runner binding + owner membership in
   // ONE transaction (atomic — a crash mid-way leaves no owner-less project).
-  // upsertExecutorsFromConfig calls `.transaction()` on the db it's given;
-  // passing the outer `tx` nests via a savepoint, so it joins this unit.
   try {
     await db.transaction(async (tx: any) => {
       await tx.insert(projects).values({
@@ -258,12 +280,7 @@ async function register(
         // to projects.promotion_mode; an absent one resets to NULL (default)
         // in the same write — the launch resolver folds the local_merge default.
         promotionMode: config.project.promotion?.mode ?? null,
-      });
-
-      const { defaultExecutorId } = await upsertExecutorsFromConfig({
-        projectId,
-        config,
-        db: tx,
+        defaultRunnerId,
       });
 
       await syncProjectFlowRolesFromConfig({
@@ -271,11 +288,6 @@ async function register(
         roles: flowRoles,
         db: tx,
       });
-
-      await tx
-        .update(projects)
-        .set({ defaultExecutorId })
-        .where(eq(projects.id, projectId));
 
       await tx.insert(projectMembers).values({
         id: randomUUID(),
@@ -307,8 +319,8 @@ async function register(
   // Phase (d): flow-install side-effects (clone + symlink + flows row), which
   // cannot live inside a DB transaction. On any failure, fully compensate so
   // registration is all-or-nothing and the same maister.yaml can be retried:
-  //   1. delete the project row — FK ON DELETE CASCADE removes executors,
-  //      flows, and project_members in one shot (frees the unique slug/repo).
+  //   1. delete the project row — FK ON DELETE CASCADE removes flows and
+  //      project_members in one shot (frees the unique slug/repo).
   //   2. remove the slug-scoped artifact subtree this call may have created.
   // The shared, content-addressed system cache (~/.maister/flows/<id>@<sha>)
   // is intentionally left — it is reused across projects and across retries.
@@ -319,9 +331,15 @@ async function register(
     // unknown to this project at install time (M14 carve-b, T1.4). Inside the
     // try so any failure is compensated by the project rollback below.
     const capabilityRefIds = buildCapabilityRefIds(config);
+    const platformRunnerRows = await db
+      .select({ id: platformAcpRunners.id })
+      .from(platformAcpRunners);
+    const platformRunnerIds = new Set<string>(
+      platformRunnerRows.map((row: { id: string }) => row.id),
+    );
 
     for (const flow of config.flows) {
-      await installFlowPlugin({
+      const installed = await installFlowPlugin({
         source: flow.source,
         version: flow.version,
         projectId,
@@ -331,6 +349,30 @@ async function register(
         capabilityRefIds,
         db,
       });
+      const missing = await syncFlowRunnerReconfigurationRequirements({
+        db,
+        projectId,
+        flowId: flow.id,
+        flowRevisionId: installed.revisionId,
+        manifest: installed.manifest,
+        platformRunnerIds,
+      });
+
+      if (missing.length > 0) {
+        await db
+          .update(flows)
+          .set({ enablementState: "Disabled", updatedAt: new Date() })
+          .where(eq(flows.id, installed.flowRowId));
+        log.warn(
+          {
+            projectId,
+            flowId: flow.id,
+            flowRowId: installed.flowRowId,
+            missingRunnerTargets: missing.length,
+          },
+          "flow attachment disabled until ACP runner targets are reconfigured",
+        );
+      }
     }
 
     // Install git-pinned capability imports (clone → trust → trust-gated setup)
@@ -344,12 +386,6 @@ async function register(
       platformMcps,
       db,
     });
-
-    // Re-apply per-flow executor overrides now that flow rows exist (the
-    // first upsert call warned + skipped them — see executors.ts doc).
-    if (config.flows.some((f) => f.executor_override)) {
-      await upsertExecutorsFromConfig({ projectId, config, db });
-    }
 
     // Mutate the operator's directory LAST — only after the manifest is valid
     // and the project is otherwise committed. A bad maister.yaml / flow install

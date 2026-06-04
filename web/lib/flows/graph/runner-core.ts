@@ -1,9 +1,10 @@
 import "server-only";
 
 import type {
-  Executor as ExecutorRow,
   Flow as FlowRow,
+  PlatformAcpRunner,
   Run as RunRow,
+  RunnerSnapshot,
   Task as TaskRow,
   Workspace as WorkspaceRow,
 } from "@/lib/db/schema";
@@ -20,8 +21,15 @@ import * as schemaModule from "@/lib/db/schema";
 import { systemCachePath } from "@/lib/flow-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, flowRevisions, flows, projects, runs, tasks, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  flowRevisions,
+  flows,
+  platformAcpRunners,
+  projects,
+  runs,
+  tasks,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner-core",
@@ -47,8 +55,9 @@ export type LoadedRun = {
   run: RunRow;
   task: TaskRow;
   flow: FlowRow;
+  executor: RunnerExecutor;
   manifest: FlowYamlV1;
-  executor: ExecutorRow;
+  runner: RunnerSnapshot;
   workspace: WorkspaceRow;
   projectSlug: string;
   flowInstallPath: string;
@@ -58,7 +67,70 @@ export function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-// Loads a run plus its task/flow/executor/workspace and resolves the manifest +
+export type RunnerExecutor = {
+  id: string;
+  executorRefId: string;
+  agent: "claude" | "codex";
+  model: string;
+  env: Record<string, string> | null;
+  router: "ccr" | null;
+};
+
+function runnerSnapshotFromRunner(row: PlatformAcpRunner): RunnerSnapshot {
+  return {
+    id: row.id,
+    adapter: row.adapter,
+    capabilityAgent: row.capabilityAgent,
+    model: row.model,
+    provider: row.provider,
+    providerKind: row.provider.kind,
+    permissionPolicy: row.permissionPolicy,
+    sidecarId: row.sidecarId,
+  };
+}
+
+function executorFromRunnerSnapshot(snapshot: RunnerSnapshot): RunnerExecutor {
+  return {
+    id: snapshot.id,
+    executorRefId: snapshot.id,
+    agent: snapshot.capabilityAgent as RunnerExecutor["agent"],
+    model: snapshot.model,
+    env: null,
+    router: snapshot.sidecarId ? "ccr" : null,
+  };
+}
+
+async function loadRunnerSnapshot(
+  db: Db,
+  run: RunRow,
+  runId: string,
+): Promise<RunnerSnapshot> {
+  if (run.runnerSnapshot) return run.runnerSnapshot;
+
+  if (run.runnerId) {
+    const runnerRows: PlatformAcpRunner[] = await db
+      .select()
+      .from(platformAcpRunners)
+      .where(eq(platformAcpRunners.id, run.runnerId));
+    const runner = runnerRows[0];
+
+    if (!runner) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `ACP runner ${run.runnerId} not found for run ${runId}`,
+      );
+    }
+
+    return runnerSnapshotFromRunner(runner);
+  }
+
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    `no ACP runner snapshot found for run ${runId}`,
+  );
+}
+
+// Loads a run plus its task/flow/runner/workspace and resolves the manifest +
 // bundle path from the IMMUTABLE pinned revision (M10, ADR-021). Shared by the
 // linear runner (runner.ts) and the graph runner (runner-graph.ts).
 export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
@@ -92,18 +164,8 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     throw new MaisterError("PRECONDITION", `flow not found for run ${runId}`);
   }
 
-  const executorRows: ExecutorRow[] = await db
-    .select()
-    .from(executors)
-    .where(eq(executors.id, run.executorId));
-  const executor = executorRows[0];
-
-  if (!executor) {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `executor not found for run ${runId}`,
-    );
-  }
+  const runner = await loadRunnerSnapshot(db, run, runId);
+  const executor = executorFromRunnerSnapshot(runner);
 
   const projectRows: Array<{ slug: string }> = await db
     .select({ slug: projects.slug })
@@ -170,6 +232,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flow,
     manifest,
     executor,
+    runner,
     workspace,
     projectSlug,
     flowInstallPath,

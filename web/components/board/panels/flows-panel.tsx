@@ -58,14 +58,7 @@ export async function FlowsPanel({
                 <b className="font-semibold text-ink-2">{flow.stepCount}</b>{" "}
                 steps
               </span>
-              {flow.overrideRef ? (
-                <span>
-                  exec{" "}
-                  <b className="font-semibold text-ink-2">{flow.overrideRef}</b>
-                </span>
-              ) : (
-                <span>—</span>
-              )}
+              <span>runner defaults</span>
             </div>
           </div>
         ))}

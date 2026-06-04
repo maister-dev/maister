@@ -29,11 +29,12 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { gcAgeDays } from "@/lib/instance-config";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flowRevisions, flows, projects, runs, tasks, users } =
+const { flowRevisions, flows, projects, runs, tasks, users } =
   schema;
 
 let container: StartedPostgreSqlContainer;
@@ -79,13 +80,7 @@ beforeAll(async () => {
     maisterYamlPath: `/repos/revgc/maister.yaml`,
   });
 
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(flows).values({
     id: flowId,
@@ -162,7 +157,9 @@ async function seedReferencingRun(revisionId: string): Promise<void> {
     projectId,
     flowId,
     flowRevisionId: revisionId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status: "Done",
     flowVersion: "v1",
     startedAt: new Date(),

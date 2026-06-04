@@ -68,10 +68,6 @@ function buildConfig(opts: {
   return maisterYamlV2Schema.parse({
     schemaVersion: 2,
     project: { name: "cap-ingest" },
-    executors: [
-      { id: "claude-sonnet", agent: "claude", model: "claude-sonnet-4-6" },
-    ],
-    default_executor: "claude-sonnet",
     capabilities: { skills: [{ id: "block-skill" }] },
     capability_imports: opts.imports,
     flows: [],

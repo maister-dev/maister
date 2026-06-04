@@ -9,7 +9,6 @@ import {
   artifactInstances as artifactInstancesTable,
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
-  executors as executorsTable,
   flows as flowsTable,
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
@@ -24,7 +23,6 @@ type TableRows = {
   runs: Record<string, unknown>[];
   tasks: Record<string, unknown>[];
   flows: Record<string, unknown>[];
-  executors: Record<string, unknown>[];
   projects: Record<string, unknown>[];
   workspaces: Record<string, unknown>[];
   step_runs: Record<string, unknown>[];
@@ -44,7 +42,6 @@ function tableNameOf(table: unknown): keyof TableRows {
   if (table === runsTable) return "runs";
   if (table === tasksTable) return "tasks";
   if (table === flowsTable) return "flows";
-  if (table === executorsTable) return "executors";
   if (table === projectsTable) return "projects";
   if (table === workspacesTable) return "workspaces";
   if (table === stepRunsTable) return "step_runs";
@@ -66,7 +63,6 @@ function makeFakeDb(initial: Partial<TableRows>): {
     runs: initial.runs ?? [],
     tasks: initial.tasks ?? [],
     flows: initial.flows ?? [],
-    executors: initial.executors ?? [],
     projects: initial.projects ?? [],
     workspaces: initial.workspaces ?? [],
     step_runs: initial.step_runs ?? [],
@@ -221,7 +217,18 @@ function baseFixture(): TableRows {
         taskId: "task-1",
         projectId: "proj-1",
         flowId: "flow-1",
-        executorId: "exec-1",
+        runnerId: "claude-code",
+        capabilityAgent: "claude",
+        runnerSnapshot: {
+          id: "claude-code",
+          adapter: "claude",
+          capabilityAgent: "claude",
+          model: "claude-sonnet-4-6",
+          provider: { kind: "anthropic" },
+          providerKind: "anthropic",
+          permissionPolicy: "default",
+          sidecarId: null,
+        },
         status: "Pending",
         currentStepId: null,
         flowVersion: "v1",
@@ -252,14 +259,6 @@ function baseFixture(): TableRows {
         manifest: flowManifest,
         version: "v1",
         revision: "unknown",
-      },
-    ],
-    executors: [
-      {
-        id: "exec-1",
-        projectId: "proj-1",
-        agent: "claude",
-        model: "claude-sonnet-4-6",
       },
     ],
     projects: [

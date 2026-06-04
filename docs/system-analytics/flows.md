@@ -150,18 +150,19 @@ flowchart TD
 > fresh review. The full rework loop is drawn in
 > [`flow-graph.md`](flow-graph.md).
 
-### Executor override resolution
+### Runner resolution
 
-The executor for an `agent` step is the highest-priority match:
+The platform ACP runner for an AI-coding step is the highest-priority match:
 
 ```mermaid
 flowchart LR
     A["Run launcher override<br/>set at Launch click"] -->|wins| Resolved
-    B["Task override<br/>tasks.executor_override_id"] -->|else| Resolved
-    C["Project per-flow override<br/>maister.yaml flows().executor_override"] -->|else| Resolved
-    D["Project default<br/>default_executor"] -->|else| Resolved
-    E["Flow recommended<br/>flow.yaml recommended_executor"] -->|else| Resolved
-    Resolved["Resolved executor"] --> Check{registered?}
+    B["Flow step target<br/>settings.runner"] -->|else| Resolved
+    C["Project Flow default<br/>project_flow_runner_defaults"] -->|else| Resolved
+    D["Platform Flow default<br/>flow_revisions.default_runner_id"] -->|else| Resolved
+    E["Project default<br/>projects.default_runner_id"] -->|else| Resolved
+    F["Platform default<br/>platform_runtime_settings.default_runner_id"] -->|else| Resolved
+    Resolved["Resolved runner"] --> Check{ready?}
     Check -- no --> Err["throw MaisterError EXECUTOR_UNAVAILABLE"]
     Check -- yes --> OK["supervisor POST /sessions"]
 ```

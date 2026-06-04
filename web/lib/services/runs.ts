@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AiCodingSettings, FlowYamlV1 } from "@/lib/config.schema";
+import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -10,14 +10,20 @@ import pino from "pino";
 
 import {
   capabilityRefIdSetsFromRecords,
-  firstUnknownExecutorRef,
   firstUnknownCapabilityRef,
   type CapabilityRefRecord,
 } from "@/lib/config";
+import {
+  resolveCompiledStepTargetRunnerId,
+  type FlowRunnerRemapRow,
+} from "@/lib/acp-runners/flow-step-target";
+import {
+  resolveRunner,
+  type RunnerCatalogEntry,
+} from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { resolveExecutor } from "@/lib/executors";
 import {
   assertNodeLaunchable,
   capabilityBearingSettings,
@@ -41,9 +47,13 @@ import {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   capabilityRecords,
-  executors,
   flowRevisions,
+  flowRunnerRemaps,
   flows,
+  platformAcpRunners,
+  platformRouterSidecars,
+  platformRuntimeSettings,
+  projectFlowRunnerDefaults,
   projectFlowRoles,
   projects,
   runs,
@@ -106,7 +116,7 @@ const LAUNCHABLE_ENABLEMENT_STATES = new Set<string>([
 
 export type LaunchRunInput = {
   taskId: string;
-  executorOverrideId?: string;
+  runnerId?: string;
   baseBranch?: string;
   targetBranch?: string;
 };
@@ -129,6 +139,53 @@ export function resolvePromotionMode(args: {
   }
 
   return "local_merge";
+}
+
+function runnerProviderKind(provider: unknown): string {
+  if (
+    provider &&
+    typeof provider === "object" &&
+    "kind" in provider &&
+    typeof provider.kind === "string"
+  ) {
+    return provider.kind;
+  }
+
+  throw new MaisterError(
+    "CONFIG",
+    `platform ACP runner has invalid provider payload: ${JSON.stringify(provider)}`,
+  );
+}
+
+function runnerCatalogEntry(
+  row: Record<string, any>,
+  sidecarById: ReadonlyMap<string, Record<string, any>>,
+): RunnerCatalogEntry {
+  const sidecar = row.sidecarId ? sidecarById.get(row.sidecarId) : undefined;
+
+  return {
+    id: row.id,
+    adapter: row.adapter,
+    capabilityAgent: row.capabilityAgent,
+    model: row.model,
+    provider: row.provider,
+    providerKind: runnerProviderKind(row.provider),
+    permissionPolicy: row.permissionPolicy,
+    sidecar: sidecar
+      ? {
+          id: sidecar.id,
+          kind: sidecar.kind,
+          lifecycle: sidecar.lifecycle,
+          configPath: sidecar.configPath,
+          baseUrl: sidecar.baseUrl,
+          healthcheckUrl: sidecar.healthcheckUrl,
+          authTokenRef: sidecar.authTokenRef,
+        }
+      : null,
+    sidecarId: row.sidecarId,
+    enabled: row.enabled,
+    ready: row.readinessStatus === "Ready",
+  };
 }
 
 export type LaunchRunContext = {
@@ -269,27 +326,69 @@ export async function launchRun(
     }
   }
 
-  const { executorId, tier: resolvedFromTier } = resolveExecutor({
-    override: input.executorOverrideId,
-    task,
-    project,
-    flow,
-  });
-
-  const executorRows = await _db
+  const compiled = compileManifest(revision.manifest as FlowYamlV1);
+  const runtimeRows = await _db
     .select()
-    .from(executors)
-    .where(
-      and(eq(executors.id, executorId), eq(executors.projectId, project.id)),
-    );
-  const executor = executorRows[0];
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"));
+  const platformRuntime = runtimeRows[0];
 
-  if (!executor) {
+  if (!platformRuntime) {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `executor ${executorId} not registered for project ${project.slug}`,
+      "platform default ACP runner is not configured",
     );
   }
+
+  const runnerRows = await _db.select().from(platformAcpRunners);
+  const sidecarRows = await _db.select().from(platformRouterSidecars);
+  const sidecarById = new Map<string, Record<string, any>>(
+    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
+  );
+  const runnerCatalog = runnerRows.map((row: Record<string, any>) =>
+    runnerCatalogEntry(row, sidecarById),
+  );
+
+  const projectFlowDefaultRows = await _db
+    .select({ runnerId: projectFlowRunnerDefaults.runnerId })
+    .from(projectFlowRunnerDefaults)
+    .where(
+      and(
+        eq(projectFlowRunnerDefaults.projectId, project.id),
+        eq(projectFlowRunnerDefaults.flowId, flow.id),
+      ),
+    );
+  const projectFlowDefaultRunnerId =
+    projectFlowDefaultRows[0]?.runnerId ?? null;
+  const remapRows: FlowRunnerRemapRow[] = await _db
+    .select({
+      stepId: flowRunnerRemaps.stepId,
+      sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
+      mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
+      status: flowRunnerRemaps.status,
+    })
+    .from(flowRunnerRemaps)
+    .where(
+      and(
+        eq(flowRunnerRemaps.projectId, project.id),
+        eq(flowRunnerRemaps.flowRevisionId, revision.id),
+      ),
+    );
+  const stepTargetRunnerId = resolveCompiledStepTargetRunnerId({
+    compiled,
+    remaps: remapRows,
+    flowRefId: flow.flowRefId,
+  });
+  const runnerResolution = resolveRunner({
+    launchOverrideRunnerId: input.runnerId,
+    step: { runnerId: stepTargetRunnerId },
+    projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
+    platformFlow: { defaultRunnerId: revision.defaultRunnerId },
+    project: { defaultRunnerId: project.defaultRunnerId },
+    platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+    runners: runnerCatalog,
+  });
+  const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
 
   const platformStatus = await checkSupervisorHealth();
 
@@ -298,7 +397,8 @@ export async function launchRun(
       {
         taskId: task.id,
         projectId: project.id,
-        executorId: executor.id,
+        runnerId: runnerResolution.runnerId,
+        runnerResolutionTier: runnerResolution.runnerResolutionTier,
         reason: platformStatus.reason,
         message: platformStatus.message,
       },
@@ -313,25 +413,12 @@ export async function launchRun(
   // M11c (ADR-032): static settings-enforcement gate. Refuse the launch
   // BEFORE any worktree/run/workspace side-effect when any capability-bearing
   // (ai_coding/judge) node in the pinned manifest declares a `strict`
-  // enforcement intent the resolved executor's agent cannot honor. The throw
+  // enforcement intent the resolved runner's agent cannot honor. The throw
   // propagates to errorResponse → httpStatusForCode: CONFIG→400 (the build
   // cannot enforce the class), EXECUTOR_UNAVAILABLE→503 (another agent could)
   // — the FROZEN SPEC mapping (docs/system-analytics/flow-settings.md §launch
   // -refusal). No worktree/run/workspace is created (we are before addWorktree).
   {
-    // Project executor *ref* id set (maister.yaml executor ids) for the
-    // node-level settings.executors[] cross-reference (AC-4). Resolved here
-    // because a flow package is generic across projects — the refs only have
-    // meaning against a concrete project's executors[]. Distinct id space from
-    // executors.id (the DB PK resolveExecutor returns).
-    const projectExecutorRows = await _db
-      .select({ refId: executors.executorRefId })
-      .from(executors)
-      .where(eq(executors.projectId, project.id));
-    const executorRefIds = new Set<string>(
-      projectExecutorRows.map((r: { refId: string }) => r.refId),
-    );
-
     // M13: active Flow-role registry (non-archived project_flow_roles).
     const projectRoleRows = await _db
       .select({ ref: projectFlowRoles.roleRef })
@@ -346,7 +433,6 @@ export async function launchRun(
       projectRoleRows.map((r: { ref: string }) => r.ref),
     );
 
-    const compiled = compileManifest(revision.manifest as FlowYamlV1);
     const skippedFlowRoleValidation = activeFlowRoleRefs.size === 0;
 
     assertCompiledFlowRolesLaunchable({
@@ -384,22 +470,6 @@ export async function launchRun(
 
       const settings = capabilityBearingSettings(node.nodeType, node.settings);
 
-      // settings.executors exists only on ai_coding; reject any ref absent
-      // from the project's executors[] before any side-effect (CONFIG → 400).
-      if (node.nodeType === "ai_coding") {
-        const unknownRef = firstUnknownExecutorRef(
-          (settings as AiCodingSettings | undefined)?.executors,
-          executorRefIds,
-        );
-
-        if (unknownRef !== null) {
-          throw new MaisterError(
-            "CONFIG",
-            `node "${node.id}" settings.executors references unknown executor id "${unknownRef}" not registered for project ${project.slug}`,
-          );
-        }
-      }
-
       // M14 carve-b: reject node settings.mcps/skills/restrictions/
       // settingsProfile refs absent from the project capability registry.
       const unknownCapability = firstUnknownCapabilityRef(
@@ -417,7 +487,7 @@ export async function launchRun(
 
       assertNodeLaunchable(
         { id: node.id, nodeType: node.nodeType, settings },
-        executor.agent,
+        capabilityAgent,
       );
     }
 
@@ -425,10 +495,11 @@ export async function launchRun(
       {
         taskId: task.id,
         flowRefId: flow.flowRefId,
-        executorId: executor.id,
-        agent: executor.agent,
+        runnerId: runnerResolution.runnerId,
+        runnerResolutionTier: runnerResolution.runnerResolutionTier,
+        capabilityAgent,
         capabilityNodes: configuredNodes,
-        projectExecutors: executorRefIds.size,
+        platformRunners: runnerCatalog.length,
         projectFlowRoles: activeFlowRoleRefs.size,
         skippedFlowRoleValidation,
       },
@@ -479,8 +550,9 @@ export async function launchRun(
       taskId: task.id,
       runId,
       createdByUserId: ctx.actorUserId,
-      executorId: executor.id,
-      resolvedFromTier,
+      runnerId: runnerResolution.runnerId,
+      runnerResolutionTier: runnerResolution.runnerResolutionTier,
+      capabilityAgent,
       branch,
       worktreePath,
     },
@@ -512,7 +584,10 @@ export async function launchRun(
         taskId: task.id,
         projectId: project.id,
         flowId: flow.id,
-        executorId: executor.id,
+        runnerId: runnerResolution.runnerId,
+        runnerResolutionTier: runnerResolution.runnerResolutionTier,
+        capabilityAgent,
+        runnerSnapshot: runnerResolution.runnerSnapshot,
         createdByUserId: ctx.actorUserId,
         status: "Pending",
         // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
@@ -588,7 +663,7 @@ export type RunDTO = {
   projectId: string;
   status: string;
   flowId: string | null;
-  executorId: string;
+  runnerId: string;
   currentStepId: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
@@ -607,7 +682,7 @@ export async function getRunDTO(
       projectId: runs.projectId,
       status: runs.status,
       flowId: runs.flowId,
-      executorId: runs.executorId,
+      runnerId: runs.runnerId,
       currentStepId: runs.currentStepId,
       startedAt: runs.startedAt,
       finishedAt: runs.endedAt,
@@ -625,7 +700,7 @@ export async function getRunDTO(
     projectId: row.projectId,
     status: row.status,
     flowId: row.flowId ?? null,
-    executorId: row.executorId,
+    runnerId: row.runnerId,
     currentStepId: row.currentStepId ?? null,
     startedAt: row.startedAt ?? null,
     finishedAt: row.finishedAt ?? null,

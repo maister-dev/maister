@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ type FakeDb = {
   select: () => {
     from: (table: unknown) => {
       where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+      then: PromiseLike<Record<string, unknown>[]>["then"];
     };
   };
   insert: (table: unknown) => {
@@ -53,31 +55,54 @@ const state: {
   selectCalls: number;
   runtimeRoot: string | null;
   project: Record<string, unknown>;
-  executor: Record<string, unknown>;
+  runners: Record<string, unknown>[];
+  runtimeSettings: Record<string, unknown>[];
 } = {
   inserts: [],
   updates: [],
   selectCalls: 0,
   runtimeRoot: null,
   project: {},
-  executor: {},
+  runners: [],
+  runtimeSettings: [],
 };
+
+function rowsForTable(table: unknown): Record<string, unknown>[] {
+  const tableName = getTableName(table as never);
+
+  if (tableName === "projects") return [state.project];
+  if (tableName === "platform_acp_runners") return state.runners;
+  if (tableName === "platform_runtime_settings") return state.runtimeSettings;
+  if (tableName === "scratch_runs") {
+    return [{ runId: "run-1", dialogStatus: "Running" }];
+  }
+
+  return [];
+}
 
 const fakeDb: FakeDb = {
   select: () => ({
-    from: () => ({
-      where: async () => {
+    from: (table: unknown) => {
+      const nextRows = async () => {
         state.selectCalls += 1;
 
-        if (state.selectCalls === 1) return [state.project];
-        if (state.selectCalls === 2) return [state.executor];
-        if (state.selectCalls === 3) {
-          return [{ runId: "run-1", dialogStatus: "Running" }];
-        }
+        return rowsForTable(table);
+      };
 
-        return [];
-      },
-    }),
+      return {
+        where: async () => nextRows(),
+        then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
+          onfulfilled?:
+            | ((
+                value: Record<string, unknown>[],
+              ) => TResult1 | PromiseLike<TResult1>)
+            | null,
+          onrejected?:
+            | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+            | null,
+        ) => nextRows().then(onfulfilled, onrejected),
+      };
+    },
   }),
   insert: (table: unknown) => ({
     values: async (values: unknown) => {
@@ -134,7 +159,7 @@ vi.mock("@/lib/scratch-runs/events", () => ({
 let POST: (req: NextRequest) => Promise<Response>;
 
 const projectId = "11111111-1111-4111-8111-111111111111";
-const executorId = "22222222-2222-4222-8222-222222222222";
+const runnerId = "codex-openai";
 
 beforeEach(async () => {
   state.inserts = [];
@@ -149,16 +174,23 @@ beforeEach(async () => {
     name: "Demo",
     repoPath: "/repo/demo",
     branchPrefix: "maister/",
+    defaultRunnerId: null,
     archivedAt: null,
   };
-  state.executor = {
-    id: executorId,
-    projectId,
-    agent: "codex",
-    model: "gpt-5",
-    env: null,
-    router: null,
-  };
+  state.runners = [
+    {
+      id: runnerId,
+      adapter: "codex",
+      capabilityAgent: "codex",
+      model: "gpt-5",
+      provider: { kind: "openai" },
+      permissionPolicy: "default",
+      sidecarId: null,
+      readinessStatus: "Ready",
+      enabled: true,
+    },
+  ];
+  state.runtimeSettings = [{ id: "singleton", defaultRunnerId: runnerId }];
 
   mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
   mocks.requireProjectAction.mockResolvedValue({ role: "member" });
@@ -246,7 +278,7 @@ function launchPayload(overrides: Record<string, unknown> = {}) {
     projectId,
     baseBranch: "main",
     branchName: "maister/demo/scratch/test",
-    executorId,
+    runnerId,
     planMode: "off",
     prompt: "Investigate the thing",
     attachments: [],
@@ -309,6 +341,21 @@ describe("POST /api/scratch-runs", () => {
       prompt: "Investigate the thing",
     });
     expect(state.inserts.length).toBeGreaterThanOrEqual(4);
+    expect(
+      state.inserts.find((call) =>
+        Object.prototype.hasOwnProperty.call(call.values as object, "runKind"),
+      )?.values,
+    ).toMatchObject({
+      runnerId,
+      runnerResolutionTier: "launchOverride",
+      capabilityAgent: "codex",
+      runnerSnapshot: {
+        id: runnerId,
+        capabilityAgent: "codex",
+        model: "gpt-5",
+        providerKind: "openai",
+      },
+    });
   });
 
   it("prepares a scratch supervisor session without sending an empty initial prompt", async () => {

@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches run-timeline.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -62,13 +63,7 @@ async function seedRun(): Promise<{ runId: string; projectId: string }> {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: `/tmp/${slug}/maister.yaml`,
   });
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -91,7 +86,9 @@ async function seedRun(): Promise<{ runId: string; projectId: string }> {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status: "Running",
     flowVersion: "v1.0.0",
   });

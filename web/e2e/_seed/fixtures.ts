@@ -12,7 +12,7 @@ export type E2EProjectFixture = {
   projectId: string;
   projectSlug: string;
   repoPath: string;
-  executorId: string;
+  runnerId: string;
   flowId: string;
   taskId?: string;
   runId?: string;

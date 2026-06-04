@@ -11,6 +11,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -117,13 +118,9 @@ describe("portfolio queries (integration)", () => {
   async function createExecutor(projectId: string): Promise<string> {
     const id = randomUUID();
 
-    await db.insert(schema.executors).values({
-      id,
-      projectId,
-      executorRefId: `claude-${id.slice(0, 8)}`,
-      agent: "claude",
-      model: "claude-sonnet-4-6",
-    });
+    await db
+      .insert(schema.platformAcpRunners)
+      .values(testPlatformRunnerRow(id, "claude"));
 
     return id;
   }
@@ -276,7 +273,9 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "NeedsInput",
       flowVersion: "v1.0.0",
     });
@@ -319,7 +318,9 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "HumanWorking",
       flowVersion: "v1.0.0",
       currentStepId: "review",
@@ -361,7 +362,9 @@ describe("portfolio queries (integration)", () => {
       id: runId,
       runKind: "scratch",
       projectId: project,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "Crashed",
       acpSessionId: "acp-resume-1",
       flowVersion: "scratch",

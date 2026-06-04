@@ -57,7 +57,7 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
   const editTarget = fixtures.users.editTarget;
   const ids = {
     project: randomUUID(),
-    executor: randomUUID(),
+    runner: randomUUID(),
     flow: randomUUID(),
     task: randomUUID(),
     run: randomUUID(),
@@ -93,9 +93,13 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
       [ids.role, ids.project],
     );
     await pool.query(
-      `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
-       VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
-      [ids.executor, ids.project],
+      `INSERT INTO platform_acp_runners
+         (id, adapter, capability_agent, model, provider, permission_policy,
+          readiness_status, readiness_reasons, enabled)
+       VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+          '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+       ON CONFLICT (id) DO NOTHING`,
+      [ids.runner],
     );
     await pool.query(
       `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
@@ -120,9 +124,23 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
       ],
     );
     await pool.query(
-      `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
-       VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
-      [ids.run, ids.task, ids.project, ids.flow, ids.executor],
+      `INSERT INTO runs
+         (id, task_id, project_id, flow_id, runner_id, capability_agent,
+          runner_snapshot, status, current_step_id, flow_version, started_at)
+       VALUES ($1, $2, $3, $4, $5, 'claude',
+          jsonb_build_object(
+            'id', $5,
+            'adapter', 'claude',
+            'capabilityAgent', 'claude',
+            'model', 'claude-sonnet-4-6',
+            'provider', jsonb_build_object('kind', 'anthropic'),
+            'providerKind', 'anthropic',
+            'permissionPolicy', 'default',
+            'sidecar', null,
+            'sidecarId', null
+          ),
+          'NeedsInput', 'review', 'v0.0.1', now())`,
+      [ids.run, ids.task, ids.project, ids.flow, ids.runner],
     );
     await pool.query(
       `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)

@@ -42,7 +42,8 @@ vi.stubGlobal("fetch", mockFetch);
 
 // IMPORTANT: import the manager AFTER mocks are set so it picks up the
 // mocked node:fs/promises + node:child_process.
-const { createCcrManager } = await import("../ccr-manager");
+const { createCcrManager, createKeyedCcrManager } =
+  await import("../ccr-manager");
 
 class FakeChild extends EventEmitter {
   pid = Math.floor(Math.random() * 90_000) + 1_000;
@@ -95,6 +96,41 @@ afterEach(() => {
 });
 
 describe("ccr-manager (unit)", () => {
+  it("keyed facade starts two independent managed CCR instances", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockImplementation(async (path) => {
+      if (String(path) === "/tmp/ccr-a.json") {
+        return JSON.stringify({ HOST: "127.0.0.1", PORT: 4567 });
+      }
+
+      return JSON.stringify({ HOST: "127.0.0.1", PORT: 5678 });
+    });
+    mockSpawn.mockImplementation(() => new FakeChild());
+    mockFetch.mockResolvedValue({ status: 200 } as Response);
+
+    const { logger } = captureLogger();
+    const mgr = createKeyedCcrManager({ logger });
+
+    await mgr.ensureRunning({
+      instance: {
+        id: "ccr-a",
+        lifecycle: "managed",
+        configPath: "/tmp/ccr-a.json",
+      },
+    });
+    await mgr.ensureRunning({
+      instance: {
+        id: "ccr-b",
+        lifecycle: "managed",
+        configPath: "/tmp/ccr-b.json",
+      },
+    });
+
+    expect(mgr.getProxyUrl("ccr-a")).toBe("http://127.0.0.1:4567");
+    expect(mgr.getProxyUrl("ccr-b")).toBe("http://127.0.0.1:5678");
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+  });
+
   it("idle → starting → ready on healthy config + spawn + 200 response", async () => {
     mockAccess.mockResolvedValue(undefined);
     mockReadFile.mockResolvedValue(

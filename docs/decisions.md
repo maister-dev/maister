@@ -177,26 +177,26 @@ over stdio JSONL.
 
 ---
 
-### ADR-004: Multi-executor: claude + codex on current target
+### ADR-004: Multi-runner: claude + codex on current target
 
 **Date:** 2026-05-25
 **Status:** Accepted
 **Context:** Validating MAIster's portfolio thesis requires more than
-one executor to prove the abstraction is real. M0 confirmed both ACP
+one runner to prove the abstraction is real. M0 confirmed both ACP
 adapters work and the supervisor's spawn dispatch on
-`executor.agent` covers both.
+runner adapter identity covers both.
 
-**Decision:** Current target ships with **both** Claude Code AND Codex executors.
+**Decision:** Current target ships with **both** Claude Code AND Codex runners.
 Both are required to pass success criteria. Cursor, opencode,
-Aider, and OpenHands are Phase 2 executor candidates.
+Aider, and OpenHands are Phase 2 runner candidates.
 
 **Consequences:**
 
-- The `executors[]` table is real, not a placeholder. The override
-  resolution chain (run launcher -> task override -> project per-flow
-  override -> project default -> flow recommended) gets exercised
+- The platform ACP runner catalog is real, not a placeholder. The resolution
+  chain (launch override -> Flow step target -> project Flow default ->
+  platform Flow default -> project default -> platform default) gets exercised
   end-to-end.
-- Per-step executor override is verified on at least one Flow in
+- Per-step runner target/remap is verified on at least one Flow in
   acceptance.
 - Adding a third agent is Phase 2 work.
 
@@ -468,7 +468,7 @@ No auto-resolve.
 **Date:** 2026-05-22
 **Status:** Accepted
 **Context:** The control plane needs a relational store for projects,
-tasks, runs, workspaces, executors, flows, HITL requests. JSON for
+tasks, runs, workspaces, platform ACP runners, flows, HITL requests. JSON for
 arbitrary fields (manifests, form schemas, env). Operators want a
 single docker compose to come up.
 
@@ -712,8 +712,9 @@ that ships capabilities/gates/artifacts *inside* a package.
    project-relative `enablement_state`
    `Installed|Enabled|UpdateAvailable|Deprecated|Disabled|Failed`,
    `trust_status`), keeping its `source/version/revision/installed_path/manifest/
-   schema_version/recommended_executor_id/executor_override_id` columns as a
-   denormalized cache of the *currently enabled* revision. `runs` gains
+   schema_version` columns as a denormalized cache of the *currently enabled*
+   revision while runner recommendations remain portable manifest data.
+   `runs` gains
    `flow_revision_id` (nullable FK); the runner reads the manifest + install path
    from this pinned revision, falling back to `flows.manifest` only for legacy
    rows. Authority for runtime bytes is `flow_revisions`, never the cache.
@@ -1279,7 +1280,7 @@ or M13's role validation.
 **Decision:** Adopt **carve (b)**. M11c replaces the M11a opaque passthrough
 with a **typed, per-node-type discriminated `settings` schema** and **removes**
 `SETTINGS_NOT_ENFORCED_WARN`. Each node `type` gets a distinct shape: `ai_coding`
-and `judge` carry the agent-capability shape (`executors`, `model`,
+and `judge` carry the agent-capability shape (`runner_type`, `runner`, `model`,
 `thinkingEffort`, `mcps`, `tools` (agent-aware map), `skills`, `settingsProfile`,
 `workspaceAccess`, `artifactAccess`, `permissionMode`, `limits`, `restrictions`,
 plus a per-class `enforcement` map); `human` carries
@@ -1288,8 +1289,8 @@ command/timeout/environmentPolicy/artifacts/failureClass shape. `settings` is
 OPTIONAL on every node type (back-compat: compiled-linear and minimal graph
 nodes carry none; absence never triggers a refusal). M11c validates settings
 **shape + enum + numeric bounds + intra-manifest/server-state references only**:
-`settings.executors[]` against `maister.yaml executors[]` (the existing M6 ref
-set), `human.decisions[]` against the node's `transitions` (the M11a validator),
+`settings.runner` against portable Flow runner targets (resolved/remapped at
+attach or launch), `human.decisions[]` against the node's `transitions` (the M11a validator),
 and `enforcement` keys only on classes the node type owns. M11c **never** reads a
 capability registry, resolves an abstract capability id, validates an
 MCP/tool/skill/agent/restriction *reference*, or materializes a settings file —

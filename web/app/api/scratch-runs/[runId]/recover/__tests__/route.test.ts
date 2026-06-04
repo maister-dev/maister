@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  executors as executorsTable,
   projects as projectsTable,
   runs as runsTable,
   scratchCapabilityProfiles as scratchCapabilityProfilesTable,
@@ -22,7 +21,6 @@ type Tables = {
   scratch_runs: Row[];
   workspaces: Row[];
   projects: Row[];
-  executors: Row[];
   scratch_capability_profiles: Row[];
 };
 type FakeDb = {
@@ -37,7 +35,6 @@ const dbState: { tables: Tables } = {
     scratch_runs: [],
     workspaces: [],
     projects: [],
-    executors: [],
     scratch_capability_profiles: [],
   },
 };
@@ -47,7 +44,6 @@ function tableOf(t: unknown): keyof Tables {
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
   if (t === projectsTable) return "projects";
-  if (t === executorsTable) return "executors";
   if (t === scratchCapabilityProfilesTable) {
     return "scratch_capability_profiles";
   }
@@ -130,7 +126,6 @@ function emptyTables(): Tables {
     scratch_runs: [],
     workspaces: [],
     projects: [],
-    executors: [],
     scratch_capability_profiles: [],
   };
 }
@@ -145,13 +140,23 @@ function seedScratchRun(
   }> = {},
 ): string {
   const runId = "run-recover";
-  const executorId = "executor-1";
 
   dbState.tables.runs.push({
     id: runId,
     runKind: overrides.runKind ?? "scratch",
     projectId: "project-1",
-    executorId,
+    runnerId: "claude-runner",
+    capabilityAgent: "claude",
+    runnerSnapshot: {
+      id: "claude-runner",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet",
+      provider: { kind: "anthropic" },
+      providerKind: "anthropic",
+      permissionPolicy: "default",
+      sidecarId: null,
+    },
     status: "Crashed",
     acpSessionId: Object.hasOwn(overrides, "acpSessionId")
       ? overrides.acpSessionId
@@ -181,14 +186,6 @@ function seedScratchRun(
   dbState.tables.projects.push({
     id: "project-1",
     slug: "demo",
-  });
-  dbState.tables.executors.push({
-    id: executorId,
-    projectId: "project-1",
-    agent: "claude",
-    model: "claude-sonnet",
-    env: { FOO: "bar" },
-    router: null,
   });
   dbState.tables.scratch_capability_profiles.push({
     id: "profile-1",
@@ -284,13 +281,21 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
       executor: {
         agent: "claude",
         model: "claude-sonnet",
-        env: { FOO: "bar" },
         router: undefined,
       },
       resumeSessionId: "acp-old",
       capabilityProfilePath:
         "/worktrees/demo/run-recover/.maister/profile.json",
       adapterLaunch: { postArgs: ["--profile"] },
+      runner: {
+        version: 1,
+        runnerId: "claude-runner",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "claude-sonnet",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "default",
+      },
     });
     expect(sendScratchPromptAndProjectEvents).toHaveBeenCalledWith({
       runId,

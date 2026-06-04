@@ -40,6 +40,7 @@ import {
 } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { runProjectorCatchUpSweep } from "@/lib/projector/catch-up-sweep";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches the store/ledger idiom).
@@ -130,13 +131,7 @@ async function seedRun(opts: {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -159,7 +154,9 @@ async function seedRun(opts: {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: opts.status,
   });

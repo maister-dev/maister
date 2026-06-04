@@ -34,8 +34,8 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
 ## Key Features
 
 - **Multi-project registry** — N projects per host, each configured by its
-  own `maister.yaml` v2: project metadata, project-scoped executors, and
-  pinned Flow plugins.
+  own `maister.yaml` v2: project metadata, project runner defaults, and pinned
+  Flow plugins.
 - **Portfolio home (superset.sh-style)** — single grid of every active
   workspace across all projects, with filters by project + status.
 - **Per-project task board** — 2 columns `Backlog | In Flight`. A Backlog
@@ -43,12 +43,13 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
   Run. **task ↔ run is 1:N** — a failed/abandoned run returns the task to
   Backlog so Launch can fire attempt N+1 (ralph-loop friendly).
 - **Backlog → Flow launch** — task created with title + prompt + Flow
-  dropdown and optional executor override.
+  dropdown and optional platform runner override.
 - **Workspace per run** — `git worktree add` with precondition checks
   (clean parent repo, branch free, worktree path free), isolated under
   `.maister/<project-slug>/runs/<run-id>/`.
-- **Multi-executor ACP** — claude and codex executors are configured per
-  project; CCR is available for `router: ccr` Claude routing.
+- **Platform ACP runners** — claude and codex runners are configured at the
+  platform layer, with project/Flow inheritance and CCR sidecars for Claude
+  routing.
 - **Hybrid HITL** — ACP permission requests become durable HITL rows;
   structured form and human-review responses use atomic input artifacts and
   runner-owned resume.
@@ -84,18 +85,12 @@ project:
   repo_path: /repos/myapp
   default_branch: main
   branch_prefix: maister/
-executors:
-  - id: claude-sonnet
-    agent: claude
-    model: claude-sonnet-4-6
-  - id: codex-default
-    agent: codex
-    model: gpt-5-codex
-default_executor: claude-sonnet
+  default_runner: claude-code
 flows:
   - id: bugfix
     source: github.com/org/maister-flow-bugfix
     version: v1.2.3
+    runner: claude-code
 EOF
 
 # Launch the services, register the project, create a task on the board

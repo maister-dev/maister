@@ -1,5 +1,4 @@
 import type {
-  Executor as ExecutorRow,
   Run as RunRow,
   StepRun as StepRunRow,
   Task as TaskRow,
@@ -18,12 +17,12 @@ const task: Pick<TaskRow, "id" | "title" | "prompt" | "attemptNumber"> = {
 
 const run: Pick<RunRow, "id"> = { id: "run-1" };
 
-const executor: Pick<ExecutorRow, "id" | "agent" | "model" | "router"> = {
+const executor = {
   id: "exec-1",
   agent: "claude",
   model: "claude-sonnet-4-6",
   router: null,
-};
+} as const;
 
 function makeStepRun(
   partial: Partial<StepRunRow> & { stepId: string; attempt: number },

@@ -26,7 +26,11 @@ erDiagram
     USERS ||--o{ PROJECT_MEMBERS : "project roles"
 
     PROJECTS ||--o{ PROJECT_MEMBERS : "members"
-    PROJECTS ||--o{ EXECUTORS : has
+    PLATFORM_ROUTER_SIDECARS ||--o{ PLATFORM_ACP_RUNNERS : "optional sidecar"
+    PLATFORM_ACP_RUNNERS ||--|| PLATFORM_RUNTIME_SETTINGS : "default runner"
+    PLATFORM_ACP_RUNNERS ||--o{ PROJECTS : "default override"
+    PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
+    PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "flow binding"
     PROJECTS ||--o{ FLOWS : has
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
     PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
@@ -38,9 +42,8 @@ erDiagram
 
     TASKS ||--o{ RUNS : "attempt N+1"
     FLOWS ||--o{ RUNS : "selected at launch"
-    EXECUTORS ||--o{ RUNS : "spawned by"
-    EXECUTORS ||--o{ TASKS : "optional override"
     FLOWS ||--o{ TASKS : "selected at create"
+    FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
@@ -130,10 +133,47 @@ erDiagram
         text main_branch "current column; product default_branch"
         text branch_prefix
         text maister_yaml_path
-        text default_executor_id
+        text default_runner_id "platform runner override"
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
         timestamp created_at
         timestamp archived_at
+    }
+
+    PLATFORM_ROUTER_SIDECARS {
+        text id PK
+        text kind "ccr"
+        text lifecycle "managed|external"
+        text command_preset
+        text config_path
+        text base_url
+        text healthcheck_url
+        text auth_token_ref
+        text readiness_status
+        jsonb readiness_reasons
+        boolean enabled
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PLATFORM_ACP_RUNNERS {
+        text id PK
+        text adapter "claude|codex"
+        text capability_agent "claude|codex"
+        text model
+        jsonb provider
+        text permission_policy
+        text sidecar_id FK
+        text readiness_status
+        jsonb readiness_reasons
+        boolean enabled
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PLATFORM_RUNTIME_SETTINGS {
+        text id PK
+        text default_runner_id FK
+        timestamp updated_at
     }
 
     EXECUTORS {
@@ -157,9 +197,16 @@ erDiagram
         text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
-        text recommended_executor_id
-        text executor_override_id FK
         timestamp created_at
+    }
+
+    PROJECT_FLOW_RUNNER_DEFAULTS {
+        text id PK
+        text project_id FK
+        text flow_id FK
+        text runner_id FK
+        timestamp created_at
+        timestamp updated_at
     }
 
     CAPABILITY_RECORDS {
@@ -230,7 +277,6 @@ erDiagram
         text title
         text prompt
         text flow_id FK
-        text executor_override_id FK
         text status "Backlog|InFlight|Done|Abandoned"
         text stage "Backlog|Prepare"
         integer attempt_number "monotonic per task"
@@ -244,7 +290,10 @@ erDiagram
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
-        text executor_id FK
+        text runner_id FK
+        text runner_resolution_tier
+        text capability_agent
+        jsonb runner_snapshot
         text status "Pending..Done"
         text acp_session_id "resume handle"
         text current_step_id "runner cursor"
@@ -581,7 +630,6 @@ not drawn until its migrations exist. `project_tokens` and `token_audit_log`
 | `assignment_events`   | `assignment_events_assignment_idx`      | `(assignment_id)`                      | Assignment event history.                                                                                               |
 | `assignment_events`   | `assignment_events_project_created_idx` | `(project_id, created_at)`             | Project audit stream.                                                                                                   |
 | `projects`            | implicit                                | `slug`, `repo_path` UNIQUE             | Registration collisions.                                                                                                |
-| `executors`           | `executors_project_ref_uq`              | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace.                                                                                                  |
 | `flows`               | `flows_project_ref_uq`                  | `(project_id, flow_ref_id)` UNIQUE     | Per-project namespace.                                                                                                  |
 | `workspaces`          | implicit                                | `worktree_path` UNIQUE                 | Globally unique worktree path.                                                                                          |
 | Table | Index | Columns | Purpose |

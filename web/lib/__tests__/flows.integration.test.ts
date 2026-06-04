@@ -117,7 +117,7 @@ describe("installFlowPlugin (integration)", () => {
     expect(row.version).toBe("v1.0.0");
     expect(row.revision).toBe(result.revision);
     expect(row.installedPath).toBe(result.installedPath);
-    expect(row.recommendedExecutorId).toBe("claude-default");
+    expect(row.manifest.runner_profiles).toHaveProperty("claude-default");
   });
 
   it("idempotent reinstall: same flowId@version skips clone, row id stable", async () => {
@@ -200,7 +200,7 @@ describe("installFlowPlugin (integration)", () => {
       db,
     });
 
-    expect(before.manifest.recommended_executor).toBe("claude-default");
+    expect(before.manifest.runner_profiles).toHaveProperty("claude-default");
 
     const [beforeRow] = await db
       .select()
@@ -228,7 +228,7 @@ describe("installFlowPlugin (integration)", () => {
     // prior revision keep reading their original bytes.
     expect(after.installedPath).not.toBe(before.installedPath);
     expect(after.revision).not.toBe(before.revision);
-    expect(after.manifest.recommended_executor).toBe("claude-glm");
+    expect(after.manifest.runner_profiles).toHaveProperty("claude-glm");
 
     const linkTarget = await readlink(after.symlinkPath);
 

@@ -19,7 +19,6 @@ const log = pino({
 
 type CliArgs = {
   taskId: string;
-  executorOverrideId?: string;
 };
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -36,7 +35,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
     ) {
       throw new MaisterError(
         "CONFIG",
-        `Bad argv near "${flag}". Usage: --task <id> [--executor-override <id>]`,
+        `Bad argv near "${flag}". Usage: --task <id>`,
       );
     }
     out[flag.slice(2)] = value;
@@ -48,7 +47,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
 
   return {
     taskId: out.task,
-    executorOverrideId: out["executor-override"],
   };
 }
 

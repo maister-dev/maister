@@ -71,13 +71,6 @@ beforeAll(async () => {
       manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
       schemaVersion: 1,
     });
-    await db.insert(schema.executors).values({
-      id: `exec-${slug}`,
-      projectId: slug,
-      executorRefId: "claude-sonnet",
-      agent: "claude",
-      model: "claude-sonnet-4-6",
-    });
   }
 
   // member of proj-a; outsider of neither.
@@ -160,7 +153,7 @@ describe("POST /api/projects/[slug]/tasks — trust boundary (integration)", () 
     expect((await res.json()).code).toBe("CONFIG");
   });
 
-  it("rejects an executorOverrideId from a DIFFERENT project (422)", async () => {
+  it("rejects retired executorOverrideId on task creation (422)", async () => {
     sessionRef.value = { user: { id: "u-member", role: "member" } };
 
     const res = await POST(
@@ -168,7 +161,7 @@ describe("POST /api/projects/[slug]/tasks — trust boundary (integration)", () 
         title: "t",
         prompt: "p",
         flowId: "flow-proj-a",
-        executorOverrideId: "exec-proj-b",
+        executorOverrideId: "exec-proj-a",
       }),
       params("proj-a"),
     );
@@ -197,5 +190,6 @@ describe("POST /api/projects/[slug]/tasks — trust boundary (integration)", () 
     expect(rows[0].projectId).toBe("proj-a");
     expect(rows[0].status).toBe("Backlog");
     expect(rows[0].stage).toBe("Backlog");
+    expect(rows[0]).not.toHaveProperty("executorOverrideId");
   });
 });

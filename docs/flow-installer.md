@@ -136,8 +136,10 @@ on `code` only.
 6. **DB upsert**: `INSERT INTO flows ... ON CONFLICT (project_id,
 flow_ref_id) DO UPDATE SET ...` — same row id stays stable on
    version upgrade; only `version`, `installed_path`, `manifest`,
-   `schema_version`, `recommended_executor_id` change. The unique
-   constraint `flows_project_ref_uq` is the conflict target.
+   `schema_version`, and enabled-revision pointers change. Portable runner
+   recommendations stay in `manifest.runner_profiles`; local runner mappings
+   live in platform/project runner tables. The unique constraint
+   `flows_project_ref_uq` is the conflict target.
 
 ## Concurrency
 

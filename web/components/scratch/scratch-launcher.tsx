@@ -18,14 +18,17 @@ type ProjectOption = {
   mainBranch: string;
 };
 
-type ExecutorOption = {
+type RunnerOption = {
   id: string;
-  executorRefId: string;
   displayLabel: string;
-  agent: "claude" | "codex";
+  adapter: string;
+  capabilityAgent: "claude" | "codex";
   model: string | null;
-  router: string | null;
-  envHint: string | null;
+  providerKind: string;
+  permissionPolicy: string;
+  sidecarId: string | null;
+  enabled: boolean;
+  ready: boolean;
 };
 
 type CapabilityOption = {
@@ -49,9 +52,9 @@ type LaunchOptions = {
   selectedProjectId: string | null;
   defaultBaseBranch?: string;
   defaultScratchBranch?: string;
-  defaultExecutorId?: string | null;
+  defaultRunnerId?: string | null;
   branches: string[];
-  executors: ExecutorOption[];
+  runners: RunnerOption[];
   workModes: Array<{
     id: WorkMode;
     label: string;
@@ -240,7 +243,7 @@ function MachineIcon(): ReactElement {
 function AgentMark({
   agent,
 }: {
-  agent: ExecutorOption["agent"];
+  agent: RunnerOption["capabilityAgent"];
 }): ReactElement {
   return (
     <span
@@ -321,7 +324,7 @@ export function ScratchLauncher({
   const [workspaceName, setWorkspaceName] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [branchName, setBranchName] = useState("");
-  const [executorId, setExecutorId] = useState("");
+  const [runnerId, setRunnerId] = useState("");
   const [workMode, setWorkMode] = useState<WorkMode>("auto");
   const [reasoningEffort, setReasoningEffort] =
     useState<ReasoningEffort>("high");
@@ -363,9 +366,7 @@ export function ScratchLauncher({
         setProjectId(payload.selectedProjectId ?? "");
         setBaseBranch(payload.defaultBaseBranch ?? payload.branches[0] ?? "");
         setBranchName("");
-        setExecutorId(
-          payload.defaultExecutorId ?? payload.executors[0]?.id ?? "",
-        );
+        setRunnerId(payload.defaultRunnerId ?? payload.runners[0]?.id ?? "");
         setWorkMode(
           payload.workModes.find((option) => option.selectedByDefault)?.id ??
             "auto",
@@ -417,10 +418,9 @@ export function ScratchLauncher({
     () => options?.projects.find((project) => project.id === projectId) ?? null,
     [options?.projects, projectId],
   );
-  const selectedExecutor = useMemo(
-    () =>
-      options?.executors.find((executor) => executor.id === executorId) ?? null,
-    [executorId, options?.executors],
+  const selectedRunner = useMemo(
+    () => options?.runners.find((runner) => runner.id === runnerId) ?? null,
+    [options?.runners, runnerId],
   );
   const contextCount =
     files.length + attachments.length + (linkedIssueUrl.trim() ? 1 : 0);
@@ -431,7 +431,12 @@ export function ScratchLauncher({
     agentDefinitionIds,
     restrictionIds,
   );
-  const canSubmit = !!projectId && !!baseBranch && !!executorId && !pending;
+  const canSubmit =
+    !!projectId &&
+    !!baseBranch &&
+    !!runnerId &&
+    Boolean(selectedRunner?.enabled && selectedRunner.ready) &&
+    !pending;
 
   useEffect(() => {
     setProjectId(requestedProjectId);
@@ -486,7 +491,7 @@ export function ScratchLauncher({
         baseBranch,
         branchName: branchName.trim() || undefined,
         name: workspaceName.trim() || undefined,
-        executorId,
+        runnerId,
         workMode,
         reasoningEffort,
         linkedIssueUrl: linkedIssueUrl.trim() || undefined,
@@ -714,24 +719,29 @@ export function ScratchLauncher({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <label className="relative inline-flex h-9 min-w-[134px] max-w-[260px] items-center gap-2 rounded-full border border-line-soft bg-paper px-3 text-[13px] font-semibold text-ink">
-                {selectedExecutor ? (
-                  <AgentMark agent={selectedExecutor.agent} />
+                {selectedRunner ? (
+                  <AgentMark agent={selectedRunner.capabilityAgent} />
                 ) : null}
                 <span className="min-w-0 truncate">
-                  {selectedExecutor?.displayLabel ?? t("executor")}
+                  {selectedRunner?.displayLabel ?? t("runner")}
                 </span>
                 <span aria-hidden="true" className="text-mute">
                   v
                 </span>
                 <select
-                  aria-label={t("executor")}
+                  aria-label={t("runner")}
                   className={invisibleSelect}
-                  value={executorId}
-                  onChange={(event) => setExecutorId(event.target.value)}
+                  value={runnerId}
+                  onChange={(event) => setRunnerId(event.target.value)}
                 >
-                  {options?.executors.map((executor) => (
-                    <option key={executor.id} value={executor.id}>
-                      {executor.displayLabel}
+                  {options?.runners.map((runner) => (
+                    <option
+                      key={runner.id}
+                      disabled={!runner.enabled || !runner.ready}
+                      value={runner.id}
+                    >
+                      {runner.displayLabel}
+                      {runner.ready ? "" : " / NotReady"}
                     </option>
                   ))}
                 </select>

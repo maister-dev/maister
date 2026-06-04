@@ -30,28 +30,25 @@ vi.mock("@/lib/runs/state-transitions", () => ({
 // Minimal db: select chains return seeded rows.
 const dbState: {
   runRow: Record<string, unknown> | null;
-  executor: Record<string, unknown> | null;
   workspace: Record<string, unknown> | null;
   project: Record<string, unknown> | null;
-} = { runRow: null, executor: null, workspace: null, project: null };
+} = { runRow: null, workspace: null, project: null };
 
 const fakeDb = {
   select: () => ({
     from: (table: { _kind?: string } | unknown) => ({
       where: async () => {
         // Order of selects in resumeRun:
-        //   1. runs (status, acpSessionId, executorId, currentStepId, projectId)
-        //   2. executors
-        //   3. workspaces
-        //   4. projects
+        //   1. runs (status, acpSessionId, runnerSnapshot, currentStepId, projectId)
+        //   2. workspaces
+        //   3. projects
         // We use a call counter to pick the right seeded row.
         callOrder.push(table);
         const idx = callOrder.length;
 
         if (idx === 1) return dbState.runRow ? [dbState.runRow] : [];
-        if (idx === 2) return dbState.executor ? [dbState.executor] : [];
-        if (idx === 3) return dbState.workspace ? [dbState.workspace] : [];
-        if (idx === 4) return dbState.project ? [dbState.project] : [];
+        if (idx === 2) return dbState.workspace ? [dbState.workspace] : [];
+        if (idx === 3) return dbState.project ? [dbState.project] : [];
 
         return [];
       },
@@ -81,14 +78,17 @@ beforeEach(async () => {
     projectId: "p1",
     status: "NeedsInputIdle",
     acpSessionId: "acp-1",
-    executorId: "e1",
     currentStepId: "step-1",
-  };
-  dbState.executor = {
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-    env: null,
-    router: null,
+    runnerSnapshot: {
+      id: "claude-runner",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+      providerKind: "anthropic",
+      permissionPolicy: "default",
+      sidecarId: null,
+    },
   };
   dbState.workspace = {
     projectSlug: "p1",

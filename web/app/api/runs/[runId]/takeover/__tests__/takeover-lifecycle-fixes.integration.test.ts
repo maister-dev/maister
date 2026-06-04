@@ -41,12 +41,12 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { getActiveTakeover } from "@/lib/flows/graph/ledger";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
 const {
-  executors,
   flows,
   hitlRequests,
   nodeAttempts,
@@ -261,13 +261,7 @@ async function seed(opts: {
     userId: ownerId,
     role: "member",
   });
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(flows).values({
     id: flowId,
     projectId,
@@ -291,7 +285,9 @@ async function seed(opts: {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status: opts.runStatus,
     currentStepId: opts.currentStepId ?? TAKEOVER_NODE,
     flowVersion: "v1.0.0",

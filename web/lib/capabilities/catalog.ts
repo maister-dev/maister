@@ -24,7 +24,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-// FIXME(any): dual drizzle-orm peer-dep variants (matches executors.ts).
+// FIXME(any): dual drizzle-orm peer-dep variants.
 const { capabilityRecords } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({

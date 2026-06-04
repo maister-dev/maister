@@ -15,6 +15,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { getActiveTakeover } from "@/lib/flows/graph/ledger";
 import {
   bumpKeepalive,
@@ -30,7 +31,7 @@ import {
 } from "@/lib/runs/state-transitions";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, nodeAttempts, projects, runs, tasks, users } = schema;
+const { flows, nodeAttempts, projects, runs, tasks, users } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -61,13 +62,7 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/state-app/maister.yaml",
   });
 
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   flowId = randomUUID();
 
@@ -122,7 +117,9 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     flowVersion: "v1",
     startedAt: new Date(),

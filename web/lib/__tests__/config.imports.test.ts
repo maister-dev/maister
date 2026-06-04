@@ -30,11 +30,12 @@ afterEach(async () => {
 function baseYaml(): Record<string, unknown> {
   return {
     schemaVersion: 2,
-    project: { name: "myapp", main_branch: "main", branch_prefix: "maister/" },
-    executors: [
-      { id: "claude-sonnet", agent: "claude", model: "claude-sonnet-4-6" },
-    ],
-    default_executor: "claude-sonnet",
+    project: {
+      name: "myapp",
+      main_branch: "main",
+      branch_prefix: "maister/",
+      default_runner: "claude-code",
+    },
     flows: [],
   };
 }

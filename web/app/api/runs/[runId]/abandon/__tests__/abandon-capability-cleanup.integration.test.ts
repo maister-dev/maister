@@ -43,11 +43,11 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
-  executors,
   flows,
   nodeAttempts,
   projectMembers,
@@ -127,7 +127,9 @@ async function seedRun(status: string): Promise<Seeded> {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     currentStepId: "implement",
     flowVersion: "v1.0.0",
@@ -234,13 +236,7 @@ beforeAll(async () => {
     userId: ownerId,
     role: "member",
   });
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(flows).values({
     id: flowId,
     projectId,

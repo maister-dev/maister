@@ -21,11 +21,12 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { gcAgeDays } from "@/lib/instance-config";
 import { crashRunningRun, markAbandoned } from "@/lib/runs/state-transitions";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, projects, runs, tasks, workspaces } = schema;
+const { flows, projects, runs, tasks, workspaces } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -55,13 +56,7 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/crash-app/maister.yaml",
   });
 
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   flowId = randomUUID();
 
@@ -109,7 +104,9 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     flowVersion: "v1",
     startedAt: new Date(),

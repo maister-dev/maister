@@ -108,7 +108,7 @@ export const projects = pgTable("projects", {
   mainBranch: text("main_branch").notNull().default("main"),
   branchPrefix: text("branch_prefix").notNull().default("maister/"),
   maisterYamlPath: text("maister_yaml_path").notNull(),
-  defaultExecutorId: text("default_executor_id"),
+  defaultRunnerId: text("default_runner_id"),
   promotionMode: text("promotion_mode"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
     .notNull()
@@ -116,29 +116,117 @@ export const projects = pgTable("projects", {
   archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
 });
 
-export const executors = pgTable(
-  "executors",
+export type PlatformRunnerProvider =
+  | { kind: "anthropic" }
+  | { kind: "anthropic_compatible"; baseUrl?: string; authToken?: string }
+  | { kind: "openai" }
+  | {
+      kind: "openai_compatible";
+      baseUrl?: string;
+      apiKey?: string;
+      wireApi?: "responses";
+    };
+
+export type RunnerSnapshot = {
+  id: string;
+  adapter: string;
+  capabilityAgent: string;
+  model: string;
+  provider?: PlatformRunnerProvider;
+  providerKind: string;
+  permissionPolicy: string;
+  sidecar?: {
+    id: string;
+    kind: "ccr";
+    lifecycle?: "managed" | "external";
+    configPath?: string | null;
+    baseUrl?: string | null;
+    healthcheckUrl?: string | null;
+    authTokenRef?: string | null;
+  } | null;
+  sidecarId?: string | null;
+};
+
+export const platformRouterSidecars = pgTable("platform_router_sidecars", {
+  id: text("id").primaryKey(),
+  kind: text("kind", { enum: ["ccr"] }).notNull(),
+  lifecycle: text("lifecycle", { enum: ["managed", "external"] }).notNull(),
+  commandPreset: text("command_preset", { enum: ["ccr_start"] }),
+  configPath: text("config_path"),
+  baseUrl: text("base_url"),
+  healthcheckUrl: text("healthcheck_url"),
+  authTokenRef: text("auth_token_ref"),
+  readinessStatus: text("readiness_status", {
+    enum: ["Unknown", "Ready", "NotReady"],
+  })
+    .notNull()
+    .default("Unknown"),
+  readinessReasons: jsonb("readiness_reasons")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export const platformAcpRunners = pgTable(
+  "platform_acp_runners",
   {
     id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    executorRefId: text("executor_ref_id").notNull(),
-    agent: text("agent", { enum: ["claude", "codex"] }).notNull(),
+    adapter: text("adapter", { enum: ["claude", "codex"] }).notNull(),
+    capabilityAgent: text("capability_agent", {
+      enum: ["claude", "codex"],
+    }).notNull(),
     model: text("model").notNull(),
-    env: jsonb("env").$type<Record<string, string> | null>(),
-    router: text("router", { enum: ["ccr"] }),
+    provider: jsonb("provider").$type<PlatformRunnerProvider>().notNull(),
+    permissionPolicy: text("permission_policy", {
+      enum: ["default", "dangerously_skip_permissions"],
+    })
+      .notNull()
+      .default("default"),
+    sidecarId: text("sidecar_id").references(() => platformRouterSidecars.id, {
+      onDelete: "set null",
+    }),
+    readinessStatus: text("readiness_status", {
+      enum: ["Unknown", "Ready", "NotReady"],
+    })
+      .notNull()
+      .default("Unknown"),
+    readinessReasons: jsonb("readiness_reasons")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
-    uniqExecutorRefPerProject: unique("executors_project_ref_uq").on(
-      t.projectId,
-      t.executorRefId,
+    idxAdapterEnabled: index("platform_acp_runners_adapter_enabled_idx").on(
+      t.adapter,
+      t.enabled,
     ),
+    idxSidecar: index("platform_acp_runners_sidecar_idx").on(t.sidecarId),
   }),
 );
+
+export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
+  id: text("id").primaryKey().default("singleton"),
+  defaultRunnerId: text("default_runner_id")
+    .notNull()
+    .references(() => platformAcpRunners.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
 
 // Immutable, globally content-addressed Flow package revision (M10, ADR-021).
 // One row per (flow_ref_id, resolved_revision); the system cache
@@ -158,6 +246,10 @@ export const flowRevisions = pgTable(
     schemaVersion: integer("schema_version").notNull(),
     engineMin: text("engine_min"),
     engineMax: text("engine_max"),
+    defaultRunnerId: text("default_runner_id").references(
+      () => platformAcpRunners.id,
+      { onDelete: "set null" },
+    ),
     contract: jsonb("contract"),
     installedPath: text("installed_path").notNull(),
     setupStatus: text("setup_status", {
@@ -203,11 +295,6 @@ export const flows = pgTable(
     installedPath: text("installed_path").notNull(),
     manifest: jsonb("manifest").notNull(),
     schemaVersion: integer("schema_version").notNull(),
-    recommendedExecutorId: text("recommended_executor_id"),
-    executorOverrideId: text("executor_override_id").references(
-      () => executors.id,
-      { onDelete: "set null" },
-    ),
     enabledRevisionId: text("enabled_revision_id").references(
       () => flowRevisions.id,
       { onDelete: "set null" },
@@ -411,9 +498,6 @@ export const tasks = pgTable(
     flowId: text("flow_id")
       .notNull()
       .references(() => flows.id),
-    executorOverrideId: text("executor_override_id").references(
-      () => executors.id,
-    ),
     status: text("status", {
       enum: ["Backlog", "InFlight", "Done", "Abandoned"],
     })
@@ -439,6 +523,70 @@ export const tasks = pgTable(
   }),
 );
 
+export const projectFlowRunnerDefaults = pgTable(
+  "project_flow_runner_defaults",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    flowId: text("flow_id")
+      .notNull()
+      .references(() => flows.id, { onDelete: "cascade" }),
+    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectFlow: unique("project_flow_runner_defaults_project_flow_uq").on(
+      t.projectId,
+      t.flowId,
+    ),
+  }),
+);
+
+export const flowRunnerRemaps = pgTable(
+  "flow_runner_remaps",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    flowRevisionId: text("flow_revision_id")
+      .notNull()
+      .references(() => flowRevisions.id, { onDelete: "cascade" }),
+    stepId: text("step_id").notNull(),
+    sourceRunnerId: text("source_runner_id").notNull(),
+    mappedRunnerId: text("mapped_runner_id").references(
+      () => platformAcpRunners.id,
+      { onDelete: "set null" },
+    ),
+    status: text("status", { enum: ["Pending", "Mapped"] })
+      .notNull()
+      .default("Pending"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectRevisionStepSource: unique(
+      "flow_runner_remaps_project_revision_step_source_uq",
+    ).on(t.projectId, t.flowRevisionId, t.stepId, t.sourceRunnerId),
+    idxMappedRunner: index("flow_runner_remaps_mapped_runner_idx").on(
+      t.mappedRunnerId,
+    ),
+  }),
+);
+
 export type RunKind = "flow" | "scratch";
 
 export const runs = pgTable(
@@ -457,9 +605,23 @@ export const runs = pgTable(
     flowId: text("flow_id").references(() => flows.id, {
       onDelete: "cascade",
     }),
-    executorId: text("executor_id")
-      .notNull()
-      .references(() => executors.id, { onDelete: "cascade" }),
+    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
+      onDelete: "set null",
+    }),
+    runnerResolutionTier: text("runner_resolution_tier", {
+      enum: [
+        "launchOverride",
+        "stepTarget",
+        "projectFlowDefault",
+        "platformFlowDefault",
+        "projectDefault",
+        "platformDefault",
+      ],
+    }),
+    capabilityAgent: text("capability_agent", {
+      enum: ["claude", "codex"],
+    }),
+    runnerSnapshot: jsonb("runner_snapshot").$type<RunnerSnapshot>(),
     status: text("status", {
       enum: [
         "Pending",
@@ -525,6 +687,7 @@ export const runs = pgTable(
     ),
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
+    idxRunner: index("runs_runner_idx").on(t.runnerId),
   }),
 );
 
@@ -1374,7 +1537,13 @@ export type ProjectMember = typeof projectMembers.$inferSelect;
 export type ProjectRole = ProjectMember["role"];
 export type GlobalRole = User["role"];
 export type Project = typeof projects.$inferSelect;
-export type Executor = typeof executors.$inferSelect;
+export type PlatformAcpRunner = typeof platformAcpRunners.$inferSelect;
+export type PlatformRouterSidecar = typeof platformRouterSidecars.$inferSelect;
+export type PlatformRuntimeSettings =
+  typeof platformRuntimeSettings.$inferSelect;
+export type ProjectFlowRunnerDefault =
+  typeof projectFlowRunnerDefaults.$inferSelect;
+export type FlowRunnerRemap = typeof flowRunnerRemaps.$inferSelect;
 export type Flow = typeof flows.$inferSelect;
 export type FlowRevision = typeof flowRevisions.$inferSelect;
 export type FlowEnablementState = Flow["enablementState"];

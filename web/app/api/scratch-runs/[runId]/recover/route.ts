@@ -1,11 +1,17 @@
 import "server-only";
 
+import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
+
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  mergeRunnerAdapterLaunch,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -26,7 +32,7 @@ import {
 } from "@/lib/supervisor-client";
 
 const {
-  executors,
+  platformAcpRunners,
   projects,
   runs,
   scratchCapabilityProfiles,
@@ -51,6 +57,17 @@ type Db = {
   select: any;
   update: any;
   transaction: any;
+};
+
+type ScratchLaunchExecutor = {
+  agent: "claude" | "codex";
+  model: string;
+  env?: Record<string, string>;
+  router?: "ccr";
+};
+type ScratchRecoveredRunner = {
+  executor: ScratchLaunchExecutor;
+  snapshot: RunnerSnapshot;
 };
 
 function httpStatusForCode(code: string): number {
@@ -101,12 +118,11 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
     throw new MaisterError("PRECONDITION", `run is not scratch: ${runId}`);
   }
 
-  const [scratchRows, workspaceRows, projectRows, executorRows, profileRows] =
+  const [scratchRows, workspaceRows, projectRows, profileRows] =
     await Promise.all([
       db.select().from(scratchRuns).where(eq(scratchRuns.runId, runId)),
       db.select().from(workspaces).where(eq(workspaces.runId, runId)),
       db.select().from(projects).where(eq(projects.id, run.projectId)),
-      db.select().from(executors).where(eq(executors.id, run.executorId)),
       db
         .select()
         .from(scratchCapabilityProfiles)
@@ -115,7 +131,7 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
   const scratch = scratchRows[0];
   const workspace = workspaceRows[0];
   const project = projectRows[0];
-  const executor = executorRows[0];
+  const recoveredRunner = await loadScratchLaunchExecutor(db, run, runId);
 
   if (!scratch) {
     throw new MaisterError(
@@ -132,21 +148,71 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
       `project not found: ${run.projectId}`,
     );
   }
-  if (!executor) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `executor not found: ${run.executorId}`,
-    );
-  }
 
   return {
     run,
     scratch,
     workspace,
     project,
-    executor,
+    executor: recoveredRunner.executor,
+    runnerSnapshot: recoveredRunner.snapshot,
     profile: profileRows[0] ?? null,
   };
+}
+
+async function loadScratchLaunchExecutor(
+  db: Db,
+  run: Record<string, any>,
+  runId: string,
+): Promise<ScratchRecoveredRunner> {
+  if (run.runnerSnapshot) {
+    return {
+      executor: {
+        agent: run.runnerSnapshot.capabilityAgent,
+        model: run.runnerSnapshot.model,
+        router: run.runnerSnapshot.sidecarId ? "ccr" : undefined,
+      },
+      snapshot: run.runnerSnapshot,
+    };
+  }
+
+  if (run.runnerId) {
+    const runnerRows = await db
+      .select()
+      .from(platformAcpRunners)
+      .where(eq(platformAcpRunners.id, run.runnerId));
+    const runner = runnerRows[0];
+
+    if (!runner) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `ACP runner not found: ${run.runnerId}`,
+      );
+    }
+
+    return {
+      executor: {
+        agent: runner.capabilityAgent,
+        model: runner.model,
+        router: runner.sidecarId ? "ccr" : undefined,
+      },
+      snapshot: {
+        id: runner.id,
+        adapter: runner.adapter,
+        capabilityAgent: runner.capabilityAgent,
+        model: runner.model,
+        provider: runner.provider,
+        providerKind: runner.provider.kind,
+        permissionPolicy: runner.permissionPolicy,
+        sidecarId: runner.sidecarId,
+      },
+    };
+  }
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `no ACP runner snapshot found for run ${runId}`,
+  );
 }
 
 async function assertSupervisorReady(): Promise<void> {
@@ -183,8 +249,15 @@ export async function POST(
     await requireActiveSession();
 
     const db = getDb() as unknown as Db;
-    const { run, scratch, workspace, project, executor, profile } =
-      await loadScratchRecoveryRows(db, runId);
+    const {
+      run,
+      scratch,
+      workspace,
+      project,
+      executor,
+      runnerSnapshot,
+      profile,
+    } = await loadScratchRecoveryRows(db, runId);
 
     await requireProjectAction(run.projectId, "operateScratchRun");
 
@@ -233,15 +306,14 @@ export async function POST(
       projectSlug: project.slug,
       worktreePath: workspace.worktreePath,
       stepId: scratchStepId(),
-      executor: {
-        agent: executor.agent,
-        model: executor.model,
-        env: executor.env ?? undefined,
-        router: executor.router ?? undefined,
-      },
+      executor,
+      runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
       resumeSessionId: run.acpSessionId,
       capabilityProfilePath: profile?.materializedPath ?? undefined,
-      adapterLaunch: profile?.adapterLaunch ?? undefined,
+      adapterLaunch: mergeRunnerAdapterLaunch(
+        runnerSnapshot,
+        profile?.adapterLaunch ?? undefined,
+      ),
     });
     const now = new Date();
 

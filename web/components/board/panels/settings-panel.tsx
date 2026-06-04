@@ -4,6 +4,9 @@ import type { ReactElement } from "react";
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
+import { FlowRunnerReconfigurationControl } from "@/components/board/panels/flow-runner-reconfiguration-control";
+import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
+
 export interface SettingsPanelProps {
   data: ProjectPageData;
   isAdmin: boolean;
@@ -17,19 +20,33 @@ export async function SettingsPanel({
   const tCommon = await getTranslations("common");
   const tBoard = await getTranslations("board");
 
-  const { project, defaultAgent, defaultExecutorRef, flows } = data;
-  const defaultFlow = flows.find((f) => f.overrideRef === null) ?? flows[0];
+  const {
+    project,
+    defaultAgent,
+    defaultRunnerLabel,
+    defaultRunnerSource,
+    defaultRunnerId,
+    effectiveDefaultRunnerId,
+    flowRunnerRemaps,
+    flows,
+    runners,
+  } = data;
+  const defaultFlow = flows[0];
 
-  // Settings rows. A settings-write API is out of POC scope, so the
-  // "change" affordance is rendered (admin only) but disabled.
   const rows: { k: string; d: string; v: string }[] = [
-    {
-      k: tBoard("defaultAgent"),
-      d: tBoard("defaultAgentDesc"),
-      v: defaultExecutorRef
-        ? `${defaultAgent ?? "—"} · ${defaultExecutorRef}`
-        : "—",
-    },
+    ...(isAdmin
+      ? []
+      : [
+          {
+            k: tBoard("defaultAgent"),
+            d: tBoard("defaultAgentDesc"),
+            v: defaultRunnerLabel
+              ? `${defaultAgent ?? "—"} · ${defaultRunnerLabel} · ${
+                  defaultRunnerSource ?? "inherited"
+                }`
+              : "inherited",
+          },
+        ]),
     {
       k: tBoard("defaultFlow"),
       d: tBoard("defaultFlowDesc"),
@@ -57,6 +74,22 @@ export async function SettingsPanel({
           {project.slug}
         </span>
       </div>
+      {isAdmin ? (
+        <ProjectRunnerSettingsControl
+          defaultRunnerId={defaultRunnerId}
+          defaultRunnerSource={defaultRunnerSource}
+          effectiveDefaultRunnerId={effectiveDefaultRunnerId}
+          projectSlug={project.slug}
+          runners={runners}
+        />
+      ) : null}
+      {isAdmin ? (
+        <FlowRunnerReconfigurationControl
+          projectSlug={project.slug}
+          remaps={flowRunnerRemaps}
+          runners={runners}
+        />
+      ) : null}
       <div className="flex flex-col gap-px overflow-hidden rounded-xl border border-line bg-line">
         {rows.map((row) => (
           <div

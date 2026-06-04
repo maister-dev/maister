@@ -107,6 +107,274 @@ tags:
   - name: capabilities
     description: Capability import trust-confirm route (M14, Designed, ADR-042).
 paths:
+  /api/admin/acp-runners:
+    get:
+      tags: [admin]
+      summary: List platform ACP runners
+      description: Admin-only. Returns platform runner catalog entries, readiness state, and usage references without exposing secret values.
+      operationId: getAdminAcpRunners
+      responses:
+        "200":
+          description: Platform ACP runner catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runners, platformDefaultRunnerId, presets]
+                properties:
+                  runners:
+                    type: array
+                    items: { type: object }
+                  platformDefaultRunnerId: { type: string, nullable: true }
+                  presets:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: Create a platform ACP runner
+      description: Admin-only. Creates an ACP runner and optionally updates the platform default. Secret material is accepted only as `env:NAME` references.
+      operationId: postAdminAcpRunner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, adapter, model, provider]
+              additionalProperties: false
+              properties:
+                id: { type: string }
+                adapter: { type: string, enum: [claude, codex] }
+                model: { type: string }
+                provider: { type: object }
+                permissionPolicy: { type: string, enum: [default, dangerously_skip_permissions], default: default }
+                sidecarId: { type: string, nullable: true }
+                enabled: { type: boolean, default: true }
+                readinessStatus: { type: string, enum: [Unknown, Ready, NotReady], default: Unknown }
+                readinessReasons:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201":
+          description: Runner created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runner]
+                properties:
+                  runner: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Runner id conflict or unsafe default transition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid runner body or adapter/provider mismatch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/acp-runners/{runnerId}:
+    patch:
+      tags: [admin]
+      summary: Update a platform ACP runner
+      description: Admin-only. Mutates runner provider/model/sidecar/readiness/enabled fields. Disabling is refused while usage references exist.
+      operationId: patchAdminAcpRunner
+      parameters:
+        - name: runnerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Runner updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runner]
+                properties:
+                  runner: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Runner is referenced or readiness precondition failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [admin]
+      summary: Delete a platform ACP runner
+      description: Admin-only. Refuses deletion while the runner is used by defaults, remaps, active runs, or historical run snapshots.
+      operationId: deleteAdminAcpRunner
+      parameters:
+        - name: runnerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Runner deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Runner is still referenced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/router-sidecars:
+    get:
+      tags: [admin]
+      summary: List router sidecars
+      description: Admin-only. Returns CCR sidecar configuration and readiness state.
+      operationId: getAdminRouterSidecars
+      responses:
+        "200":
+          description: Router sidecars.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sidecars]
+                properties:
+                  sidecars:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: Create a router sidecar
+      description: Admin-only. Creates a managed or external CCR sidecar; auth tokens are stored only as env references.
+      operationId: postAdminRouterSidecar
+      responses:
+        "201":
+          description: Sidecar created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sidecar]
+                properties:
+                  sidecar: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Sidecar id already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/launch-options:
+    get:
+      tags: [runs]
+      summary: List task-run launch options
+      description: Requires project membership. Returns visible tasks, platform ACP runners, and effective defaults for the task launch form. Secret provider fields are never returned.
+      operationId: getRunLaunchOptions
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Launch options visible to the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects, runners]
+                properties:
+                  projects:
+                    type: array
+                    items: { type: object }
+                  runners:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/projects/{slug}/settings/runner:
+    patch:
+      tags: [projects]
+      summary: Update project default runner
+      description: Project owner/admin route. Sets or clears the project default runner, inheriting from the platform default when cleared.
+      operationId: patchProjectRunnerSettings
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Project runner settings updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Runner does not exist or is not ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/flow-runner-remaps:
+    get:
+      tags: [projects]
+      summary: List Flow runner remaps
+      description: Project member route. Lists unresolved and mapped Flow step runner requirements for the project.
+      operationId: getProjectFlowRunnerRemaps
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Flow runner remaps.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [remaps]
+                properties:
+                  remaps:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [projects]
+      summary: Map a Flow runner requirement to a platform runner
+      description: Project owner/admin route. Maps an imported Flow step runner id to an available platform ACP runner.
+      operationId: patchProjectFlowRunnerRemap
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Remap updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [remap]
+                properties:
+                  remap: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Remap or target runner not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects:
     post:
       tags: [projects]
@@ -140,7 +408,7 @@ paths:
         6. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
            all-or-nothing: on any install failure the route fully
            compensates — deletes the `projects` row (FK cascade removes
-           executors, flows, and the owner membership) and removes the
+           flows and the owner membership) and removes the
            slug-scoped artifact subtree — so the same `maister.yaml` can be
            retried with no leftover row. The shared, content-addressed system
            cache (`~/.maister/flows/<id>@<sha>`) is intentionally retained.
@@ -207,7 +475,7 @@ paths:
           description: |
             A Flow plugin `git clone` or manifest validation failed
             (`FLOW_INSTALL`). The whole registration is rolled back — the
-            `projects` row is deleted (cascading to executors, flows, and the
+            `projects` row is deleted (cascading to flows and the
             owner membership) and the slug-scoped artifact subtree is removed —
             so the identical request can be retried without a 409.
           content:
@@ -222,9 +490,8 @@ paths:
         (`requireProjectAction("createTask")`). The `projectId` is
         resolved from the URL `slug` (server-state), never from the body.
 
-        Validates that `flowId` belongs to the project and, when
-        `executorOverrideId` is supplied, that it also belongs to the same
-        project. Both checks return `CONFIG` (422) on failure.
+        Validates that `flowId` belongs to the project. Runner selection is not
+        part of task creation; one-run overrides belong to `POST /api/runs`.
 
         Source: `web/app/api/projects/[slug]/tasks/route.ts`.
       operationId: postTask
@@ -279,9 +546,8 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
           description: |
-            `flowId` not configured for this project, or
-            `executorOverrideId` not registered for this project
-            (`CONFIG`).
+            `flowId` not configured for this project, or a retired runner
+            override field was supplied (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -690,7 +956,7 @@ paths:
         `member` or above (`requireProjectAction("launchRun")`). The
         `projectId` is derived from the task row, never from the body.
 
-        After auth, project, Flow, and executor checks pass, the web tier
+        After auth, project, Flow, and platform runner checks pass, the web tier
         calls the supervisor `GET /health` through
         `web/lib/supervisor-client.ts`. If the supervisor is unreachable,
         times out, returns non-200, or returns a malformed body, this route
@@ -724,9 +990,8 @@ paths:
         "400":
           description: |
             Bad request (`CONFIG`): a malformed request body, an unsupported
-            manifest `schemaVersion` / engine incompatibility, a node whose
-            `settings.executors[]` names an executor absent from the project's
-            `executors[]`, or a node whose `enforcement: strict` declares a
+            manifest `schemaVersion` / engine incompatibility, unresolved
+            Flow runner remapping, or a node whose `enforcement: strict` declares a
             capability class the build cannot strictly enforce
             (settings-enforcement refusal, M11c — see error-taxonomy.md).
           content:
@@ -742,8 +1007,8 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: |
-            Executor or platform unavailable (`EXECUTOR_UNAVAILABLE`).
-            Includes missing project executor registration and supervisor
+            Platform runner or supervisor unavailable (`EXECUTOR_UNAVAILABLE`).
+            Includes missing platform runner/default resolution and supervisor
             readiness failure before launch side effects.
           content:
             application/json:
@@ -755,9 +1020,10 @@ paths:
       description: |
         Requires an active session (`requireActiveSession` — session-authed and
         project-read-scoped; an unauthenticated request returns `401`). Returns
-        only projects, executors, base branches, and capabilities visible to the
-        caller. Optional `projectId` filters the response after membership is
-        verified — a project outside the caller's visible set returns `409`
+        only projects, platform ACP runners, base branches, and capabilities
+        visible to the caller. Secret provider fields are never returned.
+        Optional `projectId` filters the response after membership is verified
+        — a project outside the caller's visible set returns `409`
         (`PRECONDITION`). Response values are hints for the launcher;
         `POST /api/scratch-runs` revalidates every identifier from server state.
 
@@ -803,7 +1069,8 @@ paths:
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("launchRun")`). Body-controlled identifiers are
-        limited to project, executor, optional linked task, branch choices,
+        limited to project, optional runner override, optional linked task,
+        branch choices,
         attachments, and selected capability ids. The body MUST NOT include
         `runId`, `projectSlug`, `worktreePath`, `stepId`,
         `supervisorSessionId`, `acpSessionId`, or capability profile paths.
@@ -2428,8 +2695,8 @@ paths:
       summary: Enable a specific installed revision
       description: |
         M10. Admin-only. Sets the project's enabled revision to `revisionId`,
-        refreshing the denormalized cache and `recommended_executor_id` while
-        PRESERVING `executor_override_id`. Refuses untrusted / incompatible /
+        refreshing the denormalized cache while preserving runner remaps.
+        Refuses untrusted / incompatible /
         setup-incomplete revisions. `revisionId` is validated against the flow
         AND the project's declared source (cross-source enable is rejected).
         Source: `.../flow-packages/[flowRefId]/enable/route.ts`.
@@ -2842,15 +3109,6 @@ components:
           description: |
             ID of a `flows` row belonging to the project identified by
             the URL `slug`. Any other flow ID returns `422 CONFIG`.
-        executorOverrideId:
-          type: string
-          minLength: 1
-          description: |
-            Optional. ID of an `executors` row belonging to this
-            project. Stored in `tasks.executor_override_id`; enters the
-            override chain at tier 2 (between run-launcher override and
-            per-flow override). Any other executor ID returns `422
-            CONFIG`.
     AssignmentReasonBody:
       type: object
       properties:
@@ -2984,13 +3242,12 @@ components:
         taskId:
           type: string
           minLength: 1
-        executorOverrideId:
+        runnerId:
           type: string
           minLength: 1
           description: |
-            Per-launch executor override. Highest priority in the
-            five-level resolution chain (see
-            `docs/system-analytics/executors.md`).
+            Optional per-launch platform ACP runner override. Highest priority
+            in the fail-closed runner resolution chain.
         baseBranch:
           type: string
           minLength: 1
@@ -3093,9 +3350,8 @@ components:
         name: { type: string }
         mainBranch: { type: string }
         branchPrefix: { type: string }
-        defaultExecutorId:
+        defaultRunnerId:
           type: string
-          format: uuid
           nullable: true
     BranchOptions:
       type: object
@@ -3124,7 +3380,7 @@ components:
     ScratchLaunchOptionsResponse:
       type: object
       required:
-        [machine, projects, selectedProjectId, branches, executors, workModes, reasoningEfforts, capabilities]
+        [machine, projects, selectedProjectId, branches, runners, workModes, reasoningEfforts, capabilities]
       properties:
         machine:
           type: object
@@ -3146,30 +3402,31 @@ components:
         defaultScratchBranch:
           type: string
           nullable: true
-        defaultExecutorId:
+        defaultRunnerId:
           type: string
-          format: uuid
           nullable: true
         branches:
           type: array
           items: { type: string }
-        executors:
+        runners:
           type: array
           items:
             type: object
             description: |
-              Configured ACP runner profile. Multiple rows may use the same
-              adapter agent with different model/router/env settings and must
-              remain distinct launcher options.
-            required: [id, executorRefId, displayLabel, agent, model]
+              Configured platform ACP runner profile. Secret values are never
+              returned; provider secret refs stay server-side metadata.
+            required: [id, displayLabel, adapter, capabilityAgent, model, providerKind, enabled, ready]
             properties:
-              id: { type: string, format: uuid }
-              executorRefId: { type: string }
+              id: { type: string }
               displayLabel: { type: string }
-              agent: { type: string, enum: [claude, codex] }
+              adapter: { type: string, enum: [claude, codex] }
+              capabilityAgent: { type: string, enum: [claude, codex] }
               model: { type: string }
-              router: { type: string, nullable: true }
-              envHint: { type: string, nullable: true }
+              providerKind: { type: string }
+              permissionPolicy: { type: string }
+              sidecarId: { type: string, nullable: true }
+              enabled: { type: boolean }
+              ready: { type: boolean }
         workModes:
           type: array
           items:
@@ -3273,7 +3530,7 @@ components:
         createdAt: { type: string, format: date-time }
     PostScratchRunBody:
       type: object
-      required: [projectId, baseBranch, executorId]
+      required: [projectId, baseBranch]
       additionalProperties: false
       description: |
         Implemented scratch launch body. The schema intentionally excludes
@@ -3291,7 +3548,9 @@ components:
           maxLength: 255
           description: Optional explicit branch. Omit or send an empty string to use the generated scratch branch fallback.
         name: { type: string, maxLength: 200 }
-        executorId: { type: string, format: uuid }
+        runnerId:
+          type: string
+          description: Optional platform ACP runner override. Omit to use the project/platform default chain.
         workMode:
           type: string
           enum: [auto, plan_first, manual_approval]
@@ -3420,11 +3679,19 @@ components:
       properties:
         run:
           type: object
-          required: [id, projectId, executorId, status, createdByUserId, currentStepId, startedAt, endedAt]
+          required: [id, projectId, status, createdByUserId, currentStepId, startedAt, endedAt]
           properties:
             id: { type: string, format: uuid }
             projectId: { type: string, format: uuid }
-            executorId: { type: string, format: uuid }
+            runnerId: { type: string, nullable: true }
+            runnerResolutionTier:
+              type: string
+              nullable: true
+              enum: [launchOverride, stepTarget, projectFlowDefault, platformFlowDefault, projectDefault, platformDefault]
+            capabilityAgent:
+              type: string
+              nullable: true
+              enum: [claude, codex]
             createdByUserId: { type: string, format: uuid, nullable: true }
             createdByDisplayName: { type: string, nullable: true }
             status:

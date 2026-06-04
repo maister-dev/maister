@@ -21,16 +21,18 @@ import {
 } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { MaisterError } from "@/lib/errors";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
+import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
   assignments,
-  executors,
   flows,
   hitlRequests,
+  platformAcpRunners,
   projectMembers,
   projects,
   runs,
@@ -234,7 +236,7 @@ export async function getPortfolio(
             mainBranch: projects.mainBranch,
             branchPrefix: projects.branchPrefix,
             maisterYamlPath: projects.maisterYamlPath,
-            defaultExecutorId: projects.defaultExecutorId,
+            defaultRunnerId: projects.defaultRunnerId,
             createdAt: projects.createdAt,
             archivedAt: projects.archivedAt,
           })
@@ -292,13 +294,13 @@ export async function getPortfolio(
         status: runs.status,
         runKind: runs.runKind,
         acpSessionId: runs.acpSessionId,
-        agent: executors.agent,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
         branch: workspaces.branch,
         startedAt: runs.startedAt,
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
       .from(runs)
-      .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(
@@ -312,13 +314,14 @@ export async function getPortfolio(
 
     client
       .select({
+        runId: runs.id,
         projectId: runs.projectId,
-        agent: executors.agent,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
         branch: workspaces.branch,
         endedAt: runs.endedAt,
       })
       .from(runs)
-      .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .where(
         and(
@@ -334,14 +337,14 @@ export async function getPortfolio(
         projectId: assignments.projectId,
         runId: runs.id,
         prompt: assignments.title,
-        agent: executors.agent,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
         branch: workspaces.branch,
         createdAt: assignments.createdAt,
         runStatus: runs.status,
       })
       .from(assignments)
       .innerJoin(runs, eq(runs.id, assignments.runId))
-      .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .where(
         and(
@@ -358,14 +361,14 @@ export async function getPortfolio(
         projectId: runs.projectId,
         runId: runs.id,
         prompt: hitlRequests.prompt,
-        agent: executors.agent,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
         branch: workspaces.branch,
         createdAt: hitlRequests.createdAt,
         runStatus: runs.status,
       })
       .from(hitlRequests)
       .innerJoin(runs, eq(runs.id, hitlRequests.runId))
-      .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .where(
         and(
@@ -380,22 +383,20 @@ export async function getPortfolio(
 
   const defaultAgentRows = await client
     .select({
-      projectId: executors.projectId,
-      agent: executors.agent,
-      id: executors.id,
+      agent: platformAcpRunners.capabilityAgent,
+      id: platformAcpRunners.id,
     })
-    .from(executors)
-    .where(inArray(executors.projectId, projectIds));
+    .from(platformAcpRunners);
 
-  const defaultExecutorByProject = new Map<string, string | null>();
+  const defaultRunnerByProject = new Map<string, string | null>();
 
   for (const p of visibleProjects) {
-    defaultExecutorByProject.set(p.id, p.defaultExecutorId ?? null);
+    defaultRunnerByProject.set(p.id, p.defaultRunnerId ?? null);
   }
-  const agentByExecutorId = new Map<string, AgentRole>();
+  const agentByRunnerId = new Map<string, AgentRole>();
 
   for (const row of defaultAgentRows) {
-    agentByExecutorId.set(row.id, row.agent as AgentRole);
+    agentByRunnerId.set(row.id, row.agent as AgentRole);
   }
 
   const membersByProject = new Map<string, PortfolioMember[]>();
@@ -440,7 +441,13 @@ export async function getPortfolio(
     // A claimed run is human-driven, not agent-driven — surface the `dev` pill
     // instead of the run's executor agent (mirrors lib/board.ts takeover cards).
     const agent: AgentRole =
-      row.status === "HumanWorking" ? "dev" : (row.agent as AgentRole);
+      row.status === "HumanWorking"
+        ? "dev"
+        : runnerAgentFromFields({
+            capabilityAgent: row.capabilityAgent,
+            runnerSnapshot: row.runnerSnapshot,
+            context: row.runId,
+          });
 
     list.push({
       runId: row.runId,
@@ -476,7 +483,11 @@ export async function getPortfolio(
     if (list.length >= 2) continue;
     list.push({
       branch: row.branch,
-      agent: row.agent as AgentRole,
+      agent: runnerAgentFromFields({
+        capabilityAgent: row.capabilityAgent,
+        runnerSnapshot: row.runnerSnapshot,
+        context: row.runId,
+      }),
       time: row.endedAt ? relativeTime(row.endedAt, now) : "—",
     });
     mergesByProject.set(row.projectId, list);
@@ -500,7 +511,13 @@ export async function getPortfolio(
         runId: row.runId,
         prompt: row.prompt,
         agent:
-          row.runStatus === "HumanWorking" ? "dev" : (row.agent as AgentRole),
+          row.runStatus === "HumanWorking"
+            ? "dev"
+            : runnerAgentFromFields({
+                capabilityAgent: row.capabilityAgent,
+                runnerSnapshot: row.runnerSnapshot,
+                context: row.runId,
+              }),
         branch: row.branch,
       });
     }
@@ -519,9 +536,9 @@ export async function getPortfolio(
       if (ws.agent === "claude" || ws.agent === "codex") agentSet.add(ws.agent);
     }
     const agents = [...agentSet];
-    const defaultExecutorId = defaultExecutorByProject.get(p.id) ?? null;
-    const defaultAgent = defaultExecutorId
-      ? (agentByExecutorId.get(defaultExecutorId) ?? null)
+    const defaultRunnerId = defaultRunnerByProject.get(p.id) ?? null;
+    const defaultAgent = defaultRunnerId
+      ? (agentByRunnerId.get(defaultRunnerId) ?? null)
       : null;
     const pendingHitlCount = needCountByProject.get(p.id) ?? 0;
 
@@ -640,11 +657,34 @@ function railStatus(input: {
 }
 
 function executorDisplay(row: {
-  agent: string;
-  model: string;
-  executorRefId: string;
+  capabilityAgent: string | null;
+  runnerSnapshot: {
+    id: string;
+    capabilityAgent: string;
+    model: string;
+    adapter: string;
+    providerKind: string;
+    permissionPolicy: string;
+    sidecarId?: string | null;
+  } | null;
+  runId: string;
 }): string {
-  return `${row.executorRefId} · ${row.agent} · ${row.model}`;
+  const agent = runnerAgentFromFields({
+    capabilityAgent: row.capabilityAgent,
+    runnerSnapshot: row.runnerSnapshot,
+    context: row.runId,
+  });
+  const ref = row.runnerSnapshot?.id ?? null;
+  const model = row.runnerSnapshot?.model ?? null;
+
+  if (ref === null || model === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `Run ${row.runId} has no runner snapshot label`,
+    );
+  }
+
+  return `${ref} · ${agent} · ${model}`;
 }
 
 function creatorDisplay(
@@ -668,9 +708,8 @@ export async function getRailWorkspaceGroups(
       projectId: projects.id,
       slug: projects.slug,
       projectName: projects.name,
-      agent: executors.agent,
-      model: executors.model,
-      executorRefId: executors.executorRefId,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
       status: runs.status,
       runKind: runs.runKind,
       createdByUserId: runs.createdByUserId,
@@ -686,7 +725,6 @@ export async function getRailWorkspaceGroups(
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id));
 

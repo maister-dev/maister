@@ -11,11 +11,12 @@ import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 const ENDPOINT_TASK_GET = "GET /api/v1/ext/projects/[slug]/tasks/[taskId]";
 const ENDPOINT_TASK_PATCH = "PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]";
 
-const patchBodySchema = z.object({
-  title: z.string().min(1).optional(),
-  prompt: z.string().min(1).optional(),
-  executorOverrideId: z.string().min(1).nullable().optional(),
-});
+const patchBodySchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    prompt: z.string().min(1).optional(),
+  })
+  .strict();
 
 type RouteParams = { params: Promise<{ slug: string; taskId: string }> };
 

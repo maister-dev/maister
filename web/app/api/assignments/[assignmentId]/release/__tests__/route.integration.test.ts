@@ -25,6 +25,7 @@ import {
   ensureUserActor,
 } from "@/lib/assignments/service";
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -135,13 +136,7 @@ async function seedClaimedAssignment(): Promise<{
     },
   ]);
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(schema.flows).values({
     id: flowId,
@@ -167,7 +162,9 @@ async function seedClaimedAssignment(): Promise<{
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status: "NeedsInput",
     flowVersion: "v1.0.0",
   });

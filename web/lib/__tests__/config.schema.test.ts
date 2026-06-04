@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   aiCodingSettingsSchema,
   cliCheckSettingsSchema,
-  executorSchema,
   flowEntrySchema,
   flowYamlV1Schema,
   formSchemaSchema,
@@ -22,41 +21,19 @@ const goldenMaisterYaml = {
     repo_path: "/repos/myapp",
     main_branch: "main",
     branch_prefix: "maister/",
+    default_runner: "claude-code",
   },
-  executors: [
-    {
-      id: "claude-sonnet",
-      agent: "claude",
-      model: "claude-sonnet-4-6",
-    },
-    {
-      id: "claude-glm-ccr",
-      agent: "claude",
-      model: "glm-4.6",
-      router: "ccr",
-    },
-    {
-      id: "codex-default",
-      agent: "codex",
-      model: "gpt-5-codex",
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "fake-token",
-      },
-    },
-  ],
-  default_executor: "claude-sonnet",
   flows: [
     {
       id: "bugfix",
       source: "github.com/org/maister-flow-bugfix",
       version: "v1.2.3",
+      runner: "claude-code",
     },
     {
       id: "spec-kit",
       source: "github.com/org/maister-flow-spec-kit",
       version: "v0.4.1",
-      executor_override: "claude-glm-ccr",
     },
   ],
 };
@@ -72,31 +49,40 @@ describe("maisterYamlV2Schema", () => {
     ).toThrow(/schemaVersion/);
   });
 
-  it("rejects missing executors[]", () => {
+  it("accepts project runner bindings without project-scoped executors", () => {
+    const parsed = maisterYamlV2Schema.parse({
+      ...goldenMaisterYaml,
+      project: { ...goldenMaisterYaml.project, default_runner: "claude-code" },
+      flows: [
+        {
+          id: "bugfix",
+          source: "github.com/org/maister-flow-bugfix",
+          version: "v1.2.3",
+          runner: "claude-code",
+        },
+      ],
+    });
+
+    expect(parsed.project.default_runner).toBe("claude-code");
+    expect(parsed.flows[0].runner).toBe("claude-code");
+  });
+
+  it("rejects legacy executors[]", () => {
     expect(() =>
-      maisterYamlV2Schema.parse({ ...goldenMaisterYaml, executors: [] }),
+      maisterYamlV2Schema.parse({
+        ...goldenMaisterYaml,
+        executors: [{ id: "x", agent: "claude", model: "x" }],
+      }),
     ).toThrow();
   });
 
-  it("rejects unknown agent in executor", () => {
-    const bad = {
-      ...goldenMaisterYaml,
-      executors: [
-        ...goldenMaisterYaml.executors,
-        { id: "x", agent: "cursor", model: "x" },
-      ],
-    };
-
-    expect(() => maisterYamlV2Schema.parse(bad)).toThrow();
-  });
-
-  it("rejects unknown router value", () => {
-    const bad = {
-      ...goldenMaisterYaml,
-      executors: [{ id: "x", agent: "claude", model: "x", router: "noop" }],
-    };
-
-    expect(() => maisterYamlV2Schema.parse(bad)).toThrow();
+  it("rejects legacy default_executor", () => {
+    expect(() =>
+      maisterYamlV2Schema.parse({
+        ...goldenMaisterYaml,
+        default_executor: "claude-sonnet",
+      }),
+    ).toThrow();
   });
 
   it("rejects empty project.name", () => {
@@ -104,12 +90,6 @@ describe("maisterYamlV2Schema", () => {
       ...goldenMaisterYaml,
       project: { ...goldenMaisterYaml.project, name: "" },
     };
-
-    expect(() => maisterYamlV2Schema.parse(bad)).toThrow();
-  });
-
-  it("rejects empty default_executor", () => {
-    const bad = { ...goldenMaisterYaml, default_executor: "" };
 
     expect(() => maisterYamlV2Schema.parse(bad)).toThrow();
   });
@@ -170,6 +150,19 @@ describe("maisterYamlV2Schema", () => {
     });
     expect(parsed.capabilities.skills[0].enforceability).toBe("instructed");
     expect(parsed.capabilities.settings[0].enforceability).toBe("enforced");
+  });
+});
+
+describe("aiCodingSettingsSchema runner target", () => {
+  it("accepts ACP runner_type and runner target", () => {
+    const parsed = aiCodingSettingsSchema.parse({
+      runner_type: "acp",
+      runner: "claude-code",
+      skills: ["aif-implement"],
+    });
+
+    expect(parsed.runner_type).toBe("acp");
+    expect(parsed.runner).toBe("claude-code");
   });
 });
 
@@ -273,42 +266,36 @@ describe("maisterCapabilitiesSchema", () => {
   });
 });
 
-describe("executorSchema", () => {
-  it("env is optional and accepts string-keyed string map", () => {
-    expect(
-      executorSchema.parse({
-        id: "x",
-        agent: "claude",
-        model: "y",
-        env: { A: "1", B: "2" },
-      }).env,
-    ).toEqual({ A: "1", B: "2" });
-  });
-
-  it("rejects non-string env values", () => {
-    expect(() =>
-      executorSchema.parse({
-        id: "x",
-        agent: "claude",
-        model: "y",
-        env: { A: 1 as unknown as string },
-      }),
-    ).toThrow();
-  });
-});
-
 describe("flowEntrySchema", () => {
-  it("executor_override optional", () => {
+  it("runner optional", () => {
     expect(() =>
       flowEntrySchema.parse({ id: "f", source: "s", version: "v" }),
     ).not.toThrow();
+  });
+
+  it("rejects legacy executor_override", () => {
+    expect(() =>
+      flowEntrySchema.parse({
+        id: "f",
+        source: "s",
+        version: "v",
+        executor_override: "claude-sonnet",
+      }),
+    ).toThrow();
   });
 });
 
 const goldenFlowYaml = {
   schemaVersion: 1,
   name: "Bugfix",
-  recommended_executor: "claude-sonnet",
+  runner_profiles: {
+    "claude-code": {
+      capability_agent: "claude",
+      adapter: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+    },
+  },
   steps: [
     {
       id: "plan",
@@ -338,6 +325,15 @@ const goldenFlowYaml = {
 describe("flowYamlV1Schema", () => {
   it("accepts a golden v1 flow manifest with all 4 step types", () => {
     expect(() => flowYamlV1Schema.parse(goldenFlowYaml)).not.toThrow();
+  });
+
+  it("rejects legacy recommended_executor", () => {
+    expect(() =>
+      flowYamlV1Schema.parse({
+        ...goldenFlowYaml,
+        recommended_executor: "claude-sonnet",
+      }),
+    ).toThrow();
   });
 
   it("rejects wrong schemaVersion", () => {
@@ -475,7 +471,8 @@ describe("aiCodingSettingsSchema (M11c)", () => {
   it("accepts a fully-populated ai_coding settings block", () => {
     expect(() =>
       aiCodingSettingsSchema.parse({
-        executors: ["claude-sonnet", "codex-default"],
+        runner_type: "acp",
+        runner: "claude-code",
         model: "claude-sonnet-4-6",
         thinkingEffort: "high",
         mcps: ["github", "postgres"],
@@ -497,6 +494,14 @@ describe("aiCodingSettingsSchema (M11c)", () => {
         },
       }),
     ).not.toThrow();
+  });
+
+  it("rejects legacy settings.executors", () => {
+    expect(() =>
+      aiCodingSettingsSchema.parse({
+        executors: ["claude-sonnet", "codex-default"],
+      }),
+    ).toThrow();
   });
 
   it("accepts an empty ai_coding settings block (every field optional)", () => {

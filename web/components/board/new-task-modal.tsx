@@ -1,6 +1,6 @@
 "use client";
 
-import type { ProjectExecutor, ProjectFlow } from "@/lib/queries/project";
+import type { ProjectFlow } from "@/lib/queries/project";
 import type { ReactElement } from "react";
 
 import { useRouter } from "next/navigation";
@@ -15,8 +15,6 @@ export interface NewTaskModalLabels {
   promptLabel: string;
   promptPlaceholder: string;
   flowLabel: string;
-  executorLabel: string;
-  executorDefault: string;
   create: string;
   cancel: string;
 }
@@ -24,14 +22,12 @@ export interface NewTaskModalLabels {
 export interface NewTaskModalProps {
   slug: string;
   flows: ProjectFlow[];
-  executors: ProjectExecutor[];
   labels: NewTaskModalLabels;
 }
 
 export function NewTaskModal({
   slug,
   flows,
-  executors,
   labels,
 }: NewTaskModalProps): ReactElement {
   const router = useRouter();
@@ -43,13 +39,11 @@ export function NewTaskModal({
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [flowId, setFlowId] = useState(flows[0]?.id ?? "");
-  const [executorOverrideId, setExecutorOverrideId] = useState("");
 
   function reset(): void {
     setTitle("");
     setPrompt("");
     setFlowId(flows[0]?.id ?? "");
-    setExecutorOverrideId("");
     setError(null);
   }
 
@@ -65,7 +59,6 @@ export function NewTaskModal({
           title,
           prompt,
           flowId,
-          executorOverrideId: executorOverrideId || undefined,
         }),
       });
 
@@ -170,7 +163,7 @@ export function NewTaskModal({
                 />
               </label>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <label className="flex flex-col gap-1.5">
                   <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
                     {labels.flowLabel}
@@ -183,24 +176,6 @@ export function NewTaskModal({
                     {flows.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.ref}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1.5">
-                  <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
-                    {labels.executorLabel}
-                  </span>
-                  <select
-                    className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-amber"
-                    value={executorOverrideId}
-                    onChange={(e) => setExecutorOverrideId(e.target.value)}
-                  >
-                    <option value="">{labels.executorDefault}</option>
-                    {executors.map((ex) => (
-                      <option key={ex.id} value={ex.id}>
-                        {ex.ref}
                       </option>
                     ))}
                   </select>

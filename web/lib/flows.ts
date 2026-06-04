@@ -752,8 +752,6 @@ async function upsertFlowEnablementRow(opts: {
   enablementState: "Enabled" | "Installed";
 }): Promise<string> {
   const id = randomUUID();
-  const recommendedExecutorId = opts.manifest.recommended_executor ?? null;
-
   const denorm = {
     source: opts.source,
     version: opts.version,
@@ -761,7 +759,6 @@ async function upsertFlowEnablementRow(opts: {
     installedPath: opts.installedPath,
     manifest: opts.manifest,
     schemaVersion: opts.manifest.schemaVersion,
-    recommendedExecutorId,
     enabledRevisionId: opts.enabledRevisionId,
     trustStatus: opts.trustStatus,
     enablementState: opts.enablementState,

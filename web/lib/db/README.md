@@ -38,7 +38,39 @@ the runtime app is using SQLite for ultra-light dev.
 pnpm db:seed
 ```
 
-Idempotent: re-runs are no-ops once the dev project exists.
+Idempotent: re-runs recreate or update platform runtime defaults, then are
+no-ops once the sample project exists.
+
+## Local destructive reset
+
+For the platform ACP runner feature, local MAIster installs are disposable.
+When a schema rewrite is cleaner than legacy compatibility, use an explicit
+local reset instead of preserving stale project-scoped executor rows.
+
+A reset command or runbook may delete only MAIster-owned state:
+
+- the MAIster database or SQLite dev DB;
+- `.maister/` runtime artifacts created by the app;
+- MAIster Flow and capability caches;
+- MAIster-created worktrees;
+- generated platform runtime config files.
+
+It must print every root it will remove before deletion and must not delete
+arbitrary source repositories.
+
+Use the repository script first as a dry-run:
+
+```bash
+pnpm local:blast-maister-state
+pnpm local:blast-maister-state -- --confirm BLAST_MAISTER_LOCAL_STATE
+pnpm local:blast-maister-state -- --confirm BLAST_MAISTER_LOCAL_STATE --reset-postgres
+pnpm --filter maister-web db:migrate
+pnpm --filter maister-web db:seed
+```
+
+The confirmed script deletes only MAIster-owned runtime/cache/worktree/config
+roots. `--reset-postgres` additionally resets the `public` schema through
+`DATABASE_URL`; it never removes project repositories.
 
 ## SQLite caveat (dev only)
 

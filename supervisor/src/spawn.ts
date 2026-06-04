@@ -10,6 +10,7 @@ import { PassThrough } from "node:stream";
 import {
   ccrManager as defaultCcrManager,
   type CcrManager,
+  type CcrInstanceConfig,
 } from "./ccr-manager";
 import { openEventsLog, type EventsLogWriter } from "./events-log";
 import { SESSION_EVENT_CHANNEL } from "./registry";
@@ -20,6 +21,7 @@ import {
   type SessionRecord,
   type StartSessionRequest,
 } from "./types";
+import { effectiveStartSessionRequest } from "./runner-provisioner";
 
 const BINARY_BY_AGENT: Record<ExecutorAgent, string> = {
   claude: "claude-agent-acp",
@@ -110,7 +112,8 @@ export type SpawnSessionResult = {
 export async function spawnSession(
   opts: SpawnSessionOptions,
 ): Promise<SpawnSessionResult> {
-  const { sessionId, request, runtimeRoot, logger } = opts;
+  const { sessionId, runtimeRoot, logger } = opts;
+  const request = effectiveStartSessionRequest(opts.request);
   const binary = opts.binaryOverride ?? BINARY_BY_AGENT[request.executor.agent];
 
   const logPath = resolve(
@@ -161,8 +164,18 @@ export async function spawnSession(
 
   if (request.executor.router === "ccr") {
     const ccr = opts.ccrManager ?? defaultCcrManager;
+    const sidecar = opts.request.runner?.sidecar;
+    const instance: CcrInstanceConfig | undefined = sidecar
+      ? {
+          id: sidecar.id,
+          lifecycle: sidecar.lifecycle,
+          configPath: sidecar.configPath,
+          baseUrl: sidecar.baseUrl,
+          healthcheckUrl: sidecar.healthcheckUrl,
+        }
+      : undefined;
 
-    await ccr.ensureRunning();
+    await ccr.ensureRunning({ instance });
 
     const explicitToken = request.executor.env?.ANTHROPIC_AUTH_TOKEN;
     const fallbackToken = process.env.MAISTER_CCR_AUTH_TOKEN;
@@ -177,7 +190,7 @@ export async function spawnSession(
     const authTokenSource: "executor.env" | "MAISTER_CCR_AUTH_TOKEN" =
       explicitToken ? "executor.env" : "MAISTER_CCR_AUTH_TOKEN";
 
-    ccrLayer.ANTHROPIC_BASE_URL = ccr.getProxyUrl();
+    ccrLayer.ANTHROPIC_BASE_URL = ccr.getProxyUrl(instance?.id);
     ccrLayer.ANTHROPIC_AUTH_TOKEN = authToken;
     logger.debug(
       { sessionId, authTokenSource, proxyUrl: ccrLayer.ANTHROPIC_BASE_URL },
@@ -204,6 +217,9 @@ export async function spawnSession(
       resume: Boolean(request.resumeSessionId),
       router: request.executor.router ?? null,
       routerInjected: request.executor.router ?? null,
+      runnerId: opts.request.runner?.runnerId ?? null,
+      runnerProvider: opts.request.runner?.provider.kind ?? null,
+      runnerSidecar: Boolean(opts.request.runner?.sidecar),
       hasEnv: Boolean(
         request.executor.env && Object.keys(request.executor.env).length > 0,
       ),

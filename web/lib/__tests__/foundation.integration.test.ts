@@ -16,7 +16,6 @@ import { atomicWriteJson } from "@/lib/atomic";
 import { loadProjectConfig, validateFormSchemaVersion } from "@/lib/config";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { upsertExecutorsFromConfig } from "@/lib/executors";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -56,18 +55,12 @@ project:
   repo_path: /repos/foundation-app
   main_branch: main
   branch_prefix: maister/
-executors:
-  - id: claude-sonnet
-    agent: claude
-    model: claude-sonnet-4-6
-  - id: codex-default
-    agent: codex
-    model: gpt-5-codex
-default_executor: claude-sonnet
+  default_runner: claude-code
 flows:
   - id: bugfix
     source: github.com/x/y
     version: v1.0.0
+    runner: claude-code
 `;
 
     await writeFile(maisterYamlPath, yamlContent, "utf8");
@@ -75,7 +68,7 @@ flows:
     const cfg = await loadProjectConfig(maisterYamlPath);
 
     expect(cfg.project.name).toBe("foundation-app");
-    expect(cfg.executors).toHaveLength(2);
+    expect(cfg.project.default_runner).toBe("claude-code");
 
     const projectId = randomUUID();
     const flowId = randomUUID();
@@ -89,15 +82,6 @@ flows:
       branchPrefix: cfg.project.branch_prefix,
       maisterYamlPath,
     });
-
-    const { executorIdByRef } = await upsertExecutorsFromConfig({
-      projectId,
-      config: cfg,
-      db,
-    });
-
-    expect(executorIdByRef["claude-sonnet"]).toBeDefined();
-    expect(executorIdByRef["codex-default"]).toBeDefined();
 
     await db.insert(schema.flows).values({
       id: flowId,

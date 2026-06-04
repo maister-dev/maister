@@ -95,30 +95,11 @@ export async function loadProjectConfig(
   log.debug(
     {
       path: maisterYamlPath,
-      executors: cfg.executors.length,
       flows: cfg.flows.length,
+      defaultRunner: cfg.project.default_runner ?? null,
     },
     "maister.yaml loaded",
   );
-
-  const executorIds = new Set<string>();
-
-  for (const ex of cfg.executors) {
-    if (executorIds.has(ex.id)) {
-      throw new MaisterError(
-        "CONFIG",
-        `Duplicate executor id "${ex.id}" in ${maisterYamlPath}`,
-      );
-    }
-    executorIds.add(ex.id);
-  }
-
-  if (!executorIds.has(cfg.default_executor)) {
-    throw new MaisterError(
-      "CONFIG",
-      `default_executor "${cfg.default_executor}" not found in executors[] of ${maisterYamlPath}`,
-    );
-  }
 
   const flowIds = new Set<string>();
 
@@ -130,13 +111,6 @@ export async function loadProjectConfig(
       );
     }
     flowIds.add(f.id);
-
-    if (f.executor_override && !executorIds.has(f.executor_override)) {
-      throw new MaisterError(
-        "CONFIG",
-        `Flow "${f.id}" executor_override "${f.executor_override}" not found in executors[] of ${maisterYamlPath}`,
-      );
-    }
   }
 
   const importIds = new Set<string>();
@@ -432,7 +406,6 @@ function toCapabilityRefIdSets(
 export async function loadFlowManifest(
   flowYamlPath: string,
   opts?: {
-    executorIds?: readonly string[] | ReadonlySet<string>;
     roleRefs?: readonly string[] | ReadonlySet<string>;
     capabilityRefIds?: CapabilityRefIdsInput;
   },
@@ -485,7 +458,6 @@ export async function loadFlowManifest(
         : undefined;
 
     validateGraphManifest(manifest, manifest.nodes, flowYamlPath, {
-      executorIds: opts?.executorIds,
       roleRefs: opts?.roleRefs,
       capabilityRefIds: capabilityRefIdSets,
     });
@@ -664,7 +636,6 @@ function validateGraphManifest(
   nodes: NodeDef[],
   flowYamlPath: string,
   opts?: {
-    executorIds?: readonly string[] | ReadonlySet<string>;
     roleRefs?: readonly string[] | ReadonlySet<string>;
     capabilityRefIds?: CapabilityRefIdSets;
   },
@@ -715,12 +686,6 @@ function validateGraphManifest(
     );
   };
 
-  const executorIds =
-    opts?.executorIds === undefined
-      ? undefined
-      : opts.executorIds instanceof Set
-        ? opts.executorIds
-        : new Set(opts.executorIds);
   const roleRefs =
     opts?.roleRefs === undefined
       ? undefined
@@ -751,7 +716,6 @@ function validateGraphManifest(
       validateNodeSettings(
         n,
         flowYamlPath,
-        executorIds,
         roleRefs,
         enforcementTally,
         capabilityRefIds,
@@ -976,52 +940,19 @@ function validateNoBlockingHumanReview(
 
 // M11c node-level settings validation (ADR-031/032). zod has already validated
 // the typed settings shape per node type; this enforces the intra-manifest /
-// server-state cross-references zod cannot express: executor refs (against the
-// project's executors[] set when provided), human decisions (against the node's
-// declared transitions), and capability-registry refs (M14 carve b:
+// server-state cross-references zod cannot express: human decisions (against the
+// node's declared transitions) and capability-registry refs (M14 carve b:
 // settings.mcps/skills/restrictions/settingsProfile against the project
 // registry when capabilityRefIds is supplied; wired into the real load path
 // in M14 T2.4 once resolved capability_imports complete the registry).
-// Returns the first `settings.executors[]` ref id absent from the supplied
-// project executor ref-id set, or null when every ref resolves. Shared by the
-// manifest loader (parse-time, when a ref set is supplied) and the launch
-// precondition (POST /api/runs), where it is the authoritative gate: a flow
-// package is generic across projects, so `settings.executors` (maister.yaml
-// executor *ref* ids) can only be resolved against a concrete project's
-// executors[] at launch.
-export function firstUnknownExecutorRef(
-  settingsExecutors: readonly string[] | undefined,
-  executorRefIds: ReadonlySet<string>,
-): string | null {
-  for (const id of settingsExecutors ?? []) {
-    if (!executorRefIds.has(id)) return id;
-  }
-
-  return null;
-}
 
 function validateNodeSettings(
   n: NodeDef,
   flowYamlPath: string,
-  executorIds: ReadonlySet<string> | undefined,
   roleRefs: ReadonlySet<string> | undefined,
   enforcementTally: Record<string, number>,
   capabilityRefIds?: CapabilityRefIdSets,
 ): void {
-  if (executorIds && n.type === "ai_coding") {
-    const unknownRef = firstUnknownExecutorRef(
-      n.settings?.executors,
-      executorIds,
-    );
-
-    if (unknownRef !== null) {
-      throw new MaisterError(
-        "CONFIG",
-        `node "${n.id}" settings.executors references unknown executor id "${unknownRef}" in ${flowYamlPath}`,
-      );
-    }
-  }
-
   if (n.type === "human") {
     for (const decision of n.settings?.decisions ?? []) {
       if (!Object.hasOwn(n.transitions ?? {}, decision)) {

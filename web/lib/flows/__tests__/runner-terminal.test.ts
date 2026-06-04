@@ -9,7 +9,6 @@ import {
   artifactInstances as artifactInstancesTable,
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
-  executors as executorsTable,
   flows as flowsTable,
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
@@ -47,7 +46,6 @@ type TableRows = {
   runs: Row[];
   tasks: Row[];
   flows: Row[];
-  executors: Row[];
   projects: Row[];
   workspaces: Row[];
   step_runs: Row[];
@@ -62,7 +60,6 @@ function tableNameOf(t: unknown): keyof TableRows {
   if (t === runsTable) return "runs";
   if (t === tasksTable) return "tasks";
   if (t === flowsTable) return "flows";
-  if (t === executorsTable) return "executors";
   if (t === projectsTable) return "projects";
   if (t === workspacesTable) return "workspaces";
   if (t === stepRunsTable) return "step_runs";
@@ -194,7 +191,18 @@ describe("runFlow terminal-status precedence", () => {
           taskId: "task-1",
           projectId: "proj-1",
           flowId: "flow-1",
-          executorId: "exec-1",
+          runnerId: "claude-code",
+          capabilityAgent: "claude",
+          runnerSnapshot: {
+            id: "claude-code",
+            adapter: "claude",
+            capabilityAgent: "claude",
+            model: "claude-sonnet-4-6",
+            provider: { kind: "anthropic" },
+            providerKind: "anthropic",
+            permissionPolicy: "default",
+            sidecarId: null,
+          },
           status: "Running",
           currentStepId: null,
           flowVersion: "v1",
@@ -232,14 +240,6 @@ describe("runFlow terminal-status precedence", () => {
           },
           version: "v1",
           revision: "unknown",
-        },
-      ],
-      executors: [
-        {
-          id: "exec-1",
-          projectId: "proj-1",
-          agent: "claude",
-          model: "claude-sonnet-4-6",
         },
       ],
       projects: [{ id: "proj-1", slug: "demo" }],

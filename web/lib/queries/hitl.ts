@@ -7,11 +7,11 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
   actorIdentities,
   assignments,
-  executors,
   flows,
   hitlRequests,
   runs,
@@ -134,13 +134,13 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
       createdAt: hitlRequests.createdAt,
-      agent: executors.agent,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
       branch: workspaces.branch,
       flowRef: flows.flowRefId,
     })
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .innerJoin(flows, eq(flows.id, runs.flowId))
     .where(
@@ -195,7 +195,11 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       assignmentStaleEvidenceSummary: assignment?.staleEvidenceSummary ?? null,
       assigneeLabel: assignee?.label ?? null,
       assigneeUserId: assignee?.userId ?? null,
-      agent: row.agent,
+      agent: runnerAgentFromFields({
+        capabilityAgent: row.capabilityAgent,
+        runnerSnapshot: row.runnerSnapshot,
+        context: row.runId,
+      }),
       branch: row.branch,
       flowRef: row.flowRef,
       prompt: row.prompt,

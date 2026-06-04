@@ -16,8 +16,7 @@ erDiagram
     PROJECTS ||--o{ WORKSPACES : "owns"
     FLOWS ||--o{ TASKS : "selected at create"
     FLOWS ||--o{ RUNS : "selected at launch"
-    EXECUTORS ||--o{ TASKS : "optional override"
-    EXECUTORS ||--o{ RUNS : "spawned with"
+    PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS ||--|| WORKSPACES : "one worktree per run"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
@@ -39,7 +38,6 @@ erDiagram
         text title
         text prompt
         text flow_id FK
-        text executor_override_id FK
         text status "Backlog|InFlight|Done|Abandoned"
         integer attempt_number "starts at 1"
         timestamp created_at
@@ -52,7 +50,10 @@ erDiagram
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
-        text executor_id FK
+        text runner_id FK
+        text runner_resolution_tier
+        text capability_agent
+        jsonb runner_snapshot
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (--resume)"
         text current_step_id "runner cursor"

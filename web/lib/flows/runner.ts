@@ -32,6 +32,10 @@ import { runGraph } from "./graph/runner-graph";
 import { recordDefaultArtifacts } from "./graph/default-artifacts";
 import { getArtifactsForRun } from "./graph/artifact-store";
 
+import {
+  mergeRunnerAdapterLaunch,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
@@ -89,7 +93,9 @@ async function executeStep(
               | undefined,
             router: loaded.executor.router ?? undefined,
           },
+          runner: runnerSupervisorInput({ snapshot: loaded.runner }),
           sessionState: ctx.sessionState,
+          adapterLaunch: mergeRunnerAdapterLaunch(loaded.runner),
         },
         ctx.supervisorApi,
       );

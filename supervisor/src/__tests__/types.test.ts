@@ -219,6 +219,23 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts a versioned platform runner payload alongside legacy executor", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      runner: {
+        version: 1,
+        runnerId: "claude-code",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "sonnet",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "default",
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects capabilityProfilePath outside worktreePath", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,

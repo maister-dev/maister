@@ -2,19 +2,81 @@
 
 # Configuration
 
-Two layered manifests define how MAIster runs:
+Platform runtime settings plus two manifests define how MAIster runs:
 
-- **`maister.yaml` v2** — per-project: which executors, which Flow plugins,
-  which default executor. Lives in the registered repo root.
+- **Platform runtime config** — operator-managed ACP runners, router sidecars,
+  adapter diagnostics, and the required platform default runner. Stored by
+  MAIster, not inside project repos.
+- **`maister.yaml` v2** — per-project: project metadata, project default runner
+  binding, Flow plugin bindings, Flow default runner bindings, capabilities,
+  and role registries. Lives in the registered repo root.
 - **`flow.yaml` v1** — per-Flow-plugin: the step DSL (cli / agent / guard /
-  human), recommended executor, optional `setup.sh`. Lives in each
-  plugin's git repo.
+  human), AI-coding runner targets, optional `setup.sh`. Lives in each plugin's
+  git repo.
 
 Plus environment variables for the server tier itself.
 
-All validators live in `web/lib/config.ts` (zod schemas in
-`web/lib/config.schema.ts`). Every failure path throws
+Project and Flow validators live in `web/lib/config.ts` (zod schemas in
+`web/lib/config.schema.ts`). Platform runtime validators live in the
+ACP-runner platform module. Every malformed config failure path throws
 [`MaisterError({ code: "CONFIG" })`](error-taxonomy.md).
+
+## Platform runtime config
+
+Platform ACP runners are canonical launch profiles. Projects and Flows only
+reference their ids.
+
+```yaml
+platform:
+  default_runner: claude-code
+
+router_instances:
+  - id: ccr-default
+    kind: ccr
+    lifecycle: managed
+    command_preset: ccr_start
+    config_path: ~/.claude-code-router/config.json
+    base_url: http://127.0.0.1:3456
+    healthcheck_url: http://127.0.0.1:3456/health
+    auth_token: env:MAISTER_CCR_AUTH_TOKEN
+
+acp_runners:
+  - id: claude-code
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
+    permission_policy: default
+
+  - id: claude-code-ccr
+    adapter: claude
+    model: glm-5.1
+    provider:
+      kind: anthropic_compatible
+    router_instance: ccr-default
+    permission_policy: default
+
+  - id: codex-openai
+    adapter: codex
+    model: gpt-5-codex
+    provider:
+      kind: openai
+    permission_policy: default
+```
+
+Rules:
+
+- `platform.default_runner` is required and must reference one enabled runner.
+- `acp_runners[].adapter` resolves against the code-owned adapter registry.
+- `capability_agent` is derived from the adapter registry and captured in
+  launch snapshots. Operators do not enter it manually.
+- Router sidecar ids resolve against `router_instances[]`.
+- Secret values are references such as `env:NAME`, never literal tokens.
+- Unsupported provider/policy/sidecar combinations are saved only as
+  `NotReady` with reason codes, or are rejected when they would create an
+  invalid default.
+- Admin APIs and UI may show secret ref names and readiness reason codes, but
+  never raw token values or generated config bodies.
 
 ## `maister.yaml` v2
 
@@ -25,27 +87,10 @@ project:
   repo_path: /repos/myapp
   default_branch: main        # default base/target branch
   branch_prefix: maister/     # default: maister/
+  default_runner: inherit     # or a platform ACP runner id
 promotion:
   mode: pull_request          # local_merge | pull_request
   remote: origin              # for pull_request mode
-executors:
-  - id: claude-sonnet
-    agent: claude
-    model: claude-sonnet-4-6
-  - id: claude-glm-ccr
-    agent: claude
-    model: glm-4.6
-    router: ccr               # optional: route via @musistudio/claude-code-router
-  - id: claude-glm-env
-    agent: claude
-    model: glm-4.6
-    env:                      # env-router: any Anthropic-compatible provider
-      ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-      ANTHROPIC_AUTH_TOKEN: ${Z_AI_TOKEN}
-  - id: codex-default
-    agent: codex
-    model: gpt-5-codex
-default_executor: claude-sonnet
 capabilities:
   mcps:
     - id: github
@@ -100,10 +145,11 @@ flows:
   - id: bugfix
     source: github.com/org/maister-flow-bugfix
     version: v1.2.3
+    runner: inherit
   - id: spec-kit
     source: github.com/org/maister-flow-spec-kit
     version: v0.4.1
-    executor_override: claude-glm-ccr     # optional per-flow override
+    runner: claude-code-ccr               # optional platform runner ref
 ```
 
 ### Required fields
@@ -112,10 +158,6 @@ flows:
 | ----- | ---- |
 | `schemaVersion` | Must be the integer `2`. Loader refuses on any other value. |
 | `project.name` | Non-empty string. The `slug` is derived from this (kebab-case). |
-| `executors[]` | At least one entry. Each `id` must be unique within the file. |
-| `executors[].agent` | `claude` or `codex` only. Current adapters cover both. |
-| `executors[].model` | Non-empty. Free-form — the adapter validates. |
-| `default_executor` | Must reference an `id` present in `executors[]`. |
 | `flows[].id` | Unique within the file. |
 | `flows[].source` | Non-empty. Resolved by the Flow loader (`git clone --branch <version>`). |
 | `flows[].version` | Tag-pinned (lock semantics). Non-empty. The tag is the user-facing pin; at install the loader records the resolved git commit SHA in `flows.revision` and at run launch snapshots it into `runs.flow_revision`. The runner derives the bundle path from `(flowRefId, flow_revision)`, so a tag re-pointed upstream after the run launched does not affect that run. |
@@ -127,11 +169,10 @@ flows:
 | `project.repo_path` | derived | Optional and ignored since [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots). `projects.repo_path` is the **resolved on-disk dir** (the clone target under `MAISTER_REPOS_ROOT`, or the existing local dir), not this manifest field. |
 | `project.default_branch` | `main` | Default base branch for new runs and default target branch for promotion. `project.main_branch` remains accepted as a backwards-compatible alias until the branch-targeting migration lands. |
 | `project.branch_prefix` | `maister/` | Run-branch prefix; combined with the slug. |
+| `project.default_runner` | `inherit` | Platform runner id or `inherit`. `inherit` uses the platform default. Missing/unknown runner ids create an explicit reconfiguration requirement; they never create project-scoped runner rows. |
 | `promotion.mode` | `local_merge` | **(Implemented, M18 — ADR-048/049.)** `local_merge` merges the run branch into the target branch locally; `pull_request` creates/updates a PR from the run branch into the target branch. Resolved at launch via the override chain (launch override > project `promotion.mode` > default `local_merge`) and snapshotted to `workspaces.promotion_mode`. `pull_request` mode has the per-provider host prerequisites below. |
 | `promotion.remote` | unset | **(Implemented, M18 — ADR-049.)** Remote name used by `pull_request` mode (the `git push` target and the PR base remote). |
-| `executors[].env` | `null` | Map of env vars passed to the spawned agent (env-router pattern). |
-| `executors[].router` | unset | `ccr` enables `@musistudio/claude-code-router` multi-provider routing inside the session. |
-| `flows[].executor_override` | unset | When set, must reference an `id` in `executors[]`. Persisted to `flows.executor_override_id` by `upsertExecutorsFromConfig()` and slots into the override chain at tier 3 (between task override and project default). |
+| `flows[].runner` | `inherit` | Platform runner id or `inherit`. This is the project Flow attachment default and inherits the project default. |
 | `flow_roles[]` | `[]` | M13 Flow routing registry. Each `ref` is project-scoped and may be used by `finish.human.role` or human-node `settings.roles[]`. Flow roles are not RBAC and never replace `project_members.role`. |
 
 #### `pull_request` promotion mode — per-provider host prerequisites (Implemented, M18 — ADR-049)
@@ -355,38 +396,46 @@ separate authorization model.
 
 `loadProjectConfig()` runs these after schema validation:
 
-1. `default_executor` must exist in `executors[].id`.
-2. Every `flows[].executor_override` must exist in `executors[].id`.
-3. No duplicate executor IDs; no duplicate flow IDs; no duplicate `capability_imports[].id`.
+1. `project.default_runner`, when not `inherit`, must reference a platform
+   runner or create an explicit reconfiguration requirement before project
+   enablement/launch.
+2. Every `flows[].runner`, when not `inherit`, must reference a platform runner
+   or create an explicit reconfiguration requirement before project Flow
+   attachment is enabled.
+3. No duplicate flow IDs; no duplicate `capability_imports[].id`.
 4. **(Implemented, M14)** Every Flow node settings capability reference
    (`mcps[]`, `skills[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
    must resolve to a project, Flow-shipped, or system capability record. An
-   unknown ref, or a ref present in the registry but not supported by the selected
-   executor agent, throws `MaisterError({ code: "CONFIG" })`. This is the
-   "carve-b" validation described in ADR-041.
+   unknown ref, or a ref present in the registry but not supported by the
+   resolved runner's `capability_agent`, throws
+   `MaisterError({ code: "CONFIG" })`. This is the "carve-b" validation
+   described in ADR-041.
 
 Any failure throws `MaisterError({ code: "CONFIG" })` with the offending
 field path in the message.
 
-### Per-step executor override resolution
+### ACP runner resolution
 
-Highest priority wins. The chain is five tiers — per-task choice
-beats per-flow rule:
+Highest priority wins. The chain is six tiers:
 
-1. **Run launcher override** (`POST /api/runs body.executorOverrideId`).
-2. **Task override** (`tasks.executor_override_id`).
-3. **Project per-flow override** (`flows.executor_override_id`, populated from `flows[].executor_override` in `maister.yaml`).
-4. **Project default** (`projects.default_executor_id`, populated from `default_executor` in `maister.yaml`).
-5. **Flow's `recommended_executor`** from `flow.yaml` (optional).
+1. **Launch override** (`POST /api/runs body.runnerId` or scratch
+   `runnerId`).
+2. **AI-coding step target** (`nodes[].runner`, for `runner_type: acp`).
+3. **Project Flow default** (`flows[].runner` attachment override).
+4. **Platform Flow default** (platform Flow catalog default).
+5. **Project default** (`project.default_runner`).
+6. **Platform default** (`platform.default_runner`).
 
-Implementation lives in `web/lib/executors.ts:resolveExecutor()` and is
-called by `POST /api/runs`. The function is pure — no DB access, no
-log side effects — and returns `{executorId, tier}`. Callers can pass
-`override: undefined` to get the "computed executor for display" path
-used by a task-card computed-executor badge.
+Task creation does not select a runner. A task captures title, prompt, and Flow;
+one-run runner override belongs only to the workspace/run launch dialog.
 
-If none of the above resolves to a registered executor, the resolver
-throws `MaisterError({ code: "EXECUTOR_UNAVAILABLE" })` (HTTP 503).
+The pure resolver returns `{ runnerId, tier }`. Runtime hydration then adds the
+adapter-registry-derived `capability_agent` and an immutable `runner_snapshot`.
+If a referenced runner id is missing, disabled, not ready, or unsupported for
+the selected provider/policy/sidecar combination, launch refuses before
+worktree creation, run/workspace DB writes, or supervisor spawn. Missing
+Flow-step runner ids create a required reconfiguration requirement; they never
+silently fall through to lower tiers.
 
 ## `flow.yaml` v1
 
@@ -395,7 +444,8 @@ The manifest each Flow plugin ships in its git repo.
 ```yaml
 schemaVersion: 1
 name: Bugfix
-recommended_executor: claude-sonnet     # optional
+runner_type: acp                        # optional, defaults to acp today
+runner: claude-code                     # optional platform ACP target
 setup: ./setup.sh                       # optional one-time install hook
 # Optional M10 package contract (ADR-021): recorded + displayed as opaque
 # metadata. Only `compat` + `schemaVersion` are ENFORCED at enablement;
@@ -473,17 +523,17 @@ boundary) and the frozen enforcement spec in
 
 **`ai_coding` / `judge` settings** (agent-capability shape):
 
-`judge` carries the same capability shape MINUS `executors`, `settingsProfile`,
-`workspaceAccess`, and `artifactAccess` — those four are `ai_coding`-only (a
-judge spawns an agent session but declares no executor allow-list, settings
-profile, or workspace policy). The shared subset is `model`, `thinkingEffort`,
-`mcps`, `tools`, `skills`, `permissionMode`, `limits`, `restrictions`, and
-`enforcement`. `.strict()` parsing rejects any of the four `ai_coding`-only
+`judge` carries the same capability shape MINUS `runner_type`, `runner`,
+`settingsProfile`, `workspaceAccess`, and `artifactAccess` — those five are
+`ai_coding`-only. The shared subset is `model`, `thinkingEffort`, `mcps`,
+`tools`, `skills`, `permissionMode`, `limits`, `restrictions`, and
+`enforcement`. `.strict()` parsing rejects any of the five `ai_coding`-only
 fields on a `judge` node.
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `executors` | `string[]` | **`ai_coding` only.** Each id MUST exist in `maister.yaml` `executors[]` (validated at launch against the project's executors[], M11c). |
+| `runner_type` | `acp` | **`ai_coding` only.** Defaults to `acp` in this slice. Future runner families can extend this without redefining ACP semantics. |
+| `runner` | `string` | **`ai_coding` only.** For `runner_type: acp`, a platform ACP runner target or package-local target that must be remapped during Flow load/attach. |
 | `model` | `string` | Free-form model override. |
 | `thinkingEffort` | `low \| medium \| high` | Unknown value rejected. |
 | `mcps` | `string[]` | Capability class. Registry resolution against `capability_records` at validate/launch is **Implemented (M14)**. |
@@ -555,9 +605,11 @@ elapsed exceeds the cap is terminated `Failed` via the supervisor's existing
 1. No duplicate step IDs.
 2. Every `on_reject.goto_step` must reference an existing step id.
 
-`recommended_executor`, if present, is a non-empty string. Its existence in
-the project's `executors[]` is validated at project-load time, not here —
-the manifest can be loaded standalone for testing.
+For `runner_type: acp`, a top-level or node-level `runner` is a non-empty
+string. Its existence in platform runners is validated during platform Flow
+load and project Flow attachment. A missing id creates a required
+reconfiguration requirement; the manifest can still be loaded standalone for
+testing.
 
 ### Package contract + compatibility (M10)
 
@@ -894,28 +946,32 @@ routing (z.ai GLM, MiniMax, OpenRouter, …).
   `~/.claude-code-router`, overridable via `MAISTER_CCR_CONFIG_HOST_PATH`)
   is bind-mounted **read-only** at `/app/.ccr` inside the supervisor
   container; the supervisor reads `/app/.ccr/config.json`.
-- The adapter token sent in `ANTHROPIC_AUTH_TOKEN` resolves from
-  `executor.env.ANTHROPIC_AUTH_TOKEN` ∨ `MAISTER_CCR_AUTH_TOKEN`
-  (server env). Missing token surfaces as `EXECUTOR_UNAVAILABLE`
-  (503).
+- The adapter token sent in `ANTHROPIC_AUTH_TOKEN` resolves from the runner's
+  sidecar/provider secret reference or `MAISTER_CCR_AUTH_TOKEN` (server env).
+  Missing token surfaces as `EXECUTOR_UNAVAILABLE` (503).
 - See [executors §CCR setup](system-analytics/executors.md#ccr-setup)
   for the full failure-mode table (config missing, malformed JSON,
   health-check timeout, token missing).
 
-Example executor entry routing GLM-4.6 through CCR:
+Example platform runner routing GLM through CCR:
 
 ```yaml
-executors:
+platform:
+  default_runner: claude-glm-ccr
+router_instances:
+  - id: ccr-default
+    kind: ccr
+    lifecycle: managed
+    command_preset: ccr_start
+    config_path: ~/.claude-code-router/config.json
+    auth_token: env:CCR_ADAPTER_TOKEN
+acp_runners:
   - id: claude-glm-ccr
-    agent: claude
-    model: glm-4.6
-    router: ccr
-    env:
-      # Token consumed by the adapter (CCR currently accepts any non-empty
-      # value because routing decisions live in config.json). The vendor
-      # provider keys themselves go in ~/.claude-code-router/config.json,
-      # NOT here. Placeholders only.
-      ANTHROPIC_AUTH_TOKEN: ${CCR_ADAPTER_TOKEN}
+    adapter: claude
+    model: glm-5.1
+    provider:
+      kind: anthropic_compatible
+    router_instance: ccr-default
 ```
 
 Example `~/.claude-code-router/config.json` (placeholders — replace
@@ -962,12 +1018,11 @@ observability only.
 
 ## See Also
 
-- [Supervisor](supervisor.md) — the ACP daemon that consumes
-  `executors[].env` + `executors[].router` and the supervisor-specific
-  env vars listed above
+- [Supervisor](supervisor.md) — the ACP daemon that consumes normalized runner
+  spawn intents and the supervisor-specific env vars listed above
 - [Error Taxonomy](error-taxonomy.md) — `CONFIG` semantics; what the UI
   shows on each rejection
-- [Database Schema](database-schema.md) — how `maister.yaml` registration
-  writes `projects + executors + flows` rows
+- [Database Schema](database-schema.md) — how `maister.yaml` registration binds
+  projects and Flow attachments to platform runner ids
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules
   enforced around `lib/config.ts`

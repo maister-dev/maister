@@ -67,12 +67,12 @@ sequenceDiagram
     participant DB as Postgres
 
     U->>UI: Open New Task modal
-    UI->>W: GET project's flows[] + executors[]
-    W->>DB: SELECT flows, executors WHERE project_id=?
-    DB-->>UI: dropdown options
-    U->>UI: Fill title, prompt, flow, optional executor override
+    UI->>W: GET project's flows[]
+    W->>DB: SELECT launchable flows WHERE project_id=?
+    DB-->>UI: Flow options
+    U->>UI: Fill title, prompt, flow
     UI->>W: POST /api/projects/[slug]/tasks
-    W->>W: Validate (non-empty title/prompt, flow/executor exist)
+    W->>W: Validate (non-empty title/prompt, flow exists)
     alt validation fails
         W-->>UI: 400 PRECONDITION
     end
@@ -113,7 +113,7 @@ sequenceDiagram
     participant SV as Supervisor
 
     U->>UI: Click Launch on Backlog card
-    UI->>W: POST /api/runs { taskId, executor_id_override? }
+    UI->>W: POST /api/runs { taskId, runnerId? }
     W->>DB: SELECT task, project, flow, executor
     W->>W: Resolve executor (override chain)
     alt EXECUTOR_UNAVAILABLE
@@ -218,7 +218,8 @@ flowchart TD
 
 - **Empty title or prompt** → `PRECONDITION` (400).
 - **`flow_id` not registered for this project** → `PRECONDITION`.
-- **`executor_override_id` not registered** → `EXECUTOR_UNAVAILABLE`
+- **selected `runnerId` missing, disabled, or not ready** →
+  `EXECUTOR_UNAVAILABLE`
   (503).
 - **Dirty parent repo on Launch** → `PRECONDITION` ("commit or stash
   changes in `{repo_path}`").

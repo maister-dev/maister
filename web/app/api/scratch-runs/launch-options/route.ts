@@ -6,6 +6,10 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  resolveRunner,
+  type RunnerCatalogEntry,
+} from "@/lib/acp-runners/resolve";
 import { loadSelectableCapabilities } from "@/lib/capabilities/resolver";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -14,8 +18,12 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { deriveScratchBranchName } from "@/lib/scratch-runs/launch";
 import { listBranches } from "@/lib/worktree";
 
-const { executors, projectMembers, projects } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  platformAcpRunners,
+  platformRuntimeSettings,
+  projectMembers,
+  projects,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-scratch-launch-options",
@@ -36,6 +44,8 @@ function httpStatusForCode(code: string): number {
       return 403;
     case "CONFIG":
       return 400;
+    case "EXECUTOR_UNAVAILABLE":
+      return 503;
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
@@ -114,18 +124,40 @@ function capabilityOption(record: any) {
   };
 }
 
-function executorLabel(row: any): string {
-  const router = row.router ? ` via ${row.router}` : "";
+function runnerProviderKind(provider: unknown): string {
+  if (
+    provider &&
+    typeof provider === "object" &&
+    "kind" in provider &&
+    typeof provider.kind === "string"
+  ) {
+    return provider.kind;
+  }
 
-  return `${row.executorRefId} · ${row.agent} · ${row.model}${router}`;
+  throw new MaisterError(
+    "CONFIG",
+    `platform ACP runner has invalid provider payload: ${JSON.stringify(provider)}`,
+  );
 }
 
-function envHint(row: any): string | null {
-  if (!row.env || typeof row.env !== "object") return null;
+function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
+  return {
+    id: row.id,
+    adapter: row.adapter,
+    capabilityAgent: row.capabilityAgent,
+    model: row.model,
+    providerKind: runnerProviderKind(row.provider),
+    permissionPolicy: row.permissionPolicy,
+    sidecarId: row.sidecarId,
+    enabled: row.enabled,
+    ready: row.readinessStatus === "Ready",
+  };
+}
 
-  const keys = Object.keys(row.env);
+function runnerLabel(row: RunnerCatalogEntry): string {
+  const sidecar = row.sidecarId ? ` via ${row.sidecarId}` : "";
 
-  return keys.length > 0 ? keys.sort().join(", ") : null;
+  return `${row.id} · ${row.adapter} · ${row.model}${sidecar}`;
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -148,9 +180,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         selectedProjectId: null,
         defaultBaseBranch: null,
         defaultScratchBranch: null,
-        defaultExecutorId: null,
+        defaultRunnerId: null,
         branches: [],
-        executors: [],
+        runners: [],
         workModes: [
           { id: "auto", label: "Auto", selectedByDefault: true },
           { id: "plan_first", label: "Plan first", selectedByDefault: false },
@@ -177,11 +209,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const [branchRows, executorRows, capabilities] = await Promise.all([
-      listBranches(project.repoPath),
-      db.select().from(executors).where(eq(executors.projectId, project.id)),
-      loadSelectableCapabilities(project.id, db),
-    ]);
+    const [branchRows, runnerRows, runtimeRows, capabilities] =
+      await Promise.all([
+        listBranches(project.repoPath),
+        db.select().from(platformAcpRunners),
+        db
+          .select()
+          .from(platformRuntimeSettings)
+          .where(eq(platformRuntimeSettings.id, "singleton")),
+        loadSelectableCapabilities(project.id, db),
+      ]);
     const defaultScratchBranch = deriveScratchBranchName({
       branchPrefix: project.branchPrefix,
       projectSlug: project.slug,
@@ -189,10 +226,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       runId: randomUUID(),
     });
     const mcps = capabilities.filter((record) => record.kind === "mcp");
-    const defaultExecutorId =
-      project.defaultExecutorId ??
-      executorRows.find((row: any) => row.id)?.id ??
-      null;
+    const platformRuntime = runtimeRows[0];
+
+    if (!platformRuntime) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "platform default ACP runner is not configured",
+      );
+    }
+
+    const runnerCatalog = runnerRows.map(runnerCatalogEntry);
+    const defaultRunnerId = resolveRunner({
+      launchOverrideRunnerId: null,
+      step: { runnerId: null },
+      projectFlow: { defaultRunnerId: null },
+      platformFlow: { defaultRunnerId: null },
+      project: { defaultRunnerId: project.defaultRunnerId },
+      platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+      runners: runnerCatalog,
+    }).runnerId;
 
     return NextResponse.json({
       machine: {
@@ -206,21 +258,24 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         name: row.name,
         mainBranch: row.mainBranch,
         branchPrefix: row.branchPrefix,
-        defaultExecutorId: row.defaultExecutorId ?? null,
+        defaultRunnerId: row.defaultRunnerId ?? null,
       })),
       selectedProjectId: project.id,
       defaultBaseBranch: project.mainBranch,
       defaultScratchBranch,
-      defaultExecutorId,
+      defaultRunnerId,
       branches: branchRows,
-      executors: executorRows.map((row: any) => ({
+      runners: runnerCatalog.map((row: RunnerCatalogEntry) => ({
         id: row.id,
-        executorRefId: row.executorRefId,
-        displayLabel: executorLabel(row),
-        agent: row.agent,
+        displayLabel: runnerLabel(row),
+        adapter: row.adapter,
+        capabilityAgent: row.capabilityAgent,
         model: row.model,
-        router: row.router,
-        envHint: envHint(row),
+        providerKind: row.providerKind,
+        permissionPolicy: row.permissionPolicy,
+        sidecarId: row.sidecarId ?? null,
+        enabled: row.enabled,
+        ready: row.ready,
       })),
       workModes: [
         { id: "auto", label: "Auto", selectedByDefault: true },

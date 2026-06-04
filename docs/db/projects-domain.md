@@ -8,8 +8,10 @@ each entity's behavior.
 
 ```mermaid
 erDiagram
-    PROJECTS ||--o{ EXECUTORS : "executors[] in maister.yaml"
     PROJECTS ||--o{ FLOWS : "flows[] in maister.yaml"
+    PLATFORM_ACP_RUNNERS ||--o{ PROJECTS : "default_runner_id override"
+    PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "attachment default"
+    FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner binding"
 
     PROJECTS {
         text id PK
@@ -21,21 +23,10 @@ erDiagram
         text main_branch "current column; product default_branch"
         text branch_prefix "default 'maister/'"
         text maister_yaml_path "where the manifest was loaded from"
-        text default_executor_id "FK validated app-side"
+        text default_runner_id "platform runner override"
         text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         timestamp created_at
         timestamp archived_at "soft archive"
-    }
-
-    EXECUTORS {
-        text id PK
-        text project_id FK
-        text executor_ref_id "id from maister.yaml executors[]"
-        text agent "enum: claude|codex"
-        text model "free-form"
-        jsonb env "env-router vars (optional)"
-        text router "enum: ccr (optional)"
-        timestamp created_at
     }
 
     FLOWS {
@@ -48,9 +39,28 @@ erDiagram
         text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
-        text recommended_executor_id "nullable, app-side FK"
-        text executor_override_id "nullable FK"
         timestamp created_at
+    }
+
+    PLATFORM_ACP_RUNNERS {
+        text id PK
+        text adapter "claude|codex"
+        text capability_agent "claude|codex"
+        text model
+        jsonb provider
+        text permission_policy
+        text sidecar_id FK
+        text readiness_status
+        boolean enabled
+    }
+
+    PROJECT_FLOW_RUNNER_DEFAULTS {
+        text id PK
+        text project_id FK
+        text flow_id FK
+        text runner_id FK "nullable = inherit"
+        timestamp created_at
+        timestamp updated_at
     }
 ```
 
@@ -60,11 +70,10 @@ erDiagram
   rejected at register time.
 - `projects.repo_path` UNIQUE — one repo, one project. Archived
   projects' `repo_path` stays reserved.
-- `executors_project_ref_uq` on `(project_id, executor_ref_id)` — each
-  executor id is unique within its project namespace, never
-  cross-project.
 - `flows_project_ref_uq` on `(project_id, flow_ref_id)` — same shape
-  as executors.
+  as project Flow ids.
+- `project_flow_runner_defaults_project_flow_uq` on `(project_id, flow_id)` —
+  one project Flow runner binding per attachment.
 
 ## Notes
 
@@ -72,17 +81,12 @@ erDiagram
   captured at register time ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)):
   the clone source / existing `origin`, and the auto-detected host tag.
   `repo_path` is the resolved on-disk dir, not read from `maister.yaml`.
-- `projects.default_executor_id` is a deferred FK validated at the app
-  layer (it references `executors.id` from the same project, which
-  doesn't exist yet at INSERT time of `projects`).
+- `projects.default_runner_id` references a platform runner override; null means
+  inherit the platform default.
 - `flows.manifest` stores the **parsed** `flow.yaml` — full step DSL,
-  recommended executor, etc. Source of truth for the runtime step
+  portable runner profiles, etc. Source of truth for the runtime step
   loader; the on-disk `flow.yaml` is only read on install / refresh.
-- `flows.recommended_executor_id` is also app-side FK because the
-  manifest's `recommended_executor` references an executor id by ref
-  string (not by row id).
-- `flows.executor_override_id` stores the per-flow override from
-  `maister.yaml flows[].executor_override`.
+- Project Flow runner defaults live in `project_flow_runner_defaults`.
 - Planned M10 splits immutable Flow package revisions from project Flow
   enablement. Until that lands, `flows` is still the mutable current pointer;
   run safety comes from `runs.flow_revision`.

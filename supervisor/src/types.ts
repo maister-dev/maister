@@ -6,6 +6,8 @@ export const ExecutorAgentSchema = z.enum(["claude", "codex"]);
 
 export const ExecutorRouterSchema = z.enum(["ccr"]);
 
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
 export const ExecutorSchema = z.object({
   agent: ExecutorAgentSchema,
   model: z.string().min(1),
@@ -13,7 +15,9 @@ export const ExecutorSchema = z.object({
   router: ExecutorRouterSchema.optional(),
 });
 
-const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
+const envNameSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name");
 
 const worktreePathSchema = z
   .string()
@@ -23,6 +27,51 @@ const worktreePathSchema = z
     (p) => p.startsWith("/") && !p.split("/").includes(".."),
     "worktreePath must be an absolute path with no '..' segments",
   );
+
+export const RunnerProviderSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("anthropic") }).strict(),
+  z
+    .object({
+      kind: z.literal("anthropic_compatible"),
+      baseUrl: z.string().url().optional(),
+      authTokenEnv: envNameSchema.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("openai") }).strict(),
+  z
+    .object({
+      kind: z.literal("openai_compatible"),
+      baseUrl: z.string().url().optional(),
+      apiKeyEnv: envNameSchema.optional(),
+      wireApi: z.literal("responses").optional(),
+    })
+    .strict(),
+]);
+
+export const RunnerSidecarSchema = z
+  .object({
+    id: z.string().min(1).max(128).regex(SAFE_PATH_SEGMENT),
+    kind: z.literal("ccr"),
+    lifecycle: z.enum(["managed", "external"]).optional(),
+    configPath: worktreePathSchema.optional(),
+    baseUrl: z.string().url().optional(),
+    healthcheckUrl: z.string().url().optional(),
+    authTokenEnv: envNameSchema.optional(),
+  })
+  .strict();
+
+export const RunnerLaunchSchema = z
+  .object({
+    version: z.literal(1),
+    runnerId: z.string().min(1).max(128).regex(SAFE_PATH_SEGMENT),
+    adapter: ExecutorAgentSchema,
+    capabilityAgent: ExecutorAgentSchema,
+    model: z.string().min(1),
+    provider: RunnerProviderSchema,
+    permissionPolicy: z.enum(["default", "dangerously_skip_permissions"]),
+    sidecar: RunnerSidecarSchema.optional(),
+  })
+  .strict();
 
 const launchArgSchema = z
   .string()
@@ -66,6 +115,7 @@ export const StartSessionRequestSchema = z
       .max(128)
       .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
     executor: ExecutorSchema,
+    runner: RunnerLaunchSchema.optional(),
     resumeSessionId: z
       .string()
       .min(1)
@@ -109,6 +159,7 @@ export const SendPromptRequestSchema = z.object({
 export type ExecutorAgent = z.infer<typeof ExecutorAgentSchema>;
 export type ExecutorRouter = z.infer<typeof ExecutorRouterSchema>;
 export type Executor = z.infer<typeof ExecutorSchema>;
+export type RunnerLaunch = z.infer<typeof RunnerLaunchSchema>;
 export type AdapterLaunch = z.infer<typeof AdapterLaunchSchema>;
 export type McpServerInput = z.infer<typeof McpServerInputSchema>;
 export type StartSessionRequest = z.infer<typeof StartSessionRequestSchema>;
@@ -145,6 +196,44 @@ export const SupervisorHealthResponseSchema = z
 
 export type SupervisorHealthResponse = z.infer<
   typeof SupervisorHealthResponseSchema
+>;
+
+export const SupervisorDiagnosticsResponseSchema = z
+  .object({
+    status: z.literal("ready"),
+    version: z.string().min(1),
+    checkedAt: z.string().datetime(),
+    adapters: z.array(
+      z
+        .object({
+          id: ExecutorAgentSchema,
+          binary: z.string().min(1),
+          available: z.boolean(),
+        })
+        .strict(),
+    ),
+    sidecars: z.array(
+      z
+        .object({
+          id: z.string().min(1),
+          kind: z.literal("ccr"),
+          state: z.enum(["idle", "starting", "ready", "failed", "stopping"]),
+        })
+        .strict(),
+    ),
+    envRefs: z.array(
+      z
+        .object({
+          name: envNameSchema,
+          present: z.boolean(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export type SupervisorDiagnosticsResponse = z.infer<
+  typeof SupervisorDiagnosticsResponseSchema
 >;
 
 export type SessionRecord = {

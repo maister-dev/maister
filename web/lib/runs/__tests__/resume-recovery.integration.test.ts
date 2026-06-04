@@ -28,6 +28,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createGateResult, markGateStale } from "@/lib/flows/graph/gate-store";
 import {
   appendNodeAttempt,
@@ -40,7 +41,7 @@ import {
 } from "@/lib/runs/resume-recovery";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, projects, runs, tasks, users } = schema;
+const { flows, projects, runs, tasks, users } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -72,13 +73,7 @@ beforeAll(async () => {
     repoPath: "/repos/recov-app",
     maisterYamlPath: "/repos/recov-app/maister.yaml",
   });
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(flows).values({
     id: flowId,
     projectId,
@@ -126,7 +121,9 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     flowVersion: "v1",
     startedAt: new Date(),

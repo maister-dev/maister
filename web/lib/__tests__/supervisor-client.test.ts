@@ -10,6 +10,7 @@ import {
 
 import {
   cancelPermission,
+  checkSupervisorDiagnostics,
   checkSupervisorHealth,
   checkpointSession,
   createSession,
@@ -280,6 +281,56 @@ describe("checkSupervisorHealth", () => {
     await expect(getPlatformStatus()).resolves.toEqual({
       kind: "ready",
       health: readyHealth,
+    });
+  });
+});
+
+describe("checkSupervisorDiagnostics", () => {
+  const diagnostics = {
+    status: "ready",
+    version: "0.0.1",
+    checkedAt: "2026-06-03T12:00:00.000Z",
+    adapters: [
+      { id: "claude", binary: "claude-agent-acp", available: true },
+      { id: "codex", binary: "codex-acp", available: false },
+    ],
+    sidecars: [{ id: "ccr-default", kind: "ccr", state: "idle" }],
+    envRefs: [{ name: "MAISTER_CCR_AUTH_TOKEN", present: true }],
+  };
+
+  it("maps valid diagnostics to ready", async () => {
+    mockOnce(new Response(JSON.stringify(diagnostics), { status: 200 }));
+
+    await expect(checkSupervisorDiagnostics()).resolves.toEqual({
+      kind: "ready",
+      diagnostics,
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/diagnostics",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("rejects diagnostics bodies that include raw env values", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          ...diagnostics,
+          envRefs: [
+            {
+              name: "MAISTER_CCR_AUTH_TOKEN",
+              present: true,
+              value: "secret",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(checkSupervisorDiagnostics()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
     });
   });
 });

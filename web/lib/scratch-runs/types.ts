@@ -41,7 +41,7 @@ export const scratchLaunchInputSchema = z
     baseBranch: z.string().min(1).max(255),
     branchName: optionalNonEmptyString,
     name: z.string().max(200).optional(),
-    executorId: z.string().uuid(),
+    runnerId: z.string().min(1).optional(),
     workMode: scratchWorkModeSchema.optional(),
     reasoningEffort: scratchReasoningEffortSchema.default("high"),
     planMode: scratchPlanModeSchema.optional(),

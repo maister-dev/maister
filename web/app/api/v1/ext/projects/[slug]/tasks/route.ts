@@ -12,12 +12,13 @@ import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 const ENDPOINT_TASKS = "POST /api/v1/ext/projects/[slug]/tasks";
 const ENDPOINT_TASKS_GET = "GET /api/v1/ext/projects/[slug]/tasks";
 
-const postBodySchema = z.object({
-  title: z.string().min(1),
-  prompt: z.string().min(1),
-  flowId: z.string().min(1),
-  executorOverrideId: z.string().min(1).optional(),
-});
+const postBodySchema = z
+  .object({
+    title: z.string().min(1),
+    prompt: z.string().min(1),
+    flowId: z.string().min(1),
+  })
+  .strict();
 
 type RouteParams = { params: Promise<{ slug: string }> };
 
@@ -59,7 +60,6 @@ export async function POST(
             title: body.title,
             prompt: body.prompt,
             flowId: body.flowId,
-            executorOverrideId: body.executorOverrideId,
           },
           { projectId: ctx.projectId, actorUserId: null },
           db,

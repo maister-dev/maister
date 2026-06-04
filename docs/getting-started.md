@@ -115,7 +115,7 @@ test:integration   # spins up Postgres via testcontainers (slower)
 test:e2e           # Playwright (authed M11a/M11b UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply migrations against $DB_URL
-db:seed            # idempotent dev seed (1 project + 2 executors + 1 flow)
+db:seed            # idempotent dev seed (admin + platform runners + sample project)
 db:studio          # drizzle-kit studio
 backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
                          # existing flows rows after applying migration 0007
@@ -166,6 +166,44 @@ DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:seed
 Full reference: [Database Schema](database-schema.md). For the full env-var
 list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,
 `MAISTER_KEEPALIVE_MINUTES`): [Configuration](configuration.md).
+
+### Local destructive reset
+
+This repository currently has only local/disposable MAIster installs. For
+platform ACP runner schema changes, it is acceptable to reset every
+MAIster-owned local artifact and re-bootstrap from scratch.
+
+The reset boundary is deliberately narrow:
+
+- Stop web and supervisor processes.
+- Drop/recreate the MAIster Postgres database, or remove the SQLite dev DB.
+- Remove MAIster runtime artifacts under `.maister/` roots created by the app.
+- Remove MAIster cache directories for Flow packages and capability imports.
+- Remove stale MAIster-created worktrees.
+- Remove generated platform runtime config files that the old schema cannot
+  consume.
+- Run migrations and seed again; seed recreates default platform runners,
+  sidecars, admin/bootstrap rows, and sample data.
+- Re-register projects.
+
+The reset must not delete arbitrary source repositories. Removing a project
+repo is a separate explicit operator action, not part of "blast MAIster-owned
+state".
+
+The project-local reset command is dry-run unless the confirmation token is
+passed:
+
+```bash
+pnpm local:blast-maister-state
+pnpm local:blast-maister-state -- --confirm BLAST_MAISTER_LOCAL_STATE
+pnpm local:blast-maister-state -- --confirm BLAST_MAISTER_LOCAL_STATE --reset-postgres
+pnpm --filter maister-web db:migrate
+pnpm --filter maister-web db:seed
+```
+
+`--reset-postgres` uses `DATABASE_URL` and resets only the `public` schema.
+The script prints every root it will remove and refuses to delete the MAIster
+repository cwd or `MAISTER_REPOS_ROOT`.
 
 ## Authentication setup (M9)
 
@@ -244,17 +282,16 @@ curl -X POST http://localhost:3000/api/runs \
 Response (started): `202 { "runId": "...", "status": "Running" }`.
 Response (over cap): `202 { "runId": "...", "status": "Pending", "queuePosition": 1 }`.
 
-Optional body field: `executorOverrideId`. Full 5-level resolution
-order at runtime: `launcher override → tasks.executorOverrideId →
-flows.executorOverrideId → projects.defaultExecutorId →
-flows.recommendedExecutorId`. Implementation in
-`web/lib/executors.ts:resolveExecutor()` (pure, returns
-`{executorId, tier}`).
+Optional body field: `runnerId`. Runtime resolution is fail-closed:
+`launch override → AI-coding step target → project Flow default → platform
+Flow default → project default → platform default`. The run snapshots
+`runnerId`, `runnerResolutionTier`, `capabilityAgent`, and `runnerSnapshot`
+before creating the workspace.
 
 ### (Optional) CCR multi-provider routing
 
-CCR (Claude Code Router) is bundled out-of-the-box for executors that
-need intelligent multi-provider routing inside one session (z.ai GLM,
+CCR (Claude Code Router) is bundled out-of-the-box for platform ACP runners
+that need intelligent multi-provider routing inside one session (z.ai GLM,
 OpenRouter, MiniMax, …). There is NO need to globally install `ccr` —
 MAIster ships the npm package as a supervisor dep.
 
@@ -279,24 +316,33 @@ MAIster ships the npm package as a supervisor dep.
    }
    ```
 
-3. Mark the executor with `router: ccr` in `maister.yaml`:
+3. Create a platform runner that points at the CCR sidecar:
 
    ```yaml
-   executors:
+   platform:
+     default_runner: claude-glm-ccr
+   router_instances:
+     - id: ccr-default
+       kind: ccr
+       lifecycle: managed
+       command_preset: ccr_start
+       config_path: ~/.claude-code-router/config.json
+       auth_token: env:CCR_ADAPTER_TOKEN
+   acp_runners:
      - id: claude-glm-ccr
-       agent: claude
-       model: glm-4.6
-       router: ccr
-       env:
-         ANTHROPIC_AUTH_TOKEN: ${CCR_ADAPTER_TOKEN}
+       adapter: claude
+       model: glm-5.1
+       provider:
+         kind: anthropic_compatible
+       router_instance: ccr-default
    ```
 
    (The adapter token here is consumed by the spawned adapter, not by
    CCR itself — provider keys live in `~/.claude-code-router/config.json`.
    Alternatively set `MAISTER_CCR_AUTH_TOKEN` on the supervisor's env.)
 
-4. The supervisor's CCR manager starts the daemon automatically on
-   the first `router=ccr` spawn and reuses it across the supervisor
+4. The supervisor's CCR manager starts the daemon automatically for managed
+   CCR sidecars and reuses it across the supervisor
    process lifetime. Missing config or health-check failure surfaces as
    503 `EXECUTOR_UNAVAILABLE` with a pointer to
    [executors §CCR setup](system-analytics/executors.md#ccr-setup).

@@ -65,11 +65,11 @@ daemon is reachable and can accept new session work:
 }
 ```
 
-The body intentionally contains no project ids, run ids, executor
+The body intentionally contains no project ids, run ids, runner
 secrets, env vars, or filesystem paths. The web tier treats network
 errors, timeouts, non-200 responses, and malformed bodies as
 `unavailable`; there is no "connected" fallback. `POST /api/runs`
-checks this readiness after auth/project/Flow/executor validation and
+checks this readiness after auth/project/Flow/runner validation and
 before `git worktree add` or DB writes. On unavailable supervisor it
 returns `503 EXECUTOR_UNAVAILABLE` and leaves the task in `Backlog`.
 
@@ -87,11 +87,25 @@ Request body:
   "projectSlug": "myapp",                   // kebab-case
   "worktreePath": "/repos/myapp-wt",        // cwd for the child
   "stepId": "plan",                         // log file: <runId>/<stepId>.log
+  "runner": {
+    "version": 1,
+    "runnerId": "claude-code-ccr",
+    "adapter": "claude",
+    "capabilityAgent": "claude",
+    "model": "glm-5.1",
+    "provider": { "kind": "anthropic_compatible" },
+    "permissionPolicy": "default",
+    "sidecar": {
+      "id": "ccr-default",
+      "kind": "ccr",
+      "authTokenEnv": "MAISTER_CCR_AUTH_TOKEN"
+    }
+  },
   "executor": {
     "agent": "claude" | "codex",
     "model": "claude-sonnet-4-6",
     "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "..." },
-    "router": "ccr"                         // optional — see CCR lifecycle below
+    "router": "ccr"                         // legacy compatibility while migration lands
   },
   "capabilityProfilePath": "/repos/myapp/.maister/runs/run-abc/profile.json",
   "adapterLaunch": {
@@ -106,14 +120,16 @@ Request body:
 (Note: prompts are sent separately via `POST /sessions/:id/prompt`
 since M5 — the body field is gone.)
 
-When `executor.router === "ccr"`, the supervisor lazy-starts the
-bundled `@musistudio/claude-code-router` daemon on the first such
-session in the supervisor's lifetime, then injects
-`ANTHROPIC_BASE_URL=<ccr-proxy-url>` and
-`ANTHROPIC_AUTH_TOKEN=<resolved>` into the child env (see "Env merge"
-below). Subsequent `router=ccr` sessions reuse the same daemon. See
-[CCR lifecycle](#ccr-lifecycle) and
-[executors §CCR setup](system-analytics/executors.md#ccr-setup).
+When `runner.sidecar.kind === "ccr"` (or the legacy
+`executor.router === "ccr"` path during migration), the supervisor starts or
+reuses the referenced CCR sidecar before spawning the adapter, then injects the
+allow-listed proxy env into the child. See [CCR lifecycle](#ccr-lifecycle) and
+[ACP runners §CCR](system-analytics/executors.md#ccr).
+
+The web tier resolves runner ids, checks readiness, materializes safe launch
+metadata, and sends only normalized spawn intent. The supervisor remains the
+only layer that resolves env refs into values and maps typed permission
+policies to adapter argv.
 
 `capabilityProfilePath` and `adapterLaunch.env` are Implemented for scratch
 runs. The web tier owns capability policy, resolution, trust checks, and the V1
@@ -133,6 +149,13 @@ override the adapter binary, `cwd`, run id, project slug, or worktree path.
 The supervisor rejects malformed paths, `..` segments, non-string env values,
 and oversized arg/env lists with `409 PRECONDITION`.
 
+### `GET /diagnostics`
+
+Read-only runtime diagnostics for remote supervisor setup. Unlike `/health`,
+this endpoint reports launch-specific readiness inputs: adapter binary
+availability, CCR sidecar state, env-ref presence, and supervisor version. It
+never returns raw secret values.
+
 #### Capability adapter support matrix (Implemented snapshot + designed native activation)
 
 | Capability kind | Claude adapter | Codex adapter | V1 behavior |
@@ -151,7 +174,7 @@ Responses:
 | `201` | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>" }` | Spawn succeeded; ACP handshake completed. |
 | `409` | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }` | Body failed Zod validation. |
 | `500` | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }` | Adapter binary not found on PATH. |
-| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | CCR-related failure for `router=ccr` executors: CCR config file missing (`~/.claude-code-router/config.json` / `MAISTER_CCR_CONFIG_PATH`), malformed JSON, daemon failed to become ready within ~10s (health check on `GET /health`), identity-mismatch (another process owns the port), or `ANTHROPIC_AUTH_TOKEN` missing (no `executor.env.ANTHROPIC_AUTH_TOKEN` and no `MAISTER_CCR_AUTH_TOKEN`). Also reserved for future resource-cap rejections. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
+| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | Runner, adapter, env-ref, or sidecar is not launchable: adapter binary missing/unsupported, CCR config missing or malformed, sidecar health/identity failure, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
 
 ### `DELETE /sessions/:id`
 
@@ -411,10 +434,10 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_KILL_GRACE_MS` | `5000` | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown. |
 | `MAISTER_SHUTDOWN_GRACE_MS` | `15000` | Total wall-clock budget for graceful supervisor shutdown. |
 | `MAISTER_KEEPALIVE_MINUTES` | `30` | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout (M7) AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition (M8). Bumped by every web activity ping. |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Per-executor `env` in `maister.yaml` wins; this is a process-wide default for the adapters. |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs. |
 | `ANTHROPIC_AUTH_TOKEN` | unset | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). |
-| `MAISTER_CCR_AUTH_TOKEN` | unset | Fallback `ANTHROPIC_AUTH_TOKEN` for `router=ccr` executors that don't pin a per-executor token in `executor.env`. Missing → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
-| `MAISTER_CCR_CONFIG_PATH` | `/app/.ccr/config.json` (Docker) / `~/.claude-code-router/config.json` (otherwise) | Where the supervisor reads CCR's `HOST`/`PORT`. Missing file or malformed JSON → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
+| `MAISTER_CCR_AUTH_TOKEN` | unset | Default env ref for `ccr-default` sidecars. Missing when referenced → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
+| `MAISTER_CCR_CONFIG_PATH` | `/app/.ccr/config.json` (Docker) / `~/.claude-code-router/config.json` (otherwise) | Legacy/default config path for `ccr-default`. Platform sidecar config may override with a typed config path. Missing file or malformed JSON → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
 | `LOG_LEVEL` | `debug` | pino level: `trace | debug | info | warn | error | fatal | silent`. |
 
 Secrets MUST NEVER appear in:
@@ -424,18 +447,20 @@ Secrets MUST NEVER appear in:
 - the step `.log` file (sentinel-test enforced)
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
-**Env merge semantics for the spawned child:** implemented
-`supervisor/src/spawn.ts` builds the child's env as
-`{ ...process.env, ...ccrLayer, ...executor.env, ...adapterLaunch.env }`.
-The capability-launch extension appends `adapterLaunch.env` as the final
-layer after the web materializer derives and validates it:
+**Env merge semantics for the spawned child:** platform runner launch uses typed
+env refs resolved by the supervisor. During migration, the legacy
+`executor.env` path still exists, but new platform runner APIs must persist
+only `env:NAME` references.
+
+The implemented compatibility path in `supervisor/src/spawn.ts` builds the
+child's env as `{ ...process.env, ...ccrLayer, ...executor.env,
+...adapterLaunch.env }`. The platform runner path tightens that to:
 
 1. `process.env` — the supervisor's own env at startup (base).
-2. `ccrLayer` — empty when `executor.router !== "ccr"`. When CCR is
-   active, contains exactly two keys: `ANTHROPIC_BASE_URL=<ccr-proxy-url>`
-   (from `ccrManager.getProxyUrl()`) and `ANTHROPIC_AUTH_TOKEN=<resolved>`
-   (from `executor.env.ANTHROPIC_AUTH_TOKEN ?? MAISTER_CCR_AUTH_TOKEN`).
-3. `executor.env` — per-executor block from `maister.yaml`.
+2. sidecar/provider layer — contains only allow-listed keys required by the
+   adapter provisioner, with values resolved from env refs.
+3. isolated adapter config layer — generated paths such as `CODEX_HOME` or
+   capability profile env, never raw secret values.
 4. `adapterLaunch.env` — run-scoped capability materializer output.
    It wins on collision so a run-scoped MCP/settings profile can point the
    adapter at the materialized files for that one session.
@@ -460,17 +485,14 @@ This means:
 
 ## CCR lifecycle
 
-When `executor.router === "ccr"` on `POST /sessions`, the supervisor
-goes through `ccrManager.ensureRunning()` before spawning the adapter:
+When a runner references a CCR sidecar, the supervisor goes through the keyed
+sidecar manager before spawning the adapter:
 
-- **Singleton per supervisor process.** The CCR daemon spawns at most
-  once per supervisor process — lazy on the first `router=ccr` session,
-  reused by every subsequent one. No per-session daemon, no
-  per-executor daemon.
-- **Configuration is operator-managed.** Host+port come from
-  `MAISTER_CCR_CONFIG_PATH` (default per env-vars table above), keys
-  `HOST` and `PORT` at the JSON root. Defaults `127.0.0.1:3456` apply
-  when those keys are absent but the file is valid JSON. The file is
+- **Keyed instances.** `ccr-default` preserves the current singleton behavior.
+  Additional platform sidecars are keyed by sidecar id and do not silently
+  replace each other.
+- **Configuration is operator-managed.** Host+port/config path come from the
+  platform sidecar record or the `MAISTER_CCR_CONFIG_PATH` default. The file is
   read-only from the supervisor's perspective.
 - **Readiness probe validates target identity.** The supervisor polls
   `GET /health` (CCR's own endpoint). Only HTTP 200 counts as ready;
@@ -539,10 +561,23 @@ until the web tier calls `POST /sessions/:id/input`.
   "projectSlug":   "demo-app",
   "worktreePath":  "/abs/path",
   "stepId":        "plan",
+  "runner": {
+    "version": 1,
+    "runnerId": "claude-code-default",
+    "adapter": "claude",
+    "capabilityAgent": "claude",
+    "model": "claude-sonnet-4-6",
+    "provider": { "kind": "anthropic" },
+    "permissionPolicy": "default"
+  },
   "executor":      { "agent": "claude", "model": "claude-sonnet-4-6" },
   "resumeSessionId": "uuid-abc"        // optional
 }
 ```
+
+During migration `executor` remains required for backward compatibility. When
+`runner` is present, the supervisor uses the versioned runner intent as the
+launch source of truth and derives the effective executor/env/argv from it.
 
 The response includes the negotiated ACP session id:
 
@@ -596,6 +631,6 @@ through a `PassThrough` so both consumers see every chunk.
 
 - [Configuration](configuration.md) — `maister.yaml` v2 + env vars
 - [Error Taxonomy](error-taxonomy.md) — `MaisterError` codes the web tier raises after translation
-- [ACP Pivot Revision](kaa-maister-design-20260525-acp-revision.md) — the multi-executor design that motivated the supervisor split
+- [ACP Pivot Revision](kaa-maister-design-20260525-acp-revision.md) — the multi-runner design that motivated the supervisor split
 - [M0 Spike Findings](kaa-maister-m0-spike-findings-20260525.md) — adapter package versions and cross-process resume cost
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract

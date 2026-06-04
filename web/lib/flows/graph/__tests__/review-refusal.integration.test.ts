@@ -24,6 +24,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
 
@@ -73,13 +74,7 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -102,7 +97,9 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
   });

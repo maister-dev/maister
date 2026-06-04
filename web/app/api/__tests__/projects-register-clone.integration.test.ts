@@ -63,11 +63,6 @@ function maisterYaml(name: string, withRepoPath: boolean): string {
     repoPathLine.trimEnd(),
     "  main_branch: main",
     "  branch_prefix: maister/",
-    "executors:",
-    "  - id: claude-sonnet",
-    "    agent: claude",
-    "    model: claude-sonnet-4-6",
-    "default_executor: claude-sonnet",
     "flows: []",
     "",
   ]

@@ -138,6 +138,42 @@ describe("spawnSession", () => {
     expect(first.sessionId).toBe("uuid-abc-123");
   });
 
+  it("applies versioned runner payload before spawning and preserves resume ordering", async () => {
+    const request = makeRequest({
+      runId: "run-runner",
+      executor: { agent: "codex", model: "legacy-ignored" },
+      runner: {
+        version: 1,
+        runnerId: "claude-dangerous",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "sonnet",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "dangerously_skip_permissions",
+      },
+      resumeSessionId: "acp-existing-session",
+    });
+    const { child } = await spawnSession({
+      sessionId: "session-runner",
+      request,
+      runtimeRoot: tempDir,
+      logger: silentLogger,
+      binaryOverride: "node",
+      preArgs: [FIXTURE_PATH, "--lines", "0"],
+    });
+
+    const dangerousIndex = child.spawnargs.indexOf(
+      "--dangerously-skip-permissions",
+    );
+    const resumeIndex = child.spawnargs.indexOf("--resume");
+
+    expect(dangerousIndex).toBeGreaterThan(-1);
+    expect(resumeIndex).toBeGreaterThan(-1);
+    expect(dangerousIndex).toBeLessThan(resumeIndex);
+
+    await new Promise<void>((r) => child.once("exit", () => r()));
+  });
+
   it("passes capability launch args and env to the adapter process", async () => {
     const request = makeRequest({
       runId: "run-cap",

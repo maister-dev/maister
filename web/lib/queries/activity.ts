@@ -6,8 +6,9 @@ import { desc, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
-const { executors, hitlRequests, runs, stepRuns, workspaces } = schema;
+const { hitlRequests, runs, stepRuns, workspaces } = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -58,12 +59,12 @@ export async function getActivityFeed(
       status: runs.status,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
-      agent: executors.agent,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
       branch: workspaces.branch,
       flowVersion: runs.flowVersion,
     })
     .from(runs)
-    .innerJoin(executors, eq(executors.id, runs.executorId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .where(eq(runs.projectId, projectId))
     .orderBy(desc(runs.startedAt))
@@ -74,10 +75,15 @@ export async function getActivityFeed(
 
   for (const row of runRows) {
     const at = row.endedAt ?? row.startedAt;
+    const agent = runnerAgentFromFields({
+      capabilityAgent: row.capabilityAgent,
+      runnerSnapshot: row.runnerSnapshot,
+      context: row.runId,
+    });
 
     events.push({
       id: `run-${row.runId}`,
-      agent: row.agent,
+      agent,
       title: titleForRun(row.status),
       code: row.branch,
       meta: `${row.branch} · ${row.flowVersion}`,
@@ -96,11 +102,11 @@ export async function getActivityFeed(
         endedAt: stepRuns.endedAt,
         startedAt: stepRuns.startedAt,
         branch: workspaces.branch,
-        agent: executors.agent,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
       })
       .from(stepRuns)
       .innerJoin(runs, eq(runs.id, stepRuns.runId))
-      .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .where(inArray(stepRuns.runId, runIds))
       .orderBy(desc(stepRuns.startedAt))
@@ -108,11 +114,16 @@ export async function getActivityFeed(
 
     for (const step of stepRows) {
       const at = step.endedAt ?? step.startedAt;
+      const agent = runnerAgentFromFields({
+        capabilityAgent: step.capabilityAgent,
+        runnerSnapshot: step.runnerSnapshot,
+        context: step.runId,
+      });
 
       events.push({
         id: `step-${step.id}`,
-        agent: step.agent,
-        title: `${step.agent} ${step.status.toLowerCase()} step`,
+        agent,
+        title: `${agent} ${step.status.toLowerCase()} step`,
         code: step.stepId,
         meta: `${step.branch} · ${step.stepId}`,
         time: relativeTime(at, now),
@@ -128,11 +139,12 @@ export async function getActivityFeed(
         respondedAt: hitlRequests.respondedAt,
         createdAt: hitlRequests.createdAt,
         branch: workspaces.branch,
-        agent: executors.agent,
+        runId: runs.id,
+        capabilityAgent: runs.capabilityAgent,
+        runnerSnapshot: runs.runnerSnapshot,
       })
       .from(hitlRequests)
       .innerJoin(runs, eq(runs.id, hitlRequests.runId))
-      .innerJoin(executors, eq(executors.id, runs.executorId))
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .where(inArray(hitlRequests.runId, runIds))
       .orderBy(desc(hitlRequests.createdAt))
@@ -140,13 +152,18 @@ export async function getActivityFeed(
 
     for (const hitl of hitlRows) {
       const at = hitl.respondedAt ?? hitl.createdAt;
+      const agent = runnerAgentFromFields({
+        capabilityAgent: hitl.capabilityAgent,
+        runnerSnapshot: hitl.runnerSnapshot,
+        context: hitl.runId,
+      });
 
       events.push({
         id: `hitl-${hitl.id}`,
-        agent: hitl.agent,
+        agent,
         title: hitl.respondedAt
-          ? `${hitl.agent} resolved ${hitl.kind}`
-          : `${hitl.agent} paused at ${hitl.kind}`,
+          ? `${agent} resolved ${hitl.kind}`
+          : `${agent} paused at ${hitl.kind}`,
         code: hitl.kind,
         meta: `${hitl.branch} · ${hitl.prompt}`,
         time: relativeTime(at, now),

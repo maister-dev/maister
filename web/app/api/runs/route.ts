@@ -13,12 +13,14 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const postBodySchema = z.object({
-  taskId: z.string().min(1),
-  executorOverrideId: z.string().min(1).optional(),
-  baseBranch: z.string().min(1).optional(),
-  targetBranch: z.string().min(1).optional(),
-});
+const postBodySchema = z
+  .object({
+    taskId: z.string().min(1),
+    runnerId: z.string().min(1).optional(),
+    baseBranch: z.string().min(1).optional(),
+    targetBranch: z.string().min(1).optional(),
+  })
+  .strict();
 
 function errorResponse(err: unknown): NextResponse {
   if (isMaisterError(err)) {
@@ -82,7 +84,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const result = await launchRun(
       {
         taskId: body.taskId,
-        executorOverrideId: body.executorOverrideId,
+        runnerId: body.runnerId,
         baseBranch: body.baseBranch,
         targetBranch: body.targetBranch,
       },

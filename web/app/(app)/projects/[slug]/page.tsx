@@ -129,7 +129,6 @@ export default async function ProjectBoardPage({
                 {tScratch("launch")}
               </Link>
               <NewTaskModal
-                executors={pageData.executors}
                 flows={pageData.flows}
                 labels={{
                   trigger: t("newTask"),
@@ -139,8 +138,6 @@ export default async function ProjectBoardPage({
                   promptLabel: tNewTask("promptLabel"),
                   promptPlaceholder: tNewTask("promptPlaceholder"),
                   flowLabel: tNewTask("flowLabel"),
-                  executorLabel: tNewTask("executorLabel"),
-                  executorDefault: tNewTask("executorDefault"),
                   create: tNewTask("create"),
                   cancel: tCommon("cancel"),
                 }}
@@ -155,7 +152,13 @@ export default async function ProjectBoardPage({
         <MetaCell
           dot="bg-amber"
           label={t("defaultAgent")}
-          sub={pageData.defaultExecutorRef ?? undefined}
+          sub={
+            pageData.defaultRunnerLabel
+              ? `${pageData.defaultRunnerLabel} · ${
+                  pageData.defaultRunnerSource ?? "inherited"
+                }`
+              : undefined
+          }
           value={pageData.defaultAgent ?? "—"}
         />
         <MetaCell

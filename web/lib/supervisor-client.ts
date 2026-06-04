@@ -33,12 +33,45 @@ export type SupervisorAdapterLaunchInput = {
   postArgs?: string[];
 };
 
+export type SupervisorRunnerInput = {
+  version: 1;
+  runnerId: string;
+  adapter: "claude" | "codex";
+  capabilityAgent: "claude" | "codex";
+  model: string;
+  provider:
+    | { kind: "anthropic" }
+    | {
+        kind: "anthropic_compatible";
+        baseUrl?: string;
+        authTokenEnv?: string;
+      }
+    | { kind: "openai" }
+    | {
+        kind: "openai_compatible";
+        baseUrl?: string;
+        apiKeyEnv?: string;
+        wireApi?: "responses";
+      };
+  permissionPolicy: "default" | "dangerously_skip_permissions";
+  sidecar?: {
+    id: string;
+    kind: "ccr";
+    lifecycle?: "managed" | "external";
+    configPath?: string;
+    baseUrl?: string;
+    healthcheckUrl?: string;
+    authTokenEnv?: string;
+  };
+};
+
 export type CreateSessionInput = {
   runId: string;
   projectSlug: string;
   worktreePath: string;
   stepId: string;
   executor: SupervisorExecutorInput;
+  runner?: SupervisorRunnerInput;
   resumeSessionId?: string;
   capabilityProfilePath?: string;
   adapterLaunch?: SupervisorAdapterLaunchInput;
@@ -103,11 +136,55 @@ const SupervisorHealthSchema = z
   })
   .strict();
 
+const SupervisorDiagnosticsSchema = z
+  .object({
+    status: z.literal("ready"),
+    version: z.string().min(1),
+    checkedAt: z.string().datetime(),
+    adapters: z.array(
+      z
+        .object({
+          id: z.enum(["claude", "codex"]),
+          binary: z.string().min(1),
+          available: z.boolean(),
+        })
+        .strict(),
+    ),
+    sidecars: z.array(
+      z
+        .object({
+          id: z.string().min(1),
+          kind: z.literal("ccr"),
+          state: z.enum(["idle", "starting", "ready", "failed", "stopping"]),
+        })
+        .strict(),
+    ),
+    envRefs: z.array(
+      z
+        .object({
+          name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+          present: z.boolean(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export type {
   PlatformStatus,
   PlatformUnavailableReason,
   SupervisorHealth,
 } from "@/types/platform-status";
+
+export type SupervisorDiagnostics = z.infer<typeof SupervisorDiagnosticsSchema>;
+
+export type SupervisorDiagnosticsStatus =
+  | { kind: "ready"; diagnostics: SupervisorDiagnostics }
+  | {
+      kind: "unavailable";
+      reason: PlatformUnavailableReason;
+      message: string;
+    };
 
 export type SupervisorPermissionOption = {
   optionId: string;
@@ -213,13 +290,6 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
   return new MaisterError("EXECUTOR_UNAVAILABLE", `${ctx}: ${message}`);
 }
 
-function unavailable(
-  reason: PlatformUnavailableReason,
-  message: string,
-): PlatformStatus {
-  return { kind: "unavailable", reason, message };
-}
-
 function isAbortError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -249,7 +319,11 @@ export async function checkSupervisorHealth(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
-    return unavailable(isAbortError(err) ? "timeout" : "network", message);
+    return {
+      kind: "unavailable",
+      reason: isAbortError(err) ? "timeout" : "network",
+      message,
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -257,7 +331,7 @@ export async function checkSupervisorHealth(
   if (!res.ok) {
     const message = await readErrorMessage(res, `supervisor ${res.status}`);
 
-    return unavailable("http", message);
+    return { kind: "unavailable", reason: "http", message };
   }
 
   let body: unknown;
@@ -267,19 +341,83 @@ export async function checkSupervisorHealth(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
-    return unavailable("malformed", message);
+    return { kind: "unavailable", reason: "malformed", message };
   }
 
   const parsed = SupervisorHealthSchema.safeParse(body);
 
   if (!parsed.success) {
-    return unavailable("malformed", parsed.error.message);
+    return {
+      kind: "unavailable",
+      reason: "malformed",
+      message: parsed.error.message,
+    };
   }
 
   return { kind: "ready", health: parsed.data };
 }
 
 export const getPlatformStatus = cache(checkSupervisorHealth);
+
+export async function checkSupervisorDiagnostics(
+  opts: { timeoutMs?: number } = {},
+): Promise<SupervisorDiagnosticsStatus> {
+  const url = `${baseUrl()}/diagnostics`;
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    opts.timeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
+  );
+  let res: Response;
+
+  logger.debug({ url }, "checkSupervisorDiagnostics");
+
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    return {
+      kind: "unavailable",
+      reason: isAbortError(err) ? "timeout" : "network",
+      message,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res, `supervisor ${res.status}`);
+
+    return { kind: "unavailable", reason: "http", message };
+  }
+
+  let body: unknown;
+
+  try {
+    body = await res.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    return { kind: "unavailable", reason: "malformed", message };
+  }
+
+  const parsed = SupervisorDiagnosticsSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return {
+      kind: "unavailable",
+      reason: "malformed",
+      message: parsed.error.message,
+    };
+  }
+
+  return { kind: "ready", diagnostics: parsed.data };
+}
 
 export async function createSession(
   input: CreateSessionInput,

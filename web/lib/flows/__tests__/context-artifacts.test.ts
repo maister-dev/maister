@@ -1,5 +1,4 @@
 import type {
-  Executor as ExecutorRow,
   Run as RunRow,
   Task as TaskRow,
   ArtifactInstance as ArtifactInstanceRow,
@@ -20,12 +19,12 @@ const task: Pick<TaskRow, "id" | "title" | "prompt" | "attemptNumber"> = {
 
 const run: Pick<RunRow, "id"> = { id: "run-1" };
 
-const executor: Pick<ExecutorRow, "id" | "agent" | "model" | "router"> = {
+const executor = {
   id: "exec-1",
   agent: "claude",
   model: "claude-sonnet-4-6",
   router: null,
-};
+} as const;
 
 function makeArtifactInstance(
   partial: Partial<ArtifactInstanceRow> & {

@@ -14,13 +14,13 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { installFlowPlugin } from "@/lib/flows";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
-  executors,
   flows,
   nodeAttempts,
   projects,
@@ -100,17 +100,11 @@ beforeAll(async () => {
     maisterYamlPath: join(workspaceRoot, "demo-repo", "maister.yaml"),
   });
 
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db
     .update(projects)
-    .set({ defaultExecutorId: executorId })
+    .set({ defaultRunnerId: executorId })
     .where(eq(projects.id, projectId));
 
   await setupCliFlowPlugin();
@@ -179,7 +173,9 @@ async function seedRun(args: {
     taskId,
     projectId,
     flowId: args.flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status: "Pending",
     flowVersion: "local-dev",
   });

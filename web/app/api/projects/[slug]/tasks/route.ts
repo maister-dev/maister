@@ -19,12 +19,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const postBodySchema = z.object({
-  title: z.string().min(1),
-  prompt: z.string().min(1),
-  flowId: z.string().min(1),
-  executorOverrideId: z.string().min(1).optional(),
-});
+const postBodySchema = z
+  .object({
+    title: z.string().min(1),
+    prompt: z.string().min(1),
+    flowId: z.string().min(1),
+  })
+  .strict();
 
 function httpStatusForCode(code: string): number {
   switch (code) {
@@ -109,7 +110,6 @@ export async function POST(
         title: body.title,
         prompt: body.prompt,
         flowId: body.flowId,
-        executorOverrideId: body.executorOverrideId,
       },
       { projectId: project.id, actorUserId: user.id },
     );

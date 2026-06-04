@@ -13,14 +13,25 @@ import { setTimeout as wait } from "node:timers/promises";
 
 import pino from "pino";
 
-import { SupervisorError } from "./types";
+import { isSupervisorError, SupervisorError } from "./types";
 
 export type CcrState = "idle" | "starting" | "ready" | "failed" | "stopping";
 
+export type CcrInstanceConfig = {
+  id: string;
+  lifecycle?: "managed" | "external";
+  configPath?: string;
+  baseUrl?: string;
+  healthcheckUrl?: string;
+};
+
 export interface CcrManager {
-  ensureRunning(opts?: { signal?: AbortSignal }): Promise<void>;
-  getProxyUrl(): string;
-  getState(): CcrState;
+  ensureRunning(opts?: {
+    signal?: AbortSignal;
+    instance?: CcrInstanceConfig;
+  }): Promise<void>;
+  getProxyUrl(instanceId?: string): string;
+  getState(instanceId?: string): CcrState;
   shutdown(opts?: {
     signal?: NodeJS.Signals;
     timeoutMs?: number;
@@ -455,4 +466,142 @@ export function createCcrManager(
   };
 }
 
-export const ccrManager: CcrManager = createCcrManager();
+function externalCcrManager(instance: CcrInstanceConfig, logger: Logger): CcrManager {
+  let state: CcrState = "idle";
+  const baseUrl = instance.baseUrl;
+
+  if (!baseUrl) {
+    throw new SupervisorError(
+      "EXECUTOR_UNAVAILABLE",
+      `CCR sidecar ${instance.id} is external but baseUrl is not configured`,
+    );
+  }
+  const proxyUrl = baseUrl;
+
+  async function ensureRunning(opts: { signal?: AbortSignal } = {}): Promise<void> {
+    state = "starting";
+    const healthUrl =
+      instance.healthcheckUrl ?? new URL("/health", baseUrl).toString();
+    const ctl = new AbortController();
+    const onAbort = () => ctl.abort();
+
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => ctl.abort(), 2_000);
+
+    try {
+      const res = await fetch(healthUrl, { signal: ctl.signal });
+
+      if (res.status !== 200) {
+        state = "failed";
+        throw new SupervisorError(
+          "EXECUTOR_UNAVAILABLE",
+          `CCR sidecar ${instance.id} healthcheck failed at ${healthUrl} (status=${res.status})`,
+        );
+      }
+      state = "ready";
+      logger.info({ instanceId: instance.id, healthUrl }, "ccr.external.ready");
+    } catch (err) {
+      state = "failed";
+      if (isSupervisorError(err)) throw err;
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        `CCR sidecar ${instance.id} healthcheck failed at ${healthUrl}: ${(err as Error).message}`,
+        { cause: err as Error },
+      );
+    } finally {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  function getProxyUrl(): string {
+    if (state !== "ready") {
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        `CCR sidecar ${instance.id} not ready (state=${state})`,
+      );
+    }
+
+    return proxyUrl;
+  }
+
+  return {
+    ensureRunning,
+    getProxyUrl,
+    getState: () => state,
+    shutdown: async () => {
+      state = "idle";
+    },
+  };
+}
+
+export function createKeyedCcrManager(
+  opts: CreateCcrManagerOptions = {},
+): CcrManager {
+  const logger =
+    opts.logger ??
+    pino({ name: "ccr-manager", level: process.env.LOG_LEVEL ?? "info" });
+  const defaultManager = createCcrManager({ ...opts, logger });
+  const managers = new Map<string, CcrManager>();
+
+  function managerFor(instance: CcrInstanceConfig): CcrManager {
+    const existing = managers.get(instance.id);
+
+    if (existing) return existing;
+
+    const next =
+      instance.lifecycle === "external"
+        ? externalCcrManager(instance, logger)
+        : createCcrManager({
+            ...opts,
+            logger,
+            configPath: instance.configPath ?? opts.configPath,
+          });
+
+    managers.set(instance.id, next);
+
+    return next;
+  }
+
+  return {
+    ensureRunning: async (callOpts = {}) => {
+      if (!callOpts.instance) {
+        await defaultManager.ensureRunning({ signal: callOpts.signal });
+
+        return;
+      }
+
+      await managerFor(callOpts.instance).ensureRunning({
+        signal: callOpts.signal,
+      });
+    },
+    getProxyUrl: (instanceId?: string) => {
+      if (!instanceId) return defaultManager.getProxyUrl();
+      const manager = managers.get(instanceId);
+
+      if (!manager) {
+        throw new SupervisorError(
+          "EXECUTOR_UNAVAILABLE",
+          `CCR sidecar ${instanceId} has not been started`,
+        );
+      }
+
+      return manager.getProxyUrl();
+    },
+    getState: (instanceId?: string) => {
+      if (!instanceId) return defaultManager.getState();
+
+      return managers.get(instanceId)?.getState() ?? "idle";
+    },
+    shutdown: async (shutdownOpts = {}) => {
+      await Promise.all(
+        [defaultManager, ...managers.values()].map((manager) =>
+          manager.shutdown(shutdownOpts),
+        ),
+      );
+      managers.clear();
+    },
+  };
+}
+
+export const ccrManager: CcrManager = createKeyedCcrManager();

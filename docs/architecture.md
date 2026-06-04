@@ -61,7 +61,7 @@ C4Context
   `executor.env` (env-router) or via CCR.
 - **Git host** — GitHub or self-hosted. Read-only for Flow plugin
   install. Push semantics for promoted run branches are operator-controlled.
-- **Host filesystem** — parent repos at `executors[].repo_path`,
+- **Host filesystem** — parent repos at `projects.repo_path`,
   per-run worktrees at `.maister/<slug>/runs/<run-id>/`, system Flow
   cache at `~/.maister/flows/<id>@<tag>/`.
 
@@ -80,7 +80,7 @@ C4Container
     System_Boundary(maister, "MAIster") {
         Container(web, "Web tier", "Next.js 16 / React 19 / HeroUI v3", "UI + Route Handlers + server actions + Drizzle access. Bridges SSE to the browser.")
         Container(supervisor, "Supervisor daemon", "Node 24 / Fastify / pino", "Owns ACP sessions, spawns adapter binaries, heartbeat, cost accounting.")
-        ContainerDb(pg, "Database", "Postgres 16", "Projects, executors, flows, tasks, runs, workspaces, HITL requests.")
+        ContainerDb(pg, "Database", "Postgres 16", "Projects, ACP runners, flows, tasks, runs, workspaces, HITL requests.")
         Container_Boundary(adapters, "Per-session spawned adapters") {
             Container(claude_acp, "claude-agent-acp", "Node binary", "ACP adapter wrapping @anthropic-ai/claude-agent-sdk.")
             Container(codex_acp, "codex-acp", "Node binary", "ACP adapter bundling @openai/codex.")
@@ -118,7 +118,7 @@ C4Container
 | --------- | ------ | ---- | ------- |
 | Web tier | Implemented | Next.js 16 + React 19 + HeroUI v3 + Tailwind 4 | Route Handlers for run launch, HITL response, and durable run SSE; Drizzle access; Flow runner. |
 | Supervisor daemon | Implemented | Node 24 + Fastify + pino + Zod | Owns ACP sessions, spawns adapters, heartbeat watcher, cost accounting, permission deferreds, run event log. |
-| Database | Implemented | Postgres 16 (SQLite dev) | Persistent state for projects, executors, flows, tasks, runs, workspaces, step runs, HITL. |
+| Database | Implemented | Postgres 16 (SQLite dev) | Persistent state for projects, ACP runners, router sidecars, flows, tasks, runs, workspaces, step runs, HITL. |
 | `claude-agent-acp` | Implemented | `@agentclientprotocol/claude-agent-acp@0.37.0` | ACP adapter wrapping Claude Agent SDK. One process per session. |
 | `codex-acp` | Implemented | `@agentclientprotocol/codex-acp@0.0.44` | ACP adapter bundling Codex. One process per session. |
 | CCR daemon | Implemented | `@musistudio/claude-code-router@2.0.0` (MIT) | Multi-provider Anthropic-compatible proxy. Supervisor-owned: lazy `ensureRunning()` on first `router=ccr` spawn, graceful shutdown on supervisor SIGTERM/SIGINT, one daemon per supervisor process. |
@@ -258,11 +258,11 @@ These components are implemented unless the status column says otherwise:
 | --------- | -------------- | ------- | ------ |
 | `app/api/projects/route.ts` | Route Handler | Register projects from a local path or repo source, slug derivation, slug + repo_path uniqueness, Flow plugin install on register, owner membership. | Implemented |
 | `lib/flows` | `web/lib/flows.ts` | Flow plugin loader: `git clone --branch <tag>`, symlink into project subtree, manifest validation. | Implemented |
-| `lib/executors` | `web/lib/executors.ts` | Pure `resolveExecutor()` 5-level chain (launcher → task → flow override → project default → flow recommended) + `upsertExecutorsFromConfig()` helper (writes `executors` + `flows.executor_override_id` in one transaction). CCR env construction lives in `supervisor/src/spawn.ts`, not here. | Implemented |
+| `lib/acp-runners` | `web/lib/acp-runners/*` | Platform runner catalog, sidecar references, usage checks, Flow remaps, and `resolveRunner()` precedence (launch override → step target → project Flow default → platform Flow default → project default → platform default). | Implemented |
 | `lib/worktree` | `web/lib/worktree.ts` | `git worktree add/remove/list` wrapper, project-scoped paths. | Implemented |
 | `lib/scheduler` | `web/lib/scheduler.ts` | Global concurrency cap, Pending queue, auto-promote on slot free. | Implemented |
 | `app/api/projects/[slug]/tasks/route.ts` | Route Handler | Create tasks → `Backlog`. | Designed |
-| `app/api/runs/route.ts` | Route Handler | Precondition + executor resolution (delegates to `lib/executors:resolveExecutor`, logs `resolvedFromTier`) + worktree add + supervisor `POST /sessions`. | Implemented |
+| `app/api/runs/route.ts` | Route Handler | Precondition + ACP runner resolution (delegates to `lib/acp-runners/resolve`, snapshots runner identity) + worktree add + supervisor `POST /sessions`. | Implemented |
 | `app/api/runs/[runId]/stream/route.ts` | Route Handler | SSE bridge tailing `run.events.jsonl`. | Implemented |
 | `app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts` | Route Handler | Two-phase HITL response, permission delivery, atomic input artifact, runner wake-up. | Implemented |
 | `app/api/runs/[id]/activity/route.ts` | Route Handler | Bump `keepalive_until` by 30 min while user on the page. | Implemented |
@@ -310,8 +310,8 @@ sequenceDiagram
     participant LLM as Anthropic API
 
     U->>W: Click Launch on Backlog task
-    W->>DB: Load project, task, executors, flow row + manifest
-    W->>W: resolveExecutor() — 5-level chain → {executorId, tier}
+    W->>DB: Load project, task, platform runners, flow row + manifest
+    W->>W: resolveRunner() — precedence chain → {runnerId, runnerResolutionTier}
     W->>FS: git worktree add under worktree root
     W->>DB: Insert workspace + run(status=Pending), task -> InFlight
     W->>DB: tryStartRun claims a concurrency slot

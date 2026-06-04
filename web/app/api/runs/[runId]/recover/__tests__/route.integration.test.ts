@@ -39,10 +39,10 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
-  executors,
   flowRevisions,
   flows,
   projectMembers,
@@ -122,7 +122,9 @@ async function seedRun(): Promise<string> {
     projectId,
     flowId,
     flowRevisionId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     runKind: "flow",
     status: "Crashed",
     acpSessionId: "acp-secret-handle",
@@ -180,13 +182,7 @@ beforeAll(async () => {
     repoPath: "/repos/recover",
     maisterYamlPath: "/repos/recover/maister.yaml",
   });
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(flows).values({
     id: flowId,
     projectId,

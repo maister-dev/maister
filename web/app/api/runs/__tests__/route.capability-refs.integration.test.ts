@@ -31,6 +31,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -159,16 +160,10 @@ async function seedProject(
     enablementState: "Enabled",
     trustStatus: "trusted_by_policy",
   });
-  await db.insert(schema.executors).values({
-    id: `exec-${id}`,
-    projectId: id,
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(`exec-${id}`, "claude"));
   await db
     .update(schema.projects)
-    .set({ defaultExecutorId: `exec-${id}` })
+    .set({ defaultRunnerId: `exec-${id}` })
     .where(eq(schema.projects.id, id));
   await db.insert(schema.projectMembers).values({
     id: `pm-${id}`,
@@ -202,6 +197,24 @@ async function seedProject(
   }
 }
 
+async function seedPlatformDefaultRunner(): Promise<void> {
+  await db.insert(schema.platformAcpRunners).values({
+    id: "claude-default",
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "claude-sonnet-4-6",
+    provider: { kind: "anthropic" },
+    permissionPolicy: "default",
+    readinessStatus: "Ready",
+    readinessReasons: [],
+    enabled: true,
+  });
+  await db.insert(schema.platformRuntimeSettings).values({
+    id: "singleton",
+    defaultRunnerId: "claude-default",
+  });
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("runs_capref_test")
@@ -220,6 +233,7 @@ beforeAll(async () => {
     accountStatus: "active",
     passwordHash: "x",
   });
+  await seedPlatformDefaultRunner();
 
   await seedProject(
     "proj-unknown-skill",

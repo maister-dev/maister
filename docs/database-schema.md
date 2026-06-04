@@ -9,7 +9,7 @@ ultra-light dev only — never as a production target.
 
 ## Tables
 
-The implemented schema contains auth, project, capability, run, workspace,
+The implemented schema contains auth, platform runner, project, capability, run, workspace,
 graph-runner, scratch-run, and HITL tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
 `scratch_runs`, `scratch_messages`, `scratch_attachments`, and
@@ -28,14 +28,18 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `sessions`                    | Auth.js session tokens.                                                                                                                                                                                                                                                                                                    | `users.id`                                                                 |
 | `verification_tokens`         | Auth.js email-verification tokens. PK `(identifier, token)`.                                                                                                                                                                                                                                                               | (root)                                                                     |
 | `project_members`             | Per-project role assignments. UNIQUE `(project_id, user_id)`.                                                                                                                                                                                                                                                              | `projects.id`, `users.id`                                                  |
-| `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE.                                                                                                                                                                                                                                                                        | (root)                                                                     |
-| `executors`                   | Project-scoped agent identities `{agent, model, env?, router?}`.                                                                                                                                                                                                                                                           | `projects.id`                                                              |
+| `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE. Can reference a platform default runner override.                                                                                                                                                                                                                       | (root)                                                                     |
+| `platform_router_sidecars`    | Platform-managed router sidecars such as CCR. Stores typed config refs, lifecycle, readiness, and no raw secrets.                                                                                                                                                                                                           | (root)                                                                     |
+| `platform_acp_runners`        | Platform ACP runner catalog. Stores adapter id, derived capability agent, model, provider shape, permission policy, readiness, sidecar ref, and enablement.                                                                                                                                                                  | optional `platform_router_sidecars.id`                                      |
+| `platform_runtime_settings`   | Singleton platform runtime row with the required default runner id.                                                                                                                                                                                                                                                         | `platform_acp_runners.id`                                                  |
 | `flows`                       | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
+| `project_flow_runner_defaults` | Per-project Flow attachment runner default. `runner_id = null` means inherit project default.                                                                                                                                                                                                                              | `projects.id`, `flows.id`, optional `platform_acp_runners.id`              |
+| `flow_runner_remaps`          | Required remap records for Flow AI-coding step runner ids that do not directly match a platform runner during platform Flow load or project Flow attachment.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
 | `capability_records`          | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings.                                                                                                                                                                                                     | `projects.id`                                                              |
 | `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
-| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`.                                                                                                                                                                                                | `tasks.id`, `projects.id`, `flows.id`, `executors.id`                      |
+| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. New launches store `runner_id`, `runner_resolution_tier`, `capability_agent`, and `runner_snapshot` for historical display/resume.                                                               | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
 | `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session.                                                                                                                                                                                                                 | `runs.id`, `projects.id`, `users.id`, optional `tasks.id`                  |
 | `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
@@ -187,7 +191,7 @@ as implicit `owner` of every project.
   repoPath (UNIQUE), repoUrl?, provider?,
   mainBranch ('main'), branchPrefix ('maister/'),
   maisterYamlPath,
-  defaultExecutorId,             // FK validated app-side (deferred)
+  defaultRunnerId?,              // platform runner override; null = inherit
   promotionMode?,                // M18 (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
                                  //   source for the launch-time override chain (§3.4)
@@ -204,22 +208,48 @@ at register time (clone source / existing `origin`, and auto-detected host tag)
 per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots);
 `repoPath` is the resolved on-disk dir, not read from `maister.yaml`.
 
-## `executors`
+## Platform ACP runner tables
 
 ```ts
-{
-  id, projectId,
-  executorRefId,                 // the id from maister.yaml executors[]
-  agent: 'claude' | 'codex',
+platform_router_sidecars {
+  id,
+  kind: 'ccr',
+  lifecycle: 'managed' | 'external',
+  commandPreset?,
+  configPath?,
+  baseUrl?,
+  healthcheckUrl?,
+  authTokenRef?,                 // env ref name only, never raw token
+  readinessStatus: 'Unknown' | 'Ready' | 'NotReady',
+  readinessReasons: string[],
+  enabled,
+  createdAt, updatedAt
+}
+
+platform_acp_runners {
+  id,
+  adapter: 'claude' | 'codex',
+  capabilityAgent: 'claude' | 'codex',
   model,
-  env (jsonb)?,                  // env-router vars
-  router: 'ccr'?,                // optional CCR multi-provider routing
-  createdAt
+  provider,                      // typed jsonb provider shape
+  permissionPolicy: 'default' | 'dangerously_skip_permissions',
+  sidecarId?,
+  readinessStatus,
+  readinessReasons,
+  enabled,
+  createdAt, updatedAt
+}
+
+platform_runtime_settings {
+  id: 'singleton',
+  defaultRunnerId,               // required FK -> platform_acp_runners.id
+  updatedAt
 }
 ```
 
-UNIQUE constraint `(projectId, executorRefId)` — each Flow's referenced
-executor id resolves within its project's namespace, never cross-project.
+`capabilityAgent` is code-owned adapter-registry identity, snapshotted on
+launch. `provider` and sidecar fields store secret refs only. A runner or
+sidecar usage-reference service guards disable/delete actions.
 
 ## `project_flow_roles`
 
@@ -298,10 +328,6 @@ project and preserves audit labels if the linked user is later removed.
                                  //   the ENABLED revision; refreshed on
                                  //   enable/upgrade/rollback)
   schemaVersion,
-  recommendedExecutorId?,        // nullable, app-side FK to executors
-  executorOverrideId?,           // nullable FK -> executors.id,
-                                 //   flow-level override (PRESERVED across
-                                 //   enable/rollback)
   enabledRevisionId?,            // M10 FK -> flow_revisions.id (set null);
                                  //   the project's currently enabled revision
   enablementState,               // M10 enum: Installed | Enabled |
@@ -315,10 +341,10 @@ project and preserves audit labels if the linked user is later removed.
 
 UNIQUE `(projectId, flowRefId)`.
 
-M10 (ADR-021) repurposed `flows` as the project **enablement pointer**: the
-`source/version/revision/installedPath/manifest/schemaVersion/
-recommendedExecutorId` columns are now a denormalized cache of the _enabled_
-revision; runtime byte authority is `flow_revisions` via `runs.flow_revision_id`.
+M10 (ADR-021) repurposed `flows` as the project **enablement pointer**:
+`source/version/revision/installedPath/manifest/schemaVersion` are a
+denormalized cache of the _enabled_ revision; runtime byte authority is
+`flow_revisions` via `runs.flow_revision_id`.
 
 ## `flow_revisions`
 
@@ -389,7 +415,6 @@ project/kind/selectability.
 {
   id, projectId, title, prompt,
   flowId,                        // FK -> flows.id
-  executorOverrideId?,           // FK -> executors.id, optional
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
   stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
   attemptNumber,                 // monotonic per task, starts at 1
@@ -417,7 +442,10 @@ queries.
   taskId?,                       // nullable for scratch runs
   projectId,
   flowId?,                       // nullable for scratch runs
-  executorId,
+  runnerId,
+  runnerResolutionTier,
+  capabilityAgent,
+  runnerSnapshot,
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
@@ -1164,7 +1192,6 @@ users
 
 projects
   ├── project_members    (FK projectId, cascade)
-  ├── executors          (FK projectId, cascade)
   ├── flows              (FK projectId, cascade)
   ├── capability_records (FK projectId, cascade)
   ├── capability_imports (FK projectId, cascade)      ← M14 Implemented
@@ -1199,9 +1226,8 @@ projects
   └── workspaces         (FK projectId, cascade)  ← also direct
 ```
 
-`runs.flowId` and `runs.executorId` also cascade — when a project deletion
-cascades to drop flows + executors, the runs that reference them go with
-them in the same statement. The integration test
+`runs.flowId` also cascades — when a project deletion cascades to drop flows,
+the runs that reference them go with them in the same statement. The integration test
 `web/lib/db/__tests__/schema.integration.test.ts` enforces the full
 chain end-to-end against testcontainers Postgres.
 

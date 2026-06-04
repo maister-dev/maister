@@ -19,6 +19,7 @@
  * createSession spy args.
  */
 import type { NodeAttempt } from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
@@ -67,6 +68,7 @@ afterAll(async () => {
 type Seeded = {
   runId: string;
   projectId: string;
+  executorId: string;
   runtimeRoot: string;
   worktreePath: string;
 };
@@ -88,13 +90,7 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -117,7 +113,9 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
   });
@@ -130,7 +128,7 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     parentRepoPath: `/tmp/${slug}`,
   });
 
-  return { runId, projectId, runtimeRoot, worktreePath };
+  return { runId, projectId, executorId, runtimeRoot, worktreePath };
 }
 
 // Seed the capability_records the node opts into via its settings, carrying
@@ -336,8 +334,9 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
     expect(plan!.instructedClasses).toContain("my-skill");
     expect(plan!.refusedClasses).toEqual([]);
 
-    // M1 regression: the materialized profile.json records the executor REF id
-    // (the maister.yaml `executors[].id`), NOT the `executors`-table PK/UUID.
+    // ACP runner migration: profile.json records the durable resolved launch
+    // identity. This legacy fixture has no runner_id, so the fallback identity
+    // is the executor row id.
     const profileJson = JSON.parse(
       await readFile(
         join(
@@ -352,7 +351,7 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
       ),
     );
 
-    expect(profileJson.executor.executorRefId).toBe("claude-sonnet");
+    expect(profileJson.executor.id).toBe(seeded.executorId);
   }, 60_000);
 
   it("captures the run-start resolved-revision snapshot in the plan (T4.4)", async () => {

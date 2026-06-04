@@ -63,6 +63,15 @@ type PendingHitlRow = {
   schema: unknown;
   respondedAt: Date | null;
 };
+type PublicRunnerSnapshot = {
+  id: string;
+  adapter: string;
+  capabilityAgent: string;
+  model: string;
+  providerKind: string;
+  permissionPolicy: string;
+  sidecarId: string | null;
+};
 
 function httpStatusForCode(code: string): number {
   switch (code) {
@@ -195,6 +204,42 @@ function publicHitlSchema(row: PendingHitlRow): unknown {
   };
 }
 
+function publicRunnerSnapshot(raw: unknown): PublicRunnerSnapshot | null {
+  if (raw === null || typeof raw !== "object") return null;
+
+  const snapshot = raw as {
+    id?: unknown;
+    adapter?: unknown;
+    capabilityAgent?: unknown;
+    model?: unknown;
+    providerKind?: unknown;
+    permissionPolicy?: unknown;
+    sidecarId?: unknown;
+  };
+
+  if (
+    typeof snapshot.id !== "string" ||
+    typeof snapshot.adapter !== "string" ||
+    typeof snapshot.capabilityAgent !== "string" ||
+    typeof snapshot.model !== "string" ||
+    typeof snapshot.providerKind !== "string" ||
+    typeof snapshot.permissionPolicy !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: snapshot.id,
+    adapter: snapshot.adapter,
+    capabilityAgent: snapshot.capabilityAgent,
+    model: snapshot.model,
+    providerKind: snapshot.providerKind,
+    permissionPolicy: snapshot.permissionPolicy,
+    sidecarId:
+      typeof snapshot.sidecarId === "string" ? snapshot.sidecarId : null,
+  };
+}
+
 export async function GET(
   _req: Request,
   { params }: RouteParams,
@@ -245,7 +290,10 @@ export async function GET(
       run: {
         id: run.id,
         projectId: run.projectId,
-        executorId: run.executorId,
+        runnerId: run.runnerId,
+        runnerResolutionTier: run.runnerResolutionTier,
+        capabilityAgent: run.capabilityAgent,
+        runnerSnapshot: publicRunnerSnapshot(run.runnerSnapshot),
         createdByUserId: run.createdByUserId ?? scratch.createdByUserId ?? null,
         createdByDisplayName: creator?.name ?? creator?.email ?? null,
         status: run.status,

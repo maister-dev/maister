@@ -3,6 +3,9 @@ import type { Logger } from "pino";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 
 import { randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 
 import { z, ZodError } from "zod";
 
@@ -20,6 +23,7 @@ import {
   SupervisorError,
   type SessionEvent,
   type SessionStatus,
+  type SupervisorDiagnosticsResponse,
   type SupervisorHealthResponse,
 } from "./types";
 
@@ -57,6 +61,10 @@ const SESSION_STATUSES: readonly SessionStatus[] = [
   "exited",
   "crashed",
 ];
+const ADAPTER_BINARIES = {
+  claude: "claude-agent-acp",
+  codex: "codex-acp",
+} as const;
 
 export type SpawnOverrides = {
   binary?: string;
@@ -91,6 +99,24 @@ function countSessionsByStatus(
   }
 
   return counts;
+}
+
+async function isBinaryAvailable(binary: string): Promise<boolean> {
+  const pathEntries = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((entry) => entry.length > 0);
+
+  for (const entry of pathEntries) {
+    try {
+      await access(join(entry, binary), fsConstants.X_OK);
+
+      return true;
+    } catch {
+      /* keep scanning PATH */
+    }
+  }
+
+  return false;
 }
 
 export function registerRoutes(opts: RegisterRoutesOptions): void {
@@ -129,6 +155,37 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       uptimeMs: Math.max(0, Date.now() - SUPERVISOR_STARTED_AT_MS),
       checkedAt: new Date().toISOString(),
       sessions: countSessionsByStatus(registry.list()),
+    };
+
+    reply.status(200).send(body);
+  });
+
+  app.get("/diagnostics", async (_req, reply) => {
+    const ccr = opts.spawnOverrides?.ccrManager;
+    const body: SupervisorDiagnosticsResponse = {
+      status: "ready",
+      version: SUPERVISOR_VERSION,
+      checkedAt: new Date().toISOString(),
+      adapters: await Promise.all(
+        Object.entries(ADAPTER_BINARIES).map(async ([id, binary]) => ({
+          id: id as keyof typeof ADAPTER_BINARIES,
+          binary,
+          available: await isBinaryAvailable(binary),
+        })),
+      ),
+      sidecars: [
+        {
+          id: "ccr-default",
+          kind: "ccr",
+          state: ccr?.getState() ?? "idle",
+        },
+      ],
+      envRefs: [
+        {
+          name: "MAISTER_CCR_AUTH_TOKEN",
+          present: Boolean(process.env.MAISTER_CCR_AUTH_TOKEN),
+        },
+      ],
     };
 
     reply.status(200).send(body);

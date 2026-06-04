@@ -38,12 +38,12 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { gcAgeDays } from "@/lib/instance-config";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
-  executors,
   flowRevisions,
   flows,
   projects,
@@ -98,13 +98,7 @@ beforeAll(async () => {
     maisterYamlPath: `${projectRepoPath}/maister.yaml`,
   });
 
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(flows).values({
     id: flowId,
@@ -176,7 +170,9 @@ async function seed(opts: SeedOpts = {}): Promise<{
     projectId,
     flowId,
     flowRevisionId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status: opts.runStatus ?? "Abandoned",
     flowVersion: "v1",
     startedAt: new Date(Date.now() - 30 * 86_400_000),

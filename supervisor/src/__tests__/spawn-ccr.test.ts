@@ -165,6 +165,61 @@ describe("spawnSession — CCR env injection precedence", () => {
     expect(capturedEnv?.ANTHROPIC_AUTH_TOKEN).toBe("fallback-token-XYZ");
   });
 
+  it("runner sidecar intent starts and reads the keyed CCR instance", async () => {
+    process.env.MAISTER_CCR_AUTH_TOKEN = "fallback-token-XYZ";
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+
+    mockSpawn.mockImplementation((_bin, _args, opts) => {
+      capturedEnv = opts?.env;
+
+      return makeFakeChild();
+    });
+
+    const ccr = makeCcr();
+    const { logger } = captureLogger();
+
+    await spawnSession({
+      sessionId: "s-keyed",
+      request: makeRequest({
+        executor: {
+          agent: "claude",
+          model: "legacy",
+        },
+        runner: {
+          version: 1,
+          runnerId: "claude-ccr",
+          adapter: "claude",
+          capabilityAgent: "claude",
+          model: "glm",
+          provider: { kind: "anthropic_compatible" },
+          permissionPolicy: "default",
+          sidecar: {
+            id: "ccr-glm",
+            kind: "ccr",
+            lifecycle: "managed",
+            configPath: "/tmp/ccr-glm.json",
+          },
+        },
+      }),
+      runtimeRoot,
+      logger,
+      binaryOverride: "node",
+      ccrManager: ccr,
+    });
+
+    expect(ccr.ensureRunning).toHaveBeenCalledWith({
+      instance: {
+        id: "ccr-glm",
+        lifecycle: "managed",
+        configPath: "/tmp/ccr-glm.json",
+        baseUrl: undefined,
+        healthcheckUrl: undefined,
+      },
+    });
+    expect(ccr.getProxyUrl).toHaveBeenCalledWith("ccr-glm");
+    expect(capturedEnv?.ANTHROPIC_BASE_URL).toBe("http://ccr-proxy.local:3456");
+  });
+
   it("router=ccr + executor.env.ANTHROPIC_BASE_URL=custom → executor.env wins on collision", async () => {
     process.env.MAISTER_CCR_AUTH_TOKEN = "fallback";
     let capturedEnv: NodeJS.ProcessEnv | undefined;

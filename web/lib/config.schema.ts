@@ -20,19 +20,12 @@ export const capabilityRefIdSchema = z
     "capabilityRefId must not be '.', '..' or contain '..'",
   );
 
-export const executorSchema = z.object({
-  id: z.string().min(1),
-  agent: z.enum(["claude", "codex"]),
-  model: z.string().min(1),
-  env: z.record(z.string(), z.string()).optional(),
-  router: z.enum(["ccr"]).optional(),
-});
-
 export const flowEntrySchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
   version: z.string().min(1),
-  executor_override: z.string().min(1).optional(),
+  runner: z.string().min(1).optional(),
+  executor_override: z.never().optional(),
 });
 
 export const flowRoleSchema = z.object({
@@ -178,6 +171,7 @@ export const projectBlockSchema = z.object({
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
   promotion: projectPromotionSchema.optional(),
+  default_runner: z.string().min(1).optional(),
 });
 
 // A git-pinned capability package declared in `maister.yaml capability_imports[]`.
@@ -194,8 +188,8 @@ export const capabilityImportEntrySchema = z.object({
 export const maisterYamlV2Schema = z.object({
   schemaVersion: z.literal(2),
   project: projectBlockSchema,
-  executors: z.array(executorSchema).min(1),
-  default_executor: z.string().min(1),
+  executors: z.never().optional(),
+  default_executor: z.never().optional(),
   capabilities: maisterCapabilitiesSchema,
   flow_roles: z.array(flowRoleSchema).default([]),
   capability_imports: z.array(capabilityImportEntrySchema).default([]),
@@ -459,10 +453,61 @@ const settingsLimitsSchema = z
 
 const thinkingEffortSchema = z.enum(["low", "medium", "high"]);
 const permissionModeSchema = z.enum(["ask", "allow", "deny"]);
+const runnerPermissionPolicySchema = z.enum([
+  "default",
+  "dangerously_skip_permissions",
+]);
+
+const runnerProviderRequirementSchema = z
+  .object({
+    kind: z.enum([
+      "anthropic",
+      "anthropic_compatible",
+      "openai",
+      "openai_compatible",
+    ]),
+    base_url: z.string().url().optional(),
+    wire_api: z.enum(["responses"]).optional(),
+    requires_auth_token: z.boolean().optional(),
+    requires_api_key: z.boolean().optional(),
+  })
+  .strict();
+
+const runnerSidecarRequirementSchema = z
+  .object({
+    kind: z.literal("ccr"),
+    optional: z.boolean().default(false),
+  })
+  .strict();
+
+const runnerProfileCapabilitiesSchema = z
+  .object({
+    mcps: z.array(z.string().min(1)).optional(),
+    tools: agentToolsSchema.optional(),
+    skills: z.array(z.string().min(1)).optional(),
+    restrictions: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export const flowRunnerProfileSchema = z
+  .object({
+    runner_type: z.literal("acp").default("acp"),
+    capability_agent: capabilityAgentSchema,
+    adapter: capabilityAgentSchema.optional(),
+    model: z.string().min(1).optional(),
+    model_family: z.string().min(1).optional(),
+    provider: runnerProviderRequirementSchema.optional(),
+    permission_policy: runnerPermissionPolicySchema.default("default"),
+    sidecar: runnerSidecarRequirementSchema.optional(),
+    capabilities: runnerProfileCapabilitiesSchema.optional(),
+  })
+  .strict();
 
 export const aiCodingSettingsSchema = z
   .object({
-    executors: z.array(z.string().min(1)).optional(),
+    runner_type: z.literal("acp").default("acp"),
+    runner: z.string().min(1).optional(),
+    executors: z.never().optional(),
     model: z.string().min(1).optional(),
     thinkingEffort: thinkingEffortSchema.optional(),
     mcps: z.array(z.string().min(1)).optional(),
@@ -586,7 +631,10 @@ export const flowYamlV1Schema = z
   .object({
     schemaVersion: z.literal(1),
     name: z.string().min(1),
-    recommended_executor: z.string().min(1).optional(),
+    recommended_executor: z.never().optional(),
+    runner_profiles: z
+      .record(capabilityRefIdSchema, flowRunnerProfileSchema)
+      .optional(),
     setup: z.string().min(1).optional(),
     // Package contract (M10): recorded + displayed as opaque metadata; only
     // `compat` and `schemaVersion` are enforced today. Semantic validation of
@@ -627,8 +675,8 @@ export const formSchemaSchema = z.object({
 });
 
 export type MaisterYamlV2 = z.infer<typeof maisterYamlV2Schema>;
-export type ExecutorConfig = z.infer<typeof executorSchema>;
 export type FlowEntry = z.infer<typeof flowEntrySchema>;
+export type FlowRunnerProfile = z.infer<typeof flowRunnerProfileSchema>;
 export type CapabilityImportEntry = z.infer<typeof capabilityImportEntrySchema>;
 export type CapabilityAgent = z.infer<typeof capabilityAgentSchema>;
 export type CapabilitySource = z.infer<typeof capabilitySourceSchema>;

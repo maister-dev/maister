@@ -13,7 +13,13 @@ export type FlowFixtureKind =
 
 const VALID_FLOW_YAML_V1 = `schemaVersion: 1
 name: Test Flow
-recommended_executor: claude-default
+runner_profiles:
+  claude-default:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
 steps:
   - id: plan
     type: agent
@@ -23,7 +29,14 @@ steps:
 
 const VALID_FLOW_YAML_V11 = `schemaVersion: 1
 name: Test Flow v1.1
-recommended_executor: claude-glm
+runner_profiles:
+  claude-glm:
+    capability_agent: claude
+    adapter: claude
+    model: glm-5.1
+    provider:
+      kind: anthropic_compatible
+      requires_auth_token: true
 steps:
   - id: plan
     type: agent

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ type FakeDb = {
   select: (fields?: unknown) => {
     from: (table: unknown) => {
       where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+      then: PromiseLike<Record<string, unknown>[]>["then"];
     };
   };
 };
@@ -20,27 +22,51 @@ const state: {
   selectCalls: number;
   memberships: Record<string, unknown>[];
   visibleProjects: Record<string, unknown>[];
-  executors: Record<string, unknown>[];
+  runners: Record<string, unknown>[];
+  runtimeSettings: Record<string, unknown>[];
 } = {
   selectCalls: 0,
   memberships: [],
   visibleProjects: [],
-  executors: [],
+  runners: [],
+  runtimeSettings: [],
 };
+
+function rowsForTable(table: unknown): Record<string, unknown>[] {
+  const tableName = getTableName(table as never);
+
+  if (tableName === "project_members") return state.memberships;
+  if (tableName === "projects") return state.visibleProjects;
+  if (tableName === "platform_acp_runners") return state.runners;
+  if (tableName === "platform_runtime_settings") return state.runtimeSettings;
+
+  return [];
+}
 
 const fakeDb: FakeDb = {
   select: () => ({
-    from: () => ({
-      where: async () => {
+    from: (table: unknown) => {
+      const nextRows = async () => {
         state.selectCalls += 1;
 
-        if (state.selectCalls === 1) return state.memberships;
-        if (state.selectCalls === 2) return state.visibleProjects;
-        if (state.selectCalls === 3) return state.executors;
+        return rowsForTable(table);
+      };
+      const query = {
+        where: async () => nextRows(),
+        then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
+          onfulfilled?:
+            | ((
+                value: Record<string, unknown>[],
+              ) => TResult1 | PromiseLike<TResult1>)
+            | null,
+          onrejected?:
+            | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+            | null,
+        ) => nextRows().then(onfulfilled, onrejected),
+      };
 
-        return [];
-      },
-    }),
+      return query;
+    },
   }),
 };
 
@@ -62,6 +88,7 @@ const projectA = {
   repoPath: "/repos/alpha",
   mainBranch: "main",
   branchPrefix: "maister/",
+  defaultRunnerId: "codex-high",
   archivedAt: null,
 };
 const projectB = {
@@ -71,6 +98,7 @@ const projectB = {
   repoPath: "/repos/beta",
   mainBranch: "trunk",
   branchPrefix: "maister/",
+  defaultRunnerId: null,
   archivedAt: null,
 };
 
@@ -78,22 +106,31 @@ beforeEach(async () => {
   state.selectCalls = 0;
   state.memberships = [{ projectId: projectA.id, role: "member" }];
   state.visibleProjects = [projectA];
-  state.executors = [
+  state.runners = [
     {
-      id: "33333333-3333-4333-8333-333333333333",
-      executorRefId: "codex-default",
-      agent: "codex",
-      model: "gpt-5",
-      router: null,
+      id: "claude-code",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic_compatible", authToken: "env:SECRET_TOKEN" },
+      permissionPolicy: "default",
+      sidecarId: null,
+      readinessStatus: "Ready",
+      enabled: true,
     },
     {
-      id: "44444444-4444-4444-8444-444444444444",
-      executorRefId: "codex-high",
-      agent: "codex",
-      model: "gpt-5-high",
-      router: "ccr",
+      id: "codex-high",
+      adapter: "codex",
+      capabilityAgent: "codex",
+      model: "gpt-5",
+      provider: { kind: "openai_compatible", apiKey: "env:OPENAI_SECRET" },
+      permissionPolicy: "default",
+      sidecarId: null,
+      readinessStatus: "Ready",
+      enabled: true,
     },
   ];
+  state.runtimeSettings = [{ id: "singleton", defaultRunnerId: "claude-code" }];
   mocks.requireActiveSession.mockResolvedValue({
     id: "user-1",
     role: "member",
@@ -161,7 +198,8 @@ describe("GET /api/scratch-runs/launch-options", () => {
     const body = (await res.json()) as {
       projects: Array<{ id: string }>;
       branches: string[];
-      executors: Array<{ id: string; displayLabel: string }>;
+      defaultRunnerId: string;
+      runners: Array<{ id: string; displayLabel: string }>;
       workModes: Array<{ id: string; selectedByDefault: boolean }>;
       reasoningEfforts: Array<{ id: string; selectedByDefault: boolean }>;
       capabilities: {
@@ -174,11 +212,17 @@ describe("GET /api/scratch-runs/launch-options", () => {
     expect(res.status).toBe(200);
     expect(body.projects.map((project) => project.id)).toEqual([projectA.id]);
     expect(body.branches).toEqual(["main", "release"]);
-    expect(body.executors.map((executor) => executor.id)).toEqual([
-      "33333333-3333-4333-8333-333333333333",
-      "44444444-4444-4444-8444-444444444444",
+    expect(body.defaultRunnerId).toBe("codex-high");
+    expect(body.runners.map((runner) => runner.id)).toEqual([
+      "claude-code",
+      "codex-high",
     ]);
-    expect(body.executors[1]?.displayLabel).toContain("codex-high");
+    expect(body.runners[1]?.displayLabel).toContain("codex-high");
+    expect("executors" in body).toBe(false);
+    expect("defaultExecutorId" in body).toBe(false);
+    expect(JSON.stringify(body)).not.toMatch(
+      /authToken|apiKey|SECRET_TOKEN|OPENAI_SECRET/,
+    );
     expect(body.workModes.map((mode) => mode.id)).toEqual([
       "auto",
       "plan_first",

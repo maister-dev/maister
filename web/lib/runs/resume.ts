@@ -18,14 +18,15 @@ import {
 } from "@/lib/errors";
 import {
   createSession,
-  type SupervisorExecutorInput,
 } from "@/lib/supervisor-client";
+import {
+  mergeRunnerAdapterLaunch,
+  runnerExecutorInput,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executors, runs, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -75,8 +76,8 @@ export async function resumeRun(
       projectId: runs.projectId,
       status: runs.status,
       acpSessionId: runs.acpSessionId,
-      executorId: runs.executorId,
       currentStepId: runs.currentStepId,
+      runnerSnapshot: runs.runnerSnapshot,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -123,29 +124,15 @@ export async function resumeRun(
     };
   }
 
-  const execRows = await db
-    .select({
-      agent: executors.agent,
-      model: executors.model,
-      env: executors.env,
-      router: executors.router,
-    })
-    .from(executors)
-    .where(eq(executors.id, runRow.executorId));
-  const exec = execRows[0];
-
-  if (!exec) {
-    log.error(
-      { runId, executorId: runRow.executorId },
-      "resumeRun: executor row missing",
-    );
-    await failResumedRun(runId, "executor-missing", { db });
+  if (!runRow.runnerSnapshot) {
+    log.error({ runId }, "resumeRun: runner snapshot missing");
+    await failResumedRun(runId, "runner-snapshot-missing", { db });
 
     return {
       ok: false,
       code: "CHECKPOINT",
       retryable: false,
-      message: "executor row missing",
+      message: "runner snapshot missing",
     };
   }
 
@@ -191,13 +178,6 @@ export async function resumeRun(
     };
   }
 
-  const executor: SupervisorExecutorInput = {
-    agent: exec.agent,
-    model: exec.model,
-    ...(exec.env ? { env: exec.env } : {}),
-    ...(exec.router ? { router: exec.router } : {}),
-  };
-
   // [FIX] M8 review finding #3: atomic claim BEFORE spawning the
   // supervisor session. Two concurrent /respond retries serialize on
   // the markResumed CAS — exactly one wins. The loser sees the row in
@@ -226,8 +206,10 @@ export async function resumeRun(
       projectSlug,
       worktreePath: ws.worktreePath,
       stepId: runRow.currentStepId ?? "resume",
-      executor,
+      executor: runnerExecutorInput(runRow.runnerSnapshot),
+      runner: runnerSupervisorInput({ snapshot: runRow.runnerSnapshot }),
       resumeSessionId: runRow.acpSessionId,
+      adapterLaunch: mergeRunnerAdapterLaunch(runRow.runnerSnapshot),
     });
 
     if (!result.acpSessionId) {

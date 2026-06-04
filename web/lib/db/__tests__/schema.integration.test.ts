@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // `@/lib/db/schema` clash with the test-file's own drizzle copy. Runtime
 // works; we cast to `any` to silence the type-only conflict.
 import * as fullSchema from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { setEnforcementSnapshot } from "@/lib/flows/graph/ledger";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -62,13 +63,7 @@ async function seedChain() {
     maisterYamlPath: "/tmp/m.yaml",
   });
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(schema.flows).values({
     id: flowId,
@@ -94,7 +89,9 @@ async function seedChain() {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
   });
 
@@ -139,13 +136,7 @@ async function seedScratchParents() {
     maisterYamlPath: "/tmp/m.yaml",
   });
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "codex-default",
-    agent: "codex",
-    model: "gpt-5-codex",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "codex"));
 
   return { projectId, executorId, userId };
 }
@@ -167,7 +158,7 @@ describe("schema round-trip", () => {
     const ids = await seedChain();
 
     expect(await countWhere("projects", "id", ids.projectId)).toBe(1);
-    expect(await countWhere("executors", "id", ids.executorId)).toBe(1);
+    expect(await countWhere("platform_acp_runners", "id", ids.executorId)).toBe(1);
     expect(await countWhere("flows", "id", ids.flowId)).toBe(1);
     expect(await countWhere("tasks", "id", ids.taskId)).toBe(1);
     expect(await countWhere("runs", "id", ids.runId)).toBe(1);
@@ -188,7 +179,9 @@ describe("schema round-trip", () => {
       id: runId,
       runKind: "scratch",
       projectId,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "Running",
       flowVersion: "scratch",
       flowRevision: "manual",
@@ -308,17 +301,13 @@ describe("UNIQUE constraints", () => {
     ).rejects.toThrow();
   });
 
-  it("rejects duplicate (executors.project_id, executor_ref_id)", async () => {
+  it("rejects duplicate platform ACP runner id", async () => {
     const ids = await seedChain();
 
     await expect(
-      db.insert(schema.executors).values({
-        id: newId(),
-        projectId: ids.projectId,
-        executorRefId: "claude-sonnet",
-        agent: "claude",
-        model: "claude-sonnet-4-6",
-      }),
+      db
+        .insert(schema.platformAcpRunners)
+        .values(testPlatformRunnerRow(ids.executorId, "claude")),
     ).rejects.toThrow();
   });
 
@@ -453,7 +442,7 @@ describe("onDelete cascade", () => {
     expect(await countWhere("runs", "id", ids.runId)).toBe(0);
     expect(await countWhere("workspaces", "id", ids.workspaceId)).toBe(0);
     expect(await countWhere("hitl_requests", "id", ids.hitlId)).toBe(0);
-    expect(await countWhere("executors", "id", ids.executorId)).toBe(0);
+    expect(await countWhere("platform_acp_runners", "id", ids.executorId)).toBe(0);
     expect(await countWhere("flows", "id", ids.flowId)).toBe(0);
   });
 });

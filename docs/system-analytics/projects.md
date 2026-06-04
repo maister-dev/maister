@@ -7,7 +7,7 @@ operates on. Registration resolves the project source — a git URL to
 clone OR an existing local directory ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
 [`git-integration.md`](git-integration.md)) — then loads `maister.yaml`
 v2, installs the Flow plugins it references, and creates rows in
-`projects`, `executors`, and `flows`. The domain boundary covers project
+`projects` and `flows` with platform runner references. The domain boundary covers project
 lifecycle (register, archive) and the immediate fanout that lifecycle
 triggers.
 
@@ -15,8 +15,9 @@ triggers.
 
 - **Project** — registered repo. Persisted as `projects` row. See
   [`../db/projects-domain.md`](../db/projects-domain.md).
-- **Executor** — agent identity (`{agent, model, env?, router?}`)
-  declared in `maister.yaml` `executors[]`. See [`executors.md`](executors.md).
+- **Platform ACP runner reference** — optional project or Flow binding to a
+  platform runner id. Runner definitions live in platform runtime settings, not
+  inside project config. See [`executors.md`](executors.md).
 - **Flow package enablement** — project pointer to the package revision new
   runs should use. Current implementation installs git-cloned plugins under
   the MAIster flow cache and symlinks them into the project's `.maister/`
@@ -196,19 +197,18 @@ flowchart TD
   ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)).
 - Archived projects (`archived_at IS NOT NULL`) keep their `repo_path`
   reserved against new registrations per ADR-019.
-- Project registration is atomic: `projects` + all `executors[]` + all
-  `flows[]` insert in one transaction, or nothing does. The optional `git init`
+- Project registration is atomic: `projects` + Flow attachments + project/Flow
+  runner bindings insert in one transaction, or nothing does. The optional `git init`
   of a non-git local dir runs only after the manifest validates and flows
   install, and its `.git` is reverted on any failure — a failed registration
   never mutates the operator's directory.
 - Concurrent `POST /api/projects` calls are serialized by a process-wide lock
   (`withRegistrationLock`) so two registrations cannot race on the same derived
   clone target (single-host control plane).
-- Every `default_executor` and every `flows[].executor_override` resolves
-  to an entry in `executors[].id` at validation time; refuse with `CONFIG`
-  otherwise.
-- `executors[].id` and `flows[].id` are unique within their parent
-  `maister.yaml`; duplicates refused with `CONFIG`.
+- Every `project.default_runner` and every `flows[].runner` resolves to a
+  platform ACP runner id at validation time; refuse with `CONFIG` otherwise.
+- `flows[].id` values are unique within `maister.yaml`; duplicates refused with
+  `CONFIG`.
 - Flow plugin install is idempotent on `{id}@{tag}` — cache hit at
   `~/.maister/flows/<id>@<tag>/` short-circuits the clone.
 - **(Planned M10)** Project registration or `maister.yaml` refresh discovers
@@ -226,10 +226,9 @@ flowchart TD
 
 - **`maister.yaml` schema mismatch** → `MaisterError("CONFIG", ...)`.
   See [`../error-taxonomy.md`](../error-taxonomy.md).
-- **Duplicate executor id within `executors[]`** → `CONFIG` with the
-  duplicated id in the message.
-- **`default_executor` not in `executors[].id`** → `CONFIG`.
-- **`flows[].executor_override` not in `executors[].id`** → `CONFIG`.
+- **`project.default_runner` not in platform runners** → `CONFIG`.
+- **`flows[].runner` not in platform runners** → `CONFIG` or a required Flow
+  reconfiguration step when the Flow package carries a missing recommended ACP.
 - **Clone fails (`git clone`)** → `PRECONDITION` (409). The dir MAIster
   created is removed; the URL is credential-redacted in the error.
 - **Clone `target` path already exists** → `PRECONDITION` (409); supply a

@@ -17,7 +17,7 @@ const MAISTER_CRON_TOKEN =
   process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m18-.*|m19-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch)\.spec\.ts$/;
+  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m18-.*|m19-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch|platform-acp-runners)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -39,7 +39,7 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
       testIgnore: [/.*\.setup\.ts$/, AUTHED_SPEC, /live-.*\.spec\.ts$/],
     },
-    // M11a/M11b/M11c + portfolio/launch/registration/admin/scratch specs run as
+    // M11a/M11b/M11c + portfolio/launch/registration/admin/scratch/platform specs run as
     // the seeded admin against the dedicated e2e DB, each against its OWN
     // per-spec seeded project/run/worktree fixture.
     {

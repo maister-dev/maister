@@ -1,6 +1,12 @@
 schemaVersion: 1
 name: aif
-recommended_executor: claude-sonnet
+runner_profiles:
+  claude-code:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
 setup: ./setup.sh
 # Package contract (M10, ADR-021). Flow graph v1 (M11a, ADR-026): this flow
 # uses the `nodes[]` graph form, so it MUST declare engine_min >= 1.1.0.

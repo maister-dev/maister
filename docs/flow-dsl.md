@@ -64,7 +64,8 @@ nodes:
     # capability refs and materializes NOTHING — ref resolution + per-session
     # materialization are M14 (Implemented).
     settings:
-      executors: [codex-fast, claude-strong]
+      runner_type: acp
+      runner: claude-code
       thinkingEffort: high
       mcps: [github, filesystem]
       skills: [aif-implement, aif-best-practices]
@@ -206,7 +207,7 @@ performs no materialization**: it neither resolves capability references nor
 writes any per-session settings file (those are M14, below).
 
 Node-specific settings are intentionally first-class product configuration:
-AI-coding nodes constrain executors, agent definitions, MCP servers, tools,
+AI-coding nodes constrain ACP runner targets, agent definitions, MCP servers, tools,
 skills, thinking effort, permissions, workspace access, and limits. Human nodes
 constrain project roles, allowed decisions, manual takeover, further tracks,
 SLA/staleness hints, and return requirements. CLI/check/judge nodes constrain
@@ -597,10 +598,11 @@ Context paths available inside templates:
 | `run.id`                         | `runs.id`                                  |
 | `run.attemptNumber`              | mirrors `task.attemptNumber` until run-level attempts land |
 | `run.projectSlug`                | `projects.slug`                            |
-| `executor.id`                    | `executors.id`                             |
-| `executor.agent`                 | `claude \| codex`                          |
-| `executor.model`                 | `executors.model`                          |
-| `executor.router`                | `ccr` if set, else undefined               |
+| `runner.id`                      | Resolved platform ACP runner id            |
+| `runner.capabilityAgent`         | Adapter-registry identity, e.g. `claude` or `codex` |
+| `runner.model`                   | Snapshotted runner model label             |
+| `runner.providerKind`            | Snapshotted provider kind                  |
+| `runner.resolutionTier`          | Launch override, step target, project Flow, platform Flow, project default, or platform default |
 | `steps.<id>.output`              | `node_attempts.stdout` (highest attempt), `step_runs.stdout` fallback, truncated to 8 KiB |
 | `steps.<id>.vars.<name>`         | `node_attempts.vars` jsonb (highest attempt), `step_runs.vars` fallback |
 | `steps.<id>.exitCode`            | `node_attempts.exit_code` (highest attempt), `step_runs.exit_code` fallback |

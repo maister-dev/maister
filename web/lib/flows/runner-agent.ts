@@ -32,6 +32,7 @@ import {
   type PromptResult,
   type SupervisorEvent,
   type SupervisorExecutorInput,
+  type SupervisorRunnerInput,
 } from "@/lib/supervisor-client";
 
 const log = pino({
@@ -67,6 +68,7 @@ export type RunAgentStepCtx = {
     env?: Record<string, string>;
     router?: "ccr";
   };
+  runner?: SupervisorRunnerInput;
   context: FlowContext;
   sessionState: AcpSessionState;
   capabilityProfilePath?: string;
@@ -521,6 +523,7 @@ async function runNewSession(
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
       executor: executorToSupervisorInput(ctx.executor),
+      runner: ctx.runner,
       capabilityProfilePath: ctx.capabilityProfilePath,
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
@@ -637,6 +640,7 @@ async function runSlashInExisting(
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
       executor: executorToSupervisorInput(ctx.executor),
+      runner: ctx.runner,
       capabilityProfilePath: ctx.capabilityProfilePath,
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,

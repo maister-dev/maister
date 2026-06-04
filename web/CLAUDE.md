@@ -223,9 +223,8 @@ NeedsInputIdle | Review | Crashed`. A task card in Backlog shows a
   board lists pending HITL requests across all flows of the project.
   Done/Abandoned in a filter tab beside the board.
 - `app/projects/[slug]/tasks/new/page.tsx` (or modal) → **Task creation**:
-  title + prompt + Flow dropdown (from `maister.yaml` `flows[]`) + optional
-  executor override dropdown (from `executors[]` — defaults to flow's
-  `executor_override` or project's `default_executor`).
+  title + prompt + Flow dropdown (from `maister.yaml` `flows[]`). Runner
+  selection happens at launch time from the platform ACP runner catalog.
 - `app/runs/[id]/page.tsx` → **Run detail**: status, live logs, HITL form
   panel, diff view, action buttons (mark ready, merge, abandon, recover).
   Worktree context shown (project + branch + worktree path + executor).
@@ -238,9 +237,9 @@ Route Handlers under `app/api/`:
   plugins from git tags, persist row)
 - `DELETE /api/projects/[slug]` (soft-archive — sets `archived_at`)
 - `POST /api/projects/[slug]/tasks` (create task → status `Backlog`)
-- `POST /api/runs` (precondition checks, executor resolution, `git worktree
-add`, supervisor `POST /sessions` — body carries `taskId`, `flowId`,
-  optional `executor_id_override`; `projectId` derived from task)
+- `POST /api/runs` (precondition checks, ACP runner resolution, `git worktree
+add`, supervisor `POST /sessions` — body carries `taskId` and optional
+  `runnerId`; `projectId` derived from task)
 - `GET /api/runs/[id]/stream` (SSE; `lastEventId` reconnect; tails the
   per-step log file populated by `supervisor-client`)
 - `POST /api/runs/[id]/hitl-response` (atomic write `input-<step-id>.json`
@@ -274,16 +273,17 @@ CHECKPOINT`).
 - `lib/atomic.ts` — `atomicWriteJson` (tmp + rename).
 - `lib/worktree.ts` — `git worktree add|remove|list` wrapper, project-scoped
   paths.
-- `lib/config.ts` — `maister.yaml` v2 loader (project + executors[] +
-  flows[] with version pins), `schemaVersion` check, zod-validated, slug
-  derivation, dup-id check, unknown-executor-reference check. Also loads
-  Flow plugin manifests (`flow.yaml`).
+- `lib/config.ts` — `maister.yaml` v2 loader (project + flows[] with version
+  pins and optional project runner refs), `schemaVersion` check,
+  zod-validated, slug derivation. Also loads Flow plugin manifests
+  (`flow.yaml`) with portable `runner_profiles`.
 - `lib/flows.ts` — Flow plugin loader: `git clone --branch <tag>` into
   `~/.maister/flows/<id>@<tag>/` system cache, symlink into
   `.maister/<slug>/flows/<id>/`, manifest validation, version-pin enforcement.
-- `lib/executors.ts` — executor registry CRUD, override-resolution logic
-  (run launcher → project override → project default → flow recommended),
-  CCR env construction for `router: ccr`.
+- `lib/acp-runners/*` — platform runner catalog, sidecar readiness, usage
+  references, Flow runner remaps, and launch-time runner resolution
+  (launch override → Flow step target → project Flow default → platform Flow
+  default → project default → platform default).
 - `lib/supervisor-client.ts` — HTTP+SSE client to `../supervisor/`:
   `POST /sessions`, `DELETE /sessions/:id`, `GET /sessions/:id/stream`,
   `POST /sessions/:id/input` (deliver HITL response when worker is live).
@@ -293,8 +293,9 @@ CHECKPOINT`).
   Flow plugin install on register.
 - `lib/scheduler.ts` — global concurrency cap (`MAISTER_MAX_CONCURRENT_RUNS`),
   Pending queue, auto-promote on slot free.
-- `lib/db/` — Drizzle schema (`projects`, `tasks`, `runs`, `workspaces`,
-  `hitl_requests`, `flows`, `executors`) + client.
+- `lib/db/` — Drizzle schema (`projects`, `platform_acp_runners`,
+  `platform_router_sidecars`, `flows`, `flow_revisions`, `tasks`, `runs`,
+  `workspaces`, `hitl_requests`) + client.
 - `lib/reconcile.ts` — startup hook: per-project `runs` vs `git worktree
 list` vs supervisor's live session set; orphan `Running` with no live
   ACP session and no checkpoint → `Crashed`. `NeedsInputIdle` with valid
@@ -309,17 +310,18 @@ Drizzle schema sketch (server-only, `lib/db/schema.ts`):
 ```ts
 // projects
 { id, slug (unique), name, repo_path (unique), main_branch, branch_prefix,
-  maister_yaml_path, default_executor_id, created_at, archived_at? }
+  maister_yaml_path, default_runner_id?, created_at, archived_at? }
 
-// executors                              // project-scoped (no cross-project sharing in POC)
-{ id, project_id, agent: 'claude' | 'codex', model, env (jsonb)?,
-  router?: 'ccr', created_at }
+// platform_acp_runners                   // platform-scoped launch catalog
+{ id, adapter: 'claude' | 'codex', capability_agent: 'claude' | 'codex',
+  model, provider (jsonb), permission_policy, sidecar_id?,
+  readiness_status, enabled, created_at, updated_at }
 
 // flows                                  // installed Flow plugins per project
 { id, project_id, flow_id, source_url, version_tag,                 // tag-pinned
   install_path,                            // resolved symlink target
   manifest (jsonb),                        // parsed flow.yaml (steps, etc.)
-  executor_override_id?,                   // FK → executors
+  enabled_revision_id?,
   installed_at }
 
 // tasks
@@ -331,7 +333,8 @@ Drizzle schema sketch (server-only, `lib/db/schema.ts`):
   created_at, updated_at }
 
 // runs                                    // task : runs is 1 : N (retry / ralph-loop)
-{ id, project_id, task_id, flow_id, workspace_id, executor_id,
+{ id, project_id, task_id?, flow_id?, workspace_id, runner_id?,
+  runner_resolution_tier?, capability_agent?, runner_snapshot?,
   acp_session_id?,                         // resume handle for --resume
   flow_version_tag,                        // snapshot at launch time
   status:

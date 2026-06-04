@@ -20,6 +20,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -57,6 +58,7 @@ const checkSupervisorHealthMock = vi.fn<() => Promise<PlatformStatus>>(
 );
 const addWorktreeMock = vi.fn(async (_input: unknown) => undefined);
 const removeWorktreeMock = vi.fn(async (_input: unknown) => undefined);
+const runFlowMock = vi.fn(async (_runId: string) => undefined);
 
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   const actual =
@@ -73,6 +75,9 @@ vi.mock("@/lib/worktree", () => ({
   removeWorktree: (input: unknown) => removeWorktreeMock(input),
   listBranches: async () => ["main"],
   resolveBaseCommit: async () => "0000000000000000000000000000000000000000",
+}));
+vi.mock("@/lib/flows/runner", () => ({
+  runFlow: (runId: string) => runFlowMock(runId),
 }));
 
 let POST: typeof import("@/app/api/runs/route").POST;
@@ -132,8 +137,8 @@ const instructManifest = {
   ],
 };
 
-// settings.executors names a ref absent from the project's executors[] → AC-4
-// node-level validation must REFUSE the launch with CONFIG (400), no side-effect.
+// Retired settings.executors metadata must not remain launch source-of-truth;
+// runner resolution now uses platform ACP runners and runner/remap fields.
 const unknownExecutorManifest = {
   schemaVersion: 1,
   name: "UnknownExec",
@@ -180,6 +185,20 @@ const missingFlowRoleManifest = {
   ],
 };
 
+const stepTargetManifest = {
+  schemaVersion: 1,
+  name: "StepTarget",
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "/aif-implement" },
+      transitions: { success: "done" },
+      settings: { runner_type: "acp", runner: "flow-claude" },
+    },
+  ],
+};
+
 async function seedProjectWithManifest(
   id: string,
   slug: string,
@@ -222,16 +241,10 @@ async function seedProjectWithManifest(
     enablementState: "Enabled",
     trustStatus: opts.trustStatus ?? "trusted_by_policy",
   });
-  await db.insert(schema.executors).values({
-    id: `exec-${id}`,
-    projectId: id,
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(`exec-${id}`, "claude"));
   await db
     .update(schema.projects)
-    .set({ defaultExecutorId: `exec-${id}` })
+    .set({ defaultRunnerId: `exec-${id}` })
     .where(eq(schema.projects.id, id));
   await db.insert(schema.projectMembers).values({
     id: `pm-${id}`,
@@ -265,6 +278,34 @@ beforeAll(async () => {
     role: "member",
     accountStatus: "active",
     passwordHash: "x",
+  });
+  await db.insert(schema.platformAcpRunners).values([
+    {
+      id: "claude-platform",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+      permissionPolicy: "default",
+      readinessStatus: "Ready",
+      readinessReasons: [],
+      enabled: true,
+    },
+    {
+      id: "codex-ready",
+      adapter: "codex",
+      capabilityAgent: "codex",
+      model: "gpt-5",
+      provider: { kind: "openai" },
+      permissionPolicy: "default",
+      readinessStatus: "Ready",
+      readinessReasons: [],
+      enabled: true,
+    },
+  ]);
+  await db.insert(schema.platformRuntimeSettings).values({
+    id: "singleton",
+    defaultRunnerId: "claude-platform",
   });
 
   await seedProjectWithManifest("proj-strict", "proj-strict", strictManifest);
@@ -313,6 +354,34 @@ beforeAll(async () => {
       trustStatus: "untrusted",
     },
   );
+  await seedProjectWithManifest(
+    "proj-remap-mapped",
+    "proj-remap-mapped",
+    stepTargetManifest,
+  );
+  await db.insert(schema.flowRunnerRemaps).values({
+    id: "remap-proj-remap-mapped",
+    projectId: "proj-remap-mapped",
+    flowRevisionId: "rev-proj-remap-mapped",
+    stepId: "implement",
+    sourceRunnerId: "flow-claude",
+    mappedRunnerId: "codex-ready",
+    status: "Mapped",
+  });
+  await seedProjectWithManifest(
+    "proj-remap-pending",
+    "proj-remap-pending",
+    stepTargetManifest,
+  );
+  await db.insert(schema.flowRunnerRemaps).values({
+    id: "remap-proj-remap-pending",
+    projectId: "proj-remap-pending",
+    flowRevisionId: "rev-proj-remap-pending",
+    stepId: "implement",
+    sourceRunnerId: "flow-claude",
+    mappedRunnerId: null,
+    status: "Pending",
+  });
 
   ({ POST } = await import("@/app/api/runs/route"));
 }, 180_000);
@@ -327,6 +396,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     checkSupervisorHealthMock.mockResolvedValue(readyPlatformStatus());
     addWorktreeMock.mockClear();
     removeWorktreeMock.mockClear();
+    runFlowMock.mockClear();
     sessionRef.value = { user: { id: "u-member", role: "member" } };
   });
 
@@ -405,33 +475,77 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     expect(task[0].status).toBe("InFlight");
   });
 
-  it("refuses a node whose settings.executors names an executor absent from the project with 400 CONFIG and NO side-effect (AC-4)", async () => {
-    const res = await POST(request("task-proj-badexec"));
+  it("persists a mapped Flow step runner as stepTarget, not the platform default", async () => {
+    const res = await POST(request("task-proj-remap-mapped"));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
 
+    const runRows = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-remap-mapped"));
+
+    expect(runRows).toHaveLength(1);
+    expect(runRows[0].runnerId).toBe("codex-ready");
+    expect(runRows[0].runnerResolutionTier).toBe("stepTarget");
+    expect(runRows[0].capabilityAgent).toBe("codex");
+        expect(runRows[0].runnerSnapshot).toMatchObject({
+      id: "codex-ready",
+      capabilityAgent: "codex",
+    });
+  });
+
+  it("rejects a pending Flow runner remap before worktree/run/workspace side effects", async () => {
+    const res = await POST(request("task-proj-remap-pending"));
     const body = await res.json();
 
+    expect(res.status).toBe(400);
     expect(body.code).toBe("CONFIG");
-    expect(body.message).toContain("ghost");
+    expect(body.message).toContain("requires ACP runner remapping");
     expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const runRows = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-remap-pending"));
+    const workspaceRows = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.projectId, "proj-remap-pending"));
+    const taskRows = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, "task-proj-remap-pending"));
+
+    expect(runRows).toHaveLength(0);
+    expect(workspaceRows).toHaveLength(0);
+    expect(taskRows[0].status).toBe("Backlog");
+  });
+
+  it("ignores retired settings.executors refs during platform-runner launch resolution", async () => {
+    const res = await POST(request("task-proj-badexec"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
 
     const runs = await db
       .select()
       .from(schema.runs)
       .where(eq(schema.runs.taskId, "task-proj-badexec"));
 
-    expect(runs).toHaveLength(0);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].runnerId).toBe("claude-platform");
 
     const task = await db
       .select()
       .from(schema.tasks)
       .where(eq(schema.tasks.id, "task-proj-badexec"));
 
-    expect(task[0].status).toBe("Backlog");
+    expect(task[0].status).toBe("InFlight");
   });
 
-  it("does NOT false-positive a settings.executors ref that resolves against the project executors[] (202)", async () => {
+  it("launches when retired settings.executors happens to match a legacy project executor", async () => {
     const res = await POST(request("task-proj-goodexec"));
 
     expect(res.status).toBe(202);

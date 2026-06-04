@@ -38,29 +38,15 @@ project:
   repo_path: /repos/myapp
   main_branch: main
   branch_prefix: maister/
-executors:
-  - id: claude-sonnet
-    agent: claude
-    model: claude-sonnet-4-6
-  - id: claude-glm
-    agent: claude
-    model: glm-4.6
-    env:
-      ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-      ANTHROPIC_AUTH_TOKEN: fake
-  - id: claude-ccr
-    agent: claude
-    model: glm-4.6
-    router: ccr
-default_executor: claude-sonnet
+  default_runner: claude-code
 flows:
   - id: bugfix
     source: github.com/x/y
     version: v1.0.0
+    runner: claude-code
   - id: feature
     source: github.com/x/z
     version: v0.1.0
-    executor_override: claude-ccr
 `;
 
 describe("loadProjectConfig", () => {
@@ -69,7 +55,7 @@ describe("loadProjectConfig", () => {
     const cfg = await loadProjectConfig(path);
 
     expect(cfg.project.name).toBe("myapp");
-    expect(cfg.executors).toHaveLength(3);
+    expect(cfg.project.default_runner).toBe("claude-code");
     expect(cfg.flows).toHaveLength(2);
     expect(cfg.capabilities.mcps).toEqual([]);
     expect(cfg.flow_roles).toEqual([]);
@@ -102,13 +88,10 @@ describe("loadProjectConfig", () => {
     });
   });
 
-  it("rejects unknown default_executor", async () => {
+  it("rejects legacy default_executor", async () => {
     const path = await writeFixture(
       "bad-default.yaml",
-      goldenYaml.replace(
-        "default_executor: claude-sonnet",
-        "default_executor: nonexistent",
-      ),
+      `${goldenYaml}default_executor: claude-sonnet\n`,
     );
 
     let caught: unknown;
@@ -125,12 +108,12 @@ describe("loadProjectConfig", () => {
     );
   });
 
-  it("rejects unknown executor_override on a flow", async () => {
+  it("rejects legacy executor_override on a flow", async () => {
     const path = await writeFixture(
       "bad-override.yaml",
       goldenYaml.replace(
-        "executor_override: claude-ccr",
-        "executor_override: missing",
+        "    version: v0.1.0",
+        "    version: v0.1.0\n    executor_override: claude-ccr",
       ),
     );
 
@@ -139,12 +122,11 @@ describe("loadProjectConfig", () => {
     });
   });
 
-  it("rejects duplicate executor IDs", async () => {
-    const dup = goldenYaml.replace(
-      "  - id: claude-glm\n    agent: claude\n    model: glm-4.6",
-      "  - id: claude-sonnet\n    agent: claude\n    model: glm-4.6",
+  it("rejects legacy executors[]", async () => {
+    const path = await writeFixture(
+      "legacy-executors.yaml",
+      `${goldenYaml}executors:\n  - id: claude-sonnet\n    agent: claude\n    model: claude-sonnet-4-6\n`,
     );
-    const path = await writeFixture("dup.yaml", dup);
 
     await expect(loadProjectConfig(path)).rejects.toMatchObject({
       code: "CONFIG",
@@ -256,7 +238,13 @@ describe("loadPlatformMcpCapabilities", () => {
 const goldenFlowYaml = `
 schemaVersion: 1
 name: Bugfix
-recommended_executor: claude-sonnet
+runner_profiles:
+  claude-code:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
 steps:
   - id: plan
     type: agent
@@ -280,6 +268,17 @@ describe("loadFlowManifest", () => {
 
     expect(manifest.name).toBe("Bugfix");
     expect(manifest.steps).toHaveLength(3);
+  });
+
+  it("rejects legacy recommended_executor", async () => {
+    const path = await writeFixture(
+      "legacy-recommended.yaml",
+      `${goldenFlowYaml}recommended_executor: claude-sonnet\n`,
+    );
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
   });
 
   it("rejects on_reject.goto_step referencing missing step", async () => {
@@ -577,36 +576,11 @@ describe("loadFlowManifest — graph (nodes[])", () => {
 // and SHOULD name the offending node id + field (asserted on code, not message
 // substring, per the skill-context named-code rule).
 //
-// SEAM ASSUMPTION (settings.executors[] cross-ref):
-//   loadFlowManifest(flowYamlPath) today takes ONLY a path — it has NO access to
-//   the project's executor ref set. The frozen spec (flow-settings.md) says
-//   settings.executors[] is "validated against the project's executor ref set
-//   (the same set the M6 chain uses)". The realistic seam is therefore an
-//   OPTIONAL executor-ref-set parameter threaded into loadFlowManifest /
-//   validateGraphManifest, applied only when the caller supplies it (launch /
-//   project-load know the set; the install-time loadManifestOrThrow does not, so
-//   it stays a pure shape+graph validation). The implementor MUST add this
-//   optional param; this test passes it as a second argument. If the implementor
-//   chooses a different signature (e.g. an options object), update the call here
-//   to match — the contract under test is "unknown executor ref -> CONFIG when
-//   the set is supplied", not the exact arg shape.
-
-async function expectGraphConfigError(
-  path: string,
-  // The optional executor-ref-set seam (see SEAM ASSUMPTION above).
-  executorRefIds?: string[],
-): Promise<void> {
+async function expectGraphConfigError(path: string): Promise<void> {
   let caught: unknown;
 
   try {
-    // M11c seam: loadFlowManifest takes an optional { executorIds } options
-    // object (the launch/project-load callers supply the project's executor set;
-    // install-time callers omit it). The contract under test is "unknown
-    // executor ref -> CONFIG when the set is supplied".
-    await loadFlowManifest(
-      path,
-      executorRefIds ? { executorIds: executorRefIds } : undefined,
-    );
+    await loadFlowManifest(path);
   } catch (e) {
     caught = e;
   }
@@ -616,46 +590,20 @@ async function expectGraphConfigError(
 }
 
 describe("loadFlowManifest — node settings validation (M11c)", () => {
-  it("rejects settings.executors referencing an unknown executor ref", async () => {
-    const path = await writeGraph("graph-bad-executor-ref.yaml", (m) => {
+  it("rejects legacy settings.executors", async () => {
+    const path = await writeGraph("graph-legacy-executor-ref.yaml", (m) => {
       m.nodes[0].settings = { executors: ["ghost-executor"] };
     });
 
-    // executor set is supplied (launch-time seam); "ghost-executor" is absent.
-    await expectGraphConfigError(path, ["claude-sonnet", "codex-default"]);
+    await expectGraphConfigError(path);
   });
 
-  it("names the node id + field when an executor ref is unknown", async () => {
-    const path = await writeGraph("graph-bad-executor-ref-named.yaml", (m) => {
-      m.nodes[0].settings = { executors: ["ghost-executor"] };
+  it("accepts settings.runner as a portable ACP runner target", async () => {
+    const path = await writeGraph("graph-good-runner-target.yaml", (m) => {
+      m.nodes[0].settings = { runner: "claude-code" };
     });
 
-    let caught: unknown;
-
-    try {
-      await loadFlowManifest(path, { executorIds: ["claude-sonnet"] });
-    } catch (e) {
-      caught = e;
-    }
-
-    expect(isMaisterError(caught)).toBe(true);
-    const msg = caught instanceof Error ? caught.message : "";
-
-    // names the offending node id and the field/ref (not a brittle full match).
-    expect(msg).toContain("implement");
-    expect(msg).toContain("ghost-executor");
-  });
-
-  it("accepts settings.executors that are all in the supplied executor set", async () => {
-    const path = await writeGraph("graph-good-executor-ref.yaml", (m) => {
-      m.nodes[0].settings = { executors: ["claude-sonnet"] };
-    });
-
-    await expect(
-      loadFlowManifest(path, {
-        executorIds: ["claude-sonnet", "codex-default"],
-      }),
-    ).resolves.toBeTruthy();
+    await expect(loadFlowManifest(path)).resolves.toBeTruthy();
   });
 
   it("rejects a human decision listed in settings.decisions but absent from transitions", async () => {

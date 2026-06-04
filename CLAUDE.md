@@ -149,7 +149,7 @@ across all projects, not per-project. Runs above the cap go to `Pending` and
 auto-start when a slot frees. UI shows queue position. Hard cap (no override
 from `maister.yaml`) — keeps RAM/token spend bounded on a single host.
 
-### 5. Multi-executor via ACP (claude + codex)
+### 5. Platform ACP runners (claude + codex)
 
 ACP standardizes the agent surface via vendor-neutral
 `@agentclientprotocol/sdk`. Today both `claude` and `codex` are
@@ -161,24 +161,28 @@ required, spawned by `supervisor/` via per-agent adapter binaries:
   `@openai/codex`)
 
 Cursor and other ACP-capable agents land in Phase 2 once the registry
-shape is proven. The executor identity is
-`{agent, model, env?, router?}` persisted in the `executors` table and
-referenced from `runs.executor_id`.
+shape is proven. Runner identity is platform-scoped in
+`platform_acp_runners`: `{adapter, capability_agent, model, provider,
+permission_policy, sidecar?}`. Launches snapshot the effective runner into
+`runs.runner_snapshot`; resume/recover reads the snapshot, not a mutable
+catalog row.
 
 Model routing:
-- **env-router** (default, no extra dep) — set `ANTHROPIC_BASE_URL`
-  + `ANTHROPIC_AUTH_TOKEN` in `executor.env` for any
-  Anthropic-API-compatible provider (z.ai GLM, OpenRouter, anyscale).
-- **CCR** (`router: ccr`, optional) — for intelligent multi-provider
-  routing within one session, via
+- **provider config** — `anthropic`, `anthropic_compatible`, `openai`, and
+  `openai_compatible` providers are runner config. Secret values are stored as
+  `env:NAME` references only.
+- **CCR sidecar** — for intelligent multi-provider Claude routing within one
+  session, via
   `@musistudio/claude-code-router@2.0.0` (MIT).
 
-Per-step executor override resolution (highest priority wins):
-1. Run launcher override (set at Launch click, optional).
-2. Task override (`tasks.executor_override_id`).
-3. Project per-flow override in `maister.yaml` `flows[<id>].executor_override`.
-4. Project `default_executor`.
-5. Flow's `recommended_executor` in `flow.yaml` (optional, may be unset).
+Runner resolution (highest priority wins):
+1. Launch override (set at Launch click, optional).
+2. Flow step `settings.runner` target, remapped when imported if the platform
+   does not have that runner id.
+3. Project Flow default (`project_flow_runner_defaults`).
+4. Platform Flow default (`flow_revisions.default_runner_id`).
+5. Project default (`projects.default_runner_id`).
+6. Platform default (`platform_runtime_settings.default_runner_id`).
 
 ### 6. Flow Engine v2: plugin packaging + step DSL
 
@@ -197,26 +201,15 @@ project:
   repo_path: /repos/myapp
   default_branch: main
   branch_prefix: maister/
-executors:
-  - id: claude-sonnet
-    agent: claude
-    model: claude-sonnet-4-6
-  - id: claude-glm-ccr
-    agent: claude
-    model: glm-4.6
-    router: ccr
-  - id: codex-default
-    agent: codex
-    model: gpt-5-codex
-default_executor: claude-sonnet
+  default_runner: claude-code
 flows:
   - id: bugfix
     source: github.com/<org>/maister-flow-bugfix
     version: v1.2.3                    # tag-pinned (lock semantics)
+    runner: claude-code                # optional project binding
   - id: spec-kit
     source: github.com/<org>/maister-flow-spec-kit
     version: v0.4.1
-    executor_override: claude-glm-ccr  # optional per-flow override
 ```
 
 Flow manifest (`flow.yaml` inside the plugin):
@@ -224,7 +217,13 @@ Flow manifest (`flow.yaml` inside the plugin):
 ```yaml
 schemaVersion: 1
 name: Bugfix
-recommended_executor: claude-sonnet    # optional
+runner_profiles:
+  claude-code:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
 setup: ./setup.sh                      # optional one-time install script
 steps:
   - id: plan

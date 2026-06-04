@@ -4,11 +4,23 @@ import type { ReactElement } from "react";
 import { getTranslations } from "next-intl/server";
 
 import { getSessionUser } from "@/lib/authz";
+import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
+import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
+import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
+import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
+import { getAdapterSupport } from "@/lib/acp-runners/schema";
+import { getDb } from "@/lib/db/client";
+import {
+  platformAcpRunners,
+  platformRouterSidecars,
+  platformRuntimeSettings,
+} from "@/lib/db/schema";
 import {
   hostToolStatus,
   reposRoot,
   worktreesRoot,
 } from "@/lib/instance-config";
+import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("settings");
@@ -22,6 +34,8 @@ export default async function SettingsPage(): Promise<ReactElement> {
   const isAdmin = user?.role === "admin";
 
   const tools = isAdmin ? await hostToolStatus() : [];
+  const runtime = isAdmin ? await loadPlatformRuntimeView() : null;
+  const diagnostics = isAdmin ? await checkSupervisorDiagnostics() : null;
 
   return (
     <div className="mx-auto w-full max-w-[520px]">
@@ -82,6 +96,22 @@ export default async function SettingsPage(): Promise<ReactElement> {
             <p className="text-[11.5px] leading-[1.5] text-mute">
               {t("envNote")}
             </p>
+
+            {runtime ? (
+              <>
+                <AcpRunnersPanel
+                  defaultRunnerId={runtime.defaultRunnerId}
+                  presets={runtime.presets}
+                  runners={runtime.runners}
+                />
+                <RouterSidecarsPanel sidecars={runtime.sidecars} />
+                <AdapterSupportPanel
+                  adapters={runtime.adapters}
+                  diagnostics={diagnostics}
+                  runners={runtime.runners}
+                />
+              </>
+            ) : null}
           </dl>
         ) : (
           <p className="text-[13.5px] leading-[1.55] text-mute">
@@ -91,4 +121,21 @@ export default async function SettingsPage(): Promise<ReactElement> {
       </div>
     </div>
   );
+}
+
+async function loadPlatformRuntimeView() {
+  const db = getDb() as any;
+  const [runners, sidecars, settingsRows] = await Promise.all([
+    db.select().from(platformAcpRunners),
+    db.select().from(platformRouterSidecars),
+    db.select().from(platformRuntimeSettings),
+  ]);
+
+  return {
+    adapters: getAdapterSupport(),
+    defaultRunnerId: settingsRows[0]?.defaultRunnerId ?? null,
+    presets: platformRunnerPresetRows(),
+    runners,
+    sidecars,
+  };
 }

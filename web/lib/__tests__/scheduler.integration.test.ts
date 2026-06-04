@@ -29,6 +29,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import {
   promoteNextPending,
   releaseSlotOnIdle,
@@ -44,7 +45,7 @@ vi.mock("@/lib/flows/runner", () => ({ runFlow: vi.fn(async () => {}) }));
 vi.mock("@/lib/runs/recover", () => ({ driveResume: vi.fn(async () => {}) }));
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { executors, flows, projects, runs, tasks } = schema;
+const { flows, projects, runs, tasks } = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -80,13 +81,7 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/sched-app/maister.yaml",
   });
 
-  await db.insert(executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   flowId = randomUUID();
 
@@ -148,7 +143,9 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     flowVersion: fakeFlowVersion,
     startedAt: new Date(),

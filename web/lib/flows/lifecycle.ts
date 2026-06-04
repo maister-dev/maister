@@ -171,10 +171,8 @@ async function repointSymlink(
   }
 }
 
-// Switch a project's enabled revision to `revisionId`. Refreshes the
-// denormalized flows cache from the revision's manifest and refreshes
-// recommended_executor_id, but PRESERVES the project-level
-// executor_override_id (it is not touched here — see ADR-021).
+// Switch a project's enabled revision to `revisionId` and refresh the
+// denormalized flows cache from the revision's manifest.
 export async function enableRevision(args: {
   projectId: string;
   flowRefId: string;
@@ -242,7 +240,6 @@ export async function enableRevision(args: {
         installedPath: rev.installedPath,
         manifest,
         schemaVersion: rev.schemaVersion,
-        recommendedExecutorId: manifest.recommended_executor ?? null,
         updatedAt: new Date(),
       })
       .where(eq(flows.id, flow.id));
