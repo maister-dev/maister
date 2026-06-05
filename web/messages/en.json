@@ -21,6 +21,7 @@
     "projects": "Projects",
     "inbox": "Inbox",
     "flows": "Flows",
+    "repo": "Repo",
     "agents": "Agents",
     "mcps": "MCPs",
     "packages": "Packages",
@@ -530,6 +531,15 @@
         "Reworked": "Reworked",
         "Stale": "Stale"
       }
+    },
+    "files": {
+      "title": "Repo files",
+      "empty": "No tracked files.",
+      "tooLarge": "File is too large to display",
+      "binary": "Binary file — not shown",
+      "loadError": "Could not load file",
+      "loading": "Loading…",
+      "forbidden": "You do not have access to repository files"
     }
   },
   "changePassword": {

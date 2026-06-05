@@ -16,6 +16,7 @@ import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
 import { FlowsPanel } from "@/components/board/panels/flows-panel";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
+import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
@@ -31,6 +32,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "activity",
   "prs",
   "flows",
+  "repo",
   "packages",
   "integrations",
   "mcps",
@@ -73,6 +75,8 @@ export default async function ProjectBoardPage({
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   const isAdmin = role === "owner" || role === "admin";
+  const canReadRepoFiles =
+    role === "owner" || role === "admin" || role === "member";
 
   const t = await getTranslations("board");
   const tNewTask = await getTranslations("newtask");
@@ -80,6 +84,17 @@ export default async function ProjectBoardPage({
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
   const tScratch = await getTranslations("scratch");
+  const tWorkbench = await getTranslations("workbench");
+
+  const filesLabels = {
+    title: tWorkbench("files.title"),
+    empty: tWorkbench("files.empty"),
+    tooLarge: tWorkbench("files.tooLarge"),
+    binary: tWorkbench("files.binary"),
+    loadError: tWorkbench("files.loadError"),
+    loading: tWorkbench("files.loading"),
+    forbidden: tWorkbench("files.forbidden"),
+  };
 
   const [pageData, board, hitl, platformStatus] = await Promise.all([
     getProjectPageData(project),
@@ -225,6 +240,13 @@ export default async function ProjectBoardPage({
       {tab === "prs" ? <DeferredPanel kind="prs" /> : null}
       {tab === "mcps" ? <DeferredPanel kind="mcps" /> : null}
       {tab === "flows" ? <FlowsPanel flows={pageData.flows} /> : null}
+      {tab === "repo" ? (
+        <RepoFilesPanel
+          canReadRepoFiles={canReadRepoFiles}
+          labels={filesLabels}
+          slug={slug}
+        />
+      ) : null}
       {tab === "packages" ? (
         <FlowPackagesPanel
           isAdmin={isAdmin}

@@ -77,6 +77,20 @@ const gitCommitSchema = z
   .max(64)
   .regex(/^[0-9a-fA-F]+$/, "commit must be hex");
 
+// M22 Phase 4a (ADR-053): a repo-relative path/dir reachable by the workbench
+// file reader. `ref` is server-state, but path/dir is query-controlled and
+// UNTRUSTED — this rejects traversal (`..`), absolute / leading-`/`, leading-`-`
+// (option injection), and NUL before git is ever shelled. Git plumbing cannot
+// leave the repo object DB, so this is the outer ring of double confinement.
+export const repoRelPathSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((p) => !p.includes("\0"), "no NUL")
+  .refine((p) => !p.startsWith("/"), "must be relative")
+  .refine((p) => !p.startsWith("-"), "no leading dash")
+  .refine((p) => !p.split("/").includes(".."), "no .. segment");
+
 const remoteNameSchema = z
   .string()
   .min(1)
@@ -951,4 +965,188 @@ export async function resolveRefSha(
       { cause: asError(err) },
     );
   }
+}
+
+export interface RepoTreeEntry {
+  name: string;
+  type: "file" | "dir";
+}
+
+export type ListTreeArgs = {
+  repo: string;
+  ref: string;
+  dir: string;
+};
+
+// M22 Phase 4a (ADR-053): list one level of the git-tracked tree at `ref:dir`.
+// Returns null when `dir` is not a tracked tree (`.git`, gitignored, untracked,
+// or unknown) — existence-hiding, never disclosing why. `ref` is server-state;
+// `dir` is validated against repoRelPathSchema before git is shelled.
+export async function listTree(
+  args: ListTreeArgs,
+): Promise<{ path: string; entries: RepoTreeEntry[] } | null> {
+  const repo = validate(absolutePathSchema, args.repo, "repo");
+  const { dir } = args;
+  const ref = validate(gitRefSchema, args.ref, "ref");
+
+  if (dir !== "") validate(repoRelPathSchema, dir, "dir");
+
+  log.debug({ repo, ref, dir }, "listTree");
+
+  if (dir !== "") {
+    try {
+      const t = (
+        await runGit(repo, [
+          "cat-file",
+          "-t",
+          "--end-of-options",
+          `${ref}:${dir}`,
+        ])
+      ).stdout.trim();
+
+      if (t !== "tree") return null;
+    } catch {
+      return null;
+    }
+  }
+
+  let out: string;
+
+  try {
+    out = (
+      await runGit(
+        repo,
+        dir === ""
+          ? ["ls-tree", "-z", "--end-of-options", ref]
+          : ["ls-tree", "-z", "--end-of-options", ref, "--", `${dir}/`],
+      )
+    ).stdout;
+  } catch {
+    return null;
+  }
+
+  const entries: RepoTreeEntry[] = out
+    .split("\0")
+    .filter((line) => line.length > 0)
+    .map((line): RepoTreeEntry | null => {
+      const tabIdx = line.indexOf("\t");
+      const meta = line.slice(0, tabIdx);
+      const entryPath = line.slice(tabIdx + 1);
+      const typeToken = meta.split(/\s+/)[1];
+
+      // Skip submodule (commit) entries — a submodule is a separate repo that
+      // cannot be browsed through this tree; listing it as a dir misleads.
+      if (typeToken !== "blob" && typeToken !== "tree") return null;
+      const type: RepoTreeEntry["type"] = typeToken === "blob" ? "file" : "dir";
+      const name = entryPath.split("/").filter(Boolean).pop()!;
+
+      return { name, type };
+    })
+    .filter((e): e is RepoTreeEntry => e !== null);
+
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
+
+  return { path: dir, entries };
+}
+
+export type RepoBlobResult =
+  | { kind: "text"; content: string }
+  | { kind: "too-large"; size: number }
+  | { kind: "binary" }
+  | { kind: "not-found" };
+
+export type ReadBlobArgs = {
+  repo: string;
+  ref: string;
+  path: string;
+  maxBytes: number;
+};
+
+// M22 Phase 4a (ADR-053): read a single git-tracked blob at `ref:path`. Anything
+// not a tracked blob (`.git`, gitignored, untracked, dir, unknown) surfaces as
+// not-found — uniform existence-hiding. Over-cap blobs report too-large without
+// being read into memory; NUL-containing blobs are binary. `ref` is
+// server-state; `path` is validated against repoRelPathSchema before git runs.
+export async function readBlob(args: ReadBlobArgs): Promise<RepoBlobResult> {
+  const repo = validate(absolutePathSchema, args.repo, "repo");
+  const { maxBytes } = args;
+  const ref = validate(gitRefSchema, args.ref, "ref");
+  const blobPath = validate(repoRelPathSchema, args.path, "path");
+
+  log.debug({ repo, ref, path: blobPath, maxBytes }, "readBlob");
+
+  try {
+    const t = (
+      await runGit(repo, [
+        "cat-file",
+        "-t",
+        "--end-of-options",
+        `${ref}:${blobPath}`,
+      ])
+    ).stdout.trim();
+
+    if (t !== "blob") return { kind: "not-found" };
+  } catch {
+    return { kind: "not-found" };
+  }
+
+  let size: number;
+
+  try {
+    size = Number(
+      (
+        await runGit(repo, [
+          "cat-file",
+          "-s",
+          "--end-of-options",
+          `${ref}:${blobPath}`,
+        ])
+      ).stdout.trim(),
+    );
+  } catch {
+    return { kind: "not-found" };
+  }
+
+  if (size > maxBytes) return { kind: "too-large", size };
+
+  let buf: Buffer;
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        repo,
+        "cat-file",
+        "blob",
+        "--end-of-options",
+        `${ref}:${blobPath}`,
+      ],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        encoding: "buffer",
+      },
+    );
+
+    buf = stdout as Buffer;
+  } catch (err) {
+    // A blob whose bytes exceed EXEC_MAX_BUFFER (e.g. maxBytes mis-set above the
+    // buffer bound) reports too-large rather than crashing the route as a 500.
+    if (
+      (err as NodeJS.ErrnoException).code ===
+      "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+    )
+      return { kind: "too-large", size };
+
+    return { kind: "not-found" };
+  }
+
+  if (buf.includes(0)) return { kind: "binary" };
+
+  return { kind: "text", content: buf.toString("utf8") };
 }

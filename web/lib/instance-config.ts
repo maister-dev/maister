@@ -26,6 +26,7 @@ export function runtimeRoot(): string {
 }
 
 const DEFAULT_GC_AGE_DAYS = 14;
+const DEFAULT_WORKBENCH_MAX_FILE_BYTES = 524_288;
 const DEFAULT_GC_WARNING_DAYS = 2;
 const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
@@ -57,6 +58,22 @@ export function gcAgeDays(): number {
   const parsed = Number.parseInt(raw, 10);
 
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_GC_AGE_DAYS;
+
+  return parsed;
+}
+
+// M22 Phase 4a (T4.1): max blob size the workbench file-content route will
+// return; over-cap blobs surface as 413 instead of being read into memory. Env
+// override, sane default, floor at 1. Mirrors gcAgeDays.
+export function workbenchMaxFileBytes(): number {
+  const raw = process.env.MAISTER_WORKBENCH_MAX_FILE_BYTES;
+
+  if (!raw) return DEFAULT_WORKBENCH_MAX_FILE_BYTES;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_WORKBENCH_MAX_FILE_BYTES;
+  }
 
   return parsed;
 }

@@ -571,7 +571,7 @@ phase touches that is left red fails the phase (quarantine only via explicit
 
 ### Phase 4 — Repo file-tree (Track B — git-tracked-only, member-gated)
 
-- [ ] **T4.1** — `web/lib/worktree.ts`: add `repoRelPathSchema` (zod: non-empty,
+- [x] **T4.1** — `web/lib/worktree.ts`: add `repoRelPathSchema` (zod: non-empty,
   no `..` segment, not absolute, no leading `/` or `-`, no NUL) + `listTree({repo,
   ref, dir}): Promise<{path, entries:[{name, type}]}>` (`git ls-tree --name-only
   -z --end-of-options <ref> -- <dir>/`, dirs-first sort) + `readBlob({repo, ref,
@@ -586,22 +586,22 @@ phase touches that is left red fails the phase (quarantine only via explicit
   `too-large`; binary → `binary`. LOGGING: DEBUG list/read. Files:
   `web/lib/worktree.ts`, `web/lib/instance-config.ts`,
   `web/lib/__tests__/worktree-tree*.test.ts`. (no dep)
-- [ ] **T4.2** — Run-workbench file routes: `GET /api/runs/[runId]/files/route.ts`
+- [x] **T4.2** — Run-workbench file routes: `GET /api/runs/[runId]/files/route.ts`
   (+ `…/files/content/route.ts`), `requireActiveSession` +
   `requireProjectAction(projectId, "readRepoFiles")`; `runId` url-param →
   server-state `worktreePath` + `ref = run branch`; `?path=` → `repoRelPathSchema`
   → `listTree`/`readBlob`; over-cap → 413 marker, binary → 415 marker, unknown
   path → 404. Files: the two routes. (depends on T4.1, T1.0)
-- [ ] **T4.3** — Project file routes: `GET /api/projects/[slug]/files/route.ts`
+- [x] **T4.3** — Project file routes: `GET /api/projects/[slug]/files/route.ts`
   (+ `…/files/content/route.ts`), same guard (`readRepoFiles`), slug →
   `projects.repo_path` + `ref = projects.main_branch`. Files: the two routes.
   (depends on T4.1, T1.0)
-- [ ] **T4.4** — Routes tests P4a: **a `viewer` is denied (403)** on every file
+- [x] **T4.4** — Routes tests P4a: **a `viewer` is denied (403)** on every file
   route; a `member` is admitted; `.git`/gitignored/untracked path → 404 (not in
   the tracked tree); `..`/absolute path → 400; over-cap → 413; binary → 415;
   cross-project slug/run → 404 (uniform existence-hide). Name vitest projects;
   confirm globs. Files: route `__tests__`. (depends on T4.2, T4.3)
-- [ ] **T4.5** — File-tree UI: `web/components/workbench/file-tree.tsx`
+- [x] **T4.5** — File-tree UI: `web/components/workbench/file-tree.tsx`
   (`"use client"`, lazy expand via the `/files` routes; HeroUI `Disclosure`/
   `ListBox` + file/dir icons; accessible — keyboard expand, `aria-expanded`) +
   `file-viewer.tsx` (fetch `/files/content`, render text in `<pre>`, show
