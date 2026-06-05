@@ -69,9 +69,17 @@ export default async function ProjectObservatoryPage({
         </p>
       </header>
 
-      <ProjectTabs active="observatory" boardCount={board.totalTasks} slug={slug} />
+      <ProjectTabs
+        active="observatory"
+        boardCount={board.totalTasks}
+        slug={slug}
+      />
       <ObservatoryFilters current={current} labels={labels} />
-      <ObservatorySummary data={observatory} labels={labels} projectSlug={slug} />
+      <ObservatorySummary
+        data={observatory}
+        labels={labels}
+        projectSlug={slug}
+      />
       {nodeDetail ? (
         <div className="mt-4">
           <NodeDrilldownTable detail={nodeDetail} labels={labels} />

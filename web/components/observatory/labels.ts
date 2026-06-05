@@ -1,5 +1,4 @@
 import type { getTranslations } from "next-intl/server";
-
 import type { ObservatoryLabels } from "@/components/observatory/types";
 
 export function labelsFromTranslations(

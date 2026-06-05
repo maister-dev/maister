@@ -1,9 +1,8 @@
 import type { ReactElement } from "react";
+import type { CorrectionHeatmapProps } from "@/components/observatory/types";
 
 import Link from "next/link";
 import clsx from "clsx";
-
-import type { CorrectionHeatmapProps } from "@/components/observatory/types";
 
 export function CorrectionHeatmap({
   labels,
@@ -91,7 +90,13 @@ function NodeCell({
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }): ReactElement {
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}): ReactElement {
   return (
     <div>
       <dt className="truncate">{label}</dt>

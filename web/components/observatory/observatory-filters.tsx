@@ -1,5 +1,4 @@
 import type { ReactElement } from "react";
-
 import type { ObservatoryFilterProps } from "@/components/observatory/types";
 
 export function ObservatoryFilters({

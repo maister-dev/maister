@@ -39,7 +39,9 @@ export function parseObservatorySearchParams(
   };
 }
 
-function firstNonEmpty(value: string | string[] | undefined): string | undefined {
+function firstNonEmpty(
+  value: string | string[] | undefined,
+): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   const trimmed = raw?.trim();
 
@@ -50,6 +52,7 @@ function clampWindowDays(value: string | undefined): number {
   if (!value) return DEFAULT_WINDOW_DAYS;
 
   const parsed = Number.parseInt(value, 10);
+
   if (!Number.isFinite(parsed)) return DEFAULT_WINDOW_DAYS;
 
   return Math.min(MAX_WINDOW_DAYS, Math.max(1, parsed));

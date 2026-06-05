@@ -491,21 +491,21 @@ Global phase gate:
 
 ### Phase 5 - E2E, Docs Reconciliation, and Final Verification
 
-- [ ] **T5.1 (RED) - Playwright seeded scenario.** Add
+- [x] **T5.1 (RED) - Playwright seeded scenario.** Add
   `web/e2e/m23-observatory.spec.ts` using seeded stub-supervisor data:
   portfolio observatory shows correction/autonomy summary; project dashboard
   filters to one flow; node drill-down opens; repeated signal outranks one-off;
   empty project shows empty state; RU locale renders translated labels. Confirm
   Playwright config includes the spec.
-- [ ] **T5.2 (GREEN) - E2E seed support.** Extend `web/e2e/_seed/fixtures.ts`
+- [x] **T5.2 (GREEN) - E2E seed support.** Extend `web/e2e/_seed/fixtures.ts`
   or nearby seeded helpers to create deterministic runs/node attempts/gates/HITL
   rows for M23 without live agent calls. **Logging:** n/a.
-- [ ] **T5.3 - Docs as-built reconciliation.** Flip `observatory.md` status tags
+- [x] **T5.3 - Docs as-built reconciliation.** Flip `observatory.md` status tags
   from `Designed` to `Implemented`, update `docs/architecture.md` if route/table
   references are listed there, and add M23 roadmap entry/completed row only when
   implementation is actually shipped. Keep `docs/api/*` and DB docs unchanged
   unless the implementation truly added those surfaces. **Logging:** n/a.
-- [ ] **T5.4 - Final gate.** Run:
+- [x] **T5.4 - Final gate.** Run:
   `pnpm --filter maister-web typecheck`,
   `pnpm --filter maister-web test:unit`,
   `pnpm --filter maister-web test:integration`,
@@ -513,7 +513,10 @@ Global phase gate:
   `pnpm validate:docs:all`,
   `pnpm --filter maister-web lint`.
   **Logging:** capture command outputs in the implementation summary.
-- [ ] **T5.5 (REVIEW) - Final adversarial review.** Reviewer verifies the
+  **Result:** typecheck, unit, e2e, docs validation, diff check, and lint passed;
+  integration was attempted and is blocked in this environment by missing
+  `testcontainers` container runtime before test bodies run.
+- [x] **T5.5 (REVIEW) - Final adversarial review.** Reviewer verifies the
   acceptance criteria, no accidental writes/migrations, no privacy leakage, and
   no overclaim that the write half exists. Findings must be fixed before the
   final checkpoint commit.

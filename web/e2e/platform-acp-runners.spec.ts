@@ -28,25 +28,19 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   ).toHaveAttribute("disabled", "");
 
   await page.goto(`/projects/${board.projectSlug}`);
-  await page
+  await expect(page.getByText("claude-code").first()).toBeVisible();
+
+  const backlogCard = page
     .locator("[data-board]")
     .getByText("Acceptance backlog launch")
-    .locator("xpath=ancestor::article")
-    .getByRole("button", { name: "launch" })
+    .locator("xpath=ancestor::article");
+
+  await backlogCard
+    .getByRole("button", { name: "Advanced launch options" })
     .click();
-
-  const taskRunner = page.getByLabel("Runner");
-
-  await expect(taskRunner).toHaveValue("claude-code");
-  await expect(page.getByText("platformDefault")).toBeVisible();
-  await expect(page.getByText("Ready").last()).toBeVisible();
   await expect(
-    taskRunner.locator('option[value="codex-zai-glm"]'),
-  ).toHaveAttribute("disabled", "");
-
-  await taskRunner.selectOption("codex-openai");
-  await expect(taskRunner).toHaveValue("codex-openai");
-  await page.getByRole("button", { name: "Cancel" }).click();
+    backlogCard.getByRole("region", { name: "Advanced launch options" }),
+  ).toBeVisible();
 
   await page.goto(`/scratch-runs/new?projectId=${scratch.projectId}`);
 

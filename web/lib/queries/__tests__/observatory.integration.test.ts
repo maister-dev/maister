@@ -135,11 +135,27 @@ describe("observatory read models", () => {
       reworked: true,
     });
 
-    await db.insert(schema.nodeAttempts).values([
-      attempt(runId, "implement", "ai_coding", 1, "Succeeded", "visible-impl-1"),
-      attempt(runId, "implement", "ai_coding", 2, "Succeeded", "visible-impl-2"),
-      attempt(runId, "review", "human", 1, "Reworked", "visible-review-1"),
-    ]);
+    await db
+      .insert(schema.nodeAttempts)
+      .values([
+        attempt(
+          runId,
+          "implement",
+          "ai_coding",
+          1,
+          "Succeeded",
+          "visible-impl-1",
+        ),
+        attempt(
+          runId,
+          "implement",
+          "ai_coding",
+          2,
+          "Succeeded",
+          "visible-impl-2",
+        ),
+        attempt(runId, "review", "human", 1, "Reworked", "visible-review-1"),
+      ]);
     await db.insert(schema.hitlRequests).values({
       id: "visible-hitl-1",
       runId,
@@ -228,7 +244,9 @@ describe("observatory read models", () => {
     );
 
     expect(project.totals.correction.runCount).toBe(1);
-    expect(project.nodes.find((node) => node.nodeId === "checks")?.retryCount).toBe(1);
+    expect(
+      project.nodes.find((node) => node.nodeId === "checks")?.retryCount,
+    ).toBe(1);
     expect(detail.nodeId).toBe("checks");
     expect(detail.runs.map((run) => run.runId)).toEqual([runId]);
     expect(detail.attempts.map((row) => row.attempt)).toEqual([1, 2]);
@@ -257,12 +275,28 @@ describe("observatory read models", () => {
         errorCode: "TEST_FAIL",
         exitCode: 1,
       }),
-      attempt(first.runId, "checks", "check", 2, "Succeeded", "signals-checks-2", {
-        errorCode: "TEST_FAIL",
-      }),
-      attempt(second.runId, "checks", "check", 2, "Succeeded", "signals-checks-3", {
-        errorCode: "TEST_FAIL",
-      }),
+      attempt(
+        first.runId,
+        "checks",
+        "check",
+        2,
+        "Succeeded",
+        "signals-checks-2",
+        {
+          errorCode: "TEST_FAIL",
+        },
+      ),
+      attempt(
+        second.runId,
+        "checks",
+        "check",
+        2,
+        "Succeeded",
+        "signals-checks-3",
+        {
+          errorCode: "TEST_FAIL",
+        },
+      ),
       attempt(hidden.runId, "deploy", "check", 2, "Failed", "hidden-deploy-1", {
         errorCode: "DEPLOY_FAIL",
       }),
@@ -336,9 +370,9 @@ describe("observatory read models", () => {
     expect(result.topSignals.map((signal) => signal.key)).toContain(
       `gate:${visibleFlowId}:checks:unit:failed`,
     );
-    expect(result.topSignals.some((signal) => signal.key.includes(hiddenFlowId))).toBe(
-      false,
-    );
+    expect(
+      result.topSignals.some((signal) => signal.key.includes(hiddenFlowId)),
+    ).toBe(false);
     expect(result.topSignals.flatMap((signal) => signal.examples)).toContain(
       "access_token=[redacted] failed",
     );
@@ -362,7 +396,14 @@ describe("observatory read models", () => {
     });
 
     await db.insert(schema.nodeAttempts).values([
-      attempt(first.runId, "implement", "ai_coding", 1, "Succeeded", "rec-impl-1"),
+      attempt(
+        first.runId,
+        "implement",
+        "ai_coding",
+        1,
+        "Succeeded",
+        "rec-impl-1",
+      ),
       attempt(first.runId, "checks", "check", 1, "Failed", "rec-checks-1", {
         errorCode: "TEST_FAIL",
       }),
@@ -469,9 +510,10 @@ function attempt(
   };
 }
 
-function withQueryCount(
-  database: NodePgDatabase<typeof schema>,
-): { db: NodePgDatabase<typeof schema>; count: () => number } {
+function withQueryCount(database: NodePgDatabase<typeof schema>): {
+  db: NodePgDatabase<typeof schema>;
+  count: () => number;
+} {
   let statements = 0;
 
   return {
@@ -484,6 +526,7 @@ function withQueryCount(
 
           return (...args: unknown[]) => {
             statements += 1;
+
             return select.apply(target, args);
           };
         }

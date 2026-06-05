@@ -1,8 +1,7 @@
 import type { ReactElement } from "react";
+import type { ObservatoryNodeDrilldownProps } from "@/components/observatory/types";
 
 import Link from "next/link";
-
-import type { ObservatoryNodeDrilldownProps } from "@/components/observatory/types";
 
 export function NodeDrilldownTable({
   detail,
@@ -47,7 +46,9 @@ export function NodeDrilldownTable({
                 (attempt) => attempt.runId === run.runId,
               );
               const latest = attempts.at(-1);
-              const gates = detail.gates.filter((gate) => gate.runId === run.runId);
+              const gates = detail.gates.filter(
+                (gate) => gate.runId === run.runId,
+              );
               const waits = detail.hitlWaits.filter(
                 (hitl) => hitl.runId === run.runId,
               );
@@ -85,7 +86,9 @@ export function NodeDrilldownTable({
       </div>
       {detail.signals.length > 0 ? (
         <div className="mt-4 rounded-md border border-line-soft bg-ivory px-3 py-2">
-          <h3 className="m-0 text-xs font-semibold text-ink">{labels.signals}</h3>
+          <h3 className="m-0 text-xs font-semibold text-ink">
+            {labels.signals}
+          </h3>
           <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0 text-xs text-body">
             {detail.signals.flatMap((signal) =>
               signal.examples.map((example) => (

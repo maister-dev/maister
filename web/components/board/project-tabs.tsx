@@ -78,7 +78,7 @@ export async function ProjectTabs({
                 ? `/projects/${slug}`
                 : tab === "observatory"
                   ? `/projects/${slug}/observatory`
-                : `/projects/${slug}?tab=${tab}`
+                  : `/projects/${slug}?tab=${tab}`
             }
             role="tab"
           >

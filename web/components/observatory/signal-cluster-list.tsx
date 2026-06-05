@@ -2,11 +2,10 @@
 
 import type { SignalCluster } from "@/lib/queries/observatory-signals";
 import type { ReactElement } from "react";
+import type { ObservatoryLabels } from "@/components/observatory/types";
 
 import Link from "next/link";
 import { Chip } from "@heroui/react";
-
-import type { ObservatoryLabels } from "@/components/observatory/types";
 
 export function SignalClusterList({
   labels,

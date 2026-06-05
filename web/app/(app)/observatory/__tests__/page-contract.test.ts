@@ -1,7 +1,7 @@
-import en from "@/messages/en.json";
-import ru from "@/messages/ru.json";
 import { describe, expect, it } from "vitest";
 
+import en from "@/messages/en.json";
+import ru from "@/messages/ru.json";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 
 describe("observatory page contract", () => {

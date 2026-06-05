@@ -60,6 +60,13 @@ export type E2EM17Fixture = {
   project2Branch: string;
 };
 
+export type E2EM23Fixture = {
+  projectId: string;
+  projectSlug: string;
+  flowId: string;
+  nodeId: string;
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -123,6 +130,7 @@ export type E2EFixtures = {
     m19: E2EM19Fixture;
     m16: E2EM16Fixture;
     m22: E2EM22Fixture;
+    m23: E2EM23Fixture;
   };
 };
 

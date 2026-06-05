@@ -12,9 +12,9 @@ import {
 describe("observatory signal harvesting", () => {
   it("normalizes and redacts optional examples before clustering", () => {
     expect(normalizeSignalText("  Fix   lint\nagain  ")).toBe("fix lint again");
-    expect(redactSignalText("API_TOKEN=sk_live_12345 and password=secret")).toBe(
-      "API_TOKEN=[redacted] and password=[redacted]",
-    );
+    expect(
+      redactSignalText("API_TOKEN=sk_live_12345 and password=secret"),
+    ).toBe("API_TOKEN=[redacted] and password=[redacted]");
     expect(normalizeSignalText("ok")).toBeNull();
   });
 

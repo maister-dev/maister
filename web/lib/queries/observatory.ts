@@ -3,14 +3,7 @@ import "server-only";
 import type { GlobalRole } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import {
-  and,
-  eq,
-  gte,
-  inArray,
-  isNull,
-  type SQL,
-} from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -208,7 +201,10 @@ export async function getPortfolioObservatory(
   const visibleProjects = await getVisibleProjects(client, userId, globalRole);
 
   log.debug(
-    { projectCount: visibleProjects.length, windowDays: filters.windowDays ?? 30 },
+    {
+      projectCount: visibleProjects.length,
+      windowDays: filters.windowDays ?? 30,
+    },
     "getPortfolioObservatory scope resolved",
   );
 
@@ -305,9 +301,13 @@ export async function getNodeObservatoryDetail(
   const nodeAttemptsForDetail = readModel.attempts.filter(
     (attempt) => attempt.nodeId === nodeId,
   );
-  const detailRunIds = uniqueSorted(nodeAttemptsForDetail.map((row) => row.runId));
+  const detailRunIds = uniqueSorted(
+    nodeAttemptsForDetail.map((row) => row.runId),
+  );
   const detailRunSet = new Set(detailRunIds);
-  const runsForDetail = readModel.runs.filter((run) => detailRunSet.has(run.id));
+  const runsForDetail = readModel.runs.filter((run) =>
+    detailRunSet.has(run.id),
+  );
   const gatesForDetail = readModel.gates.filter((gate) =>
     nodeAttemptsForDetail.some((attempt) => attempt.id === gate.nodeAttemptId),
   );
@@ -316,7 +316,9 @@ export async function getNodeObservatoryDetail(
   );
   const artifactsForDetail = summarizeArtifacts(
     groupArtifactContributions(
-      readModel.artifacts.filter((artifact) => detailRunSet.has(artifact.runId)),
+      readModel.artifacts.filter((artifact) =>
+        detailRunSet.has(artifact.runId),
+      ),
     ),
   );
   const signalsForDetail = buildTopSignals({
@@ -465,7 +467,9 @@ async function loadObservatoryRows(
             },
           ],
     )
-    .sort((left, right) => left.startedAt.getTime() - right.startedAt.getTime());
+    .sort(
+      (left, right) => left.startedAt.getTime() - right.startedAt.getTime(),
+    );
   const runIds = typedRuns.map((run) => run.id);
 
   if (runIds.length === 0) {
@@ -511,7 +515,9 @@ async function loadObservatoryRows(
     ? uniqueSorted(attemptRows.map((attempt) => attempt.runId))
     : runIds;
   const effectiveRunIds = scopedRunIds.length > 0 ? scopedRunIds : runIds;
-  const artifactPredicates: SQL[] = [inArray(artifactInstances.runId, effectiveRunIds)];
+  const artifactPredicates: SQL[] = [
+    inArray(artifactInstances.runId, effectiveRunIds),
+  ];
 
   if (filters.artifactKind) {
     artifactPredicates.push(eq(artifactInstances.kind, filters.artifactKind));
@@ -593,7 +599,9 @@ function buildPortfolio(
   projectScope: readonly ProjectScopeRow[],
   now: Date,
 ): ObservatoryPortfolio {
-  const projectsById = new Map(projectScope.map((project) => [project.id, project]));
+  const projectsById = new Map(
+    projectScope.map((project) => [project.id, project]),
+  );
   const flowGroups = groupBy(rows.runs, (run) => run.flowId);
   const nodeGroups = groupBy(rows.attempts, (attempt) => attempt.nodeId);
   const topSignals = buildTopSignals(rows);
@@ -631,7 +639,9 @@ function buildPortfolio(
         hitlRequests: rows.hitl,
       }),
     },
-    projects: projectSummaries.filter((project) => projectsById.has(project.projectId)),
+    projects: projectSummaries.filter((project) =>
+      projectsById.has(project.projectId),
+    ),
     flows: [...flowGroups.entries()].map(([flowId, flowRuns]) => {
       const flowRunSet = new Set(flowRuns.map((run) => run.id));
       const flowRefId = flowRuns[0]?.flowRefId ?? flowId;
@@ -682,7 +692,9 @@ function buildTopSignals(rows: {
   artifacts: ArtifactRow[];
 }): SignalCluster[] {
   const runById = new Map(rows.runs.map((run) => [run.id, run]));
-  const attemptById = new Map(rows.attempts.map((attempt) => [attempt.id, attempt]));
+  const attemptById = new Map(
+    rows.attempts.map((attempt) => [attempt.id, attempt]),
+  );
   const artifactsByAttemptId = groupBy(
     rows.artifacts.filter((artifact) => artifact.nodeAttemptId !== null),
     (artifact) => artifact.nodeAttemptId ?? "",
@@ -690,6 +702,7 @@ function buildTopSignals(rows: {
   const reworkSignals = clusterReworkSignals(
     rows.hitl.flatMap((hitl) => {
       const run = runById.get(hitl.runId);
+
       if (!run) return [];
 
       return [
@@ -710,6 +723,7 @@ function buildTopSignals(rows: {
     rows.gates.flatMap((gate) => {
       const run = runById.get(gate.runId);
       const attempt = attemptById.get(gate.nodeAttemptId);
+
       if (!run || !attempt) return [];
 
       return [
@@ -731,6 +745,7 @@ function buildTopSignals(rows: {
   const retrySignals = clusterRetrySignals(
     rows.attempts.flatMap((attempt) => {
       const run = runById.get(attempt.runId);
+
       if (!run) return [];
 
       const firstArtifact = artifactsByAttemptId.get(attempt.id)?.[0];

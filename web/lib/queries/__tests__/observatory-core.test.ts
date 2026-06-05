@@ -139,7 +139,10 @@ describe("observatory core formulas", () => {
       },
     ]);
 
-    expect(grouped.map((row) => row.key)).toEqual(["def:impl-diff", "kind:log"]);
+    expect(grouped.map((row) => row.key)).toEqual([
+      "def:impl-diff",
+      "kind:log",
+    ]);
   });
 
   it("merges overlapping HITL wait intervals for Autonomy Score", () => {
@@ -265,7 +268,9 @@ describe("observatory core formulas", () => {
     const total = rollupCorrectionMetrics({ runs, nodeAttempts: attempts });
     const implement = rollupCorrectionMetrics({
       runs,
-      nodeAttempts: attempts.filter((attempt) => attempt.nodeId === "implement"),
+      nodeAttempts: attempts.filter(
+        (attempt) => attempt.nodeId === "implement",
+      ),
     });
     const checks = rollupCorrectionMetrics({
       runs,

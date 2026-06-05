@@ -3266,6 +3266,239 @@ async function seedM22Fixture(
   };
 }
 
+function runnerSnapshotJson(
+  runnerId: string,
+  agent: "claude" | "codex" = "claude",
+): string {
+  const providerKind = agent === "claude" ? "anthropic" : "openai";
+
+  return JSON.stringify({
+    id: runnerId,
+    adapter: agent,
+    capabilityAgent: agent,
+    model: agent === "claude" ? "claude-sonnet-4-6" : "gpt-5-codex",
+    provider: { kind: providerKind },
+    providerKind,
+    permissionPolicy: "default",
+    sidecar: null,
+    sidecarId: null,
+  });
+}
+
+type M23FixtureRecord = {
+  projectId: string;
+  projectSlug: string;
+  flowId: string;
+  nodeId: string;
+};
+
+// --- M23 fixture: read-only Observatory metrics ----------------------------
+// ONE project with two flow runs carrying repeated check retries, failed
+// blocking gates, rework HITL rows, and log artifacts. No supervisor or
+// worktree is needed: Observatory reads only existing DB evidence.
+
+const M23_SLUG = "e2e-m23";
+const M23_NODE_ID = "checks";
+const M23_GATE_ID = "unit";
+
+const M23_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Observatory (e2e)",
+  compat: { engine_min: "1.2.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: M23_NODE_ID },
+    },
+    {
+      id: M23_NODE_ID,
+      type: "check",
+      action: { command: "pnpm test" },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      transitions: { approve: "done", rework: "implement" },
+    },
+  ],
+};
+
+async function seedM23Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M23FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    firstTask: randomUUID(),
+    secondTask: randomUUID(),
+    firstRun: randomUUID(),
+    secondRun: randomUUID(),
+    member: randomUUID(),
+    firstCheck1: randomUUID(),
+    firstCheck2: randomUUID(),
+    firstReview: randomUUID(),
+    secondCheck1: randomUUID(),
+    secondCheck2: randomUUID(),
+    secondReview: randomUUID(),
+    firstGate: randomUUID(),
+    secondGate: randomUUID(),
+    firstHitl: randomUUID(),
+    secondHitl: randomUUID(),
+    firstArtifact: randomUUID(),
+    secondArtifact: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M23_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project,
+      M23_SLUG,
+      "MAIster E2E M23 Observatory",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-observatory@v0.0.1`,
+      JSON.stringify(M23_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES
+       ($1, $2, 'E2E observatory first', 'observe first', $3, 'InFlight', 'InFlight'),
+       ($4, $2, 'E2E observatory second', 'observe second', $3, 'InFlight', 'InFlight')`,
+    [ids.firstTask, ids.project, ids.flow, ids.secondTask],
+  );
+  await pool.query(
+    `INSERT INTO runs
+       (id, task_id, project_id, flow_id, runner_id, capability_agent,
+        runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
+     VALUES
+       ($1, $2, $3, $4, $5, 'claude', $6::jsonb, 'Review', 'review', 'v0.0.1',
+        now() - interval '3 hours', now() - interval '2 hours'),
+       ($7, $8, $3, $4, $5, 'claude', $6::jsonb, 'Running', $9, 'v0.0.1',
+        now() - interval '90 minutes', null)`,
+    [
+      ids.firstRun,
+      ids.firstTask,
+      ids.project,
+      ids.flow,
+      ids.runner,
+      runnerSnapshotJson(ids.runner),
+      ids.secondRun,
+      ids.secondTask,
+      M23_NODE_ID,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts
+       (id, run_id, node_id, node_type, attempt, status, error_code, exit_code, started_at, ended_at)
+     VALUES
+       ($1, $2, $3, 'check', 1, 'Failed', 'TEST_FAIL', 1, now() - interval '170 minutes', now() - interval '168 minutes'),
+       ($4, $2, $3, 'check', 2, 'Succeeded', 'TEST_FAIL', null, now() - interval '166 minutes', now() - interval '164 minutes'),
+       ($5, $2, 'review', 'human', 1, 'Reworked', null, null, now() - interval '150 minutes', now() - interval '145 minutes'),
+       ($6, $7, $3, 'check', 1, 'Failed', 'TEST_FAIL', 1, now() - interval '80 minutes', now() - interval '78 minutes'),
+       ($8, $7, $3, 'check', 2, 'Succeeded', 'TEST_FAIL', null, now() - interval '76 minutes', null),
+       ($9, $7, 'review', 'human', 1, 'Reworked', null, null, now() - interval '70 minutes', now() - interval '68 minutes')`,
+    [
+      ids.firstCheck1,
+      ids.firstRun,
+      M23_NODE_ID,
+      ids.firstCheck2,
+      ids.firstReview,
+      ids.secondCheck1,
+      ids.secondRun,
+      ids.secondCheck2,
+      ids.secondReview,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO gate_results
+       (id, run_id, node_attempt_id, gate_id, kind, mode, status, verdict)
+     VALUES
+       ($1, $2, $3, $4, 'command_check', 'blocking', 'failed', $5::jsonb),
+       ($6, $7, $8, $4, 'command_check', 'blocking', 'failed', $9::jsonb)`,
+    [
+      ids.firstGate,
+      ids.firstRun,
+      ids.firstCheck1,
+      M23_GATE_ID,
+      JSON.stringify({ verdict: "fail", reasons: ["ACCESS_TOKEN=abc failed"] }),
+      ids.secondGate,
+      ids.secondRun,
+      ids.secondCheck1,
+      JSON.stringify({ verdict: "fail", recommendedAction: "rerun tests" }),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests
+       (id, run_id, step_id, kind, prompt, decision, rework_target,
+        workspace_policy, created_at, responded_at)
+     VALUES
+       ($1, $2, 'review', 'human', 'Review', 'rework', 'implement', 'keep',
+        now() - interval '150 minutes', now() - interval '145 minutes'),
+       ($3, $4, 'review', 'human', 'Review', 'rework', 'implement', 'keep',
+        now() - interval '70 minutes', now() - interval '68 minutes')`,
+    [ids.firstHitl, ids.firstRun, ids.secondHitl, ids.secondRun],
+  );
+  await pool.query(
+    `INSERT INTO artifact_instances
+       (id, run_id, node_attempt_id, node_id, attempt, artifact_def_id, kind,
+        producer, locator, validity)
+     VALUES
+       ($1, $2, $3, $4, 2, null, 'log', 'runner', $5::jsonb, 'current'),
+       ($6, $7, $8, $4, 2, null, 'log', 'runner', $9::jsonb, 'current')`,
+    [
+      ids.firstArtifact,
+      ids.firstRun,
+      ids.firstCheck2,
+      M23_NODE_ID,
+      JSON.stringify({ kind: "inline", text: "checks recovered" }),
+      ids.secondArtifact,
+      ids.secondRun,
+      ids.secondCheck2,
+      JSON.stringify({ kind: "inline", text: "checks recovered again" }),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    projectId: ids.project,
+    projectSlug: M23_SLUG,
+    flowId: ids.flow,
+    nodeId: M23_NODE_ID,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -3414,6 +3647,7 @@ async function main(): Promise<void> {
     const m17 = await seedM17Fixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
+    const m23 = await seedM23Fixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -3454,6 +3688,7 @@ async function main(): Promise<void> {
         m17,
         m18,
         m22,
+        m23,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -3472,7 +3707,8 @@ async function main(): Promise<void> {
         `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})` +
         `, m17 proj1 ${m17.project1RunId} proj2 ${m17.project2RunId} (${M17_PROJECT1_SLUG}, ${M17_PROJECT2_SLUG})` +
         `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
-        `, m22 run ${m22.runId} (${M22_SLUG})`,
+        `, m22 run ${m22.runId} (${M22_SLUG})` +
+        `, m23 project ${m23.projectSlug}`,
     );
   } finally {
     await pool.end();

@@ -1,3 +1,5 @@
+import type { ObservatoryPortfolio } from "@/lib/queries/observatory";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -11,7 +13,6 @@ import {
   ObservatorySummary,
 } from "@/components/observatory/observatory-summary";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
-import type { ObservatoryPortfolio } from "@/lib/queries/observatory";
 
 const labels = labelsForTest();
 

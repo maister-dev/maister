@@ -540,6 +540,8 @@
 
 - [x] **M21. Project repo onboarding (URL clone + configurable roots)** — shipped 2026-05-31 via `fix/integration-test-seeds`. Accept a git `repo_url` at registration and clone it (**model B**: host git credentials, no secrets stored in MAIster) for GitHub / GitLab / Gitea-family (incl. GitVerse) hosts, while keeping the existing local-`repo_path` mode (existing repos are never re-cloned). Config-schema union (`repo_url?` | `repo_path?`, `repo_path` derived), `projects.repo_url` + `projects.provider` columns, provider autodetect tag, two configurable roots `MAISTER_REPOS_ROOT` (`~/.maister/repos`) + `MAISTER_WORKTREES_ROOT` (`~/.maister/worktrees`), clone-if-missing in `POST /api/projects`, Add-Project URL field. Provider-specific PR/push and managed per-project credentials (model C) stay with M18. Independent of the M11–M20 ordering — can land anytime. See ADR-025.
 
+- [x] **M23. Observatory read-only metrics surface** — shipped 2026-06-05. Wave-1 Observatory implements the read-only half of the correction/autonomy learning loop. It adds no migrations and no public Web API routes: server-component pages call batched read models over existing `runs`, `node_attempts`, `gate_results`, `hitl_requests`, and `artifact_instances` rows. Metrics: `correction_rate = (rework + retries) / runs` as an unbounded pressure ratio, Autonomy Score from merged HITL wait intervals over total run time, artifact buckets by definition/kind, and repeatable signal clusters for structured rework, failed blocking gates, and retries with redacted examples. UI: `/observatory` portfolio dashboard, `/projects/[slug]/observatory` project dashboard with GET filters, node drill-down links, EN/RU labels, and seeded M23 Playwright coverage. ADR-051 locks the formulas and harvest priority. **Deferred:** write-side learning, automatic fixes, recommendations, M17 `criticality`/`human_confidence` weighting, and any new analytics persistence/index migrations.
+
 ## Completed
 
 | Milestone                                                                    | Date       |
@@ -566,3 +568,4 @@
 | M18. Branch targeting, diff review, and manual promotion                     | 2026-06-04 |
 | M17. HITL hybrid surface                                                     | 2026-06-04 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
+| M23. Observatory read-only metrics surface                                   | 2026-06-05 |

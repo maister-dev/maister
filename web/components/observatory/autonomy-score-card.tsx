@@ -1,9 +1,8 @@
 import type { AutonomyMetric } from "@/lib/queries/observatory-core";
 import type { ReactElement } from "react";
+import type { ObservatoryLabels } from "@/components/observatory/types";
 
 import clsx from "clsx";
-
-import type { ObservatoryLabels } from "@/components/observatory/types";
 
 export function AutonomyScoreCard({
   autonomy,
@@ -14,11 +13,7 @@ export function AutonomyScoreCard({
 }): ReactElement {
   const percent = Math.round(autonomy.autonomyScore * 100);
   const tone =
-    percent >= 80
-      ? "bg-accent-4"
-      : percent >= 55
-        ? "bg-amber"
-        : "bg-danger";
+    percent >= 80 ? "bg-accent-4" : percent >= 55 ? "bg-amber" : "bg-danger";
 
   return (
     <article className="rounded-lg border border-line bg-paper p-4">
@@ -48,6 +43,9 @@ export function AutonomyScoreCard({
       </div>
       <div
         aria-label={labels.autonomyScore}
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={percent}
         className="h-2 overflow-hidden rounded-full bg-line-soft"
         role="meter"
       >
@@ -57,14 +55,26 @@ export function AutonomyScoreCard({
         />
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <Metric label={labels.waitTime} value={formatSeconds(autonomy.waitSeconds)} />
-        <Metric label={labels.openWaits} value={String(autonomy.openWaitCount)} />
+        <Metric
+          label={labels.waitTime}
+          value={formatSeconds(autonomy.waitSeconds)}
+        />
+        <Metric
+          label={labels.openWaits}
+          value={String(autonomy.openWaitCount)}
+        />
       </dl>
     </article>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }): ReactElement {
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}): ReactElement {
   return (
     <div className="rounded-md border border-line-soft bg-ivory px-3 py-2">
       <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
@@ -79,6 +89,7 @@ function formatSeconds(value: number): string {
   if (value < 60) return `${value}s`;
 
   const minutes = Math.round(value / 60);
+
   if (minutes < 60) return `${minutes}m`;
 
   return `${Math.round(minutes / 60)}h`;

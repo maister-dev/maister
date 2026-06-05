@@ -121,7 +121,10 @@ export function rollupCorrectionMetrics(input: {
   let retryCount = 0;
 
   for (const attempts of attemptsByRunNode.values()) {
-    retryCount += Math.max(0, maxNumber(attempts.map((row) => row.attempt)) - 1);
+    retryCount += Math.max(
+      0,
+      maxNumber(attempts.map((row) => row.attempt)) - 1,
+    );
   }
 
   const reworkCount = input.nodeAttempts.filter(
@@ -179,7 +182,9 @@ export function rollupAutonomyMetrics(input: {
   }
 
   const rawScore =
-    totalSeconds === 0 ? 1 : 1 - Math.min(waitSeconds, totalSeconds) / totalSeconds;
+    totalSeconds === 0
+      ? 1
+      : 1 - Math.min(waitSeconds, totalSeconds) / totalSeconds;
 
   return {
     totalSeconds,
@@ -196,13 +201,16 @@ export function groupArtifactContributions(
   artifacts: readonly ObservatoryArtifactInput[],
 ): ArtifactContribution[] {
   const grouped = groupBy(artifacts, (artifact) =>
-    artifact.artifactDefId ? `def:${artifact.artifactDefId}` : `kind:${artifact.kind}`,
+    artifact.artifactDefId
+      ? `def:${artifact.artifactDefId}`
+      : `kind:${artifact.kind}`,
   );
 
   return [...grouped.entries()]
     .map(([key, rows]) => ({
       key,
-      artifactDefId: rows.find((row) => row.artifactDefId)?.artifactDefId ?? null,
+      artifactDefId:
+        rows.find((row) => row.artifactDefId)?.artifactDefId ?? null,
       kind: rows[0]?.kind ?? "unknown",
       artifactCount: rows.length,
       runIds: uniqueSorted(rows.map((row) => row.runId)),
@@ -220,9 +228,11 @@ export function rankSignalClusters(
     }))
     .sort((left, right) => {
       const priorityDelta = right.priority - left.priority;
+
       if (priorityDelta !== 0) return priorityDelta;
 
       const occurrenceDelta = right.occurrenceCount - left.occurrenceCount;
+
       if (occurrenceDelta !== 0) return occurrenceDelta;
 
       return left.key.localeCompare(right.key);
@@ -230,7 +240,9 @@ export function rankSignalClusters(
 }
 
 export function mergedIntervalSeconds(intervals: readonly Interval[]): number {
-  const sorted = [...intervals].sort((left, right) => left.startMs - right.startMs);
+  const sorted = [...intervals].sort(
+    (left, right) => left.startMs - right.startMs,
+  );
   const merged: Interval[] = [];
 
   for (const interval of sorted) {

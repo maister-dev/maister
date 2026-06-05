@@ -1,6 +1,6 @@
 # Observatory domain
 
-> **Status: Designed (M23).** Observatory is the Wave-1 read-only metrics surface
+> **Status: Implemented (M23).** Observatory is the Wave-1 read-only metrics surface
 > for correction pressure, autonomy, and repeatable harvestable signals. It
 > builds on the M11a `node_attempts` ledger, M12 artifact evidence index, M15
 > readiness verdict calibration, and HITL timing rows. Locked decision:
@@ -15,6 +15,11 @@ not mutate Flow definitions, create recommendations, schedule work, inspect raw
 payloads, or add persistence. The goal is to prove which correction and
 autonomy patterns are repeatable enough to justify a later write-side learning
 loop.
+
+Implemented surfaces are `web/lib/queries/observatory.ts`,
+`web/lib/queries/observatory-core.ts`,
+`web/lib/queries/observatory-signals.ts`, `/observatory`, and
+`/projects/[slug]/observatory`. They reuse existing tables only.
 
 ## Domain entities
 

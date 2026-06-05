@@ -90,10 +90,16 @@ type ClusterSeed = {
 const MAX_EXAMPLES = 3;
 const MIN_EXAMPLE_LENGTH = 3;
 
-export function normalizeSignalText(value: string | null | undefined): string | null {
+export function normalizeSignalText(
+  value: string | null | undefined,
+): string | null {
   if (!value) return null;
 
-  const normalized = redactSignalText(value).trim().replace(/\s+/g, " ").toLowerCase();
+  const normalized = redactSignalText(value)
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
   return normalized.length < MIN_EXAMPLE_LENGTH ? null : normalized;
 }
 
@@ -186,7 +192,8 @@ export function clusterRetrySignals(
       : latest.artifactKind
         ? `:${latest.artifactKind}`
         : "";
-    const errorKey = latest.errorCode ?? latest.exitCode?.toString() ?? "unknown";
+    const errorKey =
+      latest.errorCode ?? latest.exitCode?.toString() ?? "unknown";
 
     retrySeeds.push({
       kind: "retry",
@@ -210,12 +217,16 @@ export function clusterRetrySignals(
   return clustersFromSeeds(retrySeeds);
 }
 
-export function rankSignals(clusters: readonly SignalCluster[]): SignalCluster[] {
+export function rankSignals(
+  clusters: readonly SignalCluster[],
+): SignalCluster[] {
   return [...clusters].sort((left, right) => {
     const priorityDelta = right.priorityScore - left.priorityScore;
+
     if (priorityDelta !== 0) return priorityDelta;
 
     const occurrenceDelta = right.occurrenceCount - left.occurrenceCount;
+
     if (occurrenceDelta !== 0) return occurrenceDelta;
 
     return left.key.localeCompare(right.key);
@@ -260,10 +271,17 @@ function scoreCluster(rows: readonly ClusterSeed[]): number {
   const affectedRunCount = new Set(rows.map((row) => row.runId)).size;
   const affectedProjectCount = new Set(rows.map((row) => row.projectId)).size;
 
-  return baseWeight + rows.length * 10 + affectedRunCount * 5 + affectedProjectCount * 3;
+  return (
+    baseWeight +
+    rows.length * 10 +
+    affectedRunCount * 5 +
+    affectedProjectCount * 3
+  );
 }
 
-function firstDefinedText(values: readonly (string | null | undefined)[]): string | null {
+function firstDefinedText(
+  values: readonly (string | null | undefined)[],
+): string | null {
   return values.find((value) => value !== null && value !== undefined) ?? null;
 }
 

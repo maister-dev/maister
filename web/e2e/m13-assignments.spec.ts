@@ -129,7 +129,7 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
           runner_snapshot, status, current_step_id, flow_version, started_at)
        VALUES ($1, $2, $3, $4, $5, 'claude',
           jsonb_build_object(
-            'id', $5,
+            'id', $5::text,
             'adapter', 'claude',
             'capabilityAgent', 'claude',
             'model', 'claude-sonnet-4-6',

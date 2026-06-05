@@ -1,13 +1,13 @@
 import type { ReactElement } from "react";
-
-import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
-import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
-import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
 import type {
   ArtifactListProps,
   ObservatoryDashboardProps,
   ObservatoryLabels,
 } from "@/components/observatory/types";
+
+import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
+import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
+import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
 
 export function ObservatorySummary({
   data,
@@ -25,8 +25,14 @@ export function ObservatorySummary({
             sub={labels.correctionFormula}
             value={correction.correctionRate.toFixed(2)}
           />
-          <MetricTile label={labels.rework} value={String(correction.reworkCount)} />
-          <MetricTile label={labels.retries} value={String(correction.retryCount)} />
+          <MetricTile
+            label={labels.rework}
+            value={String(correction.reworkCount)}
+          />
+          <MetricTile
+            label={labels.retries}
+            value={String(correction.retryCount)}
+          />
         </div>
         <CorrectionHeatmap
           labels={labels}
@@ -69,10 +75,7 @@ function MetricTile({
   );
 }
 
-function ArtifactList({
-  artifacts,
-  labels,
-}: ArtifactListProps): ReactElement {
+function ArtifactList({ artifacts, labels }: ArtifactListProps): ReactElement {
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
       <h2 className="m-0 text-sm font-semibold text-ink">{labels.artifacts}</h2>
