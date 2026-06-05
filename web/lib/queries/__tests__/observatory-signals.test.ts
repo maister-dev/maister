@@ -18,6 +18,26 @@ describe("observatory signal harvesting", () => {
     expect(normalizeSignalText("ok")).toBeNull();
   });
 
+  it("redacts bare tokens, hex digests, AWS keys, and JWTs in free text", () => {
+    expect(redactSignalText("leaked sk_live_abcdefgh1234 here")).toBe(
+      "leaked [redacted] here",
+    );
+    expect(redactSignalText("pushed with ghp_ABCDEFGH012345 token")).toBe(
+      "pushed with [redacted] token",
+    );
+    expect(
+      redactSignalText("digest d41d8cd98f00b204e9800998ecf8427e mismatch"),
+    ).toBe("digest [redacted] mismatch");
+    expect(redactSignalText("aws AKIAIOSFODNN7EXAMPLE rejected")).toBe(
+      "aws [redacted] rejected",
+    );
+    expect(
+      redactSignalText(
+        "auth eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.s3cr3tSig denied",
+      ),
+    ).toBe("auth [redacted] denied");
+  });
+
   it("clusters structured rework metadata without depending on free text", () => {
     const clusters = clusterReworkSignals([
       {

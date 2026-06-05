@@ -182,6 +182,8 @@
     "noSignals": "No repeatable signals yet.",
     "observationsOnly": "Observations only. No write-side learning is active.",
     "filters": "Filters",
+    "artifactDefId": "Artifact definition",
+    "artifactKind": "Artifact kind",
     "flow": "Flow",
     "node": "Node",
     "lookback": "Lookback",
@@ -190,7 +192,7 @@
     "days": "days",
     "drillDown": "Drill down",
     "latestAttempt": "Latest attempt",
-    "historicalAttempts": "Historical attempts",
+    "historicalAttempts": "Latest attempt by run",
     "gates": "Gates",
     "hitlWaits": "HITL waits",
     "kind": {

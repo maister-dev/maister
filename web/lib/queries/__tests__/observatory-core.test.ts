@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   groupArtifactContributions,
-  latestAttemptsByNode,
-  rankSignalClusters,
   rollupAutonomyMetrics,
   rollupCorrectionMetrics,
 } from "@/lib/queries/observatory-core";
@@ -49,6 +47,34 @@ describe("observatory core formulas", () => {
     expect(result.displayKind).toBe("pressure-ratio");
   });
 
+  it("counts human review re-entry as a retry under the frozen pressure ratio", () => {
+    const result = rollupCorrectionMetrics({
+      runs: [{ id: "run-1", active: false }],
+      nodeAttempts: [
+        {
+          id: "review-1",
+          runId: "run-1",
+          nodeId: "review",
+          nodeType: "human",
+          attempt: 1,
+          status: "Reworked",
+        },
+        {
+          id: "review-2",
+          runId: "run-1",
+          nodeId: "review",
+          nodeType: "human",
+          attempt: 2,
+          status: "Succeeded",
+        },
+      ],
+    });
+
+    expect(result.reworkCount).toBe(1);
+    expect(result.retryCount).toBe(1);
+    expect(result.correctionRate).toBe(2);
+  });
+
   it("excludes legacy runs without node attempts from correction denominator", () => {
     const result = rollupCorrectionMetrics({
       runs: [
@@ -87,38 +113,6 @@ describe("observatory core formulas", () => {
     });
 
     expect(result.volatile).toBe(true);
-  });
-
-  it("computes latest attempts by run-scoped node", () => {
-    const latest = latestAttemptsByNode([
-      {
-        id: "run-a-1",
-        runId: "run-a",
-        nodeId: "shared",
-        nodeType: "check",
-        attempt: 1,
-        status: "Succeeded",
-      },
-      {
-        id: "run-a-2",
-        runId: "run-a",
-        nodeId: "shared",
-        nodeType: "check",
-        attempt: 2,
-        status: "Failed",
-      },
-      {
-        id: "run-b-1",
-        runId: "run-b",
-        nodeId: "shared",
-        nodeType: "check",
-        attempt: 1,
-        status: "Succeeded",
-      },
-    ]);
-
-    expect(latest.get("run-a::shared")?.id).toBe("run-a-2");
-    expect(latest.get("run-b::shared")?.id).toBe("run-b-1");
   });
 
   it("groups artifacts by definition id and falls back to kind", () => {
@@ -281,32 +275,5 @@ describe("observatory core formulas", () => {
     expect(implement.runCount + checks.runCount).toBe(3);
     expect(total.retryCount).toBe(1);
     expect(total.reworkCount).toBe(1);
-  });
-
-  it("ranks signal clusters by repeatability priority", () => {
-    const ranked = rankSignalClusters([
-      {
-        key: "retry:lint",
-        source: "retry",
-        label: "lint retries",
-        occurrenceCount: 3,
-        runIds: ["run-2", "run-1"],
-        priority: 6,
-      },
-      {
-        key: "gate:blocked",
-        source: "gate",
-        label: "blocked gates",
-        occurrenceCount: 2,
-        runIds: ["run-3"],
-        priority: 8,
-      },
-    ]);
-
-    expect(ranked.map((cluster) => cluster.key)).toEqual([
-      "gate:blocked",
-      "retry:lint",
-    ]);
-    expect(ranked[1]?.runIds).toEqual(["run-1", "run-2"]);
   });
 });

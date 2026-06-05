@@ -21,6 +21,7 @@ export default defineWorkspace([
         "app/**/__tests__/**/*.test.ts",
         "components/**/*.test.ts",
         "components/**/__tests__/**/*.test.ts",
+        "styles/**/*.test.ts",
       ],
       exclude: ["lib/**/*.integration.test.ts", "app/**/*.integration.test.ts"],
       environment: "node",

@@ -207,9 +207,12 @@ Signal units are read-only "clusters" with a priority derived from repeatability
   `verdict.recommendedAction`, and normalized `verdict.reasons[]`.
 - Retry cluster: group by `(flow_id, node_id, node_type, error_code,
   exit_code)` plus artifact kind/def id when a failed/stale artifact is linked.
-- Priority score:
-  `repeatabilityScore = occurrenceCount + affectedRunCount + affectedProjectCount`
-  with multipliers for failed/stale blocking gates. When M17 lands, multiply by
+- Priority score (as implemented in `observatory-signals.ts::scoreCluster`):
+  `priorityScore = baseWeight + occurrenceCount*10 + affectedRunCount*5 + affectedProjectCount*3`,
+  where `baseWeight` is the per-kind severity (rework=70; blocking gate
+  failed=90 / stale=80; retry=60 + 10 per extra attempt). Repeatability
+  dominates via the occurrence/run/project terms, and failed/stale blocking
+  gates carry the highest base weight. When M17 lands, multiply by
   `criticality` and raise uncertainty for low `human_confidence`; do not depend
   on those fields in M23.
 - UI labels clusters as "signals", not "recommendations"; no mutation action is

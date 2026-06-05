@@ -26,6 +26,8 @@ export function labelsFromTranslations(
     noSignals: t("noSignals"),
     observationsOnly: t("observationsOnly"),
     filters: t("filters"),
+    artifactDefId: t("artifactDefId"),
+    artifactKind: t("artifactKind"),
     flow: t("flow"),
     node: t("node"),
     lookback: t("lookback"),

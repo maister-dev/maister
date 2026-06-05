@@ -29,19 +29,24 @@ export function CorrectionHeatmap({
       <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-2">
         {nodes.map((node) => {
           const content = <NodeCell labels={labels} node={node} />;
+          const params = new URLSearchParams({
+            flowId: node.flowId,
+            nodeId: node.nodeId,
+          });
 
           return projectSlug ? (
             <Link
-              key={node.nodeId}
+              key={`${node.flowId}:${node.nodeId}:${node.nodeType}`}
+              aria-label={`${labels.drillDown}: ${node.nodeId} — ${labels.correctionRate} ${node.correctionRate.toFixed(2)}`}
               className="block focus:outline-none focus:ring-2 focus:ring-amber"
-              href={`/projects/${projectSlug}/observatory?nodeId=${encodeURIComponent(
-                node.nodeId,
-              )}`}
+              href={`/projects/${projectSlug}/observatory?${params.toString()}`}
             >
               {content}
             </Link>
           ) : (
-            <div key={node.nodeId}>{content}</div>
+            <div key={`${node.flowId}:${node.nodeId}:${node.nodeType}`}>
+              {content}
+            </div>
           );
         })}
       </div>

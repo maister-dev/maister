@@ -40,6 +40,8 @@
 
   --good: #2f8a4a;
   --good-soft: #e6f1ea;
+  --danger: #b94a48;
+  --danger-soft: #f4dddd;
 
   --shadow-sm: 0 1px 0 rgba(22, 20, 15, 0.04), 0 1px 2px rgba(22, 20, 15, 0.04);
   --shadow-md: 0 8px 24px -12px rgba(22, 20, 15, 0.12),
@@ -86,6 +88,8 @@
 
   --good: #5cb677;
   --good-soft: #14241a;
+  --danger: #f07f7a;
+  --danger-soft: #2b1717;
 
   --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6),
@@ -124,6 +128,8 @@
 
   --color-good: var(--good);
   --color-good-soft: var(--good-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
 
   --font-sans: var(--sans);
   --font-mono: var(--mono);

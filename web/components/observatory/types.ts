@@ -29,6 +29,8 @@ export interface ObservatoryLabels {
   noSignals: string;
   observationsOnly: string;
   filters: string;
+  artifactDefId: string;
+  artifactKind: string;
   flow: string;
   node: string;
   lookback: string;
@@ -59,6 +61,8 @@ export interface ObservatoryNodeDrilldownProps {
 export interface ObservatoryFilterProps {
   labels: ObservatoryLabels;
   current: {
+    artifactDefId?: string;
+    artifactKind?: string;
     flowId?: string;
     nodeId?: string;
     windowDays: number;

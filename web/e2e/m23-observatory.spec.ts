@@ -33,7 +33,7 @@ test.describe("M23 Observatory", () => {
     ).toBeVisible();
     await expect(page.getByLabel("Flow")).toHaveValue(fx.flowId);
     await expect(page.getByLabel("Node")).toHaveValue(fx.nodeId);
-    await expect(page.getByText("Historical attempts")).toBeVisible();
+    await expect(page.getByText("Latest attempt by run")).toBeVisible();
     await expect(page.getByText("#2 · Succeeded").first()).toBeVisible();
 
     await page.goto(`/projects/${fx.projectSlug}/observatory?nodeId=missing`);

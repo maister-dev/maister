@@ -201,56 +201,172 @@ describe("observatory read models", () => {
     ]);
   });
 
-  it("returns project and node detail aggregates with bounded query count", async () => {
-    const { runId } = await seedRun({
+  it("returns project and node detail aggregates with constant query count", async () => {
+    const singleRun = await measureNodeDetailQueries(1);
+
+    await resetRunRows();
+
+    const multiRun = await measureNodeDetailQueries(8);
+
+    expect(singleRun.project.totals.correction.runCount).toBe(1);
+    expect(singleRun.detail.runs).toHaveLength(1);
+    expect(singleRun.detail.attempts).toHaveLength(2);
+    expect(multiRun.project.totals.correction.runCount).toBe(8);
+    expect(
+      multiRun.project.nodes.find((node) => node.nodeId === "checks")
+        ?.retryCount,
+    ).toBe(8);
+    expect(multiRun.detail.nodeId).toBe("checks");
+    expect(multiRun.detail.runs).toHaveLength(8);
+    expect(multiRun.detail.attempts).toHaveLength(16);
+    expect(multiRun.queryCount).toBe(singleRun.queryCount);
+    // Absolute ceiling guards against a constant-but-inflated count that the
+    // relative equality above would miss; the per-project dimension is covered
+    // by the two-project visibility tests in this file.
+    expect(singleRun.queryCount).toBeLessThanOrEqual(16);
+  });
+
+  it("uses one eligible run population for correction and autonomy", async () => {
+    await seedRun({
       projectId: visibleProjectId,
       flowId: visibleFlowId,
-      suffix: "node-detail",
+      suffix: "legacy-no-ledger",
+    });
+    const current = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "current-ledger",
+      reworked: true,
     });
 
-    await db.insert(schema.nodeAttempts).values([
-      attempt(runId, "checks", "check", 1, "Failed", "checks-1", {
-        errorCode: "TEST_FAIL",
-        exitCode: 1,
-      }),
-      attempt(runId, "checks", "check", 2, "Succeeded", "checks-2"),
-    ]);
-    await db.insert(schema.gateResults).values({
-      id: "gate-checks-1",
-      runId,
-      nodeAttemptId: "checks-1",
-      gateId: "unit",
-      kind: "command_check",
-      mode: "blocking",
-      status: "failed",
-      verdict: {
-        verdict: "fail",
-        reasons: ["unit failed"],
-        recommendedAction: "rerun",
-      },
+    await db
+      .insert(schema.nodeAttempts)
+      .values(
+        attempt(
+          current.runId,
+          "implement",
+          "ai_coding",
+          1,
+          "Succeeded",
+          "current-ledger-impl",
+        ),
+      );
+    await db.insert(schema.hitlRequests).values({
+      id: "legacy-hitl",
+      runId: "legacy-no-ledger-run",
+      stepId: "review",
+      kind: "human",
+      prompt: "Legacy wait",
+      decision: null,
+      createdAt: new Date("2026-06-05T11:10:00.000Z"),
+      respondedAt: null,
     });
 
-    const counted = withQueryCount(db);
     const project = await getProjectObservatory(
       visibleProjectId,
       { now: NOW },
-      counted.db,
-    );
-    const detail = await getNodeObservatoryDetail(
-      visibleProjectId,
-      "checks",
-      { now: NOW },
-      counted.db,
+      db,
     );
 
+    expect(project.totals.correction.runIds).toEqual([current.runId]);
     expect(project.totals.correction.runCount).toBe(1);
-    expect(
-      project.nodes.find((node) => node.nodeId === "checks")?.retryCount,
-    ).toBe(1);
-    expect(detail.nodeId).toBe("checks");
-    expect(detail.runs.map((run) => run.runId)).toEqual([runId]);
-    expect(detail.attempts.map((row) => row.attempt)).toEqual([1, 2]);
-    expect(counted.count()).toBeLessThanOrEqual(14);
+    expect(project.totals.autonomy.runIds).toEqual([current.runId]);
+    expect(project.totals.autonomy.totalSeconds).toBe(45 * 60);
+    expect(project.totals.autonomy.openWaitCount).toBe(0);
+  });
+
+  it("uses artifact filters to narrow the shared metric run population", async () => {
+    const logRun = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "artifact-log",
+    });
+    const diffRun = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "artifact-diff",
+    });
+
+    await db
+      .insert(schema.nodeAttempts)
+      .values([
+        attempt(
+          logRun.runId,
+          "implement",
+          "ai_coding",
+          1,
+          "Succeeded",
+          "artifact-log-impl-1",
+        ),
+        attempt(
+          diffRun.runId,
+          "implement",
+          "ai_coding",
+          1,
+          "Succeeded",
+          "artifact-diff-impl-1",
+        ),
+      ]);
+    await db.insert(schema.hitlRequests).values({
+      id: "artifact-diff-hitl",
+      runId: diffRun.runId,
+      stepId: "review",
+      kind: "human",
+      prompt: "Diff review",
+      decision: null,
+      createdAt: new Date("2026-06-05T11:30:00.000Z"),
+      respondedAt: null,
+    });
+    await db.insert(schema.artifactInstances).values([
+      {
+        id: "artifact-log-row",
+        runId: logRun.runId,
+        nodeAttemptId: "artifact-log-impl-1",
+        nodeId: "implement",
+        attempt: 1,
+        artifactDefId: "runtime-log",
+        kind: "log",
+        producer: "runner",
+        locator: { kind: "inline", text: "redacted" },
+        validity: "current",
+      },
+      {
+        id: "artifact-diff-row",
+        runId: diffRun.runId,
+        nodeAttemptId: "artifact-diff-impl-1",
+        nodeId: "implement",
+        attempt: 1,
+        artifactDefId: "workspace-diff",
+        kind: "diff",
+        producer: "runner",
+        locator: { kind: "inline", text: "redacted" },
+        validity: "current",
+      },
+    ]);
+
+    const logScope = await getProjectObservatory(
+      visibleProjectId,
+      { now: NOW, artifactKind: "log" },
+      db,
+    );
+    const diffScope = await getProjectObservatory(
+      visibleProjectId,
+      { now: NOW, artifactDefId: "workspace-diff" },
+      db,
+    );
+
+    expect(logScope.totals.correction.runIds).toEqual([logRun.runId]);
+    expect(logScope.totals.autonomy.runIds).toEqual([logRun.runId]);
+    expect(logScope.totals.autonomy.openWaitCount).toBe(0);
+    expect(logScope.artifacts.map((artifact) => artifact.artifactKey)).toEqual([
+      "def:runtime-log",
+    ]);
+    expect(diffScope.totals.correction.runIds).toEqual([diffRun.runId]);
+    expect(diffScope.totals.autonomy.runIds).toEqual([diffRun.runId]);
+    expect(diffScope.totals.autonomy.openWaitCount).toBe(1);
+    expect(diffScope.artifacts.map((artifact) => artifact.artifactKey)).toEqual(
+      ["def:workspace-diff"],
+    );
   });
 
   it("ranks repeated visible signals without leaking inaccessible project signals", async () => {
@@ -456,6 +572,70 @@ describe("observatory read models", () => {
     );
   });
 });
+
+async function measureNodeDetailQueries(runCount: number): Promise<{
+  detail: Awaited<ReturnType<typeof getNodeObservatoryDetail>>;
+  project: Awaited<ReturnType<typeof getProjectObservatory>>;
+  queryCount: number;
+}> {
+  const seededRuns = await Promise.all(
+    Array.from({ length: runCount }, (_, index) =>
+      seedRun({
+        projectId: visibleProjectId,
+        flowId: visibleFlowId,
+        suffix: `node-detail-${runCount}-${index}`,
+      }),
+    ),
+  );
+
+  await db.insert(schema.nodeAttempts).values(
+    seededRuns.flatMap(({ runId }, index) => [
+      attempt(runId, "checks", "check", 1, "Failed", `checks-${index}-1`, {
+        errorCode: "TEST_FAIL",
+        exitCode: 1,
+      }),
+      attempt(runId, "checks", "check", 2, "Succeeded", `checks-${index}-2`),
+    ]),
+  );
+  await db.insert(schema.gateResults).values({
+    id: `gate-checks-${runCount}`,
+    runId: seededRuns[0]?.runId ?? "missing",
+    nodeAttemptId: "checks-0-1",
+    gateId: "unit",
+    kind: "command_check",
+    mode: "blocking",
+    status: "failed",
+    verdict: {
+      verdict: "fail",
+      reasons: ["unit failed"],
+      recommendedAction: "rerun",
+    },
+  });
+
+  const counted = withQueryCount(db);
+  const project = await getProjectObservatory(
+    visibleProjectId,
+    { now: NOW },
+    counted.db,
+  );
+  const detail = await getNodeObservatoryDetail(
+    visibleProjectId,
+    "checks",
+    { now: NOW },
+    counted.db,
+  );
+
+  return { detail, project, queryCount: counted.count() };
+}
+
+async function resetRunRows(): Promise<void> {
+  await db.delete(schema.artifactInstances);
+  await db.delete(schema.gateResults);
+  await db.delete(schema.hitlRequests);
+  await db.delete(schema.nodeAttempts);
+  await db.delete(schema.runs);
+  await db.delete(schema.tasks);
+}
 
 async function seedRun(input: {
   projectId: string;

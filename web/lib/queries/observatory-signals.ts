@@ -110,6 +110,11 @@ export function redactSignalText(value: string): string {
       "$1=[redacted]",
     )
     .replace(/\b(?:sk|ghp|glpat|xox[baprs])_[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
+    .replace(
+      /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+      "[redacted]",
+    )
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[redacted]")
     .replace(/\b[A-Fa-f0-9]{32,}\b/g, "[redacted]");
 }
 

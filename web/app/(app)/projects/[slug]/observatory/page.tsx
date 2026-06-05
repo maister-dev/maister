@@ -20,6 +20,8 @@ import { getProjectBySlug } from "@/lib/queries/project";
 interface PageProps {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{
+    artifactDefId?: string | string[];
+    artifactKind?: string | string[];
     flowId?: string | string[];
     nodeId?: string | string[];
     windowDays?: string | string[];

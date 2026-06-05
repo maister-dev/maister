@@ -1,5 +1,9 @@
+"use client";
+
 import type { ReactElement } from "react";
 import type { ObservatoryFilterProps } from "@/components/observatory/types";
+
+import { Button, Input } from "@heroui/react";
 
 export function ObservatoryFilters({
   current,
@@ -7,44 +11,75 @@ export function ObservatoryFilters({
 }: ObservatoryFilterProps): ReactElement {
   return (
     <form
-      className="mb-5 grid grid-cols-1 gap-3 rounded-lg border border-line bg-paper p-3 md:grid-cols-[1fr_1fr_120px_auto]"
+      aria-label={labels.filters}
+      className="mb-5 grid grid-cols-1 gap-3 rounded-lg border border-line bg-paper p-3 md:grid-cols-[1fr_1fr_1fr_1fr_120px_auto]"
       method="get"
     >
       <label className="grid gap-1.5 text-xs font-medium text-ink">
         {labels.flow}
-        <input
-          className="h-9 rounded-md border border-line bg-ivory px-3 font-mono text-xs text-ink outline-none focus:border-amber"
+        <Input
+          fullWidth
+          className="font-mono text-xs"
           defaultValue={current.flowId ?? ""}
           name="flowId"
           placeholder={labels.all}
+          variant="secondary"
         />
       </label>
       <label className="grid gap-1.5 text-xs font-medium text-ink">
         {labels.node}
-        <input
-          className="h-9 rounded-md border border-line bg-ivory px-3 font-mono text-xs text-ink outline-none focus:border-amber"
+        <Input
+          fullWidth
+          className="font-mono text-xs"
           defaultValue={current.nodeId ?? ""}
           name="nodeId"
           placeholder={labels.all}
+          variant="secondary"
         />
       </label>
       <label className="grid gap-1.5 text-xs font-medium text-ink">
-        {labels.lookback}
-        <input
-          className="h-9 rounded-md border border-line bg-ivory px-3 font-mono text-xs text-ink outline-none focus:border-amber"
+        {labels.artifactKind}
+        <Input
+          fullWidth
+          className="font-mono text-xs"
+          defaultValue={current.artifactKind ?? ""}
+          name="artifactKind"
+          placeholder={labels.all}
+          variant="secondary"
+        />
+      </label>
+      <label className="grid gap-1.5 text-xs font-medium text-ink">
+        {labels.artifactDefId}
+        <Input
+          fullWidth
+          className="font-mono text-xs"
+          defaultValue={current.artifactDefId ?? ""}
+          name="artifactDefId"
+          placeholder={labels.all}
+          variant="secondary"
+        />
+      </label>
+      <label className="grid gap-1.5 text-xs font-medium text-ink">
+        {`${labels.lookback} (${labels.days})`}
+        <Input
+          fullWidth
+          className="font-mono text-xs"
           defaultValue={String(current.windowDays)}
           min={1}
           name="windowDays"
           type="number"
+          variant="secondary"
         />
       </label>
       <div className="flex items-end">
-        <button
-          className="h-9 rounded-md bg-ink px-4 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-paper hover:bg-ink-2"
+        <Button
+          className="h-9 font-mono text-[11px] font-bold uppercase tracking-[0.08em]"
+          size="sm"
           type="submit"
+          variant="primary"
         >
           {labels.apply}
-        </button>
+        </Button>
       </div>
     </form>
   );

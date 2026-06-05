@@ -72,8 +72,8 @@ export function SignalClusterList({
               {projectSlug && signal.drillDown.nodeId ? (
                 <Link
                   className="mt-2 inline-flex text-xs font-semibold text-amber hover:underline"
-                  href={`/projects/${projectSlug}/observatory?nodeId=${encodeURIComponent(
-                    signal.drillDown.nodeId,
+                  href={`/projects/${projectSlug}/observatory?${drillDownParams(
+                    signal,
                   )}`}
                 >
                   {labels.drillDown}
@@ -85,4 +85,19 @@ export function SignalClusterList({
       )}
     </section>
   );
+}
+
+function drillDownParams(signal: SignalCluster): string {
+  const params = new URLSearchParams();
+
+  if (signal.drillDown.flowId) params.set("flowId", signal.drillDown.flowId);
+  if (signal.drillDown.nodeId) params.set("nodeId", signal.drillDown.nodeId);
+  if (signal.drillDown.artifactKind) {
+    params.set("artifactKind", signal.drillDown.artifactKind);
+  }
+  if (signal.drillDown.artifactDefId) {
+    params.set("artifactDefId", signal.drillDown.artifactDefId);
+  }
+
+  return params.toString();
 }

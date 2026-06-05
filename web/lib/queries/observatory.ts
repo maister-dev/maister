@@ -75,6 +75,7 @@ export interface ObservatoryFlowSummary {
 }
 
 export interface ObservatoryNodeSummary {
+  flowId: string;
   nodeId: string;
   nodeType: string;
   runCount: number;
@@ -277,6 +278,9 @@ export async function getNodeObservatoryDetail(
   client: NodePgDatabase<typeof schema> = db(),
 ): Promise<ObservatoryNodeDetail> {
   const now = filters.now ?? new Date();
+  // Callers that drilled in from a heatmap/signal row pass the originating
+  // `flowId` so this detail reconciles with the per-flow portfolio row; without
+  // it, a node id reused across flows aggregates across all of them.
   const effectiveFilters = { ...filters, nodeId };
   const projectRows = await client
     .select({
@@ -325,7 +329,7 @@ export async function getNodeObservatoryDetail(
     runs: runsForDetail,
     attempts: nodeAttemptsForDetail,
     gates: gatesForDetail,
-    hitl: hitlForDetail,
+    hitl: hitlForDetail.filter((hitl) => hitl.stepId === nodeId),
     artifacts: readModel.artifacts.filter((artifact) =>
       detailRunSet.has(artifact.runId),
     ),
@@ -511,13 +515,20 @@ async function loadObservatoryRows(
     }
   }
 
-  const scopedRunIds = filters.nodeId
-    ? uniqueSorted(attemptRows.map((attempt) => attempt.runId))
-    : runIds;
-  const effectiveRunIds = scopedRunIds.length > 0 ? scopedRunIds : runIds;
+  const scopedRunIds = uniqueSorted(
+    attemptRows.map((attempt) => attempt.runId),
+  );
+
+  if (scopedRunIds.length === 0) {
+    return { runs: [], attempts: [], gates: [], hitl: [], artifacts: [] };
+  }
+
   const artifactPredicates: SQL[] = [
-    inArray(artifactInstances.runId, effectiveRunIds),
+    inArray(artifactInstances.runId, scopedRunIds),
   ];
+  const artifactFilterApplied = Boolean(
+    filters.artifactKind || filters.artifactDefId,
+  );
 
   if (filters.artifactKind) {
     artifactPredicates.push(eq(artifactInstances.kind, filters.artifactKind));
@@ -528,7 +539,43 @@ async function loadObservatoryRows(
     );
   }
 
-  const [gateRows, hitlRows, artifactRows] = await Promise.all([
+  const artifactRows: ArtifactRow[] = await client
+    .select({
+      id: artifactInstances.id,
+      runId: artifactInstances.runId,
+      nodeAttemptId: artifactInstances.nodeAttemptId,
+      artifactDefId: artifactInstances.artifactDefId,
+      kind: artifactInstances.kind,
+    })
+    .from(artifactInstances)
+    .where(and(...artifactPredicates));
+  const effectiveRunIds = artifactFilterApplied
+    ? uniqueSorted(artifactRows.map((artifact) => artifact.runId))
+    : scopedRunIds;
+
+  if (effectiveRunIds.length === 0) {
+    return { runs: [], attempts: [], gates: [], hitl: [], artifacts: [] };
+  }
+
+  const effectiveRunSet = new Set(effectiveRunIds);
+  const effectiveAttempts = attemptRows.filter((attempt) =>
+    effectiveRunSet.has(attempt.runId),
+  );
+
+  log.debug(
+    {
+      candidateRunCount: runIds.length,
+      eligibleRunCount: effectiveRunIds.length,
+      artifactFilterApplied,
+      artifactRunCount: uniqueSorted(
+        artifactRows.map((artifact) => artifact.runId),
+      ).length,
+      nodeFilterApplied: Boolean(filters.nodeId),
+    },
+    "observatory eligible run scope resolved",
+  );
+
+  const [gateRows, hitlRows] = await Promise.all([
     client
       .select({
         id: gateResults.id,
@@ -555,23 +602,13 @@ async function loadObservatoryRows(
       })
       .from(hitlRequests)
       .where(inArray(hitlRequests.runId, effectiveRunIds)),
-    client
-      .select({
-        id: artifactInstances.id,
-        runId: artifactInstances.runId,
-        nodeAttemptId: artifactInstances.nodeAttemptId,
-        artifactDefId: artifactInstances.artifactDefId,
-        kind: artifactInstances.kind,
-      })
-      .from(artifactInstances)
-      .where(and(...artifactPredicates)),
   ]);
 
   log.debug(
     {
       projectCount: projectScope.length,
       runCount: typedRuns.length,
-      attemptCount: attemptRows.length,
+      attemptCount: effectiveAttempts.length,
       gateCount: gateRows.length,
       hitlCount: hitlRows.length,
       artifactCount: artifactRows.length,
@@ -580,8 +617,8 @@ async function loadObservatoryRows(
   );
 
   return {
-    runs: typedRuns.filter((run) => effectiveRunIds.includes(run.id)),
-    attempts: attemptRows,
+    runs: typedRuns.filter((run) => effectiveRunSet.has(run.id)),
+    attempts: effectiveAttempts,
     gates: gateRows,
     hitl: hitlRows,
     artifacts: artifactRows,
@@ -603,7 +640,12 @@ function buildPortfolio(
     projectScope.map((project) => [project.id, project]),
   );
   const flowGroups = groupBy(rows.runs, (run) => run.flowId);
-  const nodeGroups = groupBy(rows.attempts, (attempt) => attempt.nodeId);
+  const runById = new Map(rows.runs.map((run) => [run.id, run]));
+  const nodeGroups = groupBy(rows.attempts, (attempt) => {
+    const run = runById.get(attempt.runId);
+
+    return `${run?.projectId ?? "unknown"}::${run?.flowId ?? "unknown"}::${attempt.nodeId}::${attempt.nodeType}`;
+  });
   const topSignals = buildTopSignals(rows);
   const projectSummaries = projectScope.map((project) => {
     const projectRuns = rows.runs.filter((run) => run.projectId === project.id);
@@ -663,22 +705,35 @@ function buildPortfolio(
       };
     }),
     nodes: [...nodeGroups.entries()]
-      .map(([nodeId, attempts]) => {
+      .flatMap(([, attempts]) => {
+        const firstAttempt = attempts[0];
+        const firstRun = firstAttempt ? runById.get(firstAttempt.runId) : null;
+
+        if (!firstAttempt || !firstRun) return [];
+
         const correction = rollupCorrectionMetrics({
           runs: rows.runs.map(toCorrectionRun),
           nodeAttempts: attempts,
         });
 
-        return {
-          nodeId,
-          nodeType: attempts[0]?.nodeType ?? "unknown",
-          runCount: correction.runCount,
-          reworkCount: correction.reworkCount,
-          retryCount: correction.retryCount,
-          correctionRate: correction.correctionRate,
-        };
+        return [
+          {
+            flowId: firstRun.flowId,
+            nodeId: firstAttempt.nodeId,
+            nodeType: firstAttempt.nodeType,
+            runCount: correction.runCount,
+            reworkCount: correction.reworkCount,
+            retryCount: correction.retryCount,
+            correctionRate: correction.correctionRate,
+          },
+        ];
       })
-      .sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+      .sort(
+        (left, right) =>
+          left.nodeId.localeCompare(right.nodeId) ||
+          left.flowId.localeCompare(right.flowId) ||
+          left.nodeType.localeCompare(right.nodeType),
+      ),
     artifacts: summarizeArtifacts(groupArtifactContributions(rows.artifacts)),
     topSignals,
   };

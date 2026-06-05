@@ -4,14 +4,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { labelsForTest } from "./labels.fixture";
+
 import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
 import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
 import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-table";
 import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
-import {
-  labelsForTest,
-  ObservatorySummary,
-} from "@/components/observatory/observatory-summary";
+import { ObservatorySummary } from "@/components/observatory/observatory-summary";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
 
 const labels = labelsForTest();
@@ -42,6 +41,7 @@ function portfolio(): ObservatoryPortfolio {
     flows: [],
     nodes: [
       {
+        flowId: "flow",
         nodeId: "checks",
         nodeType: "check",
         runCount: 2,
@@ -120,7 +120,7 @@ describe("Observatory components", () => {
       }),
     );
 
-    expect(html).toContain("No node attempts yet.");
+    expect(html).toContain("No node attempts in this window.");
   });
 
   it("renders filter controls as GET inputs", () => {
@@ -133,6 +133,8 @@ describe("Observatory components", () => {
 
     expect(html).toContain('method="get"');
     expect(html).toContain('name="flowId"');
+    expect(html).toContain('name="artifactKind"');
+    expect(html).toContain('name="artifactDefId"');
     expect(html).toContain('value="14"');
   });
 
@@ -145,7 +147,9 @@ describe("Observatory components", () => {
       }),
     );
 
-    expect(html).toContain("/projects/alpha/observatory?nodeId=checks");
+    expect(html).toContain(
+      "/projects/alpha/observatory?flowId=flow&amp;nodeId=checks",
+    );
     expect(html).toContain("access_token=[redacted] failed");
   });
 

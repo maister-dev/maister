@@ -11,6 +11,8 @@ import { getPortfolioObservatory } from "@/lib/queries/observatory";
 
 interface PageProps {
   searchParams: Promise<{
+    artifactDefId?: string | string[];
+    artifactKind?: string | string[];
     flowId?: string | string[];
     nodeId?: string | string[];
     windowDays?: string | string[];

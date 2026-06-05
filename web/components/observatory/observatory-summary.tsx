@@ -2,7 +2,6 @@ import type { ReactElement } from "react";
 import type {
   ArtifactListProps,
   ObservatoryDashboardProps,
-  ObservatoryLabels,
 } from "@/components/observatory/types";
 
 import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
@@ -91,8 +90,8 @@ function ArtifactList({ artifacts, labels }: ArtifactListProps): ReactElement {
               <span className="min-w-0 truncate text-sm font-medium text-ink">
                 {artifact.artifactKey}
               </span>
-              <span className="font-mono text-xs text-mute">
-                {artifact.artifactCount}
+              <span className="shrink-0 font-mono text-xs text-mute">
+                {artifact.artifactCount} · {artifact.runCount} {labels.runs}
               </span>
             </li>
           ))}
@@ -100,46 +99,4 @@ function ArtifactList({ artifacts, labels }: ArtifactListProps): ReactElement {
       )}
     </section>
   );
-}
-
-export function labelsForTest(): ObservatoryLabels {
-  return {
-    title: "Observatory",
-    subtitle: "Read-only metrics",
-    projectTitle: "Project observatory",
-    correctionRate: "Correction rate",
-    correctionFormula: "(rework + retries) / runs",
-    rework: "rework",
-    retries: "retries",
-    runs: "runs",
-    autonomyScore: "Autonomy Score",
-    waitTime: "wait",
-    openWaits: "open waits",
-    volatile: "live",
-    reviewDwellExcluded: "Review dwell without HITL is excluded.",
-    nodes: "nodes",
-    noNodes: "No node attempts yet.",
-    artifacts: "artifacts",
-    noArtifacts: "No artifacts yet.",
-    signals: "signals",
-    noSignals: "No repeatable signals yet.",
-    observationsOnly: "Observations only.",
-    filters: "Filters",
-    flow: "Flow",
-    node: "Node",
-    lookback: "Lookback",
-    apply: "Apply",
-    all: "All",
-    days: "days",
-    drillDown: "Drill down",
-    latestAttempt: "Latest attempt",
-    historicalAttempts: "Historical attempts",
-    gates: "Gates",
-    hitlWaits: "HITL waits",
-    kind: {
-      gate: "gate",
-      retry: "retry",
-      rework: "rework",
-    },
-  };
 }

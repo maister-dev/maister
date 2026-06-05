@@ -71,38 +71,10 @@ export interface ArtifactContribution {
   runIds: string[];
 }
 
-export type SignalClusterSource = "instruction" | "gate" | "retry";
-
-export interface SignalCluster {
-  key: string;
-  source: SignalClusterSource;
-  label: string;
-  occurrenceCount: number;
-  runIds: string[];
-  priority: number;
-}
-
 type Interval = {
   startMs: number;
   endMs: number;
 };
-
-export function latestAttemptsByNode(
-  attempts: readonly ObservatoryNodeAttemptInput[],
-): Map<string, ObservatoryNodeAttemptInput> {
-  const latest = new Map<string, ObservatoryNodeAttemptInput>();
-
-  for (const attempt of attempts) {
-    const key = `${attempt.runId}::${attempt.nodeId}`;
-    const current = latest.get(key);
-
-    if (!current || attempt.attempt > current.attempt) {
-      latest.set(key, attempt);
-    }
-  }
-
-  return latest;
-}
 
 export function rollupCorrectionMetrics(input: {
   runs: readonly ObservatoryRunInput[];
@@ -216,27 +188,6 @@ export function groupArtifactContributions(
       runIds: uniqueSorted(rows.map((row) => row.runId)),
     }))
     .sort((left, right) => left.key.localeCompare(right.key));
-}
-
-export function rankSignalClusters(
-  clusters: readonly SignalCluster[],
-): SignalCluster[] {
-  return [...clusters]
-    .map((cluster) => ({
-      ...cluster,
-      runIds: uniqueSorted(cluster.runIds),
-    }))
-    .sort((left, right) => {
-      const priorityDelta = right.priority - left.priority;
-
-      if (priorityDelta !== 0) return priorityDelta;
-
-      const occurrenceDelta = right.occurrenceCount - left.occurrenceCount;
-
-      if (occurrenceDelta !== 0) return occurrenceDelta;
-
-      return left.key.localeCompare(right.key);
-    });
 }
 
 export function mergedIntervalSeconds(intervals: readonly Interval[]): number {

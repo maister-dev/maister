@@ -94,7 +94,7 @@ Worked examples use `now = 2026-06-05T12:00:00.000Z`.
 | Example | Rows in scope | Expected |
 | ------- | ------------- | -------- |
 | No runs | zero eligible flow runs | `runCount=0`, `correctionRate=0`, empty groups |
-| Rework plus retry on one node | one run, node `implement` attempts `1,2`, one review attempt with `status='Reworked'` | `runCount=1`, `retryCount=1`, `reworkCount=1`, `correctionRate=2` |
+| Rework plus second human review | one run, node `implement` attempts `1,2`; node `review` attempts `1,2`; first review has `status='Reworked'` | `runCount=1`, `retryCount=2`, `reworkCount=1`, `correctionRate=3` |
 | Legacy run without node attempts | one flow run, zero `node_attempts` | excluded from denominator and numerator |
 | Artifact with null `artifact_def_id` | artifact linked to a contributing node attempt with `kind='log'` | included in artifact bucket `kind:log` |
 
