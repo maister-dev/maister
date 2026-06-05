@@ -428,32 +428,32 @@ Global phase gate:
 
 ### Phase 3 - Portfolio and Project Dashboard UI
 
-- [ ] **T3.1 (RED) - Component render tests.** Add render-to-static-markup unit
+- [x] **T3.1 (RED) - Component render tests.** Add render-to-static-markup unit
   tests for new components under `web/components/observatory/__tests__/`:
   metric tiles, correction heatmap, Autonomy Score band, signal list, empty
   state, filter controls, and drill-down links. No jsdom. Runner: vitest `unit`.
-- [ ] **T3.2 (GREEN) - Components.** Add HeroUI/Tailwind components under
+- [x] **T3.2 (GREEN) - Components.** Add HeroUI/Tailwind components under
   `web/components/observatory/`: `observatory-summary.tsx`,
   `correction-heatmap.tsx`, `autonomy-score-card.tsx`,
   `signal-cluster-list.tsx`, `observatory-filters.tsx`,
   `node-drilldown-table.tsx`. Use existing design tokens, compact dashboard
   density, icons where appropriate, stable dimensions for heatmap cells, and no
   nested cards. **Logging:** no client console logs.
-- [ ] **T3.3 (RED) - Route/page tests.** Add server-render tests or integration
+- [x] **T3.3 (RED) - Route/page tests.** Add server-render tests or integration
   smoke tests for `/observatory` and `/projects/[slug]/observatory` ensuring
   auth/session guards, project visibility, empty state, and i18n message keys.
   Runner: unit/integration according to existing route test precedent.
-- [ ] **T3.4 (GREEN) - Routes and navigation.** Add:
+- [x] **T3.4 (GREEN) - Routes and navigation.** Add:
   `web/app/(app)/observatory/page.tsx`,
   `web/app/(app)/projects/[slug]/observatory/page.tsx`,
   optional project tab/entry in `web/components/board/project-tabs.tsx`, and
   portfolio card entry points. Use server components calling query functions
   directly. **Logging:** INFO page aggregate summary from query layer only.
-- [ ] **T3.5 (GREEN) - i18n EN/RU.** Add `observatory.*` namespace to
+- [x] **T3.5 (GREEN) - i18n EN/RU.** Add `observatory.*` namespace to
   `web/messages/en.json` and `web/messages/ru.json`. Include metric labels,
   formula helper copy, filter labels, empty states, signal labels, drill-down
   labels, and future-signal placeholders. **Logging:** n/a.
-- [ ] **T3.6 (REVIEW) - UX/accessibility review.** Reviewer checks HeroUI v3
+- [x] **T3.6 (REVIEW) - UX/accessibility review.** Reviewer checks HeroUI v3
   only, EN/RU parity, no text overflow on mobile/desktop, no one-note palette,
   accessible metric labels, and no feature-explainer prose cluttering the app.
   **Verify:** typecheck, unit, integration green.

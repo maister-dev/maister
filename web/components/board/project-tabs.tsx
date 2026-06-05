@@ -7,6 +7,7 @@ import clsx from "clsx";
 export type ProjectTab =
   | "board"
   | "activity"
+  | "observatory"
   | "prs"
   | "flows"
   | "repo"
@@ -24,6 +25,7 @@ export interface ProjectTabsProps {
 const TABS: readonly ProjectTab[] = [
   "board",
   "activity",
+  "observatory",
   "prs",
   "flows",
   "repo",
@@ -43,6 +45,7 @@ export async function ProjectTabs({
   const label: Record<ProjectTab, string> = {
     board: t("board"),
     activity: t("activity"),
+    observatory: t("observatory"),
     prs: t("prs"),
     flows: t("flows"),
     repo: t("repo"),
@@ -73,6 +76,8 @@ export async function ProjectTabs({
             href={
               tab === "board"
                 ? `/projects/${slug}`
+                : tab === "observatory"
+                  ? `/projects/${slug}/observatory`
                 : `/projects/${slug}?tab=${tab}`
             }
             role="tab"
