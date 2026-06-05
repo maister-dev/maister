@@ -539,11 +539,13 @@
       "binary": "Binary file — not shown",
       "loadError": "Could not load file",
       "loading": "Loading…",
-      "forbidden": "You do not have access to repository files"
+      "forbidden": "You do not have access to repository files",
+      "treeLabel": "Repository file tree"
     },
     "diff": {
       "title": "Diff",
       "empty": "No changes in this run.",
+      "error": "Could not load the diff.",
       "changedFiles": "Changed files"
     },
     "tab": {

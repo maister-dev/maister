@@ -64,13 +64,8 @@ function errorResponse(err: unknown, runId: string): NextResponse {
 
 async function loadRun(db: Db, runId: string) {
   const runRows = await db.select().from(runs).where(eq(runs.id, runId));
-  const run = runRows[0];
 
-  if (!run) {
-    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
-  }
-
-  return run;
+  return runRows[0] ?? null;
 }
 
 async function loadScratchDiffRows(db: Db, runId: string) {
@@ -140,6 +135,10 @@ export async function GET(
 
     const db = getDb() as unknown as Db;
     const run = await loadRun(db, runId);
+
+    if (!run) {
+      return NextResponse.json({ message: "not found" }, { status: 404 });
+    }
 
     if (run.runKind === "scratch") {
       const { scratch, workspace } = await loadScratchDiffRows(db, runId);

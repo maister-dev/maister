@@ -46,6 +46,7 @@ export interface FlowGraphViewProps {
 interface FlowNodeBodyProps {
   label: string;
   status: string;
+  statusLabel?: string;
   isCurrent: boolean;
   rollup: string;
   labels: { currentNode: string };
@@ -57,6 +58,7 @@ interface FlowNodeBodyProps {
 export function FlowNodeBody({
   label,
   status,
+  statusLabel,
   isCurrent,
   rollup,
   labels,
@@ -79,7 +81,9 @@ export function FlowNodeBody({
         size="sm"
         variant="soft"
       >
-        <span className="font-mono text-[11px]">{label}</span>
+        <span className="font-mono text-[11px]" title={statusLabel}>
+          {label}
+        </span>
       </Chip>
       {rollup === "failed" || rollup === "stale" ? (
         <span data-rollup={rollup} data-testid="gate-rollup" />
@@ -112,6 +116,7 @@ function makeFlowNodeView(
           labels={labels}
           rollup={d.rollup}
           status={d.status}
+          statusLabel={labels.node[d.status] ?? d.status}
         />
         <Handle position={Position.Right} type="source" />
       </>
@@ -182,9 +187,8 @@ export default function FlowGraphView({
   // on an SSE event tick (debounced), never on a timer. A terminal run has no
   // live session, so useRunStream(null) yields no events and nothing refetches.
   const live = !isTerminalRunStatus(runStatus);
-  const { events } = useRunStream(live ? runId : null);
+  const { eventCount } = useRunStream(live ? runId : null, { retain: false });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const eventCount = events.length;
 
   useEffect(() => {
     if (!live) return;

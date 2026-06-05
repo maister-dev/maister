@@ -125,7 +125,7 @@ flowchart TD
     Gate -- no --> F403["403 UNAUTHORIZED"]
     Gate -- yes --> Val{"repoRelPathSchema ok?"}
     Val -- no --> F400["400 CONFIG: traversal/absolute/dash/NUL"]
-    Val -- yes --> LsTree["git ls-tree --name-only -z ref -- dir/"]
+    Val -- yes --> LsTree["git ls-tree -z ref -- dir/"]
     LsTree -- not in tree --> F404["404 .git/gitignored/untracked"]
     LsTree -- entries --> Render["dirs-first list"]
     Render --> OpenF["open file: GET .../files/content?path=file"]

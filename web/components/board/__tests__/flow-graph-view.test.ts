@@ -111,6 +111,23 @@ describe("FlowNodeBody — gate rollup badge", () => {
   });
 });
 
+describe("FlowNodeBody — translated status surfaced as a tooltip", () => {
+  it("renders the statusLabel as a title so status is not conveyed by color alone", () => {
+    const html = renderToStaticMarkup(
+      createElement(FlowNodeBody, {
+        label: "implement",
+        status: "Running",
+        statusLabel: "Выполняется",
+        isCurrent: false,
+        rollup: "none",
+        labels: baseLabels,
+      } as FlowNodeBodyProps & { statusLabel: string }),
+    );
+
+    expect(html).toContain('title="Выполняется"');
+  });
+});
+
 describe("FlowNodeBody — current-node emphasis", () => {
   it("marks the current node with data-current=true and aria-current", () => {
     const html = render({

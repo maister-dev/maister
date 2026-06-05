@@ -1429,8 +1429,10 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          description: Run/workspace not found, workspace removed, or base metadata unavailable (`PRECONDITION`).
+          description: Workspace metadata missing, workspace removed, or base metadata unavailable (`PRECONDITION`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

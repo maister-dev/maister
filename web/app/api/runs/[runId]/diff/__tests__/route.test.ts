@@ -9,7 +9,11 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { diffNameStatus, diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
+import {
+  diffNameStatus,
+  diffRunWorkspace,
+  resolveBaseRef,
+} from "@/lib/worktree";
 
 // M22 Phase 5 (T5.2, RED): the diff route now dispatches on `run.runKind`.
 //   - SCRATCH path is UNCHANGED (readScratchRun, no `files`) — all the existing
@@ -151,7 +155,8 @@ function seedFlowRun(
     parentRepoPath: "/repos/demo",
     baseCommit:
       overrides.baseCommit === undefined ? "feedbeef" : overrides.baseCommit,
-    baseBranch: overrides.baseBranch === undefined ? "main" : overrides.baseBranch,
+    baseBranch:
+      overrides.baseBranch === undefined ? "main" : overrides.baseBranch,
     targetBranch:
       overrides.targetBranch === undefined ? "release" : overrides.targetBranch,
     removedAt: overrides.removedAt ?? null,
@@ -178,7 +183,9 @@ beforeEach(() => {
     "diff --git a/file.txt b/file.txt\n",
   );
   vi.mocked(diffNameStatus).mockClear();
-  vi.mocked(diffNameStatus).mockResolvedValue([{ path: "file.txt", status: "M" }]);
+  vi.mocked(diffNameStatus).mockResolvedValue([
+    { path: "file.txt", status: "M" },
+  ]);
   vi.mocked(resolveBaseRef).mockClear();
   vi.mocked(resolveBaseRef).mockResolvedValue(
     "resolvedbase0000000000000000000000000000",
@@ -367,6 +374,16 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     const res = await invokeGet(runId);
 
     expect(res.status).toBe(403);
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/runs/[runId]/diff — missing run (M22)", () => {
+  it("returns 404 (not 409) for a run id that does not exist, matching the files/graph routes", async () => {
+    const res = await invokeGet("does-not-exist");
+
+    expect(res.status).toBe(404);
+    expect(requireProjectAction).not.toHaveBeenCalled();
     expect(diffRunWorkspace).not.toHaveBeenCalled();
   });
 });

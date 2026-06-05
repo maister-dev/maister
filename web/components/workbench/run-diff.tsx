@@ -11,6 +11,7 @@ export type RunDiffFile = { path: string; status: string };
 export interface RunDiffLabels {
   title: string;
   empty: string;
+  error: string;
   changedFiles: string;
 }
 
@@ -22,7 +23,7 @@ export function extractFileSection(diff: string, path: string): string {
   const sections = diff.split(/\n(?=diff --git )/);
   const match = sections.find(
     (s) =>
-      s.startsWith("diff --git") && s.split("\n", 1)[0].includes(` b/${path}`),
+      s.startsWith("diff --git") && s.split("\n", 1)[0].endsWith(` b/${path}`),
   );
 
   return match ?? diff;
@@ -140,7 +141,7 @@ export default function RunDiff({ runId, labels }: RunDiffProps): ReactElement {
         data-testid="run-diff-error"
         role="alert"
       >
-        {labels.empty}
+        {labels.error}
       </p>
     );
   }

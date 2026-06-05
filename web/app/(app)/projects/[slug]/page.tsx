@@ -94,6 +94,7 @@ export default async function ProjectBoardPage({
     loadError: tWorkbench("files.loadError"),
     loading: tWorkbench("files.loading"),
     forbidden: tWorkbench("files.forbidden"),
+    treeLabel: tWorkbench("files.treeLabel"),
   };
 
   const [pageData, board, hitl, platformStatus] = await Promise.all([

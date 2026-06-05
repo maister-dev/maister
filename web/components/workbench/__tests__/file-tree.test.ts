@@ -39,11 +39,7 @@ const SEED: FileEntry[] = [
   { name: "a.txt", type: "file" },
 ];
 
-function renderRow(
-  entry: FileEntry,
-  depth: number,
-  expanded: boolean,
-): string {
+function renderRow(entry: FileEntry, depth: number, expanded: boolean): string {
   return renderToStaticMarkup(
     createElement(FileTreeEntryRow, { entry, depth, expanded }),
   );
@@ -116,5 +112,14 @@ describe("FileTreeList — seeded entry list rendering", () => {
     const count = html.split("aria-expanded").length - 1;
 
     expect(count).toBe(1);
+  });
+
+  it("labels the root tree with the provided treeLabel (a11y name)", () => {
+    const labelled = renderToStaticMarkup(
+      createElement(FileTreeList, { entries: SEED, treeLabel: "Repo tree" }),
+    );
+
+    expect(labelled).toContain('role="tree"');
+    expect(labelled).toContain('aria-label="Repo tree"');
   });
 });

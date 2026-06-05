@@ -11,6 +11,7 @@ export type FileTreeEntry = { name: string; type: "file" | "dir" };
 
 export interface FileTreeLabels extends FileViewerLabels {
   empty: string;
+  treeLabel?: string;
 }
 
 function DirIcon(): ReactElement {
@@ -96,6 +97,7 @@ export interface FileTreeListProps {
   parentPath?: string;
   childrenByDir?: Record<string, FileTreeEntry[] | undefined>;
   selectedPath?: string | null;
+  treeLabel?: string;
   onActivateEntry?: (entry: FileTreeEntry, fullPath: string) => void;
 }
 
@@ -106,10 +108,12 @@ export function FileTreeList({
   parentPath = "",
   childrenByDir = {},
   selectedPath = null,
+  treeLabel,
   onActivateEntry,
 }: FileTreeListProps): ReactElement {
   return (
     <ul
+      aria-label={depth === 0 ? treeLabel : undefined}
       className="m-0 flex list-none flex-col p-0"
       role={depth === 0 ? "tree" : "group"}
     >
@@ -261,6 +265,7 @@ export default function FileTree({
             entries={rootEntries ?? []}
             expandedDirs={expandedDirs}
             selectedPath={selectedPath}
+            treeLabel={labels.treeLabel}
             onActivateEntry={onActivateEntry}
           />
         )}

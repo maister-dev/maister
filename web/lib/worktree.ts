@@ -362,10 +362,14 @@ export async function diffRunWorkspace(
   const branch = validate(branchNameSchema, args.branch, "branch");
 
   try {
+    // 2-dot: the literal stored-base -> branch tree delta. A 3-dot range diffs
+    // from merge-base(base, branch), which under-reports the branch when its
+    // history is rewritten off its stored base (rebase/reset). Matches the
+    // documented contract (workbench.md) and the M18 review-panel `diffRange`.
     const { stdout } = await runGit(repo, [
       "diff",
       "--no-ext-diff",
-      `${baseCommit}...${branch}`,
+      `${baseCommit}..${branch}`,
     ]);
 
     return stdout;
@@ -833,11 +837,12 @@ export type DiffNameStatusArgs = {
   branch: string;
 };
 
-// M22 Phase 5 (T5.1): the changed-files summary for the workbench diff. 3-dot
-// (`base...branch`) to match diffRunWorkspace's symmetric-difference range so the
-// file list lines up with the rendered diff. Parses git's `--name-status` output:
-// each line is `<STATUS>\t<path>` (or `R100\told\tnew` for renames/copies — take
-// the NEW path, the last tab-field).
+// M22 Phase 5 (T5.1): the changed-files summary for the workbench diff. 2-dot
+// (`base..branch`) to match diffRunWorkspace's literal stored-base -> branch tree
+// delta so the file list lines up with the rendered diff (and with the M18
+// review-panel `diffRange`). Parses git's `--name-status` output: each line is
+// `<STATUS>\t<path>` (or `R100\told\tnew` for renames/copies — take the NEW path,
+// the last tab-field).
 export async function diffNameStatus(
   args: DiffNameStatusArgs,
 ): Promise<DiffFileEntry[]> {
@@ -853,7 +858,7 @@ export async function diffNameStatus(
       "--name-status",
       "--no-color",
       "--end-of-options",
-      `${base}...${br}`,
+      `${base}..${br}`,
     ]);
 
     return stdout
@@ -871,7 +876,7 @@ export async function diffNameStatus(
 
     throw new MaisterError(
       "CONFLICT",
-      `git diff --name-status ${base}...${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      `git diff --name-status ${base}..${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
       { cause: asError(err) },
     );
   }

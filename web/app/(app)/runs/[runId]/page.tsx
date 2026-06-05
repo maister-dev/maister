@@ -293,10 +293,12 @@ export default async function RunDetailPage({
           binary: tWorkbench("files.binary"),
           loadError: tWorkbench("files.loadError"),
           loading: tWorkbench("files.loading"),
+          treeLabel: tWorkbench("files.treeLabel"),
         },
         diffLabels: {
           title: tWorkbench("diff.title"),
           empty: tWorkbench("diff.empty"),
+          error: tWorkbench("diff.error"),
           changedFiles: tWorkbench("diff.changedFiles"),
         },
       };
