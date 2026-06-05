@@ -222,6 +222,62 @@ describe("observatory core formulas", () => {
     expect(result.reviewDwellExcluded).toBe(true);
   });
 
+  it("keeps child run counts distinct from additive correction events", () => {
+    const runs = [
+      { id: "run-1", active: false },
+      { id: "run-2", active: false },
+    ];
+    const attempts = [
+      {
+        id: "run-1-impl",
+        runId: "run-1",
+        nodeId: "implement",
+        nodeType: "ai_coding",
+        attempt: 1,
+        status: "Succeeded",
+      },
+      {
+        id: "run-1-check-1",
+        runId: "run-1",
+        nodeId: "checks",
+        nodeType: "check",
+        attempt: 1,
+        status: "Failed",
+      },
+      {
+        id: "run-1-check-2",
+        runId: "run-1",
+        nodeId: "checks",
+        nodeType: "check",
+        attempt: 2,
+        status: "Succeeded",
+      },
+      {
+        id: "run-2-check",
+        runId: "run-2",
+        nodeId: "checks",
+        nodeType: "check",
+        attempt: 1,
+        status: "Reworked",
+      },
+    ] as const;
+
+    const total = rollupCorrectionMetrics({ runs, nodeAttempts: attempts });
+    const implement = rollupCorrectionMetrics({
+      runs,
+      nodeAttempts: attempts.filter((attempt) => attempt.nodeId === "implement"),
+    });
+    const checks = rollupCorrectionMetrics({
+      runs,
+      nodeAttempts: attempts.filter((attempt) => attempt.nodeId === "checks"),
+    });
+
+    expect(total.runCount).toBe(2);
+    expect(implement.runCount + checks.runCount).toBe(3);
+    expect(total.retryCount).toBe(1);
+    expect(total.reworkCount).toBe(1);
+  });
+
   it("ranks signal clusters by repeatability priority", () => {
     const ranked = rankSignalClusters([
       {

@@ -462,27 +462,27 @@ Global phase gate:
 
 ### Phase 4 - Per-Node Drill-Down and Cross-Surface Consistency
 
-- [ ] **T4.1 (RED) - Drill-down consistency tests.** Integration tests assert
+- [x] **T4.1 (RED) - Drill-down consistency tests.** Integration tests assert
   that a portfolio heatmap row, project row, and node detail reconcile with the
   correct additive-vs-distinct semantics: rework/retry event counts are additive
   across child buckets, while `runCount` is a distinct set cardinality and child
   `runCount` values must reconcile by set union, not numeric sum. Node detail
   lists contributing runs/gates/HITL waits without leaking inaccessible projects.
-- [ ] **T4.2 (GREEN) - Node detail read model.** Extend
+- [x] **T4.2 (GREEN) - Node detail read model.** Extend
   `web/lib/queries/observatory.ts` with `getNodeObservatoryDetail` returning
   contributing runs, attempts, gate verdicts, HITL waits, artifact links, and
   signal examples for one project/node/filter. Batch by selected node, not
   per-run. **Logging:** DEBUG selected node/filter and row counts.
-- [ ] **T4.3 (GREEN) - Drill-down UI.** Add node detail route or query-param
+- [x] **T4.3 (GREEN) - Drill-down UI.** Add node detail route or query-param
   driven section under `web/app/(app)/projects/[slug]/observatory/page.tsx`.
   Link to run detail/timeline/evidence graph where the underlying row exists.
   Surface "latest attempt" vs "historical attempts" clearly. **Logging:** none
   outside query layer.
-- [ ] **T4.4 (RED/GREEN) - Shared DTO invariants.** Add tests that
+- [x] **T4.4 (RED/GREEN) - Shared DTO invariants.** Add tests that
   portfolio/project/node views call the same pure rollup helpers and cannot
   drift on Autonomy/correction formulas. Mirror the existing readiness SSOT
   consistency test style.
-- [ ] **T4.5 (REVIEW) - Consistency review.** Reviewer checks formula SSOT,
+- [x] **T4.5 (REVIEW) - Consistency review.** Reviewer checks formula SSOT,
   no duplicated business logic in components, no N+1 drill-down behavior, and
   correct handling of legacy/no-ledger rows. **Verify:** typecheck, unit,
   integration green.

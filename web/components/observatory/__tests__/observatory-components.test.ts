@@ -187,11 +187,13 @@ describe("Observatory components", () => {
           ],
           hitlWaits: [],
           artifacts: [],
+          signals: portfolio().topSignals,
         },
       }),
     );
 
     expect(html).toContain("/runs/run-1");
     expect(html).toContain("#1 · Failed");
+    expect(html).toContain("access_token=[redacted] failed");
   });
 });

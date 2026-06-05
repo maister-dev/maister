@@ -155,6 +155,7 @@ export interface ObservatoryNodeDetail {
     respondedAt: Date | null;
   }[];
   artifacts: ObservatoryArtifactSummary[];
+  signals: SignalCluster[];
 }
 
 type ProjectScopeRow = {
@@ -318,6 +319,15 @@ export async function getNodeObservatoryDetail(
       readModel.artifacts.filter((artifact) => detailRunSet.has(artifact.runId)),
     ),
   );
+  const signalsForDetail = buildTopSignals({
+    runs: runsForDetail,
+    attempts: nodeAttemptsForDetail,
+    gates: gatesForDetail,
+    hitl: hitlForDetail,
+    artifacts: readModel.artifacts.filter((artifact) =>
+      detailRunSet.has(artifact.runId),
+    ),
+  });
 
   log.debug(
     {
@@ -372,6 +382,7 @@ export async function getNodeObservatoryDetail(
       respondedAt: hitl.respondedAt,
     })),
     artifacts: artifactsForDetail,
+    signals: signalsForDetail,
   };
 }
 
@@ -805,6 +816,7 @@ function emptyNodeDetail(
     gates: [],
     hitlWaits: [],
     artifacts: [],
+    signals: [],
   };
 }
 

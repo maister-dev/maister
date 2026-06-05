@@ -343,6 +343,77 @@ describe("observatory read models", () => {
       "access_token=[redacted] failed",
     );
   });
+
+  it("reconciles additive correction events with distinct run-count semantics", async () => {
+    const first = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "reconcile-first",
+    });
+    const second = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "reconcile-second",
+    });
+    const hidden = await seedRun({
+      projectId: hiddenProjectId,
+      flowId: hiddenFlowId,
+      suffix: "reconcile-hidden",
+    });
+
+    await db.insert(schema.nodeAttempts).values([
+      attempt(first.runId, "implement", "ai_coding", 1, "Succeeded", "rec-impl-1"),
+      attempt(first.runId, "checks", "check", 1, "Failed", "rec-checks-1", {
+        errorCode: "TEST_FAIL",
+      }),
+      attempt(first.runId, "checks", "check", 2, "Succeeded", "rec-checks-2", {
+        errorCode: "TEST_FAIL",
+      }),
+      attempt(second.runId, "checks", "check", 1, "Reworked", "rec-checks-3", {
+        errorCode: "TEST_FAIL",
+      }),
+      attempt(hidden.runId, "checks", "check", 2, "Failed", "rec-hidden-1", {
+        errorCode: "HIDDEN",
+      }),
+    ]);
+    await db.insert(schema.gateResults).values({
+      id: "rec-gate-1",
+      runId: first.runId,
+      nodeAttemptId: "rec-checks-1",
+      gateId: "unit",
+      kind: "command_check",
+      mode: "blocking",
+      status: "failed",
+      verdict: { verdict: "fail", reasons: ["unit failed"] },
+    });
+
+    const project = await getProjectObservatory(
+      visibleProjectId,
+      { now: NOW },
+      db,
+    );
+    const checksDetail = await getNodeObservatoryDetail(
+      visibleProjectId,
+      "checks",
+      { now: NOW },
+      db,
+    );
+    const nodeRunCountSum = project.nodes.reduce(
+      (sum, node) => sum + node.runCount,
+      0,
+    );
+
+    expect(project.totals.correction.runCount).toBe(2);
+    expect(nodeRunCountSum).toBeGreaterThan(project.totals.correction.runCount);
+    expect(checksDetail.correction.runCount).toBe(2);
+    expect(checksDetail.runs.map((run) => run.runId).sort()).toEqual([
+      first.runId,
+      second.runId,
+    ]);
+    expect(checksDetail.runs.some((run) => run.runId === hidden.runId)).toBe(
+      false,
+    );
+  });
 });
 
 async function seedRun(input: {
