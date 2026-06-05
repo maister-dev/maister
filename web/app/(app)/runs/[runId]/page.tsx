@@ -32,6 +32,15 @@ import {
   ReviewPanel,
   type ReviewPanelLabels,
 } from "@/components/runs/review-panel";
+import FileTree, {
+  type FileTreeLabels,
+} from "@/components/workbench/file-tree";
+import RunDiff, { type RunDiffLabels } from "@/components/workbench/run-diff";
+import {
+  WorkbenchTabs,
+  type WorkbenchTab,
+  type WorkbenchTabsLabels,
+} from "@/components/workbench/workbench-tabs";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -49,9 +58,22 @@ import {
 } from "@/lib/queries/run";
 import { diffRange, resolveBaseCommit, resolveBaseRef } from "@/lib/worktree";
 
-type RouteParams = { params: Promise<{ runId: string }> };
+type RouteParams = {
+  params: Promise<{ runId: string }>;
+  searchParams: Promise<Record<string, string | string[]>>;
+};
 
 type RunDetailForReview = Awaited<ReturnType<typeof getRunDetail>> & object;
+
+const WORKBENCH_TABS: readonly WorkbenchTab[] = ["files", "diff", "graph"];
+
+function parseWb(raw: string | string[] | undefined): WorkbenchTab {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  return (WORKBENCH_TABS as readonly string[]).includes(value ?? "")
+    ? (value as WorkbenchTab)
+    : "graph";
+}
 
 // Resolve the ReviewPanel props for a flow run at `Review`. Legacy-row safe
 // (§3.6): null branch metadata is filled from project defaults / merge-base;
@@ -156,8 +178,11 @@ function staleSummaryText(
 
 export default async function RunDetailPage({
   params,
+  searchParams,
 }: RouteParams): Promise<ReactElement> {
   const { runId } = await params;
+  const { wb: rawWb } = await searchParams;
+  const activeWb = parseWb(rawWb);
 
   const user = await getSessionUser();
 
@@ -222,6 +247,9 @@ export default async function RunDetailPage({
     layout: Awaited<ReturnType<typeof getFlowLayout>>;
     statuses: Awaited<ReturnType<typeof getRunNodeStatuses>>;
     labels: FlowGraphViewLabels;
+    tabLabels: WorkbenchTabsLabels;
+    filesLabels: FileTreeLabels;
+    diffLabels: RunDiffLabels;
   } | null = null;
 
   if (detail.runKind === "flow") {
@@ -253,6 +281,23 @@ export default async function RunDetailPage({
             Reworked: tWorkbench("graph.node.Reworked"),
             Stale: tWorkbench("graph.node.Stale"),
           },
+        },
+        tabLabels: {
+          files: tWorkbench("tab.files"),
+          diff: tWorkbench("tab.diff"),
+          graph: tWorkbench("tab.graph"),
+        },
+        filesLabels: {
+          empty: tWorkbench("files.empty"),
+          tooLarge: tWorkbench("files.tooLarge"),
+          binary: tWorkbench("files.binary"),
+          loadError: tWorkbench("files.loadError"),
+          loading: tWorkbench("files.loading"),
+        },
+        diffLabels: {
+          title: tWorkbench("diff.title"),
+          empty: tWorkbench("diff.empty"),
+          changedFiles: tWorkbench("diff.changedFiles"),
         },
       };
     }
@@ -585,20 +630,31 @@ export default async function RunDetailPage({
       </section>
 
       {flowGraphData ? (
-        <section className="mt-6">
-          <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
-            {flowGraphData.labels.title}
-          </h2>
-          <FlowGraphViewSection
-            currentStepId={flowGraphData.statuses.currentStepId}
-            editable={canEditFlowLayout}
-            initialStatuses={flowGraphData.statuses.nodes}
-            labels={flowGraphData.labels}
-            layout={flowGraphData.layout}
+        <section className="mt-6" data-testid="run-workbench">
+          <WorkbenchTabs
+            active={activeWb}
+            labels={flowGraphData.tabLabels}
             runId={detail.runId}
-            runStatus={detail.status}
-            topology={flowGraphData.topology}
           />
+          {activeWb === "graph" ? (
+            <FlowGraphViewSection
+              currentStepId={flowGraphData.statuses.currentStepId}
+              editable={canEditFlowLayout}
+              initialStatuses={flowGraphData.statuses.nodes}
+              labels={flowGraphData.labels}
+              layout={flowGraphData.layout}
+              runId={detail.runId}
+              runStatus={detail.status}
+              topology={flowGraphData.topology}
+            />
+          ) : activeWb === "files" ? (
+            <FileTree
+              filesApiBase={`/api/runs/${detail.runId}/files`}
+              labels={flowGraphData.filesLabels}
+            />
+          ) : (
+            <RunDiff labels={flowGraphData.diffLabels} runId={detail.runId} />
+          )}
         </section>
       ) : null}
 

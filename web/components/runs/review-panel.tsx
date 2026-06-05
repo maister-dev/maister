@@ -8,6 +8,8 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { RawDiff } from "@/components/runs/raw-diff";
+
 type PromotionMode = "local_merge" | "pull_request";
 
 export type ReviewPanelConflict = {
@@ -217,9 +219,7 @@ export function ReviewPanel({
       ) : null}
 
       {/* raw diff */}
-      <pre className="mb-4 max-h-[420px] overflow-auto rounded-lg border border-line-soft bg-paper p-4 font-mono text-[11px] leading-[1.45] text-ink-2">
-        {diff}
-      </pre>
+      <RawDiff diff={diff} />
 
       {prUrl ? (
         <p className="mb-4 font-mono text-[11px]">

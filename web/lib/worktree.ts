@@ -822,6 +822,61 @@ async function diffRangeTruncated(
   });
 }
 
+export interface DiffFileEntry {
+  path: string;
+  status: string;
+}
+
+export type DiffNameStatusArgs = {
+  worktreePath: string;
+  baseRef: string;
+  branch: string;
+};
+
+// M22 Phase 5 (T5.1): the changed-files summary for the workbench diff. 3-dot
+// (`base...branch`) to match diffRunWorkspace's symmetric-difference range so the
+// file list lines up with the rendered diff. Parses git's `--name-status` output:
+// each line is `<STATUS>\t<path>` (or `R100\told\tnew` for renames/copies — take
+// the NEW path, the last tab-field).
+export async function diffNameStatus(
+  args: DiffNameStatusArgs,
+): Promise<DiffFileEntry[]> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const base = validate(gitRefSchema, args.baseRef, "baseRef");
+  const br = validate(branchNameSchema, args.branch, "branch");
+
+  log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffNameStatus");
+
+  try {
+    const { stdout } = await runGit(wt, [
+      "diff",
+      "--name-status",
+      "--no-color",
+      "--end-of-options",
+      `${base}...${br}`,
+    ]);
+
+    return stdout
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line): DiffFileEntry => {
+        const parts = line.split("\t");
+        const status = parts[0].charAt(0);
+        const filePath = parts.length >= 3 ? parts[parts.length - 1] : parts[1];
+
+        return { path: filePath, status };
+      });
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff --name-status ${base}...${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
 export type WorktreeStatusArgs = {
   worktreePath: string;
 };

@@ -540,6 +540,16 @@
       "loadError": "Could not load file",
       "loading": "Loading…",
       "forbidden": "You do not have access to repository files"
+    },
+    "diff": {
+      "title": "Diff",
+      "empty": "No changes in this run.",
+      "changedFiles": "Changed files"
+    },
+    "tab": {
+      "files": "Files",
+      "diff": "Diff",
+      "graph": "Graph"
     }
   },
   "changePassword": {

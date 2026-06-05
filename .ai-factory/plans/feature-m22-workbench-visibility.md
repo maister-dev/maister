@@ -617,11 +617,11 @@ phase touches that is left red fails the phase (quarantine only via explicit
 
 ### Phase 5 — Workbench diff (Track C)
 
-- [ ] **T5.1** — `web/lib/worktree.ts`: add `diffNameStatus({worktreePath, baseRef,
+- [x] **T5.1** — `web/lib/worktree.ts`: add `diffNameStatus({worktreePath, baseRef,
   branch}): Promise<{path, status}[]>` (`git diff --name-status --no-color
   --end-of-options base..branch`, parsed). Unit-test the parse (rename/add/delete/
   modify). LOGGING: via the module logger. Files: `web/lib/worktree.ts`. (no dep)
-- [ ] **T5.2** — Extend `GET /api/runs/[runId]/diff/route.ts` to flow runs: a
+- [x] **T5.2** — Extend `GET /api/runs/[runId]/diff/route.ts` to flow runs: a
   `runKind === "flow"` branch resolves base = `workspaces.base_commit ??
   resolveBaseRef(...)`, branch = `workspaces.branch`, via `diffRange`; returns the
   **same JSON** as scratch + adds `files: diffNameStatus(...)`. RBAC: flow →
@@ -629,12 +629,12 @@ phase touches that is left red fails the phase (quarantine only via explicit
   → `readScratchRun` (unchanged). **Assertion migration:** the existing
   scratch-only test asserting `PRECONDITION` on a flow run is updated to assert the
   new flow-run success. Files: diff route, its `__tests__`. (depends on T5.1)
-- [ ] **T5.3** — `web/components/runs/raw-diff.tsx`: extract the M18 review-panel
+- [x] **T5.3** — `web/components/runs/raw-diff.tsx`: extract the M18 review-panel
   `<pre>` diff block into a shared component (raw text, no highlighting — Phase 2);
   **refactor `review-panel.tsx` to use it** (behavior-preserving; review-panel
   tests stay green — assertion migration). Files: `raw-diff.tsx`, `review-panel.tsx`.
   (no dep)
-- [ ] **T5.4** — Workbench diff surface + Tabs: `web/components/workbench/run-diff.tsx`
+- [x] **T5.4** — Workbench diff surface + Tabs: `web/components/workbench/run-diff.tsx`
   (`"use client"`, fetch `GET …/diff`, render `<RawDiff>` + a changed-files list
   from `files`; clicking a file anchors/filters the `<pre>` client-side). Mount in
   the run workbench via a HeroUI `Tabs`: *Files* | *Diff* | *Graph* (`?wb=`

@@ -8,13 +8,15 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { diffRunWorkspace } from "@/lib/worktree";
+import {
+  diffNameStatus,
+  diffRunWorkspace,
+  resolveBaseRef,
+} from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, scratchRuns, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, scratchRuns, workspaces, projects } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-run-diff",
@@ -60,17 +62,18 @@ function errorResponse(err: unknown, runId: string): NextResponse {
   );
 }
 
-async function loadScratchDiffRows(db: Db, runId: string) {
+async function loadRun(db: Db, runId: string) {
   const runRows = await db.select().from(runs).where(eq(runs.id, runId));
   const run = runRows[0];
 
   if (!run) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
-  if (run.runKind !== "scratch") {
-    throw new MaisterError("PRECONDITION", `run is not scratch: ${runId}`);
-  }
 
+  return run;
+}
+
+async function loadScratchDiffRows(db: Db, runId: string) {
   const [scratchRows, workspaceRows] = await Promise.all([
     db.select().from(scratchRuns).where(eq(scratchRuns.runId, runId)),
     db.select().from(workspaces).where(eq(workspaces.runId, runId)),
@@ -94,7 +97,36 @@ async function loadScratchDiffRows(db: Db, runId: string) {
     );
   }
 
-  return { run, scratch, workspace };
+  return { scratch, workspace };
+}
+
+// The run is already loaded + authorized by the caller; this only fetches the
+// workspace + project (no redundant run round-trip).
+async function loadFlowDiffRows(
+  db: Db,
+  run: { id: string; projectId: string },
+) {
+  const [workspaceRows, projectRows] = await Promise.all([
+    db.select().from(workspaces).where(eq(workspaces.runId, run.id)),
+    db.select().from(projects).where(eq(projects.id, run.projectId)),
+  ]);
+  const workspace = workspaceRows[0];
+  const project = projectRows[0];
+
+  if (!workspace) {
+    throw new MaisterError("PRECONDITION", `workspace not found: ${run.id}`);
+  }
+  if (workspace.removedAt) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `workspace already removed for run: ${run.id}`,
+    );
+  }
+  if (!project) {
+    throw new MaisterError("PRECONDITION", `project not found: ${run.id}`);
+  }
+
+  return { workspace, project };
 }
 
 export async function GET(
@@ -107,23 +139,59 @@ export async function GET(
     await requireActiveSession();
 
     const db = getDb() as unknown as Db;
-    const { run, scratch, workspace } = await loadScratchDiffRows(db, runId);
+    const run = await loadRun(db, runId);
 
-    await requireProjectAction(run.projectId, "readScratchRun");
+    if (run.runKind === "scratch") {
+      const { scratch, workspace } = await loadScratchDiffRows(db, runId);
 
-    const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
+      await requireProjectAction(run.projectId, "readScratchRun");
+
+      const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
+      const diff = await diffRunWorkspace({
+        projectRepoPath: workspace.parentRepoPath,
+        baseCommit: scratch.baseCommit,
+        branch: workspace.branch,
+      });
+
+      return NextResponse.json({
+        runId,
+        baseCommit: scratch.baseCommit,
+        sourceBranch: workspace.branch,
+        targetBranch,
+        diff,
+      });
+    }
+
+    await requireProjectAction(run.projectId, "readBoard");
+
+    const { workspace, project } = await loadFlowDiffRows(db, run);
+
+    const base =
+      workspace.baseCommit ??
+      (await resolveBaseRef({
+        worktreePath: workspace.worktreePath,
+        branch: workspace.branch,
+        mainBranch: project.mainBranch,
+      }));
     const diff = await diffRunWorkspace({
-      projectRepoPath: workspace.parentRepoPath,
-      baseCommit: scratch.baseCommit,
+      projectRepoPath: workspace.worktreePath,
+      baseCommit: base,
+      branch: workspace.branch,
+    });
+    const files = await diffNameStatus({
+      worktreePath: workspace.worktreePath,
+      baseRef: base,
       branch: workspace.branch,
     });
 
     return NextResponse.json({
       runId,
-      baseCommit: scratch.baseCommit,
+      baseCommit: base,
       sourceBranch: workspace.branch,
-      targetBranch,
+      targetBranch:
+        workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
       diff,
+      files,
     });
   } catch (err) {
     return errorResponse(err, runId);
