@@ -44,6 +44,8 @@ erDiagram
     FLOWS ||--o{ RUNS : "selected at launch"
     FLOWS ||--o{ TASKS : "selected at create"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
+    FLOWS ||--o{ FLOW_GRAPH_LAYOUTS : "graph-view node positions (M22)"
+    USERS ||--o{ FLOW_GRAPH_LAYOUTS : "updated_by SET NULL (M22)"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
@@ -198,6 +200,16 @@ erDiagram
         jsonb manifest "parsed flow.yaml"
         integer schema_version
         timestamp created_at
+    }
+
+    FLOW_GRAPH_LAYOUTS {
+        text id PK
+        text flow_id FK "per-project key; project-isolated (M22)"
+        text node_id "compiled-manifest node id"
+        double x
+        double y
+        text updated_by_user_id FK "nullable, SET NULL"
+        timestamp updated_at
     }
 
     PROJECT_FLOW_RUNNER_DEFAULTS {

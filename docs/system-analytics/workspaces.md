@@ -513,7 +513,9 @@ flowchart LR
 - Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
   [`projects.md`](projects.md),
   [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
-  [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact).
+  [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact),
+  [`workbench.md`](workbench.md) (M22 — the worktree is the **tracked-file
+  source** for the read-only file-tree + base→run diff).
 - Source: `web/lib/worktree.ts`; scratch recovery routes under
   `web/app/api/scratch-runs/[runId]/recover/`. **(Implemented, M18)**
   `web/lib/runs/promote.ts` (shared `promoteRun`), `web/lib/runs/pr-adapter.ts`.

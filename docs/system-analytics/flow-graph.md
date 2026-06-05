@@ -299,7 +299,9 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   compatibility (engine bump).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`respond` review
   decision).
-- Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md).
+- Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md),
+  [`workbench.md`](workbench.md) (M22 — the read-only graph **view** + live
+  node-status coloring that renders this topology).
 - Source (Implemented): `web/lib/config.schema.ts` (node/gate schema),
   `web/lib/config.ts` (`loadFlowManifest`),
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`,

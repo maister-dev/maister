@@ -481,6 +481,81 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/files:
+    get:
+      tags: [projects]
+      summary: Designed (M22) — list git-tracked project-repo files (one level)
+      description: |
+        Requires the `readRepoFiles` action (project `member`). Lists git-tracked
+        entries one level under `?path=` via `git ls-tree` against
+        `projects.main_branch` HEAD (server-state `ref`) of `projects.repo_path`.
+        Tracked-only (same boundary as the run file routes). `?path=` validated by
+        `repoRelPathSchema`.
+      operationId: listProjectFiles
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: false
+          description: Repo-relative directory (default = repo root). Validated by `repoRelPathSchema`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: One-level tracked file/dir listing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileTreeResponse" }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/projects/{slug}/files/content:
+    get:
+      tags: [projects]
+      summary: Designed (M22) — read a git-tracked project-repo file
+      description: |
+        Requires the `readRepoFiles` action (project `member`). Reads a single
+        tracked blob via `git cat-file` against `projects.main_branch` HEAD,
+        capped at `MAISTER_WORKBENCH_MAX_FILE_BYTES`. Over-cap → `413`; binary →
+        `415`; untracked/unknown path → `404`; traversal → `400`.
+      operationId: readProjectFile
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: true
+          description: Repo-relative file path. Validated by `repoRelPathSchema`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tracked text file content.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileContentResponse" }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "415":
+          $ref: "#/components/responses/FileBinary"
+
   /api/projects/{slug}/tasks:
     post:
       tags: [projects]
@@ -1329,11 +1404,15 @@ paths:
   /api/runs/{runId}/diff:
     get:
       tags: [runs]
-      summary: Implemented — read workspace diff for a run
+      summary: Implemented (scratch) · Designed (M22, flow-run case + files) — read workspace diff
       description: |
-        Requires project membership at `viewer` or above. Returns the diff
-        between the run workspace branch and its server-resolved base commit.
-        For scratch runs, base metadata comes from `scratch_runs`.
+        Returns the diff between the run workspace branch and its
+        server-resolved base commit, plus a changed-files summary (`files`).
+        **Flow runs (M22):** base = `workspaces.base_commit ?? resolveBaseRef(...)`,
+        branch = `workspaces.branch`, gated `readBoard` (project `viewer` — the diff
+        is run-scoped, matching the M18 review panel; run state is NOT restricted to
+        `Review`). **Scratch runs:** base metadata comes from `scratch_runs`, gated
+        `readScratchRun`.
       operationId: getRunDiff
       parameters:
         - name: runId
@@ -1342,7 +1421,7 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Workspace diff.
+          description: Workspace diff + changed-files summary.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RunDiffResponse" }
@@ -1355,6 +1434,174 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/graph:
+    get:
+      tags: [runs]
+      summary: Designed (M22) — flow-graph topology + layout overrides
+      description: |
+        Requires project membership at `viewer` or above (`readBoard`). Compiles
+        the run's pinned manifest into a logic-only topology (nodes + edges, no
+        x/y) and returns the stored `flow_graph_layouts` overrides for the run's
+        `flow_id`. `runId` is the url-param; `projectId`/`flow_id`/pinned manifest
+        are server-state. dagre seeds positions client-side; overrides merge on top.
+      operationId: getRunGraph
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Topology + layout overrides.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunGraphResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/runs/{runId}/graph-status:
+    get:
+      tags: [runs]
+      summary: Designed (M22) — live node/gate status snapshot for the graph view
+      description: |
+        Requires project membership at `viewer` or above (`readBoard`). Returns
+        the highest-`attempt` `node_attempts.status` per node, a gate rollup over
+        `gate_results.status`, and `runs.current_step_id` + `runs.status`. The
+        client refetches this ONLY on an SSE event tick (debounced), never on a
+        timer, and stops once the run is terminal (ADR-052 — no polling).
+      operationId: getRunGraphStatus
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Live node/gate status snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunGraphStatusResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/runs/{runId}/graph/layout:
+    put:
+      tags: [runs]
+      summary: Designed (M22) — upsert a manual node position
+      description: |
+        Requires the `editFlowLayout` action (project `member`). Upserts one
+        `flow_graph_layouts` row keyed `(flow_id, node_id)`, last-writer-wins.
+        `runId` is the url-param; `flow_id` is resolved from the run server-state
+        (a flow-less scratch run is refused `CONFIG`). `nodeId` is validated
+        against the run's pinned-manifest node set (allow-list) before write — an
+        unknown id is refused `CONFIG` with no write. `x`/`y` are bounded floats.
+      operationId: putRunGraphLayout
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GraphLayoutPutBody" }
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResult"
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/runs/{runId}/files:
+    get:
+      tags: [runs]
+      summary: Designed (M22) — list git-tracked worktree files (one level)
+      description: |
+        Requires the `readRepoFiles` action (project `member` — strictly above
+        `readBoard`). Lists git-tracked entries one level under `?path=` via
+        `git ls-tree` against the run branch tip (server-state `ref`). Reads ONLY
+        tracked content — `.git/`, gitignored, `node_modules`, and untracked
+        paths are not in the tree and return `404`. `?path=` is untrusted and
+        validated by `repoRelPathSchema` (`..`/absolute/leading-`-`/NUL → `400`).
+      operationId: listRunFiles
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: false
+          description: Repo-relative directory (default = repo root). Validated by `repoRelPathSchema`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: One-level tracked file/dir listing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileTreeResponse" }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/runs/{runId}/files/content:
+    get:
+      tags: [runs]
+      summary: Designed (M22) — read a git-tracked worktree file
+      description: |
+        Requires the `readRepoFiles` action (project `member`). Reads a single
+        tracked blob via `git cat-file` against the run branch tip, capped at
+        `MAISTER_WORKBENCH_MAX_FILE_BYTES`. Over-cap → `413`; binary → `415`;
+        untracked/unknown path → `404`; traversal → `400`.
+      operationId: readRunFile
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: query
+          required: true
+          description: Repo-relative file path. Validated by `repoRelPathSchema`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tracked text file content.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileContentResponse" }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "415":
+          $ref: "#/components/responses/FileBinary"
 
   /api/runs/{runId}/artifacts:
     get:
@@ -3012,6 +3259,27 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    NotFound:
+      description: |
+        (M22) Resource genuinely not found: unknown run/project, a run with no
+        flow/manifest, or a path not in the git-tracked tree. A bare HTTP 404 —
+        NOT a thrown `MaisterError` (it does not map `PRECONDITION`, whose status
+        is 409). Access denied (non-member / below-`member` role) is 403, not 404.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotFoundBody" }
+    FileTooLarge:
+      description: |
+        (M22) Tracked file exceeds `MAISTER_WORKBENCH_MAX_FILE_BYTES`; bytes are
+        not served.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/FileTooLargeBody" }
+    FileBinary:
+      description: (M22) Tracked file is binary; content is not served.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/FileBinaryBody" }
     Precondition:
       description: Precondition failed or conflict (`PRECONDITION` / `CONFLICT`).
       content:
@@ -3783,6 +4051,140 @@ components:
         sourceBranch: { type: string }
         targetBranch: { type: string }
         diff: { type: string }
+        files:
+          type: array
+          description: |
+            (M22) Changed-files summary from `git diff --name-status base..branch`,
+            rendered beside the raw diff in the workbench. Present for flow runs.
+          items: { $ref: "#/components/schemas/DiffFileEntry" }
+    DiffFileEntry:
+      type: object
+      required: [path, status]
+      properties:
+        path: { type: string }
+        status:
+          type: string
+          description: git name-status letter (`A` add, `M` modify, `D` delete, `R` rename, `C` copy).
+    RunGraphResponse:
+      type: object
+      required: [topology, layout]
+      properties:
+        topology: { $ref: "#/components/schemas/GraphTopology" }
+        layout:
+          type: object
+          description: |
+            (M22) Override map keyed by node id; a node absent from the map is
+            dagre-seeded client-side.
+          additionalProperties: { $ref: "#/components/schemas/GraphNodePosition" }
+    GraphTopology:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/GraphTopologyNode" }
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/GraphTopologyEdge" }
+    GraphTopologyNode:
+      type: object
+      required: [id, nodeType, label]
+      properties:
+        id: { type: string }
+        nodeType:
+          type: string
+          enum: [ai_coding, cli, check, judge, human, guard]
+        label: { type: string }
+    GraphTopologyEdge:
+      type: object
+      required: [id, source, target, outcome]
+      properties:
+        id: { type: string }
+        source: { type: string }
+        target: { type: string }
+        outcome: { type: string }
+    GraphNodePosition:
+      type: object
+      required: [x, y]
+      properties:
+        x: { type: number }
+        y: { type: number }
+    GraphLayoutPutBody:
+      type: object
+      required: [nodeId, x, y]
+      additionalProperties: false
+      properties:
+        nodeId: { type: string, minLength: 1 }
+        x: { type: number }
+        y: { type: number }
+    RunGraphStatusResponse:
+      type: object
+      required: [currentStepId, runStatus, nodes]
+      properties:
+        currentStepId: { type: string, nullable: true }
+        runStatus: { type: string }
+        nodes:
+          type: object
+          description: Per-node status map keyed by node id.
+          additionalProperties: { $ref: "#/components/schemas/GraphNodeStatus" }
+    GraphNodeStatus:
+      type: object
+      required: [status, attempt, gates, rollup]
+      properties:
+        status:
+          type: string
+          enum: [Pending, Running, Succeeded, Failed, NeedsInput, Reworked, Stale]
+        attempt: { type: integer }
+        gates:
+          type: array
+          items: { $ref: "#/components/schemas/GraphGateStatus" }
+        rollup:
+          type: string
+          description: Worst-blocking gate rollup driving the node badge tint.
+    GraphGateStatus:
+      type: object
+      required: [blocking, status]
+      properties:
+        blocking: { type: boolean }
+        status:
+          type: string
+          enum: [pending, running, passed, failed, stale, skipped, overridden]
+    FileTreeResponse:
+      type: object
+      required: [path, entries]
+      properties:
+        path: { type: string }
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/FileTreeEntry" }
+    FileTreeEntry:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [file, dir] }
+    FileContentResponse:
+      type: object
+      required: [kind, content]
+      properties:
+        kind: { type: string, enum: [text] }
+        content: { type: string }
+    FileTooLargeBody:
+      type: object
+      required: [kind, size]
+      properties:
+        kind: { type: string, enum: [too-large] }
+        size: { type: integer, description: Blob size in bytes. }
+    FileBinaryBody:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [binary] }
+    NotFoundBody:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
     PromoteRunBody:
       type: object
       required: [mode, reviewedTargetCommit]

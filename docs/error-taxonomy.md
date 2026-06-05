@@ -119,6 +119,31 @@ defined as a string union in `web/lib/errors.ts`.
 >   The promote route's `httpStatusForCode` carries the `EXECUTOR_UNAVAILABLE → 503`
 >   case.
 
+> **M22 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+> closed union; ADR-051/052/053). The workbench reuses one existing code (`CONFIG`)
+> at new call sites (all Designed, M22), plus HTTP-only 404/413/415 statuses that
+> are NOT `MaisterError`s:
+>
+> - **`CONFIG` → HTTP 400** new call sites: `PUT /api/runs/{runId}/graph/layout`
+>   when `nodeId` is not in the run's pinned-manifest node set (allow-list reject,
+>   no write) or the run has no `flow_id` (a flow-less scratch run); and every
+>   `…/files[/content]` route (run + project) when `?path=` fails `repoRelPathSchema`
+>   (`..` segment, absolute, leading `/` or `-`, NUL). Thrown by
+>   `web/lib/runs/flow-layout-write.ts:upsertNodeLayout` and `web/lib/worktree.ts`
+>   (`repoRelPathSchema`). Names the offending node id / path.
+> - **HTTP 404 (bare, NOT a thrown `MaisterError`)**: `GET …/graph` /
+>   `…/graph-status` for a genuinely unknown run, a run with no flow, or no pinned
+>   manifest; the file routes when a validated `?path=` is not in the git-tracked
+>   tree (`.git/` / gitignored / untracked / unknown). The route returns a bare
+>   `404` with a `{message}` body — it does NOT throw `PRECONDITION` (whose
+>   canonical mapping is **409**, code-only). Access denied (non-member or
+>   below-`member` role) is **403** via `requireProjectAction`, the app-wide
+>   convention — NOT 404.
+> - **HTTP-only, no `MaisterError`:** a tracked blob over
+>   `MAISTER_WORKBENCH_MAX_FILE_BYTES` returns **413** (`{kind:"too-large",size}`);
+>   a binary blob returns **415** (`{kind:"binary"}`). These are content-negotiation
+>   markers from `readBlob`, not thrown domain errors.
+
 ## Construction
 
 ```ts

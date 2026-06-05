@@ -79,6 +79,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/readiness.md`](system-analytics/readiness.md) | Readiness policy: promotion-gating over blocking gates, verdict calibration, unified readiness summary (M15). |
 | [`system-analytics/instance-config.md`](system-analytics/instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
 | [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
+| [`system-analytics/workbench.md`](system-analytics/workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, project-scoped layout store. |
 
 ### Cross-cutting reference
 

@@ -76,6 +76,9 @@
 | [ADR-048](#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
 | [ADR-049](#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant) | PR promotion via a hybrid provider `PrAdapter` (credential model B); reverses the "gh is never invoked" invariant | Accepted | 2026-06-03 |
 | [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars) | Platform ACP runners, adapter provisioners, and router sidecars | Accepted | 2026-06-03 |
+| [ADR-051](#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed) | Flow-graph layout metadata store (project-scoped, `flow_id`-keyed) | Accepted | 2026-06-05 |
+| [ADR-052](#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch) | Live node-status coloring via SSE-triggered `graph-status` refetch | Accepted | 2026-06-05 |
+| [ADR-053](#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads) | Workbench file-tree: git-tracked-only, member-gated reads | Accepted | 2026-06-05 |
 
 ---
 
@@ -3049,6 +3052,89 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
   product default.
 - **Allow arbitrary scripts/argv from the UI:** creates injection and reproducibility risk. Rejected;
   only typed, allow-listed lifecycle commands and adapter policies are accepted.
+
+---
+
+### ADR-051: Flow-graph layout metadata store (project-scoped, `flow_id`-keyed)
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** M22 adds a per-run flow-graph VIEW (reusing the ADR-039 `@xyflow/react` + `@dagrejs/dagre` renderer) where dagre seeds an auto-layout but an operator may drag nodes to reposition them, and those positions MUST persist and round-trip across reloads. The product constraint (root command + roadmap §E1) is absolute: manual node positions are presentation metadata that MUST live in a SEPARATE store, NEVER in the `flow.yaml` manifest — the DSL stays logic-only (engine stays `1.2.0`, no manifest schema change). The backlog doc floated an in-manifest "presentation section"; that is rejected here. The open question was the store's key. A `flow_revision_id` key would tie layout to one immutable revision, but `flow_revisions` rows are shared across projects that install the same flow source — a member of project A could overwrite the layout project B sees (a cross-project write leak Codex flagged in the adversarial pass).
+
+**Decision:** A new DB table `flow_graph_layouts` (migration `0024`), one row per pinned node, keyed `UNIQUE (flow_id, node_id)`:
+
+- `flow_id` FK → `flows.id` ON DELETE CASCADE; `node_id` text; `x`/`y` double precision; `updated_by_user_id` FK → `users.id` ON DELETE SET NULL; `updated_at` timestamptz.
+- **Keying on `flows.id`** (the per-project flow binding) makes the layout **project-isolated by construction**: `flows` is per-project, so a write authorized against the run's project can only ever touch that project's `flow_id` rows. It is also **upgrade-stable** — it survives a `flow_revisions` bump (`runs.flow_revision_id` is nullable anyway).
+- **Round-trip** = dagre always computes a baseline; stored rows are **overrides merged on top**. No flag — a node with a row is pinned; a node with no row is dagre-seeded. **Stale** node-ids (a revision dropped a node) are **ignored at render** (the row is skipped; dagre seeds the rest).
+- **Write** = a single-store idempotent upsert `PUT /api/runs/{runId}/graph/layout {nodeId,x,y}` → `onConflictDoUpdate` on `(flow_id, node_id)`, last-writer-wins. `runId` = url-param; `flow_id` = server-state (resolved from the run, refuse a flow-less scratch run with `CONFIG`); `nodeId` = body, validated against the run's pinned-manifest node set (allow-list) before write (unknown id → `CONFIG`/400, no write); `x`/`y` bounded floats.
+- **RBAC** = a new `editFlowLayout` action (min role `member`), distinct from `readBoard`, tunable to `admin` later without touching call sites (layout is shared *within* the project).
+- **GC**: `flow_graph_layouts` rows are children of `flows` (CASCADE), NOT of `flow_revisions` — M19 revision-GC does NOT delete layout; only deleting the project/flow removes it.
+
+**Consequences:**
+- Manual positions persist and round-trip with no `flow.yaml`/engine change; the DSL stays logic-only.
+- Cross-project layout writes are structurally impossible (a project-A member can never touch project-B rows); proven by a two-project integration test (M22 T1.5).
+- A revision upgrade keeps positions for still-present nodes; dropped nodes' rows are inert (ignored at render), tolerated rather than eagerly GC'd.
+- One more table + one write route; no new `MaisterError` code (reuses `CONFIG` / `UNAUTHENTICATED` / `UNAUTHORIZED`).
+
+**Alternatives Considered:**
+- **Positions in `flow.yaml` (manifest "presentation section"):** violates the logic-only DSL invariant, forces an engine bump, and couples shared bundle bytes to per-project view state. Rejected.
+- **Key on `flow_revision_id`:** `flow_revisions` is shared across projects → cross-project write leak, and layout dies on every revision bump. Rejected.
+- **Key on `run_id` (per-run layout):** positions would not survive across a task's many runs (1:N retry loop), defeating "persist my layout". Rejected.
+- **A `presentation jsonb` blob on `flows`:** loses per-node upsert idempotency and concurrent-edit granularity (a whole-blob write races). Rejected for the per-row `(flow_id, node_id)` table.
+
+---
+
+### ADR-052: Live node-status coloring via SSE-triggered `graph-status` refetch
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** The M22 flow-graph view colors each node by its live execution status (highest-attempt `node_attempts.status` + gate rollup) and emphasizes `runs.current_step_id`. The run-detail page is a pure Server Component with no live subscription, and the existing run SSE stream (`GET /api/runs/{runId}/stream`) carries only supervisor session events (`session.line|update|permission_request|exited|crashed`) — it has NO `nodeId→status` delta. [ADR #1 / ADR-007](#adr-007-sse-pipe-to-disk-for-step-output) forbid `fs.watch` / `chokidar` / polling for state transitions; a naive `setInterval` recolor would violate that, and a reviewer could read any periodic refetch as a banned poll.
+
+**Decision:** A `"use client"` `<FlowGraphView>` (mounted through the `{ssr:false}` dynamic wrapper, the ADR-039 pattern) colors from a server-rendered initial snapshot, then keeps colors live WITHOUT polling:
+
+- **Server (run-detail, static at render):** `compileManifest(pinnedManifest)` → topology; `getFlowLayout(run.flow_id)` → overrides; `getRunNodeStatuses(runId)` → initial node/gate statuses + `currentStepId`. Topology + layout are stable, so dagre runs **once** on the client.
+- **Live coloring:** the client subscribes to the EXISTING `useRunStream(runId)` SSE. On each SSE event it **debounces (~1 s)** and refetches the lightweight `GET /api/runs/{runId}/graph-status` JSON (node→status + gate rollup + `currentStepId`), recoloring in place (no dagre re-run, no `router.refresh()`). The refetch is **TRIGGERED BY an SSE event, never by a timer** — it is the sanctioned ACP-notification-bridged-through-SSE path, not a poll.
+- **Terminal freeze:** when `runs.status` is terminal (`Done | Failed | Abandoned | Crashed`) there is no live session, so statuses are frozen and the client does NOT refetch — the server snapshot is authoritative. The e2e asserts **zero** `…/graph-status` traffic after a run goes terminal.
+- **Color map:** `colorForNodeStatus(status, isCurrent)` mirrors the evidence-graph `colorForState` → HeroUI `<Chip color>`; the current node gets ring emphasis; a blocking-gate `failed`/`stale` rollup tints the node.
+
+**Consequences:**
+- Live status without polling and without a new SSE event type — reuses the existing run stream as a change-trigger only.
+- A debounce collapses event bursts into at most ~1 refetch/sec; the status route is a cheap read model that returns an explicit DTO (no secrets, no internal handles).
+- The "is this a poll?" review risk is closed in writing: SSE-triggered + terminal-freeze + an e2e traffic assertion.
+- No supervisor change (the stream already exists); the recolor adds one small read route.
+
+**Alternatives Considered:**
+- **`setInterval` polling of `…/graph-status`:** the banned poll; violates ADR #1. Rejected.
+- **Add a `node.status` delta to the SSE payload:** a larger supervisor + web change, and the status read model already exists server-side; the refetch-on-tick is far smaller. Deferred (a Phase-2 optimization if the refetch proves heavy).
+- **`router.refresh()` per SSE event:** re-runs the whole Server Component (re-compiles, re-lays-out, refetches everything) and flickers; the in-place recolor is cheaper. Rejected.
+
+---
+
+### ADR-053: Workbench file-tree: git-tracked-only, member-gated reads
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** M22 adds a read-only file browser over a run's worktree and a project's repo. A raw `fs.readdir` / `readFile` of an arbitrary worktree/repo path is a secret-disclosure surface: it would expose `.git/`, gitignored secrets (`.env*`), `node_modules`, and untracked agent output, and is one path-traversal bug away from reading outside the tree. The board's `readBoard` action is `viewer`; source code is more sensitive than board metadata.
+
+**Decision:** The browser reads ONLY git-tracked content via git plumbing, behind a dedicated permission:
+
+- **Reads:** `listTree({repo, ref, dir})` via `git ls-tree --name-only -z --end-of-options <ref> -- <dir>/` (one level) and `readBlob({repo, ref, path, maxBytes})` via `git cat-file -s` (size) then `git cat-file blob <ref>:<path>`, capped at `MAISTER_WORKBENCH_MAX_FILE_BYTES` (default `524288` = 512 KiB). Both new in `web/lib/worktree.ts`, **on-demand (NOT a watcher → ADR #1-compliant)**.
+- **Trust boundary = "what is committed":** `.git/`, gitignored (`.env*`), `node_modules`, and untracked output are unreachable **by construction** (not in the tree object DB), not by a leaky denylist.
+- **`ref` is server-state:** the run branch tip (run workbench) or `projects.main_branch` HEAD (project page) — never body-controlled. **`path`/`dir` is body/query-controlled and UNTRUSTED** → a new `repoRelPathSchema` rejects `..` segments, absolute, leading `/` or `-`, and NUL; git plumbing additionally cannot leave the repo object DB (double confinement).
+- **RBAC** = a new `readRepoFiles` action (min role `member`), strictly above `readBoard`/`viewer` — a viewer cannot browse source at all. The workbench **diff** stays `readBoard`/`viewer` (it is run-scoped: only that run's `base..branch` changes, matching the M18 review-panel visibility).
+- **Routes:** `GET /api/runs/{runId}/files[/content]` (worktree) and `GET /api/projects/{slug}/files[/content]` (project repo); over-cap → `413`, binary → `415`, unknown path → `404` (uniform existence-hide), traversal → `400` (`CONFIG`).
+- **Untracked-file viewing is explicitly deferred** (it is the secret-disclosure surface we are excluding); a later opt-in member+ "show untracked" mode with an explicit secret denylist can be added if dogfood demands it.
+
+**Consequences:**
+- A low-privilege `viewer` cannot read source; even a `member` cannot reach `.git` / secrets / untracked output.
+- No raw `fs` read of arbitrary paths and no execute-path (no `setup.sh` / hook / `child_process` of repo content) — both the path-traversal risk and the fetch-then-execute separation rule are satisfied.
+- Listing is lazy-per-level and blob reads are capped — no full-tree walk, no unbounded read on big repos/files.
+- One new env var (`.env.example` + `docs/configuration.md`; `web` runs on the host, so no compose `web` block per [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)); no new `MaisterError` code (reuses `CONFIG` / `PRECONDITION` + HTTP 404/413/415).
+
+**Alternatives Considered:**
+- **Raw `fs` read of the worktree with a secret denylist:** denylists leak (new secret patterns, symlinks, `.git` internals); tracked-only excludes by construction. Rejected.
+- **Reuse `readBoard` (`viewer`) for file reads:** exposes source to view-only accounts; M22 raises the bar with `readRepoFiles = member`. Rejected.
+- **Show untracked / working-copy files now:** the highest secret-disclosure surface (uncommitted `.env`, agent scratch output); deferred behind an explicit future opt-in. Rejected for Wave-1.
 
 ---
 

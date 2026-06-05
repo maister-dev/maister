@@ -88,7 +88,11 @@ server action). The column is reusable for admin-forced resets.
   Order: `viewer < member < admin < owner`.
 - `requireProjectAction(projectId, action)` — convenience wrapper mapping
   named actions (`readBoard`, `launchRun`, `createTask`, `answerHitl`,
-  `editSettings`) to minimum project roles via `PROJECT_ACTION_MIN`.
+  `editSettings`, …) to minimum project roles via `PROJECT_ACTION_MIN`.
+  **M22 (ADR-051/053) adds two actions:** `readRepoFiles` (`member`) gates the
+  workbench git-tracked file routes — strictly above `readBoard`/`viewer`, so a
+  viewer cannot browse source; `editFlowLayout` (`member`) gates the flow-graph
+  layout `PUT`. The workbench **diff** stays `readBoard` (`viewer`, run-scoped).
 - `httpStatusForAuthz(code)` — maps `UNAUTHENTICATED`→401,
   `UNAUTHORIZED`→403 for use in API route error handlers.
 
