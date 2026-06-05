@@ -515,6 +515,23 @@
     "waiting": "Waiting",
     "overridden": "Overridden"
   },
+  "workbench": {
+    "graph": {
+      "title": "Flow graph",
+      "empty": "No flow graph for this run.",
+      "currentNode": "Current node",
+      "saveError": "Could not save the node position.",
+      "node": {
+        "Pending": "Pending",
+        "Running": "Running",
+        "Succeeded": "Succeeded",
+        "Failed": "Failed",
+        "NeedsInput": "Needs input",
+        "Reworked": "Reworked",
+        "Stale": "Stale"
+      }
+    }
+  },
   "changePassword": {
     "title": "Change your password",
     "sub": "Your account requires a new password before you can continue.",

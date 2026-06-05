@@ -8,6 +8,8 @@ import Link from "next/link";
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
 import { type EvidenceGraphLabels } from "@/components/board/evidence-graph";
+import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
+import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import {
   CapabilityProfilePanel,
   type CapabilityProfileNodeView,
@@ -32,8 +34,13 @@ import {
 } from "@/components/runs/review-panel";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
+import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
+import { getFlowLayout } from "@/lib/queries/flow-layout";
+import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getRunReadiness } from "@/lib/queries/readiness";
+import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
+import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
   getRunCapabilityProfiles,
   getRunDetail,
@@ -169,6 +176,10 @@ export default async function RunDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
+  // editFlowLayout min-role is `member` (ADR-051). Kept distinct from canAct so a
+  // future tightening of editFlowLayout does not silently follow canAct.
+  const canEditFlowLayout =
+    role === "owner" || role === "admin" || role === "member";
   const t = await getTranslations("run");
 
   const timeline = await getRunTimeline(runId);
@@ -202,6 +213,50 @@ export default async function RunDetailPage({
     kindGate: tEvidence("kindGate"),
     kindDecision: tEvidence("kindDecision"),
   };
+
+  // M22 (T3.3): the flow-graph view for a flow run — compiled topology + stored
+  // layout overrides + initial node statuses, all server-state. Scratch runs
+  // have no flow graph and skip the section.
+  let flowGraphData: {
+    topology: ReturnType<typeof buildGraphTopology>;
+    layout: Awaited<ReturnType<typeof getFlowLayout>>;
+    statuses: Awaited<ReturnType<typeof getRunNodeStatuses>>;
+    labels: FlowGraphViewLabels;
+  } | null = null;
+
+  if (detail.runKind === "flow") {
+    const loadedM = await loadRunManifest(runId);
+
+    if (loadedM) {
+      const topology = buildGraphTopology(compileManifest(loadedM.manifest));
+      const [graphLayout, nodeStatuses] = await Promise.all([
+        getFlowLayout(loadedM.flowId),
+        getRunNodeStatuses(runId),
+      ]);
+      const tWorkbench = await getTranslations("workbench");
+
+      flowGraphData = {
+        topology,
+        layout: graphLayout,
+        statuses: nodeStatuses,
+        labels: {
+          title: tWorkbench("graph.title"),
+          empty: tWorkbench("graph.empty"),
+          currentNode: tWorkbench("graph.currentNode"),
+          saveError: tWorkbench("graph.saveError"),
+          node: {
+            Pending: tWorkbench("graph.node.Pending"),
+            Running: tWorkbench("graph.node.Running"),
+            Succeeded: tWorkbench("graph.node.Succeeded"),
+            Failed: tWorkbench("graph.node.Failed"),
+            NeedsInput: tWorkbench("graph.node.NeedsInput"),
+            Reworked: tWorkbench("graph.node.Reworked"),
+            Stale: tWorkbench("graph.node.Stale"),
+          },
+        },
+      };
+    }
+  }
 
   const settingsClassLabel: Record<EnforcementSnapshotEntry["class"], string> =
     {
@@ -528,6 +583,24 @@ export default async function RunDetailPage({
           runId={detail.runId}
         />
       </section>
+
+      {flowGraphData ? (
+        <section className="mt-6">
+          <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+            {flowGraphData.labels.title}
+          </h2>
+          <FlowGraphViewSection
+            currentStepId={flowGraphData.statuses.currentStepId}
+            editable={canEditFlowLayout}
+            initialStatuses={flowGraphData.statuses.nodes}
+            labels={flowGraphData.labels}
+            layout={flowGraphData.layout}
+            runId={detail.runId}
+            runStatus={detail.status}
+            topology={flowGraphData.topology}
+          />
+        </section>
+      ) : null}
 
       {settings ? (
         <FlowSettingsPanel

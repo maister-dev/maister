@@ -533,14 +533,14 @@ phase touches that is left red fails the phase (quarantine only via explicit
 
 ### Phase 3 — FlowGraphView component (React Flow reuse) + live coloring + run mount
 
-- [ ] **T3.1** — `web/lib/board/flow-graph-view-layout.ts`: `toFlowGraphView(topology,
+- [x] **T3.1** — `web/lib/board/flow-graph-view-layout.ts`: `toFlowGraphView(topology,
   layoutOverrides) → {nodes:Node[], edges:Edge[]}` (mirror `toFlowGraph`; set
   `type:"flowNode"`), reuse `layoutGraph` for the dagre baseline and **apply
   `layoutOverrides` on top** (override wins; **ignore overrides for node-ids not in
   the topology** — stale-node safety). `colorForNodeStatus(status, isCurrent) →
   ChipColor`. Pure, unit-tested. Files: `web/lib/board/flow-graph-view-layout.ts`.
   (depends on T2.1)
-- [ ] **T3.2** — `web/components/board/flow-graph-view.tsx` (`"use client"`):
+- [x] **T3.2** — `web/components/board/flow-graph-view.tsx` (`"use client"`):
   mirror `evidence-graph.tsx` — custom node factory (`<Chip color>` + `<Handle>`
   source/target + current-node ring + gate-rollup badge), `ReactFlow` direct,
   `nodesDraggable={editable}` with `onNodeDragStop` → `PUT …/graph/layout`
@@ -551,14 +551,14 @@ phase touches that is left red fails the phase (quarantine only via explicit
   editable}`. Plus a `{ssr:false}` wrapper
   `web/components/board/flow-graph-view-section.tsx` (replicate
   `evidence-graph-section.tsx`). Files: both. (depends on T3.1, T2.3, T1.4)
-- [ ] **T3.3** — Mount on run-detail: `web/app/(app)/runs/[runId]/page.tsx` adds a
+- [x] **T3.3** — Mount on run-detail: `web/app/(app)/runs/[runId]/page.tsx` adds a
   **Flow graph** section (server-side: compile pinned manifest → topology;
   `getFlowLayout(run.flow_id)`; `getRunNodeStatuses` for `initialStatuses`;
   `editable` only when the viewer has `editFlowLayout`/member — pass a server-
   computed boolean, never trust the client), behind the `{ssr:false}` wrapper,
   alongside the evidence graph. Additive panel, no status-read-model change.
   Files: run-detail page. (depends on T3.2)
-- [ ] **T3.4** — Tests P3: unit — `toFlowGraphView` override-merge + dagre seed +
+- [x] **T3.4** — Tests P3: unit — `toFlowGraphView` override-merge + dagre seed +
   **stale-node-id ignored**; `colorForNodeStatus` mapping incl. current-node
   emphasis. Component render (renderToStaticMarkup, no jsdom) — nodes render with
   correct chip colors from `initialStatuses`; draggable wiring present only when
