@@ -498,18 +498,18 @@ phase touches that is left red fails the phase (quarantine only via explicit
 
 ### Phase 2 — Graph topology + live node-status read models + routes
 
-- [ ] **T2.1** — `web/lib/queries/flow-graph-view.ts` (server-only): pure
+- [x] **T2.1** — `web/lib/queries/flow-graph-view.ts` (server-only): pure
   `buildGraphTopology(compiled: FlowGraph): {nodes:[{id, nodeType, label}],
   edges:[{id, source, target, outcome}]}` — nodes from `compiled.nodes`/`order`,
   edges from each `CompiledNode.transitions` (skip `"done"`; one edge per outcome).
   No DB, fully unit-testable. Files: `web/lib/queries/flow-graph-view.ts`. (no dep)
-- [ ] **T2.2** — `web/lib/queries/run-node-status.ts` (server-only):
+- [x] **T2.2** — `web/lib/queries/run-node-status.ts` (server-only):
   `getRunNodeStatuses(runId, db?) → {currentStepId, runStatus, nodes:
   Record<nodeId, {status, attempt, gates:{blocking:boolean, status}[], rollup}>}`
   — reuse `getRunTimeline`, **highest-attempt-per-node** (§0.2), gate rollup. Pure
   mapping. LOGGING: DEBUG `[run-node-status] {runId, nodeCount}`. Files:
   `web/lib/queries/run-node-status.ts`. (no dep)
-- [ ] **T2.3** — Routes: `GET /api/runs/[runId]/graph/route.ts` (compile pinned
+- [x] **T2.3** — Routes: `GET /api/runs/[runId]/graph/route.ts` (compile pinned
   manifest → `buildGraphTopology` + `getFlowLayout(run.flow_id)` →
   `{topology, layout}`) and `GET /api/runs/[runId]/graph-status/route.ts`
   (`getRunNodeStatuses`). Both `requireActiveSession` +
@@ -517,7 +517,7 @@ phase touches that is left red fails the phase (quarantine only via explicit
   `projectId`; 404 on missing run/manifest or a run with no flow. LOGGING: INFO
   request/result. Files: `web/app/api/runs/[runId]/graph/route.ts`,
   `web/app/api/runs/[runId]/graph-status/route.ts`. (depends on T2.1, T2.2, T1.2)
-- [ ] **T2.4** — Tests P2. Unit: `buildGraphTopology` — linear `steps[]` → chain;
+- [x] **T2.4** — Tests P2. Unit: `buildGraphTopology` — linear `steps[]` → chain;
   graph flow with `rework`/multi-outcome `transitions` → right edges; `"done"`
   omitted. `getRunNodeStatuses` — highest-attempt wins; `Reworked`/`Stale`
   surfaced; gate rollup picks worst-blocking. Route — RBAC denial; 404 missing

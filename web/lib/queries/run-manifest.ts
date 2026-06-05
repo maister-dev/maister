@@ -21,14 +21,15 @@ type Db = NodePgDatabase<typeof schema>;
 
 export interface RunManifest {
   flowId: string;
+  projectId: string;
   manifest: FlowYamlV1;
 }
 
 /**
- * Resolve a run's flow id and pinned manifest. Prefer the immutable
- * flow_revisions.manifest (launch-time snapshot); fall back to the mutable
- * flows.manifest for legacy rows. Returns null for a flow-less run (e.g.
- * scratch) or when no manifest is reachable. Mirrors the resolution in
+ * Resolve a run's flow id, owning project id, and pinned manifest. Prefer the
+ * immutable flow_revisions.manifest (launch-time snapshot); fall back to the
+ * mutable flows.manifest for legacy rows. Returns null for a flow-less run
+ * (e.g. scratch) or when no manifest is reachable. Mirrors the resolution in
  * lib/queries/run.ts getRunSettings.
  */
 export async function loadRunManifest(
@@ -40,6 +41,7 @@ export async function loadRunManifest(
   const rows = await client
     .select({
       flowId: runs.flowId,
+      projectId: runs.projectId,
       flowRevisionId: runs.flowRevisionId,
     })
     .from(runs)
@@ -78,5 +80,5 @@ export async function loadRunManifest(
     return null;
   }
 
-  return { flowId: row.flowId, manifest };
+  return { flowId: row.flowId, projectId: row.projectId, manifest };
 }

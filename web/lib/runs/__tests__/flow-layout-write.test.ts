@@ -50,6 +50,7 @@ describe("upsertNodeLayout", () => {
   it("upserts a known node with the resolved flowId, nodeId, x, y, userId", async () => {
     vi.mocked(loadRunManifest).mockResolvedValue({
       flowId: "flow-1",
+      projectId: "project-1",
       manifest,
     });
     const { db, calls } = makeFakeDb();
@@ -77,6 +78,7 @@ describe("upsertNodeLayout", () => {
   it("throws CONFIG and does not write when the nodeId is not in the manifest", async () => {
     vi.mocked(loadRunManifest).mockResolvedValue({
       flowId: "flow-1",
+      projectId: "project-1",
       manifest,
     });
     const { db, calls } = makeFakeDb();
@@ -114,6 +116,7 @@ describe("upsertNodeLayout", () => {
   it("throws CONFIG and does not write for a non-finite x", async () => {
     vi.mocked(loadRunManifest).mockResolvedValue({
       flowId: "flow-1",
+      projectId: "project-1",
       manifest,
     });
     const { db, calls } = makeFakeDb();
@@ -134,6 +137,7 @@ describe("upsertNodeLayout", () => {
   it("throws CONFIG and does not write for an out-of-bounds y", async () => {
     vi.mocked(loadRunManifest).mockResolvedValue({
       flowId: "flow-1",
+      projectId: "project-1",
       manifest,
     });
     const { db, calls } = makeFakeDb();
