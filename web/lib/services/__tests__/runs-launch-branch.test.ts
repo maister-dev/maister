@@ -24,13 +24,18 @@ const mocks = vi.hoisted(() => ({
   runFlow: vi.fn(),
   worktreesRoot: vi.fn(),
   compileManifest: vi.fn(),
-  resolveExecutor: vi.fn(),
 }));
 
+// `from()` is both awaitable (for selects with no `.where()`, e.g.
+// platformAcpRunners / platformRouterSidecars) AND chainable to `.where()`.
+// Either terminal consumes exactly one positional `state.selectResults` slot.
+// It is a lazy thenable (NOT an eager Promise) so chained `.where()` selects do
+// not also consume a slot via an auto-scheduled `from()` microtask.
+type FromResult = PromiseLike<Record<string, unknown>[]> & {
+  where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+};
 type SelectChain = {
-  from: (table: unknown) => {
-    where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
-  };
+  from: (table: unknown) => FromResult;
 };
 type InsertCall = { table: unknown; values: Record<string, unknown> };
 
@@ -44,7 +49,7 @@ type FakeDb = {
 };
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
-const EXECUTOR_ID = "22222222-2222-4222-8222-222222222222";
+const RUNNER_ID = "22222222-2222-4222-8222-222222222222";
 const TASK_ID = "33333333-3333-4333-8333-333333333333";
 const FLOW_ID = "44444444-4444-4444-8444-444444444444";
 const REVISION_ID = "55555555-5555-4555-8555-555555555555";
@@ -59,16 +64,20 @@ const state: {
   inserts: [],
 };
 
+function nextSelectResult(): Record<string, unknown>[] {
+  const result = state.selectResults[state.selectCalls] ?? [];
+
+  state.selectCalls += 1;
+
+  return result;
+}
+
 const fakeDb: FakeDb = {
   select: () => ({
-    from: () => ({
-      where: async () => {
-        const result = state.selectResults[state.selectCalls] ?? [];
-
-        state.selectCalls += 1;
-
-        return result;
-      },
+    from: (): FromResult => ({
+      then: (onFulfilled) =>
+        Promise.resolve(nextSelectResult()).then(onFulfilled),
+      where: async () => nextSelectResult(),
     }),
   }),
   insert: (table: unknown) => ({
@@ -100,7 +109,6 @@ vi.mock("@/lib/instance-config", () => ({
 vi.mock("@/lib/flows/graph/compile", () => ({
   compileManifest: mocks.compileManifest,
 }));
-vi.mock("@/lib/executors", () => ({ resolveExecutor: mocks.resolveExecutor }));
 
 type LaunchRunFn = typeof import("@/lib/services/runs").launchRun;
 type ResolvePromotionModeFn =
@@ -119,15 +127,21 @@ function project(overrides: Record<string, unknown> = {}) {
     mainBranch: "main",
     branchPrefix: "maister/",
     archivedAt: null,
-    defaultExecutorId: EXECUTOR_ID,
+    defaultRunnerId: null,
     promotionMode: null,
     ...overrides,
   };
 }
 
-// The 8 sequential `_db.select()` calls launchRun performs, in order:
-//   1 tasks, 2 projects, 3 flows, 4 flowRevisions, 5 executors(id+project),
-//   6 executors(refIds), 7 projectFlowRoles, 8 capabilityRecords.
+// The 11 sequential `_db.select()` calls launchRun performs, in order
+// (ADR-050 platform-runner work):
+//   1 tasks, 2 projects, 3 flows, 4 flowRevisions, 5 platformRuntimeSettings,
+//   6 platformAcpRunners (no .where), 7 platformRouterSidecars (no .where),
+//   8 projectFlowRunnerDefaults, 9 flowRunnerRemaps, 10 projectFlowRoles,
+//   11 capabilityRecords.
+// Slots 8-11 are intentionally omitted: the fake DB returns `[]` past the
+// array end, which is the correct empty-result for those four (resolution
+// falls through to the platform default runner; no roles/capabilities seeded).
 function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
   state.selectResults = [
     [
@@ -137,7 +151,6 @@ function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
         flowId: FLOW_ID,
         status: "Backlog",
         attemptNumber: 0,
-        executorOverrideId: null,
       },
     ],
     [opts.project ?? project()],
@@ -148,8 +161,6 @@ function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
         enabledRevisionId: REVISION_ID,
         enablementState: "Enabled",
         trustStatus: "trusted_by_policy",
-        executorOverrideId: null,
-        recommendedExecutorId: null,
       },
     ],
     [
@@ -162,20 +173,27 @@ function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
         schemaVersion: 1,
         engineMin: null,
         engineMax: null,
+        defaultRunnerId: null,
         manifest: { schemaVersion: 1, name: "Bugfix", nodes: [] },
       },
     ],
+    // 5 platformRuntimeSettings — platform default points at the seeded runner.
+    [{ id: "singleton", defaultRunnerId: RUNNER_ID }],
+    // 6 platformAcpRunners — the launch catalog (resolved via platformDefault).
     [
       {
-        id: EXECUTOR_ID,
-        projectId: PROJECT_ID,
-        executorRefId: "claude-default",
-        agent: "claude",
+        id: RUNNER_ID,
+        adapter: "claude",
+        capabilityAgent: "claude",
         model: "claude-sonnet-4-6",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "default",
+        sidecarId: null,
+        readinessStatus: "Ready",
+        enabled: true,
       },
     ],
-    [{ refId: "claude-default" }],
-    [],
+    // 7 platformRouterSidecars — none needed for this runner.
     [],
   ];
 }
@@ -207,10 +225,6 @@ beforeEach(async () => {
   // A trivial compiled graph with no capability-bearing nodes — sidesteps the
   // M11c/M13/M14 enforcement gates so the test isolates branch resolution.
   mocks.compileManifest.mockReturnValue({ nodes: new Map() });
-  mocks.resolveExecutor.mockReturnValue({
-    executorId: EXECUTOR_ID,
-    tier: "projectDefault",
-  });
 
   seedSelects();
 

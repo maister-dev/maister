@@ -20,7 +20,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -241,7 +241,9 @@ async function seedProjectWithManifest(
     enablementState: "Enabled",
     trustStatus: opts.trustStatus ?? "trusted_by_policy",
   });
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(`exec-${id}`, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(`exec-${id}`, "claude"));
   await db
     .update(schema.projects)
     .set({ defaultRunnerId: `exec-${id}` })
@@ -490,7 +492,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     expect(runRows[0].runnerId).toBe("codex-ready");
     expect(runRows[0].runnerResolutionTier).toBe("stepTarget");
     expect(runRows[0].capabilityAgent).toBe("codex");
-        expect(runRows[0].runnerSnapshot).toMatchObject({
+    expect(runRows[0].runnerSnapshot).toMatchObject({
       id: "codex-ready",
       capabilityAgent: "codex",
     });
@@ -535,7 +537,13 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
       .where(eq(schema.runs.taskId, "task-proj-badexec"));
 
     expect(runs).toHaveLength(1);
-    expect(runs[0].runnerId).toBe("claude-platform");
+    // The retired settings.executors:["ghost"] ref is ignored — it is NOT a
+    // step runner target, so resolution falls through the real chain. The seed
+    // sets no launch override / step target / flow default, so the project
+    // default runner (exec-proj-badexec, seeded by seedProjectWithManifest)
+    // legitimately wins over the platform default per the §5 resolution order.
+    expect(runs[0].runnerId).toBe("exec-proj-badexec");
+    expect(runs[0].runnerResolutionTier).toBe("projectDefault");
 
     const task = await db
       .select()

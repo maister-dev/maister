@@ -20,6 +20,7 @@ import {
 } from "vitest";
 
 import { issueToken } from "@/lib/tokens/issue";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -87,19 +88,22 @@ async function seedProject(slug: string) {
     maisterYamlPath: `/tmp/${slug}/maister.yaml`,
   });
 
-  await (db as any).insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await (db as any)
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
-  // Set defaultExecutorId after executor row exists (no FK on the column).
+  // Set defaultRunnerId after the platform runner row exists.
   await (db as any)
     .update(schema.projects)
-    .set({ defaultExecutorId: executorId })
+    .set({ defaultRunnerId: executorId })
     .where(eq(schema.projects.id, projectId));
+
+  // Runner resolution requires the platform-runtime-settings singleton to exist.
+  // Idempotent across multiple seedProject calls (cross-project tests).
+  await (db as any)
+    .insert(schema.platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: executorId })
+    .onConflictDoNothing();
 
   await (db as any).insert(schema.flowRevisions).values({
     id: revisionId,

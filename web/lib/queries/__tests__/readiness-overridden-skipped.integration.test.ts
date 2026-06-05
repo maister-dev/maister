@@ -38,6 +38,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { getRunReadiness, type ReadinessDTO } from "@/lib/queries/readiness";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -91,13 +95,9 @@ async function seedProject(slug: string): Promise<{
     schemaVersion: 1,
   });
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   return { projectId, flowId, executorId };
 }
@@ -133,7 +133,9 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
     status: "Review",
     flowVersion: "v1.0.0",
     currentStepId: "review",

@@ -11,7 +11,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -115,7 +118,7 @@ describe("portfolio queries (integration)", () => {
     return id;
   }
 
-  async function createExecutor(projectId: string): Promise<string> {
+  async function createExecutor(_projectId: string): Promise<string> {
     const id = randomUUID();
 
     await db
@@ -459,7 +462,9 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: opts.runStatus,
       flowVersion: "v1.0.0",
       currentStepId: "review",
@@ -623,7 +628,9 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "Review",
       flowVersion: "v1.0.0",
       currentStepId: "review",
@@ -723,7 +730,9 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      executorId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "Review",
       flowVersion: "v1.0.0",
       currentStepId: "review",
@@ -821,7 +830,9 @@ describe("portfolio queries (integration)", () => {
         taskId: task,
         flowId: flow,
         runKind: "flow",
-        executorId: executor,
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
         status: opts.runStatus,
         flowVersion: "v1.0.0",
         startedAt: new Date(),

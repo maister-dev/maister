@@ -16,6 +16,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 
 // M18 Phase 2 — RED until `web/lib/runs/promote.ts` (`promoteRun`) lands with
 // the durable promotion claim (§3.2, Codex F1/F5). This is the INTEGRATION
@@ -148,7 +152,9 @@ async function seedFlowReviewRun(args: {
     projectId,
     flowId,
     flowRevisionId: revisionId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
     status: "Review",
     acpSessionId: "acp-x",
     currentStepId: "review-node",
@@ -252,7 +258,7 @@ beforeEach(async () => {
   await db.delete(schema.workspaces);
   await db.delete(schema.runs);
   await db.delete(schema.tasks);
-  await db.delete(schema.executors);
+  await db.delete(schema.platformAcpRunners);
   await db.delete(schema.flows);
   await db.delete(schema.flowRevisions);
   await db.delete(schema.projects);
@@ -294,13 +300,9 @@ beforeEach(async () => {
     enablementState: "Enabled",
     trustStatus: "trusted_by_policy",
   });
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   // Capture the void marker so the unused setup return is meaningful.
   void setup;

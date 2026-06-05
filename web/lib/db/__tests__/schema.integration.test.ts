@@ -15,7 +15,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // `@/lib/db/schema` clash with the test-file's own drizzle copy. Runtime
 // works; we cast to `any` to silence the type-only conflict.
 import * as fullSchema from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { setEnforcementSnapshot } from "@/lib/flows/graph/ledger";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -63,7 +66,9 @@ async function seedChain() {
     maisterYamlPath: "/tmp/m.yaml",
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(schema.flows).values({
     id: flowId,
@@ -136,7 +141,9 @@ async function seedScratchParents() {
     maisterYamlPath: "/tmp/m.yaml",
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "codex"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "codex"));
 
   return { projectId, executorId, userId };
 }
@@ -158,7 +165,9 @@ describe("schema round-trip", () => {
     const ids = await seedChain();
 
     expect(await countWhere("projects", "id", ids.projectId)).toBe(1);
-    expect(await countWhere("platform_acp_runners", "id", ids.executorId)).toBe(1);
+    expect(await countWhere("platform_acp_runners", "id", ids.executorId)).toBe(
+      1,
+    );
     expect(await countWhere("flows", "id", ids.flowId)).toBe(1);
     expect(await countWhere("tasks", "id", ids.taskId)).toBe(1);
     expect(await countWhere("runs", "id", ids.runId)).toBe(1);
@@ -442,8 +451,20 @@ describe("onDelete cascade", () => {
     expect(await countWhere("runs", "id", ids.runId)).toBe(0);
     expect(await countWhere("workspaces", "id", ids.workspaceId)).toBe(0);
     expect(await countWhere("hitl_requests", "id", ids.hitlId)).toBe(0);
-    expect(await countWhere("platform_acp_runners", "id", ids.executorId)).toBe(0);
     expect(await countWhere("flows", "id", ids.flowId)).toBe(0);
+
+    // platform_acp_runners is platform-scoped (no project_id FK) and
+    // runs.runner_id is ON DELETE SET NULL — the runner the deleted run
+    // pointed at survives a project delete.
+    expect(await countWhere("platform_acp_runners", "id", ids.executorId)).toBe(
+      1,
+    );
+
+    await db.execute(
+      sql.raw(
+        `delete from platform_acp_runners where id = '${ids.executorId}'`,
+      ),
+    );
   });
 });
 

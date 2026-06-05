@@ -19,6 +19,7 @@ import {
 } from "vitest";
 
 import { issueToken } from "@/lib/tokens/issue";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -83,13 +84,9 @@ async function seedProject(slug: string) {
     schemaVersion: 1,
   });
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   return { slug, projectId, flowId, executorId };
 }
@@ -174,7 +171,7 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
 
   it("valid token, correct project → 201 {taskId}, audit row", async () => {
     const slug = `ext-tasks-create-${randomUUID().slice(0, 8)}`;
-    const { projectId, flowId, executorId } = await seedProject(slug);
+    const { projectId, flowId } = await seedProject(slug);
 
     const token = await issueToken({ projectId, name: "Test Token" }, db);
 
@@ -182,7 +179,6 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
       title: "New Task",
       prompt: "Fix the bug",
       flowId,
-      executorOverrideId: executorId,
     });
 
     req.headers.set("authorization", `Bearer ${token.secret}`);

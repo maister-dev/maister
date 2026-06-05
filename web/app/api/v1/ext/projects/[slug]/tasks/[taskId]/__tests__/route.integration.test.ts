@@ -19,6 +19,7 @@ import {
 } from "vitest";
 
 import { issueToken } from "@/lib/tokens/issue";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -83,13 +84,9 @@ async function seedProject(slug: string) {
     schemaVersion: 1,
   });
 
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   return { slug, projectId, flowId, executorId };
 }

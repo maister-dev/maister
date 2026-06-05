@@ -42,6 +42,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { markDownstreamStale } from "@/lib/flows/graph/ledger";
 import { markGateOverridden } from "@/lib/flows/graph/gate-store";
 // RED: reportExternalGate does not exist yet (§B).
@@ -90,13 +94,9 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db.insert(schema.executors).values({
-    id: executorId,
-    projectId,
-    executorRefId: "claude-sonnet",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -119,7 +119,9 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     taskId,
     projectId,
     flowId,
-    executorId,
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
     flowVersion: "v1.0.0",
     status: "Running",
   });

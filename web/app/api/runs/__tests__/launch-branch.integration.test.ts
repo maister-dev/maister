@@ -20,6 +20,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 // M18 Phase 1 — RED until migration 0021 + launchRun branch persistence land.
 // Real Postgres (Testcontainers) + real DB writes; the git side of the worktree
@@ -157,17 +158,6 @@ async function seedProject(
     enablementState: "Enabled",
     trustStatus: "trusted_by_policy",
   });
-  await db.insert(schema.executors).values({
-    id: `exec-${id}`,
-    projectId: id,
-    executorRefId: "claude-default",
-    agent: "claude",
-    model: "claude-sonnet-4-6",
-  });
-  await db
-    .update(schema.projects)
-    .set({ defaultExecutorId: `exec-${id}` })
-    .where(eq(schema.projects.id, id));
   await db.insert(schema.projectMembers).values({
     id: `pm-${id}`,
     projectId: id,
@@ -229,6 +219,14 @@ beforeAll(async () => {
     role: "member",
     accountStatus: "active",
     passwordHash: "x",
+  });
+
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow("claude-default", "claude"));
+  await db.insert(schema.platformRuntimeSettings).values({
+    id: "singleton",
+    defaultRunnerId: "claude-default",
   });
 
   await seedProject("proj-pr", "proj-pr", { promotionMode: "pull_request" });
