@@ -9,14 +9,8 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
-const {
-  actorIdentities,
-  assignments,
-  flows,
-  hitlRequests,
-  runs,
-  workspaces,
-} = schema;
+const { actorIdentities, assignments, flows, hitlRequests, runs, workspaces } =
+  schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {

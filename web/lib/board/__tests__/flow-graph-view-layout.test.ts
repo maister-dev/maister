@@ -32,14 +32,24 @@ function sampleTopology(): GraphTopology {
       { id: "review", nodeType: "human", label: "review" },
     ],
     edges: [
-      { id: "plan:default", source: "plan", target: "implement", outcome: "default" },
+      {
+        id: "plan:default",
+        source: "plan",
+        target: "implement",
+        outcome: "default",
+      },
       {
         id: "implement:default",
         source: "implement",
         target: "review",
         outcome: "default",
       },
-      { id: "review:reject", source: "review", target: "plan", outcome: "reject" },
+      {
+        id: "review:reject",
+        source: "review",
+        target: "plan",
+        outcome: "reject",
+      },
     ],
   };
 }
@@ -75,9 +85,9 @@ describe("toFlowGraphView — base nodes/edges", () => {
       expect(mapped).toBeDefined();
       expect(mapped?.source).toBe(src.source);
       expect(mapped?.target).toBe(src.target);
-      expect((mapped?.data as Record<string, unknown> | undefined)?.outcome).toBe(
-        src.outcome,
-      );
+      expect(
+        (mapped?.data as Record<string, unknown> | undefined)?.outcome,
+      ).toBe(src.outcome);
     }
   });
 });
@@ -95,7 +105,9 @@ describe("toFlowGraphView — dagre baseline (no overrides)", () => {
     }
 
     // A multi-node LR chain must spread out — not every node parked at (0,0).
-    const positions = new Set(nodes.map((n) => `${n.position.x},${n.position.y}`));
+    const positions = new Set(
+      nodes.map((n) => `${n.position.x},${n.position.y}`),
+    );
 
     expect(positions.size).toBeGreaterThan(1);
 

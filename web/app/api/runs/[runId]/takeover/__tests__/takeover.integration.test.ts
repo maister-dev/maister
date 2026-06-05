@@ -39,7 +39,10 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 
 const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
@@ -236,7 +239,9 @@ async function seed(opts: {
     role: "member",
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(flows).values({
     id: flowId,

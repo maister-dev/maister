@@ -31,7 +31,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -160,7 +160,9 @@ async function seedProject(
     enablementState: "Enabled",
     trustStatus: "trusted_by_policy",
   });
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(`exec-${id}`, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(`exec-${id}`, "claude"));
   await db
     .update(schema.projects)
     .set({ defaultRunnerId: `exec-${id}` })

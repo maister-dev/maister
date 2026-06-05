@@ -24,7 +24,10 @@ import {
 } from "../service";
 
 import * as fullSchema from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { isMaisterError } from "@/lib/errors";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -126,7 +129,9 @@ async function seedWait(): Promise<{
     maisterYamlPath: "/tmp/m.yaml",
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(schema.flows).values({
     id: flowId,

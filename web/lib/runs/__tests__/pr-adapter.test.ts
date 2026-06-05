@@ -495,8 +495,7 @@ describe("GiteaApiAdapter — createOrUpdatePr happy path (no existing PR)", () 
 
     expect(post).toBeDefined();
     const headers = post?.init?.headers as Record<string, string> | undefined;
-    const authValue =
-      headers?.Authorization ?? headers?.authorization ?? "";
+    const authValue = headers?.Authorization ?? headers?.authorization ?? "";
 
     expect(authValue).toContain("tkn-gitea");
   });
@@ -536,8 +535,7 @@ describe("GiteaApiAdapter — createOrUpdatePr happy path (no existing PR)", () 
       (c) => (c.init?.method ?? "GET").toUpperCase() === "POST",
     );
     const headers = post?.init?.headers as Record<string, string> | undefined;
-    const authValue =
-      headers?.Authorization ?? headers?.authorization ?? "";
+    const authValue = headers?.Authorization ?? headers?.authorization ?? "";
 
     expect(authValue).toContain("tkn-gitverse");
   });
@@ -610,6 +608,7 @@ describe("GiteaApiAdapter — idempotent (existing open PR for the head branch)"
           ],
         };
       }
+
       // A POST here would be a duplicate-create bug.
       return { status: 500, json: { message: "POST must not happen" } };
     };
@@ -788,7 +787,9 @@ describe("token redaction (NEVER log/leak the token)", () => {
     }
 
     expect(thrown).toBeInstanceOf(MaisterError);
-    expect((thrown as Error).message).not.toContain("SUPER-SECRET-TOKEN-abc123");
+    expect((thrown as Error).message).not.toContain(
+      "SUPER-SECRET-TOKEN-abc123",
+    );
   });
 
   it("GhCliAdapter — a CLI failure error message does NOT contain GH_TOKEN", async () => {
@@ -975,9 +976,9 @@ describe("GiteaApiAdapter — paginates the open-PR lookup", () => {
       remoteUrl: "https://gitea.example.com/org/repo.git",
     });
 
-    await expect(adapter.createOrUpdatePr({ ...PR_ARGS })).rejects.toMatchObject(
-      { code: "EXECUTOR_UNAVAILABLE" },
-    );
+    await expect(
+      adapter.createOrUpdatePr({ ...PR_ARGS }),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
 
     const gets = fetchCalls.filter(
       (c) => (c.init?.method ?? "GET").toUpperCase() === "GET",

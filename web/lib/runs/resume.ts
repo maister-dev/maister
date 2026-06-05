@@ -16,9 +16,7 @@ import {
   MaisterError,
   type MaisterErrorCode,
 } from "@/lib/errors";
-import {
-  createSession,
-} from "@/lib/supervisor-client";
+import { createSession } from "@/lib/supervisor-client";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,

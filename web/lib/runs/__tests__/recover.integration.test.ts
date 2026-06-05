@@ -50,21 +50,17 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
 import { driveResume, resumeCrashedRun } from "@/lib/runs/recover";
 import { promoteNextPending } from "@/lib/scheduler";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const {
-  flowRevisions,
-  flows,
-  projects,
-  runs,
-  tasks,
-  users,
-  workspaces,
-} = schema;
+const { flowRevisions, flows, projects, runs, tasks, users, workspaces } =
+  schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -144,7 +140,9 @@ beforeAll(async () => {
     maisterYamlPath: `${projectRepoPath}/maister.yaml`,
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(flows).values({
     id: flowId,

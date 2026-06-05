@@ -14,21 +14,17 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { installFlowPlugin } from "@/lib/flows";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const {
-  flows,
-  nodeAttempts,
-  projects,
-  runs,
-  stepRuns,
-  tasks,
-  workspaces,
-} = schema;
+const { flows, nodeAttempts, projects, runs, stepRuns, tasks, workspaces } =
+  schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -100,7 +96,9 @@ beforeAll(async () => {
     maisterYamlPath: join(workspaceRoot, "demo-repo", "maister.yaml"),
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db
     .update(projects)

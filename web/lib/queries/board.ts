@@ -391,7 +391,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       branch: run.branch,
       agent: takeover
         ? "dev"
-          : runnerAgentFromFields({
+        : runnerAgentFromFields({
             capabilityAgent: run.capabilityAgent,
             runnerSnapshot: run.runnerSnapshot,
             context: run.runId,
