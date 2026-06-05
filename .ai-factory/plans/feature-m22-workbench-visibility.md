@@ -450,23 +450,23 @@ phase touches that is left red fails the phase (quarantine only via explicit
 
 ### Phase 1 — RBAC actions + project-scoped layout store (Track A foundation)
 
-- [ ] **T1.0** — Authz actions: add `readRepoFiles: "member"` and `editFlowLayout:
+- [x] **T1.0** — Authz actions: add `readRepoFiles: "member"` and `editFlowLayout:
   "member"` to `PROJECT_ACTION_MIN` (`web/lib/authz.ts`); update the
   `ProjectAction` union consumers; document both in the `web/CLAUDE.md` RBAC
   section. Tests: unit — `requireProjectAction(projectId, "readRepoFiles")` denies
   a `viewer` (403) and admits a `member`; same for `editFlowLayout`. LOGGING:
   none (pure authz map). Files: `web/lib/authz.ts`, `web/lib/__tests__/authz*.test.ts`.
   (no dep)
-- [ ] **T1.1** — Migration 0024 + `web/lib/db/schema.ts`: add `flow_graph_layouts`
+- [x] **T1.1** — Migration 0024 + `web/lib/db/schema.ts`: add `flow_graph_layouts`
   (§0.3.B; additive, `flow_id` FK CASCADE, `updated_by_user_id` FK SET NULL,
   UNIQUE `(flow_id, node_id)`). Verify the highest existing migration number
   first; generate via the project's drizzle flow. Files: `web/lib/db/schema.ts`,
   `web/lib/db/migrations/0024_*.sql`. (depends on T0.5)
-- [ ] **T1.2** — `web/lib/queries/flow-layout.ts` (server-only):
+- [x] **T1.2** — `web/lib/queries/flow-layout.ts` (server-only):
   `getFlowLayout(flowId, db?): Promise<Record<nodeId, {x,y}>>` — the override map;
   pure, testable. LOGGING: DEBUG `[flow-layout.get] {flowId, count}`. Files:
   `web/lib/queries/flow-layout.ts`. (depends on T1.1)
-- [ ] **T1.3** — `web/lib/runs/flow-layout-write.ts`: `upsertNodeLayout({runId,
+- [x] **T1.3** — `web/lib/runs/flow-layout-write.ts`: `upsertNodeLayout({runId,
   nodeId, x, y, userId, db}) → {ok}` — resolve `flow_id` from the run
   (server-state; refuse if the run has no flow, e.g. scratch → `CONFIG`), compile
   the pinned manifest, **assert `nodeId` ∈ node set** (allow-list; else
@@ -474,13 +474,13 @@ phase touches that is left red fails the phase (quarantine only via explicit
   node_id)`, stamp `updated_by_user_id`. LOGGING: DEBUG entry, INFO on upsert,
   WARN on unknown-node/no-flow refusal, format `[flow-layout.upsert]`. Files:
   `web/lib/runs/flow-layout-write.ts`. (depends on T1.2)
-- [ ] **T1.4** — `PUT /api/runs/[runId]/graph/layout/route.ts`:
+- [x] **T1.4** — `PUT /api/runs/[runId]/graph/layout/route.ts`:
   `requireActiveSession` + `requireProjectAction(projectId /* server-state */,
   "editFlowLayout")`; zod body `{nodeId:string, x:number, y:number}` (runId
   url-param only); call `upsertNodeLayout`; map `CONFIG`→400, RBAC→401/403,
   missing run→404, conflict→409. LOGGING: INFO request/result. Files:
   `web/app/api/runs/[runId]/graph/layout/route.ts`. (depends on T1.3)
-- [ ] **T1.5** — Tests P1. Unit: `getFlowLayout` shape; `upsertNodeLayout`
+- [x] **T1.5** — Tests P1. Unit: `getFlowLayout` shape; `upsertNodeLayout`
   known-node upsert, **unknown-node → CONFIG (no write)**, no-flow run → CONFIG,
   bound enforcement, idempotent re-upsert. Route: RBAC denial (`viewer` → 403),
   400 on bad body, 200 round-trip. Integration (testcontainers): upsert→read-back;

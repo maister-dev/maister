@@ -46,6 +46,8 @@ const PROJECT_ORDER: Record<ProjectRole, number> = {
 export const PROJECT_ACTION_MIN = {
   readBoard: "viewer",
   readScratchRun: "viewer",
+  readRepoFiles: "member",
+  editFlowLayout: "member",
   launchRun: "member",
   operateScratchRun: "member",
   promoteRun: "member",

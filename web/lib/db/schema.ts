@@ -1,5 +1,6 @@
 import {
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -327,6 +328,37 @@ export const flows = pgTable(
     uniqFlowRefPerProject: unique("flows_project_ref_uq").on(
       t.projectId,
       t.flowRefId,
+    ),
+  }),
+);
+
+// M22 (ADR-051): per-node manual positions for the workbench flow-graph view.
+// Separate presentation store — never in flow.yaml. Keyed on the per-project
+// flows.id so the layout is project-isolated AND upgrade-stable (survives a
+// revision bump; child of flows, NOT flow_revisions).
+export const flowGraphLayouts = pgTable(
+  "flow_graph_layouts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    flowId: text("flow_id")
+      .notNull()
+      .references(() => flows.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    x: doublePrecision("x").notNull(),
+    y: doublePrecision("y").notNull(),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    flowNodeUq: unique("flow_graph_layouts_flow_node_uq").on(
+      t.flowId,
+      t.nodeId,
     ),
   }),
 );

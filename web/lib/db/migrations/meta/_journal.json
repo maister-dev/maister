@@ -169,6 +169,13 @@
       "when": 1780500000000,
       "tag": "0023_drop_legacy_executors",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780600000000,
+      "tag": "0024_m22_flow_graph_layouts",
+      "breakpoints": true
     }
   ]
 }
