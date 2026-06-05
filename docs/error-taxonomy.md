@@ -121,7 +121,7 @@ defined as a string union in `web/lib/errors.ts`.
 
 > **M22 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
 > closed union; ADR-051/052/053). The workbench reuses one existing code (`CONFIG`)
-> at new call sites (all Designed, M22), plus HTTP-only 404/413/415 statuses that
+> at new call sites (all Implemented, M22), plus HTTP-only 404/413/415 statuses that
 > are NOT `MaisterError`s:
 >
 > - **`CONFIG` → HTTP 400** new call sites: `PUT /api/runs/{runId}/graph/layout`

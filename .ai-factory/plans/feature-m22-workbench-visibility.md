@@ -648,7 +648,7 @@ phase touches that is left red fails the phase (quarantine only via explicit
 
 ### Phase 6 — i18n EN+RU + Playwright e2e + final gate
 
-- [ ] **T6.1** — i18n EN+RU: new `workbench` namespace in `web/messages/en.json`
+- [x] **T6.1** — i18n EN+RU: new `workbench` namespace in `web/messages/en.json`
   + `web/messages/ru.json` — graph (`graph.title`, `graph.empty`,
   `graph.node.<status>`, `graph.currentNode`, `graph.saveError`), file-tree
   (`files.title`, `files.empty`, `files.tooLarge`, `files.binary`,
@@ -657,7 +657,7 @@ phase touches that is left red fails the phase (quarantine only via explicit
   `run`/`evidence` namespace structure; both locales must have an identical key
   set. Files: `web/messages/en.json`, `web/messages/ru.json`. (depends on T3.3,
   T4.5, T5.4)
-- [ ] **T6.2** — Playwright e2e (seeded, authed; dedicated test DB)
+- [x] **T6.2** — Playwright e2e (seeded, authed; dedicated test DB)
   `web/e2e/m22-workbench.spec.ts`: (a) open a seeded run → flow-graph renders, the
   current node is emphasized, node colors match seeded `node_attempts` statuses;
   drag a node (as a `member`) → reload → position persisted; (b) the file-tree
@@ -668,7 +668,7 @@ phase touches that is left red fails the phase (quarantine only via explicit
   diff + changed-files list; (d) the project `repo` tab lists tracked repo files
   for a member. Confirm the spec is in the e2e project glob. Files:
   `web/e2e/m22-workbench.spec.ts`, seed helpers. (depends on T6.1)
-- [ ] **T6.3** — Final gate: `pnpm --filter maister-web typecheck` (0) ·
+- [x] **T6.3** — Final gate: `pnpm --filter maister-web typecheck` (0) ·
   `test:unit` · `test:integration` · `test:e2e` (m22 + prior) · root
   `pnpm validate:docs:all` · `npx @redocly/cli lint docs/api/web.openapi.yaml` —
   all green. Roadmap: tick M22 in `.ai-factory/ROADMAP.md` + Completed table (done
@@ -676,7 +676,7 @@ phase touches that is left red fails the phase (quarantine only via explicit
 <!-- Commit checkpoint: T6.1–T6.3 -->
 
 ### Final gate
-- [ ] `pnpm --filter maister-web typecheck` (0) · `test:unit` · `test:integration`
+- [x] `pnpm --filter maister-web typecheck` (0) · `test:unit` · `test:integration`
   · `test:e2e` · `pnpm validate:docs:all` · OpenAPI lint — all green ·
   roadmap M22 ticked (by `/aif-verify`).
 

@@ -327,25 +327,6 @@ type ProjectFixture = {
   branch?: string;
 };
 
-function runnerSnapshotJson(
-  runnerId: string,
-  agent: "claude" | "codex" = "claude",
-): string {
-  const providerKind = agent === "claude" ? "anthropic" : "openai";
-
-  return JSON.stringify({
-    id: runnerId,
-    adapter: agent,
-    capabilityAgent: agent,
-    model: agent === "claude" ? "claude-sonnet-4-6" : "gpt-5-codex",
-    provider: { kind: providerKind },
-    providerKind,
-    permissionPolicy: "default",
-    sidecar: null,
-    sidecarId: null,
-  });
-}
-
 type RegistrationFixture = {
   repoPath: string;
   duplicateRepoPath: string;
@@ -656,6 +637,72 @@ const M18_REVIEW_SCHEMA = {
   workspacePolicies: ["keep"],
 };
 
+// --- M22 fixture: workbench (flow-graph view + git-tracked file tree + diff) --
+// ONE project with a REAL parent repo carrying TRACKED files (README.md, a
+// src/ subdir, AND an oversized blob > 524288 bytes so the too-large marker is
+// exercised), plus a run branch carrying a committed DIFF off base so the Diff
+// tab renders changed-files. ONE flow run parked at `Running` with
+// `current_step_id` = the `implement` node, real node_attempts (plan Succeeded,
+// implement Running on the current node, review Pending) + a PASSED gate so node
+// colors and current-node emphasis are assertable. A VIEWER user + a viewer
+// project_members row proves the readRepoFiles member-gate (viewer → 403).
+
+const M22_SLUG = "e2e-m22";
+const M22_BRANCH = "maister/e2e-m22-workbench";
+const M22_CURRENT_NODE = "implement";
+const M22_VIEWER_EMAIL = "e2e-m22-viewer@maister.local";
+const M22_VIEWER_PASSWORD = "E2eM22Viewer!pass1";
+// > 524288 (DEFAULT_WORKBENCH_MAX_FILE_BYTES) so readBlob reports too-large.
+const M22_OVERSIZED_BYTES = 600_000;
+
+// implement (ai_coding, current node, Running) -> checks (check + a PASSED
+// command_check gate) -> review (human). The compiled topology node ids equal
+// these manifest node ids, so current_step_id='implement' and the node_attempts
+// statuses both map onto real flow-graph nodes.
+const M22_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Workbench (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "/aif-plan {{ task.prompt }}" },
+      transitions: { success: M22_CURRENT_NODE },
+    },
+    {
+      id: M22_CURRENT_NODE,
+      type: "ai_coding",
+      action: { prompt: "/aif-implement" },
+      transitions: { success: "checks" },
+    },
+    {
+      id: "checks",
+      type: "check",
+      action: { command: "true" },
+      pre_finish: {
+        gates: [
+          {
+            id: "lint",
+            kind: "command_check",
+            mode: "blocking",
+            command: "true",
+          },
+        ],
+      },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: M22_CURRENT_NODE },
+    },
+  ],
+};
+
 function resetDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -955,7 +1002,7 @@ async function seedM11aFixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1')`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1')`,
     [ids.run, ids.task, ids.project, ids.flow, ids.runner],
   );
   await pool.query(
@@ -1055,7 +1102,7 @@ async function seedM12EvidenceFixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
     [ids.run, ids.task, ids.project, ids.flow, ids.runner],
   );
   await pool.query(
@@ -1254,7 +1301,7 @@ async function seedM11bFixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', $6, 'v0.0.1', now())`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', $6, 'v0.0.1', now())`,
     [ids.run, ids.task, ids.project, ids.flow, ids.runner, M11B_REVIEW_NODE],
   );
   await pool.query(
@@ -1396,10 +1443,10 @@ async function seedLaunchableProjectFixture(
      ON CONFLICT (id) DO NOTHING`,
     [ids.runner],
   );
-  await pool.query(
-    `UPDATE projects SET default_runner_id = $1 WHERE id = $2`,
-    [ids.runner, ids.project],
-  );
+  await pool.query(`UPDATE projects SET default_runner_id = $1 WHERE id = $2`, [
+    ids.runner,
+    ids.project,
+  ]);
   await pool.query(
     `INSERT INTO flow_revisions
        (id, flow_ref_id, source, version_label, resolved_revision, manifest_digest, manifest,
@@ -1495,7 +1542,7 @@ async function seedLaunchableProjectFixture(
     `INSERT INTO runs
        (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id,
         flow_version, flow_revision, flow_revision_id, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review',
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review',
         'v0.0.1', $6, $7, now())`,
     [
       ids.run,
@@ -1627,7 +1674,7 @@ async function seedM11cVisibleFixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1')`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1')`,
     [ids.run, ids.task, ids.project, ids.flow, ids.runner],
   );
   await pool.query(
@@ -1724,36 +1771,37 @@ async function seedM11cRefuseFixture(
   // The enabled revision the launch path resolves the manifest from. Installed +
   // setup done + supported schema + engine-compatible so launch reaches the
   // settings-enforcement gate rather than failing an earlier precondition.
+  // The enabled revision carries default_runner_id (platformFlowDefault tier)
+  // so the launch resolves a runner and reaches the settings-enforcement gate
+  // rather than throwing EXECUTOR_UNAVAILABLE first.
   await pool.query(
     `INSERT INTO flow_revisions
        (id, flow_ref_id, source, version_label, resolved_revision, manifest_digest,
-        manifest, schema_version, engine_min, installed_path, setup_status, package_status)
+        manifest, schema_version, engine_min, installed_path, setup_status, package_status,
+        default_runner_id)
      VALUES ($1, 'aif-m11c-refuse', $2, 'v0.0.1', 'rev-m11c-refuse', 'sha-m11c-refuse',
-        $3, 1, '1.1.0', $4, 'done', 'Installed')`,
+        $3, 1, '1.1.0', $4, 'done', 'Installed', $5)`,
     [
       ids.revision,
       "github.com/maister/maister-flow-aif",
       JSON.stringify(M11C_REFUSE_MANIFEST),
       installedPath,
+      ids.runner,
     ],
   );
   // The project flow row: Enabled + trusted, pointing at the strict revision.
-  // default_runner_id resolves the executor (the flowRecommended tier) so
-  // resolveExecutor does not throw EXECUTOR_UNAVAILABLE before the settings gate
-  // — the project has no default_runner_id and the task no override.
   await pool.query(
     `INSERT INTO flows
        (id, project_id, flow_ref_id, source, version, revision, installed_path, manifest,
-        schema_version, default_runner_id, enabled_revision_id, enablement_state, trust_status)
+        schema_version, enabled_revision_id, enablement_state, trust_status)
      VALUES ($1, $2, 'aif-m11c-refuse', $3, 'v0.0.1', 'rev-m11c-refuse', $4, $5, 1,
-        $6, $7, 'Enabled', 'trusted')`,
+        $6, 'Enabled', 'trusted')`,
     [
       ids.flow,
       ids.project,
       "github.com/maister/maister-flow-aif",
       installedPath,
       JSON.stringify(M11C_REFUSE_MANIFEST),
-      ids.runner,
       ids.revision,
     ],
   );
@@ -1851,10 +1899,10 @@ async function seedM19Fixture(
      ON CONFLICT (id) DO NOTHING`,
     [ids.runner],
   );
-  await pool.query(
-    `UPDATE projects SET default_runner_id = $1 WHERE id = $2`,
-    [ids.runner, ids.project],
-  );
+  await pool.query(`UPDATE projects SET default_runner_id = $1 WHERE id = $2`, [
+    ids.runner,
+    ids.project,
+  ]);
   await pool.query(
     `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
      VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
@@ -1890,7 +1938,7 @@ async function seedM19Fixture(
   // acp_session_id → resume-agent → recoverable.
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, resume_target_step_id, acp_session_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Crashed', $6, 'acp-m19-crashed', 'v0.0.1', now(), now())`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Crashed', $6, 'acp-m19-crashed', 'v0.0.1', now(), now())`,
     [
       ids.crashedRun,
       ids.crashedTask,
@@ -1936,7 +1984,7 @@ async function seedM19Fixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, resume_target_step_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Crashed', $6, 'v0.0.1', now(), now())`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Crashed', $6, 'v0.0.1', now(), now())`,
     [
       ids.notRecoverableRun,
       ids.notRecoverableTask,
@@ -1972,7 +2020,7 @@ async function seedM19Fixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'Abandoned', $6, 'v0.0.1', now(), now())`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Abandoned', $6, 'v0.0.1', now(), now())`,
     [
       ids.warningRun,
       ids.warningTask,
@@ -2004,7 +2052,7 @@ async function seedM19Fixture(
   );
   await pool.query(
     `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'Abandoned', $6, 'v0.0.1', now(), now())`,
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Abandoned', $6, 'v0.0.1', now(), now())`,
     [
       ids.dueRun,
       ids.dueTask,
@@ -2049,7 +2097,7 @@ async function seedM15Fixture(
 ): Promise<M15FixtureRecord> {
   const ids = {
     project: randomUUID(),
-    executor: randomUUID(),
+    runner: randomUUID(),
     flow: randomUUID(),
     failedTask: randomUUID(),
     failedRun: randomUUID(),
@@ -2085,9 +2133,13 @@ async function seedM15Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
-     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
-    [ids.executor, ids.project],
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
   );
   await pool.query(
     `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
@@ -2114,9 +2166,9 @@ async function seedM15Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'Review', 'review', 'v0.0.1', now())`,
-    [ids.failedRun, ids.failedTask, ids.project, ids.flow, ids.executor],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'review', 'v0.0.1', now())`,
+    [ids.failedRun, ids.failedTask, ids.project, ids.flow, ids.runner],
   );
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
@@ -2169,15 +2221,9 @@ async function seedM15Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'Review', 'review', 'v0.0.1', now())`,
-    [
-      ids.overriddenRun,
-      ids.overriddenTask,
-      ids.project,
-      ids.flow,
-      ids.executor,
-    ],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'review', 'v0.0.1', now())`,
+    [ids.overriddenRun, ids.overriddenTask, ids.project, ids.flow, ids.runner],
   );
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
@@ -2472,7 +2518,7 @@ async function seedM18Fixture(
 ): Promise<M18FixtureRecord> {
   const ids = {
     project: randomUUID(),
-    executor: randomUUID(),
+    runner: randomUUID(),
     flow: randomUUID(),
     member: randomUUID(),
     // per-scenario task/run/workspace/hitl/attempt ids
@@ -2515,10 +2561,15 @@ async function seedM18Fixture(
   const conflictWt = `${repoPath}/.worktrees/e2e-m18-conflict`;
   const prWt = `${repoPath}/.worktrees/e2e-m18-pr`;
 
-  const merge = await provisionM18RunBranch(repoPath, M18_MERGE_BRANCH, mergeWt, {
-    fileName: "feature-merge.txt",
-    runLine: "clean merge change\n",
-  });
+  const merge = await provisionM18RunBranch(
+    repoPath,
+    M18_MERGE_BRANCH,
+    mergeWt,
+    {
+      fileName: "feature-merge.txt",
+      runLine: "clean merge change\n",
+    },
+  );
   const conflict = await provisionM18RunBranch(
     repoPath,
     M18_CONFLICT_BRANCH,
@@ -2537,12 +2588,22 @@ async function seedM18Fixture(
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, main_branch, provider, maister_yaml_path)
      VALUES ($1, $2, $3, $4, 'main', 'github', $5)`,
-    [ids.project, M18_SLUG, "MAIster E2E M18 Promotion", repoPath, `${repoPath}/maister.yaml`],
+    [
+      ids.project,
+      M18_SLUG,
+      "MAIster E2E M18 Promotion",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
   );
   await pool.query(
-    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
-     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
-    [ids.executor, ids.project],
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
   );
   await pool.query(
     `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
@@ -2635,9 +2696,9 @@ async function seedM18Fixture(
       [s.taskId, ids.project, s.taskTitle, "do the thing", ids.flow],
     );
     await pool.query(
-      `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
-       VALUES ($1, $2, $3, $4, $5, 'Review', $6, 'v0.0.1', now())`,
-      [s.runId, s.taskId, ids.project, ids.flow, ids.executor, M18_REVIEW_NODE],
+      `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+       VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', $6, 'v0.0.1', now())`,
+      [s.runId, s.taskId, ids.project, ids.flow, ids.runner, M18_REVIEW_NODE],
     );
     await pool.query(
       `INSERT INTO workspaces
@@ -2698,6 +2759,240 @@ async function seedM18Fixture(
   };
 }
 
+// The M22 fixture carries the run id (workbench owner), the project slug (repo
+// tab), the current node id (current-node emphasis), a Succeeded node id (node
+// color), the run branch, and the seeded VIEWER credentials (member-gate proof).
+type M22FixtureRecord = {
+  projectSlug: string;
+  repoPath: string;
+  runId: string;
+  branch: string;
+  currentNode: string;
+  succeededNode: string;
+  oversizedFile: string;
+  viewerEmail: string;
+  viewerPassword: string;
+};
+
+// Build the M22 parent repo: base commit carrying README.md, src/app.ts, and an
+// oversized tracked blob; then a run branch off base with a committed change so
+// `diffRange(base...runBranch)` renders changed-files. Returns the base SHA.
+async function provisionM22Repo(
+  repoPath: string,
+  worktreePath: string,
+  branch: string,
+  oversizedFile: string,
+): Promise<{ baseCommit: string }> {
+  resetDir(repoPath);
+  await execFileAsync("git", ["init", "-b", "main", repoPath]);
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "config",
+    "user.email",
+    "e2e@maister.local",
+  ]);
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "config",
+    "user.name",
+    "MAIster E2E",
+  ]);
+
+  writeFileSync(
+    path.join(repoPath, "README.md"),
+    "# M22 workbench fixture\n",
+    "utf8",
+  );
+  mkdirSync(path.join(repoPath, "src"), { recursive: true });
+  writeFileSync(
+    path.join(repoPath, "src", "app.ts"),
+    "export const answer = 42;\n",
+    "utf8",
+  );
+  writeFileSync(
+    path.join(repoPath, oversizedFile),
+    "x".repeat(M22_OVERSIZED_BYTES),
+    "utf8",
+  );
+  await execFileAsync("git", ["-C", repoPath, "add", "."]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "base"]);
+
+  const { stdout: baseSha } = await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "rev-parse",
+    "HEAD",
+  ]);
+  const baseCommit = baseSha.trim();
+
+  // Run branch + worktree off base, with a committed change so the Diff tab
+  // shows a changed file (README.md modified) on the run branch vs base.
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    worktreePath,
+  ]);
+  writeFileSync(
+    path.join(worktreePath, "README.md"),
+    "# M22 workbench fixture\n\nworkbench diff change\n",
+    "utf8",
+  );
+  await execFileAsync("git", ["-C", worktreePath, "add", "README.md"]);
+  await execFileAsync("git", [
+    "-C",
+    worktreePath,
+    "commit",
+    "-m",
+    "run change on m22 branch",
+  ]);
+
+  return { baseCommit };
+}
+
+async function seedM22Fixture(
+  pool: Pool,
+  userId: string,
+  viewer: UserFixture,
+): Promise<M22FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+    viewerMember: randomUUID(),
+    planAttempt: randomUUID(),
+    implAttempt: randomUUID(),
+    checksAttempt: randomUUID(),
+    reviewAttempt: randomUUID(),
+    gate: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-m22-workbench`;
+  const oversizedFile = "big.txt";
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M22_SLUG]);
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  const { baseCommit } = await provisionM22Repo(
+    repoPath,
+    worktreePath,
+    M22_BRANCH,
+    oversizedFile,
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      M22_SLUG,
+      "MAIster E2E M22 Workbench",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m22@v0.0.1`,
+      JSON.stringify(M22_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E workbench", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Running', $6, 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow, ids.runner, M22_CURRENT_NODE],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      M22_BRANCH,
+      worktreePath,
+      repoPath,
+      baseCommit,
+    ],
+  );
+
+  // Ledger: plan Succeeded → implement Running (the current node) → review
+  // Pending. The `checks` Succeeded attempt carries a PASSED blocking gate so a
+  // gate rollup is present on the graph.
+  const attempts: Array<[string, string, string, string]> = [
+    [ids.planAttempt, "plan", "ai_coding", "Succeeded"],
+    [ids.implAttempt, M22_CURRENT_NODE, "ai_coding", "Running"],
+    [ids.checksAttempt, "checks", "check", "Succeeded"],
+    [ids.reviewAttempt, "review", "human", "Pending"],
+  ];
+
+  for (const [id, nodeId, nodeType, status] of attempts) {
+    await pool.query(
+      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+       VALUES ($1, $2, $3, $4, 1, $5, now())`,
+      [id, ids.run, nodeId, nodeType, status],
+    );
+  }
+  await pool.query(
+    `INSERT INTO gate_results (id, run_id, node_attempt_id, gate_id, kind, mode, status, ended_at)
+     VALUES ($1, $2, $3, 'lint', 'command_check', 'blocking', 'passed', now())`,
+    [ids.gate, ids.run, ids.checksAttempt],
+  );
+
+  // The admin owner (workbench owner / member-gate pass) + a VIEWER member
+  // (below readRepoFiles' `member` floor → 403 on the file routes).
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'viewer')`,
+    [ids.viewerMember, ids.project, viewer.id],
+  );
+
+  return {
+    projectSlug: M22_SLUG,
+    repoPath,
+    runId: ids.run,
+    branch: M22_BRANCH,
+    currentNode: M22_CURRENT_NODE,
+    succeededNode: "plan",
+    oversizedFile,
+    viewerEmail: viewer.email,
+    viewerPassword: viewer.password,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -2725,6 +3020,7 @@ async function main(): Promise<void> {
         M15_SLUG,
         M16_SLUG,
         M18_SLUG,
+        M22_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -2735,6 +3031,7 @@ async function main(): Promise<void> {
         DISABLED_EMAIL,
         MEMBER_EMAIL,
         EDIT_TARGET_EMAIL,
+        M22_VIEWER_EMAIL,
       ],
     ]);
 
@@ -2786,6 +3083,16 @@ async function main(): Promise<void> {
       accountStatus: "active",
       mustChangePassword: false,
     });
+    // Global-role `viewer` so it does NOT bypass project RBAC: it proves the
+    // readRepoFiles `member` floor (viewer project member → 403).
+    const m22Viewer = await insertUser(pool, {
+      email: M22_VIEWER_EMAIL,
+      password: M22_VIEWER_PASSWORD,
+      name: "E2E M22 Viewer",
+      role: "viewer",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
 
     await seedPlatformRuntime(pool);
 
@@ -2832,6 +3139,7 @@ async function main(): Promise<void> {
     const m15 = await seedM15Fixture(pool, admin.id);
     const m16 = await seedM16Fixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
+    const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -2870,6 +3178,7 @@ async function main(): Promise<void> {
         m15,
         m16,
         m18,
+        m22,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -2886,7 +3195,8 @@ async function main(): Promise<void> {
         `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})` +
         `, m15 failed ${m15.failedRunId} overridden ${m15.overriddenRunId} (${M15_SLUG})` +
         `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})` +
-        `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})`,
+        `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
+        `, m22 run ${m22.runId} (${M22_SLUG})`,
     );
   } finally {
     await pool.end();

@@ -1,10 +1,9 @@
 # Workbench visibility domain
 
-> **Status: Designed (M22).** This file is the M22 contract for the per-run
+> **Status: Implemented (M22).** This file is the M22 contract for the per-run
 > **workbench**: a flow-graph VIEW with live node-status coloring, a read-only
-> git-tracked file browser, and the base→run diff. It is **docs-first** — at the
-> Phase-0 HEAD nothing here is coded yet; the final M22 gate flips the surfaces
-> to Implemented as each track lands. Three independent tracks:
+> git-tracked file browser, and the base→run diff — all three tracks shipped.
+> Three independent tracks:
 > **A — flow-graph view** ([ADR-051](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed),
 > [ADR-052](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch)),
 > **B — file-tree** ([ADR-053](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads)),
@@ -225,7 +224,7 @@ flowchart LR
 - Related: [`flow-graph.md`](flow-graph.md) (execution model the view renders),
   [`runs.md`](runs.md) (run state / diff), [`workspaces.md`](workspaces.md)
   (worktree the tree reads).
-- Source (Designed, M22): `web/lib/queries/flow-graph-view.ts`,
+- Source (Implemented, M22): `web/lib/queries/flow-graph-view.ts`,
   `web/lib/queries/run-node-status.ts`, `web/lib/queries/flow-layout.ts`,
   `web/lib/runs/flow-layout-write.ts`, `web/lib/board/flow-graph-view-layout.ts`,
   `web/components/board/flow-graph-view.tsx`,

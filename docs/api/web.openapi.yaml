@@ -484,7 +484,7 @@ paths:
   /api/projects/{slug}/files:
     get:
       tags: [projects]
-      summary: Designed (M22) — list git-tracked project-repo files (one level)
+      summary: Implemented (M22) — list git-tracked project-repo files (one level)
       description: |
         Requires the `readRepoFiles` action (project `member`). Lists git-tracked
         entries one level under `?path=` via `git ls-tree` against
@@ -520,7 +520,7 @@ paths:
   /api/projects/{slug}/files/content:
     get:
       tags: [projects]
-      summary: Designed (M22) — read a git-tracked project-repo file
+      summary: Implemented (M22) — read a git-tracked project-repo file
       description: |
         Requires the `readRepoFiles` action (project `member`). Reads a single
         tracked blob via `git cat-file` against `projects.main_branch` HEAD,
@@ -1404,7 +1404,7 @@ paths:
   /api/runs/{runId}/diff:
     get:
       tags: [runs]
-      summary: Implemented (scratch) · Designed (M22, flow-run case + files) — read workspace diff
+      summary: Implemented (scratch + flow-run, M22) — read workspace diff
       description: |
         Returns the diff between the run workspace branch and its
         server-resolved base commit, plus a changed-files summary (`files`).
@@ -1438,7 +1438,7 @@ paths:
   /api/runs/{runId}/graph:
     get:
       tags: [runs]
-      summary: Designed (M22) — flow-graph topology + layout overrides
+      summary: Implemented (M22) — flow-graph topology + layout overrides
       description: |
         Requires project membership at `viewer` or above (`readBoard`). Compiles
         the run's pinned manifest into a logic-only topology (nodes + edges, no
@@ -1467,7 +1467,7 @@ paths:
   /api/runs/{runId}/graph-status:
     get:
       tags: [runs]
-      summary: Designed (M22) — live node/gate status snapshot for the graph view
+      summary: Implemented (M22) — live node/gate status snapshot for the graph view
       description: |
         Requires project membership at `viewer` or above (`readBoard`). Returns
         the highest-`attempt` `node_attempts.status` per node, a gate rollup over
@@ -1496,7 +1496,7 @@ paths:
   /api/runs/{runId}/graph/layout:
     put:
       tags: [runs]
-      summary: Designed (M22) — upsert a manual node position
+      summary: Implemented (M22) — upsert a manual node position
       description: |
         Requires the `editFlowLayout` action (project `member`). Upserts one
         `flow_graph_layouts` row keyed `(flow_id, node_id)`, last-writer-wins.
@@ -1530,7 +1530,7 @@ paths:
   /api/runs/{runId}/files:
     get:
       tags: [runs]
-      summary: Designed (M22) — list git-tracked worktree files (one level)
+      summary: Implemented (M22) — list git-tracked worktree files (one level)
       description: |
         Requires the `readRepoFiles` action (project `member` — strictly above
         `readBoard`). Lists git-tracked entries one level under `?path=` via
@@ -1567,7 +1567,7 @@ paths:
   /api/runs/{runId}/files/content:
     get:
       tags: [runs]
-      summary: Designed (M22) — read a git-tracked worktree file
+      summary: Implemented (M22) — read a git-tracked worktree file
       description: |
         Requires the `readRepoFiles` action (project `member`). Reads a single
         tracked blob via `git cat-file` against the run branch tip, capped at

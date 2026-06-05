@@ -84,10 +84,14 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
 
   await expect(readinessSummaryHeading).toBeVisible();
 
-  // The reasons list should be present (the blocking gate is the reason).
+  // The reasons list should be present (the blocking gate is the reason). The
+  // run-detail page now also renders the ReviewPanel's own readiness list
+  // ([data-testid="review-readiness"]) for flow Review runs, so scope to the
+  // first reasons list to keep the locator unambiguous.
   const reasonsList = page
     .locator("section[class*='border'][class*='rounded']")
-    .locator("ul");
+    .locator("ul")
+    .first();
 
   await expect(reasonsList).toBeVisible();
 

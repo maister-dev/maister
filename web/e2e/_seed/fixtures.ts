@@ -64,6 +64,22 @@ export type E2EM19Fixture = {
   dueBranch: string;
 };
 
+// M22 Phase 6: workbench fixture. ONE project with a REAL repo (tracked files +
+// an oversized blob + a committed run-branch diff) and a flow run parked at
+// Running with current_step_id = the `implement` node. Carries the seeded VIEWER
+// credentials to prove the readRepoFiles member-gate (viewer → 403).
+export type E2EM22Fixture = {
+  projectSlug: string;
+  repoPath: string;
+  runId: string;
+  branch: string;
+  currentNode: string;
+  succeededNode: string;
+  oversizedFile: string;
+  viewerEmail: string;
+  viewerPassword: string;
+};
+
 export type E2EFixtures = {
   adminEmail: string;
   adminPassword: string;
@@ -88,6 +104,7 @@ export type E2EFixtures = {
     registration: E2ERegistrationFixture;
     m19: E2EM19Fixture;
     m16: E2EM16Fixture;
+    m22: E2EM22Fixture;
   };
 };
 

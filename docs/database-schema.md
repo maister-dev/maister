@@ -54,7 +54,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
-| `flow_graph_layouts`          | **(M22 — Designed, migration `0024`)** Per-node manual graph-view positions for the workbench flow-graph view. Separate presentation store — never in `flow.yaml`. Keyed `(flow_id, node_id)`; `editFlowLayout` (member) upserts.                                                                                            | `flows.id`, `users.id` (updated_by, SET NULL)                             |
+| `flow_graph_layouts`          | **(M22 — Implemented, migration `0024`)** Per-node manual graph-view positions for the workbench flow-graph view. Separate presentation store — never in `flow.yaml`. Keyed `(flow_id, node_id)`; `editFlowLayout` (member) upserts.                                                                                            | `flows.id`, `users.id` (updated_by, SET NULL)                             |
 | Table | Purpose | Cascades from |
 | ----- | ------- | ------------- |
 | `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`; `account_status` controls login eligibility. | (root) |
@@ -349,7 +349,7 @@ denormalized cache of the _enabled_ revision; runtime byte authority is
 
 ## `flow_graph_layouts`
 
-**(M22 — Designed, migration `0024`, additive; ADR-051.)** Per-node manual
+**(M22 — Implemented, migration `0024`, additive; ADR-051.)** Per-node manual
 positions for the workbench flow-graph **view**. A **separate presentation
 store** — node positions NEVER live in `flow.yaml` (the DSL stays logic-only;
 engine stays `1.2.0`).

@@ -17,7 +17,7 @@ const MAISTER_CRON_TOKEN =
   process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m18-.*|m19-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch|platform-acp-runners)\.spec\.ts$/;
+  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m18-.*|m19-.*|m22-.*|portfolio-board|task-launch-gating|project-registration|admin-users|scratch-launch|platform-acp-runners)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
