@@ -24,13 +24,26 @@ artifact protocol used when the worker is checkpointed.
     as `kind="human"` and the response is captured under the same
     atomic-claim + artifact-write contract as `kind="form"`. The
     loop-on-reject routing (`on_reject.goto_step` rerouting +
-    `comments_var` propagation) is designed — until then,
-    `kind="human"` behaves wire-equivalent to `kind="form"`. The
-    distinction is preserved on the row so the loop can light up
-    rerouting without a schema change.
+    `comments_var` propagation) is implemented — `kind="human"` now
+    reparks atomically to the goto target on rejection. The distinction
+    is preserved on the row so the loop can be traced per-kind.
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
 enum | array`.
+- **`criticality`** — flow-author-declared importance of the HITL request.
+  Stored on `hitl_requests.criticality` (text, nullable). Allowed values:
+  `low | medium | high | critical`. Written ONCE at creation from the `human`
+  node/step's `criticality` field; never updated after the row is inserted.
+  Surfaces as a badge on the HITL form and as a sort key in the inbox (critical
+  first). (Implemented — M17)
+- **`human_confidence`** — responder self-reported certainty at response time.
+  Real in `[0,1]`; stored on `hitl_requests.human_confidence` (real, nullable)
+  and echoed in `hitl_requests.response` jsonb as `{ confidence }`. Validated
+  server-side: values outside `[0,1]` are rejected with 422. Written in the
+  Phase-1 transaction of `respondToHitl`. Distinct from
+  `GateVerdict.calibration.confidence` (M15 AI-judge machine confidence on
+  `gate_results.verdict`): `human_confidence` annotates a human decision;
+  it does NOT re-gate readiness. (Implemented — M17)
 - **`needs-input.json`** — artifact written when a checkpointable
   structured-form request is raised.
 - **`input-<stepId>.json`** — atomic-written response payload.
@@ -41,7 +54,7 @@ enum | array`.
 | ---- | ------- | ----- | --------------- | ---- |
 | `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
 | `form` | Agent writes `needs-input.json` mid-step | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
-| `human` | Flow step `type: human` (linear) or `human_review` node finish (graph) | Yes (`form_schema`) | Linear: Designed (`on_reject.goto_step` not executed). Graph (M11a): **declared decisions** drive the rework loop | Artifact only |
+| `human` | Flow step `type: human` (linear) or `human_review` node finish (graph) | Yes (`form_schema`) | Linear: **Implemented — M17** (`on_reject.goto_step` atomic repark, bounded by `maxLoops=5`). Graph (M11a): **declared decisions** drive the rework loop | Artifact only |
 
 The decision tree:
 
@@ -120,7 +133,14 @@ sequenceDiagram
     Note over R: If checkpoint/resume lands, runner-owned resume<br/>uses acp_session_id instead of route-owned status flips.
 ```
 
-### Human-review response (Implemented; loop Designed)
+### Human-review response with executed on_reject loop (Implemented — M17)
+
+The sequence below describes the M17 linear `on_reject.goto_step`
+repark (Implemented — landed in Phase 3). On a reject response the runner writes a dedicated rework-comments
+artifact (never the completion sentinel), invalidates prior-pass sentinels for
+the re-execution window, and atomically reparks `currentStepId` to the goto
+target. The loop is bounded by `maxLoops` (default 5). An approve response
+follows the normal structured-form path (advance to next step).
 
 ```mermaid
 sequenceDiagram
@@ -131,15 +151,20 @@ sequenceDiagram
     participant DB as Postgres
 
     Note over W: Flow reached a step type=human with on_reject.goto_step=plan
-    W->>FS: render form_schema in UI
     U->>W: Reject with comments
-    W->>DB: Phase 1: claim row, store response
-    W->>FS: Phase 2: atomicWriteJson input-{stepId}.json
+    W->>DB: Phase 1: claim row, store response {rejected:true, comments}
+    W->>FS: Phase 2: atomicWriteJson input-{humanStepId}.json
     W->>DB: Phase 3: set responded_at
     W-->>R: schedule runFlow
     R->>DB: claim NeedsInput -> Running
-    R->>R: continue next step (rejection is audit data)
-    Note over R: Designed loop: on_reject.goto_step + comments_var<br/>will route to an earlier step when implemented.
+    R->>R: read stored response, detect rejection
+    R->>FS: atomicWriteJson rework-comments-{gotoStepId}.json {comments_var: comments}
+    R->>FS: delete input-{stepId}.json for every step in [gotoTarget..humanStep]
+    R->>DB: single CAS tx: UPDATE runs SET currentStepId=gotoStepId WHERE status=Running AND currentStepId=humanStepId
+    R->>R: break and re-enter at gotoStepId via resume-claim path
+    Note over R: Re-entered step reads rework-comments-{gotoStepId}.json<br/>and injects comments_var into its context.
+    Note over R: When re-execution reaches the human step again,<br/>its input-{stepId}.json is gone so HITL is re-created.
+    Note over R: Reject count incremented per run/step.<br/>Exceeding maxLoops=5 raises MaisterError(CONFIG).
 ```
 
 ### Declared decisions vs raw `goto_step` (M11a — Designed)
@@ -215,6 +240,78 @@ The `status='Running'` flip plus the takeover row's `ended_at` is the **AFTER-si
 idempotency marker** — never set before the git/ledger side-effect completes. A
 git-op failure in Phase 2 leaves the run `HumanWorking` with no ledger write and
 no status flip (409 `CONFLICT`, retryable).
+
+### Cross-project Inbox block and numeric badge (Implemented — M17)
+
+The portfolio home (`app/(app)/page.tsx`) renders a full cross-project
+Inbox block listing every pending `HitlItem` across all projects visible
+to the actor. The block absorbs the per-project `NeedsYouStrip`; the
+compact numeric "Needs you (N)" badge on each `ProjectCard` and on the
+portfolio header survives. The inline response component renders directly
+inside the block so the operator can respond without navigating to the
+run page. Access is RBAC-scoped: members see only their own projects;
+admins see all.
+
+```mermaid
+sequenceDiagram
+    participant H as portfolio home (RSC)
+    participant Q as getCrossProjectHitlInbox
+    participant DB as Postgres
+    actor U as Operator
+    participant W as Web route
+
+    H->>Q: getCrossProjectHitlInbox(userId, globalRole)
+    Q->>DB: SELECT hitl_requests JOIN assignments JOIN runs JOIN projects<br/>WHERE respondedAt IS NULL AND status IN (NeedsInput, NeedsInputIdle)<br/>AND (admin OR projectId IN member_projects)<br/>ORDER BY criticality DESC, created_at ASC
+    DB-->>Q: HitlItem[] with schema, criticality, assignment state
+    Q-->>H: HitlItem[]
+    H->>H: render InboxBlock with inline HitlDecisionControls per item
+    H->>H: render Needs-you badge = count(HitlItem[])
+    U->>W: POST /api/runs/{runId}/hitl/{hitlRequestId}/respond (inline)
+    W-->>H: onRespond callback triggers revalidation
+```
+
+### HITL-over-MCP — hitl_list and hitl_respond (Implemented — M17)
+
+External token-scoped agents query and answer pending HITL via two new
+MCP tools (`hitl_list`, `hitl_respond`) backed by new external REST
+routes. Both routes enforce scope (D8) and actor-kind (D7) gates and
+emit audit rows via `handleExt`. A token/agent actor may answer
+`permission` and `form` HITL only; `human`-kind requests require a human
+actor. Cross-project isolation is enforced by existence-hiding: a
+`runId` that belongs to a different project returns 404, not 403.
+
+```mermaid
+sequenceDiagram
+    participant MC as MCP client (agent)
+    participant MT as hitl_list / hitl_respond tools
+    participant ER as ext route (handleExt)
+    participant DB as Postgres
+    participant SV as hitl service (respondToHitl)
+    actor AU as audit log
+
+    MC->>MT: hitl_list {runId}
+    MT->>ER: GET /api/v1/ext/runs/{runId}/hitl (bearer token)
+    ER->>DB: verify token, resolve projectId
+    ER->>DB: run.projectId != token.projectId -> 404 (existence-hide)
+    ER->>DB: scopeLabel=hitl:read not in actor.scopes and not * -> 403 (D8)
+    ER->>DB: SELECT hitl_requests WHERE runId AND respondedAt IS NULL
+    ER->>AU: recordTokenAudit action=hitl_list
+    ER-->>MT: 200 HitlItem[]
+    MT-->>MC: pending HITL items
+
+    MC->>MT: hitl_respond {runId, hitlRequestId, optionId/response, confidence}
+    MT->>ER: POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond
+    ER->>DB: verify token, existence-hide check
+    ER->>DB: scopeLabel=hitl:respond not in actor.scopes and not * -> 403 (D8)
+    ER->>DB: hitlRow.kind = human AND actor.kind != user -> 403 (D7)
+    ER->>SV: respondToHitl({kind:api_token, tokenId, projectId, label}, input)
+    SV->>DB: Phase 1: claim row, write response + human_confidence
+    SV->>SV: Phase 2: deliverPermission OR atomicWriteJson
+    SV->>DB: Phase 3: set responded_at
+    ER->>AU: recordTokenAudit action=hitl_respond
+    ER-->>MT: 200 / 202 / 409 / 422
+    MT-->>MC: result
+```
 
 ## Keep-alive activity tracking
 
@@ -295,21 +392,52 @@ fields:
   with conflicting payloads return 409 before any artifact is
   touched, and same-payload retries are idempotent. The supervisor
   never writes input artifacts.
-- **(Implemented)** `human` step responses are captured under the
-  same two-phase commit + artifact-write contract as `form`. The
-  `on_reject` clause on the Flow step is preserved in the row's kind
-  (`hitl_requests.kind = "human"`) and may also be carried in the
-  response payload as `{ rejected: bool, comments?: string }`, but the
-  runner does NOT branch on it today — it advances to the next step
-  with the response captured as ordinary `steps.<id>.vars`. The
-  reviewer UI MUST therefore treat rejection as informational
-  (recorded for audit, the run continues), not as a routing action.
-- **(Designed)** Full `on_reject.goto_step` rerouting in
-  `runHumanStep`: when the response indicates rejection, the runner
-  jumps to the declared `goto_step` with `comments_var` populated
-  from the response. Until it lands, the API surface MUST NOT
-  represent rejection as a loop-back action — see `web.openapi.yaml`
-  and the UI MUST disable loop-back affordances.
+- **(Implemented — M17)** `human` step responses are captured under the
+  same two-phase commit + artifact-write contract as `form` (stored as
+  `hitl_requests.kind = "human"`); the reject decision is carried in the
+  response payload as `{ rejected: bool, comments?: string }`. On
+  **approve** the runner advances to the next step; on **reject** the
+  runner EXECUTES the step's `on_reject.goto_step` rerouting (see the
+  `runHumanStep` rerouting bullet below), bounded by `maxLoops` — rejection
+  is a routing action, NOT merely informational.
+- **(Implemented — M17)** A conflicting re-submit on an already-claimed
+  `hitl_requests` row (different payload, `respondedAt IS NULL`) MUST
+  return 409 before any artifact or supervisor side-effect runs.
+  A same-payload retry on a delivered row (`respondedAt IS NOT NULL`)
+  MUST be idempotent (200 + re-queue resume). The respond route MUST
+  reject any `runs.status` outside `PENDING_FORM_RUN_STATUS =
+  {NeedsInput, NeedsInputIdle}` with 422.
+- **(Implemented — M17)** `hitl_requests.criticality` MUST be written
+  once at creation from the flow-author-declared `human` node/step
+  `criticality` field (`low | medium | high | critical`) and MUST NOT
+  be updated after insertion.
+- **(Implemented — M17)** `hitl_requests.human_confidence` MUST be a
+  real in `[0,1]`; values outside that range MUST be rejected
+  server-side with 422. `human_confidence` and `criticality` ANNOTATE
+  a human decision; they MUST NOT re-gate readiness. The escalate-to-
+  human decision stays the Flow's `human_review` gate, never the
+  external actor's.
+- **(Implemented — M17)** A token or internal-agent actor MUST NOT
+  satisfy a `hitl_requests.kind = "human"` request;
+  `respondToHitl` MUST return 403 (`UNAUTHORIZED`) for any
+  `actor.kind !== "user"` when `hitlRow.kind = "human"` (D7).
+  Token actors are limited to answering `permission` and `form` HITL.
+- **(Implemented — M17)** Both HITL ext routes (`GET …/hitl` scope
+  `hitl:read`, `POST …/hitl/{id}/respond` scope `hitl:respond`) MUST
+  enforce `handleExt({requireScope:true})`: the route's `scopeLabel`
+  MUST be in `actor.scopes` or equal `"*"`; absent scope MUST return
+  403. A token actor MUST NOT create or skip a gate; gate placement
+  stays the Flow's.
+- **(Implemented — M17)** The flat `steps[]` `on_reject` loop MUST be
+  bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
+  `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
+  breach) and terminate the run.
+- **(Implemented — M17)** Full `on_reject.goto_step` rerouting in
+  `runHumanStep`: on rejection the runner MUST write
+  `rework-comments-{gotoStepId}.json` (NEVER `input-{gotoStepId}.json`),
+  delete `input-{stepId}.json` for every step in
+  `[gotoTarget..humanStep]`, and atomically repark
+  `runs.currentStepId` to the goto target in a single CAS transaction.
 - **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
   * **Phase 1 (atomic claim).** `response` is stored under a row-level
@@ -393,11 +521,28 @@ fields:
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
 - **HITL on `human` step is rejected** — rejection is stored as
-  response payload. The runner does not branch on it until the
-  designed `on_reject.goto_step` loop lands.
+  response payload. (Implemented — M17) The runner reparks
+  `currentStepId` to `on_reject.goto_step` atomically, invalidates
+  prior-pass completion sentinels for the re-execution window, and
+  re-enters at the goto target with `comments_var` injected from
+  `rework-comments-{gotoStepId}.json`. Exceeding `maxLoops` →
+  `MaisterError("CONFIG")` (terminal).
 - **`session/request_permission` arrives while the supervisor is
   shutting down** — request lost; agent will retry on next launch
   through the standard `acp_session_id` resume.
+- **Token actor calls ext HITL respond on a `human`-kind request** —
+  `respondToHitl` returns `MaisterError("UNAUTHORIZED")` → HTTP 403
+  (D7). Response body MUST NOT reveal which HITL kind triggered the
+  refusal. (Implemented — M17)
+- **Token missing `hitl:read` or `hitl:respond` scope** →
+  `handleExt({requireScope:true})` returns 403. Response MUST NOT
+  leak which scopes the token holds (D8). (Implemented — M17)
+- **Ext HITL route called with a `runId` from a different project** →
+  existence-hide: 404, not 403. (Implemented — M17)
+- **`human_confidence` body value outside `[0,1]`** → server-side Zod
+  validation fails → 422 (`NEEDS_INPUT`). (Implemented — M17)
+- **`on_reject.goto_step` re-entry guard exceeded** → `MaisterError("CONFIG")` →
+  run `Failed`, task → `Backlog`. (Implemented — M17)
 
 ## M8 — live vs idle HITL response paths
 
@@ -476,7 +621,11 @@ runner-agent enforcement is queued for a follow-up patch.
 ## Linked artifacts
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
-  [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror).
+  [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror),
+  ADR-050 (HITL assessment taxonomy — `criticality`/`human_confidence`; Implemented — M17),
+  ADR-051 (HITL response service + HITL-over-MCP + token-actor + D7/D8 gates; Implemented — M17),
+  ADR-052 (flat-runner `on_reject` atomic repark; Implemented — M17),
+  ADR-053 (HITL hybrid-surface composition — cross-project inbox; Implemented — M17).
 - ERD: [`../db/hitl-domain.md`](../db/hitl-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`form_schema versioning`;

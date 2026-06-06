@@ -204,10 +204,19 @@ ignoring a newly added code.
 | HTTP status | When returned |
 | ----------- | ------------- |
 | **401** | Invalid, expired, or revoked project token. Also: missing or invalid inbound bearer on the Streamable-HTTP MCP transport. |
-| **403** | Reserved — scope enforcement, unused in v1 full-project-API model (ADR-041). |
-| **404** | Token's project ≠ addressed resource (existence-hide). Also: unknown or non-`external_check` gate; unknown task or run id. |
-| **409** | Domain conflict — a gate report on a terminal run (`Done`/`Abandoned`/`Crashed`/`Failed`), or a launch/create precondition conflict (`CONFLICT`/`PRECONDITION` from the shared service). |
-| **422** | Request body failed schema validation, or a `CONFIG` `MaisterError` from the shared service (unknown flow/executor, invalid config). Mapped by the shared `httpStatusForExtCode`. |
+| **403** | **(Implemented — M17, ADR-051.)** Two distinct cases, both on the HITL ext routes only — other `/api/v1/ext/*` routes keep the existing binary enforcement (ADR-046 unchanged): **(D8) missing scope** — `GET /api/v1/ext/runs/{runId}/hitl` requires scope `hitl:read`; `POST …/hitl/{id}/respond` requires scope `hitl:respond`; a token without the matching scope (and without `*`) is refused 403 via `handleExt({requireScope:true})`; the response does not reveal which scopes the token holds. **(D7) actor-kind gate** — a token (`api_token`) or internal-agent actor answering a `human`-kind HITL request (`hitlRow.kind === "human"`) is refused 403; token/agent actors may answer only `permission`/`form`-kind requests. A `*`-scoped token passes the D8 check but is still subject to D7. |
+| **404** | Token's project ≠ addressed resource (existence-hide). Also: unknown or non-`external_check` gate; unknown task or run id. **(M17, Implemented)** on HITL ext routes: `run.projectId ≠ token.projectId`, or unknown `runId`/`hitlRequestId`, or `hitlRow.runId ≠ runId` — all return 404 without distinguishing which check failed (existence-hide). |
+| **409** | Domain conflict — a gate report on a terminal run (`Done`/`Abandoned`/`Crashed`/`Failed`), or a launch/create precondition conflict (`CONFLICT`/`PRECONDITION` from the shared service). **(M17, Implemented)** on the HITL respond ext route: idempotency conflict when the HITL request already has a `respondedAt` timestamp (the shared `respondToHitl` service returns 409, same as the session route). |
+| **422** | Request body failed schema validation, or a `CONFIG` `MaisterError` from the shared service (unknown flow/executor, invalid config). Mapped by the shared `httpStatusForExtCode`. **(M17, Implemented — `NEEDS_INPUT`)** on the HITL respond ext route: bad response payload — `response` body fails the `respondToHitl` service validation (unknown `optionId`, out-of-range `confidence`, schema mismatch) — mapped from `MaisterError("NEEDS_INPUT")` to 422. |
+
+**New scope labels (M17, Implemented):** `hitl:read` and `hitl:respond`
+are added to the project-token scope vocabulary. They are enforced via opt-in
+`handleExt({requireScope:true})` on the two new HITL ext routes (D8). All
+existing ext routes remain on the prior binary enforcement model (no
+`requireScope`). A `["*"]`-scoped token passes the scope check on all routes
+including the new HITL routes; it is still subject to the actor-kind gate
+(D7). See [ADR-051](decisions.md#adr-051) and
+[`api/external/operations.openapi.yaml`](api/external/operations.openapi.yaml).
 
 ## See Also
 

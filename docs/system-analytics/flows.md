@@ -118,8 +118,10 @@ stateDiagram-v2
 
 ### Step DSL execution model (Partly implemented)
 
-Steps run sequentially. The `on_reject.goto_step` loop is designed; today
-`human` responses are captured and the runner continues to the next step.
+Steps run sequentially. The linear `on_reject.goto_step` loop is **Implemented
+(M17, ADR-052)**: a rejected `human` response reparks the run to the target step
+(injecting `comments_var`) via an atomic CAS, bounded by `maxLoops` (default 5)
+so a review cycle cannot loop forever.
 
 ```mermaid
 flowchart TD
@@ -134,16 +136,18 @@ flowchart TD
     Eval --> Next
     Form --> Verdict{accepted?}
     Verdict -- yes --> Next[Step N+1]
-    Verdict -- no, designed on_reject.goto_step --> Loop[jump to target step<br/>+ inject comments_var]
+    Verdict -- no, on_reject.goto_step M17 --> Loop[jump to target step<br/>+ inject comments_var]
     Loop --> S1
     Next --> Done{more steps?}
     Done -- yes --> S1
     Done -- no --> End([Run complete])
 ```
 
-> **(M11a — Designed) graph rework supersedes `on_reject.goto_step`.** The linear
-> `on_reject.goto_step` loop above stays **recorded-but-unexecuted** for `steps[]`
-> flows. A graph (`nodes[]`) flow instead uses node `transitions` +
+> **(M11a) graph rework supersedes `on_reject.goto_step` for `nodes[]` flows.** The
+> linear `on_reject.goto_step` loop above is **Implemented (M17, ADR-052)** for
+> `steps[]` flows (atomic repark, bounded by `maxLoops`; a session-less linear
+> gate/human orphan reconciles to `Crashed`/`linear-gate-orphan`). A graph
+> (`nodes[]`) flow instead uses node `transitions` +
 > `finish.human.decisions`: a reviewer's declared `rework` decision marks
 > downstream gates **stale**, moves the node pointer to the rework target, opens
 > a new `node_attempts` row, and re-runs the validation path before reaching a

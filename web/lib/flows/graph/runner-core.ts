@@ -49,6 +49,10 @@ export type RunFlowOptions = {
   // CAS-clears `resume_started_at`, instead of no-op'ing (graph) or restarting
   // from step 0 (linear).
   crashResume?: { targetStepId: string };
+  // M17 Phase 3: set by the in-process repark tail-call after the repark CAS
+  // commits. The repark CAS is the single-winner claim; this is a soft re-entry
+  // with NO additional CAS.
+  reparkResume?: { targetStepId: string };
 };
 
 export type LoadedRun = {

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
@@ -6,9 +7,11 @@ import {
   jsonb,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable(
@@ -431,6 +434,12 @@ export const actorIdentities = pgTable(
       t.projectId,
       t.userId,
     ),
+    // M17 (0025): a project's api_token actor is unique per (project, token) so
+    // ensureApiTokenActor upserts. Partial — user/system rows (NULL token_id)
+    // stay distinct and unaffected.
+    uniqProjectTokenActor: uniqueIndex("actor_identities_project_token_uq")
+      .on(t.projectId, t.tokenId)
+      .where(sql`${t.kind} = 'api_token'`),
     idxProject: index("actor_identities_project_idx").on(t.projectId),
   }),
 );
@@ -1455,6 +1464,12 @@ export const hitlRequests = pgTable(
     decision: text("decision"),
     workspacePolicy: text("workspace_policy"),
     reworkTarget: text("rework_target"),
+    // M17 ADR-050: flow-author-declared criticality; write-once at INSERT.
+    criticality: text("criticality", {
+      enum: ["low", "medium", "high", "critical"],
+    }),
+    // M17 ADR-050: responder self-reported confidence in [0,1]; set at response time.
+    humanConfidence: real("human_confidence"),
     respondedAt: timestamp("responded_at", {
       withTimezone: true,
       mode: "date",

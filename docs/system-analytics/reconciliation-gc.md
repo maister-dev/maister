@@ -65,11 +65,12 @@ stateDiagram-v2
     state "Run reconcile (Running-only)" as ReconcileAxis {
         [*] --> Running: candidate row
         Running --> Reattached: live session present
-        Running --> Redispatched: no live session,<br/>current node check/judge<br/>(retry-safe gate)
+        Running --> Redispatched: graph flow, no live session,<br/>current node check/judge<br/>(retry-safe gate)
         Running --> Skipped: agent node within<br/>MAISTER_RECONCILE_GRACE_SECONDS
         Running --> Crashed: worktree gone
         Running --> Crashed: agent session gone past grace
         Running --> Crashed: cli node, no live session<br/>(cli-not-retry-safe)
+        Running --> Crashed: linear flow, gate/human orphan<br/>(linear-gate-orphan)
         Reattached --> [*]
         Redispatched --> [*]
         Skipped --> [*]: re-evaluated next tick
@@ -329,7 +330,8 @@ to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`),
 | status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
 | `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
 | `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
-| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge` — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
+| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/null — read-only) in a **graph (`nodes[]`) flow** | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
+| `Running` | worktree present, no live session, current node is a gate/`human` orphan in a **linear (`steps[]`) flow** | **CRASH** (`crashRunningRun`, reason `linear-gate-orphan`) | a flat `steps[]` run cannot resume mid-flow via `runFlow` (bare re-entry restarts at step 0 and re-runs prior side-effects); crashing retains the node in `resume_target_step_id` so operator Recover resumes from it (ADR-052 window-(c)) |
 | `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
 | `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |

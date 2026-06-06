@@ -4264,17 +4264,20 @@ components:
             schema — see `docs/configuration.md`). Returns 422 on
             failure.
 
-            **M7 behaviour for `kind="human"`:** the response is
-            captured under the same atomic-claim + artifact-write
-            contract as `kind="form"`. The runner advances to the
-            NEXT step with the response surfaced as
-            `steps.<stepId>.vars`. The Flow step's `on_reject` clause
-            is recorded on the row (`hitl_requests.kind = "human"`)
-            but the runner does NOT route on it — `on_reject.goto_step`
-            rerouting is **Designed M8**. UIs SHOULD therefore not
-            present rejection as a loop-back action in M7; record
-            rejection intent in the response payload for audit, but
-            understand the runner will not branch on it until M8.
+            **`kind="human"` with `on_reject` (Implemented — M17):** the
+            response is captured under the same atomic-claim + artifact-write
+            contract as `kind="form"`. On an APPROVE response (`rejected`
+            absent/false) the runner advances to the NEXT step with the response
+            surfaced as `steps.<stepId>.vars`. On a REJECT response
+            (`{ rejected: true, comments?: string }`) the runner executes the
+            Flow step's `on_reject` clause: it atomically reparks
+            `runs.current_step_id` to `on_reject.goto_step`, injects `comments`
+            under the step's `comments_var` into the goto target's context, and
+            re-enters there. UIs SHOULD present rejection as a loop-back /
+            send-back-with-comments action. The reject→goto loop is bounded by
+            `maxLoops` (default 5); exceeding it terminates the run with
+            `MaisterError("CONFIG")`. (In a graph `nodes[]` flow this routing is
+            superseded by the node's declared-decision rework loop, M11a.)
 
             **(M11a — Designed) graph `human_review`:** for a review HITL the
             `response` object additionally carries the review-decision
@@ -4290,6 +4293,19 @@ components:
               description: Structured form payload — keys match the row's form schema.
               additionalProperties: true
             - $ref: "#/components/schemas/ReviewDecisionResponse"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: |
+            **(M17 — Implemented)** Optional responder self-reported certainty
+            (`0..1`) for a `kind == "form" | "human"` response, including a
+            graph `human_review` decision. Distinct from the AI-judge machine
+            `GateVerdict.confidence` (M15). When present it is bounded
+            server-side and echoed into the stored `hitl_requests.response`
+            jsonb and written to `hitl_requests.human_confidence`. Ignored for
+            `kind == "permission"`. Annotates the response; it never re-gates
+            readiness.
     ReviewDecisionResponse:
       type: object
       description: |

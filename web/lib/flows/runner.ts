@@ -4,6 +4,9 @@ import type { Run as RunRow } from "@/lib/db/schema";
 import type { Step } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
+import { readFile, unlink } from "node:fs/promises";
+import { join } from "node:path";
+
 import { and, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
@@ -36,6 +39,7 @@ import {
   mergeRunnerAdapterLaunch,
   runnerSupervisorInput,
 } from "@/lib/acp-runners/spawn-intent";
+import { atomicWriteJson } from "@/lib/atomic";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
@@ -54,6 +58,9 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// M17 Phase 3: on_reject repark loop guard (mirrors graph rework.maxLoops).
+const MAX_REWORK_LOOPS = 5;
+
 export type { RunFlowOptions } from "./graph/runner-core";
 
 async function executeStep(
@@ -65,6 +72,7 @@ async function executeStep(
     worktreePath: string;
     sessionState: AcpSessionState;
     supervisorApi?: SupervisorApi;
+    db: Db;
   },
 ): Promise<StepResult & { needsInput?: boolean; acpSessionId?: string }> {
   const common = {
@@ -136,6 +144,7 @@ async function executeStep(
         stepId: step.id,
         flowInstallPath: loaded.flowInstallPath,
         context,
+        db: ctx.db,
       });
     default:
       throw new MaisterError(
@@ -216,12 +225,37 @@ export async function runFlow(
     loaded.run.currentStepId = crashResumeStepId;
   }
 
+  // M17 Phase 3: reparkResume — the in-process tail-call after the repark CAS
+  // commits (the explicit re-entry of the repark winner). No additional CAS is
+  // needed: the repark CAS is the single-winner claim. A reparked-`Running`
+  // linear run whose process died after the commit (window-(c)) is recovered
+  // via the existing crash path, NOT auto-redispatch: reconcile classifies a
+  // session-less linear gate/human run `crash` (reason `linear-gate-orphan`),
+  // `crashRunningRun` retains the goto target in `resume_target_step_id`, and
+  // operator Recover (`resumeCrashedRun` → `driveResume`) threads
+  // `crashResume.targetStepId` so re-entry resumes FROM the goto target — never
+  // a bare `runFlow` that would restart at step 0 and re-run prior side-effects.
+  // This is why we do NOT treat every Running+currentStepId run as a repark
+  // (that would misclassify a plain promote/manual re-dispatch and break the
+  // step_runs double-execution guard).
+  const reparkResumeStepId =
+    opts.reparkResume && loaded.run.status === "Running"
+      ? opts.reparkResume.targetStepId
+      : null;
+
+  if (reparkResumeStepId !== null) {
+    loaded.run.currentStepId = reparkResumeStepId;
+  }
+
   // A NeedsInput resume (status NeedsInput) claims via the NeedsInput→Running
   // CAS below; a crash-resume (status already Running) already claimed above via
   // CAS-clear resume_started_at. `isResume` drives resumeIndex/stepsToRun for both.
   const isNeedsInputResume =
     loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
-  const isResume = isNeedsInputResume || crashResumeStepId !== null;
+  const isResume =
+    isNeedsInputResume ||
+    crashResumeStepId !== null ||
+    reparkResumeStepId !== null;
 
   if (isNeedsInputResume) {
     // Atomic resume claim: only ONE concurrent runFlow call for the
@@ -296,6 +330,9 @@ export async function runFlow(
   // schema enum already supports both; without this accumulator the
   // terminal write would silently collapse CRASH to Failed.
   let runErrorCode: MaisterErrorCode | null = null;
+  // M17 Phase 3: set when the repark CAS commits; skips the terminal write
+  // so the in-process tail-call can re-enter at the goto target.
+  let reparkedTo: string | null = null;
   // M11a: `steps` is optional on the manifest (graph flows use `nodes[]` and run
   // through the graph runner, Phase 3). The linear runner handles `steps[]` only.
   const allSteps = loaded.manifest.steps ?? [];
@@ -342,6 +379,10 @@ export async function runFlow(
         .find((sr) => sr.stepId === step.id);
 
       let stepRunId: string;
+      // The attempt of the step_run actually executing this iteration — drives
+      // evidence binding (recordDefaultArtifacts) so rework artifacts attach to
+      // the current pass, not attempt 1.
+      let currentAttempt: number;
 
       if (
         isResume &&
@@ -350,20 +391,53 @@ export async function runFlow(
         lastForStep.status === "NeedsInput"
       ) {
         stepRunId = lastForStep.id;
+        currentAttempt = lastForStep.attempt;
         log2.info(
           { stepRunId, stepId: step.id },
           "resuming existing step-run from NeedsInput",
         );
       } else {
+        // Re-executing an already-run step needs a fresh attempt number to avoid
+        // the step_runs unique constraint (run_id, step_id, attempt). Two cases:
+        //   1. on_reject repark re-entry (reparkResume).
+        //   2. ADR-052 crash-resume re-entering a step whose latest step_run is
+        //      already terminal — the pre-repark-CAS crash window: markStepSucceeded
+        //      committed but the repark CAS had not, so crashRunningRun retained the
+        //      human step (not the goto) in resume_target_step_id and Recover
+        //      re-enters here with that step_run already Succeeded. Without the
+        //      increment, createStepRun(attempt=1) collides and Recover never
+        //      succeeds.
+        // A first-ever execution keeps attempt=1 so the constraint still guards
+        // against accidental double-execution (promote + manual re-dispatch race).
+        const attemptsForStep = existingStepRuns.filter(
+          (sr) => sr.stepId === step.id,
+        );
+        const reExecuting =
+          reparkResumeStepId !== null ||
+          (isResume && attemptsForStep.length > 0);
+        const attempt =
+          reExecuting && attemptsForStep.length
+            ? Math.max(...attemptsForStep.map((sr) => sr.attempt)) + 1
+            : 1;
+
+        if (reExecuting && reparkResumeStepId === null) {
+          log2.info(
+            { stepId: step.id, attempt, priorAttempts: attemptsForStep.length },
+            "[FIX] crash-resume re-entering a terminal step — fresh attempt (ADR-052 pre-CAS window)",
+          );
+        }
+
         const created = await createStepRun({
           runId,
           stepId: step.id,
           stepType: step.type,
           mode,
+          attempt,
           db,
         });
 
         stepRunId = created.id;
+        currentAttempt = attempt;
       }
 
       await markStepRunning(stepRunId, db);
@@ -372,6 +446,35 @@ export async function runFlow(
       // M12 (T3.4): pass current artifacts for template rendering.
       const currentArtifacts = await getArtifactsForRun(runId, db);
 
+      // M17 Phase 3: inject rework comments as extraVars when present.
+      // rework-comments-<step.id>.json is written by the repark path (pre-tx)
+      // before the repark CAS commits. Left on disk (harmless orphan; overwritten
+      // on next repark — ADR-052 crash-window (c)).
+      let reworkComments: Record<string, unknown> | undefined;
+      const reworkCommentsPath = join(
+        runtimeRoot,
+        ".maister",
+        loaded.projectSlug,
+        "runs",
+        runId,
+        `rework-comments-${step.id}.json`,
+      );
+
+      try {
+        const raw = await readFile(reworkCommentsPath, "utf8");
+        const parsed: unknown = JSON.parse(raw);
+
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          reworkComments = parsed as Record<string, unknown>;
+          log2.debug(
+            { stepId: step.id, keys: Object.keys(reworkComments) },
+            "rework-comments injected as extraVars",
+          );
+        }
+      } catch {
+        // ENOENT or bad JSON → no injection; step runs without comments.
+      }
+
       const context = buildContext({
         task: loaded.task,
         run: loaded.run,
@@ -379,6 +482,7 @@ export async function runFlow(
         stepRuns: stepRunsCurrent,
         projectSlug: loaded.projectSlug,
         artifacts: currentArtifacts,
+        extraVars: reworkComments,
       });
 
       let result: Awaited<ReturnType<typeof executeStep>>;
@@ -389,6 +493,7 @@ export async function runFlow(
           worktreePath,
           sessionState,
           supervisorApi: opts.supervisorApi,
+          db,
         });
       } catch (err) {
         const e = isMaisterError(err)
@@ -421,6 +526,160 @@ export async function runFlow(
         }
         needsInput = true;
         log2.info({ stepId: step.id }, "step requested NeedsInput");
+        break;
+      }
+
+      // M17 Phase 3: on_reject repark.
+      if (result.rework) {
+        const { gotoStepId, commentsVar, comments } = result.rework;
+        const humanIndex = allSteps.findIndex((s) => s.id === step.id);
+        const gotoIndex = allSteps.findIndex((s) => s.id === gotoStepId);
+
+        if (gotoIndex === -1) {
+          await markStepFailed(stepRunId, { errorCode: "CONFIG" }, db);
+          throw new MaisterError(
+            "CONFIG",
+            `on_reject.goto_step "${gotoStepId}" not found in manifest for run ${runId}`,
+          );
+        }
+
+        // maxLoops guard (ADR-052): bound BOTH this human step's own loops AND
+        // the run-WIDE repark budget, so N independent human on_reject steps
+        // cannot each loop MAX_REWORK_LOOPS times (the 5×N gap). A repark always
+        // re-runs its triggering human step, so the run-wide repark count ==
+        // (total human-step executions − distinct human steps that ran). Both
+        // counts are derived from step_runs (durable; survives respawn).
+        const freshStepRuns = await getStepRunsForRun(runId, db);
+        const humanRunCount = freshStepRuns.filter(
+          (sr) => sr.stepId === step.id,
+        ).length;
+        const humanStepIds = new Set(
+          allSteps.filter((s) => s.type === "human").map((s) => s.id),
+        );
+        const humanStepRuns = freshStepRuns.filter((sr) =>
+          humanStepIds.has(sr.stepId),
+        );
+        const runReparkCount =
+          humanStepRuns.length -
+          new Set(humanStepRuns.map((sr) => sr.stepId)).size;
+
+        log2.debug(
+          {
+            stepId: step.id,
+            humanRunCount,
+            runReparkCount,
+            max: MAX_REWORK_LOOPS,
+          },
+          "rework loop guard check",
+        );
+
+        if (
+          humanRunCount > MAX_REWORK_LOOPS ||
+          runReparkCount >= MAX_REWORK_LOOPS
+        ) {
+          log2.warn(
+            {
+              stepId: step.id,
+              humanRunCount,
+              runReparkCount,
+              max: MAX_REWORK_LOOPS,
+            },
+            "on_reject maxLoops exceeded — failing run CONFIG",
+          );
+          await markStepFailed(stepRunId, { errorCode: "CONFIG" }, db);
+          throw new MaisterError(
+            "CONFIG",
+            `on_reject exceeded maxLoops (${MAX_REWORK_LOOPS}) for run ${runId} (step "${step.id}", humanRunCount=${humanRunCount}, runReparkCount=${runReparkCount})`,
+          );
+        }
+
+        // Mark the human step succeeded (it DID complete; produced a reject).
+        await markStepSucceeded(
+          stepRunId,
+          { stdout: result.stdout, vars: result.vars },
+          db,
+        );
+
+        // ORDER MATTERS (ADR-052 clause 2):
+        // 1. (over)write rework-comments-<gotoStepId>.json (pre-tx). UNCONDITIONAL
+        //    so a prior pass's comments for this SAME goto target can never be
+        //    re-injected when the current reject carries no comments_var — write
+        //    an empty object in that case (no injection).
+        const commentsFilePath = join(
+          runtimeRoot,
+          ".maister",
+          loaded.projectSlug,
+          "runs",
+          runId,
+          `rework-comments-${gotoStepId}.json`,
+        );
+
+        await atomicWriteJson(
+          commentsFilePath,
+          commentsVar ? { [commentsVar]: comments ?? "" } : {},
+        );
+        log2.info(
+          { runId, gotoStepId, commentsVar: commentsVar ?? null },
+          "repark: wrote rework-comments file",
+        );
+
+        // 2. Delete input sentinels for every step in [gotoIndex, humanIndex+1)
+        //    so re-reached steps re-prompt instead of auto-satisfying.
+        const stepsToInvalidate = allSteps.slice(gotoIndex, humanIndex + 1);
+
+        for (const s of stepsToInvalidate) {
+          const inputPath = join(
+            runtimeRoot,
+            ".maister",
+            loaded.projectSlug,
+            "runs",
+            runId,
+            `input-${s.id}.json`,
+          );
+
+          await unlink(inputPath).catch((e: unknown) => {
+            if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+          });
+        }
+
+        log2.info(
+          {
+            runId,
+            from: step.id,
+            to: gotoStepId,
+            deletedSentinels: stepsToInvalidate.map((s) => s.id),
+          },
+          "repark: window sentinels cleared",
+        );
+
+        // 3. Repark CAS: single-winner claim.
+        const reparkClaimed: Array<{ id: string }> = await db
+          .update(runs)
+          .set({ currentStepId: gotoStepId })
+          .where(
+            and(
+              eq(runs.id, runId),
+              eq(runs.status, "Running"),
+              eq(runs.currentStepId, step.id),
+            ),
+          )
+          .returning({ id: runs.id });
+
+        if (reparkClaimed.length === 0) {
+          // Another writer changed state; bail without a terminal write.
+          log2.warn(
+            { runId, from: step.id, to: gotoStepId },
+            "repark CAS lost — another writer changed run state; bailing",
+          );
+
+          return;
+        }
+
+        log2.info(
+          { runId, from: step.id, to: gotoStepId },
+          "repark CAS committed — tail-call re-entering at goto target",
+        );
+        reparkedTo = gotoStepId;
         break;
       }
 
@@ -501,7 +760,7 @@ export async function runFlow(
           runId,
           stepRunId,
           nodeId: step.id,
-          attempt: 1,
+          attempt: currentAttempt,
           projectSlug: loaded.projectSlug,
           workspace: loaded.workspace,
           runtimeRoot,
@@ -572,6 +831,24 @@ export async function runFlow(
     }
 
     return;
+  }
+
+  // M17 Phase 3: repark tail-call — skip the terminal write, re-enter at goto.
+  if (reparkedTo !== null && !needsInput && !checkpointed && !failed) {
+    log2.info(
+      { from: loaded.run.currentStepId, to: reparkedTo },
+      "repark tail-call: re-entering runFlow at goto target",
+    );
+    await cleanupSlashSession(
+      sessionState,
+      opts.supervisorApi?.deleteSession,
+      log2,
+    );
+
+    return runFlow(runId, {
+      ...opts,
+      reparkResume: { targetStepId: reparkedTo },
+    });
   }
 
   const endedAt = new Date();

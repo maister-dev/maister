@@ -62,6 +62,13 @@ export type StepResult = {
   durationMs?: number;
   acpSessionId?: string;
   needsInput?: boolean;
+  // M17 Phase 3: set by runHumanStep when the step has on_reject and the
+  // stored input has rejected===true. Drives the repark logic in runner.ts.
+  rework?: {
+    gotoStepId: string;
+    commentsVar?: string;
+    comments?: unknown;
+  };
 };
 
 export type RunContext = {

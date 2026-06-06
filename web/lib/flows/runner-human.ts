@@ -43,6 +43,8 @@ export type HumanStepLike = {
     goto_step: string;
     comments_var?: string;
   };
+  // M17 ADR-050: flow-author-declared criticality; write-once at INSERT.
+  criticality?: "low" | "medium" | "high" | "critical";
 };
 
 export type RunHumanStepCtx = {
@@ -141,6 +143,32 @@ export async function runHumanStep(
       "human step resume from existing input artifact",
     );
 
+    // M17 Phase 3: on_reject repark signal.
+    if (step.on_reject && existingInput.rejected === true) {
+      log.debug(
+        {
+          runId: ctx.runId,
+          stepId: step.id,
+          gotoStepId: step.on_reject.goto_step,
+          commentsVar: step.on_reject.comments_var,
+        },
+        "human step rejected — returning rework signal",
+      );
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: existingInput,
+        durationMs: Date.now() - startedAt,
+        needsInput: false,
+        rework: {
+          gotoStepId: step.on_reject.goto_step,
+          commentsVar: step.on_reject.comments_var,
+          comments: existingInput.comments,
+        },
+      };
+    }
+
     return {
       ok: true,
       stdout: "",
@@ -222,7 +250,12 @@ export async function runHumanStep(
       kind,
       schema,
       prompt: promptText,
+      criticality: step.criticality ?? null,
     });
+    log.debug(
+      { runId: ctx.runId, stepId: step.id, criticality: step.criticality },
+      "criticality resolved at creation",
+    );
     await createHitlAssignmentForRun({
       db: tx,
       runId: ctx.runId,

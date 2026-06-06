@@ -44,6 +44,12 @@ tags:
     description: Run readiness check via token auth.
   - name: gates
     description: External gate report submission via token auth.
+  - name: hitl
+    description: |
+      Human-in-the-loop list + respond via token auth (M17). Unlike all other
+      ext routes, the two HITL routes additionally enforce the matching token
+      scope (`hitl:read` / `hitl:respond`) or `*` (D8) and refuse a token actor
+      answering a `human`-kind request (D7).
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -405,6 +411,169 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /api/v1/ext/runs/{runId}/hitl:
+    get:
+      tags: [hitl]
+      summary: List pending HITL requests for a run
+      description: |
+        Scope `hitl:read` (M17). Returns the pending (unanswered) human-in-the-
+        loop requests for the run identified by `runId`. The run's `projectId`
+        is re-validated against the token's project — mismatch → 404
+        (existence-hide).
+
+        **Scope enforcement (D8).** Unlike other ext routes, this route gates on
+        the token scope: `hitl:read` must be present in the token's `scopes`, or
+        the token must hold `*`, else 403. The 403 body does NOT reveal which
+        scopes the token holds.
+
+        **DTO policy.** Items NEVER include `acp_session_id`, absolute worktree
+        paths, supervisor-internal handles, or any other internal locator.
+
+        Writes a `token_audit_log` row with scope `hitl:read` after success.
+      operationId: extListRunHitl
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Pending HITL requests for the run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hitl]
+                properties:
+                  hitl:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtHitlRequestDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond:
+    post:
+      tags: [hitl]
+      summary: Respond to a pending HITL request
+      description: |
+        Scope `hitl:respond` (M17). Answers the pending HITL request identified
+        by `hitlRequestId` on the run identified by `runId`. Routes through the
+        SAME `respondToHitl` service (and the same two-phase commit + audit) as
+        the session-auth `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`.
+        The run's `projectId` is re-validated against the token's project, and
+        `hitlRow.runId` must equal the URL `runId` — either mismatch → 404
+        (existence-hide).
+
+        The handler dispatches on the stored `hitl_requests.kind`:
+
+        - **permission**: supply `optionId`. Two-phase atomic claim; same
+          `optionId` on retry → idempotent 200; idle-resume scheduled → 202.
+        - **form**: supply `response` (validated against the row's `schema`;
+          422 on failure), with optional `confidence` (`0..1`).
+
+        **Actor-kind gate (D7).** A token actor MAY answer only
+        `kind ∈ {permission, form}`. A `human`-kind request (including a graph
+        `human_review`) requires a human actor — a token answering it → 403.
+        This makes "escalate-to-human is a Flow gate, never the external actor's"
+        (ADR-024) executable: a machine token can never satisfy a human gate,
+        even holding `hitl:respond`. The token actor can answer a pending request
+        but can never create one or alter gate placement.
+
+        **Scope enforcement (D8).** A token lacking `hitl:respond` (and not `*`)
+        → 403. The 403 body does NOT reveal which scopes the token holds.
+
+        Writes a `token_audit_log` row with scope `hitl:respond`.
+      operationId: extRespondRunHitl
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: hitlRequestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtHitlRespondBody" }
+            examples:
+              permission-select:
+                summary: Approve a pending permission
+                value:
+                  optionId: "allow"
+              form-typed:
+                summary: Structured form response with confidence
+                value:
+                  response:
+                    approved: true
+                    comments: "lgtm"
+                  confidence: 0.9
+      responses:
+        "200":
+          description: |
+            Response durably recorded. For permission, the supervisor deferred
+            was resolved; for form, the input artifact was written and the
+            runner was queued. The runner (not this route) owns the
+            `NeedsInput → Running` transition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtHitlRespondResponse" }
+        "202":
+          description: |
+            Idle-resume scheduled — the run was checkpointed (`NeedsInputIdle`)
+            and a fresh supervisor session was spawned to deliver against the
+            new request. Same-payload retries keep returning 202 until
+            auto-delivery completes, then return 200 idempotent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtHitlRespondResponse" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          description: |
+            Terminal idle-resume failure (`HITL_TIMEOUT`/`CHECKPOINT`): the
+            `NeedsInputIdle` run could not be resumed to deliver the response
+            and was transitioned to a terminal state. Not retryable. Surfaced
+            verbatim from the shared `respondToHitl` service (same as the
+            session-auth respond route).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: |
+            Retryable transient failure (`EXECUTOR_UNAVAILABLE`): the supervisor
+            was unreachable for permission delivery, the idle-resume spawn
+            failed retryably, or the form input artifact could not be written.
+            Safe to retry. Surfaced verbatim from the shared `respondToHitl`
+            service.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
 components:
   securitySchemes:
     projectToken:
@@ -418,6 +587,13 @@ components:
         API (`scopes` stored as labels for forward-compat; enforcement is
         binary). Token failures (invalid, expired, revoked, wrong-project) all
         map to 401 or 404 per the existence-hide policy.
+
+        **HITL carve-out (M17, D8 / ADR-046 UNCHANGED).** The two HITL routes
+        (`GET …/runs/{runId}/hitl`, `POST …/runs/{runId}/hitl/{hitlRequestId}/respond`)
+        ADDITIONALLY require the matching scope (`hitl:read` / `hitl:respond`) or
+        `*` — a token lacking it gets 403. ALL OTHER `/api/v1/ext/*` routes keep
+        the binary model (scope label audit-only, not gated) per ADR-046, which
+        is NOT reopened. A 403 body never reveals which scopes the token holds.
 
   responses:
     TokenUnauthorized:
@@ -446,6 +622,22 @@ components:
         `Failed`), or a task/run create/launch precondition conflict (task not
         in `Backlog`, project archived, branch/worktree taken). Code `CONFLICT`
         or `PRECONDITION`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
+    HitlForbidden:
+      description: |
+        (M17) HITL access refused (`UNAUTHORIZED`). One of two distinct cases:
+
+          - **Missing scope (D8)** — the token lacks the route's required scope
+            (`hitl:read` for list, `hitl:respond` for respond) and does not hold
+            `*`. The body NEVER reveals which scopes the token holds.
+          - **Actor-kind gate (D7, respond only)** — a token actor attempted to
+            answer a `human`-kind request (including a graph `human_review`).
+            A `human`-kind request requires a human actor; token actors may
+            answer only `kind ∈ {permission, form}`.
+
+        Cross-project access does NOT use 403 — it hides existence (404).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -772,3 +964,115 @@ components:
           type: string
           format: uuid
           description: ID of the `test_report` artifact created for this report.
+
+    ExtHitlRequestDTO:
+      type: object
+      description: |
+        (M17) External projection of a pending HITL request. NEVER includes
+        `acp_session_id`, absolute worktree paths, `token_hash`, or
+        supervisor-internal handles.
+      required:
+        - hitlRequestId
+        - stepId
+        - kind
+        - prompt
+        - requestedAt
+      properties:
+        hitlRequestId:
+          type: string
+          format: uuid
+        stepId:
+          type: string
+          description: The flow step/node id that raised this request.
+        kind:
+          type: string
+          description: |
+            Request kind. A token actor may answer only `permission` and
+            `form`; `human` requires a human actor (D7).
+          enum: [permission, form, human]
+        prompt:
+          type: string
+          description: Prompt text shown to the responder.
+        schema:
+          type: object
+          nullable: true
+          description: |
+            Form/decision schema the `response` is validated against, when the
+            request carries one (`form` / `human`). Null for `permission`.
+          additionalProperties: true
+        options:
+          type: array
+          description: |
+            Allowed options for a `permission` request (the supervisor's
+            declared choices), each as an `{ optionId, label }` object. Always an
+            array — empty (`[]`) for `form` / `human`, never null.
+          items:
+            type: object
+            required:
+              - optionId
+              - label
+            properties:
+              optionId:
+                type: string
+              label:
+                type: string
+        criticality:
+          type: string
+          nullable: true
+          description: |
+            Flow-author-declared criticality of the request, when set on the
+            `human` node/step. Null when undeclared. Annotation only — it does
+            NOT re-gate readiness.
+          enum: [low, medium, high, critical]
+        requestedAt:
+          type: string
+          format: date-time
+          description: When the request was created.
+
+    ExtHitlRespondBody:
+      type: object
+      description: |
+        (M17) HITL response payload. Supply `optionId` for a `permission`
+        request, or `response` for a `form` request. A `human`-kind request
+        cannot be answered by a token actor (D7).
+      properties:
+        optionId:
+          type: string
+          minLength: 1
+          description: |
+            Required iff the HITL row has `kind == "permission"`. MUST match one
+            of the supervisor-declared options.
+        response:
+          type: object
+          description: |
+            Required iff the HITL row has `kind == "form"`. Validated against the
+            row's `schema` (server-state, never body-trusted); 422 on failure.
+          additionalProperties: true
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: |
+            Optional responder self-reported certainty (`0..1`) for a `form`
+            response. Bounded server-side; echoed into the stored
+            `hitl_requests.response` jsonb and written to
+            `hitl_requests.human_confidence`. Ignored for `permission`.
+
+    ExtHitlRespondResponse:
+      type: object
+      required: [ok, runStatus]
+      description: |
+        (M17) Result of an ext HITL response. Mirrors the session route — the
+        runner (not this route) owns the `NeedsInput → Running` transition.
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        runStatus:
+          type: string
+          enum: [NeedsInput]
+          description: Row state at response time.
+        state:
+          type: string
+          enum: [resume-in-progress]
+          description: Present only on the 202 idle-resume branch.

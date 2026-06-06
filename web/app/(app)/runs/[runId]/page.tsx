@@ -571,6 +571,7 @@ export default async function RunDetailPage({
               </div>
               <RunHitlResponse
                 canAct={canAct}
+                criticality={detail.pendingHitl.criticality}
                 hitlRequestId={detail.pendingHitl.hitlRequestId}
                 kind={detail.pendingHitl.kind}
                 options={detail.pendingHitl.options}

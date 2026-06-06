@@ -2,19 +2,28 @@
 
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { ReactElement } from "react";
+import type { ReviewSchema } from "@/components/board/hitl-decision-controls";
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
-import clsx from "clsx";
 
-interface ReviewSchema {
-  review?: boolean;
-  allowedDecisions?: string[];
-  transitions?: Record<string, string>;
-  reworkTargets?: string[];
-  workspacePolicies?: string[];
-}
+import { HitlDecisionControls } from "@/components/board/hitl-decision-controls";
+
+// Typed MaisterError codes the respond route can return; each has a message in
+// messages/*.json under `run.error.<CODE>`. Anything else → `run.error.generic`.
+const KNOWN_ERROR_CODES = new Set([
+  "CRASH",
+  "EXECUTOR_UNAVAILABLE",
+  "ACP_PROTOCOL",
+  "HITL_TIMEOUT",
+  "CONFLICT",
+  "CONFIG",
+  "NEEDS_INPUT",
+  "PRECONDITION",
+  "UNAUTHORIZED",
+  "ACCOUNT_INACTIVE",
+]);
 
 export interface RunHitlResponseProps {
   runId: string;
@@ -23,6 +32,9 @@ export interface RunHitlResponseProps {
   options: HitlOption[];
   schema: unknown;
   canAct: boolean;
+  onRespond?: () => void;
+  compact?: boolean;
+  criticality?: "low" | "medium" | "high" | "critical" | null;
 }
 
 export function RunHitlResponse({
@@ -32,6 +44,9 @@ export function RunHitlResponse({
   options,
   schema,
   canAct,
+  onRespond,
+  compact,
+  criticality,
 }: RunHitlResponseProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
@@ -40,6 +55,15 @@ export function RunHitlResponse({
   const [error, setError] = useState<string | null>(null);
   const [json, setJson] = useState("{}");
   const [comments, setComments] = useState("");
+  const [confidence, setConfidence] = useState("");
+
+  // Map a typed MaisterError `code` to a localized message. Unknown codes fall
+  // back to the generic message so the user never sees a raw code like CONFLICT.
+  function errorMessage(code: string): string {
+    return KNOWN_ERROR_CODES.has(code)
+      ? t(`error.${code}`)
+      : t("error.generic");
+  }
 
   async function post(payload: Record<string, unknown>): Promise<void> {
     setBusy(true);
@@ -60,14 +84,18 @@ export function RunHitlResponse({
           code?: string;
         } | null;
 
-        setError(data?.code ?? "CRASH");
+        setError(errorMessage(data?.code ?? "CRASH"));
 
         return;
       }
 
-      startTransition(() => router.refresh());
+      if (onRespond) {
+        onRespond();
+      } else {
+        startTransition(() => router.refresh());
+      }
     } catch {
-      setError("EXECUTOR_UNAVAILABLE");
+      setError(errorMessage("EXECUTOR_UNAVAILABLE"));
     } finally {
       setBusy(false);
     }
@@ -84,152 +112,108 @@ export function RunHitlResponse({
       return;
     }
 
-    void post({ response: parsed });
+    const payload: Record<string, unknown> = { response: parsed };
+
+    if (confidence !== "") {
+      payload.confidence = Math.min(1, Math.max(0, Number(confidence)));
+    }
+
+    void post(payload);
   }
 
   const disabled = busy || pending || !canAct;
 
-  // M11a graph review HITL: the row's schema declares the allow-list. Render
-  // declared decisions as buttons + a comments box; the decision rides INSIDE
-  // the `response` payload (validated server-side against the allow-list).
+  // M11a graph review HITL: the row's schema declares the allow-list.
   const reviewSchema =
-    schema && typeof schema === "object" && (schema as ReviewSchema).review
+    schema &&
+    typeof schema === "object" &&
+    (schema as ReviewSchema & { review?: boolean }).review
       ? (schema as ReviewSchema)
       : null;
 
-  if (reviewSchema) {
-    const decisions = reviewSchema.allowedDecisions ?? [];
-    const policies = reviewSchema.workspacePolicies ?? [];
-    const reworkTargets = reviewSchema.reworkTargets ?? [];
+  const isReworkDecision = (d: string): boolean => {
+    if (!reviewSchema) return false;
     const transitions = reviewSchema.transitions ?? {};
-    const isReworkDecision = (d: string): boolean =>
-      Object.hasOwn(transitions, d) && reworkTargets.includes(transitions[d]);
-
-    const submitDecision = (decision: string): void => {
-      const response: Record<string, unknown> = { decision };
-      const trimmed = comments.trim();
-
-      if (trimmed) response.comments = trimmed;
-      if (isReworkDecision(decision)) {
-        response.workspacePolicy = policies[0] ?? "keep";
-      }
-
-      void post({ response });
-    };
-
-    const decisionLabel = (d: string): string =>
-      d === "approve"
-        ? t("decisionApprove")
-        : d === "rework"
-          ? t("decisionRework")
-          : d;
+    const reworkTargets = reviewSchema.reworkTargets ?? [];
 
     return (
-      <div className="flex flex-col gap-3">
-        <label
-          className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
-          htmlFor="review-comments"
-        >
-          {t("reviewComments")}
-        </label>
-        <textarea
-          className="min-h-[90px] rounded-[10px] border border-line bg-paper p-3 text-[12.5px] text-ink outline-none focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)]"
-          id="review-comments"
-          placeholder={t("reviewCommentsPlaceholder")}
-          value={comments}
-          onChange={(e) => setComments(e.target.value)}
-        />
-        <div className="flex flex-wrap gap-2">
-          {decisions.map((d) => (
-            <button
-              key={d}
-              className={clsx(
-                "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
-                isReworkDecision(d)
-                  ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
-                  : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
-                disabled && "opacity-60",
-              )}
-              disabled={disabled}
-              type="button"
-              onClick={() => submitDecision(d)}
-            >
-              {decisionLabel(d)}
-            </button>
-          ))}
-        </div>
-        {error ? (
-          <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
-        ) : null}
-      </div>
+      Object.hasOwn(transitions, d) && reworkTargets.includes(transitions[d])
     );
+  };
+
+  function handleDecision(decision: string): void {
+    const response: Record<string, unknown> = { decision };
+    const trimmed = comments.trim();
+
+    if (trimmed) response.comments = trimmed;
+
+    const policies = reviewSchema?.workspacePolicies ?? [];
+
+    if (isReworkDecision(decision)) {
+      response.workspacePolicy = policies[0] ?? "keep";
+    }
+
+    const payload: Record<string, unknown> = { response };
+
+    if (confidence !== "") {
+      payload.confidence = Math.min(1, Math.max(0, Number(confidence)));
+    }
+
+    void post(payload);
   }
 
-  if (kind === "permission") {
-    return (
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap gap-2">
-          {options.map((opt) => (
-            <button
-              key={opt.optionId}
-              className={clsx(
-                "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
-                opt.optionId.includes("deny")
-                  ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
-                  : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
-                disabled && "opacity-60",
-              )}
-              disabled={disabled}
-              type="button"
-              onClick={() => void post({ optionId: opt.optionId })}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        {error ? (
-          <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
-        ) : null}
-      </div>
-    );
+  function handleSendBack(): void {
+    // Rework/send-back: pick the first rework decision or fall back to "rework".
+    const decisions = reviewSchema?.allowedDecisions ?? [];
+    const reworkDecision =
+      decisions.find((d) => isReworkDecision(d)) ?? "rework";
+
+    handleDecision(reworkDecision);
   }
+
+  // Confidence applies to form/human/review; NOT permission.
+  const showConfidence = kind !== "permission";
+
+  const labels = {
+    criticalityLabel: t("criticalityLabel"),
+    "criticality.low": t("criticality.low"),
+    "criticality.medium": t("criticality.medium"),
+    "criticality.high": t("criticality.high"),
+    "criticality.critical": t("criticality.critical"),
+    confidenceLabel: t("confidenceLabel"),
+    reviewComments: t("reviewComments"),
+    decisionApprove: t("decisionApprove"),
+    decisionRework: t("decisionRework"),
+    sendBackWithComments: t("sendBackWithComments"),
+    responseLabel: t("responseLabel"),
+    responseHint: t("responseHint"),
+    schemaLabel: t("schemaLabel"),
+    submit: busy ? t("submitting") : t("submit"),
+    reviewCommentsPlaceholder: t("reviewCommentsPlaceholder"),
+  };
 
   return (
-    <div className="flex flex-col gap-2">
-      <label
-        className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
-        htmlFor="hitl-response"
-      >
-        {t("responseLabel")}
-      </label>
-      <p className="text-[12px] text-mute">{t("responseHint")}</p>
-      <textarea
-        className="min-h-[120px] rounded-[10px] border border-line bg-paper p-3 font-mono text-[12.5px] text-ink outline-none focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)]"
-        id="hitl-response"
-        value={json}
-        onChange={(e) => setJson(e.target.value)}
-      />
-      {schema != null ? (
-        <details className="text-[11.5px] text-mute">
-          <summary className="cursor-pointer font-mono uppercase tracking-[0.06em]">
-            {t("schemaLabel")}
-          </summary>
-          <pre className="mt-2 overflow-auto rounded-lg border border-line-soft bg-ivory p-3 text-[11px] text-ink-2">
-            {JSON.stringify(schema, null, 2)}
-          </pre>
-        </details>
-      ) : null}
-      {error ? (
-        <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
-      ) : null}
-      <button
-        className="mt-1 inline-flex w-max items-center rounded-full bg-amber px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_8px_24px_-8px_var(--amber)] transition-all hover:bg-amber-2 disabled:opacity-60"
-        disabled={disabled}
-        type="button"
-        onClick={submitJson}
-      >
-        {busy ? t("submitting") : t("submit")}
-      </button>
-    </div>
+    <HitlDecisionControls
+      comments={comments}
+      compact={compact}
+      confidence={confidence}
+      criticality={criticality}
+      disabled={disabled}
+      error={error}
+      jsonValue={json}
+      kind={kind}
+      labels={labels}
+      options={options}
+      reviewSchema={reviewSchema}
+      schema={schema}
+      showConfidence={showConfidence}
+      onCommentsChange={setComments}
+      onConfidenceChange={setConfidence}
+      onDecision={handleDecision}
+      onJsonChange={setJson}
+      onOption={(optionId) => void post({ optionId })}
+      onSendBack={handleSendBack}
+      onSubmitJson={submitJson}
+    />
   );
 }

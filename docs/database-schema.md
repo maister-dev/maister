@@ -1063,6 +1063,11 @@ on `(project_id, created_at)`. Cascade chain: deleting a project drops all its
                                  //   from response.decision (e.g. approve|rework)
   workspacePolicy?,              // (M11a — Designed) chosen rework workspace policy
   reworkTarget?,                 // (M11a — Designed) resolved rework target node
+  criticality?,                  // (M17 — Implemented, 0024) flow-declared severity
+                                 //   low|medium|high|critical; write-once at creation
+  humanConfidence?,              // (M17 — Implemented, 0024) real 0..1 responder
+                                 //   self-report; written at respond time; also
+                                 //   echoed into response as { confidence }
   respondedAt?, createdAt
 }
 ```
@@ -1083,9 +1088,25 @@ field. See [`api/web.openapi.yaml`](api/web.openapi.yaml) and
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
 `kind=human` is a Flow step `type: human` whose definition carries an
 `on_reject` clause; today it is wire-equivalent to `kind=form` (response
-captured, runner advances to the next step). The `on_reject.goto_step`
-rerouting loop is designed — the row distinction is preserved so it can
-light up without a schema change.
+captured, runner advances to the next step). **(M17 — Implemented.)** The flat
+`steps[]` `on_reject.goto_step` rerouting loop (with `comments_var` injection)
+is **Implemented** in the linear runner (ADR-052 — atomic-repark landed in Phase 3).
+The graph runner executes its equivalent rework path unchanged.
+
+**(M17 — Implemented, migration `0024`.)** Two additive assessment columns (ADR-050):
+
+- `criticality` (`text`, nullable) — flow-author-declared severity, app-layer
+  enum `low | medium | high | critical`. **Write-once**: copied from the `human`
+  node/step manifest at row INSERT and never updated. No DB default — `NULL` when
+  the Flow author leaves it undeclared.
+- `human_confidence` (`real`, nullable) — the responder's self-reported certainty
+  in `[0, 1]`, written in the respond service's Phase-1 transaction and **also
+  echoed into the `response` jsonb** as `{ confidence: <number> }`. `NULL` while
+  the row is open. The `0..1` bound is enforced server-side. This is the *human*
+  responder's self-report and is **distinct from** the M15 AI-judge
+  `GateVerdict.confidence` carried on `gate_results.verdict` (machine confidence);
+  the two are never conflated. Neither column re-gates readiness — escalate-to-human
+  stays the Flow's `human_review` gate (ADR-024 clause closed by ADR-050).
 
 For `kind=permission`, `schema` is not null and stores the live
 permission descriptor: `{ requestId, options, toolCall,

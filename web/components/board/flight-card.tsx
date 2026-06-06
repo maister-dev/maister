@@ -8,6 +8,7 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { FlightCardHitl } from "@/components/board/flight-card-hitl";
 import { READINESS_BADGE } from "@/components/readiness-badge";
 
 export interface FlightCardLabels {
@@ -66,21 +67,25 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
   const isHumanWorking = card.status === "humanworking";
+  // A needs card with a pending HITL request must NOT be wrapped in <a> because
+  // it contains interactive form elements (<button>/<textarea>). Use a <div>
+  // container and an explicit "View" link instead.
+  const needsInlineHitl = isNeeds && card.hitlRequestId != null;
+  const cardClass = clsx(
+    "group/fc relative flex flex-col gap-2.5 overflow-hidden rounded-[10px] border px-3.5 pb-3 pt-3 transition-[transform,box-shadow,border-color]",
+    !needsInlineHitl &&
+      "hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--accent-4)_40%,var(--line))] hover:shadow-[0_8px_22px_-12px_rgba(22,20,15,0.16)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber",
+    isNeeds
+      ? "border-amber-line bg-[linear-gradient(180deg,color-mix(in_oklab,var(--amber-soft)_30%,var(--paper))_0%,var(--paper)_60%)]"
+      : isHumanWorking
+        ? "border-[color-mix(in_oklab,var(--accent-3)_45%,var(--line))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--accent-3-soft)_35%,var(--paper))_0%,var(--paper)_60%)]"
+        : isDone
+          ? "border-line bg-[color-mix(in_oklab,var(--ivory)_40%,var(--paper))] opacity-85 hover:opacity-100"
+          : "border-line bg-paper",
+  );
 
-  return (
-    <Link
-      className={clsx(
-        "group/fc relative flex flex-col gap-2.5 overflow-hidden rounded-[10px] border px-3.5 pb-3 pt-3 transition-[transform,box-shadow,border-color] hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--accent-4)_40%,var(--line))] hover:shadow-[0_8px_22px_-12px_rgba(22,20,15,0.16)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber",
-        isNeeds
-          ? "border-amber-line bg-[linear-gradient(180deg,color-mix(in_oklab,var(--amber-soft)_30%,var(--paper))_0%,var(--paper)_60%)]"
-          : isHumanWorking
-            ? "border-[color-mix(in_oklab,var(--accent-3)_45%,var(--line))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--accent-3-soft)_35%,var(--paper))_0%,var(--paper)_60%)]"
-            : isDone
-              ? "border-line bg-[color-mix(in_oklab,var(--ivory)_40%,var(--paper))] opacity-85 hover:opacity-100"
-              : "border-line bg-paper",
-      )}
-      href={`/runs/${card.runId}`}
-    >
+  const cardBody = (
+    <>
       <span
         className={clsx(
           "absolute inset-y-0 left-0 w-[3px]",
@@ -153,6 +158,14 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
           >
             {card.agent}
           </span>
+          {needsInlineHitl ? (
+            <Link
+              className="rounded-full border border-line bg-paper px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-mute hover:text-ink"
+              href={`/runs/${card.runId}`}
+            >
+              View
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -213,6 +226,19 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
         </div>
       ) : null}
 
+      {needsInlineHitl ? (
+        <div className="border-t border-dashed border-line-soft pt-2">
+          <FlightCardHitl
+            criticality={card.criticality}
+            hitlRequestId={card.hitlRequestId!}
+            kind={card.hitlKind!}
+            options={card.hitlOptions}
+            runId={card.runId}
+            schema={card.hitlSchema}
+          />
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between gap-2.5 border-t border-dashed border-line-soft pt-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           <span className="inline-flex items-center gap-1 font-semibold text-ink-2">
@@ -242,6 +268,16 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
           {card.time}
         </span>
       </div>
+    </>
+  );
+
+  if (needsInlineHitl) {
+    return <div className={cardClass}>{cardBody}</div>;
+  }
+
+  return (
+    <Link className={cardClass} href={`/runs/${card.runId}`}>
+      {cardBody}
     </Link>
   );
 }

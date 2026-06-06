@@ -559,6 +559,7 @@ fields on a `judge` node.
 | `slaHours` | `number > 0` | Out-of-range rejected. |
 | `stalenessHint` | `string` | Hint surfaced when downstream goes stale. |
 | `returnRequires` | `string[]` | Conditions required before returning. |
+| `criticality` | `low \| medium \| high \| critical` | **(Implemented — M17.)** Flow-author-declared severity. Optional; additive — no `MAISTER_ENGINE_VERSION` bump (stays 1.2.0). Stored write-once on `hitl_requests.criticality` at HITL row creation; absent means no severity declared. Responder `confidence` is a response-time value supplied in the answer body — it cannot be pre-declared here. See [`flow-dsl.md`](flow-dsl.md#human-step). |
 
 **`cli` / `check` settings** (command shape):
 
@@ -796,6 +797,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_CCR_AUTH_TOKEN` | no | unset | Fallback for `ANTHROPIC_AUTH_TOKEN` when an executor has `router: ccr` and does not pin the token in `executor.env`. Missing token → `EXECUTOR_UNAVAILABLE` (503). |
 | `MAISTER_CCR_CONFIG_PATH` | no | `/app/.ccr/config.json` in Docker, `~/.claude-code-router/config.json` otherwise | Container-side path the supervisor reads for CCR host+port. In compose this aligns with the bind-mount target — leave unset unless changing the layout. |
 | `MAISTER_CCR_CONFIG_HOST_PATH` | no (Docker only) | `${HOME}/.claude-code-router` | Host directory bind-mounted at `/app/.ccr` (read-only) in the supervisor service. Point at a secret-mount directory for hardened deployments. |
+
+**M17 env-variable parity:** M17 adds no new environment variable. The table
+above is identical to `.env.example`; `compose*.yml`, bound ports, and the
+supervisor sidecar configuration are unchanged by M17.
 
 Secrets MUST live in `.env` server-side. Never logged, never streamed via
 SSE, never embedded in `session/update` payloads visible to the browser.

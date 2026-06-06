@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Assignment, HitlRequest } from "@/lib/db/schema";
+import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
@@ -15,6 +15,45 @@ const { actorIdentities, assignments, flows, hitlRequests, runs, workspaces } =
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
+}
+
+/**
+ * Returns pending (respondedAt IS NULL) hitl_requests rows for the given run,
+ * scoped to the given projectId so callers cannot leak rows across projects.
+ * Consumed by the P6 external-access list route.
+ */
+export async function getHitlRequestsForRun(
+  runId: string,
+  projectId: string,
+  deps?: { db?: NodePgDatabase<typeof schema> },
+): Promise<HitlRequest[]> {
+  const client = deps?.db ?? db();
+
+  // Verify the run belongs to the declared projectId AND is genuinely awaiting
+  // input. A HITL is pending ONLY while the run is NeedsInput/NeedsInputIdle —
+  // matching getHitlInbox/getCrossProjectHitlInbox. Otherwise (Running,
+  // HumanWorking, Failed, Abandoned, Done) an unanswered row is stale and MUST
+  // NOT be surfaced to external clients even when respondedAt stayed null.
+  const runRows = await client
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.id, runId),
+        eq(runs.projectId, projectId),
+        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+      ),
+    );
+
+  if (runRows.length === 0) {
+    return [];
+  }
+
+  return client
+    .select()
+    .from(hitlRequests)
+    .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
+    .orderBy(asc(hitlRequests.createdAt));
 }
 
 export type HitlAgent = "claude" | "codex";
@@ -41,6 +80,8 @@ export interface HitlItem {
   prompt: string;
   options: HitlOption[];
   time: string;
+  schema: unknown;
+  criticality: "low" | "medium" | "high" | "critical" | null;
 }
 
 export interface HitlInbox {
@@ -100,6 +141,79 @@ export function extractOptions(
     );
 }
 
+// Shared select shape for hitl_requests rows (used by getHitlInbox and getCrossProjectHitlInbox).
+export type HitlRowBase = {
+  hitlRequestId: string;
+  runId: string;
+  kind: HitlRequest["kind"];
+  prompt: string;
+  rawSchema: unknown;
+  criticality: "low" | "medium" | "high" | "critical" | null;
+  createdAt: Date;
+  capabilityAgent: "claude" | "codex" | null;
+  runnerSnapshot: RunnerSnapshot | null;
+  branch: string;
+  flowRef: string;
+};
+
+// Map a batch of HitlRowBase rows + pre-fetched assignment/actor maps to HitlItem[].
+export function mapRowsToHitlItems(
+  rows: HitlRowBase[],
+  assignmentsByHitlId: Map<
+    string | null,
+    {
+      id: string;
+      status: Assignment["status"];
+      actionKind: Assignment["actionKind"];
+      roleRefs: string[];
+      staleEvidenceSummary: Record<string, unknown> | null;
+      assigneeActorId: string | null;
+    }
+  >,
+  actorsById: Map<
+    string,
+    { id: string; label: string | null; userId: string | null }
+  >,
+  now: Date,
+): HitlItem[] {
+  return rows.map((row) => {
+    const assignment = assignmentsByHitlId.get(row.hitlRequestId) ?? null;
+    const assignee =
+      assignment?.assigneeActorId != null
+        ? (actorsById.get(assignment.assigneeActorId) ?? null)
+        : null;
+
+    return {
+      hitlRequestId: row.hitlRequestId,
+      runId: row.runId,
+      kind: row.kind,
+      assignmentId: assignment?.id ?? null,
+      assignmentStatus: assignment?.status ?? null,
+      assignmentActionKind: assignment?.actionKind ?? null,
+      assignmentRoleRefs: assignment?.roleRefs ?? [],
+      assignmentStaleEvidenceSummary: assignment?.staleEvidenceSummary ?? null,
+      assigneeLabel: assignee?.label ?? null,
+      assigneeUserId: assignee?.userId ?? null,
+      agent: runnerAgentFromFields({
+        capabilityAgent: row.capabilityAgent,
+        runnerSnapshot: row.runnerSnapshot,
+        context: row.runId,
+      }),
+      branch: row.branch,
+      flowRef: row.flowRef,
+      prompt: row.prompt,
+      options: extractOptions(row.kind, row.rawSchema),
+      time: relativeTime(row.createdAt, now),
+      // Permission schemas carry supervisor-internal handles (requestId,
+      // supervisorSessionId, toolCall) written by runner-agent — NEVER serialize
+      // them to the browser. Mirrors the ext-API DTO guard; the actionable
+      // surface for permission is `options` (already projected above).
+      schema: row.kind === "permission" ? null : row.rawSchema,
+      criticality: row.criticality,
+    };
+  });
+}
+
 export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
   const now = new Date();
   const client = db();
@@ -127,6 +241,7 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       kind: hitlRequests.kind,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
+      criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
@@ -171,36 +286,7 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
     assignmentRows.map((assignment) => [assignment.hitlRequestId, assignment]),
   );
 
-  const items: HitlItem[] = rows.map((row) => {
-    const assignment = assignmentsByHitlId.get(row.hitlRequestId) ?? null;
-    const assignee =
-      assignment?.assigneeActorId != null
-        ? (actorsById.get(assignment.assigneeActorId) ?? null)
-        : null;
-
-    return {
-      hitlRequestId: row.hitlRequestId,
-      runId: row.runId,
-      kind: row.kind,
-      assignmentId: assignment?.id ?? null,
-      assignmentStatus: assignment?.status ?? null,
-      assignmentActionKind: assignment?.actionKind ?? null,
-      assignmentRoleRefs: assignment?.roleRefs ?? [],
-      assignmentStaleEvidenceSummary: assignment?.staleEvidenceSummary ?? null,
-      assigneeLabel: assignee?.label ?? null,
-      assigneeUserId: assignee?.userId ?? null,
-      agent: runnerAgentFromFields({
-        capabilityAgent: row.capabilityAgent,
-        runnerSnapshot: row.runnerSnapshot,
-        context: row.runId,
-      }),
-      branch: row.branch,
-      flowRef: row.flowRef,
-      prompt: row.prompt,
-      options: extractOptions(row.kind, row.rawSchema),
-      time: relativeTime(row.createdAt, now),
-    };
-  });
+  const items = mapRowsToHitlItems(rows, assignmentsByHitlId, actorsById, now);
 
   return {
     items,

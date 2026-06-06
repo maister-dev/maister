@@ -779,6 +779,58 @@ describe("nodeSchema", () => {
       }),
     ).toThrow();
   });
+
+  // M17 ADR-050: criticality field on human node settings
+  it("human node accepts optional criticality in settings", () => {
+    const base = {
+      id: "review",
+      type: "human",
+      settings: {},
+      finish: { human: { decisions: ["approve"] } },
+      transitions: { approve: "done" },
+    };
+
+    expect(() =>
+      nodeSchema.parse({ ...base, settings: { criticality: "low" } }),
+    ).not.toThrow();
+    expect(() =>
+      nodeSchema.parse({ ...base, settings: { criticality: "medium" } }),
+    ).not.toThrow();
+    expect(() =>
+      nodeSchema.parse({ ...base, settings: { criticality: "high" } }),
+    ).not.toThrow();
+    expect(() =>
+      nodeSchema.parse({ ...base, settings: { criticality: "critical" } }),
+    ).not.toThrow();
+  });
+
+  it("human node rejects invalid criticality values in settings", () => {
+    const base = {
+      id: "review",
+      type: "human",
+      finish: { human: { decisions: ["approve"] } },
+      transitions: { approve: "done" },
+    };
+
+    expect(() =>
+      nodeSchema.parse({
+        ...base,
+        settings: { criticality: "severe" },
+      }),
+    ).toThrow();
+  });
+
+  it("human node without criticality is valid", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "review",
+        type: "human",
+        settings: { roles: ["reviewer"] },
+        finish: { human: { decisions: ["approve"] } },
+        transitions: { approve: "done" },
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("stepSchema", () => {
@@ -794,6 +846,45 @@ describe("stepSchema", () => {
 
   it("human step requires form_schema", () => {
     expect(() => stepSchema.parse({ id: "x", type: "human" })).toThrow();
+  });
+
+  // M17 ADR-050: criticality field on human steps
+  it("human step accepts optional criticality: low|medium|high|critical", () => {
+    const base = { id: "x", type: "human", form_schema: "schemas/review.json" };
+
+    expect(() =>
+      stepSchema.parse({ ...base, criticality: "low" }),
+    ).not.toThrow();
+    expect(() =>
+      stepSchema.parse({ ...base, criticality: "medium" }),
+    ).not.toThrow();
+    expect(() =>
+      stepSchema.parse({ ...base, criticality: "high" }),
+    ).not.toThrow();
+    expect(() =>
+      stepSchema.parse({ ...base, criticality: "critical" }),
+    ).not.toThrow();
+  });
+
+  it("human step rejects invalid criticality values", () => {
+    const base = { id: "x", type: "human", form_schema: "schemas/review.json" };
+
+    expect(() =>
+      stepSchema.parse({ ...base, criticality: "urgent" }),
+    ).toThrow();
+    expect(() =>
+      stepSchema.parse({ ...base, criticality: "CRITICAL" }),
+    ).toThrow();
+  });
+
+  it("human step with absent criticality is valid", () => {
+    expect(() =>
+      stepSchema.parse({
+        id: "x",
+        type: "human",
+        form_schema: "schemas/review.json",
+      }),
+    ).not.toThrow();
   });
 });
 

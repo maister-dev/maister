@@ -455,7 +455,7 @@
     `confidence` + `criticality` and the escalate-to-human decision is a Flow
     gate, never the external actor's.
 
-- [ ] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11a's typed decisions, M11b's manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
+- [x] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11a's typed decisions, M11b's manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
 
 - [x] **M18. Branch targeting, diff review, and manual promotion** — replace
       the narrow "merge to main" assumption with engineer-controlled branch
@@ -564,4 +564,5 @@
 | M16. External operations API, tokens, and thin MCP facade                    | 2026-06-02 |
 | M15. Readiness policy and verdict calibration                                | 2026-06-03 |
 | M18. Branch targeting, diff review, and manual promotion                     | 2026-06-04 |
+| M17. HITL hybrid surface                                                     | 2026-06-04 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |

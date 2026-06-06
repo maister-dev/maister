@@ -1,0 +1,306 @@
+import type { HitlOption } from "@/lib/queries/hitl";
+import type { ReactElement } from "react";
+
+import clsx from "clsx";
+
+export interface HitlDecisionControlsLabels {
+  criticalityLabel: string;
+  "criticality.low": string;
+  "criticality.medium": string;
+  "criticality.high": string;
+  "criticality.critical": string;
+  confidenceLabel: string;
+  reviewComments: string;
+  decisionApprove: string;
+  decisionRework: string;
+  sendBackWithComments: string;
+  responseLabel: string;
+  responseHint: string;
+  schemaLabel: string;
+  submit: string;
+  reviewCommentsPlaceholder: string;
+}
+
+export interface ReviewSchema {
+  allowedDecisions?: string[];
+  transitions?: Record<string, string>;
+  reworkTargets?: string[];
+  workspacePolicies?: string[];
+}
+
+export interface HitlDecisionControlsProps {
+  kind: "permission" | "form" | "human";
+  reviewSchema: ReviewSchema | null;
+  options: HitlOption[];
+  schema: unknown;
+  criticality?: "low" | "medium" | "high" | "critical" | null;
+  showConfidence: boolean;
+  confidence: string;
+  comments: string;
+  jsonValue: string;
+  disabled: boolean;
+  compact?: boolean;
+  error: string | null;
+  labels: HitlDecisionControlsLabels;
+  onConfidenceChange: (v: string) => void;
+  onCommentsChange: (v: string) => void;
+  onJsonChange: (v: string) => void;
+  onDecision: (decision: string) => void;
+  onSendBack: () => void;
+  onOption: (optionId: string) => void;
+  onSubmitJson: () => void;
+}
+
+const CRITICALITY_PILL: Record<"low" | "medium" | "high" | "critical", string> =
+  {
+    low: "border-line text-mute bg-ivory",
+    medium: "border-amber-line bg-amber-soft text-amber",
+    high: "border-[color-mix(in_oklab,var(--amber)_60%,var(--red-500))] bg-[color-mix(in_oklab,var(--amber-soft)_70%,transparent)] text-[color-mix(in_oklab,var(--amber)_70%,var(--red-500))]",
+    critical: "border-red-500/40 bg-red-500/10 text-red-500",
+  };
+
+function CriticalityBadge({
+  criticality,
+  labels,
+}: {
+  criticality: "low" | "medium" | "high" | "critical";
+  labels: HitlDecisionControlsLabels;
+}): ReactElement {
+  const levelLabel =
+    labels[`criticality.${criticality}` as keyof HitlDecisionControlsLabels];
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+        {labels.criticalityLabel}
+      </span>
+      <span
+        className={clsx(
+          "rounded-full border px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.04em]",
+          CRITICALITY_PILL[criticality],
+        )}
+      >
+        {levelLabel}
+      </span>
+    </div>
+  );
+}
+
+function ConfidenceInput({
+  confidence,
+  label,
+  onChange,
+  disabled,
+}: {
+  confidence: string;
+  label: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}): ReactElement {
+  return (
+    <div className="flex items-center gap-2">
+      <label
+        className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+        htmlFor="hitl-confidence"
+      >
+        {label}
+      </label>
+      <input
+        className="w-20 rounded-[7px] border border-line bg-paper px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-amber"
+        disabled={disabled}
+        id="hitl-confidence"
+        max={1}
+        min={0}
+        step={0.1}
+        type="number"
+        value={confidence}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+export function HitlDecisionControls({
+  kind,
+  reviewSchema,
+  options,
+  schema,
+  criticality,
+  showConfidence,
+  confidence,
+  comments,
+  jsonValue,
+  disabled,
+  compact,
+  error,
+  labels,
+  onConfidenceChange,
+  onCommentsChange,
+  onJsonChange,
+  onDecision,
+  onSendBack,
+  onOption,
+  onSubmitJson,
+}: HitlDecisionControlsProps): ReactElement {
+  const decisionLabel = (d: string): string => {
+    if (d === "approve") return labels.decisionApprove;
+    if (d === "rework") return labels.decisionRework;
+
+    return d;
+  };
+
+  const isReworkDecision = (d: string): boolean => {
+    if (!reviewSchema) return false;
+    const transitions = reviewSchema.transitions ?? {};
+    const reworkTargets = reviewSchema.reworkTargets ?? [];
+
+    return (
+      Object.hasOwn(transitions, d) && reworkTargets.includes(transitions[d])
+    );
+  };
+
+  return (
+    <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>
+      {criticality ? (
+        <CriticalityBadge criticality={criticality} labels={labels} />
+      ) : null}
+
+      {reviewSchema ? (
+        <>
+          <label
+            className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+            htmlFor="hitl-review-comments"
+          >
+            {labels.reviewComments}
+          </label>
+          <textarea
+            className={clsx(
+              "rounded-[10px] border border-line bg-paper p-3 text-[12.5px] text-ink outline-none focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)]",
+              compact ? "min-h-[60px]" : "min-h-[90px]",
+            )}
+            disabled={disabled}
+            id="hitl-review-comments"
+            placeholder={labels.reviewCommentsPlaceholder}
+            value={comments}
+            onChange={(e) => onCommentsChange(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            {(reviewSchema.allowedDecisions ?? []).map((d) => (
+              <button
+                key={d}
+                className={clsx(
+                  "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
+                  isReworkDecision(d)
+                    ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
+                    : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                  disabled && "opacity-60",
+                )}
+                disabled={disabled}
+                type="button"
+                onClick={() => onDecision(d)}
+              >
+                {decisionLabel(d)}
+              </button>
+            ))}
+            <button
+              className={clsx(
+                "rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2",
+                disabled && "opacity-60",
+              )}
+              disabled={disabled}
+              type="button"
+              onClick={onSendBack}
+            >
+              {labels.sendBackWithComments}
+            </button>
+          </div>
+          {showConfidence ? (
+            <ConfidenceInput
+              confidence={confidence}
+              disabled={disabled}
+              label={labels.confidenceLabel}
+              onChange={onConfidenceChange}
+            />
+          ) : null}
+        </>
+      ) : kind === "permission" ? (
+        <div className="flex flex-wrap gap-2">
+          {options.map((opt) => (
+            <button
+              key={opt.optionId}
+              className={clsx(
+                "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
+                opt.optionId.includes("deny")
+                  ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
+                  : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                disabled && "opacity-60",
+              )}
+              disabled={disabled}
+              type="button"
+              onClick={() => onOption(opt.optionId)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
+          <label
+            className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+            htmlFor="hitl-json-response"
+          >
+            {labels.responseLabel}
+          </label>
+          <p className="text-[12px] text-mute">{labels.responseHint}</p>
+          <textarea
+            aria-label={labels.responseLabel}
+            className={clsx(
+              "rounded-[10px] border border-line bg-paper p-3 font-mono text-[12.5px] text-ink outline-none focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)]",
+              compact ? "min-h-[60px]" : "min-h-[120px]",
+            )}
+            disabled={disabled}
+            id="hitl-json-response"
+            value={jsonValue}
+            onChange={(e) => onJsonChange(e.target.value)}
+          />
+          {schema != null ? (
+            <details className="text-[11.5px] text-mute">
+              <summary className="cursor-pointer font-mono uppercase tracking-[0.06em]">
+                {labels.schemaLabel}
+              </summary>
+              <pre className="mt-2 overflow-auto rounded-lg border border-line-soft bg-ivory p-3 text-[11px] text-ink-2">
+                {JSON.stringify(schema, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+          {showConfidence ? (
+            <ConfidenceInput
+              confidence={confidence}
+              disabled={disabled}
+              label={labels.confidenceLabel}
+              onChange={onConfidenceChange}
+            />
+          ) : null}
+          <button
+            className="mt-1 inline-flex w-max items-center rounded-full bg-amber px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_8px_24px_-8px_var(--amber)] transition-all hover:bg-amber-2 disabled:opacity-60"
+            disabled={disabled}
+            type="button"
+            onClick={onSubmitJson}
+          >
+            {labels.submit}
+          </button>
+        </>
+      )}
+
+      {error ? (
+        <p
+          aria-live="assertive"
+          className="font-mono text-[12px] text-[#d9534f]"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}

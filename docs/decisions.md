@@ -79,6 +79,10 @@
 | [ADR-051](#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed) | Flow-graph layout metadata store (project-scoped, `flow_id`-keyed) | Accepted | 2026-06-05 |
 | [ADR-052](#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch) | Live node-status coloring via SSE-triggered `graph-status` refetch | Accepted | 2026-06-05 |
 | [ADR-053](#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads) | Workbench file-tree: git-tracked-only, member-gated reads | Accepted | 2026-06-05 |
+| [ADR-054](#adr-054-hitl-assessment-taxonomy--flow-declared-criticality-vs-responder-human_confidence-annotate-not-re-gate) | HITL assessment taxonomy — flow-declared `criticality` vs responder `human_confidence`, annotate-not-re-gate | Accepted | 2026-06-05 |
+| [ADR-055](#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates) | HITL response service + HITL-over-MCP + token-actor + actor-kind/scope auth gates | Accepted | 2026-06-05 |
+| [ADR-056](#adr-056-flat-runner-on_rejectgoto_step-atomic-execution--single-tx-repark-dedicated-comments-channel-window-sentinel-invalidation) | Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation | Accepted | 2026-06-05 |
+| [ADR-057](#adr-057-hitl-hybrid-surface-composition--cross-project-inbox-block-inline-response-component-numeric-needs-you-n-badge) | HITL hybrid-surface composition — cross-project Inbox block, inline response component, numeric "Needs you (N)" badge | Accepted | 2026-06-05 |
 
 ---
 
@@ -3138,6 +3142,333 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 
 ---
 
+### ADR-054: HITL assessment taxonomy — flow-declared `criticality` vs responder `human_confidence`, annotate-not-re-gate
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** [ADR-024](#adr-024-external-operations-surface--rest--thin-mcp-facade-project-tokens-mandatory-audit-hitl-assessment--flow-owned-escalation)
+reserved a "HITL assessment & Flow-owned escalation" clause but left the concrete fields unspecified,
+and [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) re-pointed
+that clause forward to M17 rather than implementing it. Two distinct quantities have been informally
+conflated under the word "confidence": (a) how *severe* a human decision is — declared by the Flow
+author when they place a `human` step/node — and (b) how *certain* the responding human felt when they
+answered. A third, already-shipped quantity is the M15 AI-judge machine confidence parsed onto
+`GateVerdict.confidence` and stored in `gate_results.verdict`
+([ADR-048](#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)), which
+calibration already maps to a gate `status` at execution time. M17 must name the two human-facing
+quantities, anchor each to a concrete column and write-time, and decide whether they participate in
+readiness — without re-deriving or re-litigating the M15 machine-confidence path.
+
+**Decision:** Introduce two named, orthogonal HITL annotations and forbid them from re-gating readiness:
+
+- **`criticality` = flow-author-declared severity.** A flow-author field on the `human` node/step,
+  enum **exactly `low | medium | high | critical`** (four values, includes `critical`). It is stored on
+  `hitl_requests.criticality` (text, **nullable, no DB default** — `NULL` when the author did not
+  declare it). It is **write-once at the `hitl_requests` INSERT** in both creation paths
+  (`runner-human.ts` for linear `human` steps, `runner-graph.ts::runReviewHuman` for graph
+  `human_review`) and is **never updated afterward** — each request is a fresh row, so there is no
+  SET/CLEAR round-trip and the config-state-symmetry rule does not apply.
+- **`human_confidence` = responder self-reported certainty.** Captured at **response time** from the
+  answering human, a numeric `real` in `[0,1]` inclusive. It is stored on
+  `hitl_requests.human_confidence` (real, nullable) **and** echoed into the `response` JSONB as
+  `{ "confidence": <number> }`. Server validation is `z.number().min(0).max(1)`, **optional** — an
+  absent value is permitted and stays `NULL`. The bound is enforced server-side in the respond path
+  (the shared `respondToHitl` service, [ADR-055](#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates)),
+  never UI-only.
+- **Distinct from `GateVerdict.confidence` (M15 AI-judge).** `criticality` and `human_confidence`
+  annotate the HITL *surface* (criticality badge / sort key on the inbox; confidence on the
+  decision/evidence record). They are **NOT** the machine confidence on `gate_results.verdict`, which
+  M15 calibration already resolves to a gate `status` at execution. The two families never mix.
+- **Annotate, do NOT re-gate.** Neither field feeds the readiness evaluator
+  (`readiness-core.ts`/`assertEvidenceReady`). The escalate-to-human decision stays the Flow's
+  `human_review` gate (the ADR-024 clause), **never** an external actor's and never a function of a
+  recorded `human_confidence` value. A low self-reported confidence is observable but does not by itself
+  block or re-open promotion.
+- This **closes the ADR-024 HITL-assessment clause** and **supersedes the ADR-045 M17 pointer** for it:
+  the fields are now named and placed; M17's remaining work is to surface and persist them, not to
+  re-decide them.
+
+No engine bump: `MAISTER_ENGINE_VERSION` stays **1.2.0**. The columns ride additive migration `0022`.
+
+**Consequences:**
+
+- `criticality` and `human_confidence` are nullable and additive, so every pre-M17 `hitl_requests` row
+  and every flow manifest without a declared `criticality` stays valid; legacy reads see `NULL`.
+- A reviewer reading a HITL surface can distinguish "the Flow author said this is `critical`" from "the
+  human who answered was only `0.4` sure" from "the AI judge passed at `0.9`" — three sources, three
+  storage sites, never collapsed into one number.
+- Because the fields are pure annotation, no readiness-evaluator, board-badge, or promote-path consumer
+  has to re-classify on them; the M15 shared `readiness-core.ts` is untouched.
+- `criticality` being write-once means there is no edit/clear path to test or guard — the only write is
+  at creation, asserted by the fan-out check on both creation paths.
+
+**Alternatives Considered:**
+
+- **A 3-level `criticality` (`low|medium|high`).** The plan body proposed three; the user overrode to
+  the **four-level** enum including `critical`. Rejected — `low|medium|high|critical`.
+- **Discrete `human_confidence` buckets (`low|med|high`).** Rejected — a `real` in `[0,1]` is finer,
+  trivially bucketable for display, and matches the `z.number().min(0).max(1)` server bound.
+- **Feeding `human_confidence` (or `criticality`) into readiness re-gating.** Rejected — it would make a
+  human's self-doubt silently block promotion and would fork the escalate-to-human authority away from
+  the Flow's `human_review` gate, violating the ADR-024 clause. Annotate-only.
+- **Reusing `GateVerdict.confidence` for the human self-report.** Rejected — that column is the M15
+  machine verdict consumed by calibration; overloading it would corrupt the calibration semantics and
+  conflate machine and human certainty.
+
+---
+
+### ADR-055: HITL response service + HITL-over-MCP + token-actor + actor-kind/scope auth gates
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** The HITL respond logic — Phase-0 validation, the Phase-1 row-lock CAS write, the Phase-2
+`atomicWriteJson` (form/human) or `deliverPermission` supervisor RPC (permission), and the Phase-3
+`respondedAt` stamp + resume — lives **inline** in the session route
+(`web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts`). [ADR-024](#adr-024-external-operations-surface--rest--thin-mcp-facade-project-tokens-mandatory-audit-hitl-assessment--flow-owned-escalation)
+reserved "route/answer pending HITL" as part of the external surface, but the M16 external slice
+([ADR-046](#adr-046-project-api-token-model),
+[ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package)) shipped task/run/readiness/gate
+tools and **deferred HITL-over-MCP to here**. Exposing HITL to a token actor without first extracting
+the logic would fork the two-phase commit; exposing it without an actor-kind gate would let a machine
+token satisfy a human escalation; exposing it under ADR-046's audit-only scope labels would let any
+project token answer regardless of its issued scope. Two of these were raised as CRITICAL findings in
+adversarial review (D7, D8).
+
+**Decision:** Extract one shared service and expose it externally behind two new routes and two MCP
+tools, gated by actor-kind and an opt-in scope check:
+
+- **Extract `respondToHitl` into `web/lib/services/hitl.ts`.** The session route and the new ext routes
+  both call it; the extraction is **zero behavior change** — the two-phase commit discipline is kept
+  byte-for-byte (Phase-1 `db.transaction` row-lock CAS write of `response` + `reviewFields` +
+  `human_confidence`, idempotency marker `respondedAt` stays the **AFTER**-side write; the
+  `PENDING_FORM_RUN_STATUS = {NeedsInput, NeedsInputIdle}` allow-list and the `assertReviewDecision`
+  Phase-0 validation are unchanged). The actor is a typed union
+  `{ kind:"user"; … } | { kind:"api_token"; tokenId; projectId; … }`; the session route always passes
+  `{kind:"user"}`. This mirrors the M16 `createTask`/`launchRun` service extraction precedent.
+- **New external REST routes** under the existing
+  [ADR-046](#adr-046-project-api-token-model) `projectToken` scheme:
+  `GET /api/v1/ext/runs/{runId}/hitl` (scope `hitl:read`) lists a run's pending HITL, and
+  `POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond` (scope `hitl:respond`) answers one. Both
+  go through `handleExt` (existence-hide + mandatory audit). The **existence-hide trust boundary** is
+  `run.projectId == token.projectId` else **404** (and `hitlRow.runId == runId` else 404) — a
+  cross-project run is indistinguishable from a non-existent one.
+- **New MCP tools `hitl_list` / `hitl_respond`** in the existing `@maister/mcp` package, each a thin
+  REST client of the two routes above — no DB access, no business logic, satisfying the ADR-024 /
+  [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) thin-facade invariant and
+  inheriting the complete `token_audit_log` trail.
+- **Token actor identity.** A new `ensureApiTokenActor({projectId, tokenId, label})` upserts the
+  `actor_identities` row for assignment attribution, backed by a new **unique partial index on
+  `(project_id, token_id)` WHERE `kind = 'api_token'`** (migration `0025`; user rows with `NULL`
+  `token_id` stay distinct). In Phase 1 the `api_token` branch of `respondToHitl` is a typed stub that
+  throws `UNAUTHORIZED`; it is wired live in Phase 6.
+- **D7 — answering a `human`-kind HITL requires a human actor.** `respondToHitl` refuses any
+  `actor.kind !== "user"` when `hitlRow.kind === "human"` → **403** (covers both the linear `on_reject`
+  human step and graph `human_review`). Token and internal-agent actors may answer only
+  `kind ∈ {permission, form}`. This makes ADR-024's "escalate-to-human is a Flow gate, never the external
+  actor's" *executable*: a machine token can never satisfy a human gate, even holding `hitl:respond`.
+  Supersedes the prior Open Question on MCP answering `human_review` (→ no).
+- **D8 — opt-in scope enforcement on the two HITL routes only.** `handleExt` gains an opt-in
+  `requireScope: true`; when set, the route's `scopeLabel` MUST be in `actor.scopes` or `"*"` else
+  **403**. **Only the two new HITL routes opt in.** Every other `/api/v1/ext/*` route keeps ADR-046's
+  binary enforcement (scope label audit-only) **unchanged** — D8 does **not** reopen ADR-046's global
+  binary model; it carves a single, opt-in exception for the most sensitive surface and records that
+  boundary precisely. The carve is a no-op for today's `["*"]`-issued tokens and future-proofs the
+  moment granular issuance lands. **403 responses MUST NOT leak which scopes a token holds.**
+- The external actor can **answer** a pending request but can **never create or skip a gate** — gate
+  placement stays the Flow's (ADR-024). The real-time human boundary is D7; the credential boundary is
+  D8; they compose.
+
+No new `runs.status`, no engine bump (`MAISTER_ENGINE_VERSION` stays **1.2.0**); the actor-token index
+rides additive migration `0023`.
+
+**Consequences:**
+
+- One implementation of the HITL two-phase commit serves the UI, REST, and MCP; there is no second copy
+  to drift, and the ext route adds no side-effect beyond what the session route already performs.
+- A token holding `hitl:respond` can clear machine-appropriate `permission`/`form` HITL via MCP/REST
+  through the same audited path as the UI, but provably cannot answer a `human`/`human_review` request
+  (D7) — HITL-over-MCP stays useful without weakening the human escalation contract.
+- The `requireScope` opt-in closes the "scope labels are audit-only" gap for the HITL surface while
+  leaving every other ext route byte-identical — the change is locally auditable and reversible.
+- `ensureApiTokenActor` plus the partial unique index give token responses real assignment attribution
+  without colliding with the existing `(project_id, user_id)` user-actor uniqueness.
+- 403 (insufficient scope) and 403 (wrong actor kind) become live external statuses for the first time;
+  the external OpenAPI and error taxonomy document both, and the 403 body never enumerates held scopes.
+
+**Alternatives Considered:**
+
+- **Duplicating the respond logic into the ext route instead of extracting a service.** Rejected —
+  forks the two-phase commit and the idempotency/deferred discipline; a single `respondToHitl` is the
+  only way to guarantee parity between the UI and the external surface.
+- **Letting a token actor answer `human`/`human_review` if it holds `hitl:respond`.** Rejected (D7) — it
+  would let a machine satisfy a Flow's human-escalation gate, defeating ADR-024's Flow-owned escalation.
+- **Globally enforcing scope labels for all ext routes (reversing ADR-046's binary model).** Rejected
+  for M17 — that is a separate, deferred decision with a wider blast radius; D8 carves only the HITL
+  routes via an opt-in flag and explicitly leaves the global model intact.
+- **Returning the token's held scopes in the 403 body for debuggability.** Rejected — leaks the token's
+  capability set to a caller that just proved it lacks the required scope; the 403 is opaque.
+- **A dedicated HITL token model separate from the ADR-046 project token.** Rejected — the project token
+  already scopes to a project and audits; HITL reuses it with the new scope labels, no new credential.
+
+---
+
+### ADR-056: Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** The graph runner (`runner-graph.ts`) implements review-driven rework fully — backward jump,
+`commentsVar` injection, bounded `rework.maxLoops`. The **linear `steps[]` runner** (`runner.ts`) does
+not: `runHumanStep` (`runner-human.ts`) persists `on_reject` only into `needs-input.json`, never onto the
+`hitl_requests` row, and on resume returns `{ok:true}` so the flat loop **advances unconditionally** —
+`on_reject.goto_step` and `comments_var` are never read. Closing this is a multi-store transition over
+`runs.currentStepId`, the per-pass `step_runs` rows, the on-disk `input-<stepId>.json` completion
+sentinels, and a comments side-channel. Two adversarial-review findings shaped it: (HIGH) the comments
+channel must not be a completion sentinel, and (the deeper bug behind it) stale completion sentinels in
+the re-execution window would auto-satisfy a re-reached human/form step with its *prior* reject so the
+loop never re-prompts. No shipped flow uses flat `human`+`on_reject` today (only test fixtures), so the
+risk is bounded to the linear path, but the atomicity must be correct before any flow relies on it.
+
+**Decision:** Execute the linear `on_reject.goto_step` + `comments_var` path with a single durable
+repark and explicit crash-window reasoning:
+
+- **The comments channel is NOT a completion sentinel.** `runHumanStep` treats
+  `input-<stepId>.json` as the step's completion artifact (its presence returns `ok:true` and SKIPS HITL
+  creation). Rework comments therefore ride a **dedicated `rework-comments-<gotoStepId>.json`**
+  (overwrite-safe, written via `atomicWriteJson`, never a completion sentinel), injected into the target
+  step's context under `comments_var` through a new `injectedVars` param on `buildContext`/`executeStep`
+  — the durable analogue of the graph runner's in-memory `pendingInjectedVars`. Writing comments into
+  `input-<gotoStep.id>.json` is **forbidden** — it would falsely auto-satisfy a human/form goto target.
+- **Stale completion sentinels are invalidated for the re-execution window.** A backward repark
+  re-reaches the triggering human step (and any human/form step between the goto target and it); their
+  prior-pass `input-<stepId>.json` would auto-satisfy with the stale reject. On repark the runner
+  **deletes `input-<stepId>.json` for every step in `[gotoTarget..humanStep]`** so each re-reached step
+  re-prompts cleanly. The canonical `input-<stepId>.json` contract for the **non-rework path is
+  unchanged**.
+- **One transaction for the durable repark.** A single `db.transaction` performs a CAS
+  `runs {currentStepId := gotoStep.id}` guarded on `status='Running' AND currentStepId=<humanStepId>`
+  (the just-claimed resume state). New `step_runs` are created per pass by the existing loop, so
+  re-execution versions naturally — **no separate `step_runs` supersede write**. The runner then
+  `break`s and re-enters via the existing resume-claim path at the reparked `currentStepId` (chosen over
+  a mutable in-loop pointer: smaller blast radius, reuses the resume claim).
+- **Ordering is delete-sentinels (fs) → repark-CAS-commit (DB).** This makes every crash window
+  benign-or-correct (below).
+- **Bounded re-entry guard.** A reject→goto→reject cycle is bounded by a re-entry guard with
+  **default `maxLoops = 5`** (the linear path has no DSL field; the **graph keeps its explicit DSL
+  `rework.maxLoops`**); exceeding it terminates the run with `MaisterError("CONFIG")` (parity with
+  the graph runner's `rework.maxLoops` breach) rather than looping forever.
+- **Crash-window enumeration** (justifying the delete→commit ordering):
+  - **(a) death before sentinel-delete** → `currentStepId` still = human step, sentinels intact; resume
+    re-drives the stored reject (idempotent) and reparks again. Correct.
+  - **(b) death after sentinel-delete, before repark commit** → `currentStepId` still = human step but
+    its sentinel is gone; resume re-prompts the human (the reject response is lost — a **benign
+    degradation, never corruption**).
+  - **(c) death after repark commit** → `currentStepId` = goto target, window sentinels already gone;
+    reconciliation classifies the run as **Crashed**. A flat `steps[]` run has no graph mid-flow
+    resume, so reconcile crashes ANY session-less linear gate/human orphan **directly** (reason
+    `linear-gate-orphan`), never auto-redispatching it through a bare `runFlow` (which would restart
+    at step 0 and re-run prior side-effects); a `cli`/`agent` goto crashes via the standard
+    `cli-not-retry-safe` / `agent-session-gone` paths. `crashRunningRun` retains the goto target in
+    `resume_target_step_id`. This is a **benign Crashed degradation** — no data corruption. The
+    operator recovers via the standard Recover button (`resumeCrashedRun` → `driveResume`), which
+    passes `crashResume` and resumes cleanly from the retained goto target. The orphan
+    `rework-comments-*.json` is harmless (ignored unless the target expects `comments_var`;
+    overwritten on the next repark).
+- This flips the linear `on_reject.goto_step` + `comments_var` path **Designed → Implemented** (in
+  Phase 3) in `hitl.md`, `flow-dsl.md`, and `database-schema.md`. The graph runner is untouched.
+
+**Consequences:**
+
+- The linear runner reaches parity with the graph runner's send-back loop, with full multi-store
+  atomicity and a bounded cycle — a flow author can now rely on flat `human`+`on_reject`.
+- A re-reached human/form step re-prompts on the second pass instead of silently auto-satisfying from a
+  stale prior response — the loop is correct, not just present.
+- Comments are observable to the goto target without ever masquerading as a completion artifact; the
+  non-rework `input-<stepId>.json` contract is unchanged, so existing linear flows are unaffected.
+- Every crash window is enumerated and either correct, a benign re-prompt, or a benign Crashed
+  degradation recoverable via the standard Recover button; no background sweeper and no new status are
+  introduced, and the worst case is a run that shows Crashed but resumes cleanly from the goto target,
+  never corruption.
+
+**Alternatives Considered:**
+
+- **Writing `comments_var` into `input-<gotoStepId>.json`.** Rejected (HIGH finding) — that file is the
+  completion sentinel; a human/form goto target would be auto-satisfied with the comments payload and
+  never re-prompt. Dedicated `rework-comments-<gotoStepId>.json` instead.
+- **Not invalidating window sentinels (repark `currentStepId` only).** Rejected — the re-reached human
+  step's stale `input-<stepId>.json` would auto-satisfy the second pass with the prior reject, so the
+  loop never re-prompts; the runner deletes the window sentinels first.
+- **A mutable in-loop pointer instead of break + re-enter via the resume claim.** Rejected — larger
+  blast radius and a second code path for state entry; reusing the existing resume claim keeps one
+  entry point and one CAS.
+- **Commit the repark before deleting sentinels (DB → fs ordering).** Rejected — a crash after commit
+  but before delete would leave `currentStepId` at the goto target with stale sentinels still in the
+  window, risking auto-satisfy; delete-first makes the crash windows benign.
+- **An unbounded reject→goto loop.** Rejected — a flow that always rejects would spin forever; the
+  re-entry guard (`maxLoops` default 5) terminates with `MaisterError("CONFIG")`.
+
+---
+
+### ADR-057: HITL hybrid-surface composition — cross-project Inbox block, inline response component, numeric "Needs you (N)" badge
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** The HITL machinery is shipped piecemeal — M11a typed-decision buttons
+(`run-hitl-response.tsx`), M13 per-project inbox + assignment actions
+(`getHitlInbox(projectId)`), M15 readiness summary, and the M9 portfolio feed
+(`getPortfolio` → `effectiveNeedRows`, `totalNeeds`, `pendingHitlCount`) with a one-item-per-project
+`NeedsYouStrip`. But there is no cross-project HITL view: a user with several projects must visit each
+board; `run-hitl-response.tsx` is a `"use client"` hook component with a hard `router.refresh()` and no
+`onRespond` callback or `compact` variant, so it cannot be embedded inline on a board flight card; and
+`ProjectCard` carries `pendingHitlCount` in its DTO but renders **no badge**. M17 composes these into a
+single hybrid surface without adding a route, a status, or new machinery.
+
+**Decision:** Compose the existing pieces into a portfolio-home hybrid surface:
+
+- **Cross-project Inbox as a portfolio-home BLOCK**, rendered in `app/(app)/page.tsx` — **not** a new
+  `/inbox` route. A new `getCrossProjectHitlInbox` lifts `getHitlInbox` from project scope to
+  **membership scope** (admin sees all visible projects; a member sees only their `project_members`
+  projects), reusing the same assignment ∪ legacy `hitl_requests` dedup-by-`runId` as `getPortfolio`
+  and batching reads (no N+1). The one-item-per-project `NeedsYouStrip` is **absorbed** into this full
+  block; the compact numeric badge survives (below).
+- **Inline embeddable response component.** Refactor `run-hitl-response.tsx` so a pure display
+  subcomponent (e.g. `HitlDecisionControls`) is renderable via `renderToStaticMarkup`, add an
+  `onRespond?: () => void` callback (replacing the hard `router.refresh()`, which becomes the default),
+  and a `compact?: boolean` variant. The board flight card is un-`Link`ed on `NeedsInput*` (nav moved
+  off the `<a>` so a `<form>` is not nested in `<a>`) and renders the inline response; the same
+  component renders in the cross-project Inbox block and on run-detail. It surfaces the ADR-054
+  `criticality` badge and the `human_confidence` input.
+- **Numeric "Needs you (N)" badge.** A compact badge derived from `portfolio.totalNeeds` on the home,
+  plus a `pendingHitlCount` chip on `ProjectCard` (the DTO field that was previously unrendered). The
+  badge count equals the Inbox block item count.
+
+No new route, no new `runs.status`, no engine bump; this is pure composition over the M9/M11a/M13/M15
+machinery.
+
+**Consequences:**
+
+- A multi-project user resolves HITL from one place (the portfolio home) without visiting each board,
+  and can respond inline on a board flight card without a full page navigation.
+- One response component serves the board card, the cross-project Inbox block, and run-detail; the hard
+  `router.refresh()` becomes an opt-out default, so existing run-detail behavior is preserved.
+- The "Needs you (N)" badge and the `ProjectCard` chip are now precise (derived from the same
+  `totalNeeds`/`pendingHitlCount` the Inbox block counts), removing the prior unrendered-DTO gap.
+- RBAC is preserved by construction: membership-scoped `getCrossProjectHitlInbox` means a member never
+  sees another project's HITL; the dedup matches `getPortfolio` so the badge and block agree.
+
+**Alternatives Considered:**
+
+- **A dedicated `/inbox` route.** Rejected — adds a nav destination and a route to maintain for what is
+  a composition of existing read models; a portfolio-home block reuses the existing page and feed.
+- **Keeping `NeedsYouStrip` as a one-per-project strip above the block.** Rejected — it would duplicate
+  the block's first row per project; the full block absorbs it and the compact badge carries the count.
+- **A second, board-only response component.** Rejected — two components drift; one component with
+  `onRespond`/`compact` serves every surface, with a pure subcomponent for `renderToStaticMarkup`
+  testability.
+- **Per-card `getHitlInbox` calls for the cross-project view.** Rejected — N+1 over every project; a
+  single membership-scoped batched query mirrors `getPortfolio`.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.
@@ -3178,3 +3509,14 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
 ---
 
 *Decisions are numbered sequentially. Do not reuse numbers.*
+
+---
+
+## TODO (tracked doc defects)
+
+- **Duplicate `### ADR-048` heading (pre-existing).** Two distinct ADRs share the number `ADR-048`:
+  the M15 "Readiness enforcement over all blocking gate kinds + verdict calibration" (≈ line 2556) and
+  the M18 "Branch targeting at launch, shared promotion service, promote-time readiness re-gate"
+  (≈ line 2747). Numbering is immutable history (R4) — **do NOT renumber either**. Filed per docs R9 so
+  the collision is tracked; a future ADR may supersede-and-renumber one with an explicit migration note,
+  but M17 leaves both as-is.

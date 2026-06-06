@@ -1,4 +1,3 @@
-import type { NeedsYouItem } from "@/components/portfolio/needs-you-strip";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
@@ -7,29 +6,25 @@ import Link from "next/link";
 import { LiveTicker } from "@/components/chrome/live-ticker";
 import { DensityToggle } from "@/components/portfolio/density-toggle";
 import { EmptyState } from "@/components/portfolio/empty-state";
-import { NeedsYouStrip } from "@/components/portfolio/needs-you-strip";
+import { HitlInboxBlock } from "@/components/portfolio/hitl-inbox-block";
+import { InboxRespond } from "@/components/portfolio/inbox-respond";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
 import { ProjectCard } from "@/components/portfolio/project-card";
 import { requireSession } from "@/lib/authz";
-import { getPortfolio } from "@/lib/queries/portfolio";
+import {
+  getCrossProjectHitlInbox,
+  getPortfolio,
+} from "@/lib/queries/portfolio";
 
 export default async function PortfolioPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("portfolio");
 
-  const portfolio = await getPortfolio(user.id, user.role);
+  const [portfolio, inbox] = await Promise.all([
+    getPortfolio(user.id, user.role),
+    getCrossProjectHitlInbox(user.id, user.role),
+  ]);
   const isEmpty = portfolio.projects.length === 0;
-
-  const needsItems: NeedsYouItem[] = portfolio.projects
-    .filter((p) => p.need !== null && p.pendingHitlCount > 0)
-    .map((p) => ({
-      projectSlug: p.slug,
-      agent: p.need!.agent,
-      prompt: p.need!.prompt,
-      branch: p.need!.branch,
-      time: p.activeWorkspaces.find((ws) => ws.status === "needs")?.time ?? "—",
-      runId: p.need!.runId,
-    }));
 
   return (
     <>
@@ -82,8 +77,29 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             })}
           </LiveTicker>
 
-          {needsItems.length > 0 ? (
-            <NeedsYouStrip count={portfolio.totalNeeds} items={needsItems} />
+          {inbox.count > 0 ? (
+            <HitlInboxBlock
+              count={inbox.count}
+              items={inbox.items}
+              labels={{
+                title: t("inboxTitle", { count: inbox.count }),
+                empty: t("inboxEmpty"),
+                ariaLabel: t("inboxAriaLabel"),
+                countAriaLabel: t("inboxCountAriaLabel", {
+                  count: inbox.count,
+                }),
+              }}
+              renderRespond={(item) => (
+                <InboxRespond
+                  criticality={item.criticality}
+                  hitlRequestId={item.hitlRequestId}
+                  kind={item.kind}
+                  options={item.options}
+                  runId={item.runId}
+                  schema={item.schema}
+                />
+              )}
+            />
           ) : null}
 
           <section

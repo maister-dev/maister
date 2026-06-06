@@ -120,7 +120,34 @@ export type ResolvedReviewDecision = {
   // Set only when the decision routes to a rework target.
   workspacePolicy?: string;
   reworkTarget?: string;
+  // M17 ADR-050: responder self-reported confidence in [0,1].
+  confidence?: number;
 };
+
+/**
+ * M17 ADR-050: resolve the raw confidence value from the response body.
+ * undefined → undefined (absent is valid).
+ * finite number in [0,1] → that number.
+ * anything else → throws NEEDS_INPUT.
+ */
+export function resolveConfidence(raw: unknown): number | undefined {
+  if (raw === undefined) return undefined;
+
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    throw new MaisterError(
+      "NEEDS_INPUT",
+      "confidence must be a number in [0,1]",
+    );
+  }
+  if (raw < 0 || raw > 1) {
+    throw new MaisterError(
+      "NEEDS_INPUT",
+      "confidence must be a number in [0,1]",
+    );
+  }
+
+  return raw;
+}
 
 export function isReviewSchema(schema: unknown): boolean {
   return isPlainObject(schema) && (schema as ReviewSchemaLike).review === true;
@@ -129,6 +156,7 @@ export function isReviewSchema(schema: unknown): boolean {
 export function validateReviewDecision(
   response: unknown,
   schema: unknown,
+  rawConfidence?: unknown,
 ): ({ ok: true } & ResolvedReviewDecision) | { ok: false; message: string } {
   if (!isPlainObject(schema)) {
     return { ok: false, message: "review hitl schema is missing or malformed" };
@@ -157,11 +185,24 @@ export function validateReviewDecision(
     };
   }
 
+  // M17 ADR-050: confidence may arrive as a field inside the response object
+  // (graph review path) or as a separate rawConfidence argument (service layer).
+  // Prefer the explicit argument; fall back to response.confidence.
+  const confidenceRaw =
+    rawConfidence !== undefined ? rawConfidence : response.confidence;
+  let confidence: number | undefined;
+
+  try {
+    confidence = resolveConfidence(confidenceRaw);
+  } catch {
+    return { ok: false, message: "confidence must be a number in [0,1]" };
+  }
+
   const target = transitions[decision];
   const isRework = (s.reworkTargets ?? []).includes(target);
 
   if (!isRework) {
-    return { ok: true, decision };
+    return { ok: true, decision, confidence };
   }
 
   // Rework decision: a submitted workspacePolicy must be allowed; an omitted
@@ -182,6 +223,7 @@ export function validateReviewDecision(
       decision,
       workspacePolicy: submitted,
       reworkTarget: target,
+      confidence,
     };
   }
 
@@ -190,14 +232,16 @@ export function validateReviewDecision(
     decision,
     workspacePolicy: policies[0] ?? "keep",
     reworkTarget: target,
+    confidence,
   };
 }
 
 export function assertReviewDecision(
   response: unknown,
   schema: unknown,
+  rawConfidence?: unknown,
 ): ResolvedReviewDecision {
-  const result = validateReviewDecision(response, schema);
+  const result = validateReviewDecision(response, schema, rawConfidence);
 
   if (!result.ok) {
     throw new MaisterError("NEEDS_INPUT", result.message);
@@ -207,5 +251,6 @@ export function assertReviewDecision(
     decision: result.decision,
     workspacePolicy: result.workspacePolicy,
     reworkTarget: result.reworkTarget,
+    confidence: result.confidence,
   };
 }

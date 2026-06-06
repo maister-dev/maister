@@ -70,6 +70,7 @@ export interface RunPendingHitl {
   prompt: string;
   options: HitlOption[];
   schema: unknown;
+  criticality: "low" | "medium" | "high" | "critical" | null;
 }
 
 export interface RunDetail {
@@ -227,6 +228,7 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       kind: hitlRequests.kind,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
+      criticality: hitlRequests.criticality,
     })
     .from(hitlRequests)
     .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
@@ -294,7 +296,12 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
           assigneeUserId: pendingAssignee?.userId ?? null,
           prompt: pending.prompt,
           options: extractOptions(pending.kind, pending.rawSchema),
-          schema: pending.rawSchema,
+          // Permission `schema` carries supervisor-internal handles (requestId,
+          // supervisorSessionId, toolCall) — never serialize them to the browser.
+          // Mirrors queries/board.ts and queries/hitl.ts; the permission UI
+          // renders only `options`, so nulling `schema` loses nothing.
+          schema: pending.kind === "permission" ? null : pending.rawSchema,
+          criticality: pending.criticality ?? null,
         }
       : null,
   };

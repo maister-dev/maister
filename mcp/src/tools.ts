@@ -103,6 +103,31 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId", "gateId", "status"],
     },
   },
+  hitl_list: {
+    description: "List pending human-in-the-loop requests for a run",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+      },
+      required: ["runId"],
+    },
+  },
+  hitl_respond: {
+    description:
+      "Answer a pending permission/form HITL request for a run (human-kind requests require a human actor and are refused)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        hitlRequestId: { type: "string" },
+        optionId: { type: "string" },
+        response: { type: "object" },
+        confidence: { type: "number" },
+      },
+      required: ["runId", "hitlRequestId"],
+    },
+  },
 };
 
 type DispatchResult =
@@ -261,6 +286,31 @@ function resolveRouting(
       return {
         method: "POST",
         path: `/api/v1/ext/runs/${runId}/gates/${gateId}/report`,
+        body,
+      };
+    }
+    case "hitl_list": {
+      const { runId } = args as { runId: string };
+
+      return { method: "GET", path: `/api/v1/ext/runs/${runId}/hitl` };
+    }
+    case "hitl_respond": {
+      const { runId, hitlRequestId, optionId, response, confidence } = args as {
+        runId: string;
+        hitlRequestId: string;
+        optionId?: string;
+        response?: unknown;
+        confidence?: number;
+      };
+      const body: Record<string, unknown> = {};
+
+      if (optionId !== undefined) body.optionId = optionId;
+      if (response !== undefined) body.response = response;
+      if (confidence !== undefined) body.confidence = confidence;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/${runId}/hitl/${hitlRequestId}/respond`,
         body,
       };
     }

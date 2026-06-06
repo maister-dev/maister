@@ -480,7 +480,11 @@ export async function crashResumedRun(
 export type CrashReason =
   | "worktree-gone"
   | "agent-session-gone"
-  | "cli-not-retry-safe";
+  | "cli-not-retry-safe"
+  // M17 (ADR-052): a session-less linear (flat `steps[]`) run parked on a
+  // gate/human node — no graph mid-flow resume, so reconcile crashes it and
+  // Recover resumes from resume_target_step_id (window-(c)).
+  | "linear-gate-orphan";
 
 export async function crashRunningRun(
   runId: string,

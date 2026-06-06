@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "actor_identities_project_token_uq" ON "actor_identities" USING btree ("project_id","token_id") WHERE "actor_identities"."kind" = 'api_token';

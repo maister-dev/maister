@@ -309,7 +309,13 @@ export async function ProjectCard({
       ) : null}
 
       <footer className="mt-3.5 flex items-center justify-between gap-2.5 border-t border-line-soft pt-3">
-        <div className="inline-flex flex-wrap gap-1.5" />
+        <div className="inline-flex flex-wrap gap-1.5">
+          {project.pendingHitlCount > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold tracking-[0.04em] text-amber">
+              {t("pendingChip", { count: project.pendingHitlCount })}
+            </span>
+          ) : null}
+        </div>
         <Link
           className="inline-flex items-center gap-[5px] font-mono text-[10.5px] tracking-[0.04em] text-mute hover:text-ink"
           href={`/projects/${project.slug}`}

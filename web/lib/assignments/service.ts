@@ -9,7 +9,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -299,6 +299,42 @@ export async function ensureUserActor(
         label: actorLabel(args),
         updatedAt: now,
       },
+    })
+    .returning();
+
+  return actor as ActorIdentity;
+}
+
+export type EnsureApiTokenActorArgs = {
+  db?: Db;
+  projectId: string;
+  tokenId: string;
+  label?: string | null;
+};
+
+// M17 (ADR-051): the api_token actor for external HITL responses. Upserts on the
+// partial unique (project_id, token_id) WHERE kind='api_token' so repeated
+// answers from the same token attribute to one actor row.
+export async function ensureApiTokenActor(
+  args: EnsureApiTokenActorArgs,
+): Promise<ActorIdentity> {
+  const db = args.db ?? getDb();
+  const now = new Date();
+  const label = args.label ?? `token:${args.tokenId}`;
+  const [actor] = await db
+    .insert(actorIdentities)
+    .values({
+      id: randomUUID(),
+      projectId: args.projectId,
+      kind: "api_token",
+      label,
+      tokenId: args.tokenId,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [actorIdentities.projectId, actorIdentities.tokenId],
+      targetWhere: sql`${actorIdentities.kind} = 'api_token'`,
+      set: { label, updatedAt: now },
     })
     .returning();
 

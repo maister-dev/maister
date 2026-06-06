@@ -250,6 +250,8 @@ const humanStepSchema = z.object({
     })
     .optional(),
   retry_safe: z.boolean().optional(),
+  // M17 ADR-050: flow-author-declared criticality for this HITL step.
+  criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
 });
 
 export const stepSchema = z.discriminatedUnion("type", [
@@ -547,6 +549,8 @@ export const humanSettingsSchema = z
     slaHours: z.number().positive().optional(),
     stalenessHint: z.string().min(1).optional(),
     returnRequires: z.array(z.string().min(1)).optional(),
+    // M17 ADR-050: flow-author-declared criticality for this HITL node.
+    criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
   })
   .strict();
 

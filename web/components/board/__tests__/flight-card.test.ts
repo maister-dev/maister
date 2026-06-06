@@ -49,6 +49,11 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readiness: "ready",
     readyToPromote: false,
     prNumber: null,
+    hitlRequestId: null,
+    hitlKind: null,
+    hitlOptions: [],
+    hitlSchema: null,
+    criticality: null,
     ...over,
   };
 }

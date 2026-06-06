@@ -448,6 +448,8 @@ erDiagram
         text decision "M11a review decision"
         text workspace_policy "M11a rework policy"
         text rework_target "M11a resolved rework target"
+        text criticality "M17 Implemented: low|medium|high|critical, write-once"
+        real human_confidence "M17 Implemented: responder self-report 0..1"
         timestamp responded_at
         timestamp created_at
     }
@@ -618,6 +620,7 @@ not drawn until its migrations exist. `project_tokens` and `token_audit_log`
 | `project_flow_roles`  | `project_flow_roles_project_key_uq`     | `(project_id, role_ref)` UNIQUE        | One Flow role ref per project.                                                                                          |
 | `project_flow_roles`  | `project_flow_roles_project_idx`        | `(project_id)`                         | Project Flow role lookup.                                                                                               |
 | `actor_identities`    | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE         | One user actor per project.                                                                                             |
+| `actor_identities`    | `actor_identities_project_token_uq`     | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind='api_token'` | **(M17 Implemented, migration `0025`)** One api-token actor per (project, token); user/system rows (`token_id IS NULL`) stay distinct. Backs `ensureApiTokenActor`. |
 | `actor_identities`    | `actor_identities_project_idx`          | `(project_id)`                         | Project actor lookup.                                                                                                   |
 | `tasks`               | `tasks_project_status_idx`              | `(project_id, status)`                 | Board queries.                                                                                                          |
 | `tasks`               | `tasks_id_attempt_uq`                   | `(id, attempt_number)` UNIQUE          | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |

@@ -43,6 +43,23 @@ export type E2EM16Fixture = E2EProjectFixture & {
   gateId: string;
 };
 
+// M17 Phase 7: HITL hybrid-surface e2e fixture. Two projects carrying:
+//   • Project 1: a NeedsInput run with a human_review HITL (criticality: high)
+//   • Project 2: a NeedsInput run with a human_review HITL (criticality: medium, on_reject schema)
+// Exercises cross-project inbox, inline response controls, confidence input, criticality badges.
+export type E2EM17Fixture = {
+  project1Slug: string;
+  project1Id: string;
+  project1RunId: string;
+  project1HitlId: string;
+  project1Branch: string;
+  project2Slug: string;
+  project2Id: string;
+  project2RunId: string;
+  project2HitlId: string;
+  project2Branch: string;
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -102,6 +119,7 @@ export type E2EFixtures = {
     scratch: E2EProjectFixture;
     liveCcr: E2EProjectFixture;
     registration: E2ERegistrationFixture;
+    m17: E2EM17Fixture;
     m19: E2EM19Fixture;
     m16: E2EM16Fixture;
     m22: E2EM22Fixture;

@@ -51,10 +51,12 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 8 external tools", () => {
+  it("registers all 10 external tools (incl. M17 hitl_list, hitl_respond)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "gate_report",
+        "hitl_list",
+        "hitl_respond",
         "readiness_get",
         "run_get",
         "run_launch",
@@ -247,6 +249,52 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       commitSha: "abc123",
       summary: "all green",
       payload: { passed: 42 },
+    });
+  });
+
+  it("hitl_list → GET /api/v1/ext/runs/{runId}/hitl (no body)", async () => {
+    mockOnce({ hitl: [] }, 200);
+
+    await dispatchTool({
+      name: "hitl_list",
+      args: { runId: "run-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/run-1/hitl`);
+    expect(headerAuth(init)).toBe(AUTH);
+  });
+
+  it("hitl_respond → POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond with only defined keys", async () => {
+    mockOnce({ ok: true, runStatus: "NeedsInput" }, 200);
+
+    await dispatchTool({
+      name: "hitl_respond",
+      args: {
+        runId: "run-1",
+        hitlRequestId: "hitl-1",
+        response: { approved: true },
+        confidence: 0.8,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/runs/run-1/hitl/hitl-1/respond`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    // optionId omitted (undefined) — only defined keys are forwarded.
+    expect(parsedBody(init)).toEqual({
+      response: { approved: true },
+      confidence: 0.8,
     });
   });
 });

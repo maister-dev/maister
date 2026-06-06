@@ -5,7 +5,7 @@ import type { Workspace as WorkspaceRow } from "@/lib/db/schema";
 import { access } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { recordArtifact } from "./artifact-store";
@@ -177,6 +177,10 @@ export async function recordDefaultArtifacts(
 
   // 3. HITL response (best-effort: only if responded row exists)
   try {
+    // On an on_reject rework loop a step has multiple responded HITL rows
+    // (reject, then the final approve). Bind the human_note to the LATEST one
+    // (newest by creation) so the final decision is current evidence, never a
+    // stale earlier reject.
     const hitlRows: Array<{ id: string }> = await db
       .select({ id: hitlRequests.id })
       .from(hitlRequests)
@@ -187,6 +191,7 @@ export async function recordDefaultArtifacts(
           isNotNull(hitlRequests.response),
         ),
       )
+      .orderBy(desc(hitlRequests.createdAt))
       .limit(1);
 
     const hitlRow = hitlRows[0];

@@ -11,8 +11,11 @@
 //        resumeStartedAt / latestAttemptStartedAt; within grace ->
 //        {skip, "grace-window"}; past grace (or both-null) ->
 //        {crash, "agent-session-gone"}
-//      - retry-safe gate (check/judge/guard/human/null) ->
-//        {redispatch, "gate-redispatch"}
+//      - retry-safe gate (check/judge/guard/human/null):
+//        - GRAPH (nodes[]) run        -> {redispatch, "gate-redispatch"}
+//        - LINEAR (isLinearFlow) run  -> {crash, "linear-gate-orphan"}  (M17
+//          ADR-052: a flat steps[] run has no graph mid-flow resume, so bare
+//          re-dispatch would restart at step 0 and re-run prior side-effects)
 //
 // The classifier is PURE — nowMs/graceSeconds are inputs, no clock/db access.
 
@@ -251,6 +254,59 @@ describe("classifyRunReconcile — step 4c: retry-safe gate → redispatch", () 
         input({ currentNodeKind: "check", resumeStartedAt: ago(1) }),
       ),
     ).toEqual({ action: "redispatch", reason: "gate-redispatch" });
+  });
+});
+
+describe("classifyRunReconcile — step 4c (linear): gate/human orphan → crash", () => {
+  // M17 (ADR-052) window-(c): a flat steps[] run reparked onto an on_reject
+  // goto target (or otherwise parked on a session-less gate/human node) has NO
+  // graph mid-flow resume. Bare runFlow would restart at step 0 and re-run
+  // prior agent/cli side-effects, so reconcile must CRASH it — crashRunningRun
+  // retains the node in resume_target_step_id and operator Recover resumes from
+  // it via crashResume.
+  const LINEAR_KINDS: Array<ReconcileInput["currentNodeKind"]> = [
+    "check",
+    "judge",
+    "guard",
+    "human",
+    null,
+  ];
+
+  for (const kind of LINEAR_KINDS) {
+    it(`linear + no live session + ${String(kind)} node → crash / linear-gate-orphan`, () => {
+      expect(
+        classifyRunReconcile(
+          input({ currentNodeKind: kind, isLinearFlow: true }),
+        ),
+      ).toEqual({ action: "crash", reason: "linear-gate-orphan" });
+    });
+  }
+
+  it("linear flag does NOT affect cli (still cli-not-retry-safe)", () => {
+    expect(
+      classifyRunReconcile(
+        input({ currentNodeKind: "cli", isLinearFlow: true }),
+      ),
+    ).toEqual({ action: "crash", reason: "cli-not-retry-safe" });
+  });
+
+  it("linear flag does NOT affect agent within grace (still skip)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          currentNodeKind: "ai_coding",
+          isLinearFlow: true,
+          resumeStartedAt: ago(GRACE - 1),
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "grace-window" });
+  });
+
+  it("graph (isLinearFlow false/omitted) keeps gate-redispatch", () => {
+    expect(classifyRunReconcile(input({ currentNodeKind: "human" }))).toEqual({
+      action: "redispatch",
+      reason: "gate-redispatch",
+    });
   });
 });
 

@@ -20,6 +20,8 @@ erDiagram
         text decision "M11a review decision (claimed from response.decision)"
         text workspace_policy "M11a chosen rework workspace policy"
         text rework_target "M11a resolved rework target node"
+        text criticality "M17 Implemented: flow-declared low|medium|high|critical (write-once at creation, NULL if undeclared)"
+        real human_confidence "M17 Implemented: responder self-report 0..1 (written at respond time, NULL while open)"
         timestamp responded_at "NULL while open"
         timestamp created_at
     }
@@ -31,6 +33,18 @@ erDiagram
 > respond route validates it against the manifest-derived allow-list stored in
 > `schema` at creation and copies the resolved values into these columns at claim
 > time. See [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md).
+
+> **(M17 — Implemented, migration `0024`.)** The HITL assessment taxonomy (ADR-050):
+> - `criticality` — flow-author-declared severity (`low | medium | high | critical`,
+>   enforced at the app layer), copied from the `human` node/step manifest into the
+>   row at INSERT. **Write-once**: set at creation, never updated; `NULL` when the
+>   Flow author leaves it undeclared (no DB default).
+> - `human_confidence` — the responder's self-reported certainty in `[0, 1]`,
+>   written in the respond service's Phase-1 transaction and **also echoed into the
+>   `response` jsonb** as `{ confidence: <number> }`. `NULL` while the row is open.
+>   This is the *human* responder's self-report — distinct from the M15 AI-judge
+>   `GateVerdict.confidence` on `gate_results.verdict` (machine confidence). The two
+>   are never conflated.
 
 ## In-jsonb shape — `schema` column
 
@@ -68,6 +82,12 @@ Shape varies by kind:
 | `permission` | `{ optionId: string }` |
 | `form` | An object whose keys match `schema.fields[].name`, with the matching `type`. |
 | `human` | Form-shaped object, optionally including review fields such as `{ rejected?: boolean, comments?: string }`. **(M11a — Designed)** a graph `human_review` payload carries `{ decision, comments?, workspacePolicy? }` validated against the row's `schema` allow-list and mirrored into the `decision`/`workspace_policy`/`rework_target` columns. |
+
+**(M17 — Implemented.)** On any `form`/`human`/review response the responder's
+self-reported `human_confidence` is echoed into `response` as `{ confidence: <number> }`
+(`0..1`), alongside whatever the kind's payload already carries. The canonical
+store for the value is the `human_confidence` column; the `response.confidence`
+echo keeps the answer self-describing without a separate read.
 
 Free-form `additionalProperties` are tolerated (forward-compat).
 

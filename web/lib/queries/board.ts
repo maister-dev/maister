@@ -3,19 +3,22 @@ import "server-only";
 import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
+import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { extractOptions } from "@/lib/queries/hitl";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
   artifactInstances,
   flows,
+  hitlRequests,
   nodeAttempts,
   runs,
   stepRuns,
@@ -93,6 +96,14 @@ export interface FlightCard {
   // M18 (T4.4): the pre-seeded PR number for a `pull_request`-mode run (display
   // only); null when no PR has been recorded.
   prNumber: number | null;
+  // M17 P4: HITL fields, populated only for NeedsInput/NeedsInputIdle cards
+  // with a pending (respondedAt IS NULL) hitl_requests row. All null/[] on
+  // every non-needs card or when no pending request exists.
+  hitlRequestId: string | null;
+  hitlKind: "permission" | "form" | "human" | null;
+  hitlOptions: HitlOption[];
+  hitlSchema: unknown | null;
+  criticality: "low" | "medium" | "high" | "critical" | null;
 }
 
 export interface BoardColumnData {
@@ -312,6 +323,59 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   // blocking gate with status="stale".
   const readinessByRun = await computeReadinessByRun(client, latestRunIds);
 
+  // M17 P4: bulk HITL query — one query for all NeedsInput/NeedsInputIdle
+  // latest runs. Map by runId. Never N+1 and never leaks acp/supervisor handles.
+  const hitlByRun = new Map<
+    string,
+    {
+      hitlRequestId: string;
+      hitlKind: "permission" | "form" | "human";
+      hitlSchema: unknown | null;
+      hitlOptions: HitlOption[];
+      criticality: "low" | "medium" | "high" | "critical" | null;
+    }
+  >();
+
+  const needsRunIds: string[] = [];
+
+  for (const row of latestRunByTask.values()) {
+    if (row.status === "NeedsInput" || row.status === "NeedsInputIdle") {
+      needsRunIds.push(row.runId);
+    }
+  }
+
+  if (needsRunIds.length > 0) {
+    const hitlRows = await client
+      .select({
+        id: hitlRequests.id,
+        runId: hitlRequests.runId,
+        kind: hitlRequests.kind,
+        rawSchema: hitlRequests.schema,
+        criticality: hitlRequests.criticality,
+      })
+      .from(hitlRequests)
+      .where(
+        and(
+          inArray(hitlRequests.runId, needsRunIds),
+          isNull(hitlRequests.respondedAt),
+        ),
+      )
+      .orderBy(asc(hitlRequests.createdAt));
+
+    for (const row of hitlRows) {
+      if (hitlByRun.has(row.runId)) continue;
+      hitlByRun.set(row.runId, {
+        hitlRequestId: row.id,
+        hitlKind: row.kind,
+        // Permission schemas carry supervisor-internal handles — never expose to
+        // the browser (mirrors the ext-API DTO guard). Options suffice for the UI.
+        hitlSchema: row.kind === "permission" ? null : (row.rawSchema ?? null),
+        hitlOptions: extractOptions(row.kind, row.rawSchema),
+        criticality: row.criticality ?? null,
+      });
+    }
+  }
+
   // M11b (ADR-030): the active takeover claim per latest run — owner + the
   // claim time (the takeover node_attempts.started_at). Drives the
   // `humanworking` card's "claimed by <owner>" badge and elapsed time. The
@@ -430,6 +494,26 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         run.status === "Review" &&
         (readinessByRun.get(run.runId) ?? "ready") === "ready",
       prNumber: run.prNumber ?? null,
+      // M17 P4: HITL fields — only for needs-status cards with a pending request.
+      ...(cardStatus === "needs"
+        ? (() => {
+            const hitl = hitlByRun.get(run.runId) ?? null;
+
+            return {
+              hitlRequestId: hitl?.hitlRequestId ?? null,
+              hitlKind: hitl?.hitlKind ?? null,
+              hitlOptions: hitl?.hitlOptions ?? [],
+              hitlSchema: hitl?.hitlSchema ?? null,
+              criticality: hitl?.criticality ?? null,
+            };
+          })()
+        : {
+            hitlRequestId: null,
+            hitlKind: null,
+            hitlOptions: [],
+            hitlSchema: null,
+            criticality: null,
+          }),
     });
 
     if (

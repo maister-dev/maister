@@ -176,6 +176,20 @@
       "when": 1780600000000,
       "tag": "0024_m22_flow_graph_layouts",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780600000001,
+      "tag": "0025_m17_hitl_assessment",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780600000002,
+      "tag": "0026_m17_actor_token_uniqueness",
+      "breakpoints": true
     }
   ]
 }

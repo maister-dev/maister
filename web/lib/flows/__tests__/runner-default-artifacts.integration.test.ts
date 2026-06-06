@@ -18,6 +18,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { recordDefaultArtifacts } from "@/lib/flows/graph/default-artifacts";
 import { runFlow } from "@/lib/flows/runner";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -311,6 +312,72 @@ describe("runFlow — default artifacts (T3.3, engine_min 1.1.0+, linear steps[]
 
     expect(hitlArt).toBeDefined();
     expect(hitlArt?.producer).toBe("runner");
+  });
+
+  it("binds human_note to the LATEST responded HITL + the current attempt (rework evidence)", async () => {
+    // Regression: after reject -> rework -> approve, the step has two responded
+    // HITL rows. recordDefaultArtifacts must bind the human_note to the LATEST
+    // (approve) and record it under the CURRENT attempt — never the stale reject
+    // at attempt 1.
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.1.0" },
+      steps: [{ id: "review", type: "human", form_schema: "./schemas/r.json" }],
+    };
+    const seeded = await seedLinearRun(manifest);
+    const wsRows = (await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.runId, seeded.runId))) as any[];
+
+    const rejectId = randomUUID();
+    const approveId = randomUUID();
+    const earlier = new Date(Date.now() - 60_000);
+    const later = new Date();
+
+    await db.insert(schema.hitlRequests).values({
+      id: rejectId,
+      runId: seeded.runId,
+      stepId: "review",
+      kind: "human",
+      prompt: "review",
+      response: { rejected: true, comments: "fix it" },
+      respondedAt: earlier,
+      createdAt: earlier,
+    });
+    await db.insert(schema.hitlRequests).values({
+      id: approveId,
+      runId: seeded.runId,
+      stepId: "review",
+      kind: "human",
+      prompt: "review",
+      response: { approved: true },
+      respondedAt: later,
+      createdAt: later,
+    });
+
+    await recordDefaultArtifacts(
+      {
+        runId: seeded.runId,
+        stepRunId: randomUUID(),
+        nodeId: "review",
+        attempt: 2,
+        projectSlug: seeded.slug,
+        workspace: wsRows[0],
+        runtimeRoot: seeded.runtimeRoot,
+      },
+      db,
+    );
+
+    const artifacts = await getArtifactInstances(seeded.runId);
+    const note = artifacts.find((a) => a.kind === "human_note");
+
+    expect(note).toBeDefined();
+    expect(note.attempt).toBe(2);
+    expect((note.locator as { hitlRequestId: string }).hitlRequestId).toBe(
+      approveId,
+    );
   });
 
   it("does not record default if payload missing (best-effort)", async () => {

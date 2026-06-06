@@ -67,6 +67,31 @@ export async function resolveCurrentNodeKind(
   );
 }
 
+// M17 (ADR-052): resolve BOTH the current node kind AND whether the run's flow
+// is a flat `steps[]` (linear) flow, in ONE manifest load. Reconcile needs the
+// linear flag to route a session-less gate/human orphan to `crash` (linear has
+// no graph mid-flow resume) instead of `redispatch`. `isLinear` is true when the
+// manifest declares `steps[]`; graph (`nodes[]`) flows return false.
+export async function resolveCurrentNodeContext(
+  db: Db,
+  run: {
+    flowRevisionId: string | null;
+    flowId: string | null;
+    currentStepId: string | null;
+  },
+): Promise<{ nodeKind: NodeAttemptType | null; isLinear: boolean }> {
+  const manifest = await resolveManifest(db, run);
+
+  if (!manifest) return { nodeKind: null, isLinear: false };
+
+  const isLinear = Array.isArray(manifest.steps) && manifest.steps.length > 0;
+  const nodeKind = run.currentStepId
+    ? (compileManifest(manifest).nodes.get(run.currentStepId)?.nodeType ?? null)
+    : null;
+
+  return { nodeKind, isLinear };
+}
+
 // M19 crash-recover (ADR-034): resolve BOTH the node kind and its `retry_safe`
 // opt-in for a given step id (the recover target = resume_target_step_id ??
 // current_step_id). The classifier needs both to decide resume-agent vs

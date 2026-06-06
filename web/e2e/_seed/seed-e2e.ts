@@ -601,6 +601,50 @@ const M16_REVIEW_SCHEMA = {
 // No blocking gates on any run → readiness rolls up `ready` (the promote gate
 // passes). The flow manifest is the minimal implement→review shape (like M11a).
 
+// --- M17 fixture: cross-project HITL inbox with graph human_review ---------
+// Two projects each with runs in NeedsInput + pending HITL requests:
+// - Project 1: permission kind (binary) + human_review kind with criticality badge
+// - Project 2: human_review kind with on_reject send-back schema
+// Inbox appears on portfolio home with count badge.
+
+const M17_PROJECT1_SLUG = "e2e-m17-project1";
+const M17_PROJECT2_SLUG = "e2e-m17-project2";
+const M17_BRANCH1 = "maister/e2e-m17-proj1";
+const M17_BRANCH2 = "maister/e2e-m17-proj2";
+
+const M17_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
+};
+
+const M17_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF HITL (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      prompt: "implement {{ task.prompt }}",
+    },
+    {
+      id: "review",
+      type: "human",
+      decisions: ["approve", "rework"],
+      transitions: { approve: "done", rework: "implement" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
 const M18_SLUG = "e2e-m18";
 const M18_TARGET_BRANCH = "release";
 const M18_MERGE_BRANCH = "maister/e2e-m18-merge";
@@ -2417,6 +2461,235 @@ async function seedM16Fixture(
   };
 }
 
+// --- M17 Fixture type and seeding function --------------------------------
+
+type M17FixtureRecord = {
+  project1Slug: string;
+  project1Id: string;
+  project1RunId: string;
+  project1HitlId: string;
+  project1Branch: string;
+  project2Slug: string;
+  project2Id: string;
+  project2RunId: string;
+  project2HitlId: string;
+  project2Branch: string;
+};
+
+async function seedM17Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M17FixtureRecord> {
+  const ids = {
+    project1: randomUUID(),
+    executor1: randomUUID(),
+    flow1: randomUUID(),
+    task1: randomUUID(),
+    run1: randomUUID(),
+    workspace1: randomUUID(),
+    hitl1: randomUUID(),
+    implAttempt1: randomUUID(),
+    reviewAttempt1: randomUUID(),
+    project2: randomUUID(),
+    executor2: randomUUID(),
+    flow2: randomUUID(),
+    task2: randomUUID(),
+    run2: randomUUID(),
+    workspace2: randomUUID(),
+    hitl2: randomUUID(),
+    implAttempt2: randomUUID(),
+    reviewAttempt2: randomUUID(),
+  };
+
+  const repoPath1 = `/tmp/maister-e2e/${ids.project1}`;
+  const repoPath2 = `/tmp/maister-e2e/${ids.project2}`;
+  const worktreePath1 = `${repoPath1}/.worktrees/e2e-m17-proj1`;
+  const worktreePath2 = `${repoPath2}/.worktrees/e2e-m17-proj2`;
+
+  // Clean up any prior M17 state
+  await pool.query(`DELETE FROM projects WHERE slug IN ($1, $2)`, [
+    M17_PROJECT1_SLUG,
+    M17_PROJECT2_SLUG,
+  ]);
+
+  // --- Project 1: permission + human_review with criticality ---
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project1,
+      M17_PROJECT1_SLUG,
+      "MAIster E2E M17 Project 1",
+      repoPath1,
+      `${repoPath1}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor1, ids.project1],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow1,
+      ids.project1,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m17@v0.0.1`,
+      JSON.stringify(M17_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.task1,
+      ids.project1,
+      "M17 Project 1 Review",
+      "Review and approve the implementation",
+      ids.flow1,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run1, ids.task1, ids.project1, ids.flow1, ids.executor1],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.workspace1,
+      ids.run1,
+      ids.project1,
+      M17_BRANCH1,
+      worktreePath1,
+      repoPath1,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.implAttempt1, ids.run1],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.reviewAttempt1, ids.run1],
+  );
+  // Human review with criticality "high"
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, criticality)
+     VALUES ($1, $2, 'review', 'human_review', $3, $4, 'high')`,
+    [
+      ids.hitl1,
+      ids.run1,
+      JSON.stringify(M17_REVIEW_SCHEMA),
+      "Review the implementation for code quality and correctness.",
+    ],
+  );
+
+  // --- Project 2: human_review with on_reject send-back schema ---
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project2,
+      M17_PROJECT2_SLUG,
+      "MAIster E2E M17 Project 2",
+      repoPath2,
+      `${repoPath2}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
+     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
+    [ids.executor2, ids.project2],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow2,
+      ids.project2,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m17-proj2@v0.0.1`,
+      JSON.stringify(M17_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [
+      ids.task2,
+      ids.project2,
+      "M17 Project 2 Review",
+      "Review and decide on the feature",
+      ids.flow2,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run2, ids.task2, ids.project2, ids.flow2, ids.executor2],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      ids.workspace2,
+      ids.run2,
+      ids.project2,
+      M17_BRANCH2,
+      worktreePath2,
+      repoPath2,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.implAttempt2, ids.run2],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.reviewAttempt2, ids.run2],
+  );
+  // Human review with medium criticality and on_reject schema for send-back
+  const schemaWithOnReject = {
+    ...M17_REVIEW_SCHEMA,
+    onReject: {
+      goto_step: "implement",
+      commentsVar: "review_comments",
+    },
+  };
+
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, criticality)
+     VALUES ($1, $2, 'review', 'human_review', $3, $4, 'medium')`,
+    [
+      ids.hitl2,
+      ids.run2,
+      JSON.stringify(schemaWithOnReject),
+      "Review the feature design and provide feedback.",
+    ],
+  );
+
+  return {
+    project1Slug: M17_PROJECT1_SLUG,
+    project1Id: ids.project1,
+    project1RunId: ids.run1,
+    project1HitlId: ids.hitl1,
+    project1Branch: M17_BRANCH1,
+    project2Slug: M17_PROJECT2_SLUG,
+    project2Id: ids.project2,
+    project2RunId: ids.run2,
+    project2HitlId: ids.hitl2,
+    project2Branch: M17_BRANCH2,
+  };
+}
+
 // The M18 fixture carries the three Review run ids (one per promotion scenario)
 // plus the target branch + the pre-seeded PR display fields, so the e2e spec can
 // navigate each run-detail page and assert the promote / conflict / PR-display
@@ -3138,6 +3411,7 @@ async function main(): Promise<void> {
     const m19 = await seedM19Fixture(pool, admin.id);
     const m15 = await seedM15Fixture(pool, admin.id);
     const m16 = await seedM16Fixture(pool, admin.id);
+    const m17 = await seedM17Fixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
 
@@ -3177,6 +3451,7 @@ async function main(): Promise<void> {
         m19,
         m15,
         m16,
+        m17,
         m18,
         m22,
       },
@@ -3195,6 +3470,7 @@ async function main(): Promise<void> {
         `, m19 crashed ${m19.crashedRunId} (${M19_SLUG})` +
         `, m15 failed ${m15.failedRunId} overridden ${m15.overriddenRunId} (${M15_SLUG})` +
         `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})` +
+        `, m17 proj1 ${m17.project1RunId} proj2 ${m17.project2RunId} (${M17_PROJECT1_SLUG}, ${M17_PROJECT2_SLUG})` +
         `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
         `, m22 run ${m22.runId} (${M22_SLUG})`,
     );

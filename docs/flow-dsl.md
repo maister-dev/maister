@@ -485,10 +485,14 @@ The report becomes a normal artifact in the run evidence graph. If the
 dependent commit, upstream artifact, or gate input changes, the external check
 becomes stale and must be reported again or overridden through human review.
 
-The MAIster MCP server exposes only a thin facade over the same operations:
-create/list/get/update task, launch run, get run, get readiness, and report a
-gate result where the token is authorized. MCP tools never bypass Flow
-validation, token authorization, readiness, or artifact recording.
+The MAIster MCP server exposes a thin facade over the operations API: 10 tools
+(create/list/get/update task; launch/get run; get readiness; report a gate
+result; list and respond to HITL requests) where the token is authorized. The
+two HITL tools — `hitl_list` and `hitl_respond` — are backed by the
+`GET /api/v1/ext/runs/{runId}/hitl` (`hitl:read`) and
+`POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond` (`hitl:respond`)
+ext routes (Implemented — M17). MCP tools never bypass Flow validation,
+token authorization, readiness, or artifact recording.
 
 ### `cli` step
 
@@ -554,6 +558,7 @@ success.
 - id: review
   type: human
   form_schema: ./schemas/review.json
+  criticality: high          # optional — low | medium | high | critical
   on_reject:
     goto_step: implement
     comments_var: review_comments
@@ -563,8 +568,30 @@ Inserts a `hitl_requests` row of `kind: "human"`, transitions the run to
 `NeedsInput`, and returns. The response route writes
 `input-<stepId>.json` after the HITL row is claimed, then schedules
 `runFlow`; the runner owns the `NeedsInput -> Running` transition.
-`on_reject.goto_step` is recorded but not executed by the runner for linear
-`steps[]` flows. In a graph flow (`nodes[]`) it is **superseded** by node
+
+**`criticality`** (optional, `low | medium | high | critical`) — flow-author-declared
+severity. Stored on `hitl_requests.criticality` at row creation; write-once.
+Controls inbox sort order and badge display. Additive — no engine bump; absent
+means no severity declared.
+
+**Responder `confidence`** — a response-time self-report (`number 0..1`)
+supplied by the human when answering. Captured from the response body; stored
+as `hitl_requests.human_confidence` and echoed in the `response` jsonb.
+`confidence` is NOT a flow-declared field — flow authors cannot pre-declare it;
+it is submitted with the answer, not specified in `flow.yaml`.
+
+**`on_reject.goto_step` + `comments_var`** (Implemented — M17): for linear
+`steps[]` flows, submitting a reject response reparks the runner to the named
+step via a single atomic `currentStepId` CAS, bounded by a re-entry guard
+(`maxLoops`, default 5). Comments travel via a dedicated
+`rework-comments-<gotoStepId>.json` artifact — they are **never** written to
+`input-<gotoStepId>.json`, which would falsely auto-satisfy a re-reached
+human/form step. Completion sentinels (`input-<stepId>.json`) for every step in
+the window `[gotoTarget..humanStep]` are deleted before the repark commit so
+re-reached human/form steps re-prompt instead of auto-satisfying from a prior
+pass. Exceeding `maxLoops` terminates the run with `MaisterError("CONFIG")`
+(parity with the graph runner's `rework.maxLoops` breach).
+In a graph flow (`nodes[]`) `on_reject` is **superseded** by node
 `transitions` + `finish.human.decisions`, which drive the validated
 review-driven rework loop (M11a — see
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md)).

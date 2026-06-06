@@ -508,6 +508,101 @@ describe("runReconcileSweep (integration)", () => {
     expect(runFlow).toHaveBeenCalledWith(checkRun);
   }, 60_000);
 
+  it("crashes a reparked-Running LINEAR run on a human goto target (window-(c)), retaining resume_target_step_id — does NOT redispatch (ADR-052)", async () => {
+    // M17 window-(c): a flat steps[] run reparked onto a human on_reject goto
+    // target, whose process died AFTER the repark CAS commit, is Running with
+    // currentStepId on the human goto target and no live session. A bare
+    // runFlow would restart at step 0 and re-run prior side-effects; reconcile
+    // must CRASH it (linear-gate-orphan) so crashRunningRun retains the node in
+    // resume_target_step_id and operator Recover resumes from it via crashResume.
+    const linearFlowId = randomUUID();
+    const linearRevId = randomUUID();
+    const LINEAR_MANIFEST = {
+      schemaVersion: 1,
+      name: "recon-linear-human",
+      steps: [
+        {
+          id: "first-review",
+          type: "human",
+          form_schema: "./schemas/review.json",
+          on_reject: { goto_step: "rework-review", comments_var: "fb" },
+        },
+        {
+          id: "rework-review",
+          type: "human",
+          form_schema: "./schemas/review.json",
+        },
+      ],
+    };
+
+    await db.insert(flows).values({
+      id: linearFlowId,
+      projectId,
+      flowRefId: "recon-linear",
+      source: "github.com/x/recon-linear",
+      version: "v1.0.0",
+      installedPath: "/tmp/flows/recon-linear",
+      manifest: LINEAR_MANIFEST,
+      schemaVersion: 1,
+    });
+    await db.insert(flowRevisions).values({
+      id: linearRevId,
+      flowRefId: "recon-linear",
+      source: "github.com/x/recon-linear",
+      versionLabel: "v1.0.0",
+      resolvedRevision: "cafef00d",
+      manifestDigest: "sha256:recon-linear",
+      manifest: LINEAR_MANIFEST,
+      schemaVersion: 1,
+      installedPath: "/tmp/flows/recon-linear",
+      packageStatus: "Installed",
+    });
+
+    const taskId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(tasks).values({
+      id: taskId,
+      projectId,
+      title: "t",
+      prompt: "p",
+      flowId: linearFlowId,
+      status: "InFlight",
+    });
+    await db.insert(runs).values({
+      id: runId,
+      taskId,
+      projectId,
+      flowId: linearFlowId,
+      flowRevisionId: linearRevId,
+      executorId,
+      runKind: "flow",
+      status: "Running",
+      acpSessionId: null,
+      currentStepId: "rework-review", // the human goto target after repark
+      flowVersion: "v1",
+      startedAt: new Date(),
+      resumeStartedAt: null,
+    });
+    await seedWorkspace(runId, "/worktrees/linear-c");
+
+    const { opts, runFlow } = makeOpts({
+      worktreePaths: ["/worktrees/linear-c"],
+      liveSessions: [],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    const row = await readRun(runId);
+
+    expect(row.status).toBe("Crashed");
+    // crashRunningRun retains the goto target so operator Recover can resume it.
+    expect(row.resumeTargetStepId).toBe("rework-review");
+    expect(row.currentStepId).toBeNull();
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    expect(runFlow).not.toHaveBeenCalledWith(runId);
+  }, 60_000);
+
   it("excludes a takeover-return candidate (ownerUserId + returnedDiff + endedAt all set)", async () => {
     // This Running row's worktree is GONE and it has no live session — it
     // would normally crash — but the takeover ledger marks it as the

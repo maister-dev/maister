@@ -7,10 +7,12 @@ import type {
   ScratchDialogStatus,
 } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
+import type { HitlItem } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import {
   and,
+  asc,
   count,
   desc,
   eq,
@@ -24,11 +26,13 @@ import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
+import { mapRowsToHitlItems } from "@/lib/queries/hitl";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
+  actorIdentities,
   assignments,
   flows,
   hitlRequests,
@@ -868,4 +872,161 @@ export async function getRailWorkspaces(
       href: row.href,
     })),
   );
+}
+
+export type CrossProjectHitlItem = HitlItem & {
+  projectId: string;
+  projectSlug: string;
+  projectName: string;
+};
+
+export interface CrossProjectHitlInbox {
+  items: CrossProjectHitlItem[];
+  count: number;
+}
+
+const CRITICALITY_RANK: Record<string, number> = {
+  critical: 3,
+  high: 2,
+  medium: 1,
+  low: 0,
+};
+
+function critRank(c: string | null): number {
+  return c !== null ? (CRITICALITY_RANK[c] ?? -1) : -1;
+}
+
+export async function getCrossProjectHitlInbox(
+  userId: string,
+  globalRole: GlobalRole,
+): Promise<CrossProjectHitlInbox> {
+  const now = new Date();
+  const client = db();
+
+  // Resolve visible projects exactly like getPortfolio.
+  const visibleProjects =
+    globalRole === "admin"
+      ? await client
+          .select({
+            id: projects.id,
+            slug: projects.slug,
+            name: projects.name,
+          })
+          .from(projects)
+          .where(isNull(projects.archivedAt))
+      : await client
+          .select({
+            id: projects.id,
+            slug: projects.slug,
+            name: projects.name,
+          })
+          .from(projects)
+          .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
+          .where(
+            and(eq(projectMembers.userId, userId), isNull(projects.archivedAt)),
+          );
+
+  if (visibleProjects.length === 0) {
+    return { items: [], count: 0 };
+  }
+
+  const projectIds = visibleProjects.map((p) => p.id);
+
+  // One batched query: all pending hitl_requests across all visible run ids.
+  const rows = await client
+    .select({
+      hitlRequestId: hitlRequests.id,
+      runId: hitlRequests.runId,
+      kind: hitlRequests.kind,
+      prompt: hitlRequests.prompt,
+      rawSchema: hitlRequests.schema,
+      criticality: hitlRequests.criticality,
+      createdAt: hitlRequests.createdAt,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
+      branch: workspaces.branch,
+      flowRef: flows.flowRefId,
+      projectId: runs.projectId,
+    })
+    .from(hitlRequests)
+    .innerJoin(runs, eq(runs.id, hitlRequests.runId))
+    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .innerJoin(flows, eq(flows.id, runs.flowId))
+    .where(
+      and(
+        inArray(runs.projectId, projectIds),
+        inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+        isNull(hitlRequests.respondedAt),
+      ),
+    )
+    .orderBy(asc(hitlRequests.createdAt));
+
+  if (rows.length === 0) {
+    return { items: [], count: 0 };
+  }
+
+  // Batched assignment + actor lookups (no N+1).
+  const hitlIds = rows.map((row) => row.hitlRequestId);
+  const assignmentRows = await client
+    .select()
+    .from(assignments)
+    .where(inArray(assignments.hitlRequestId, hitlIds));
+
+  const actorIds = assignmentRows
+    .map((a) => a.assigneeActorId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const actorRows =
+    actorIds.length > 0
+      ? await client
+          .select({
+            id: actorIdentities.id,
+            label: actorIdentities.label,
+            userId: actorIdentities.userId,
+          })
+          .from(actorIdentities)
+          .where(inArray(actorIdentities.id, actorIds))
+      : [];
+
+  const actorsById = new Map(actorRows.map((a) => [a.id, a]));
+  const assignmentsByHitlId = new Map(
+    assignmentRows.map((a) => [a.hitlRequestId, a]),
+  );
+
+  // Build project lookup for slug/name.
+  const projectById = new Map(
+    visibleProjects.map((p) => [p.id, { slug: p.slug, name: p.name }]),
+  );
+
+  const baseItems = mapRowsToHitlItems(
+    rows,
+    assignmentsByHitlId,
+    actorsById,
+    now,
+  );
+
+  const items: CrossProjectHitlItem[] = baseItems.map((item, idx) => {
+    const projId = rows[idx].projectId;
+    const proj = projectById.get(projId) ?? { slug: projId, name: projId };
+
+    return {
+      ...item,
+      projectId: projId,
+      projectSlug: proj.slug,
+      projectName: proj.name,
+    };
+  });
+
+  // Sort: criticality DESC (critical>high>medium>low>null), then createdAt ASC (already asc from DB).
+  items.sort((a, b) => {
+    const rankDiff = critRank(b.criticality) - critRank(a.criticality);
+
+    return rankDiff !== 0 ? rankDiff : 0; // createdAt order already preserved from DB
+  });
+
+  // `count` is the size of THIS inbox list — pending hitl_requests rows in
+  // NeedsInput/NeedsInputIdle. It is intentionally narrower than
+  // getPortfolio.totalNeeds (the actionable-ASSIGNMENT total, which also counts
+  // HumanWorking/Review runs): the home "needs you" headline reflects
+  // totalNeeds, while this `count` titles the HITL inbox block specifically.
+  return { items, count: items.length };
 }

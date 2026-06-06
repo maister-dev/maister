@@ -153,7 +153,7 @@ async function tryReadInputArtifact(
 // artifact; on first visit create the review HITL (with the manifest-derived
 // allow-list in `schema`) and pause. Full decision validation + rework
 // staleness land in Phase 5; here the decision drives the pointer move.
-async function runReviewHuman(
+export async function runReviewHuman(
   node: CompiledNode,
   loaded: LoadedRun,
   prompt: string,
@@ -236,6 +236,17 @@ async function runReviewHuman(
     ),
   );
 
+  const nodeCriticality =
+    node.nodeType === "human" &&
+    node.settings !== undefined &&
+    "criticality" in node.settings
+      ? ((
+          node.settings as {
+            criticality?: "low" | "medium" | "high" | "critical";
+          }
+        ).criticality ?? null)
+      : null;
+
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
     await tx.insert(hitlRequests).values({
       id: hitlRequestId,
@@ -244,7 +255,12 @@ async function runReviewHuman(
       kind: "human",
       schema,
       prompt,
+      criticality: nodeCriticality,
     });
+    log.debug(
+      { runId: loaded.run.id, nodeId: node.id, criticality: nodeCriticality },
+      "criticality resolved at creation",
+    );
     await createHitlAssignmentForRun({
       db: tx,
       runId: loaded.run.id,

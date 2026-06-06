@@ -11,7 +11,7 @@ import pino from "pino";
 import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { resolveCurrentNodeKind } from "@/lib/flows/graph/current-node-kind";
+import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import {
   reconcileGraceSeconds,
@@ -48,6 +48,7 @@ export type ReconcileReason =
   | "worktree-gone"
   | "live-session"
   | "gate-redispatch"
+  | "linear-gate-orphan"
   | "cli-not-retry-safe"
   | "grace-window"
   | "agent-session-gone";
@@ -71,6 +72,13 @@ export interface ReconcileInput {
   latestAttemptStartedAt: Date | null;
   nowMs: number;
   graceSeconds: number;
+  // M17 (ADR-052): true when the run executes a flat `steps[]` flow (vs a
+  // graph `nodes[]` flow). A linear run has NO graph resume — bare `runFlow`
+  // restarts from step 0 and re-runs prior side-effects — so a session-less
+  // gate/human orphan (incl. the repark window-(c) state) must reconcile to
+  // `crash` and recover via `resume_target_step_id`, NOT auto-redispatch.
+  // Graph runs (false/omitted) keep the existing gate-redispatch path.
+  isLinearFlow?: boolean;
 }
 
 export interface ReconcileDecision {
@@ -140,6 +148,15 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   }
 
   // check / judge / guard / human / null → retry-safe gate re-dispatch.
+  // A linear (flat `steps[]`) run cannot resume mid-flow through `runFlow`
+  // (no graph node-resume; bare re-entry restarts at step 0 and re-runs prior
+  // side-effects). Crash it instead so `crashRunningRun` retains the node in
+  // `resume_target_step_id` and operator Recover resumes from it via
+  // `crashResume` (ADR-052 window-(c)). Graph runs keep gate-redispatch.
+  if (input.isLinearFlow) {
+    return { action: "crash", reason: "linear-gate-orphan" };
+  }
+
   return { action: "redispatch", reason: "gate-redispatch" };
 }
 
@@ -194,6 +211,8 @@ function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
       return "agent-session-gone";
     case "cli-not-retry-safe":
       return "cli-not-retry-safe";
+    case "linear-gate-orphan":
+      return "linear-gate-orphan";
     default:
       // Defensive: only crash reasons reach a crash dispatch.
       return "agent-session-gone";
@@ -425,10 +444,10 @@ export async function runReconcileSweep(
       worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false;
     const live = cand.acpSessionId ? liveMap.get(cand.acpSessionId) : undefined;
 
-    const currentNodeKind =
+    const { nodeKind: currentNodeKind, isLinear } =
       cand.runKind === "scratch"
-        ? null
-        : await resolveCurrentNodeKind(db, {
+        ? { nodeKind: null, isLinear: false }
+        : await resolveCurrentNodeContext(db, {
             flowRevisionId: cand.flowRevisionId,
             flowId: cand.flowId,
             currentStepId: cand.currentStepId,
@@ -449,6 +468,7 @@ export async function runReconcileSweep(
         latestAttemptStartedAt: attemptStartedAt,
         nowMs,
         graceSeconds,
+        isLinearFlow: isLinear,
       },
       cand.runId,
     );

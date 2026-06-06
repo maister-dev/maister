@@ -35,6 +35,10 @@ export function httpStatusForExtCode(code: string): number {
       return 422;
     case "EXECUTOR_UNAVAILABLE":
       return 503;
+    // Supervisor rejected the delivery at the protocol level — terminal upstream
+    // failure, distinct from a generic 500.
+    case "ACP_PROTOCOL":
+      return 502;
     default:
       return 500;
   }
@@ -53,6 +57,12 @@ export async function handleExt(
     // SKIPS its success after-audit on a <400 response, but STILL writes the
     // failure audit on >=400 (work never reaches its in-tx audit on failure).
     successAuditInWork?: boolean;
+    // M17 §D8 (ADR-051): opt-in scope enforcement. When set, the actor MUST hold
+    // `scopeLabel` (or the `*` wildcard) or the request is rejected 403 BEFORE
+    // work() runs. ONLY the two HITL routes opt in; every other ext route leaves
+    // this unset and keeps ADR-046 binary (scope label audit-only). The 403 body
+    // never reveals which scopes the token holds.
+    requireScope?: boolean;
   },
   work: (ctx: ExtCtx) => Promise<NextResponse>,
 ): Promise<NextResponse> {
@@ -136,6 +146,33 @@ export async function handleExt(
         { status: 404 },
       );
     }
+  }
+
+  // 3b. D8 scope enforcement (opt-in). The 403 body MUST NOT leak which scopes
+  // the token holds.
+  if (
+    opts.requireScope &&
+    !(actor.scopes.includes(opts.scopeLabel) || actor.scopes.includes("*"))
+  ) {
+    await recordTokenAudit(
+      {
+        tokenId: actor.tokenId,
+        projectId: actor.projectId,
+        actorLabel: actor.actorLabel,
+        scopeUsed: opts.scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: "error",
+        statusCode: 403,
+      },
+      d,
+    ).catch(() => {});
+    void bumpTokenLastUsed(actor.tokenId, d).catch(() => {});
+
+    return NextResponse.json(
+      { code: "UNAUTHORIZED", message: "insufficient scope" },
+      { status: 403 },
+    );
   }
 
   // 4. Run work().

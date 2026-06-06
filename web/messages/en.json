@@ -150,7 +150,12 @@
       "recover": "recover",
       "discard": "discard",
       "none": "open"
-    }
+    },
+    "inboxTitle": "Needs you · {count}",
+    "inboxEmpty": "No pending items",
+    "inboxAriaLabel": "Cross-project HITL inbox",
+    "inboxCountAriaLabel": "{count} pending",
+    "pendingChip": "Needs you · {count}"
   },
   "scratch": {
     "eyebrow": "Scratch workspace",
@@ -481,7 +486,29 @@
     "discard": "Discard",
     "discarding": "Discarding…",
     "discardConfirmTitle": "Discard this run?",
-    "discardConfirmBody": "Discarding abandons the run and schedules its worktree for removal. This cannot be undone."
+    "discardConfirmBody": "Discarding abandons the run and schedules its worktree for removal. This cannot be undone.",
+    "confidenceLabel": "Confidence",
+    "criticalityLabel": "Criticality",
+    "criticality": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "critical": "critical"
+    },
+    "sendBackWithComments": "Send back with comments",
+    "error": {
+      "generic": "Something went wrong. Try again.",
+      "CRASH": "Something went wrong. Try again.",
+      "EXECUTOR_UNAVAILABLE": "The supervisor is unreachable. Retry in a moment.",
+      "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
+      "HITL_TIMEOUT": "This request expired before your response was delivered.",
+      "CONFLICT": "This request was already answered.",
+      "CONFIG": "The response was not valid for this request.",
+      "NEEDS_INPUT": "The response was incomplete. Check the fields and try again.",
+      "PRECONDITION": "This request is no longer available. Reload the page.",
+      "UNAUTHORIZED": "You do not have permission to answer this request.",
+      "ACCOUNT_INACTIVE": "Your account is inactive."
+    }
   },
   "evidence": {
     "title": "Evidence graph",
