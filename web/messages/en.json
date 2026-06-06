@@ -28,6 +28,7 @@
     "integrations": "Integrations",
     "settings": "Settings",
     "users": "Users",
+    "scheduler": "Scheduler",
     "board": "Board",
     "activity": "Activity",
     "observatory": "Observatory",
@@ -665,6 +666,58 @@
       "admin": "admin",
       "member": "member",
       "viewer": "viewer"
+    }
+  },
+  "adminScheduler": {
+    "eyebrow": "Admin",
+    "title": "Scheduler",
+    "sub": "Manage background scheduler jobs: system sweeps, commands, agent ticks, and scheduled Flow runs.",
+    "tableTitle": "Scheduler jobs",
+    "tableSub": "Jobs are claimed on each /api/cron/tick. Disabled jobs are skipped.",
+    "newJob": "New job",
+    "filterKindAll": "All kinds",
+    "filterStateAll": "All states",
+    "job": "Job",
+    "kindLabel": "Kind",
+    "cadence": "Cadence",
+    "secondsSuffix": "s",
+    "nextRun": "Next run",
+    "stateLabel": "State",
+    "failures": "Failures",
+    "actions": "Actions",
+    "edit": "Edit",
+    "delete": "Delete",
+    "never": "Never",
+    "noResults": "No scheduler jobs match these filters.",
+    "createTitle": "Create scheduler job",
+    "editTitle": "Edit scheduler job",
+    "idLabel": "ID",
+    "idPlaceholder": "auto",
+    "maxFailures": "Max failures",
+    "target": "Target (JSON)",
+    "enabledLabel": "Enabled",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "targetInvalidJson": "Target must be valid JSON.",
+    "targetMustBeObject": "Target must be a JSON object.",
+    "cadenceInvalid": "Cadence must be a positive whole number of seconds.",
+    "maxFailuresInvalid": "Max failures must be a positive whole number.",
+    "kind": {
+      "system_sweep": "system_sweep",
+      "command": "command",
+      "agent_tick": "agent_tick",
+      "flow_run": "flow_run"
+    },
+    "state": {
+      "active": "active",
+      "disabled": "disabled"
+    },
+    "targetHint": {
+      "system_sweep": "No target needed; use {}.",
+      "command": "{ \"commandKind\": \"http_ping\", \"url\": \"https://…\" } or { \"commandKind\": \"console_ping\", \"host\": \"example.com\" }",
+      "agent_tick": "Free-form target passed to the agent launcher.",
+      "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }"
     }
   },
   "adminUsers": {

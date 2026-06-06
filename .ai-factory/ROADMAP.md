@@ -542,6 +542,10 @@
 
 - [x] **M23. Observatory read-only metrics surface** — shipped 2026-06-05. Wave-1 Observatory implements the read-only half of the correction/autonomy learning loop. It adds no migrations and no public Web API routes: server-component pages call batched read models over existing `runs`, `node_attempts`, `gate_results`, `hitl_requests`, and `artifact_instances` rows. Metrics: `correction_rate = (rework + retries) / runs` as an unbounded pressure ratio, Autonomy Score from merged HITL wait intervals over total run time, artifact buckets by definition/kind, and repeatable signal clusters for structured rework, failed blocking gates, and retries with redacted examples. UI: `/observatory` portfolio dashboard, `/projects/[slug]/observatory` project dashboard with GET filters, node drill-down links, EN/RU labels, and seeded M23 Playwright coverage. ADR-051 locks the formulas and harvest priority. **Deferred:** write-side learning, automatic fixes, recommendations, M17 `criticality`/`human_confidence` weighting, and any new analytics persistence/index migrations.
 
+- [x] **M24. Scheduler service (one clock, polymorphic jobs)** — shipped 2026-06-05 via `feature/m24-m25-wave1-long-lead`. Adds ADR-060, the spec SSOT, migration `0027_m24_scheduler_service.sql`, `scheduler_jobs`, `scheduler_job_runs`, and `agent_schedules`; token-guarded `GET/POST /api/cron/tick`; `/api/cron/gc` compatibility wrapper over shared `system_sweep`; fixed-interval catch-up-not-backfill claim core; stuck-attempt reaping; command/agent/flow handler seams; disabled-by-default web-tier fallback timer; scheduler status read model; and docs/OpenAPI/env updates. The supervisor remains DB-free, and `flow_run` is the only scheduler kind that reaches the existing flow cap.
+
+- [x] **M25. Capability catalog groundwork** — shipped 2026-06-05 via `feature/m24-m25-wave1-long-lead`. Adds ADR-061, the spec SSOT, migration `0028_m25_authored_capability_catalog.sql`, `authored_capabilities`, `authored_capability_revisions`, canonical content hashes, draft optimistic concurrency, local publish/archive services, REST groundwork under `/api/projects/{slug}/catalog/caps`, authored rule/skill projection into `capability_records`, authored flow catalog-only publication, and config SET/CLEAR preservation for `material.origin='authored'`. PR publication and two-way catalog-repo sync stay deferred.
+
 ## Completed
 
 | Milestone                                                                    | Date       |
@@ -569,3 +573,5 @@
 | M17. HITL hybrid surface                                                     | 2026-06-04 |
 | M21. Project repo onboarding (URL clone + configurable roots)                | 2026-05-31 |
 | M23. Observatory read-only metrics surface                                   | 2026-06-05 |
+| M24. Scheduler service (one clock, polymorphic jobs)                         | 2026-06-05 |
+| M25. Capability catalog groundwork                                           | 2026-06-05 |

@@ -28,6 +28,7 @@
     "integrations": "Интеграции",
     "settings": "Настройки",
     "users": "Пользователи",
+    "scheduler": "Планировщик",
     "board": "Доска",
     "activity": "Активность",
     "observatory": "Обсерватория",
@@ -665,6 +666,58 @@
       "admin": "админ",
       "member": "участник",
       "viewer": "наблюдатель"
+    }
+  },
+  "adminScheduler": {
+    "eyebrow": "Админ",
+    "title": "Планировщик",
+    "sub": "Управление фоновыми задачами планировщика: системные свипы, команды, тики агентов и запланированные запуски Flow.",
+    "tableTitle": "Задачи планировщика",
+    "tableSub": "Задачи забираются на каждом /api/cron/tick. Отключённые задачи пропускаются.",
+    "newJob": "Новая задача",
+    "filterKindAll": "Все типы",
+    "filterStateAll": "Все состояния",
+    "job": "Задача",
+    "kindLabel": "Тип",
+    "cadence": "Интервал",
+    "secondsSuffix": "с",
+    "nextRun": "Следующий запуск",
+    "stateLabel": "Состояние",
+    "failures": "Сбои",
+    "actions": "Действия",
+    "edit": "Изменить",
+    "delete": "Удалить",
+    "never": "Никогда",
+    "noResults": "Нет задач по этим фильтрам.",
+    "createTitle": "Создать задачу планировщика",
+    "editTitle": "Изменить задачу планировщика",
+    "idLabel": "ID",
+    "idPlaceholder": "авто",
+    "maxFailures": "Макс. сбоев",
+    "target": "Цель (JSON)",
+    "enabledLabel": "Включена",
+    "save": "Сохранить",
+    "saving": "Сохранение…",
+    "cancel": "Отмена",
+    "targetInvalidJson": "Цель должна быть корректным JSON.",
+    "targetMustBeObject": "Цель должна быть JSON-объектом.",
+    "cadenceInvalid": "Интервал должен быть положительным целым числом секунд.",
+    "maxFailuresInvalid": "Макс. сбоев должно быть положительным целым числом.",
+    "kind": {
+      "system_sweep": "system_sweep",
+      "command": "command",
+      "agent_tick": "agent_tick",
+      "flow_run": "flow_run"
+    },
+    "state": {
+      "active": "активна",
+      "disabled": "отключена"
+    },
+    "targetHint": {
+      "system_sweep": "Цель не нужна; используйте {}.",
+      "command": "{ \"commandKind\": \"http_ping\", \"url\": \"https://…\" } или { \"commandKind\": \"console_ping\", \"host\": \"example.com\" }",
+      "agent_tick": "Произвольная цель, передаётся лаунчеру агента.",
+      "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }"
     }
   },
   "adminUsers": {

@@ -527,6 +527,250 @@ export const capabilityRecords = pgTable(
   }),
 );
 
+export type SchedulerJobKind =
+  | "system_sweep"
+  | "command"
+  | "agent_tick"
+  | "flow_run";
+export type SchedulerJobRunStatus =
+  | "Claimed"
+  | "Running"
+  | "Succeeded"
+  | "Failed"
+  | "Skipped";
+
+export const schedulerJobs = pgTable(
+  "scheduler_jobs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    jobKind: text("job_kind", {
+      enum: ["system_sweep", "command", "agent_tick", "flow_run"],
+    }).notNull(),
+    target: jsonb("target")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    cadenceIntervalSeconds: integer("cadence_interval_seconds").notNull(),
+    nextRunAt: timestamp("next_run_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    lastFiredAt: timestamp("last_fired_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    maxFailures: integer("max_failures").notNull().default(3),
+    disabledAt: timestamp("disabled_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxDue: index("scheduler_jobs_due_idx").on(t.disabledAt, t.nextRunAt),
+    idxKindDue: index("scheduler_jobs_kind_due_idx").on(t.jobKind, t.nextRunAt),
+    idxProjectKind: index("scheduler_jobs_project_kind_idx").on(
+      t.projectId,
+      t.jobKind,
+    ),
+  }),
+);
+
+export const schedulerJobRuns = pgTable(
+  "scheduler_job_runs",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => schedulerJobs.id, { onDelete: "cascade" }),
+    jobKind: text("job_kind", {
+      enum: ["system_sweep", "command", "agent_tick", "flow_run"],
+    }).notNull(),
+    status: text("status", {
+      enum: ["Claimed", "Running", "Succeeded", "Failed", "Skipped"],
+    })
+      .notNull()
+      .default("Claimed"),
+    claimedAt: timestamp("claimed_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    startedAt: timestamp("started_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    finishedAt: timestamp("finished_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    summary: jsonb("summary")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxJob: index("scheduler_job_runs_job_idx").on(t.jobId),
+    idxLease: index("scheduler_job_runs_lease_idx").on(
+      t.status,
+      t.leaseExpiresAt,
+    ),
+  }),
+);
+
+export const agentSchedules = pgTable(
+  "agent_schedules",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    schedulerJobId: text("scheduler_job_id")
+      .notNull()
+      .references(() => schedulerJobs.id, { onDelete: "cascade" }),
+    agentRef: text("agent_ref").notNull(),
+    triggerType: text("trigger_type", {
+      enum: ["cron", "manual", "event", "continuous"],
+    }).notNull(),
+    desiredState: text("desired_state", {
+      enum: ["running", "stopped"],
+    }),
+    eventMatch: jsonb("event_match").$type<Record<string, unknown>>(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProjectAgent: index("agent_schedules_project_agent_idx").on(
+      t.projectId,
+      t.agentRef,
+    ),
+    idxSchedulerJob: index("agent_schedules_scheduler_job_idx").on(
+      t.schedulerJobId,
+    ),
+  }),
+);
+
+export type AuthoredCapabilityKind = "rule" | "skill" | "flow";
+export type AuthoredCapabilityLifecycle = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+
+export const authoredCapabilities = pgTable(
+  "authored_capabilities",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["rule", "skill", "flow"] }).notNull(),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    lifecycle: text("lifecycle", {
+      enum: ["DRAFT", "PUBLISHED", "ARCHIVED"],
+    })
+      .notNull()
+      .default("DRAFT"),
+    draftVersion: integer("draft_version").notNull().default(1),
+    currentDraftRevisionId: text("current_draft_revision_id"),
+    currentPublishedRevisionId: text("current_published_revision_id"),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectKindSlug: unique(
+      "authored_capabilities_project_kind_slug_uq",
+    ).on(t.projectId, t.kind, t.slug),
+    idxProjectKind: index("authored_capabilities_project_kind_idx").on(
+      t.projectId,
+      t.kind,
+    ),
+  }),
+);
+
+export const authoredCapabilityRevisions = pgTable(
+  "authored_capability_revisions",
+  {
+    id: text("id").primaryKey(),
+    capabilityId: text("capability_id")
+      .notNull()
+      .references(() => authoredCapabilities.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["rule", "skill", "flow"] }).notNull(),
+    revisionNumber: integer("revision_number").notNull(),
+    lifecycle: text("lifecycle", {
+      enum: ["DRAFT", "PUBLISHED", "ARCHIVED"],
+    })
+      .notNull()
+      .default("DRAFT"),
+    draftVersion: integer("draft_version").notNull(),
+    title: text("title").notNull(),
+    body: jsonb("body").$type<Record<string, unknown>>().notNull().default({}),
+    manifest: jsonb("manifest").$type<Record<string, unknown> | null>(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    contentHash: text("content_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    publishedAt: timestamp("published_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    archivedAt: timestamp("archived_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    uniqCapabilityRevision: unique(
+      "authored_capability_revisions_capability_revision_uq",
+    ).on(t.capabilityId, t.revisionNumber),
+    uniqActiveDraft: uniqueIndex(
+      "authored_capability_revisions_active_draft_uq",
+    )
+      .on(t.capabilityId)
+      .where(sql`${t.lifecycle} = 'DRAFT'`),
+    idxCapabilityLifecycle: index(
+      "authored_capability_revisions_capability_lifecycle_idx",
+    ).on(t.capabilityId, t.lifecycle),
+  }),
+);
+
 export const tasks = pgTable(
   "tasks",
   {

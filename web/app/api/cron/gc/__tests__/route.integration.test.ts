@@ -1,15 +1,15 @@
 // M19 Phase 4 (T4.4): the /api/cron/gc route. Auth is a constant-time
 // X-Maister-Cron-Token compare against MAISTER_CRON_TOKEN: empty config → 503
-// (cron disabled), mismatch → 401, valid → run BOTH sweeps → 200 with
-// {workspace, revision}, or 207 if a sub-sweep threw (partial). The token is a
-// server-only secret and must NEVER appear in the response body. Real Postgres
-// testcontainer so both sweeps run against a live DB on the happy path; the
-// sweep modules are spied so the 207 partial-failure case can be forced.
+// (cron disabled), mismatch → 401, valid → run the system_sweep compatibility
+// service → 200 flat GcSweepSummary, or 207 if a sub-sweep threw (partial).
+// The token is a server-only secret and must NEVER appear in the response body.
+// Real Postgres testcontainer backs the route; the GC sub-sweep modules are
+// spied so the 207 partial-failure case can be forced deterministically.
 //
 // Scenarios (QA contract T4.4 / plan T4.6):
 //   1. empty MAISTER_CRON_TOKEN → 503 (disabled).
 //   2. wrong token → 401.
-//   3. valid token → 200 running both sweeps; body shape {workspace, revision}.
+//   3. valid token → 200 running system_sweep; body shape GcSweepSummary.
 //   4. a forced sub-sweep failure → 207 (partial).
 //   5. the response body never contains the token value.
 
@@ -38,7 +38,7 @@ let originalDbUrl: string | undefined;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
-// Spy the two sweeps so the happy path returns deterministic summaries and the
+// Spy the GC sub-sweeps so the compatibility DTO stays deterministic and the
 // 207 case can force a throw. The real DB still backs getDb() for any code that
 // reaches it.
 const workspaceSweepSpy = vi.fn(async () => ({
@@ -166,7 +166,7 @@ describe("GET/POST /api/cron/gc", () => {
     expect(workspaceSweepSpy).not.toHaveBeenCalled();
   }, 60_000);
 
-  it("returns 200 running BOTH sweeps with the flat GcSweepSummary DTO on a valid token", async () => {
+  it("returns 200 running system_sweep with the flat GcSweepSummary DTO on a valid token", async () => {
     const res = await cronPOST(req(TOKEN));
 
     expect(res.status).toBe(200);
@@ -183,7 +183,7 @@ describe("GET/POST /api/cron/gc", () => {
     });
   }, 60_000);
 
-  it("GET behaves like POST on a valid token (200, both sweeps)", async () => {
+  it("GET behaves like POST on a valid token (200, system_sweep)", async () => {
     const res = await cronGET(getReq(TOKEN));
 
     expect(res.status).toBe(200);

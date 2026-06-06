@@ -254,8 +254,25 @@ The resolved import is then ingested into `capability_records` via
 [`db/capabilities-domain.md`](db/capabilities-domain.md) and ADR-043.
 
 **Config-state symmetry (R-SYM):** Removing an entry from `capability_imports[]`
-disables the corresponding `capability_records` rows (`selectable=false`,
-`disabled_at` set). Historic profile snapshots are not retroactively invalidated.
+disables the corresponding config/import-owned `capability_records` rows
+(`selectable=false`, `disabled_at` set). Historic profile snapshots are not
+retroactively invalidated. **M25 authored catalog carve-out:** rows whose
+`material.origin='authored'` are local DB-authored projections and are never
+disabled by `upsertCapabilitiesFromConfig` SET/CLEAR, even though they also use
+`source='project'`.
+
+#### Authored capability catalog (Implemented, M25)
+
+Authored rules, skills, and flows are created through MAIster's DB/API surface,
+not through `maister.yaml`. Local `Published` means visible inside this MAIster
+instance only; external catalog PR publication and two-way sync are later work.
+Published authored rules/skills project into `capability_records` as
+`source='project'` with `material.origin='authored'`. Authored flow publication
+stores immutable local catalog content only and does not mutate `flows`,
+`flow_revisions`, project enablement, install caches, or `setup.sh` trust state.
+
+See [`system-analytics/capability-catalog.md`](system-analytics/capability-catalog.md)
+and [ADR-061](decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 
 #### `capabilities.agent_definitions[]` and `capabilities.env_profiles[]` (Implemented, M14)
 
@@ -761,14 +778,20 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `SEED_ADMIN_PASSWORD` | no | `maister-admin` | `pnpm db:seed` — password for the initial admin user. Change before any shared use. |
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
-| `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global concurrency cap (across all projects) |
+| `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global Flow run concurrency cap (across all projects). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command`/`agent_tick` budgets. |
+| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `1` | **Implemented, M24.** SQL claim budget for concurrent `agent_tick` scheduler attempts; invalid or non-positive values fall back to `1` and do not reduce or override `MAISTER_MAX_CONCURRENT_RUNS`. |
+| `MAISTER_MAX_CONCURRENT_COMMANDS` | no | `2` | **Implemented, M24.** SQL claim budget for concurrent `command` scheduler attempts; invalid or non-positive values fall back to `2` and do not reduce or override `MAISTER_MAX_CONCURRENT_RUNS`. |
 | `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` | no | `60` | Web: periodic reconcile sweeper interval (M19) |
 | `MAISTER_RECONCILE_GRACE_SECONDS` | no | `90` | Web: grace window before a no-live-session agent run is crashed (protects in-flight launches/recovers) (M19) |
 | `MAISTER_GC_SWEEP_INTERVAL_SECONDS` | no | `3600` | Web: background GC sweeper interval (M19) |
 | `MAISTER_GC_AGE_DAYS` | no | `14` | Web: age before Abandoned/Done worktrees + Removed flow revisions are GC'd (M19) |
 | `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) (M19) |
 | `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
-| `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` returns 503 disabled) | (none) | **Server-only secret** for `GET`/`POST /api/cron/gc` auth — never logged or streamed (M19) |
+| `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` and `/api/cron/tick` return 503 disabled) | (none) | **Server-only secret** for token-guarded cron routes — never logged or streamed. M24 reuses it for `GET`/`POST /api/cron/tick`; `/api/cron/gc` remains a compatibility wrapper. |
+| `MAISTER_SCHEDULER_TIMER_ENABLED` | no | `false` | **Implemented, M24.** Enables the single-box web-tier fallback timer when exactly `true`. External cron remains preferred. |
+| `MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS` | no | `60` | **Implemented, M24.** Fallback timer cadence only; fixed-interval job cadence lives per `scheduler_jobs.cadence_interval_seconds`. |
+| `MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS` | no | `300` | **Implemented, M24.** Lease timeout for stuck `Claimed`/`Running` scheduler attempts before reaping as `Failed`. |
+| `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES` | no | `3` | **Implemented, M24.** Auto-disable threshold for repeated `agent_tick` precondition/launcher failures during result recording and lease reaping; invalid or non-positive values fall back to `3`. Other job kinds use `scheduler_jobs.max_failures`. |
 | `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS` | no | `300` | **(Implemented, M18 — ADR-058, Codex F1.)** Stale-`claiming` promotion-claim reclaim window (seconds). A `workspaces.promotion_state='claiming'` claim older than this is reclaimable by the next promote attempt (crash recovery), which re-mints `promotion_attempt_id`. Read by the web tier's shared `promoteRun` service. Host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
 | `MAISTER_API_BASE_URL` | no | `http://localhost:3000` | **(M16 — Implemented)** MCP facade: base URL of the MAIster REST API the `mcp/` package wraps (e.g. `http://localhost:3000` in dev; external HTTPS in prod). |
 | `MAISTER_PROJECT_TOKEN` | no | (none) | **(M16 — Implemented)** MCP facade **stdio/local-only** project token. **IGNORED** under the Streamable-HTTP transport, which requires a per-request inbound bearer forwarded verbatim to `/api/v1/ext`. Not a web-tier secret — never read by `web/` or `supervisor/`. |

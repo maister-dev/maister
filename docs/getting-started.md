@@ -389,24 +389,29 @@ Behavior:
 Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
 [aif plugin](flow-aif-plugin.md).
 
-## GC cron
+## Scheduler cron
 
-A background GC sweeper runs in-process (every
-`MAISTER_GC_SWEEP_INTERVAL_SECONDS`, default 3600). For deployments that
-prefer an external scheduler, the same two sweeps (graceful workspace
-preserve-then-prune + Removed flow-revision cache cleanup) are exposed at
-`GET`/`POST /api/cron/gc`. Set `MAISTER_CRON_TOKEN` to a secret and pass it in
-the `X-Maister-Cron-Token` header:
+The unified scheduler clock is exposed at `GET`/`POST /api/cron/tick`
+(Implemented, M24). Point external cron there in production. The route is
+stateless: every tick claims due jobs atomically, runs bounded handlers, and
+records attempt results. Set `MAISTER_CRON_TOKEN` to a secret and pass it in the
+`X-Maister-Cron-Token` header:
 
 ```bash
 curl -H "X-Maister-Cron-Token: $MAISTER_CRON_TOKEN" \
-  http://localhost:3000/api/cron/gc
+  http://localhost:3000/api/cron/tick
 ```
 
-An empty `MAISTER_CRON_TOKEN` disables the route (`503 cron disabled`); a wrong
-token returns `401`. On success it returns `200 { workspace, revision }` (or
-`207` if one sweep failed but the other ran). The token is a server-only secret
-— never commit a real value or log it.
+An empty `MAISTER_CRON_TOKEN` disables cron routes (`503 cron disabled`); a wrong
+token returns `401`. On success `/api/cron/tick` returns `200` with a scheduler
+summary, or `207` if a claimed attempt failed/skipped. The token is a
+server-only secret — never commit a real value or log it.
+
+`GET`/`POST /api/cron/gc` remains a compatibility route for the M19 GC contract.
+It delegates to the scheduler `system_sweep` service while preserving the old
+GC summary shape and `200`/`207` behavior. Single-box deployments may enable the
+fallback timer with `MAISTER_SCHEDULER_TIMER_ENABLED=true`, but external cron is
+the preferred production clock.
 
 ## Project layout
 

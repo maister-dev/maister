@@ -190,6 +190,20 @@
       "when": 1780600000002,
       "tag": "0026_m17_actor_token_uniqueness",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780617600000,
+      "tag": "0027_m24_scheduler_service",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1780617900000,
+      "tag": "0028_m25_authored_capability_catalog",
+      "breakpoints": true
     }
   ]
 }

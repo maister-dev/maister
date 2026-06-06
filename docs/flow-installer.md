@@ -8,6 +8,11 @@ symlink it into the project's `.maister/` subtree, and upsert the row
 into the `flows` table. The runner consumes installed bundles through
 the content-addressed cache.
 
+M25 authored catalog flows are not Flow plugin installs. A locally Published
+authored flow remains inert catalog content until a later packaging/publication
+milestone creates a real Flow package revision; this installer does not read or
+execute authored drafts.
+
 For what a Flow IS (entities, step DSL, lifecycle) see
 [`docs/system-analytics/flows.md`](system-analytics/flows.md). For the
 planned package lifecycle product surface see

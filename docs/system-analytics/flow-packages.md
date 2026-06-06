@@ -13,6 +13,12 @@ content-addressed cache, `systemCachePath(flow_ref_id, revision)`) are
 review, compatibility enforcement, and the Flow Packages UI are **M10** — see
 [ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)
 for the decision, schema model, trust policy, and the microsoft/apm evaluation.
+M25's authored capability catalog is deliberately separate: locally Published
+authored flows are catalog content only and do not mutate `flow_revisions`,
+`flows.enablement_state`, install caches, trust decisions, or `setup.sh`
+execution. See
+[`capability-catalog.md`](capability-catalog.md) and
+[ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 
 ## Domain entities
 

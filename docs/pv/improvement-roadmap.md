@@ -186,6 +186,10 @@ Close the loop that today only consumes git plugins read-only:
   publish them as PRs to a catalog repo, with two-way sync back into the
   instance. This is the *write* side that makes improvement proposals
   actionable.
+  - **Implemented Wave-1 slice (M25):** local authored cap model, draft/version
+    lifecycle, local publish/archive, REST groundwork, and authored
+    rule/skill projection into `capability_records`. PR publication and
+    two-way catalog-repo sync remain Wave 2/3.
 - **Self-improvement** (Improver → proposal inbox): harvested signals become
   drafted edits with rationale + evidence, dropped into an inbox. Human always
   edits and publishes — **nothing auto-applies** (the operator stays in control).
@@ -313,6 +317,12 @@ agent-only:
 
 Atomic claim (`UPDATE … WHERE next_run_at <= now() RETURNING`) so overlapping
 ticks can't double-fire; one catch-up fire on clock outage, no backfill.
+
+**Implemented Wave-1 slice (M24):** `scheduler_jobs`,
+`scheduler_job_runs`, `agent_schedules`, `/api/cron/tick`, `/api/cron/gc`
+compatibility over `system_sweep`, fixed-interval catch-up, stuck-attempt
+reaping, handler seams for all four job kinds, and the disabled-by-default
+single-box fallback timer.
 
 ### P6 — Cross-node session continuity, with explicit clear *(opt-in, Wave 2)*
 Agent sessions are one-per-node and disposable; node N+1 does not inherit node

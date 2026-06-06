@@ -14,7 +14,9 @@ for behavior and the import lifecycle FSM, and
 The diagram below covers three entities:
 
 - **`CAPABILITY_RECORDS`** — the existing project-visible registry catalog
-  (Implemented, migration `0012`).
+  (Implemented, migration `0012`). M25 authored rule/skill projections are
+  Implemented to write authored-origin rows here with `source='project'` and
+  `material.origin='authored'`.
 - **`CAPABILITY_IMPORTS`** — the new git-pinned import ledger, one row per
   `(project, capabilityRefId, resolvedRevision)` (Implemented, M14).
 - **`NODE_ATTEMPTS.materialization_plan`** — the new nullable jsonb column on
@@ -90,6 +92,12 @@ registration (`upsertCapabilitiesFromConfig`).
 - `selectable` — set to `false` when the CLEAR pass removes an entry; re-enabled
   when re-added. Historic profile snapshots (e.g. `scratch_capability_profiles`)
   retain their snapshot and are not retroactively invalidated.
+- `material.origin` — absent for config/import-owned rows today. M25 authored
+  projections set `origin='authored'` plus `authoredCapabilityId`,
+  `authoredRevisionId`, `body`, `manifest`, and `schemaVersion`; the immutable
+  content hash is stored in `capability_records.revision`. SET/CLEAR code MUST
+  exclude these rows when resyncing `maister.yaml`, because config-owned and
+  authored local rows both use `source='project'`.
 - `enforceability` — `enforced | instructed | unsupported` for the selected
   executor agent. M14 begins flipping cells from `instructed` to `enforced` as
   native materialization is spike-verified (see ADR-042).
@@ -131,8 +139,8 @@ durable ledger for each git-pinned capability package fetched from a
 
 ## Unique key and indexes — `capability_imports`
 
-| Constraint / Index | Columns | Purpose |
-| ------------------ | ------- | ------- |
+| Constraint / Index                                  | Columns                                              | Purpose                                                                                                                       |
+| --------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `capability_imports_project_ref_revision_uq` UNIQUE | `(project_id, capability_ref_id, resolved_revision)` | One row per (project, import id, resolved git SHA). Content-addressable: the same SHA from two different tags shares one row. |
 
 ## `node_attempts.materialization_plan` jsonb (Implemented, M14)
@@ -222,4 +230,6 @@ M19 workspace GC (ADR-035/036) as a backstop when the in-flow cleanup seams miss
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Config: [`../configuration.md`](../configuration.md) §`capability_imports[]`.
 - ADRs: [ADR-041](../decisions.md), [ADR-042](../decisions.md), [ADR-043](../decisions.md).
+- Authored catalog extension: [`../system-analytics/capability-catalog.md`](../system-analytics/capability-catalog.md),
+  [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 - Source (Implemented, M14): migration `0019_m14_capability_materialization`.

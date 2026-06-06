@@ -34,6 +34,9 @@ erDiagram
     PROJECTS ||--o{ FLOWS : has
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
     PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
+    PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
+    PROJECTS ||--o{ SCHEDULER_JOBS : "optional scheduler scope (M24)"
+    PROJECTS ||--o{ AGENT_SCHEDULES : "agent schedules (M24)"
     PROJECTS ||--o{ PROJECT_FLOW_ROLES : "flow routing labels"
     PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
     PROJECTS ||--o{ TASKS : has
@@ -79,6 +82,10 @@ erDiagram
     PROJECTS ||--o{ TOKEN_AUDIT_LOG : "audit rows (M16)"
     USERS ||--o{ PROJECT_TOKENS : "created_by SET NULL (M16)"
     PROJECT_TOKENS ||--o{ TOKEN_AUDIT_LOG : "per-call audit (M16)"
+    CAPABILITY_RECORDS ||--o{ AUTHORED_CAPABILITIES : "projected via material.origin"
+    AUTHORED_CAPABILITIES ||--o{ AUTHORED_CAPABILITY_REVISIONS : "revision history"
+    SCHEDULER_JOBS ||--o{ SCHEDULER_JOB_RUNS : "attempt ledger"
+    SCHEDULER_JOBS ||--o| AGENT_SCHEDULES : "agent tick bridge"
 
     USERS {
         text id PK
@@ -279,6 +286,84 @@ erDiagram
         text setup_status "not_required|pending|done|failed"
         text package_status "Discovered|Installing|Installed|Failed|Removed"
         text trust_status "untrusted|trusted|trusted_by_policy"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    AUTHORED_CAPABILITIES {
+        text id PK
+        text project_id FK
+        text kind "rule|skill|flow"
+        text slug "UNIQUE per project/kind"
+        text title
+        text lifecycle "DRAFT|PUBLISHED|ARCHIVED"
+        integer draft_version
+        text current_draft_revision_id
+        text current_published_revision_id
+        timestamp archived_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    AUTHORED_CAPABILITY_REVISIONS {
+        text id PK
+        text capability_id FK
+        text project_id FK
+        text kind "rule|skill|flow"
+        integer revision_number
+        text lifecycle "DRAFT|PUBLISHED|ARCHIVED"
+        integer draft_version
+        text title
+        jsonb body
+        jsonb manifest
+        integer schema_version
+        text content_hash
+        timestamp created_at
+        timestamp published_at
+        timestamp archived_at
+    }
+
+    SCHEDULER_JOBS {
+        text id PK
+        text project_id FK
+        text job_kind "system_sweep|command|agent_tick|flow_run"
+        jsonb target
+        integer cadence_interval_seconds
+        timestamp next_run_at
+        timestamp last_fired_at
+        timestamp lease_expires_at
+        timestamp disabled_at
+        integer consecutive_failures
+        integer max_failures
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    SCHEDULER_JOB_RUNS {
+        text id PK
+        text job_id FK
+        text job_kind
+        text status "Claimed|Running|Succeeded|Failed|Skipped"
+        timestamp claimed_at
+        timestamp started_at
+        timestamp lease_expires_at
+        timestamp finished_at
+        jsonb summary
+        text error_code
+        text error_message
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    AGENT_SCHEDULES {
+        text id PK
+        text project_id FK
+        text agent_ref "typed text; no M25 FK"
+        text scheduler_job_id FK
+        text trigger_type "cron|manual|event|continuous"
+        text desired_state "running|stopped"
+        jsonb event_match
+        boolean enabled
         timestamp created_at
         timestamp updated_at
     }
@@ -606,47 +691,6 @@ not drawn until its migrations exist. `project_tokens` and `token_audit_log`
 
 ## Indexes
 
-| Table                 | Index                                   | Columns                                | Purpose                                                                                                                 |
-| --------------------- | --------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `users`               | implicit                                | `email` UNIQUE                         | Auth lookup by email.                                                                                                   |
-| `users`               | `users_account_status_idx`              | `(account_status)`                     | Admin approval queue and status filtering.                                                                              |
-| `accounts`            | implicit PK                             | `(provider, provider_account_id)`      | Auth.js adapter dedup.                                                                                                  |
-| `sessions`            | implicit PK                             | `session_token`                        | Session lookup.                                                                                                         |
-| `verification_tokens` | implicit PK                             | `(identifier, token)`                  | Token lookup.                                                                                                           |
-| `project_members`     | `project_members_project_user_uq`       | `(project_id, user_id)` UNIQUE         | One membership per user/project.                                                                                        |
-| `project_members`     | `project_members_user_idx`              | `(user_id)`                            | Per-user project listing / authz.                                                                                       |
-| `capability_records`  | `capability_records_project_kind_idx`   | `(project_id, kind, selectable)`       | Scratch launch-options catalog lookup.                                                                                  |
-| `capability_imports`  | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Implemented)** One row per (project, import id, resolved git SHA). |
-| `project_flow_roles`  | `project_flow_roles_project_key_uq`     | `(project_id, role_ref)` UNIQUE        | One Flow role ref per project.                                                                                          |
-| `project_flow_roles`  | `project_flow_roles_project_idx`        | `(project_id)`                         | Project Flow role lookup.                                                                                               |
-| `actor_identities`    | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE         | One user actor per project.                                                                                             |
-| `actor_identities`    | `actor_identities_project_token_uq`     | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind='api_token'` | **(M17 Implemented, migration `0025`)** One api-token actor per (project, token); user/system rows (`token_id IS NULL`) stay distinct. Backs `ensureApiTokenActor`. |
-| `actor_identities`    | `actor_identities_project_idx`          | `(project_id)`                         | Project actor lookup.                                                                                                   |
-| `tasks`               | `tasks_project_status_idx`              | `(project_id, status)`                 | Board queries.                                                                                                          |
-| `tasks`               | `tasks_id_attempt_uq`                   | `(id, attempt_number)` UNIQUE          | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
-| `runs`                | `runs_project_status_idx`               | `(project_id, status)`                 | Portfolio + per-project queries.                                                                                        |
-| `runs`                | `runs_task_idx`                         | `(task_id)`                            | Latest-attempt lookups.                                                                                                 |
-| `runs`                | `runs_project_status_kind_idx`          | `(project_id, status, run_kind)`       | Active workspace queries across Flow and scratch runs.                                                                  |
-| `runs`                | `runs_kind_task_idx`                    | `(run_kind, task_id)`                  | Board/latest-attempt lookups that explicitly exclude scratch runs.                                                      |
-| `scratch_runs`        | `scratch_runs_project_status_idx`       | `(project_id, dialog_status)`          | Project scratch workspace lists.                                                                                        |
-| `scratch_attachments` | `scratch_attachments_run_idx`           | `(run_id)`                             | Run-level attachment lookup.                                                                                            |
-| `scratch_attachments` | `scratch_attachments_message_idx`       | `(message_id)`                         | Message attachment lookup.                                                                                              |
-| `step_runs`           | `step_runs_run_idx`                     | `(run_id)`                             | Per-run step lookups.                                                                                                   |
-| `node_attempts`       | `node_attempts_run_step_attempt_uq`     | `(run_id, node_id, attempt)` UNIQUE    | **(M11a)** Append-only ledger uniqueness.                                                                               |
-| `node_attempts`       | `node_attempts_run_idx`                 | `(run_id)`                             | **(M11a)** Templating highest-attempt union.                                                                            |
-| `gate_results`        | `gate_results_run_idx`                  | `(run_id)`                             | **(M11a)** Per-run gate lookups.                                                                                        |
-| `gate_results`        | `gate_results_node_attempt_idx`         | `(node_attempt_id)`                    | **(M11a)** Gates for a node attempt.                                                                                    |
-| `hitl_requests`       | `hitl_requests_run_idx`                 | `(run_id)`                             | Pending HITL panel.                                                                                                     |
-| `assignments`         | `assignments_hitl_request_uq`           | `(hitl_request_id)` UNIQUE             | One assignment per linked HITL wait.                                                                                    |
-| `assignments`         | `assignments_project_status_idx`        | `(project_id, status)`                 | Project work queue.                                                                                                     |
-| `assignments`         | `assignments_run_status_idx`            | `(run_id, status)`                     | Run-detail work queue.                                                                                                  |
-| `assignments`         | `assignments_current_actor_idx`         | `(assignee_actor_id)`                  | Actor-owned work lookup.                                                                                                |
-| `assignments`         | `assignments_hitl_request_idx`          | `(hitl_request_id)`                    | HITL lookup.                                                                                                            |
-| `assignment_events`   | `assignment_events_assignment_idx`      | `(assignment_id)`                      | Assignment event history.                                                                                               |
-| `assignment_events`   | `assignment_events_project_created_idx` | `(project_id, created_at)`             | Project audit stream.                                                                                                   |
-| `projects`            | implicit                                | `slug`, `repo_path` UNIQUE             | Registration collisions.                                                                                                |
-| `flows`               | `flows_project_ref_uq`                  | `(project_id, flow_ref_id)` UNIQUE     | Per-project namespace.                                                                                                  |
-| `workspaces`          | implicit                                | `worktree_path` UNIQUE                 | Globally unique worktree path.                                                                                          |
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `users` | implicit | `email` UNIQUE | Auth lookup by email. |
@@ -657,8 +701,15 @@ not drawn until its migrations exist. `project_tokens` and `token_audit_log`
 | `project_members` | `project_members_project_user_uq` | `(project_id, user_id)` UNIQUE | One membership per user/project. |
 | `project_members` | `project_members_user_idx` | `(user_id)` | Per-user project listing / authz. |
 | `capability_records` | `capability_records_project_kind_idx` | `(project_id, kind, selectable)` | Scratch launch-options catalog lookup. |
+| `capability_imports` | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Implemented)** One row per (project, import id, resolved git SHA). |
+| `project_flow_roles` | `project_flow_roles_project_key_uq` | `(project_id, role_ref)` UNIQUE | One Flow role ref per project. |
+| `project_flow_roles` | `project_flow_roles_project_idx` | `(project_id)` | Project Flow role lookup. |
+| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
+| `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind=api_token` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
+| `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
+| `flow_graph_layouts` | `flow_graph_layouts_flow_node_uq` | `(flow_id, node_id)` UNIQUE | **(M22 Implemented, migration `0024`)** Per-project flow graph layout positions. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
-| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today (PK already covers `id`); the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
+| `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today; the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |
 | `runs` | `runs_task_idx` | `(task_id)` | Latest-attempt lookups. |
 | `runs` | `runs_project_status_kind_idx` | `(project_id, status, run_kind)` | Active workspace queries across Flow and scratch runs. |
@@ -672,8 +723,26 @@ not drawn until its migrations exist. `project_tokens` and `token_audit_log`
 | `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |
 | `gate_results` | `gate_results_node_attempt_idx` | `(node_attempt_id)` | **(M11a)** Gates for a node attempt. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
+| `assignments` | `assignments_hitl_request_uq` | `(hitl_request_id)` UNIQUE | One assignment per linked HITL wait. |
+| `assignments` | `assignments_project_status_idx` | `(project_id, status)` | Project work queue. |
+| `assignments` | `assignments_run_status_idx` | `(run_id, status)` | Run-detail work queue. |
+| `assignments` | `assignments_current_actor_idx` | `(assignee_actor_id)` | Actor-owned work lookup. |
+| `assignments` | `assignments_hitl_request_idx` | `(hitl_request_id)` | HITL lookup. |
+| `assignment_events` | `assignment_events_assignment_idx` | `(assignment_id)` | Assignment event history. |
+| `assignment_events` | `assignment_events_project_created_idx` | `(project_id, created_at)` | Project audit stream. |
+| `scheduler_jobs` | `scheduler_jobs_due_idx` | `(disabled_at, next_run_at)` | **(M24 Implemented, migration `0027`)** Due-job scan. |
+| `scheduler_jobs` | `scheduler_jobs_kind_due_idx` | `(job_kind, next_run_at)` | **(M24 Implemented, migration `0027`)** Kind-filtered due-job scan. |
+| `scheduler_jobs` | `scheduler_jobs_project_kind_idx` | `(project_id, job_kind)` | **(M24 Implemented, migration `0027`)** Project-scoped scheduler read model. |
+| `scheduler_job_runs` | `scheduler_job_runs_job_idx` | `(job_id)` | **(M24 Implemented, migration `0027`)** Job attempt history. |
+| `scheduler_job_runs` | `scheduler_job_runs_lease_idx` | `(status, lease_expires_at)` | **(M24 Implemented, migration `0027`)** Stuck-attempt reaper. |
+| `agent_schedules` | `agent_schedules_project_agent_idx` | `(project_id, agent_ref)` | **(M24 Implemented, migration `0027`)** Project agent schedule lookup. |
+| `agent_schedules` | `agent_schedules_scheduler_job_idx` | `(scheduler_job_id)` | **(M24 Implemented, migration `0027`)** Agent schedule to scheduler job bridge. |
+| `authored_capabilities` | `authored_capabilities_project_kind_slug_uq` | `(project_id, kind, slug)` UNIQUE | **(M25 Implemented, migration `0028`)** Project-local authored capability namespace. |
+| `authored_capabilities` | `authored_capabilities_project_kind_idx` | `(project_id, kind)` | **(M25 Implemented, migration `0028`)** Authored catalog list/filter. |
+| `authored_capability_revisions` | `authored_capability_revisions_capability_revision_uq` | `(capability_id, revision_number)` UNIQUE | **(M25 Implemented, migration `0028`)** Immutable revision numbering. |
+| `authored_capability_revisions` | `authored_capability_revisions_capability_lifecycle_idx` | `(capability_id, lifecycle)` | **(M25 Implemented, migration `0028`)** Current draft/published revision lookup. |
+| `authored_capability_revisions` | `authored_capability_revisions_active_draft_uq` | `(capability_id)` UNIQUE, PARTIAL `WHERE lifecycle=DRAFT` | **(M25 Implemented, migration `0028`)** One active draft per authored capability. |
 | `projects` | implicit | `slug`, `repo_path` UNIQUE | Registration collisions. |
-| `executors` | `executors_project_ref_uq` | `(project_id, executor_ref_id)` UNIQUE | Per-project namespace. |
 | `flows` | `flows_project_ref_uq` | `(project_id, flow_ref_id)` UNIQUE | Per-project namespace. |
 | `workspaces` | implicit | `worktree_path` UNIQUE | Globally unique worktree path. |
 | `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification. |

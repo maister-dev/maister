@@ -104,6 +104,10 @@ tags:
     description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
   - name: reconciliation-gc
     description: Crash recover/discard and the token-guarded GC cron route (M19, ADR-033..036).
+  - name: scheduler
+    description: Unified token-guarded scheduler tick route (M24, ADR-060).
+  - name: catalog
+    description: Project-local authored capability catalog groundwork (M25, ADR-061).
   - name: capabilities
     description: Capability import trust-confirm route (M14, Designed, ADR-042).
 paths:
@@ -149,10 +153,20 @@ paths:
                 adapter: { type: string, enum: [claude, codex] }
                 model: { type: string }
                 provider: { type: object }
-                permissionPolicy: { type: string, enum: [default, dangerously_skip_permissions], default: default }
+                permissionPolicy:
+                  {
+                    type: string,
+                    enum: [default, dangerously_skip_permissions],
+                    default: default,
+                  }
                 sidecarId: { type: string, nullable: true }
                 enabled: { type: boolean, default: true }
-                readinessStatus: { type: string, enum: [Unknown, Ready, NotReady], default: Unknown }
+                readinessStatus:
+                  {
+                    type: string,
+                    enum: [Unknown, Ready, NotReady],
+                    default: Unknown,
+                  }
                 readinessReasons:
                   type: array
                   items: { type: string }
@@ -222,6 +236,148 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: Runner is still referenced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/scheduler-jobs:
+    get:
+      tags: [admin]
+      summary: (M24) List scheduler jobs
+      description: Admin-only. Returns scheduler jobs with cadence, target, next-run, disabled state, failure counters, and last-attempt status.
+      operationId: getAdminSchedulerJobs
+      responses:
+        "200":
+          description: Scheduler job catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: (M24) Create a scheduler job
+      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`).
+      operationId: postAdminSchedulerJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jobKind, cadenceIntervalSeconds]
+              additionalProperties: false
+              properties:
+                id: { type: string }
+                jobKind:
+                  {
+                    type: string,
+                    enum: [system_sweep, command, agent_tick, flow_run],
+                  }
+                target: { type: object }
+                cadenceIntervalSeconds: { type: integer, minimum: 1 }
+                maxFailures: { type: integer, minimum: 1 }
+                nextRunAt: { type: string, format: date-time }
+                projectId: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Scheduler job created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Scheduler job id already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or per-kind target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/scheduler-jobs/{jobId}:
+    patch:
+      tags: [admin]
+      summary: (M24) Update a scheduler job
+      description: Admin-only. Mutates cadence, target, maxFailures, nextRunAt, or enabled state. `enabled=true` clears `disabledAt` and resets `consecutiveFailures`.
+      operationId: patchAdminSchedulerJob
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                target: { type: object }
+                cadenceIntervalSeconds: { type: integer, minimum: 1 }
+                maxFailures: { type: integer, minimum: 1 }
+                nextRunAt: { type: string, format: date-time }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Scheduler job updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Scheduler job not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or per-kind target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [admin]
+      summary: (M24) Delete a scheduler job
+      description: Admin-only. Deletes the job and cascades its attempt ledger. The default system_sweep job is re-seeded on the next tick.
+      operationId: deleteAdminSchedulerJob
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Scheduler job deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Scheduler job not found.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -1374,7 +1530,17 @@ paths:
                   action: { type: string, enum: [open] }
                   dialogStatus:
                     type: string
-                    enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+                    enum:
+                      [
+                        Starting,
+                        WaitingForUser,
+                        Running,
+                        NeedsInput,
+                        Review,
+                        Crashed,
+                        Done,
+                        Abandoned,
+                      ]
         "202":
           description: Scratch session resumed and prompt dispatched.
           content:
@@ -1387,10 +1553,27 @@ paths:
                   action: { type: string, enum: [recover] }
                   dialogStatus:
                     type: string
-                    enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+                    enum:
+                      [
+                        Starting,
+                        WaitingForUser,
+                        Running,
+                        NeedsInput,
+                        Review,
+                        Crashed,
+                        Done,
+                        Abandoned,
+                      ]
                   stopReason:
                     type: string
-                    enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]
+                    enum:
+                      [
+                        end_turn,
+                        max_tokens,
+                        max_turn_requests,
+                        refusal,
+                        cancelled,
+                      ]
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -2598,7 +2781,8 @@ paths:
             secret.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CreateProjectTokenResponse" }
+              schema:
+                { $ref: "#/components/schemas/CreateProjectTokenResponse" }
         "401":
           description: No valid session (`UNAUTHENTICATED`).
           content:
@@ -2706,12 +2890,263 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/projects/{slug}/catalog/caps:
+    get:
+      tags: [catalog]
+      summary: (M25) List authored capabilities for a project
+      description: |
+        Implemented, M25. `slug` is a URL parameter resolved to server-side
+        project state. Query filters are enum/string-only. The route never
+        accepts body-controlled `projectId` or capability source fields.
+      operationId: listAuthoredCapabilities
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: kind
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/AuthoredCapabilityKind" }
+      responses:
+        "200":
+          description: Authored capability rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [caps]
+                properties:
+                  caps:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuthoredCapability" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    post:
+      tags: [catalog]
+      summary: (M25) Create an authored capability draft
+      description: |
+        Implemented, M25. Creates a project-local authored rule, skill, or flow
+        plus its first Draft revision. Body carries authored fields only; the
+        project is derived from `slug`.
+      operationId: createAuthoredCapability
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/AuthoredCapabilityCreateBody" }
+      responses:
+        "201":
+          description: Draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [capability, draft]
+                properties:
+                  capability:
+                    { $ref: "#/components/schemas/AuthoredCapability" }
+                  draft:
+                    { $ref: "#/components/schemas/AuthoredCapabilityRevision" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/catalog/caps/{capId}:
+    get:
+      tags: [catalog]
+      summary: (M25) Read one authored capability
+      operationId: getAuthoredCapability
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Authored capability with current revisions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthoredCapabilityDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/catalog/caps/{capId}/draft:
+    patch:
+      tags: [catalog]
+      summary: (M25) Update an authored capability draft
+      description: |
+        Implemented, M25. Requires the caller's `expectedDraftVersion`; stale
+        writes return `409 CONFLICT`. Body cannot carry project/source/origin
+        ownership fields.
+      operationId: updateAuthoredCapabilityDraft
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthoredCapabilityDraftBody" }
+      responses:
+        "200":
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/AuthoredCapabilityRevision" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/catalog/caps/{capId}/publish-local:
+    post:
+      tags: [catalog]
+      summary: (M25) Publish an authored capability inside this MAIster instance
+      description: |
+        Implemented, M25. Local publish of a rule/skill projects an authored-origin
+        `capability_records` row in the same transaction. Local publish of a
+        flow stores only immutable authored catalog content and never mutates
+        `flows` or `flow_revisions`.
+      operationId: publishLocalAuthoredCapability
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Published local revision.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/AuthoredCapabilityRevision" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/catalog/caps/{capId}/archive:
+    post:
+      tags: [catalog]
+      summary: (M25) Archive an authored capability
+      description: |
+        Implemented, M25. Archives the authored capability and disables only its
+        authored-origin projection. Historic run snapshots remain valid.
+      operationId: archiveAuthoredCapability
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Archived.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthoredCapability" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/cron/tick:
+    get:
+      tags: [scheduler]
+      summary: (M24) Run the unified scheduler tick
+      description: |
+        Implemented, M24. Token-guarded stateless scheduler clock. Claims due
+        `scheduler_jobs` atomically, reaps expired leases, runs per-kind
+        handlers, and records attempt results. Optional `jobKind` narrows due
+        dispatch. Auth is `X-Maister-Cron-Token`; no Auth.js session.
+      operationId: runSchedulerTick
+      security:
+        - cronToken: []
+      parameters:
+        - name: jobKind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [system_sweep, command, agent_tick, flow_run]
+      responses:
+        "200":
+          description: Tick completed with no failed or skipped attempts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
+        "207":
+          description: Tick completed with one or more failed/skipped attempts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503": { $ref: "#/components/responses/Config" }
+    post:
+      tags: [scheduler]
+      summary: (M24) Run the unified scheduler tick
+      description: POST variant of `GET /api/cron/tick`; behavior is identical.
+      operationId: runSchedulerTickPost
+      security:
+        - cronToken: []
+      parameters:
+        - name: jobKind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [system_sweep, command, agent_tick, flow_run]
+      responses:
+        "200":
+          description: Tick completed with no failed or skipped attempts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
+        "207":
+          description: Tick completed with one or more failed/skipped attempts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTickSummary" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503": { $ref: "#/components/responses/Config" }
+
   /api/cron/gc:
     get:
-      tags: [reconciliation-gc]
-      summary: (M19) Run the GC sweep (token-guarded cron)
+      tags: [reconciliation-gc, scheduler]
+      summary: (M19/M24) Run the GC sweep compatibility route
       description: |
-        (Designed, M19 — ADR-035 / ADR-036. Code lands in Phase 4.)
+        (Implemented, M19; compatibility wrapper Designed, M24 — ADR-060.)
 
         Token-guarded HTTP entry point for the preserve-then-prune GC sweep —
         the same work the background sweeper performs
@@ -2721,6 +3156,8 @@ paths:
         worktrees to a `maister/archive/<runId>` branch (optionally pushed when
         `MAISTER_GC_ARCHIVE_PUSH=true`), and only then prunes.
 
+        M24 keeps this route as a compatibility wrapper over the unified
+        `system_sweep` service while preserving the response shape and statuses.
         Auth is by the `X-Maister-Cron-Token` header, compared in constant time
         to `MAISTER_CRON_TOKEN` — NOT an Auth.js session. **No body / query
         cross-resource identifiers**: the sweep derives its candidate set from
@@ -2756,10 +3193,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     post:
-      tags: [reconciliation-gc]
-      summary: (M19) Run the GC sweep (token-guarded cron)
+      tags: [reconciliation-gc, scheduler]
+      summary: (M19/M24) Run the GC sweep compatibility route
       description: |
-        (Designed, M19 — ADR-035 / ADR-036. Code lands in Phase 4.)
+        (Implemented, M19; compatibility wrapper Designed, M24 — ADR-060.)
 
         POST variant of `GET /api/cron/gc` — identical behavior, for cron
         runners that prefer a non-idempotent verb. Auth is the same
@@ -2920,7 +3357,12 @@ paths:
         Source: `web/app/api/projects/[slug]/flow-packages/install/route.ts`.
       operationId: installFlowPackage
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       requestBody:
         required: true
         content:
@@ -2951,8 +3393,18 @@ paths:
         Source: `.../flow-packages/[flowRefId]/enable/route.ts`.
       operationId: enableFlowRevision
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       requestBody:
         required: true
         content:
@@ -2975,8 +3427,18 @@ paths:
         `.../flow-packages/[flowRefId]/disable/route.ts`.
       operationId: disableFlowPackage
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       responses:
         "200": { $ref: "#/components/responses/OkResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -2995,8 +3457,18 @@ paths:
         Source: `.../flow-packages/[flowRefId]/upgrade/route.ts`.
       operationId: upgradeFlowPackage
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       requestBody:
         required: true
         content:
@@ -3029,8 +3501,18 @@ paths:
         `.../flow-packages/[flowRefId]/rollback/route.ts`.
       operationId: rollbackFlowPackage
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       requestBody:
         required: true
         content:
@@ -3054,8 +3536,18 @@ paths:
         `.../flow-packages/[flowRefId]/trust/route.ts`.
       operationId: setFlowPackageTrust
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       requestBody:
         required: true
         content:
@@ -3085,9 +3577,24 @@ paths:
         `.../flow-packages/[flowRefId]/revisions/[revisionId]/remove/route.ts`.
       operationId: removeFlowRevision
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: revisionId, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       responses:
         "200": { $ref: "#/components/responses/OkResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -3106,9 +3613,24 @@ paths:
         `.../flow-packages/[flowRefId]/upgrade-preview/route.ts`.
       operationId: getFlowUpgradePreview
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: flowRefId, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: revisionId, in: query, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: revisionId,
+            in: query,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
       responses:
         "200":
           description: Structured upgrade preview.
@@ -3156,14 +3678,19 @@ paths:
         [`configuration.md`](../configuration.md#capability_imports).
       operationId: confirmCapabilityImportTrust
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string, minLength: 1 } }
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
         - name: capabilityRefId
           in: path
           required: true
           schema:
             type: string
             minLength: 1
-            pattern: '^[A-Za-z0-9._-]+$'
+            pattern: "^[A-Za-z0-9._-]+$"
             description: |
               Validated against SAFE_PATH_SEGMENT on the server; url-param only —
               not accepted from the body.
@@ -3589,9 +4116,171 @@ components:
           type: array
           description: Per-row skip reasons when a sub-sweep partially failed (207).
           items: { type: string }
+    SchedulerTickSummary:
+      type: object
+      description: |
+        (Implemented, M24) Result of one unified scheduler tick. `attempts` lists
+        due jobs claimed by this tick; jobs skipped because another unexpired
+        lease exists are not duplicated.
+      required:
+        [
+          attemptedCount,
+          claimedCount,
+          succeededCount,
+          failedCount,
+          skippedCount,
+          attempts,
+        ]
+      properties:
+        attemptedCount: { type: integer, minimum: 0 }
+        claimedCount: { type: integer, minimum: 0 }
+        succeededCount: { type: integer, minimum: 0 }
+        failedCount: { type: integer, minimum: 0 }
+        skippedCount: { type: integer, minimum: 0 }
+        jobKind:
+          type: string
+          nullable: true
+          enum: [system_sweep, command, agent_tick, flow_run]
+        attempts:
+          type: array
+          items:
+            type: object
+            required: [jobId, jobKind, status]
+            properties:
+              jobId: { type: string }
+              attemptId: { type: string, nullable: true }
+              jobKind:
+                type: string
+                enum: [system_sweep, command, agent_tick, flow_run]
+              status:
+                type: string
+                enum: [Claimed, Running, Succeeded, Failed, Skipped]
+              errorCode:
+                type: string
+                nullable: true
+              errorMessage:
+                type: string
+                nullable: true
+              nextRunAt:
+                type: string
+                format: date-time
+                nullable: true
+    AuthoredCapabilityKind:
+      type: string
+      enum: [rule, skill, flow]
+    AuthoredCapabilityLifecycle:
+      type: string
+      enum: [DRAFT, PUBLISHED, ARCHIVED]
+    AuthoredCapability:
+      type: object
+      required:
+        - id
+        - projectId
+        - kind
+        - slug
+        - title
+        - lifecycle
+        - draftVersion
+        - archivedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        kind: { $ref: "#/components/schemas/AuthoredCapabilityKind" }
+        slug: { type: string }
+        title: { type: string }
+        lifecycle: { $ref: "#/components/schemas/AuthoredCapabilityLifecycle" }
+        draftVersion: { type: integer, minimum: 1 }
+        currentDraftRevisionId: { type: string, nullable: true }
+        currentPublishedRevisionId: { type: string, nullable: true }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AuthoredCapabilityRevision:
+      type: object
+      required:
+        - id
+        - capabilityId
+        - projectId
+        - kind
+        - revisionNumber
+        - draftVersion
+        - lifecycle
+        - title
+        - body
+        - manifest
+        - schemaVersion
+        - contentHash
+        - createdAt
+      properties:
+        id: { type: string }
+        capabilityId: { type: string }
+        projectId: { type: string }
+        kind: { $ref: "#/components/schemas/AuthoredCapabilityKind" }
+        revisionNumber: { type: integer, minimum: 1 }
+        draftVersion: { type: integer, minimum: 1 }
+        lifecycle: { $ref: "#/components/schemas/AuthoredCapabilityLifecycle" }
+        title: { type: string }
+        body: {}
+        manifest: {}
+        schemaVersion: { type: integer, minimum: 1 }
+        contentHash: { type: string }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    AuthoredCapabilityDetail:
+      type: object
+      required: [capability, revisions]
+      properties:
+        capability: { $ref: "#/components/schemas/AuthoredCapability" }
+        draft:
+          {
+            $ref: "#/components/schemas/AuthoredCapabilityRevision",
+            nullable: true,
+          }
+        published:
+          {
+            $ref: "#/components/schemas/AuthoredCapabilityRevision",
+            nullable: true,
+          }
+        revisions:
+          type: array
+          items: { $ref: "#/components/schemas/AuthoredCapabilityRevision" }
+    AuthoredCapabilityCreateBody:
+      type: object
+      additionalProperties: false
+      required: [kind, slug, title]
+      properties:
+        kind: { $ref: "#/components/schemas/AuthoredCapabilityKind" }
+        slug: { type: string, minLength: 1 }
+        title: { type: string, minLength: 1 }
+        body: {}
+        manifest: {}
+        schemaVersion: { type: integer, minimum: 1 }
+    AuthoredCapabilityDraftBody:
+      type: object
+      additionalProperties: false
+      required: [expectedDraftVersion]
+      properties:
+        expectedDraftVersion: { type: integer, minimum: 1 }
+        title: { type: string, minLength: 1 }
+        body: {}
+        manifest: {}
+        schemaVersion: { type: integer, minimum: 1 }
     ScratchCapabilityOption:
       type: object
-      required: [id, recordId, kind, label, source, enforceability, selectedByDefault, agents]
+      required:
+        [
+          id,
+          recordId,
+          kind,
+          label,
+          source,
+          enforceability,
+          selectedByDefault,
+          agents,
+        ]
       properties:
         id: { type: string, minLength: 1 }
         recordId: { type: string, format: uuid }
@@ -3650,7 +4339,16 @@ components:
     ScratchLaunchOptionsResponse:
       type: object
       required:
-        [machine, projects, selectedProjectId, branches, runners, workModes, reasoningEfforts, capabilities]
+        [
+          machine,
+          projects,
+          selectedProjectId,
+          branches,
+          runners,
+          workModes,
+          reasoningEfforts,
+          capabilities,
+        ]
       properties:
         machine:
           type: object
@@ -3685,7 +4383,17 @@ components:
             description: |
               Configured platform ACP runner profile. Secret values are never
               returned; provider secret refs stay server-side metadata.
-            required: [id, displayLabel, adapter, capabilityAgent, model, providerKind, enabled, ready]
+            required:
+              [
+                id,
+                displayLabel,
+                adapter,
+                capabilityAgent,
+                model,
+                providerKind,
+                enabled,
+                ready,
+              ]
             properties:
               id: { type: string }
               displayLabel: { type: string }
@@ -3717,7 +4425,15 @@ components:
               selectedByDefault: { type: boolean }
         capabilities:
           type: object
-          required: [mcps, skills, rules, agentDefinitions, restrictions, defaultSelectedMcpIds]
+          required:
+            [
+              mcps,
+              skills,
+              rules,
+              agentDefinitions,
+              restrictions,
+              defaultSelectedMcpIds,
+            ]
           properties:
             mcps:
               type: array
@@ -3900,7 +4616,19 @@ components:
     ScratchRun:
       type: object
       required:
-        [runId, projectId, runStatus, dialogStatus, branchName, baseBranch, baseCommit, targetBranch, workMode, reasoningEffort, planMode]
+        [
+          runId,
+          projectId,
+          runStatus,
+          dialogStatus,
+          branchName,
+          baseBranch,
+          baseCommit,
+          targetBranch,
+          workMode,
+          reasoningEffort,
+          planMode,
+        ]
       properties:
         runId: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
@@ -3909,10 +4637,32 @@ components:
         createdByDisplayName: { type: string, nullable: true }
         runStatus:
           type: string
-          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Crashed, Done, Abandoned, Failed]
+          enum:
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              Review,
+              Crashed,
+              Done,
+              Abandoned,
+              Failed,
+            ]
         dialogStatus:
           type: string
-          enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+          enum:
+            [
+              Starting,
+              WaitingForUser,
+              Running,
+              NeedsInput,
+              Review,
+              Crashed,
+              Done,
+              Abandoned,
+            ]
         branchName: { type: string }
         baseBranch: { type: string }
         baseCommit: { type: string }
@@ -3945,11 +4695,29 @@ components:
               label: { type: string }
     ScratchRunDetail:
       type: object
-      required: [run, scratch, workspace, messages, attachments, capabilityProfile, pendingHitl]
+      required:
+        [
+          run,
+          scratch,
+          workspace,
+          messages,
+          attachments,
+          capabilityProfile,
+          pendingHitl,
+        ]
       properties:
         run:
           type: object
-          required: [id, projectId, status, createdByUserId, currentStepId, startedAt, endedAt]
+          required:
+            [
+              id,
+              projectId,
+              status,
+              createdByUserId,
+              currentStepId,
+              startedAt,
+              endedAt,
+            ]
           properties:
             id: { type: string, format: uuid }
             projectId: { type: string, format: uuid }
@@ -3957,7 +4725,15 @@ components:
             runnerResolutionTier:
               type: string
               nullable: true
-              enum: [launchOverride, stepTarget, projectFlowDefault, platformFlowDefault, projectDefault, platformDefault]
+              enum:
+                [
+                  launchOverride,
+                  stepTarget,
+                  projectFlowDefault,
+                  platformFlowDefault,
+                  projectDefault,
+                  platformDefault,
+                ]
             capabilityAgent:
               type: string
               nullable: true
@@ -3966,16 +4742,41 @@ components:
             createdByDisplayName: { type: string, nullable: true }
             status:
               type: string
-              enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, Review, Crashed, Done, Abandoned, Failed]
+              enum:
+                [
+                  Pending,
+                  Running,
+                  NeedsInput,
+                  NeedsInputIdle,
+                  HumanWorking,
+                  Review,
+                  Crashed,
+                  Done,
+                  Abandoned,
+                  Failed,
+                ]
             currentStepId: { type: string, nullable: true }
             startedAt: { type: string, format: date-time }
             endedAt: { type: string, format: date-time, nullable: true }
         scratch:
           type: object
-          required: [name, workMode, reasoningEffort, planMode, linkedTaskId, linkedIssueUrl, baseBranch, baseCommit, targetBranch, dialogStatus]
+          required:
+            [
+              name,
+              workMode,
+              reasoningEffort,
+              planMode,
+              linkedTaskId,
+              linkedIssueUrl,
+              baseBranch,
+              baseCommit,
+              targetBranch,
+              dialogStatus,
+            ]
           properties:
             name: { type: string, nullable: true }
-            workMode: { type: string, enum: [auto, plan_first, manual_approval] }
+            workMode:
+              { type: string, enum: [auto, plan_first, manual_approval] }
             reasoningEffort: { type: string, enum: [low, high, extra, ultra] }
             planMode: { type: string, enum: [off, plan-first] }
             linkedTaskId: { type: string, format: uuid, nullable: true }
@@ -3985,7 +4786,17 @@ components:
             targetBranch: { type: string, nullable: true }
             dialogStatus:
               type: string
-              enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+              enum:
+                [
+                  Starting,
+                  WaitingForUser,
+                  Running,
+                  NeedsInput,
+                  Review,
+                  Crashed,
+                  Done,
+                  Abandoned,
+                ]
             errorCode: { type: string, nullable: true }
             errorMessage: { type: string, nullable: true }
         workspace:
@@ -4004,7 +4815,16 @@ components:
           items: { $ref: "#/components/schemas/ScratchAttachment" }
         capabilityProfile:
           type: object
-          required: [profileDigest, selectedMcpIds, selectedSkillIds, selectedRuleIds, selectedAgentDefinitionIds, restrictions, downgradeNotes]
+          required:
+            [
+              profileDigest,
+              selectedMcpIds,
+              selectedSkillIds,
+              selectedRuleIds,
+              selectedAgentDefinitionIds,
+              restrictions,
+              downgradeNotes,
+            ]
           properties:
             profileDigest: { type: string }
             selectedMcpIds:
@@ -4040,7 +4860,17 @@ components:
         sequence: { type: integer, minimum: 1 }
         dialogStatus:
           type: string
-          enum: [Starting, WaitingForUser, Running, NeedsInput, Review, Crashed, Done, Abandoned]
+          enum:
+            [
+              Starting,
+              WaitingForUser,
+              Running,
+              NeedsInput,
+              Review,
+              Crashed,
+              Done,
+              Abandoned,
+            ]
         stopReason:
           type: string
           enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]

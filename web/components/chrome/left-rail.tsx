@@ -95,6 +95,12 @@ const sectionIcons: Record<string, ReactNode> = {
       <path d="M10.8 5.3a2.2 2.2 0 0 1 0 4.1M14.5 13.4c0-1.8-1-3.2-2.6-3.8" />
     </>
   ),
+  scheduler: (
+    <>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4.6V8l2.4 1.5" />
+    </>
+  ),
 };
 
 const dotByStatus: Record<WorkspaceStatus, string> = {
@@ -163,6 +169,12 @@ export async function LeftRail({
       id: "users",
       label: tNav("users"),
       href: "/admin/users",
+      ready: true,
+    });
+    sections.push({
+      id: "scheduler",
+      label: tNav("scheduler"),
+      href: "/admin/scheduler",
       ready: true,
     });
   }

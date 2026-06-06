@@ -62,4 +62,8 @@ export async function register(): Promise<void> {
   const { startGcSweeper } = await import("@/lib/gc/sweeper");
 
   startGcSweeper();
+
+  const { startSchedulerTimer } = await import("@/lib/scheduler/timer");
+
+  startSchedulerTimer();
 }

@@ -55,33 +55,11 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
 | `flow_graph_layouts`          | **(M22 — Implemented, migration `0024`)** Per-node manual graph-view positions for the workbench flow-graph view. Separate presentation store — never in `flow.yaml`. Keyed `(flow_id, node_id)`; `editFlowLayout` (member) upserts.                                                                                            | `flows.id`, `users.id` (updated_by, SET NULL)                             |
-| Table | Purpose | Cascades from |
-| ----- | ------- | ------------- |
-| `users` | Authenticated users. `email` UNIQUE. `role` global: `admin\|member\|viewer`; `account_status` controls login eligibility. | (root) |
-| `accounts` | Auth.js OAuth account links (Drizzle adapter contract). | `users.id` |
-| `sessions` | Auth.js session tokens. | `users.id` |
-| `verification_tokens` | Auth.js email-verification tokens. PK `(identifier, token)`. | (root) |
-| `project_members` | Per-project role assignments. UNIQUE `(project_id, user_id)`. | `projects.id`, `users.id` |
-| `projects` | Registered repos. `slug` + `repo_path` both UNIQUE. | (root) |
-| `executors` | Project-scoped agent identities `{agent, model, env?, router?}`. | `projects.id` |
-| `flows` | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement. | `projects.id` |
-| `capability_records` | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings. | `projects.id` |
-| `tasks` | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`. | `projects.id` |
-| `runs` | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. | `tasks.id`, `projects.id`, `flows.id`, `executors.id` |
-| `workspaces` | `git worktree` instances tied to a run. | `runs.id`, `projects.id` |
-| `scratch_runs` | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. | `runs.id`, `projects.id`, `users.id`, optional `tasks.id` |
-| `scratch_messages` | Append-only dialog message ledger with monotonic sequence per scratch run. | `scratch_runs.run_id` |
-| `scratch_attachments` | Text note, file path, or issue URL attachments attached to a scratch run or message. | `scratch_runs.run_id`, optional `scratch_messages.id` |
-| `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path. | `scratch_runs.run_id` |
-| `step_runs` | Per-step execution records for the linear flow runner (legacy-read after M11a). | `runs.id` |
-| `node_attempts` | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b) |
-| `gate_results` | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…). | `runs.id`, `node_attempts.id` |
-| `artifact_instances` | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
-| `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`. | `runs.id` |
-| `project_tokens` | **(M16 — Implemented, migration `0018_m16_api_tokens.sql`)** Project-scoped API tokens. `prefix` + `token_hash` (sha256) at rest; plaintext returned once. | `projects.id`, `users.id` (created_by, SET NULL) |
-| `token_audit_log` | **(M16 — Implemented, migration `0018_m16_api_tokens.sql`)** Append-only audit record per `/api/v1/ext` call. | `project_tokens.id`, `projects.id` |
-| `hitl_requests` | HITL prompts emitted during a run (M11a adds review-decision columns). | `runs.id` |
-
+| `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
+| `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
+| `agent_schedules`             | **(M24 — Implemented, migration `0027`)** Narrow scheduler bridge for project-local agent refs. `agent_ref` is typed text in M24 and has no FK to authored catalog rows.                                                                                                                                                             | `projects.id`, `scheduler_jobs.id`                                         |
+| `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
+| `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
 ## `users`
 
 (Introduced in M9 — migration `0004_petite_gamora.sql`.)
@@ -441,6 +419,96 @@ registration.
 UNIQUE `(projectId, source, kind, capabilityRefId)`. Index
 `capability_records_project_kind_idx` supports launch-options lookups by
 project/kind/selectability.
+
+M25 authored catalog projection writes authored rule/skill rows here as
+`source='project'` with `material.origin='authored'`,
+`material.authoredCapabilityId`, `material.revisionId`, and
+`material.contentHash`. Because config-owned project rows also use
+`source='project'`, config SET/CLEAR predicates must exclude
+`material.origin='authored'`; same-kind/slug collisions with non-authored
+project rows are refused before publish.
+
+## Scheduler tables (Implemented, M24)
+
+See [`db/scheduler-domain.md`](db/scheduler-domain.md) for the ERD and
+[`system-analytics/scheduler.md`](system-analytics/scheduler.md) for the
+state machine.
+
+```ts
+scheduler_jobs {
+  id, projectId?,
+  jobKind: 'system_sweep' | 'command' | 'agent_tick' | 'flow_run',
+  target,                         // jsonb; validated per jobKind
+  cadenceIntervalSeconds,          // fixed-interval only in M24
+  nextRunAt, lastFiredAt?,
+  disabledAt?,
+  budgetKey?,
+  consecutiveFailures,
+  maxFailures,
+  createdAt, updatedAt
+}
+
+scheduler_job_runs {
+  id, jobId,
+  jobKind,
+  claimToken,
+  status: 'Claimed' | 'Running' | 'Succeeded' | 'Failed' | 'Skipped',
+  startedAt, leaseExpiresAt, endedAt?,
+  summary?,
+  errorCode?, errorMessage?
+}
+
+agent_schedules {
+  id, projectId,
+  agentRef,                        // typed text; no M25 FK
+  schedulerJobId,
+  triggerType,
+  desiredState?,
+  enabled,
+  createdAt, updatedAt
+}
+```
+
+`scheduler_jobs` is indexed on `(disabled_at, next_run_at)` and
+`(job_kind, next_run_at)`. `scheduler_job_runs` is indexed on
+`(status, lease_expires_at)` so the tick can reap expired attempts before
+claiming new work.
+
+## Authored catalog tables (Implemented, M25)
+
+See [`system-analytics/capability-catalog.md`](system-analytics/capability-catalog.md).
+
+```ts
+authored_capabilities {
+  id, projectId,
+  kind: 'rule' | 'skill' | 'flow',
+  slug, title, description?,
+  originType?, originRefId?,
+  currentDraftRevisionId?,
+  currentPublishedRevisionId?,
+  archivedAt?,
+  createdAt, updatedAt
+}
+
+authored_capability_revisions {
+  id, capabilityId,
+  revisionNumber,
+  draftVersion,
+  lifecycle: 'Draft' | 'Published' | 'Archived',
+  body,
+  manifest,
+  contentHash,
+  basedOnRevisionId?,
+  createdByUserId?,
+  publishedAt?,
+  createdAt, updatedAt
+}
+```
+
+UNIQUE `(project_id, kind, slug)` gives one local authored cap identity per
+project/kind/slug. `content_hash` is `sha256` over canonical JSON
+`{kind, body, manifest, schemaVersion}`. Published revisions are immutable;
+draft updates increment `draft_version` and stale callers receive `CONFLICT`.
 
 ## `tasks`
 

@@ -17,7 +17,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -206,6 +206,12 @@ export async function upsertCapabilitiesFromConfig(
       const capabilityIdByRef: Record<string, string> = {};
 
       for (const record of desired) {
+        await assertConfigDoesNotOverwriteAuthoredRecord(
+          tx,
+          args.projectId,
+          record,
+        );
+
         const rows = await tx
           .insert(capabilityRecords)
           .values({
@@ -286,11 +292,13 @@ export async function upsertCapabilitiesFromConfig(
                   eq(capabilityRecords.source, source),
                   eq(capabilityRecords.kind, kind),
                   notInArray(capabilityRecords.capabilityRefId, refs),
+                  sql`coalesce(${capabilityRecords.material}->>'origin', '') <> 'authored'`,
                 )
               : and(
                   eq(capabilityRecords.projectId, args.projectId),
                   eq(capabilityRecords.source, source),
                   eq(capabilityRecords.kind, kind),
+                  sql`coalesce(${capabilityRecords.material}->>'origin', '') <> 'authored'`,
                 );
 
           await tx
@@ -326,6 +334,35 @@ export async function upsertCapabilitiesFromConfig(
       "CONFIG",
       `upsertCapabilitiesFromConfig failed: ${asError(err).message}`,
       { cause: asError(err) },
+    );
+  }
+}
+
+async function assertConfigDoesNotOverwriteAuthoredRecord(
+  tx: any,
+  projectId: string,
+  record: CapabilityRecordInput,
+): Promise<void> {
+  const rows = await tx
+    .select({ id: capabilityRecords.id, material: capabilityRecords.material })
+    .from(capabilityRecords)
+    .where(
+      and(
+        eq(capabilityRecords.projectId, projectId),
+        eq(capabilityRecords.source, record.source),
+        eq(capabilityRecords.kind, record.kind),
+        eq(capabilityRecords.capabilityRefId, record.capabilityRefId),
+      ),
+    )
+    .limit(1);
+  const existing = rows[0] as
+    | { id: string; material: Record<string, unknown> }
+    | undefined;
+
+  if (existing?.material.origin === "authored") {
+    throw new MaisterError(
+      "CONFLICT",
+      `config capability ${record.source}/${record.kind}/${record.capabilityRefId} would overwrite authored capability projection ${existing.id}`,
     );
   }
 }

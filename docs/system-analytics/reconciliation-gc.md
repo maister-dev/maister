@@ -173,10 +173,15 @@ from step 0 (linear). The claim is single-winner via a CAS-clear of the
 in-flight marker (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND
 resume_started_at IS NOT NULL`): the winner drives, the loser bails.
 
-### Cron GC route (Designed, M19)
+### Cron GC route (Implemented M19; compatibility wrapper Implemented M24)
 
-`GET`/`POST /api/cron/gc` runs both sweeps on demand, guarded by a
-constant-time `X-Maister-Cron-Token` comparison.
+`GET`/`POST /api/cron/gc` runs the unified `system_sweep` service on demand,
+guarded by a constant-time `X-Maister-Cron-Token` comparison.
+
+M24 keeps this route as a compatibility wrapper over the unified scheduler
+`system_sweep` service. The response shape and `200`/`207`/`401`/`503` behavior
+remain the M19 GC contract; new external cron integrations should prefer
+`/api/cron/tick`.
 
 ```mermaid
 flowchart TD
@@ -184,7 +189,7 @@ flowchart TD
     Cfg -- empty --> R503[503 disabled]
     Cfg -- set --> Tok{header == token<br/>constant-time?}
     Tok -- no --> R401[401]
-    Tok -- yes --> Run[run workspace GC + revision GC sweeps]
+    Tok -- yes --> Run[run system_sweep compatibility service]
     Run --> Sum{any sub-sweep partial failure?}
     Sum -- no --> R200[200 JSON summary]
     Sum -- yes --> R207[207 JSON summary]

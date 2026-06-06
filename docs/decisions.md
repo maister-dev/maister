@@ -85,6 +85,8 @@
 | [ADR-057](#adr-057-hitl-hybrid-surface-composition--cross-project-inbox-block-inline-response-component-numeric-needs-you-n-badge) | HITL hybrid-surface composition — cross-project Inbox block, inline response component, numeric "Needs you (N)" badge | Accepted | 2026-06-05 |
 | [ADR-058](#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
 | [ADR-059](#adr-059-read-only-observatory-formulas-and-harvest-priority) | Read-only Observatory formulas and harvest priority | Accepted | 2026-06-05 |
+| [ADR-060](#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets) | Unified scheduler clock and polymorphic job budgets | Accepted | 2026-06-05 |
+| [ADR-061](#adr-061-local-authored-capability-catalog-lifecycle) | Local authored capability catalog lifecycle | Accepted | 2026-06-05 |
 
 ---
 
@@ -3554,6 +3556,121 @@ projections and never leak server-only handles.
   policy exists. Rejected for M23.
 - **Persist signal clusters or recommendations now:** that starts the write half of the
   learning loop and introduces proposal lifecycle semantics. Rejected; M23 is read-only.
+
+---
+
+### ADR-060: Unified scheduler clock and polymorphic job budgets
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** MAIster already has a token-guarded GC cron route and several
+sanctioned recovery/cleanup sweeps. Wave-1 long-lead work needs a broader clock
+for system sweeps, narrow commands, future agent ticks, and scheduled Flow runs.
+Putting that clock in the supervisor would force DB access into the process that
+is deliberately DB-free and owns only ACP sessions. Adding multiple cron routes
+would duplicate auth, scheduling, budget, and observability behavior.
+
+**Decision:** The scheduler is one stateless Next.js tick route,
+`GET`/`POST /api/cron/tick`, guarded by `X-Maister-Cron-Token` and driven
+primarily by an external cron. The web tier owns scheduler DB state and handler
+dispatch. The supervisor remains DB-free and owns only process/session lifecycle.
+M24 supports fixed-interval cadence only through
+`scheduler_jobs.cadence_interval_seconds`; cron expressions and RRULEs are
+deferred. A due job is claimed atomically with an `UPDATE ... WHERE
+next_run_at <= now() ... RETURNING` transaction that also creates the attempt
+ledger row and refuses overlap when an unexpired attempt lease exists. Clock
+outage catch-up fires once and advances to the first future occurrence; missed
+intervals are not backfilled.
+
+Scheduler job kinds are `system_sweep`, `command`, `agent_tick`, and
+`flow_run`. `flow_run` uses the existing `MAISTER_MAX_CONCURRENT_RUNS` and
+`tryStartRun` path. `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`.
+`agent_tick` uses `MAISTER_MAX_CONCURRENT_AGENTS` and, until an actor launcher
+exists, production targets without a launcher record terminal `Skipped` with
+`PRECONDITION` and auto-disable after
+`MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. The tick service idempotently seeds
+`system_sweep.default` so existing recovery sweeps keep running after migration
+without a hand-authored scheduler row. The existing `/api/cron/gc` route remains
+as a compatibility wrapper over the same `system_sweep` service and keeps its
+response/status contract. A single-box fallback timer is allowed only when
+`MAISTER_SCHEDULER_TIMER_ENABLED=true`; it calls the same tick service and is not
+the preferred production clock.
+
+**Consequences:**
+- Scheduler logic can reuse Drizzle, run creation, recovery, and GC services
+  without teaching the supervisor about DB state.
+- Operators get one cron secret and one clock target while `/api/cron/gc`
+  remains compatible during migration.
+- Job-kind budgets are explicit and do not let agent/command work steal Flow
+  run slots.
+- `agent_tick` has an explicit no-launcher seam in M24; repeated no-launcher
+  skips self-disable instead of creating endless scheduler noise.
+- Fixed-interval cadence keeps M24 small and avoids a premature cron/RRULE
+  parser contract.
+- Attempt leases and reaping make crash windows visible and retryable.
+
+**Alternatives Considered:**
+- **Supervisor-owned scheduler:** duplicates web DB/orchestration logic and
+  violates the supervisor-owns-agents boundary. Rejected.
+- **Independent route per job class:** repeats auth, claim, budget, and
+  observability logic. Rejected.
+- **Cron/RRULE support in the first slice:** adds a wider authoring contract than
+  Wave 1 needs. Rejected for M24.
+- **Automatic fallback timer when the cron token is unset:** hides deployment
+  misconfiguration and risks a resident timer running unexpectedly. Rejected;
+  fallback is explicit opt-in.
+
+---
+
+### ADR-061: Local authored capability catalog lifecycle
+
+**Date:** 2026-06-05
+**Status:** Accepted
+**Context:** ADR-043 made capability imports git-installed and read-only, using
+the Flow install fetch/trust/execute pipeline. Wave-1 authoring groundwork needs
+a local DB model for drafting and versioning rules, skills, and flows without
+changing git import trust semantics or pretending local authored flows are
+runnable Flow packages.
+
+**Decision:** Authored capabilities are first-class project-local DB records,
+not edits to `maister.yaml`. The M25 lifecycle is `Draft -> Published ->
+Archived`. `Published` means visible inside the MAIster instance only; external
+catalog PR publication and two-way sync are later work. Draft updates use
+optimistic concurrency through `draft_version`; stale updates fail with
+`CONFLICT`. Published revisions are immutable. Local publish of authored
+`rule` and `skill` revisions projects into `capability_records` as
+`source='project'` with `material.origin='authored'` in the same transaction.
+Local publish of authored `flow` revisions stores immutable catalog content only
+and never mutates `flows`, `flow_revisions`, install caches, setup status, or
+project enablement.
+
+Because config-owned project capability rows also use `source='project'`,
+same `(project_id, kind, slug)` collisions with non-authored project rows are
+refused with `CONFLICT`; authored origin never silently wins. Config SET/CLEAR
+logic must explicitly exclude `material.origin='authored'`, so resyncing
+`maister.yaml` never disables local authored projections. Authored content is
+operator input and inert in M25: no authored draft runs `setup.sh`, hooks, or
+package code.
+
+**Consequences:**
+- The existing git-installed import path remains read-only and trust-gated.
+- Local authored rules/skills can be selected through the same
+  `capability_records` read path as other project capabilities.
+- Authored flow publication cannot be mistaken for Flow package enablement.
+- Config resyncs stop being dangerous for authored rows despite the shared
+  `source='project'` label.
+- External catalog publication can add a separate state/table later without
+  renaming M25's project-local lifecycle.
+
+**Alternatives Considered:**
+- **Write authored caps back into `maister.yaml`:** blurs operator config with
+  app-authored content and bypasses revision lifecycle. Rejected.
+- **Use a `LocalPublished` lifecycle value:** adds naming noise to the local data
+  model. Rejected; `Published` is explicitly project-local in this ADR.
+- **Let authored rows override config rows on slug collision:** would create
+  silent priority rules and surprising resolver output. Rejected.
+- **Turn authored flows directly into `flow_revisions`:** bypasses the package
+  lifecycle and trust model. Rejected for M25.
 
 ---
 

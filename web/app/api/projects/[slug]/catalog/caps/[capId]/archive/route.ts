@@ -1,0 +1,40 @@
+import "server-only";
+
+import { NextRequest, NextResponse } from "next/server";
+
+import { archiveAuthoredCapability } from "@/lib/catalog/authored-service";
+import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
+import { catalogErrorResponse } from "@/lib/catalog/route-errors";
+
+type RouteContext = {
+  params: Promise<{ slug: string; capId: string }>;
+};
+
+export async function POST(
+  req: NextRequest,
+  ctx: RouteContext,
+): Promise<NextResponse> {
+  try {
+    const { slug, capId } = await ctx.params;
+
+    await authorizeCatalogRouteProject(slug);
+    await assertEmptyBody(req);
+    const result = await archiveAuthoredCapability({
+      projectSlug: slug,
+      capId,
+    });
+
+    return NextResponse.json(result, { status: 200 });
+  } catch (err) {
+    return catalogErrorResponse(err);
+  }
+}
+
+async function assertEmptyBody(req: NextRequest): Promise<void> {
+  if (req.body === null) {
+    return;
+  }
+
+  await req.json();
+  throw new SyntaxError("archive does not accept a request body");
+}
