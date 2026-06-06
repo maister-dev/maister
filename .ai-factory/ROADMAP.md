@@ -510,7 +510,7 @@
     automation, semantic version inference, approval chains, changelog
     generation beyond a promotion summary, and production environment control.
 
-  **As-built (shipped 2026-06-04):** ADR-048 (branch targeting at launch + shared
+  **As-built (shipped 2026-06-04):** ADR-058 (branch targeting at launch + shared
   promotion service + promote-time readiness re-gate; M18/M15 carve) + ADR-049 (PR
   promotion via a hybrid provider `PrAdapter`, credential model B — reverses the
   "gh is never invoked" invariant). Launch accepts optional `baseBranch`/`targetBranch`

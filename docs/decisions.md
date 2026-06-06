@@ -73,7 +73,7 @@
 | [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) | External_check enforcement via the Review chokepoint; M16/M15/M18 carve | Accepted | 2026-06-02 |
 | [ADR-046](#adr-046-project-api-token-model) | Project API token model | Accepted | 2026-06-02 |
 | [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) | Thin MCP facade as a standalone REST-client package | Accepted | 2026-06-02 |
-| [ADR-048](#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
+| [ADR-048](#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15) | Readiness enforcement over all blocking gate kinds + verdict calibration (M15) | Accepted | 2026-06-03 |
 | [ADR-049](#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant) | PR promotion via a hybrid provider `PrAdapter` (credential model B); reverses the "gh is never invoked" invariant | Accepted | 2026-06-03 |
 | [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars) | Platform ACP runners, adapter provisioners, and router sidecars | Accepted | 2026-06-03 |
 | [ADR-051](#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed) | Flow-graph layout metadata store (project-scoped, `flow_id`-keyed) | Accepted | 2026-06-05 |
@@ -83,6 +83,7 @@
 | [ADR-055](#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates) | HITL response service + HITL-over-MCP + token-actor + actor-kind/scope auth gates | Accepted | 2026-06-05 |
 | [ADR-056](#adr-056-flat-runner-on_rejectgoto_step-atomic-execution--single-tx-repark-dedicated-comments-channel-window-sentinel-invalidation) | Flat-runner `on_reject.goto_step` atomic execution — single-tx repark, dedicated comments channel, window-sentinel invalidation | Accepted | 2026-06-05 |
 | [ADR-057](#adr-057-hitl-hybrid-surface-composition--cross-project-inbox-block-inline-response-component-numeric-needs-you-n-badge) | HITL hybrid-surface composition — cross-project Inbox block, inline response component, numeric "Needs you (N)" badge | Accepted | 2026-06-05 |
+| [ADR-058](#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve) | Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve) | Accepted | 2026-06-03 |
 
 ---
 
@@ -2736,7 +2737,7 @@ Whether the delivered config actually CONSTRAINS the agent is still gated on the
 
 ---
 
-### ADR-048: Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve)
+### ADR-058: Branch targeting at launch, shared promotion service, promote-time readiness re-gate (M18/M15 carve)
 
 **Date:** 2026-06-03
 **Status:** Accepted
@@ -2879,7 +2880,7 @@ milestone and is tagged `Designed` in the system-analytics and DB docs until eac
 
 **Date:** 2026-06-03
 **Status:** Accepted
-**Context:** ADR-048 generalizes promotion to flow runs across `local_merge` **and** `pull_request`
+**Context:** ADR-058 generalizes promotion to flow runs across `local_merge` **and** `pull_request`
 modes, but until M18 there is **no git push and no PR creation anywhere** in the platform:
 `web/lib/repo-source.ts` detects the provider (`github | gitlab | gitea | gitverse | generic`) but
 only records it, `cloneRepo` is a plain `git clone` on host credentials, and the promote route throws
@@ -2912,7 +2913,7 @@ dispatched on `projects.provider`, under **credential model B**:
   remote.
 - **Idempotent PR by stored `workspace.pr_url`.** If `pr_url` is set, the adapter **updates** the
   existing PR (pushes commits), never creating a duplicate. The crash-window fallback (PR created
-  upstream but `pr_url` not yet persisted, because the markers are AFTER-side writes per ADR-048) is a
+  upstream but `pr_url` not yet persisted, because the markers are AFTER-side writes per ADR-058) is a
   provider query — `gh pr list --head` / `glab mr list --source-branch` / Gitea
   `GET …/pulls` — to detect an existing upstream PR for `(run branch → target)` and update instead of
   duplicating.
@@ -3514,9 +3515,7 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
 
 ## TODO (tracked doc defects)
 
-- **Duplicate `### ADR-048` heading (pre-existing).** Two distinct ADRs share the number `ADR-048`:
-  the M15 "Readiness enforcement over all blocking gate kinds + verdict calibration" (≈ line 2556) and
-  the M18 "Branch targeting at launch, shared promotion service, promote-time readiness re-gate"
-  (≈ line 2747). Numbering is immutable history (R4) — **do NOT renumber either**. Filed per docs R9 so
-  the collision is tracked; a future ADR may supersede-and-renumber one with an explicit migration note,
-  but M17 leaves both as-is.
+- **Duplicate `### ADR-048` heading (resolved).** The collision was resolved by renumbering the M18
+  "Branch targeting at launch, shared promotion service, promote-time readiness re-gate" ADR to
+  **ADR-058**; the M15 "Readiness enforcement over all blocking gate kinds + verdict calibration" ADR
+  keeps **ADR-048**.

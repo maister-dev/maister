@@ -57,7 +57,7 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   carrying `pr_url`/`pr_number` **in the payload** for `pull_request` promotions.
   **No new artifact kind** (`pr_link` is NOT introduced — resolved decision Q3);
   `local_merge` promotions record the same artifact with no `pr_url`. See
-  [`workspaces.md`](workspaces.md) and [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve).
+  [`workspaces.md`](workspaces.md) and [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve).
 - **Artifact definition** (`artifact_def_id`) — manifest `output.produces[].id`
   for declared artifacts; `NULL` for default/projector-derived rows.
 - **Evidence-readiness guard** (`assertEvidenceReady`) — per-def-current: a
@@ -320,7 +320,7 @@ All logs use the module-local pino logger per the existing pattern
   [ADR-022](../decisions.md) (projector, lands with M12),
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
-  [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
+  [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
   (promotion artifact via `commit_set`/`diff`, Implemented M18).
 - DB ERD: [`../db/artifacts-domain.md`](../db/artifacts-domain.md),
   [`../db/erd.md`](../db/erd.md).

@@ -605,7 +605,7 @@ Migration `0021` backfills existing rows — `promotionMode := <project default 
 'local_merge'>` and `targetBranch := <project default_branch>`; `baseBranch`/
 `baseCommit` stay null (historically unknowable, handled by the promote-service
 code fallback). A second group implements the **durable promotion claim**
-([ADR-048](decisions.md)): `promotionState` (`none | claiming | done | failed`,
+([ADR-058](decisions.md)): `promotionState` (`none | claiming | done | failed`,
 `NOT NULL DEFAULT 'none'`), `promotionClaimedAt`, `promotionOwnerUserId`
 (FK → `users.id`, nullable), and `promotionAttemptId` — a per-attempt
 CAS-identity token (opaque) minted fresh on each claim. Promotion serializes on

@@ -949,7 +949,7 @@ async function promoteScratchRun(
 }
 
 /**
- * Shared promotion service over both run kinds (M18 Phase 2, ADR-048).
+ * Shared promotion service over both run kinds (M18 Phase 2, ADR-058).
  * Dispatches on `runs.run_kind`. Flow runs get the readiness re-gate +
  * target-drift gate + relaxed target; scratch runs stay target-locked with the
  * M15 merge-readiness guard. Both run through the durable promotion claim (§3.2,

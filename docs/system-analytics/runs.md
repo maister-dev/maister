@@ -151,7 +151,7 @@ invariants bind it to the run machine:
 Before M18 a **flow** run dead-ended at `Review` (`Running→Review` is
 CAS-guarded; no promote path flipped it terminal — only scratch runs promoted).
 M18
-([ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
+([ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve))
 wires the **existing** `Review → Done` edge for flow runs through a **shared
 `promoteRun` service** that drives both run kinds. This adds **NO new
 `runs.status` value** — `local_merge` terminates at the existing `Done`. The
@@ -239,7 +239,7 @@ sequenceDiagram
 > **not** gate promotion on them. **(Implemented, M18)** the promote service enforces
 > readiness here by calling `assertEvidenceReady(runId, "review")` a **second**
 > time (a deliberate M16 reuse, no M15 dependency —
-> [ADR-048](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve));
+> [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve));
 > overridden gates satisfy it. `local_merge` finalizes at `Done`; `pull_request`
 > is **(Implemented, M18)**. See [`flow-graph.md`](flow-graph.md) and
 > [`workspaces.md`](workspaces.md).
@@ -528,7 +528,7 @@ matching rows.
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
-  [ADR-048 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-048-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
+  [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
   (Implemented, M18).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
