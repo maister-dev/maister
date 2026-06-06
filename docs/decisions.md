@@ -29,7 +29,7 @@
 | [ADR-001](#adr-001-nextjs-16--heroui-v3-as-the-web-stack) | Next.js 16 + HeroUI v3 as the web stack | Accepted | 2026-05-22 |
 | [ADR-002](#adr-002-supervisor-runs-as-a-separate-node-daemon) | Supervisor runs as a separate Node daemon | Accepted | 2026-05-25 |
 | [ADR-003](#adr-003-acp-as-the-agent-runtime-protocol) | ACP as the agent runtime protocol | Accepted | 2026-05-25 |
-| [ADR-004](#adr-004-multi-executor-claude--codex-on-current-target) | Multi-executor: claude + codex on current target | Accepted | 2026-05-25 |
+| [ADR-004](#adr-004-multi-runner-claude--codex-on-current-target) | Multi-executor: claude + codex on current target | Accepted | 2026-05-25 |
 | [ADR-005](#adr-005-model-routing-env-router-default-ccr-optional) | Model routing: env-router default, CCR optional | Accepted | 2026-05-25 |
 | [ADR-006](#adr-006-hybrid-hitl-keep-alive--checkpointresume) | Hybrid HITL: keep-alive + checkpoint/resume | Accepted | 2026-05-25 |
 | [ADR-007](#adr-007-sse-pipe-to-disk-for-step-output) | SSE pipe-to-disk for step output | Accepted | 2026-05-22 |
@@ -37,7 +37,7 @@
 | [ADR-009](#adr-009-global-concurrency-cap--3) | Global concurrency cap = 3 | Accepted | 2026-05-22 |
 | [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl) | Flow Engine v2: plugin packaging + step DSL | Accepted | 2026-05-25 |
 | [ADR-011](#adr-011-workspace-lifecycle-via-git-worktree) | Workspace lifecycle via git worktree | Accepted | 2026-05-22 |
-| [ADR-012](#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict) | Local promotion merge policy: `--no-ff`, abort on conflict | Accepted | 2026-05-22 |
+| [ADR-012](#adr-012-local-promotion-merge-policy---no-ff-abort-on-conflict) | Local promotion merge policy: `--no-ff`, abort on conflict | Accepted | 2026-05-22 |
 | [ADR-013](#adr-013-postgres-16-primary-sqlite-dev-drizzle-orm) | Postgres 16 primary, SQLite dev, Drizzle ORM | Accepted | 2026-05-22 |
 | [ADR-014](#adr-014-i18n-en--ru-from-day-one) | i18n: EN + RU from day one | Accepted | 2026-05-22 |
 | [ADR-015](#adr-015-pnpm-workspace-node-24) | pnpm workspace, Node 24 | Accepted | 2026-05-22 |
@@ -189,6 +189,7 @@ over stdio JSONL.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+> **Partially superseded by [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars):** the project-scoped executor-identity mechanism was replaced by the platform ACP runner catalog (`platform_acp_runners`, `runs.runner_id`); the two-runner (claude + codex) decision itself stands.
 **Context:** Validating MAIster's portfolio thesis requires more than
 one runner to prove the abstraction is real. M0 confirmed both ACP
 adapters work and the supervisor's spawn dispatch on
@@ -218,6 +219,7 @@ Aider, and OpenHands are Phase 2 runner candidates.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+> **Partially superseded by [ADR-050](#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars):** the env-router-default / CCR-optional decision stands, but the config surface moved — `maister.yaml` no longer carries `executors[]`/`router: ccr` (now `z.never()` in config.schema.ts); CCR is a platform router sidecar.
 **Context:** Users want to route their Claude session through
 third-party Anthropic-API-compatible providers (z.ai GLM, OpenRouter,
 anyscale). M0 verified that setting `ANTHROPIC_BASE_URL` +
@@ -378,6 +380,7 @@ from `maister.yaml`.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+> **Extended by [ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump):** the linear `steps[]` DSL is superseded for execution by the graph `nodes[]` manifest; the plugin-packaging decision here stands.
 **Context:** Hard-coding Flows inside MAIster ties the product release
 to every Flow change. Hard-coded Flows also can't ship with their own
 skills, agents, or setup scripts. Users need to add a Flow without
@@ -781,6 +784,7 @@ that ships capabilities/gates/artifacts *inside* a package.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+> **Refined by [ADR-038](#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022):** the artifact projector (per-run cursor) is Implemented (M12).
 **Context:** The UI needs a live timeline of agent tool calls and file
 changes, reviewers need queryable evidence, and analytics needs cross-run
 facts. Today the supervisor's ACP `session.update` payloads (`tool_call`,
@@ -856,6 +860,7 @@ the v1 topology ADR-022's projector relies on.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+> **Implemented across [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve) (carve), [ADR-046](#adr-046-project-api-token-model) (tokens), [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package) (MCP facade), [ADR-054](#adr-054-hitl-assessment-taxonomy--flow-declared-criticality-vs-responder-human_confidence-annotate-not-re-gate) (HITL assessment):** the reserved HITL responder field shipped as `human_confidence` (renamed from `confidence` by ADR-054).
 **Context:** MAIster needs a machine-facing surface so external systems (CI,
 local scripts, autonomous assistant agents) can create tasks, read the board
 and run readiness, and route/answer pending HITL requests — without
@@ -1037,6 +1042,7 @@ Reworked | Stale`).
 
 **Date:** 2026-05-30
 **Status:** Accepted
+> **Delivered:** the M15 re-scope landed in [ADR-048](#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15); `external_check` execution in [ADR-045](#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve).
 **Context:** Review-driven rework is only demonstrable if gates actually
 execute, go **stale** on rework, and **rerun** — a status lifecycle plus
 structured verdicts, not metric-only guards. The roadmap originally assigned
@@ -1088,6 +1094,7 @@ move to M11a.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+> **Fully delivered:** M11a/M11b/M11c all shipped; surviving contracts live in ADR-026/027/028/030/031/032. Historical planning record.
 **Context:** Roadmap M11 ("Flow graph maturity") bundles the graph engine,
 ledger, rework, and gate execution together with manual human takeover, the rich
 run-detail timeline, typed node settings, and a runtime enforcement boundary —
@@ -1745,7 +1752,7 @@ preserve EVERYTHING first):
    Forcibly removing un-preserved dirty state is FORBIDDEN.
 
 GC **never auto-merges** into the project default/target branch (that is M18
-promotion, [ADR-012](#adr-012-local-promotion-merge-policy-no-ff-abort-on-conflict)).
+promotion, [ADR-012](#adr-012-local-promotion-merge-policy---no-ff-abort-on-conflict)).
 A clean worktree with no commit divergence has nothing to preserve → skip
 straight to removal. The migration 0015 adds three nullable `workspaces` columns
 (`scheduled_removal_at`, `archived_branch`, `archived_at`) — no `gc_state` enum.
@@ -1901,7 +1908,7 @@ AI judgment, human note, checkpoint, default log, guard metrics); the **web
 tier** sees the supervisor **event stream** and can derive evidence the runner
 cannot observe (per-tool-call activity, preview URLs). The no-`fs.watch` /
 no-`chokidar` / no-polling rule (root CLAUDE.md §1) forbids a watcher driving
-state. [ADR-022] is the web-side projector pattern that this ADR refines and
+state. [ADR-022](#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models) is the web-side projector pattern that this ADR refines and
 scopes.
 
 **Decision:** Two write paths into **one** index:
@@ -1942,7 +1949,7 @@ This corrects the plan's §11.1 ratified default, which assumed a per-step log.
 
 **Consequences:**
 
-- [ADR-022] stays "lands with M12" — this ADR scopes it, it does not reopen it.
+- [ADR-022](#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models) stays "lands with M12" — this ADR scopes it, it does not reopen it.
 - The M11 `node_attempts` ledger remains **runner-owned**; the projector never
   writes it.
 - The projector **never reassembles diffs** — git is the source for diff
@@ -2103,6 +2110,7 @@ ingress is introduced.
 
 **Date:** 2026-06-02
 **Status:** Accepted
+> **Delivery half superseded by [ADR-044](#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven):** the CLI-flag/preArgs delivery mechanism was disproven; capability now ships via `.claude/settings.local.json` + ACP `newSession`. The registry/resolver/ledger half here stands.
 **Context:** [ADR-031](#adr-031-node-typed-settings-schema-carve-b) shipped typed
 node `settings` but deferred the **positive** half of roadmap criterion #6 to
 M14: resolving `mcps:[github]` / `skills:[…]` / `tools:[…]` /
@@ -2219,6 +2227,7 @@ cover the new failure modes. Imports reuse the flow-install pipeline per
 
 **Date:** 2026-06-02
 **Status:** Accepted
+> **Status note (2026-06):** the `instructed → enforced` flip authorized here is NOT yet executed — `ENFORCEABILITY_BY_AGENT` remains all-`instructed` (every cell `TODO(M14)`) as of M17, and the verdict table is unfilled. The gating policy is active; only the flip pends a live spike.
 **Context:** [ADR-032](#adr-032-settings-enforcement-refusal-boundary) froze
 `ENFORCEABILITY_BY_AGENT` (`web/lib/flows/enforcement.ts`) **all-`instructed`**
 across both agents and all six capability classes (`mcps`, `tools`, `skills`,
@@ -2403,6 +2412,7 @@ No new `MaisterError` code — `FLOW_INSTALL` carries import/path failures and
 
 **Date:** 2026-06-02
 **Status:** Accepted
+> **Closed clause:** the "HITL `confidence`/`criticality` re-scoped to M17" pointer here is now resolved by [ADR-054](#adr-054-hitl-assessment-taxonomy--flow-declared-criticality-vs-responder-human_confidence-annotate-not-re-gate).
 **Context:** M11a ([ADR-028](#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)) stubbed
 `external_check` gates as `pending + TODO(M16)` — they are schema-valid and status-modelled but
 not executed. M16 must wire the stub to a real outcome without introducing new `runs.status` values
@@ -2482,7 +2492,7 @@ service core without duplicating domain logic.
 
 **Consequences:**
 
-- Two new tables (`project_tokens`, `token_audit_log`) in migration `0018_m16_api_tokens.sql`;
+- Two new tables (`project_tokens`, `token_audit_log`) in migration `0020_m16_api_tokens.sql`;
   cascade chain: project → tokens → audit rows.
 - The plaintext token is returned once at creation and is never stored or re-derivable; loss
   requires re-issuance.
@@ -2522,7 +2532,7 @@ a standalone workspace package — determines its coupling surface and its abili
 independently.
 
 **Decision:** The MCP facade is a **standalone top-level `mcp/` workspace package** (`@maister/mcp`,
-`@modelcontextprotocol/sdk`). It exposes 8 MCP tools (task CRUD, run launch/read/readiness,
+`@modelcontextprotocol/sdk`). It exposes **10 MCP tools** (8 core + `hitl_list`/`hitl_respond` added by [ADR-055](#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates)) (task CRUD, run launch/read/readiness,
 gate report) each implemented as a thin HTTP client of the corresponding `/api/v1/ext` route —
 no DB access, no Drizzle, no supervisor dependency. **Transport-scoped auth**: under
 **Streamable-HTTP** (the default, remote transport), the MCP server requires a per-request
@@ -2982,6 +2992,7 @@ provider/config docs until that phase's HEAD.
 
 **Date:** 2026-06-03
 **Status:** Accepted
+> **Supersedes (in part) [ADR-004](#adr-004-multi-runner-claude--codex-on-current-target) and [ADR-005](#adr-005-model-routing-env-router-default-ccr-optional):** this ADR replaces the project-scoped executor-identity + model-routing config those defined.
 **Context:** MAIster is moving from project-scoped executor rows to operator-managed ACP launch
 configuration. The same platform must support Claude Code direct, Claude Code through Claude Code
 Router (CCR), Claude Code with explicit dangerous permission policy, Codex with OpenAI-compatible
@@ -3189,7 +3200,7 @@ readiness — without re-deriving or re-litigating the M15 machine-confidence pa
   the fields are now named and placed; M17's remaining work is to surface and persist them, not to
   re-decide them.
 
-No engine bump: `MAISTER_ENGINE_VERSION` stays **1.2.0**. The columns ride additive migration `0022`.
+No engine bump: `MAISTER_ENGINE_VERSION` stays **1.2.0**. The columns ride additive migration `0025_m17_hitl_assessment.sql`.
 
 **Consequences:**
 
@@ -3259,7 +3270,7 @@ tools, gated by actor-kind and an opt-in scope check:
   inheriting the complete `token_audit_log` trail.
 - **Token actor identity.** A new `ensureApiTokenActor({projectId, tokenId, label})` upserts the
   `actor_identities` row for assignment attribution, backed by a new **unique partial index on
-  `(project_id, token_id)` WHERE `kind = 'api_token'`** (migration `0025`; user rows with `NULL`
+  `(project_id, token_id)` WHERE `kind = 'api_token'`** (migration `0026_m17_actor_token_uniqueness.sql`; user rows with `NULL`
   `token_id` stay distinct). In Phase 1 the `api_token` branch of `respondToHitl` is a typed stub that
   throws `UNAUTHORIZED`; it is wired live in Phase 6.
 - **D7 — answering a `human`-kind HITL requires a human actor.** `respondToHitl` refuses any
@@ -3280,7 +3291,7 @@ tools, gated by actor-kind and an opt-in scope check:
   D8; they compose.
 
 No new `runs.status`, no engine bump (`MAISTER_ENGINE_VERSION` stays **1.2.0**); the actor-token index
-rides additive migration `0023`.
+rides additive migration `0026_m17_actor_token_uniqueness.sql`.
 
 **Consequences:**
 

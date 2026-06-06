@@ -1464,11 +1464,11 @@ export const hitlRequests = pgTable(
     decision: text("decision"),
     workspacePolicy: text("workspace_policy"),
     reworkTarget: text("rework_target"),
-    // M17 ADR-050: flow-author-declared criticality; write-once at INSERT.
+    // M17 ADR-054: flow-author-declared criticality; write-once at INSERT.
     criticality: text("criticality", {
       enum: ["low", "medium", "high", "critical"],
     }),
-    // M17 ADR-050: responder self-reported confidence in [0,1]; set at response time.
+    // M17 ADR-054: responder self-reported confidence in [0,1]; set at response time.
     humanConfidence: real("human_confidence"),
     respondedAt: timestamp("responded_at", {
       withTimezone: true,
