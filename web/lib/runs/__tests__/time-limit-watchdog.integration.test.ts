@@ -56,10 +56,7 @@ vi.mock("@/lib/flows/runner", () => ({
 let runSweepTick: (opts?: { db?: unknown }) => Promise<unknown>;
 
 import * as schemaModule from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -123,9 +120,7 @@ beforeAll(async () => {
     repoPath: "/repos/wd-app",
     maisterYamlPath: "/repos/wd-app/maister.yaml",
   });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   ({ runSweepTick } = await import("../keepalive-sweeper"));
 }, 180_000);

@@ -20,10 +20,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import {
   createHitlAssignment,
   ensureUserActor,
@@ -97,9 +94,7 @@ async function seedProject(
     maisterYamlPath: `/tmp/${slug}/maister.yaml`,
   });
 
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(schema.flows).values({
     id: flowId,

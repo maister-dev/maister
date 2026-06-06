@@ -29,10 +29,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import {
   promoteNextPending,
   releaseSlotOnIdle,
@@ -84,9 +81,7 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/sched-app/maister.yaml",
   });
 
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   flowId = randomUUID();
 

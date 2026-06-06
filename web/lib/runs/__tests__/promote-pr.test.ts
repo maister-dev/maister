@@ -236,10 +236,12 @@ beforeEach(() => {
     .mockReset()
     .mockReturnValue({ preflight, createOrUpdatePr } as never);
   preflight.mockReset().mockResolvedValue(undefined);
-  createOrUpdatePr.mockReset().mockResolvedValue({
-    url: "https://github.com/org/repo/pull/77",
-    number: 77,
-  });
+  createOrUpdatePr
+    .mockReset()
+    .mockResolvedValue({
+      url: "https://github.com/org/repo/pull/77",
+      number: 77,
+    });
   vi.mocked(createAssignment)
     .mockReset()
     .mockResolvedValue({ id: "assignment-1" } as never);
@@ -247,9 +249,9 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ id: "actor-1" } as never);
   vi.mocked(findActiveAssignmentForRun).mockReset().mockResolvedValue(null);
-  vi.mocked(systemCloseActiveAssignmentsForRun)
-    .mockReset()
-    .mockResolvedValue([]);
+  vi.mocked(systemCloseActiveAssignmentsForRun).mockReset().mockResolvedValue(
+    [],
+  );
   authorize.mockReset().mockResolvedValue(undefined);
 });
 
@@ -277,7 +279,10 @@ describe("promoteRun — pull_request happy path (github)", () => {
     expect(res.prNumber).toBe(77);
 
     // Provider dispatch ran against the project's provider.
-    expect(selectPrAdapter).toHaveBeenCalledWith("github", expect.anything());
+    expect(selectPrAdapter).toHaveBeenCalledWith(
+      "github",
+      expect.anything(),
+    );
     expect(preflight).toHaveBeenCalledTimes(1);
 
     // Branch pushed before the PR is opened.
@@ -315,7 +320,9 @@ describe("promoteRun — pull_request happy path (github)", () => {
 
   it("records a PR artifact carrying pr_url/pr_number in its payload", async () => {
     const runId = seedGithubFlowRun();
-    const { recordArtifact } = await import("@/lib/flows/graph/artifact-store");
+    const { recordArtifact } = await import(
+      "@/lib/flows/graph/artifact-store"
+    );
 
     await callPromote(runId, {
       mode: "pull_request",
@@ -445,10 +452,7 @@ describe("promoteRun — config failures → PRECONDITION (409), no pr_url, stay
 
     // selectPrAdapter throws for a generic provider.
     vi.mocked(selectPrAdapter).mockImplementationOnce(() => {
-      throw new MaisterError(
-        "PRECONDITION",
-        "PR mode unsupported for provider",
-      );
+      throw new MaisterError("PRECONDITION", "PR mode unsupported for provider");
     });
 
     await expectMaisterCode(

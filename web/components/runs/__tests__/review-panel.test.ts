@@ -1,8 +1,8 @@
-import type { ReadinessDTO } from "@/lib/queries/readiness";
-
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { ReadinessDTO } from "@/lib/queries/readiness";
 
 // ---------------------------------------------------------------------------
 // CONTRACT under test — `components/runs/review-panel.tsx` (M18 T4.2).
@@ -89,7 +89,9 @@ function render(over: Partial<ReviewPanelProps> = {}): string {
     labels: LABELS,
   } as ReviewPanelProps;
 
-  return renderToStaticMarkup(createElement(ReviewPanel, { ...base, ...over }));
+  return renderToStaticMarkup(
+    createElement(ReviewPanel, { ...base, ...over }),
+  );
 }
 
 describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => {

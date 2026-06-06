@@ -41,10 +41,7 @@ import {
 } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { projectorArtifactId } from "@/lib/flows/graph/artifact-store";
 import { projectRunEvents } from "@/lib/projector/artifact-projector";
 
@@ -120,9 +117,7 @@ async function seedRun(): Promise<Seeded> {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,

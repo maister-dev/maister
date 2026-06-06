@@ -16,10 +16,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -68,9 +65,7 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,

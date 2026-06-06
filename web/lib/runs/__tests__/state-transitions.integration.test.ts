@@ -15,10 +15,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { getActiveTakeover } from "@/lib/flows/graph/ledger";
 import {
   bumpKeepalive,
@@ -65,9 +62,7 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/state-app/maister.yaml",
   });
 
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   flowId = randomUUID();
 

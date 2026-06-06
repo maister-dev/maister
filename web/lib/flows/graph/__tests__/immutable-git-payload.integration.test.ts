@@ -29,10 +29,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { recordDefaultArtifacts } from "@/lib/flows/graph/default-artifacts";
 import { runFlow } from "@/lib/flows/runner";
@@ -158,9 +155,7 @@ async function seedRun(repo: GitRepo): Promise<{
     repoPath: repo.repo,
     maisterYamlPath: "/tmp/m.yaml",
   });
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -369,9 +364,7 @@ describe("F3: runner records commit_set baseRef as the merge-base", () => {
       repoPath: repo.repo,
       maisterYamlPath: "/tmp/m.yaml",
     });
-    await db
-      .insert(schema.platformAcpRunners)
-      .values(testPlatformRunnerRow(executorId, "claude"));
+    await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
     await db.insert(schema.flows).values({
       id: flowId,
       projectId,

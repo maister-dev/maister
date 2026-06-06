@@ -29,15 +29,13 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import {
-  testPlatformRunnerRow,
-  testRunnerSnapshot,
-} from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { gcAgeDays } from "@/lib/instance-config";
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { flowRevisions, flows, projects, runs, tasks, users } = schema;
+const { flowRevisions, flows, projects, runs, tasks, users } =
+  schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -82,9 +80,7 @@ beforeAll(async () => {
     maisterYamlPath: `/repos/revgc/maister.yaml`,
   });
 
-  await db
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(flows).values({
     id: flowId,

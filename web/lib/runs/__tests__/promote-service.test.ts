@@ -250,9 +250,9 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ id: "actor-1" } as never);
   vi.mocked(findActiveAssignmentForRun).mockReset().mockResolvedValue(null);
-  vi.mocked(systemCloseActiveAssignmentsForRun)
-    .mockReset()
-    .mockResolvedValue([]);
+  vi.mocked(systemCloseActiveAssignmentsForRun).mockReset().mockResolvedValue(
+    [],
+  );
   authorize.mockReset().mockResolvedValue(undefined);
 });
 
