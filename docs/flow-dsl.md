@@ -434,6 +434,63 @@ benchmark datasets, rich preview sandboxing, cross-run artifact reuse, full
 payload-schema validation for every artifact kind, provider-specific CI apps,
 and CI ingestion beyond the generic external gate report contract.
 
+## M26: structured node output channel (`output.result`) (Designed)
+
+> **Status (M26 — Designed).** Opt-in schema-validated structured output for
+> every graph node type, folded into the existing `node_attempts.vars` channel.
+> Decision: [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
+> frozen SSOT:
+> `.ai-factory/specs/feature-m26-structured-output-run-context.md`. The
+> post-action validate seam, the run-context file, and the per-node-type
+> transport are drawn in
+> [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
+
+Today only `human`/HITL nodes write a structured result into
+`node_attempts.vars`; `ai_coding`/`cli`/`check`/`judge` nodes leave `vars: {}`.
+M26 lets any graph node emit a **schema-validated** structured result into that
+same `vars` channel, declared **opt-in** per node. A node without `output.result`
+behaves byte-identically to today (no transport provisioning, no parsing).
+
+**`output.result`.** A new field on a node's `output` block, **sibling of the M12
+`output.produces[]`**:
+
+```yaml
+output:
+  result:
+    schema: ./schemas/plan-output.json   # path, resolved against the flow install dir
+    required: false                       # default false
+  produces:                               # M12, unchanged
+    - id: plan-summary
+      kind: generic_file
+```
+
+| field | type | meaning |
+| ----- | ---- | ------- |
+| `schema` | string | A **path** (not inline) resolved against the flow install dir with the same escape-guard as `form_schema`; the resolved file is validated as a `formSchemaSchema` document. M26 **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
+| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds. |
+
+**Per-node-type output transport.** Transport is chosen by the node's execution
+mechanism, not declared:
+
+| Node types | Transport |
+| ---------- | --------- |
+| `ai_coding`, `judge` (agent-executed) | The agent ends its response with a **single** sentinel-tagged fenced block ` ```json maister:output … ``` `; the runner extracts the **last** such block from the **1 MiB-capped** `result.stdout` capture (a block pushed past the cap is treated as **absent** → `CONFIG` if `required`). The agent writes **no file** (it cannot write outside its worktree `cwd`). |
+| `cli`, `check` (cli-executed) | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file. |
+
+`human` nodes are unchanged — their `vars` come from the HITL input artifact.
+
+**Engine gate.** Any flow using `output.result` on **any** node MUST declare
+`compat.engine_min: 1.3.0`. `MAISTER_ENGINE_VERSION` bumps `1.2.0 → 1.3.0`; a
+manifest that declares `output.result` without `compat.engine_min >= 1.3.0` is
+rejected with `MaisterError("CONFIG")` (mirrors the `ARTIFACT_ENGINE_MIN = 1.2.0`
+gate). A flow that does **not** declare `output.result` stays valid at any
+`engine_min` (back-compat). The post-action validate seam, the size cap
+(`MAISTER_NODE_OUTPUT_MAX_BYTES`), and the run-context file are specified in
+[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md); env wiring is
+in [`configuration.md`](configuration.md). Rationale lives in
+[ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)
+— not restated here.
+
 ## Planned M15: readiness policy and verdict calibration
 
 > **Re-scoped (ADR-028).** M11a annexed gate *execution* — the kinds, status

@@ -130,7 +130,12 @@ to the `step_runs` row only when no `node_attempts` exist (legacy runs).
 flowchart TD
     Entry([entry / resume node]) --> Append[appendNodeAttempt<br/>attempt = nextAttemptFor]
     Append --> Act[run action<br/>cli / agent / check / judge / human]
-    Act --> Gates[run pre_finish.gates in order]
+    Act --> Validate{output.result declared?<br/>M26 — Designed}
+    Validate -- no --> Gates[run pre_finish.gates in order]
+    Validate -- yes, valid --> FoldVars[fold validated payload into vars]
+    Validate -- yes, invalid --> FailCfg[markNodeFailed CONFIG]
+    FoldVars --> Gates
+    FailCfg --> Fail[node Failed -> run Failed]
     Gates --> Block{blocking gate failed?}
     Block -- yes, rework target exists --> Stale[markDownstreamStale<br/>jump to rework target]
     Block -- yes, no rework --> Fail[node Failed -> run Failed]
@@ -146,6 +151,100 @@ flowchart TD
     More -- node id --> Append
     More -- terminal --> Done([run Review / Done])
 ```
+
+The `Validate` decision and its three branches are the **M26 post-action seam**
+(below). For nodes without `output.result` the seam is a no-op and traversal is
+unchanged.
+
+### Structured output validate seam (M26 — Designed)
+
+> **Status (M26 — Designed.)** Opt-in schema-validated structured output, folded
+> into the existing `node_attempts.vars`. Decision:
+> [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
+> frozen SSOT:
+> `../../.ai-factory/specs/feature-m26-structured-output-run-context.md`. DSL
+> field + transport contract: [`../flow-dsl.md`](../flow-dsl.md) §M26. Env wiring:
+> [`../configuration.md`](../configuration.md).
+
+After a node's action **succeeds** and **before** `pre_finish.gates` run, when the
+node declares `output.result` (and `compat.engine_min >= 1.3.0`), the runner
+applies a post-action validation pipeline at the existing post-action seam, then
+folds the validated object into the attempt's `vars`. A node **without**
+`output.result` skips the whole seam — its behavior is byte-identical to today
+(`vars: {}`, no transport provisioning, no parsing).
+
+1. **Acquire the raw payload by execution mechanism.** Agent-executed
+   (`ai_coding`/`judge`) → the **last** ` ```json maister:output ` fenced block in
+   the **1 MiB-capped** `result.stdout` capture (`STDOUT_CAP_BYTES`); a block
+   pushed past the 1 MiB stdout cap is treated as **absent**. Cli-executed
+   (`cli`/`check`) → the contents of `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json`
+   (per-attempt filename, so attempt N never inherits attempt N-1's file).
+2. **Enforce `MAISTER_NODE_OUTPUT_MAX_BYTES`** (default 256 KiB) on the raw
+   payload bytes.
+3. **`JSON.parse`** defensively.
+4. **Validate** against the declared `formSchemaSchema` `./path`. M26 **adds** a
+   nested `object` type to that grammar (flat today: `string \| number \| boolean
+   \| enum \| array`) — net-new work, still no `ajv` and no new dep.
+5. **On success,** fold the validated object into the attempt's `vars`, persisted
+   by the **existing single** `markNodeSucceeded(..., { vars })` UPDATE — no new
+   write, no new crash window. A downstream node then resolves
+   `{{steps.<nodeId>.vars.<key>}}` through the unchanged `reduceLedger`
+   highest-attempt-wins union.
+6. **On any failure** — payload absent while `required: true`, oversize past the
+   cap, invalid JSON, or schema mismatch — the attempt fails with
+   `markNodeFailed` + `MaisterError("CONFIG")` and the run stays unpromotable. This
+   seam runs only after the agent turn reached `end_turn` (`result.ok`), at which
+   point `sendPrompt` has already drained every permission deferred —
+   `markNodeFailed` here leaks nothing. Payload absent while `required: false` →
+   `vars` stays `{}` and the node proceeds.
+
+### Run-context file (M26 — Designed)
+
+> **Status (M26 — Designed.)** A session-independent JSON blackboard projecting
+> run-level state, injected as a pointer into each agent node's prompt. Decision:
+> [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).
+
+`run.json` lives at `<worktreePath>/.maister/run.json`, written via
+`atomicWriteJson` **inside the agent's worktree cwd** so both `claude` and `codex`
+read it from their own working dir (no out-of-cwd-read assumption, no dependence on
+`.claude` settings). The runner git-excludes `.maister/` for the worktree
+(idempotent append of `.maister/` to the path from `git rev-parse --git-path
+info/exclude`) so `run.json` never enters `git status` or the base→run diff. The
+run logs (`<stepId>.log`, `run.events.jsonl`, `cost.jsonl`) stay at `<runDir>`;
+only `run.json` lives in the worktree. Its shape (M26 hardcoded "all"):
+
+```json
+{
+  "intent": "<task.prompt>",
+  "nodes": { "<nodeId>": { "summary": "<truncated node output text>", "vars": { } } },
+  "gates": { "<gateId>": { "status": "passed", "verdict": { } } },
+  "promoted": { }
+}
+```
+
+- `intent` = `task.prompt`.
+- `nodes.<id>.summary` = the node's truncated output text (the existing
+  `reduceLedger` `output` field); `nodes.<id>.vars` = the node's structured vars
+  (P1; `{}` for nodes that declared none).
+- `gates.<id>` = `{ status, verdict? }` for the latest result per gate — `status`
+  (from `gate_results.status`) is **always present** (the only signal for
+  `command_check`/`human_review`, whose `verdict` is null); `verdict` is included
+  only when non-null.
+- `promoted` = a flat last-wins union of every node's `vars` (the single place an
+  agent reads all structured state). Reserved to become selective when the P7
+  selector lands (later wave).
+
+`run.json` is a **pure projection** of `node_attempts` + `gate_results` +
+`task.prompt`, rebuilt by `buildRunContext(...)` and rewritten (a) once at run
+start (intent only) and (b) after every node-attempt terminal ledger write.
+Because it is derived, it is **idempotent and self-healing**: a missing/stale
+file is regenerated on the next node, and **correctness never depends on it** — a
+fresh, cleared, or resumed session reconstructs identical state from the ledger +
+worktree. The runner appends a one-line pointer `[Run context: <abs run.json path>]`
+to each agent node's resolved prompt (after `renderStrict`, before dispatch — both
+`new-session` and `slash-in-existing`). `run.json` is built only from `vars` +
+gate results + `task.prompt` — **never** from `context.env`, so no env secret can
+enter the file.
 
 ### Review-driven rework loop (criterion #3)
 
@@ -249,6 +348,28 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   ends the run `Failed` with a clear error — never an unbounded cycle.
 - M11a `gate_results` **feed but do not gate promotion**; refusing a merge on an
   unsatisfied required gate is the M15/M18 readiness policy, not M11a.
+- **(M26 — Designed)** A node declaring `output.result` MUST have its payload
+  acquired by execution mechanism (agent → last ` ```json maister:output ` block in
+  the 1 MiB-capped `result.stdout`, a block past that cap treated as absent; cli →
+  per-attempt `MAISTER_OUTPUT_FILE`), size-capped at
+  `MAISTER_NODE_OUTPUT_MAX_BYTES`, JSON-parsed, and validated against the resolved
+  `formSchemaSchema` `./path` (extended this milestone with a nested `object` type)
+  BEFORE `Succeeded`, folding into the **existing** `markNodeSucceeded` `vars`
+  UPDATE (no new write/migration/error code); any failure (absent-while-`required`,
+  oversize, bad JSON, schema mismatch) MUST fail the attempt with
+  `MaisterError("CONFIG")` and leave the run unpromotable (the seam runs after
+  `end_turn`, so no ACP deferred is open and `markNodeFailed` leaks nothing) — while
+  a node WITHOUT `output.result` stays byte-identical to today (`vars: {}`) and
+  requires `compat.engine_min >= 1.3.0`.
+- **(M26 — Designed)** `run.json` MUST exist per run at
+  `<worktreePath>/.maister/run.json`, separate from logs (which stay at `<runDir>`)
+  and git-excluded for the worktree (absent from `git status` and the base→run
+  diff), as a pure idempotent projection of `node_attempts` + `gate_results` +
+  `task.prompt` (`{intent, nodes(summary+vars), gates(status+verdict?), promoted}`)
+  that a fresh/cleared/resumed session reconstructs identically; correctness MUST
+  never depend on it, every agent node's prompt MUST carry the `[Run context: <abs
+  path>]` pointer in both session modes, and it MUST NOT contain any value sourced
+  from `context.env`.
 
 ## Edge cases
 
@@ -283,6 +404,21 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **Node `settings` block present** → preserved as opaque passthrough (never
   silently stripped), `SETTINGS_NOT_ENFORCED_WARN` fires once; enforcement is
   M11c.
+- **(M26 — Designed) Structured-output validation failures** at the post-action
+  seam, each → attempt `Failed` + `MaisterError("CONFIG")`, run unpromotable:
+  missing fenced block (agent) or absent `MAISTER_OUTPUT_FILE` (cli) while
+  `required: true`; a `maister:output` block pushed past the 1 MiB `result.stdout`
+  cap (treated as absent → `CONFIG` if `required`); invalid JSON; schema mismatch
+  against the resolved `formSchemaSchema`; payload oversize past
+  `MAISTER_NODE_OUTPUT_MAX_BYTES`. The seam runs after `end_turn`, so no ACP
+  deferred is open on this path.
+- **(M26 — Designed) Stale per-attempt cli output file** → a rework attempt N that
+  does not re-write `output-<nodeId>-N.json` MUST NOT inherit attempt N-1's file;
+  the per-attempt filename isolates it (absent-while-`required` → `CONFIG`,
+  absent-while-optional → `vars: {}`).
+- **(M26 — Designed) Node with no `output.result`** → the validate seam is a
+  no-op; the attempt is byte-identical to pre-M26 (`vars: {}`), no transport is
+  provisioned, and no `CONFIG` can arise from the seam.
 
 ## Linked artifacts
 
@@ -290,11 +426,14 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-026 Graph manifest](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
-  [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c).
+  [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
+  [ADR-063 Structured output + run-context (M26 — Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).
+- Spec (M26 — Designed):
+  `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   narrative [`../database-schema.md`](../database-schema.md).
 - DSL: [`../flow-dsl.md`](../flow-dsl.md) §Flow graph node lifecycle, §Gate
-  execution.
+  execution, §M26 (`output.result`).
 - Config: [`../configuration.md`](../configuration.md) §Package contract +
   compatibility (engine bump).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`respond` review

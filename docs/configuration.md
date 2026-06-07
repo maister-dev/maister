@@ -680,6 +680,22 @@ blocking gate kinds (`command_check`/`ai_judgment`/`skill_check`/`artifact_requi
 optional/additive, so no engine floor change is required
 ([ADR-048](decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)).
 
+**M26 engine bump (Designed).** M26 bumps `MAISTER_ENGINE_VERSION`
+`1.2.0 → 1.3.0` in `web/lib/flows/engine-version.ts`
+([ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)).
+`MAISTER_ENGINE_VERSION` is a **code constant, not an env var** — there is no
+`.env` wiring for it (unlike `MAISTER_NODE_OUTPUT_MAX_BYTES`, the separate
+size-cap env var above, which is wired into `.env.example` + this doc only, never
+`compose.yml`). A Flow that declares the new node
+`output.result` field on any node MUST declare `compat.engine_min: 1.3.0`, so an
+older engine refuses it through the same `engine_min..engine_max` check above; a
+manifest using `output.result` without `compat.engine_min >= 1.3.0` is rejected
+with `CONFIG` (mirrors the M12 declared-artifact gate). A Flow that does **not**
+declare `output.result` stays valid at any `engine_min` (back-compat).
+`SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]` (the field is additive). The
+transport contract and validate seam are in [`flow-dsl.md`](flow-dsl.md) §M26 and
+[`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26.
+
 ### Verdict calibration (M15)
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing
@@ -805,6 +821,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
 | `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | M8 resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed via `--resume`, the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
 | `MAISTER_WORKBENCH_MAX_FILE_BYTES` | no | `524288` (512 KiB) | **(M22 — Implemented, ADR-053.)** Max size of a single git-tracked blob the workbench file viewer serves. A larger file returns a `413` `too-large` marker; bytes are never sent. Read by `web/lib/instance-config.ts:workbenchMaxFileBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
+| `MAISTER_NODE_OUTPUT_MAX_BYTES` | no | `262144` (256 KiB) | **(M26 — Designed, [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).)** Caps a graph node's structured-output payload (the agent ` ```json maister:output ` block or the cli `MAISTER_OUTPUT_FILE` contents) before parse/validate at the post-action seam; exceeding it fails the attempt with `MaisterError({ code: "CONFIG" })`. Read by `web/lib/instance-config.ts:nodeOutputMaxBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_WORKBENCH_MAX_FILE_BYTES` precedent). See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26 and [`flow-dsl.md`](flow-dsl.md) §M26. |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |
 | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
