@@ -20,7 +20,6 @@ import {
 const log = pino({ name: "users", level: process.env.LOG_LEVEL ?? "info" });
 const {
   actorIdentities,
-  flowGraphLayouts,
   nodeAttempts,
   projectMembers,
   projectTokens,
@@ -541,7 +540,6 @@ export async function hardDeleteAdminUser(
       { table: actorIdentities, column: actorIdentities.userId },
       { table: projectTokens, column: projectTokens.created_by },
       { table: workspaces, column: workspaces.promotionOwnerUserId },
-      { table: flowGraphLayouts, column: flowGraphLayouts.updatedByUserId },
     ];
 
     for (const { table, column } of refChecks) {
