@@ -369,4 +369,4 @@ before supervisor child spawn.
 - [Flow DSL](../flow-dsl.md)
 - [Database schema](../database-schema.md)
 - [Error taxonomy](../error-taxonomy.md)
-- [ADR-045](../decisions.md#adr-045-platform-acp-runners-adapter-provisioners-and-router-sidecars)
+- [ADR-050](../decisions.md#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars)
