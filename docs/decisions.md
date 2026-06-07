@@ -87,6 +87,7 @@
 | [ADR-059](#adr-059-read-only-observatory-formulas-and-harvest-priority) | Read-only Observatory formulas and harvest priority | Accepted | 2026-06-05 |
 | [ADR-060](#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets) | Unified scheduler clock and polymorphic job budgets | Accepted | 2026-06-05 |
 | [ADR-061](#adr-061-local-authored-capability-catalog-lifecycle) | Local authored capability catalog lifecycle | Accepted | 2026-06-05 |
+| [ADR-062](#adr-062-platform-user-administration--project-member-management-admin-surface-carve) | Platform user administration + project member management (admin-surface carve) | Accepted | 2026-06-07 |
 
 ---
 
@@ -3671,6 +3672,88 @@ package code.
   silent priority rules and surprising resolver output. Rejected.
 - **Turn authored flows directly into `flow_revisions`:** bypasses the package
   lifecycle and trust model. Rejected for M25.
+
+---
+
+### ADR-062: Platform user administration + project member management (admin-surface carve)
+
+**Date:** 2026-06-07
+**Status:** Accepted
+**Context:** M9 shipped the RBAC enforcement layer (`web/lib/authz.ts`:
+`requireGlobalRole` / `requireProjectRole` / `requireProjectAction`,
+DB-authoritative, global-admin-implicit-owner, last-active-admin + no-self
+guards). That layer is complete and not modified here. This ADR records the
+**admin surface** built on top of it: user provisioning, deletion policy,
+lightweight audit stamps, and project membership management. Team/org
+governance stays deferred (Wave-4/E5).
+
+**Decision:**
+
+**D1 — Provisioning.** Global admins create accounts with an admin-set one-time
+temporary password (primary path) or an auto-generated password when the field
+is left blank. `must_change_password=true` is set unconditionally on creation.
+There are NO email invites, SMTP, forgot-password, or email-verification flows.
+Recovery stays admin-reset only. Generated password length is controlled by
+`MAISTER_TEMP_PASSWORD_LENGTH` (default 12, clamped ≥ 12); admin-typed passwords
+enforce a minimum of 12 characters. The temporary password is returned exactly
+once in the create response and is never logged.
+
+**D2 — Deletion.** Soft-disable (`account_status='disabled'`) is the default
+and the terminal-safe path for accounts that have been used. Hard-delete is
+permitted only for unused accounts — eligible iff `account_status='pending'`
+AND `last_login_at IS NULL` AND zero referencing rows exist in
+`runs`, `scratch_runs`, `node_attempts`, `actor_identities`, `project_tokens`,
+`workspaces`, `flow_graph_layouts`. `password_hash` is excluded from the
+eligibility check. On hard-delete, `project_members`, `accounts`, and `sessions`
+cascade. Any account with referencing rows receives a `PRECONDITION` (409)
+response; the UI offers Disable as the only action.
+
+**D3 — Audit stamps.** Lightweight who/when columns on the affected rows,
+generalizing the existing `account_status_updated_by` / `account_status_updated_at`
+pattern. New nullable columns: `users.{created_by, updated_at, updated_by}` and
+`project_members.{added_by, updated_at, updated_by}`. There is NO separate
+append-only audit-log table.
+
+**D4 — Project member add.** Adding a member to a project attaches an existing
+platform user (searchable by email or display name). User creation cannot happen
+at the project level.
+
+**D6 — Members surface.** A new `members` tab on the project page shows the
+full member roster. Roster reads are visible to any project member; role changes
+and removals are gated to project-admin+ / global-admin via a new
+`PROJECT_ACTION_MIN` action `manageMembers`.
+
+**D8 — No last-owner guard on project members.** `project_members.role='owner'`
+confers no capability beyond `admin` today — nothing in `PROJECT_ACTION_MIN`
+requires the owner role. Global admins are implicit owners of every project,
+so a project can never become inaccessible regardless of member roster state.
+No last-owner guard is implemented.
+
+**Consequences:**
+- User provisioning and lifecycle is fully admin-driven with no mail infrastructure
+  dependency.
+- Hard-delete is safe because it is structurally gated on zero referencing rows;
+  soft-disable is always available as the fallback.
+- Audit visibility comes at zero schema overhead beyond nullable stamp columns.
+- Project membership is always a two-step flow: user must exist before being
+  added to a project, preventing orphaned invites.
+- Dropping the last-owner guard keeps the membership model simple; the invariant
+  is covered by global-admin implicit ownership.
+
+**Alternatives Considered:**
+- **SMTP email invites:** out of scope — no mail infrastructure on the current
+  target. Rejected.
+- **Separate append-only audit-log table:** D3 lightweight stamps on the affected
+  rows are sufficient for the current admin surface; a separate audit log adds
+  schema and query complexity without observable benefit today. Rejected.
+- **Per-field user mutation routes (status / role / password-reset):** the
+  codebase already uses a single aggregating `PATCH /api/admin/users/{userId}`;
+  project memory (prefer-aggregating-endpoint) mandates aggregating PATCH over
+  per-field routes. OpenAPI documenting separate routes is drift to be fixed, not
+  a model to follow. Rejected.
+- **Last-owner guard on project members:** D8 rationale — `owner` role confers no
+  extra capability and global admins are implicit owners, so the guard would be
+  purely cosmetic overhead. Rejected.
 
 ---
 

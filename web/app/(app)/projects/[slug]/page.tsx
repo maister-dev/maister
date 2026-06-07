@@ -18,12 +18,14 @@ import { FlowsPanel } from "@/components/board/panels/flows-panel";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
+import { ProjectMembersPanel } from "@/components/project/project-members-panel";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
 import { getFlowPackages } from "@/lib/queries/flow-packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
+import { listProjectMembers } from "@/lib/project-members";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 import { listTokens } from "@/lib/tokens/list";
 
@@ -36,6 +38,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "packages",
   "integrations",
   "mcps",
+  "members",
   "settings",
 ];
 
@@ -260,6 +263,17 @@ export default async function ProjectBoardPage({
           isAdmin={isAdmin}
           slug={slug}
           tokens={isAdmin ? await listTokens(project.id) : []}
+        />
+      ) : null}
+      {tab === "members" ? (
+        <ProjectMembersPanel
+          canManage={isAdmin}
+          members={(await listProjectMembers(project.id)).map((m) => ({
+            ...m,
+            createdAt: m.createdAt.toISOString(),
+          }))}
+          selfUserId={user.id}
+          slug={slug}
         />
       ) : null}
       {tab === "settings" ? (

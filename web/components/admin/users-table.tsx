@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { UserCreateModal } from "@/components/admin/user-create-modal";
 import { UserEditModal } from "@/components/admin/user-edit-modal";
 
 export interface AdminUserProjectRow {
@@ -18,6 +19,7 @@ export interface AdminUserProjectRow {
 }
 
 export interface AdminUserRow {
+  createdAt: string;
   email: string;
   id: string;
   lastLoginAt: string | null;
@@ -26,6 +28,8 @@ export interface AdminUserRow {
   projects: AdminUserProjectRow[];
   role: GlobalRole;
   status: AccountStatus;
+  statusUpdatedAt: string | null;
+  statusUpdatedBy: string | null;
 }
 
 export interface ProjectOption {
@@ -42,7 +46,10 @@ export interface AdminUsersFilters {
 
 export interface AdminUsersTableProps {
   filters: AdminUsersFilters;
+  page: number;
+  perPage: number;
   projectOptions: ProjectOption[];
+  total: number;
   users: AdminUserRow[];
 }
 
@@ -52,7 +59,7 @@ const inputClass =
 const badgeBase =
   "rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]";
 
-function formatLastLogin(iso: string | null, fallback: string): string {
+function formatDate(iso: string | null, fallback: string): string {
   if (!iso) return fallback;
 
   return new Date(iso).toLocaleString(undefined, {
@@ -61,9 +68,20 @@ function formatLastLogin(iso: string | null, fallback: string): string {
   });
 }
 
+function formatDateShort(iso: string | null, fallback: string): string {
+  if (!iso) return fallback;
+
+  return new Date(iso).toLocaleDateString(undefined, {
+    dateStyle: "medium",
+  });
+}
+
 export function AdminUsersTable({
   filters,
+  page,
+  perPage,
   projectOptions,
+  total,
   users,
 }: AdminUsersTableProps): ReactElement {
   const t = useTranslations("adminUsers");
@@ -78,6 +96,9 @@ export function AdminUsersTable({
   const [status, setStatus] = useState(filters.status);
   const [projectId, setProjectId] = useState(filters.projectId);
   const [editing, setEditing] = useState<AdminUserRow | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
 
   useEffect(() => {
     setQ(filters.q);
@@ -88,6 +109,7 @@ export function AdminUsersTable({
 
   // Write the COMPLETE filter set (these 4 are the only params) so a rapid
   // dropdown-then-type can never drop a just-changed filter via a stale URL.
+  // Filter changes reset to page 1.
   function syncUrl(next: AdminUsersFilters): void {
     const params = new URLSearchParams();
 
@@ -95,6 +117,25 @@ export function AdminUsersTable({
     if (next.role !== "all") params.set("role", next.role);
     if (next.status !== "all") params.set("status", next.status);
     if (next.projectId !== "all") params.set("projectId", next.projectId);
+
+    const query = params.toString();
+
+    startTransition(() => {
+      router.replace(query ? `${pathname}?${query}` : pathname, {
+        scroll: false,
+      });
+    });
+  }
+
+  function goToPage(p: number): void {
+    const params = new URLSearchParams();
+
+    if (filters.q.trim()) params.set("q", filters.q.trim());
+    if (filters.role !== "all") params.set("role", filters.role);
+    if (filters.status !== "all") params.set("status", filters.status);
+    if (filters.projectId !== "all") params.set("projectId", filters.projectId);
+    if (perPage !== 25) params.set("perPage", String(perPage));
+    if (p > 1) params.set("page", String(p));
 
     const query = params.toString();
 
@@ -122,13 +163,22 @@ export function AdminUsersTable({
   return (
     <section className="rounded-[14px] border border-line bg-paper shadow-[var(--shadow-sm)]">
       <div className="flex flex-col gap-3 border-b border-line px-5 py-4">
-        <div>
-          <h2 className="m-0 text-[17px] font-semibold tracking-[-0.015em] text-ink">
-            {t("tableTitle")}
-          </h2>
-          <p className="mt-1 text-[12.5px] leading-[1.5] text-mute">
-            {t("tableSub")}
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="m-0 text-[17px] font-semibold tracking-[-0.015em] text-ink">
+              {t("tableTitle")}
+            </h2>
+            <p className="mt-1 text-[12.5px] leading-[1.5] text-mute">
+              {t("tableSub")}
+            </p>
+          </div>
+          <button
+            className="shrink-0 touch-manipulation rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-white hover:bg-amber-2"
+            type="button"
+            onClick={() => setCreating(true)}
+          >
+            {t("newUser")}
+          </button>
         </div>
 
         <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
@@ -211,6 +261,7 @@ export function AdminUsersTable({
               <th className="px-4 py-3">{t("roleLabel")}</th>
               <th className="px-4 py-3">{t("projectAccess")}</th>
               <th className="px-4 py-3">{t("lastLogin")}</th>
+              <th className="px-4 py-3">{t("created")}</th>
               <th className="px-5 py-3 text-right">{t("actions")}</th>
             </tr>
           </thead>
@@ -219,7 +270,7 @@ export function AdminUsersTable({
               <tr>
                 <td
                   className="px-5 py-8 text-center font-mono text-[11.5px] text-mute"
-                  colSpan={6}
+                  colSpan={7}
                 >
                   {t("noResults")}
                 </td>
@@ -241,10 +292,43 @@ export function AdminUsersTable({
         </table>
       </div>
 
+      {totalPages > 1 ? (
+        <div className="flex items-center justify-between border-t border-line px-5 py-3">
+          <span className="font-mono text-[10.5px] tabular-nums text-mute">
+            {t("pageOf", { page, total: totalPages })}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              className="touch-manipulation rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink disabled:opacity-40"
+              disabled={page <= 1 || pending}
+              type="button"
+              onClick={() => goToPage(page - 1)}
+            >
+              {t("pagePrev")}
+            </button>
+            <button
+              className="touch-manipulation rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink disabled:opacity-40"
+              disabled={page >= totalPages || pending}
+              type="button"
+              onClick={() => goToPage(page + 1)}
+            >
+              {t("pageNext")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {editing ? (
         <UserEditModal
           user={editing}
           onClose={() => setEditing(null)}
+          onSaved={() => startTransition(() => router.refresh())}
+        />
+      ) : null}
+
+      {creating ? (
+        <UserCreateModal
+          onClose={() => setCreating(false)}
           onSaved={() => startTransition(() => router.refresh())}
         />
       ) : null}
@@ -331,7 +415,13 @@ function UserRow({
         suppressHydrationWarning
         className="px-4 py-3.5 font-mono text-[10.5px] tabular-nums text-mute"
       >
-        {formatLastLogin(user.lastLoginAt, neverLabel)}
+        {formatDate(user.lastLoginAt, neverLabel)}
+      </td>
+      <td
+        suppressHydrationWarning
+        className="px-4 py-3.5 font-mono text-[10.5px] tabular-nums text-mute"
+      >
+        {formatDateShort(user.createdAt, "—")}
       </td>
       <td className="px-5 py-3.5 text-right">
         <button

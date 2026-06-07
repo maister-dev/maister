@@ -8,6 +8,55 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+async function patchUser(
+  userId: string,
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const res = await fetch(`/api/admin/users/${userId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      code?: string;
+      message?: string;
+    } | null;
+
+    return {
+      ok: false,
+      code: body?.code,
+      message: body?.message ?? body?.code ?? `Request failed: ${res.status}`,
+    };
+  }
+
+  return { ok: true };
+}
+
+async function deleteUser(
+  userId: string,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const res = await fetch(`/api/admin/users/${userId}`, {
+    method: "DELETE",
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      code?: string;
+      message?: string;
+    } | null;
+
+    return {
+      ok: false,
+      code: body?.code,
+      message: body?.message ?? body?.code ?? `Request failed: ${res.status}`,
+    };
+  }
+
+  return { ok: true };
+}
+
 const inputClass =
   "min-h-[36px] rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber";
 
@@ -26,12 +75,15 @@ export function UserEditModal({
   onSaved,
 }: UserEditModalProps): ReactElement {
   const t = useTranslations("adminUsers");
+  const [name, setName] = useState(user.name ?? "");
+  const [email, setEmail] = useState(user.email);
   const [role, setRole] = useState<GlobalRole>(user.role);
   const [status, setStatus] = useState<AccountStatus>(user.status);
   const [password, setPassword] = useState("");
   const [forceChange, setForceChange] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConflict, setDeleteConflict] = useState(false);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -40,7 +92,10 @@ export function UserEditModal({
   onCloseRef.current = onClose;
 
   const passwordTooShort = password.length > 0 && password.length < 12;
+  const canDelete = user.status === "pending" && user.lastLoginAt === null;
   const dirty =
+    name.trim() !== (user.name ?? "") ||
+    email.trim() !== user.email ||
     role !== user.role ||
     (status !== user.status && status !== "pending") ||
     password.length >= 12;
@@ -101,6 +156,8 @@ export function UserEditModal({
   async function save(): Promise<void> {
     const patch: Record<string, unknown> = {};
 
+    if (name.trim() !== (user.name ?? "")) patch.name = name.trim();
+    if (email.trim() !== user.email) patch.email = email.trim();
     if (role !== user.role) patch.role = role;
     if (status !== user.status && status !== "pending") patch.status = status;
 
@@ -119,21 +176,61 @@ export function UserEditModal({
     setError(null);
 
     try {
-      const res = await fetch(`/api/admin/users/${user.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(patch),
-      });
+      const result = await patchUser(user.id, patch);
 
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          code?: string;
-          message?: string;
-        } | null;
+      if (!result.ok) {
+        setError(result.message ?? "Request failed");
 
-        setError(
-          body?.message ?? body?.code ?? `Request failed: ${res.status}`,
-        );
+        return;
+      }
+
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setDeleteConflict(false);
+
+    try {
+      const result = await deleteUser(user.id);
+
+      if (!result.ok) {
+        if (result.code === "PRECONDITION") {
+          setDeleteConflict(true);
+          setError(result.message ?? t("deleteBlocked"));
+        } else {
+          setError(result.message ?? "Request failed");
+        }
+
+        return;
+      }
+
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disableInstead(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setDeleteConflict(false);
+
+    try {
+      const result = await patchUser(user.id, { status: "disabled" });
+
+      if (!result.ok) {
+        setError(result.message ?? "Request failed");
 
         return;
       }
@@ -190,6 +287,32 @@ export function UserEditModal({
 
         <div className="flex flex-col gap-4 overflow-y-auto overscroll-contain px-5 py-5">
           <div className="grid grid-cols-2 gap-3">
+            <label className="col-span-2 flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("name")}</span>
+              <input
+                autoComplete="off"
+                className={inputClass}
+                disabled={busy}
+                spellCheck={false}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </label>
+
+            <label className="col-span-2 flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("email")}</span>
+              <input
+                autoComplete="off"
+                className={inputClass}
+                disabled={busy}
+                spellCheck={false}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+
             <label className="flex flex-col gap-1.5">
               <span className={fieldLabel}>{t("roleLabel")}</span>
               <select
@@ -283,30 +406,65 @@ export function UserEditModal({
               role="alert"
             >
               {error}
+              {deleteConflict ? (
+                <div className="mt-2">
+                  <button
+                    className="rounded-md border border-amber bg-amber px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
+                    disabled={busy}
+                    type="button"
+                    onClick={() => void disableInstead()}
+                  >
+                    {t("offerDisable")}
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-4">
-          <button
-            className="touch-manipulation rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-mute hover:border-mute hover:text-ink-2"
-            disabled={busy}
-            type="button"
-            onClick={onClose}
-          >
-            {t("cancel")}
-          </button>
-          <button
-            className={clsx(
-              "touch-manipulation rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-white hover:bg-amber-2",
-              (busy || passwordTooShort || !dirty) && "opacity-60",
+        <div className="flex items-center justify-between gap-2 border-t border-line px-5 py-4">
+          <div>
+            {canDelete ? (
+              <button
+                className="touch-manipulation rounded-lg border border-[#b5332b]/40 bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-[#b5332b] hover:border-[#b5332b] hover:bg-[#b5332b]/5"
+                disabled={busy}
+                type="button"
+                onClick={() => void handleDelete()}
+              >
+                {t("delete")}
+              </button>
+            ) : (
+              <button
+                aria-disabled
+                className="touch-manipulation cursor-not-allowed rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-mute opacity-50"
+                title={t("deleteBlocked")}
+                type="button"
+              >
+                {t("delete")}
+              </button>
             )}
-            disabled={busy || passwordTooShort || !dirty}
-            type="button"
-            onClick={() => void save()}
-          >
-            {busy ? t("saving") : t("save")}
-          </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="touch-manipulation rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-mute hover:border-mute hover:text-ink-2"
+              disabled={busy}
+              type="button"
+              onClick={onClose}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className={clsx(
+                "touch-manipulation rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-white hover:bg-amber-2",
+                (busy || passwordTooShort || !dirty) && "opacity-60",
+              )}
+              disabled={busy || passwordTooShort || !dirty}
+              type="button"
+              onClick={() => void save()}
+            >
+              {busy ? t("saving") : t("save")}
+            </button>
+          </div>
         </div>
       </div>
     </div>

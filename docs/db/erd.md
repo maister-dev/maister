@@ -99,6 +99,9 @@ erDiagram
         text account_status_updated_by
         boolean must_change_password
         timestamp created_at
+        text created_by
+        timestamp updated_at
+        text updated_by
     }
 
     ACCOUNTS {
@@ -129,6 +132,9 @@ erDiagram
         text user_id FK
         text role "owner|admin|member|viewer"
         timestamp created_at
+        text added_by
+        timestamp updated_at
+        text updated_by
     }
 
     PROJECTS {

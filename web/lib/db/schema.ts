@@ -51,6 +51,9 @@ export const users = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
+    createdBy: text("created_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }),
+    updatedBy: text("updated_by"),
   },
   (t) => ({
     idxAccountStatus: index("users_account_status_idx").on(t.accountStatus),
@@ -1745,6 +1748,9 @@ export const projectMembers = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
+    addedBy: text("added_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }),
+    updatedBy: text("updated_by"),
   },
   (t) => ({
     uniqMembership: unique("project_members_project_user_uq").on(

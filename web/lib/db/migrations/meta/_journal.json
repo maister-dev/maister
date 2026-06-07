@@ -204,6 +204,13 @@
       "when": 1780617900000,
       "tag": "0028_m25_authored_capability_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1780618200000,
+      "tag": "0029_identity_admin_audit",
+      "breakpoints": true
     }
   ]
 }

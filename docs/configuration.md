@@ -776,6 +776,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `AUTH_URL` | no | derived from request host | Auth.js canonical origin (e.g. `https://maister.example.com`). Only needed when a reverse proxy rewrites the `Host` header in a way that breaks callback URLs. Leave blank in dev. |
 | `SEED_ADMIN_EMAIL` | no | `admin@maister.local` | `pnpm db:seed` — email for the initial admin user. |
 | `SEED_ADMIN_PASSWORD` | no | `maister-admin` | `pnpm db:seed` — password for the initial admin user. Change before any shared use. |
+| `MAISTER_TEMP_PASSWORD_LENGTH` | no | `12` | Web tier. Length of admin-provisioned auto-generated one-time temp passwords (clamped to a minimum of 12). Governs GENERATED passwords only — admin-typed passwords keep the 12-character minimum. Read server-side by the web tier; never logged. |
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `3` | Global Flow run concurrency cap (across all projects). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command`/`agent_tick` budgets. |

@@ -118,6 +118,8 @@ export type E2EFixtures = {
     disabled: E2EUserFixture;
     member: E2EUserFixture;
     editTarget: E2EUserFixture;
+    deletable: E2EUserFixture;
+    memberCandidate: E2EUserFixture;
   };
   byKey: {
     m11a: E2EProjectFixture;

@@ -77,9 +77,29 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
   accountStatusUpdatedAt?,
   accountStatusUpdatedBy?,
   mustChangePassword: boolean,    // DEFAULT false; true forces a password change
-  createdAt
+  createdAt,
+  createdBy?,                     // audit (M-admin-surface, ADR-062) web-tier identity that created the row
+  updatedAt?,                     // audit (M-admin-surface, ADR-062) last admin edit timestamp
+  updatedBy?                      // audit (M-admin-surface, ADR-062) web-tier identity of last admin edit
 }
 ```
+
+`createdBy` is stamped at row INSERT with the authenticated caller's identity.
+`updatedBy` / `updatedAt` are stamped on any admin-initiated change — role
+assignment, account-status flip, or forced password-reset — generalising the
+existing `accountStatusUpdatedBy` / `accountStatusUpdatedAt` pattern to cover
+all edit surfaces (Implemented, ADR-062).
+
+**(Implemented, ADR-062 — hard-delete policy.)** Hard-delete of a `users` row is
+permitted only when ALL of the following hold: `accountStatus = 'pending'`, the
+user has never completed a sign-in (no `sessions` row and `emailVerified IS
+NULL`), and there are no referencing rows in `runs` (`created_by_user_id`),
+`scratch_runs` (`created_by_user_id`), `node_attempts` (`owner_user_id`),
+`actor_identities` (`user_id`), `project_tokens` (`created_by`),
+`workspaces` (`promotion_owner_user_id`), or `flow_graph_layouts`
+(`updated_by_user_id`). `project_members`, `accounts`, and `sessions` rows
+cascade automatically. Any other user must be disabled (`accountStatus =
+'disabled'`) rather than deleted.
 
 `role` is the **global role** used by `requireGlobalRole()` in `lib/authz.ts`.
 The single bootstrap admin is seeded by **migration `0005`**
@@ -147,9 +167,17 @@ this table is populated by Auth.js when OAuth providers are added (Phase 2).
   projectId,                      // FK -> projects.id (cascade)
   userId,                         // FK -> users.id (cascade)
   role: 'owner' | 'admin' | 'member' | 'viewer',
-  createdAt
+  createdAt,
+  addedBy?,                       // audit (M-admin-surface, ADR-062) web-tier identity that added the member
+  updatedAt?,                     // audit (M-admin-surface, ADR-062) last role-change timestamp
+  updatedBy?                      // audit (M-admin-surface, ADR-062) web-tier identity of last role change
 }
 ```
+
+`addedBy` is stamped at INSERT with the authenticated caller's identity.
+`updatedBy` / `updatedAt` are stamped on any subsequent role change,
+generalising the existing `accountStatusUpdatedBy` pattern to project
+membership edits (Implemented, ADR-062).
 
 UNIQUE `(projectId, userId)` — one membership row per (user, project).
 Indexed on `userId` for per-user project listing.

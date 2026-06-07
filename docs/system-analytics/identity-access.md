@@ -5,8 +5,8 @@
 The **identity and access** domain covers signed-in MAIster users, their
 account settings, password lifecycle, Auth.js sessions, and role checks before
 project or run actions. The domain boundary ends at project-specific
-authorization decisions; project membership semantics live in
-[`projects.md`](projects.md) and the DB schema.
+authorization decisions; per-project roster management lives in
+[`project-membership.md`](project-membership.md).
 
 Status: **Implemented (M9+)** — credentials auth, admin-approved account
 activation, DB-authoritative roles/status, forced password change, the signed-in
@@ -175,62 +175,122 @@ sequenceDiagram
     SA-->>U: redirect /
 ```
 
-### Admin user management (Implemented)
+### Admin user management — list and edit (Implemented)
+
+The admin user list is a **server-rendered page** (`/admin/users`); there is
+no `GET /api/admin/users` JSON endpoint. Edits go through the single
+aggregating `PATCH /api/admin/users/{userId}` route — one request may carry
+any subset of `{role, status, password, mustChangePassword, name, email}`.
+
+```mermaid
+sequenceDiagram
+    actor A as Admin
+    participant UI as /admin/users (SSR)
+    participant API as PATCH /api/admin/users/{userId}
+    participant AZ as requireGlobalRole(admin)
+    participant DB as Postgres
+
+    A->>UI: open user management (page load)
+    UI->>DB: SELECT users without password_hash (SSR)
+    DB-->>UI: user list
+    UI-->>A: rendered user table
+    A->>UI: activate/disable/role-change/password-reset (one or many fields)
+    UI->>API: PATCH {role?, status?, password?, mustChangePassword?, name?, email?}
+    API->>AZ: require active global admin
+    AZ->>DB: SELECT live admin row
+    API->>DB: enforce no self-demotion/self-disable/last-active-admin
+    alt guard fails
+        API-->>UI: 409 PRECONDITION
+    end
+    alt duplicate email
+        API-->>UI: 409 CONFLICT
+    end
+    API->>DB: UPDATE users SET ...fields..., updated_by=adminId, updated_at=now()
+    API-->>UI: 200
+```
+
+### Admin create user (Implemented)
+
+The admin creates a user account without requiring public registration.
+A temporary password is generated (or supplied), shown once in the response,
+and never logged. The account is forced to change it on first login.
 
 ```mermaid
 sequenceDiagram
     actor A as Admin
     participant UI as /admin/users
-    participant API as /api/admin/users
+    participant API as POST /api/admin/users
     participant AZ as requireGlobalRole(admin)
     participant DB as Postgres
 
-    A->>UI: open user management
-    UI->>API: GET /api/admin/users?status=...
+    A->>UI: fill create-user form (name, email, role, status, password?)
+    UI->>API: POST {name, email, role, status, password?}
     API->>AZ: require active global admin
     AZ->>DB: SELECT live admin row
-    API->>DB: SELECT users without password_hash
-    API-->>UI: users
-    A->>UI: activate, disable, role change, or password reset
-    UI->>API: single-purpose mutation route
-    API->>AZ: require active global admin
-    API->>DB: enforce no self-demotion/self-disable<br/>and last active admin invariant
-    API->>DB: UPDATE users
+    alt duplicate email
+        API-->>UI: 409 CONFLICT
+    end
+    API->>API: password? → use supplied (min 12)<br/>else auto-generate at MAISTER_TEMP_PASSWORD_LENGTH (default 12)
+    API->>API: bcrypt hash tempPassword
+    API->>DB: INSERT users SET password_hash, must_change_password=true,<br/>created_by=adminId, account_status=status
+    API-->>UI: 201 {id, tempPassword}
+    UI-->>A: show tempPassword once (never re-shown, never logged)
+```
+
+### Admin edit identity — name and email (Implemented)
+
+Email is normalized to lowercase before uniqueness check and storage.
+
+```mermaid
+sequenceDiagram
+    actor A as Admin
+    participant UI as /admin/users
+    participant API as PATCH /api/admin/users/{userId}
+    participant DB as Postgres
+
+    A->>UI: edit name or email field
+    UI->>API: PATCH {name?, email?}
+    API->>API: lowercase-normalize email if present
+    API->>DB: check unique email (excluding this userId)
+    alt duplicate email
+        API-->>UI: 409 CONFLICT
+    end
+    API->>DB: UPDATE users SET name?=..., email?=lowercase,<br/>updated_by=adminId, updated_at=now()
+    API-->>UI: 200
+```
+
+### Admin hard-delete unused account (Implemented)
+
+Hard-delete is permitted only for accounts that have never been used:
+`account_status='pending'`, `last_login_at IS NULL`, and no rows in
+`runs`, `scratch_runs`, `node_attempts`, `actor_identities`,
+`project_tokens`, `workspaces`, or `flow_graph_layouts`. Otherwise the
+admin is offered disable.
+
+```mermaid
+flowchart TD
+    Start["DELETE /api/admin/users/{userId}"] --> Self{"self-delete?"}
+    Self -- yes --> Pre1["409 PRECONDITION"]
+    Self -- no --> Pred{"account_status='pending' AND last_login_at IS NULL AND no linked rows?"}
+    Pred -- no --> Pre2["409 PRECONDITION — offer disable instead"]
+    Pred -- yes --> Cascade["DELETE users (cascade: project_members, sessions, accounts)"]
+    Cascade --> Done["200 ok"]
 ```
 
 ## Expectations
 
-- Every protected app page MUST load the live `users` row before rendering
-  user-specific content.
-- Role-gated server actions and Route Handlers MUST call
-  `requireActiveSession()` through the authz helpers before reading protected
-  project or run resources.
-- JWT `role` and `mustChangePassword` claims MUST NOT be treated as authority;
-  server authz MUST re-read `users.role`, `users.account_status`, and
-  `users.must_change_password`.
-- Public registration MUST create `users.role = 'member'` and
-  `users.account_status = 'pending'`; only the bootstrap migration or an
-  existing admin path may create a global admin.
-- Credentials sign-in MUST reject `pending` and `disabled` users after password
-  verification and surface a specific UI message instead of auto-signing in.
-- Role-gated APIs MUST reject old sessions for non-active users with
-  `ACCOUNT_INACTIVE`.
-- Admin user management MUST NOT return `users.password_hash`.
-- Admin mutations MUST NOT allow self-disable, self-demotion, or removing the
-  last active global admin.
-- A user with `users.must_change_password = true` MUST be redirected to
-  `/change-password` by the app layout and blocked from role-gated APIs with
-  `PASSWORD_CHANGE_REQUIRED`.
-- `/change-password` MUST clear `users.must_change_password` only after a
-  valid password update.
-- `/account/password` MUST require an active session and update only the
-  signed-in user's `users.password_hash`.
-- `/account` MUST require an active session and update only the signed-in
-  user's `users.name`.
-- The signed-in user menu MUST expose personal settings, password change, and
-  sign-out without sending secrets or role-changing controls to the browser.
-- Deleting a user MUST invalidate authority on the next server request because
-  `getSessionUser()` cannot resolve the live `users` row.
+- Every protected app page and route handler MUST re-read the live `users` row before rendering; JWT claims (`role`, `mustChangePassword`) MUST NOT be treated as authority.
+- Role-gated server actions and route handlers MUST call `requireActiveSession()` before reading protected resources; non-active accounts are rejected with `ACCOUNT_INACTIVE`.
+- Public registration MUST create `users.role = 'member'` and `users.account_status = 'pending'`; credentials sign-in MUST reject `pending` and `disabled` accounts with a specific UI message.
+- Admin create (POST `/api/admin/users`) MUST set `must_change_password=true`; the temp password is returned only once in the 201 response body and MUST NEVER be logged or stored plain-text.
+- `users.password_hash` MUST NEVER be returned by any API response.
+- `users.email` MUST be stored lowercase; admin edit and public registration both normalize before uniqueness check and upsert.
+- Admin mutations MUST NOT allow self-disable, self-demotion, or removing the last active global admin; each guard returns `PRECONDITION` (409).
+- Admin hard-delete is permitted ONLY when `account_status='pending'` AND `last_login_at IS NULL` AND no rows reference the user in `runs`, `scratch_runs`, `node_attempts`, `actor_identities`, `project_tokens`, `workspaces`, or `flow_graph_layouts`; otherwise return `PRECONDITION`. `(Implemented)`
+- Every admin mutation (create/edit) MUST stamp `created_by` on insert and `updated_by` + `updated_at` on update. `(Implemented)`
+- A user with `users.must_change_password = true` MUST be redirected to `/change-password` by the app layout and blocked from role-gated APIs with `PASSWORD_CHANGE_REQUIRED`; the flag clears only after a valid password update.
+- `/account/password` MUST update only the signed-in user's `users.password_hash`; `/account` MUST update only `users.name`.
+- Deleting a user MUST invalidate authority on the next server request because `getSessionUser()` cannot resolve the live `users` row.
 
 ## Edge cases
 
@@ -243,11 +303,9 @@ sequenceDiagram
 - **Old session after account disable** -> role-gated APIs reject with
   `ACCOUNT_INACTIVE` before project/run data is read.
 - **Valid session but insufficient global or project role** ->
-  `MaisterError("UNAUTHORIZED", ...)`; do not reveal protected resource
-  details.
+  `MaisterError("UNAUTHORIZED", ...)`; do not reveal protected resource details.
 - **`must_change_password=true` on a role-gated action** ->
-  `MaisterError("PASSWORD_CHANGE_REQUIRED", ...)`; route to
-  `/change-password`.
+  `MaisterError("PASSWORD_CHANGE_REQUIRED", ...)`; route to `/change-password`.
 - **Deleted user referenced by an old session** -> `getSessionUser()` returns
   null after the DB lookup; Auth.js JWT refresh returns null and signs the
   browser out.
@@ -258,12 +316,17 @@ sequenceDiagram
 - **User changes their password from `/account/password`** -> existing sessions
   are not explicitly revoked in the current target; future session-revocation
   policy belongs in a separate security decision.
+- **Duplicate email on admin create or edit** -> `MaisterError("CONFLICT", ...)`; 409. `(Implemented)`
+- **Hard-delete of a user with linked rows (runs, workspaces, etc.)** -> `MaisterError("PRECONDITION", ...)`; 409; admin is offered disable instead. `(Implemented)`
+- **Self-delete, self-disable, or self-demotion** -> `MaisterError("PRECONDITION", ...)`; 409. `(Implemented)`
+- **Admin removes last active global admin** -> `MaisterError("PRECONDITION", ...)`; 409. `(Implemented)`
 
 ## Linked artifacts
 
 - DB schema: [`../database-schema.md#users`](../database-schema.md#users),
   [`../database-schema.md#sessions`](../database-schema.md#sessions),
   [`../database-schema.md#project_members`](../database-schema.md#project_members).
+- Project membership management: [`project-membership.md`](project-membership.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) §Auth.js routes
   and authentication notes.
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)

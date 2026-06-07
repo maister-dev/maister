@@ -44,6 +44,10 @@ const MEMBER_EMAIL = "e2e-member@maister.local";
 const MEMBER_PASSWORD = "E2eMember!pass1";
 const EDIT_TARGET_EMAIL = "e2e-edit-target@maister.local";
 const EDIT_TARGET_PASSWORD = "E2eEditTarget!pass1";
+const DELETABLE_EMAIL = "e2e-deletable@maister.local";
+const DELETABLE_PASSWORD = "E2eDeletable!pass1";
+const MEMBER_CANDIDATE_EMAIL = "e2e-member-candidate@maister.local";
+const MEMBER_CANDIDATE_PASSWORD = "E2eMemberCandidate!pass1";
 
 const BOARD_SLUG = "e2e-acceptance-board";
 const SCRATCH_SLUG = "e2e-acceptance-scratch";
@@ -2478,7 +2482,7 @@ type M17FixtureRecord = {
 
 async function seedM17Fixture(
   pool: Pool,
-  userId: string,
+  _userId: string,
 ): Promise<M17FixtureRecord> {
   const ids = {
     project1: randomUUID(),
@@ -2525,11 +2529,6 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
-     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
-    [ids.executor1, ids.project1],
-  );
-  await pool.query(
     `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
      VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
     [
@@ -2552,9 +2551,9 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [ids.run1, ids.task1, ids.project1, ids.flow1, ids.executor1],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run1, ids.task1, ids.project1, ids.flow1, PLATFORM_DEFAULT_RUNNER_ID],
   );
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
@@ -2603,11 +2602,6 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO executors (id, project_id, executor_ref_id, agent, model)
-     VALUES ($1, $2, 'claude-sonnet', 'claude', 'claude-sonnet-4-6')`,
-    [ids.executor2, ids.project2],
-  );
-  await pool.query(
     `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
      VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
     [
@@ -2630,9 +2624,9 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, executor_id, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [ids.run2, ids.task2, ids.project2, ids.flow2, ids.executor2],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run2, ids.task2, ids.project2, ids.flow2, PLATFORM_DEFAULT_RUNNER_ID],
   );
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
@@ -3538,6 +3532,8 @@ async function main(): Promise<void> {
         MEMBER_EMAIL,
         EDIT_TARGET_EMAIL,
         M22_VIEWER_EMAIL,
+        DELETABLE_EMAIL,
+        MEMBER_CANDIDATE_EMAIL,
       ],
     ]);
 
@@ -3585,6 +3581,24 @@ async function main(): Promise<void> {
       email: EDIT_TARGET_EMAIL,
       password: EDIT_TARGET_PASSWORD,
       name: "E2E Edit Target",
+      role: "member",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
+    // Unused pending account — no project_members rows → hard-delete eligible.
+    const deletable = await insertUser(pool, {
+      email: DELETABLE_EMAIL,
+      password: DELETABLE_PASSWORD,
+      name: "E2E Deletable",
+      role: "member",
+      accountStatus: "pending",
+      mustChangePassword: false,
+    });
+    // Active member with no project membership — target for add/re-role/remove tests.
+    const memberCandidate = await insertUser(pool, {
+      email: MEMBER_CANDIDATE_EMAIL,
+      password: MEMBER_CANDIDATE_PASSWORD,
+      name: "E2E Member Candidate",
       role: "member",
       accountStatus: "active",
       mustChangePassword: false,
@@ -3671,6 +3685,8 @@ async function main(): Promise<void> {
         disabled,
         member,
         editTarget,
+        deletable,
+        memberCandidate,
       },
       byKey: {
         m11a,

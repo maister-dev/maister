@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -334,5 +336,299 @@ describe("admin user management invariants (integration)", () => {
     await expect(
       verifyPassword("TemporaryPassword123", row.passwordHash),
     ).resolves.toBe(true);
+  });
+});
+
+describe("createAdminUser (integration)", () => {
+  it("creates an active user with a supplied password, stamps created_by, forces change", async () => {
+    const res = await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Ada Create",
+      email: "Ada.Create@Example.com",
+      role: "member",
+      status: "active",
+      password: "supplied-pass-123",
+    });
+
+    expect(res.tempPassword).toBe("supplied-pass-123");
+
+    const row = await userByEmail("ada.create@example.com");
+
+    expect(row.id).toBe(res.id);
+    expect(row.role).toBe("member");
+    expect(row.accountStatus).toBe("active");
+    expect(row.mustChangePassword).toBe(true);
+    expect(row.createdBy).toBe("usr_bootstrap_admin");
+    await expect(
+      verifyPassword("supplied-pass-123", row.passwordHash),
+    ).resolves.toBe(true);
+  });
+
+  it("auto-generates a >=12 char temp password that verifies when none supplied", async () => {
+    const res = await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Gen Create",
+      email: "gen.create@example.com",
+      role: "viewer",
+      status: "pending",
+    });
+
+    expect(res.tempPassword.length).toBeGreaterThanOrEqual(12);
+
+    const row = await userByEmail("gen.create@example.com");
+
+    expect(row.accountStatus).toBe("pending");
+    await expect(
+      verifyPassword(res.tempPassword, row.passwordHash),
+    ).resolves.toBe(true);
+  });
+
+  it("rejects a duplicate email (case-insensitive) with CONFLICT", async () => {
+    await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Dup One",
+      email: "dup.create@example.com",
+      role: "member",
+      status: "active",
+      password: "first-pass-1234",
+    });
+
+    await expect(
+      usersApi.createAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        name: "Dup Two",
+        email: "DUP.CREATE@example.com",
+        role: "member",
+        status: "active",
+        password: "second-pass-123",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+});
+
+describe("updateAdminUser identity edits (integration)", () => {
+  it("edits name and email (lowercased) and stamps updated_by/updated_at", async () => {
+    const { id } = await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Old Identity",
+      email: "old.identity@example.com",
+      role: "member",
+      status: "active",
+      password: "init-pass-12345",
+    });
+
+    await usersApi.updateAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      targetUserId: id,
+      name: "New Identity",
+      email: "New.Identity@Example.com",
+    });
+
+    const row = await userByEmail("new.identity@example.com");
+
+    expect(row.id).toBe(id);
+    expect(row.name).toBe("New Identity");
+    expect(row.updatedBy).toBe("usr_bootstrap_admin");
+    expect(row.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("rejects an email edit colliding with another user (CONFLICT)", async () => {
+    await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Taken",
+      email: "taken.identity@example.com",
+      role: "member",
+      status: "active",
+      password: "init-pass-12345",
+    });
+    const { id } = await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Free",
+      email: "free.identity@example.com",
+      role: "member",
+      status: "active",
+      password: "init-pass-67890",
+    });
+
+    await expect(
+      usersApi.updateAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        targetUserId: id,
+        email: "TAKEN.IDENTITY@example.com",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+});
+
+describe("hardDeleteAdminUser (integration)", () => {
+  async function seedPendingUnused(): Promise<string> {
+    const { id } = await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Pending Unused",
+      email: `pend-${randomUUID().slice(0, 8)}@example.com`,
+      role: "member",
+      status: "pending",
+    });
+
+    return id;
+  }
+
+  async function seedProject(): Promise<string> {
+    const id = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id,
+      slug: `hd-${id.slice(0, 8)}`,
+      name: `HardDelete ${id.slice(0, 4)}`,
+      repoPath: `/repos/hd-${id}`,
+      maisterYamlPath: `/repos/hd-${id}/maister.yaml`,
+    });
+
+    return id;
+  }
+
+  it("deletes an unused pending user and cascades project_members", async () => {
+    const id = await seedPendingUnused();
+    const projectId = await seedProject();
+
+    await db.insert(schema.projectMembers).values({
+      id: randomUUID(),
+      projectId,
+      userId: id,
+      role: "member",
+    });
+
+    await usersApi.hardDeleteAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      targetUserId: id,
+    });
+
+    const gone = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, id));
+
+    expect(gone).toHaveLength(0);
+
+    const members = await db
+      .select()
+      .from(schema.projectMembers)
+      .where(eq(schema.projectMembers.userId, id));
+
+    expect(members).toHaveLength(0);
+  });
+
+  it("refuses with PRECONDITION when the user is referenced by content", async () => {
+    const id = await seedPendingUnused();
+    const projectId = await seedProject();
+
+    await db.insert(schema.actorIdentities).values({
+      id: randomUUID(),
+      projectId,
+      kind: "user",
+      label: "ref",
+      userId: id,
+    });
+
+    await expect(
+      usersApi.hardDeleteAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        targetUserId: id,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const still = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, id));
+
+    expect(still).toHaveLength(1);
+  });
+
+  it("refuses with PRECONDITION when the account is not pending", async () => {
+    const { id } = await usersApi.createAdminUser({
+      adminUserId: "usr_bootstrap_admin",
+      name: "Active NoDelete",
+      email: "active.nodelete@example.com",
+      role: "member",
+      status: "active",
+      password: "init-pass-12345",
+    });
+
+    await expect(
+      usersApi.hardDeleteAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        targetUserId: id,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("refuses with PRECONDITION when the user has logged in", async () => {
+    const id = await seedPendingUnused();
+
+    await db
+      .update(schema.users)
+      .set({ lastLoginAt: new Date() })
+      .where(eq(schema.users.id, id));
+
+    await expect(
+      usersApi.hardDeleteAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        targetUserId: id,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("refuses self-delete with PRECONDITION", async () => {
+    const id = await seedPendingUnused();
+
+    await expect(
+      usersApi.hardDeleteAdminUser({ adminUserId: id, targetUserId: id }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+});
+
+describe("listAdminUsers + countAdminUsers pagination (integration)", () => {
+  it("paginates with limit/offset and counts the filtered set", async () => {
+    const token = `pg${randomUUID().slice(0, 8)}`;
+
+    for (let i = 0; i < 5; i++) {
+      await usersApi.createAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        name: `Pager ${token} ${i}`,
+        email: `${token}-${i}@example.com`,
+        role: i === 0 ? "admin" : "member",
+        status: "active",
+        password: `pw-${i}-abcdefgh`,
+      });
+    }
+
+    expect(await usersApi.countAdminUsers({ q: token })).toBe(5);
+    expect(await usersApi.countAdminUsers({ q: token, role: "admin" })).toBe(1);
+
+    const page1 = await usersApi.listAdminUsers({
+      q: token,
+      limit: 2,
+      offset: 0,
+    });
+    const page2 = await usersApi.listAdminUsers({
+      q: token,
+      limit: 2,
+      offset: 2,
+    });
+    const page3 = await usersApi.listAdminUsers({
+      q: token,
+      limit: 2,
+      offset: 4,
+    });
+
+    expect(page1).toHaveLength(2);
+    expect(page2).toHaveLength(2);
+    expect(page3).toHaveLength(1);
+
+    const ids = new Set([...page1, ...page2, ...page3].map((u) => u.id));
+
+    expect(ids.size).toBe(5);
+    expect(page1.every((u) => !("passwordHash" in u))).toBe(true);
   });
 });

@@ -11,14 +11,38 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { hashPassword, verifyPassword } from "@/lib/password";
+import {
+  generateTempPassword,
+  hashPassword,
+  verifyPassword,
+} from "@/lib/password";
 
 const log = pino({ name: "users", level: process.env.LOG_LEVEL ?? "info" });
-const { projectMembers, projects, users } = schema;
+const {
+  actorIdentities,
+  flowGraphLayouts,
+  nodeAttempts,
+  projectMembers,
+  projectTokens,
+  projects,
+  runs,
+  scratchRuns,
+  users,
+  workspaces,
+} = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === "23505"
+  );
 }
 
 export type CredentialFailureReason = "invalid" | "pending" | "disabled";
@@ -76,6 +100,8 @@ export interface VerifyCredentialAccountInput {
 }
 
 export interface ListAdminUsersInput {
+  limit?: number;
+  offset?: number;
   projectId?: string;
   q?: string;
   role?: GlobalRole;
@@ -84,10 +110,26 @@ export interface ListAdminUsersInput {
 
 export interface UpdateAdminUserInput {
   adminUserId: string;
+  email?: string;
   mustChangePassword?: boolean;
+  name?: string;
   password?: string;
   role?: GlobalRole;
   status?: "active" | "disabled";
+  targetUserId: string;
+}
+
+export interface CreateAdminUserInput {
+  adminUserId: string;
+  email: string;
+  name: string;
+  password?: string;
+  role: GlobalRole;
+  status: "active" | "pending";
+}
+
+export interface HardDeleteAdminUserInput {
+  adminUserId: string;
   targetUserId: string;
 }
 
@@ -172,25 +214,41 @@ export async function verifyCredentialAccount(
   };
 }
 
-export async function listAdminUsers(
-  input: ListAdminUsersInput = {},
-): Promise<AdminUserListItem[]> {
-  const client = db();
+// Returns resolved memberIds (null = no projectId filter; empty array = early-empty).
+async function resolveMemberIds(
+  client: NodePgDatabase<typeof schema>,
+  projectId: string | undefined,
+): Promise<string[] | null> {
+  if (!projectId) return null;
 
-  // Project filter answers "who is an EXPLICIT member of this project". Global
-  // admins are implicit owners of every project (see lib/authz) but are
-  // intentionally excluded here — the admin manages explicit memberships.
-  let memberIds: string[] | null = null;
+  const memberRows = await client
+    .select({ userId: projectMembers.userId })
+    .from(projectMembers)
+    .where(eq(projectMembers.projectId, projectId));
 
-  if (input.projectId) {
-    const memberRows = await client
-      .select({ userId: projectMembers.userId })
-      .from(projectMembers)
-      .where(eq(projectMembers.projectId, input.projectId));
+  return memberRows.map((r) => r.userId);
+}
 
-    memberIds = memberRows.map((r) => r.userId);
+// Shared WHERE clause builder for listAdminUsers and countAdminUsers.
+// Returns null when the early-empty condition is detected (projectId given but no members).
+async function buildUserFilters(
+  client: NodePgDatabase<typeof schema>,
+  input: ListAdminUsersInput,
+): Promise<
+  | {
+      earlyEmpty: true;
+    }
+  | {
+      earlyEmpty: false;
+      // FIXME(any): drizzle SQL condition type varies by version; use unknown here.
 
-    if (memberIds.length === 0) return [];
+      where: any;
+    }
+> {
+  const memberIds = await resolveMemberIds(client, input.projectId);
+
+  if (memberIds !== null && memberIds.length === 0) {
+    return { earlyEmpty: true };
   }
 
   const filters = [
@@ -205,7 +263,21 @@ export async function listAdminUsers(
     memberIds ? inArray(users.id, memberIds) : undefined,
   ].filter((f): f is NonNullable<typeof f> => Boolean(f));
 
-  const rows = await client
+  return {
+    earlyEmpty: false,
+    where: filters.length > 0 ? and(...filters) : undefined,
+  };
+}
+
+export async function listAdminUsers(
+  input: ListAdminUsersInput = {},
+): Promise<AdminUserListItem[]> {
+  const client = db();
+  const built = await buildUserFilters(client, input);
+
+  if (built.earlyEmpty) return [];
+
+  let query = client
     .select({
       id: users.id,
       name: users.name,
@@ -219,8 +291,14 @@ export async function listAdminUsers(
       createdAt: users.createdAt,
     })
     .from(users)
-    .where(filters.length > 0 ? and(...filters) : undefined)
-    .orderBy(desc(users.createdAt));
+    .where(built.where)
+    .orderBy(desc(users.createdAt))
+    .$dynamic();
+
+  if (input.limit !== undefined) query = query.limit(input.limit);
+  if (input.offset !== undefined) query = query.offset(input.offset);
+
+  const rows = await query;
 
   if (rows.length === 0) return [];
 
@@ -251,6 +329,22 @@ export async function listAdminUsers(
   }
 
   return rows.map((row) => ({ ...row, projects: byUser.get(row.id) ?? [] }));
+}
+
+export async function countAdminUsers(
+  input: ListAdminUsersInput = {},
+): Promise<number> {
+  const client = db();
+  const built = await buildUserFilters(client, input);
+
+  if (built.earlyEmpty) return 0;
+
+  const result = await client
+    .select({ value: count() })
+    .from(users)
+    .where(built.where);
+
+  return Number(result[0]?.value ?? 0);
 }
 
 /**
@@ -312,6 +406,12 @@ export async function updateAdminUser(
 
     const patch: Partial<typeof users.$inferInsert> = {};
 
+    if (input.name !== undefined) patch.name = input.name;
+
+    if (input.email !== undefined) {
+      patch.email = input.email.toLowerCase();
+    }
+
     if (input.role !== undefined) patch.role = input.role;
 
     if (input.status !== undefined) {
@@ -329,7 +429,21 @@ export async function updateAdminUser(
 
     if (Object.keys(patch).length === 0) return;
 
-    await tx.update(users).set(patch).where(eq(users.id, targetUserId));
+    patch.updatedAt = new Date();
+    patch.updatedBy = adminUserId;
+
+    try {
+      await tx.update(users).set(patch).where(eq(users.id, targetUserId));
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new MaisterError(
+          "CONFLICT",
+          `Email already in use: ${patch.email}`,
+        );
+      }
+
+      throw err;
+    }
   });
 
   log.info(
@@ -342,4 +456,114 @@ export async function updateAdminUser(
     },
     "admin updated user",
   );
+}
+
+export async function createAdminUser(
+  input: CreateAdminUserInput,
+): Promise<{ id: string; tempPassword: string }> {
+  const email = input.email.toLowerCase();
+  const tempPassword = input.password ?? generateTempPassword();
+  const passwordHash = await hashPassword(tempPassword);
+  const id = randomUUID();
+
+  try {
+    await db().insert(users).values({
+      id,
+      name: input.name,
+      email,
+      passwordHash,
+      role: input.role,
+      accountStatus: input.status,
+      mustChangePassword: true,
+      createdBy: input.adminUserId,
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new MaisterError("CONFLICT", `User already exists: ${email}`);
+    }
+
+    throw err;
+  }
+
+  log.info(
+    {
+      adminUserId: input.adminUserId,
+      userId: id,
+      role: input.role,
+      status: input.status,
+      generated: input.password === undefined,
+    },
+    "admin created user",
+  );
+
+  return { id, tempPassword };
+}
+
+export async function hardDeleteAdminUser(
+  input: HardDeleteAdminUserInput,
+): Promise<void> {
+  const { adminUserId, targetUserId } = input;
+
+  if (adminUserId === targetUserId) {
+    throw new MaisterError("PRECONDITION", "Admins cannot delete themselves");
+  }
+
+  await db().transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        accountStatus: users.accountStatus,
+        lastLoginAt: users.lastLoginAt,
+      })
+      .from(users)
+      .where(eq(users.id, targetUserId))
+      .for("update");
+
+    const target = rows[0];
+
+    if (!target) {
+      throw new MaisterError("PRECONDITION", `User not found: ${targetUserId}`);
+    }
+
+    if (target.accountStatus !== "pending" || target.lastLoginAt !== null) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "Only unused pending accounts can be hard-deleted; disable instead",
+      );
+    }
+
+    // Reference checks: count FK references across all content tables.
+    // FIXME(any): drizzle table/column types are complex generics; any is safe here.
+
+    const refChecks: Array<{ table: any; column: any }> = [
+      { table: runs, column: runs.createdByUserId },
+      { table: scratchRuns, column: scratchRuns.createdByUserId },
+      { table: nodeAttempts, column: nodeAttempts.ownerUserId },
+      { table: actorIdentities, column: actorIdentities.userId },
+      { table: projectTokens, column: projectTokens.created_by },
+      { table: workspaces, column: workspaces.promotionOwnerUserId },
+      { table: flowGraphLayouts, column: flowGraphLayouts.updatedByUserId },
+    ];
+
+    for (const { table, column } of refChecks) {
+      const result = await tx
+        .select({ value: count() })
+        .from(table)
+        .where(eq(column, targetUserId));
+      const n = Number(result[0]?.value ?? 0);
+
+      if (n > 0) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "User has referenced records; disable instead",
+        );
+      }
+    }
+
+    await tx.delete(users).where(eq(users.id, targetUserId));
+
+    log.info(
+      { adminUserId, targetUserId },
+      "admin hard-deleted unused pending user",
+    );
+  });
 }

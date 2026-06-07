@@ -782,6 +782,204 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/members:
+    get:
+      tags: [projects]
+      summary: List project members
+      description: |
+        Requires project membership at `viewer` or above
+        (`requireProjectAction("readBoard")`). Returns all active members for
+        the project. `slug` is resolved server-side; no body-controlled
+        project identifiers are accepted.
+      operationId: listProjectMembers
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Project member list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectMember" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+    post:
+      tags: [projects]
+      summary: Add a member to a project
+      description: |
+        Requires the `manageMembers` action (project admin or global admin).
+        Adds an existing platform user to the project with the specified role.
+        `slug` is resolved server-side. Returns `409` if the user is already a
+        member (`CONFLICT`) or the `userId` does not correspond to a known
+        platform user (`PRECONDITION`).
+      operationId: addProjectMember
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddProjectMemberBody" }
+      responses:
+        "201":
+          description: Member added.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [memberId]
+                properties:
+                  memberId: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Project not found or archived (`PRECONDITION`), user is already a
+            member of this project (`CONFLICT`), or the supplied `userId` does
+            not match any platform user (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/members/candidates:
+    get:
+      tags: [projects]
+      summary: List platform users eligible to be added as project members
+      description: |
+        Requires the `manageMembers` action (project admin or global admin).
+        Returns platform users who are NOT already members of this project.
+        Optional `q` filters by name or email prefix (case-insensitive).
+        `slug` is resolved server-side.
+      operationId: listMemberCandidates
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: q
+          in: query
+          required: false
+          description: Optional name/email filter prefix.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Candidate users not yet members of this project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [candidates]
+                properties:
+                  candidates:
+                    type: array
+                    items: { $ref: "#/components/schemas/MemberCandidate" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/members/{memberId}:
+    patch:
+      tags: [projects]
+      summary: Update a project member's role
+      description: |
+        Requires the `manageMembers` action (project admin or global admin).
+        Changes the role of an existing project member. `slug` and `memberId`
+        are resolved server-side. Returns `409` on a concurrent stale-update
+        race (`CONFLICT`).
+      operationId: updateProjectMemberRole
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: memberId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProjectMemberRoleBody" }
+      responses:
+        "200":
+          description: Member role updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Project not found or archived (`PRECONDITION`), or concurrent update race (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [projects]
+      summary: Remove a member from a project
+      description: |
+        Requires the `manageMembers` action (project admin or global admin).
+        Removes the project membership row. `slug` and `memberId` are resolved
+        server-side. Returns `409` on a concurrent race (`CONFLICT`).
+      operationId: removeProjectMember
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: memberId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Member removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Project not found or archived (`PRECONDITION`), or concurrent race (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/projects/{slug}/assignments:
     get:
       tags: [assignments]
@@ -980,8 +1178,8 @@ paths:
         and `password`; the server lowercases email, hashes the password, and
         creates `users.role = "member"` with `account_status = "pending"`.
         The route does not sign the user in. Admin activation through
-        `/api/admin/users/{userId}/status` is required before credentials
-        sign-in succeeds.
+        `PATCH /api/admin/users/{userId}` (`status: active`) is required
+        before credentials sign-in succeeds.
       operationId: registerUser
       requestBody:
         required: true
@@ -1006,173 +1204,119 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
   /api/admin/users:
-    get:
+    post:
       tags: [admin]
-      summary: List users for admin management
+      summary: Create a user account
       description: |
-        Admin-only (`requireGlobalRole("admin")`). Query identifiers are
-        filters only: `status` and `q` are body/query-controlled and do not
-        authorize access. The current admin comes from auth context. Response
-        excludes `password_hash`.
-      operationId: listAdminUsers
+        Admin-only (`requireGlobalRole("admin")`). Creates a new user account.
+        When `password` is omitted the server generates a secure temporary
+        password. The `tempPassword` in the response is shown once in
+        plaintext and is never re-readable — store or convey it immediately.
+      operationId: createAdminUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminCreateUserBody" }
+      responses:
+        "201":
+          description: |
+            User created. `tempPassword` is the plaintext credential shown
+            once — the server stores only its bcrypt hash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminCreateUserResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Email already registered (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/users/{userId}:
+    patch:
+      tags: [admin]
+      summary: Update a user account (aggregating)
+      description: |
+        Admin-only (`requireGlobalRole("admin")`). Aggregating PATCH — supply
+        any combination of `role`, `status`, `password`, `mustChangePassword`,
+        `name`, or `email`; at least one field is required. The route prevents
+        self-disable, self-demotion, and removing the last active admin
+        (`PRECONDITION`). A duplicate `email` returns `CONFLICT` (409).
+      operationId: updateAdminUser
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [pending, active, disabled]
-        - name: q
-          in: query
-          schema:
-            type: string
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminUpdateUserBody" }
       responses:
         "200":
-          description: Users returned without password hashes.
+          description: User updated.
           content:
             application/json:
               schema:
                 type: object
-                required: [users]
+                required: [ok]
                 properties:
-                  users:
-                    type: array
-                    items: { $ref: "#/components/schemas/AdminUser" }
-        "401":
-          description: No valid session (`UNAUTHENTICATED`).
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Duplicate email (`CONFLICT`), or self-disable / self-demote /
+            last-active-admin invariant violated (`PRECONDITION`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "403":
-          description: Not an active global admin.
+        "422":
+          description: Invalid body or no fields supplied (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-
-  /api/admin/users/{userId}/status:
-    patch:
+    delete:
       tags: [admin]
-      summary: Activate or disable a user
+      summary: Hard-delete an unused user account
       description: |
-        Admin-only. `userId` is a URL parameter. Current admin is auth-context.
-        Body-controlled `status` may be `active` or `disabled`. The route
-        prevents self-disable and disabling the last active admin.
-      operationId: setUserStatus
+        Admin-only (`requireGlobalRole("admin")`). Permanently removes the
+        account. Eligible accounts are those that are `pending`, have never
+        signed in, and have no content references (runs, tasks, assignments,
+        project memberships). Accounts that do not meet this predicate should
+        be disabled instead. The route prevents self-delete (`PRECONDITION`).
+      operationId: deleteAdminUser
       parameters:
         - name: userId
           in: path
           required: true
           schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AdminSetStatusBody" }
       responses:
         "200":
-          description: Status updated.
-        "401":
-          description: No valid session (`UNAUTHENTICATED`).
+          description: User deleted.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "403":
-          description: Not an active global admin.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: Invariant violation (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "422":
-          description: Invalid body (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-
-  /api/admin/users/{userId}/role:
-    patch:
-      tags: [admin]
-      summary: Change a user's global role
-      description: |
-        Admin-only. `userId` is a URL parameter. Body-controlled `role` may be
-        `viewer`, `member`, or `admin`. The route prevents self-demotion and
-        removing the last active admin.
-      operationId: setUserRole
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AdminSetRoleBody" }
-      responses:
-        "200":
-          description: Role updated.
-        "401":
-          description: No valid session (`UNAUTHENTICATED`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "403":
-          description: Not an active global admin.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "409":
-          description: Invariant violation (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "422":
-          description: Invalid body (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-
-  /api/admin/users/{userId}/password-reset:
-    post:
-      tags: [admin]
-      summary: Reset a user's password
-      description: |
-        Admin-only. `userId` is a URL parameter. Body-controlled `password` is
-        bcrypt-hashed server-side. `mustChangePassword` can force the user
-        through `/change-password` on next sign-in.
-      operationId: resetUserPassword
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AdminPasswordResetBody" }
-      responses:
-        "200":
-          description: Password updated.
-        "401":
-          description: No valid session (`UNAUTHENTICATED`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "403":
-          description: Not an active global admin.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "409":
-          description: Target user does not exist (`PRECONDITION`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "422":
-          description: Invalid body (`CONFIG`).
+          description: |
+            Account is not eligible for hard-delete — it is not `pending`,
+            has signed in, or has content references (`PRECONDITION`); or
+            the caller is attempting to self-delete (`PRECONDITION`). Use
+            the aggregating PATCH to disable instead.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -3995,43 +4139,101 @@ components:
         status:
           type: string
           enum: [pending]
-    AdminUser:
+    AdminCreateUserBody:
       type: object
-      required: [id, email, role, status, mustChangePassword, createdAt]
+      required: [name, email, role, status]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [viewer, member, admin]
+        status:
+          type: string
+          enum: [active, pending]
+        password:
+          type: string
+          minLength: 12
+          description: |
+            Optional explicit initial password. When omitted the server
+            generates a secure temporary password returned in `tempPassword`.
+    AdminCreateUserResponse:
+      type: object
+      required: [id, tempPassword]
+      description: |
+        Created user id and the one-time plaintext credential. `tempPassword`
+        is never re-readable — the server stores only the bcrypt hash.
+      properties:
+        id: { type: string }
+        tempPassword:
+          type: string
+          description: |
+            Plaintext initial password shown once. Convey to the user
+            immediately; the server cannot re-derive it.
+    AdminUpdateUserBody:
+      type: object
+      description: |
+        Aggregating user update. At least one field is required.
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [viewer, member, admin]
+        status:
+          type: string
+          enum: [active, disabled]
+        password:
+          type: string
+          minLength: 12
+        mustChangePassword: { type: boolean }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        email:
+          type: string
+          format: email
+    ProjectMemberRole:
+      type: string
+      enum: [owner, admin, member, viewer]
+    ProjectMember:
+      type: object
+      required: [memberId, userId, email, role, createdAt]
+      properties:
+        memberId: { type: string }
+        userId: { type: string }
+        name: { type: string, nullable: true }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/ProjectMemberRole" }
+        createdAt: { type: string, format: date-time }
+        addedBy: { type: string, nullable: true }
+    MemberCandidate:
+      type: object
+      required: [id, email]
       properties:
         id: { type: string }
         name: { type: string, nullable: true }
         email: { type: string, format: email }
-        role:
-          type: string
-          enum: [viewer, member, admin]
-        status:
-          type: string
-          enum: [pending, active, disabled]
-        mustChangePassword: { type: boolean }
-        statusUpdatedAt: { type: string, format: date-time, nullable: true }
-        statusUpdatedBy: { type: string, nullable: true }
-        createdAt: { type: string, format: date-time }
-    AdminSetStatusBody:
+    AddProjectMemberBody:
       type: object
-      required: [status]
+      required: [userId, role]
+      additionalProperties: false
       properties:
-        status:
-          type: string
-          enum: [active, disabled]
-    AdminSetRoleBody:
+        userId: { type: string }
+        role: { $ref: "#/components/schemas/ProjectMemberRole" }
+    UpdateProjectMemberRoleBody:
       type: object
       required: [role]
+      additionalProperties: false
       properties:
-        role:
-          type: string
-          enum: [viewer, member, admin]
-    AdminPasswordResetBody:
-      type: object
-      required: [password, mustChangePassword]
-      properties:
-        password: { type: string, minLength: 12 }
-        mustChangePassword: { type: boolean }
+        role: { $ref: "#/components/schemas/ProjectMemberRole" }
     PostRunBody:
       type: object
       required: [taskId]

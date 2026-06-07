@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { updateAdminUser } from "@/lib/users";
+import { hardDeleteAdminUser, updateAdminUser } from "@/lib/users";
 
 const log = pino({
   name: "api-admin-user",
@@ -15,6 +15,8 @@ const log = pino({
 
 const bodySchema = z
   .object({
+    name: z.string().min(1).max(120).optional(),
+    email: z.string().email().optional(),
     role: z.enum(["viewer", "member", "admin"]).optional(),
     status: z.enum(["active", "disabled"]).optional(),
     password: z.string().min(12).optional(),
@@ -22,6 +24,8 @@ const bodySchema = z
   })
   .refine(
     (b) =>
+      b.name !== undefined ||
+      b.email !== undefined ||
       b.role !== undefined ||
       b.status !== undefined ||
       b.password !== undefined ||
@@ -104,11 +108,30 @@ export async function PATCH(
     await updateAdminUser({
       adminUserId: admin.id,
       targetUserId: userId,
+      name: parsed.data.name,
+      email: parsed.data.email,
       role: parsed.data.role,
       status: parsed.data.status,
       password: parsed.data.password,
       mustChangePassword: parsed.data.mustChangePassword,
     });
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return errorResponse(err, userId);
+  }
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  const { userId } = await params;
+
+  try {
+    const admin = await requireGlobalRole("admin");
+
+    await hardDeleteAdminUser({ adminUserId: admin.id, targetUserId: userId });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

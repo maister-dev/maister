@@ -14,6 +14,7 @@ export type ProjectTab =
   | "packages"
   | "integrations"
   | "mcps"
+  | "members"
   | "settings";
 
 export interface ProjectTabsProps {
@@ -32,6 +33,7 @@ const TABS: readonly ProjectTab[] = [
   "packages",
   "integrations",
   "mcps",
+  "members",
   "settings",
 ];
 
@@ -52,6 +54,7 @@ export async function ProjectTabs({
     packages: t("packages"),
     integrations: t("integrations"),
     mcps: t("mcps"),
+    members: t("members"),
     settings: t("settings"),
   };
 

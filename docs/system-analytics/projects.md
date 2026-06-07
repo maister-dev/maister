@@ -162,6 +162,10 @@ sequenceDiagram
     W-->>U: 201 { slug, projectId, gitStatus }
 ```
 
+Registration inserts an initial owner membership row for the registering admin.
+Per-project member management (list, add, role change, remove) is documented
+in [`project-membership.md`](project-membership.md).
+
 ### Auto-discovery on startup (Designed)
 
 Recursive scan of `MAISTER_PROJECTS_DIR` registers every `maister.yaml`
