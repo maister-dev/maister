@@ -1785,13 +1785,14 @@ paths:
   /api/runs/{runId}/graph:
     get:
       tags: [runs]
-      summary: Implemented (M22) — flow-graph topology + layout overrides
+      summary: Implemented (M22) — flow-graph topology + authored layout
       description: |
         Requires project membership at `viewer` or above (`readBoard`). Compiles
         the run's pinned manifest into a logic-only topology (nodes + edges, no
-        x/y) and returns the stored `flow_graph_layouts` overrides for the run's
-        `flow_id`. `runId` is the url-param; `projectId`/`flow_id`/pinned manifest
-        are server-state. dagre seeds positions client-side; overrides merge on top.
+        x/y) and returns the authored layout from the manifest `presentation`
+        section (ADR-064), as a `nodeId → {x,y}` map. `runId` is the url-param;
+        `projectId`/`flow_id`/pinned manifest are server-state. dagre seeds
+        positions client-side; authored positions merge on top.
       operationId: getRunGraph
       parameters:
         - name: runId
@@ -1800,7 +1801,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Topology + layout overrides.
+          description: Topology + authored layout.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RunGraphResponse" }
@@ -1833,40 +1834,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RunGraphStatusResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /api/runs/{runId}/graph/layout:
-    put:
-      tags: [runs]
-      summary: Implemented (M22) — upsert a manual node position
-      description: |
-        Requires the `editFlowLayout` action (project `member`). Upserts one
-        `flow_graph_layouts` row keyed `(flow_id, node_id)`, last-writer-wins.
-        `runId` is the url-param; `flow_id` is resolved from the run server-state
-        (a flow-less scratch run is refused `CONFIG`). `nodeId` is validated
-        against the run's pinned-manifest node set (allow-list) before write — an
-        unknown id is refused `CONFIG` with no write. `x`/`y` are bounded floats.
-      operationId: putRunGraphLayout
-      parameters:
-        - name: runId
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/GraphLayoutPutBody" }
-      responses:
-        "200":
-          $ref: "#/components/responses/OkResult"
-        "400":
-          $ref: "#/components/responses/Config"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -5131,8 +5098,9 @@ components:
         layout:
           type: object
           description: |
-            (M22) Override map keyed by node id; a node absent from the map is
-            dagre-seeded client-side.
+            (ADR-064) Authored layout from the manifest `presentation` section,
+            keyed by node id; a node absent from the map is dagre-seeded
+            client-side.
           additionalProperties: { $ref: "#/components/schemas/GraphNodePosition" }
     GraphTopology:
       type: object
@@ -5165,14 +5133,6 @@ components:
       type: object
       required: [x, y]
       properties:
-        x: { type: number }
-        y: { type: number }
-    GraphLayoutPutBody:
-      type: object
-      required: [nodeId, x, y]
-      additionalProperties: false
-      properties:
-        nodeId: { type: string, minLength: 1 }
         x: { type: number }
         y: { type: number }
     RunGraphStatusResponse:

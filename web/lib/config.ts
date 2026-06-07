@@ -1,6 +1,7 @@
 import "server-only";
 
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import path from "node:path";
 
 import Mustache from "mustache";
 import pino from "pino";
@@ -16,6 +17,7 @@ import {
   type CapabilityAgent,
   type CapabilityKind,
   type FlowYamlV1,
+  type FormSchema,
   type MaisterYamlV2,
   type McpCapabilityConfig,
   type NodeDef,
@@ -605,6 +607,10 @@ function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
 // engine_min >= this value.
 const ARTIFACT_ENGINE_MIN = "1.2.0";
 
+// Structured-output floor version (M26): manifests with any node declaring
+// `output.result` must declare engine_min >= this value.
+const OUTPUT_ENGINE_MIN = "1.3.0";
+
 // Returns true when the manifest uses any artifact feature (produces, artifact
 // input.requires, or artifact_required gates). Used to gate the engine-min check.
 function declaresArtifacts(nodes: NodeDef[]): boolean {
@@ -623,6 +629,16 @@ function declaresArtifacts(nodes: NodeDef[]): boolean {
     for (const g of n.pre_finish?.gates ?? []) {
       if (g.kind === "artifact_required") return true;
     }
+  }
+
+  return false;
+}
+
+// Returns true when any node declares the M26 structured-output channel
+// (`output.result`). Used to gate the engine-min check.
+function declaresOutputResult(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    if (n.output?.result) return true;
   }
 
   return false;
@@ -658,6 +674,15 @@ function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring artifacts but engine_min "${engineMin}" < ${ARTIFACT_ENGINE_MIN} — bump compat.engine_min to ${ARTIFACT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // Engine gate (M26): manifests declaring `output.result` require
+  // engine_min >= 1.3.0. Manifests without it stay valid at any engine_min.
+  if (declaresOutputResult(nodes) && !semverGte(engineMin, OUTPUT_ENGINE_MIN)) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 
@@ -1029,23 +1054,112 @@ function validateSettingsRoleRefs(
   }
 }
 
-export function validateFormSchemaVersion(
-  formSchema: unknown,
-  expectedVersion: number,
-): void {
-  const parsed = formSchemaSchema.safeParse(formSchema);
+function parseFormSchemaDoc(data: unknown, contextLabel: string): FormSchema {
+  const parsed = formSchemaSchema.safeParse(data);
 
   if (!parsed.success) {
     throw new MaisterError(
       "CONFIG",
-      `Invalid form_schema: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+      `${contextLabel}: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
 
-  if (parsed.data.schemaVersion !== expectedVersion) {
+  return parsed.data;
+}
+
+export function validateFormSchemaVersion(
+  formSchema: unknown,
+  expectedVersion: number,
+): void {
+  const parsed = parseFormSchemaDoc(formSchema, "Invalid form_schema");
+
+  if (parsed.schemaVersion !== expectedVersion) {
     throw new MaisterError(
       "CONFIG",
-      `form_schema version mismatch: expected ${expectedVersion}, got ${parsed.data.schemaVersion}`,
+      `form_schema version mismatch: expected ${expectedVersion}, got ${parsed.schemaVersion}`,
     );
   }
+}
+
+// M26 (ADR-063): the single form_schema document loader. Resolves a relative
+// `./path` against the flow install dir, escape-guards, follows the symlink to
+// its real path (Flow bundles are symlinked into the project, so the real path
+// must be inside the install dir too), reads, JSON-parses, and validates the
+// formSchemaSchema grammar. Both the HITL `form_schema` loader (runner-human)
+// and the node `output.result.schema` resolver call this — one read+parse+
+// validate procedure, four `CONFIG` failure modes (escape, ENOENT, bad JSON,
+// bad shape).
+export async function readAndValidateFormSchemaDoc(
+  flowInstallPath: string,
+  relPath: string,
+): Promise<FormSchema> {
+  const base = path.resolve(flowInstallPath);
+  const joined = path.resolve(base, relPath);
+
+  if (!joined.startsWith(base + path.sep)) {
+    throw new MaisterError(
+      "CONFIG",
+      `form_schema path escapes flow install dir: ${relPath}`,
+    );
+  }
+
+  let resolvedPath: string;
+
+  try {
+    resolvedPath = await realpath(joined);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `form_schema file not found: ${joined} (${asError(err).message})`,
+      { cause: asError(err) },
+    );
+  }
+
+  // Canonicalize the base too: on macOS the temp/install root may itself sit
+  // behind a symlink (/var -> /private/var), so the post-symlink prefix check
+  // must compare real paths on both sides or it would reject legitimate files.
+  const canonicalBase = await realpath(base);
+
+  if (
+    resolvedPath !== canonicalBase &&
+    !resolvedPath.startsWith(canonicalBase + path.sep)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `form_schema path escapes flow install dir: ${relPath}`,
+    );
+  }
+
+  let raw: string;
+
+  try {
+    raw = await readFile(resolvedPath, "utf8");
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `cannot read form_schema ${resolvedPath}: ${asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  let data: unknown;
+
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `form_schema is not valid JSON (${resolvedPath}): ${asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  return parseFormSchemaDoc(data, `invalid form_schema (${resolvedPath})`);
+}
+
+export async function resolveOutputResultSchema(
+  flowInstallPath: string,
+  relPath: string,
+): Promise<FormSchema> {
+  return readAndValidateFormSchemaDoc(flowInstallPath, relPath);
 }

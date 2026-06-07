@@ -17,7 +17,7 @@ const log = pino({
 const bodySchema = z.object({
   optionId: z.string().min(1).optional(),
   response: z.unknown().optional(),
-  // M17 ADR-050: responder self-reported confidence in [0,1].
+  // M17 ADR-054: responder self-reported confidence in [0,1].
   // Validation happens in the service layer (resolveConfidence → 422 NEEDS_INPUT).
   confidence: z.unknown().optional(),
 });

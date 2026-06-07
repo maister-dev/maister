@@ -5,7 +5,7 @@ import type { RunNodeStatuses } from "@/lib/queries/run-node-status";
 import type { Node, NodeProps, NodeTypes } from "@xyflow/react";
 import type { ReactElement } from "react";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -28,7 +28,6 @@ export interface FlowGraphViewLabels {
   title: string;
   empty: string;
   currentNode: string;
-  saveError: string;
   node: Record<string, string>;
 }
 
@@ -40,7 +39,6 @@ export interface FlowGraphViewProps {
   currentStepId: string | null;
   runStatus: string;
   labels: FlowGraphViewLabels;
-  editable: boolean;
 }
 
 interface FlowNodeBodyProps {
@@ -132,7 +130,6 @@ export default function FlowGraphView({
   currentStepId,
   runStatus,
   labels,
-  editable,
 }: FlowGraphViewProps): ReactElement {
   const nodeTypes = useMemo<NodeTypes>(
     () => ({ flowNode: makeFlowNodeView(labels) }),
@@ -146,7 +143,6 @@ export default function FlowGraphView({
 
   const [statuses, setStatuses] = useState(initialStatuses);
   const [currentStep, setCurrentStep] = useState(currentStepId);
-  const [saveError, setSaveError] = useState<string | null>(null);
 
   const nodes = useMemo<Node[]>(
     () =>
@@ -160,27 +156,6 @@ export default function FlowGraphView({
         },
       })),
     [positioned, statuses, currentStep],
-  );
-
-  const onNodeDragStop = useCallback(
-    async (_e: unknown, node: Node): Promise<void> => {
-      try {
-        const res = await fetch(`/api/runs/${runId}/graph/layout`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            nodeId: node.id,
-            x: node.position.x,
-            y: node.position.y,
-          }),
-        });
-
-        if (!res.ok) setSaveError(labels.saveError);
-      } catch {
-        setSaveError(labels.saveError);
-      }
-    },
-    [runId, labels],
   );
 
   // Live coloring (ADR-052): refetch the lightweight graph-status snapshot ONLY
@@ -219,7 +194,6 @@ export default function FlowGraphView({
   return (
     <div
       className="h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
-      data-editable={String(editable)}
       data-testid="flow-graph-view"
     >
       <ReactFlow
@@ -228,13 +202,11 @@ export default function FlowGraphView({
         nodeTypes={nodeTypes}
         nodes={nodes}
         nodesConnectable={false}
-        nodesDraggable={editable}
-        onNodeDragStop={editable ? onNodeDragStop : undefined}
+        nodesDraggable={false}
       >
         <Background />
         <Controls showInteractive={false} />
       </ReactFlow>
-      {saveError ? <p role="alert">{saveError}</p> : null}
     </div>
   );
 }

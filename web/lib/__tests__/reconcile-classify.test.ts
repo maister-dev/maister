@@ -14,7 +14,7 @@
 //      - retry-safe gate (check/judge/guard/human/null):
 //        - GRAPH (nodes[]) run        -> {redispatch, "gate-redispatch"}
 //        - LINEAR (isLinearFlow) run  -> {crash, "linear-gate-orphan"}  (M17
-//          ADR-052: a flat steps[] run has no graph mid-flow resume, so bare
+//          ADR-056: a flat steps[] run has no graph mid-flow resume, so bare
 //          re-dispatch would restart at step 0 and re-run prior side-effects)
 //
 // The classifier is PURE — nowMs/graceSeconds are inputs, no clock/db access.
@@ -258,7 +258,7 @@ describe("classifyRunReconcile — step 4c: retry-safe gate → redispatch", () 
 });
 
 describe("classifyRunReconcile — step 4c (linear): gate/human orphan → crash", () => {
-  // M17 (ADR-052) window-(c): a flat steps[] run reparked onto an on_reject
+  // M17 (ADR-056) window-(c): a flat steps[] run reparked onto an on_reject
   // goto target (or otherwise parked on a session-less gate/human node) has NO
   // graph mid-flow resume. Bare runFlow would restart at step 0 and re-run
   // prior agent/cli side-effects, so reconcile must CRASH it — crashRunningRun

@@ -67,7 +67,7 @@ export async function resolveCurrentNodeKind(
   );
 }
 
-// M17 (ADR-052): resolve BOTH the current node kind AND whether the run's flow
+// M17 (ADR-056): resolve BOTH the current node kind AND whether the run's flow
 // is a flat `steps[]` (linear) flow, in ONE manifest load. Reconcile needs the
 // linear flag to route a session-less gate/human orphan to `crash` (linear has
 // no graph mid-flow resume) instead of `redispatch`. `isLinear` is true when the

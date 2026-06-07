@@ -1,7 +1,7 @@
 // T6.2 (e2e): the M22 workbench surface — flow-graph view, git-tracked file
-// tree + viewer, run diff, layout persistence, the readRepoFiles member-gate,
-// and the project repo tab — end-to-end through the real UI + the real
-// file/graph/layout APIs, against the seeded `m22` fixture
+// tree + viewer, run diff, authored-layout read-back, the readRepoFiles
+// member-gate, and the project repo tab — end-to-end through the real UI + the
+// real file/graph APIs, against the seeded `m22` fixture
 // (e2e/_seed/seed-e2e.ts → seedM22Fixture). ONE project with a REAL parent repo
 // (README.md + src/app.ts + an oversized tracked blob + a committed run-branch
 // diff vs base) and a flow run parked at `Running` with current_step_id =
@@ -12,8 +12,8 @@
 //   1. graph    — /runs/<id> (default ?wb=graph) renders the flow-graph view;
 //      the `plan` node reflects its seeded Succeeded status; the current node
 //      (`implement`) carries data-current="true".
-//   2. layout   — dragging a flow-node fires PUT /graph/layout (200); GET
-//      /graph then returns a layout map containing the dragged nodeId.
+//   2. layout   — GET /graph returns the authored layout from the flow.yaml
+//      presentation section (ADR-064); the removed PUT /graph/layout is 404.
 //   3. files    — ?wb=files lists tracked files; expanding `src` reveals its
 //      file; opening a file shows file-content; opening the oversized file shows
 //      file-too-large; a .git/config path → 404 and a ../etc path → 400.
@@ -86,7 +86,7 @@ test("flow-graph view renders node statuses and the current-node emphasis", asyn
   ).toBeVisible();
 });
 
-test("dragging a flow-node persists its layout via PUT and GET /graph", async ({
+test("GET /graph returns the authored layout from the flow manifest, and there is no runtime layout store", async ({
   page,
 }) => {
   const fx = loadM22Fixture();
@@ -94,87 +94,26 @@ test("dragging a flow-node persists its layout via PUT and GET /graph", async ({
   await page.goto(`/runs/${fx.runId}?wb=graph`);
   await expect(page.locator('[data-testid="flow-graph-view"]')).toBeVisible();
 
-  // React Flow's draggable element is the `.react-flow__node` wrapper (the
-  // [data-testid="flow-node"] body is its child, behind the source/target
-  // handles); d3-drag listens on the wrapper, so drive the gesture there.
-  const node = page.locator(".react-flow__node").first();
-
-  await expect(node).toBeVisible();
-
-  const box = await node.boundingBox();
-
-  if (!box) throw new Error("react-flow node has no bounding box");
-
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
-
-  // Attempt a REAL drag: stepped pointer moves past React Flow's drag threshold
-  // so onNodeDragStop fires PUT /graph/layout. If React Flow does not register
-  // the gesture (canvas drag can be flaky headless), fall back to the direct
-  // PUT — the editable layout API is the contract under test, and persistence is
-  // verified robustly via GET /graph below either way.
-  let putFired = false;
-  const layoutResponse = page
-    .waitForResponse(
-      (r) =>
-        r.url().includes(`/api/runs/${fx.runId}/graph/layout`) &&
-        r.request().method() === "PUT",
-      { timeout: 8_000 },
-    )
-    .then((r) => {
-      putFired = true;
-
-      return r;
-    })
-    .catch(() => null);
-
-  await page.mouse.move(cx, cy);
-  await page.mouse.down();
-  // A tiny first nudge to cross React Flow's drag-start threshold, then the
-  // real displacement in fine steps, then settle before releasing.
-  await page.mouse.move(cx + 5, cy + 5);
-  await page.mouse.move(cx + 30, cy + 20, { steps: 8 });
-  await page.mouse.move(cx + 70, cy + 50, { steps: 12 });
-  await page.waitForTimeout(50);
-  await page.mouse.up();
-
-  const dragRes = await layoutResponse;
-
-  if (dragRes) {
-    expect(dragRes.status()).toBe(200);
-  } else {
-    // Fallback (sanctioned): drive the editable layout API directly with a real
-    // node id sourced from the topology (not scraped from the canvas DOM).
-    const topoRes = await page.request.get(`/api/runs/${fx.runId}/graph`);
-
-    expect(topoRes.status()).toBe(200);
-    const topo = (await topoRes.json()) as {
-      topology: { nodes: Array<{ id: string }> };
-    };
-    const nodeId = topo.topology.nodes[0]?.id;
-
-    if (!nodeId) throw new Error("graph topology has no nodes");
-    const putRes = await page.request.put(
-      `/api/runs/${fx.runId}/graph/layout`,
-      { data: { nodeId, x: 123, y: 456 } },
-    );
-
-    expect(putRes.status()).toBe(200);
-  }
-
-  // Robust persistence: the stored layout map (keyed by the run's flow nodes)
-  // now carries a node override — no brittle pixel-position assertions.
+  // ADR-064: layout is authored in the flow.yaml presentation section and read
+  // back by GET /graph — no per-project runtime store, no drag-persist route.
   const graphRes = await page.request.get(`/api/runs/${fx.runId}/graph`);
 
   expect(graphRes.status()).toBe(200);
   const graph = (await graphRes.json()) as {
+    topology: { nodes: Array<{ id: string }> };
     layout: Record<string, { x: number; y: number }>;
   };
 
-  expect(Object.keys(graph.layout).length).toBeGreaterThan(0);
-  // Surface which path persisted the layout (real drag vs API fallback).
-  // eslint-disable-next-line no-console
-  console.log(`m22 layout persisted via ${putFired ? "real drag" : "PUT API"}`);
+  // The authored positions seeded in M22_MANIFEST.presentation come through.
+  expect(graph.layout.plan).toEqual({ x: 0, y: 0 });
+  expect(graph.layout[fx.currentNode]).toEqual({ x: 220, y: 0 });
+
+  // The removed runtime layout route no longer exists.
+  const putRes = await page.request.put(`/api/runs/${fx.runId}/graph/layout`, {
+    data: { nodeId: "plan", x: 1, y: 2 },
+  });
+
+  expect(putRes.status()).toBe(404);
 });
 
 test("file-tree lists tracked files, opens a file, and flags the oversized blob", async ({

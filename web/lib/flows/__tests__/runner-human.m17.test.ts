@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * M17 ADR-050: criticality creation-path tests for linear human steps
+ * M17 ADR-054: criticality creation-path tests for linear human steps
  * Verify that criticality is written ONCE at hitl_requests INSERT and never updated.
  */
 
@@ -29,6 +29,10 @@ vi.mock("@/lib/assignments/service", () => ({
 
 vi.mock("@/lib/config", () => ({
   validateFormSchemaVersion: vi.fn(),
+  readAndValidateFormSchemaDoc: vi.fn(async () => ({
+    schemaVersion: 1,
+    fields: [],
+  })),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {

@@ -11,7 +11,7 @@
 Flows are the product's control surface — typed `node` / `gate` / `settings`
 graphs in `flow.yaml`. Today they are **hand-edited** YAML inside a tag-pinned
 plugin bundle. The M22 workbench can *view* a flow graph but it is **read-only**
-(layout authored in the `flow.yaml` presentation section, ADR-062; no write
+(layout authored in the `flow.yaml` presentation section, ADR-064; no write
 action). So changing a flow means editing YAML by hand while knowing the DSL,
 the gate kinds, the capability/settings schema, the transitions/rework rules,
 and the engine-version compat — a high-friction, error-prone, expert-only loop.
@@ -127,6 +127,6 @@ flowchart LR
 
 - Write-side companion to [`improvement-roadmap.md`](improvement-roadmap.md) §6
   (Flow-graph editor) and E3 (authoring→publication).
-- Builds on M22 (workbench view, ADR-062/053), M25 (authored catalog), the
+- Builds on M22 (workbench view, ADR-064/053), M25 (authored catalog), the
   `flow.yaml` validation pipeline, and M13 roles.
 - Ready to feed into `/aif-plan` once the open questions above are settled.

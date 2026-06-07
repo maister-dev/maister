@@ -119,7 +119,7 @@ stateDiagram-v2
 ### Step DSL execution model (Partly implemented)
 
 Steps run sequentially. The linear `on_reject.goto_step` loop is **Implemented
-(M17, ADR-052)**: a rejected `human` response reparks the run to the target step
+(M17, ADR-056)**: a rejected `human` response reparks the run to the target step
 (injecting `comments_var`) via an atomic CAS, bounded by `maxLoops` (default 5)
 so a review cycle cannot loop forever.
 
@@ -144,7 +144,7 @@ flowchart TD
 ```
 
 > **(M11a) graph rework supersedes `on_reject.goto_step` for `nodes[]` flows.** The
-> linear `on_reject.goto_step` loop above is **Implemented (M17, ADR-052)** for
+> linear `on_reject.goto_step` loop above is **Implemented (M17, ADR-056)** for
 > `steps[]` flows (atomic repark, bounded by `maxLoops`; a session-less linear
 > gate/human orphan reconciles to `Crashed`/`linear-gate-orphan`). A graph
 > (`nodes[]`) flow instead uses node `transitions` +

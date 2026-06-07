@@ -250,7 +250,7 @@ const humanStepSchema = z.object({
     })
     .optional(),
   retry_safe: z.boolean().optional(),
-  // M17 ADR-050: flow-author-declared criticality for this HITL step.
+  // M17 ADR-054: flow-author-declared criticality for this HITL step.
   criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
 });
 
@@ -395,6 +395,16 @@ export const nodeOutputSchema = z
           requiredFor: z.array(z.enum(["review", "merge"])).optional(),
         }),
       )
+      .optional(),
+    // M26 (ADR-063): opt-in structured-output declaration. `schema` is a
+    // relative `./path` resolved+validated as a formSchemaSchema doc at runtime
+    // (resolveOutputResultSchema). `required` defaults to false at the seam.
+    result: z
+      .object({
+        schema: z.string().min(1),
+        required: z.boolean().optional(),
+      })
+      .strict()
       .optional(),
   })
   .passthrough();
@@ -549,7 +559,7 @@ export const humanSettingsSchema = z
     slaHours: z.number().positive().optional(),
     stalenessHint: z.string().min(1).optional(),
     returnRequires: z.array(z.string().min(1)).optional(),
-    // M17 ADR-050: flow-author-declared criticality for this HITL node.
+    // M17 ADR-054: flow-author-declared criticality for this HITL node.
     criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
   })
   .strict();
@@ -631,6 +641,31 @@ export const nodeSchema = z.discriminatedUnion("type", [
   humanNodeSchema,
 ]);
 
+// M22 (ADR-064): additive, runner-ignored presentation section — per-node
+// canvas display options (position/size/color) keyed by node `id`, authored
+// WITH the flow and shipped in the bundle. The flow-graph view reads it; dagre
+// seeds any node without an entry. The engine never reads this, so the
+// logic-only DSL invariant holds with no engine bump. Per-project runtime
+// drag-persist deliberately does NOT live here: a pinned bundle is shared and
+// immutable, so layout EDITING belongs to the flow editor on the source
+// flow.yaml, not a runtime write into this section.
+export const flowNodePresentationSchema = z
+  .object({
+    id: z.string().min(1),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    color: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const flowPresentationSchema = z
+  .object({
+    nodes: z.array(flowNodePresentationSchema).optional(),
+  })
+  .strict();
+
 export const flowYamlV1Schema = z
   .object({
     schemaVersion: z.literal(1),
@@ -659,19 +694,37 @@ export const flowYamlV1Schema = z
     // M11a; it is now optional so the refine can reject both-absent.
     steps: z.array(stepSchema).min(1).optional(),
     nodes: z.array(nodeSchema).min(1).optional(),
+    // Additive presentation metadata (ADR-064); runner/engine never reads it.
+    presentation: flowPresentationSchema.optional(),
   })
   .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {
     message: "flow manifest must declare exactly one of steps[] or nodes[]",
   });
 
-const formFieldSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().min(1).optional(),
-  type: z.enum(["string", "number", "boolean", "enum", "array"]),
-  required: z.boolean().optional(),
-  default: z.unknown().optional(),
-  options: z.array(z.string()).optional(),
-});
+// M26 (ADR-063): the grammar gains a nested `object` type with recursive
+// `fields`, so a structured node output can declare a tree. Recursion needs an
+// explicit element type for `z.lazy`; all prior flat types are unchanged.
+type FormFieldShape = {
+  name: string;
+  label?: string;
+  type: "string" | "number" | "boolean" | "enum" | "array" | "object";
+  required?: boolean;
+  default?: unknown;
+  options?: string[];
+  fields?: FormFieldShape[];
+};
+
+const formFieldSchema: z.ZodType<FormFieldShape> = z.lazy(() =>
+  z.object({
+    name: z.string().min(1),
+    label: z.string().min(1).optional(),
+    type: z.enum(["string", "number", "boolean", "enum", "array", "object"]),
+    required: z.boolean().optional(),
+    default: z.unknown().optional(),
+    options: z.array(z.string()).optional(),
+    fields: z.array(formFieldSchema).optional(),
+  }),
+);
 
 export const formSchemaSchema = z.object({
   schemaVersion: z.number().int().positive(),
@@ -706,6 +759,8 @@ export type MaisterCapabilitiesConfig = z.infer<
   typeof maisterCapabilitiesSchema
 >;
 export type FlowYamlV1 = z.infer<typeof flowYamlV1Schema>;
+export type FlowPresentation = z.infer<typeof flowPresentationSchema>;
+export type FlowNodePresentation = z.infer<typeof flowNodePresentationSchema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;
 export type Step = z.infer<typeof stepSchema>;
 export type FormSchema = z.infer<typeof formSchemaSchema>;

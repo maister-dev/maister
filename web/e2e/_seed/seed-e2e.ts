@@ -749,6 +749,16 @@ const M22_MANIFEST = {
       transitions: { approve: "done", rework: M22_CURRENT_NODE },
     },
   ],
+  // Authored layout (ADR-064): node positions ship in the flow manifest, read
+  // by the read-only flow-graph view. There is no runtime layout store.
+  presentation: {
+    nodes: [
+      { id: "plan", x: 0, y: 0 },
+      { id: M22_CURRENT_NODE, x: 220, y: 0 },
+      { id: "checks", x: 440, y: 0 },
+      { id: "review", x: 660, y: 0 },
+    ],
+  },
 };
 
 function resetDir(dir: string): void {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { validateReviewDecision } from "@/lib/flows/hitl-validate";
 
 /**
- * M17 ADR-050: human_confidence assessment taxonomy tests
+ * M17 ADR-054: human_confidence assessment taxonomy tests
  * Confidence is a real in [0,1] inclusive, optional, captured at response time
  * and echoed into the response jsonb.
  */

@@ -88,6 +88,8 @@
 | [ADR-060](#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets) | Unified scheduler clock and polymorphic job budgets | Accepted | 2026-06-05 |
 | [ADR-061](#adr-061-local-authored-capability-catalog-lifecycle) | Local authored capability catalog lifecycle | Accepted | 2026-06-05 |
 | [ADR-062](#adr-062-platform-user-administration--project-member-management-admin-surface-carve) | Platform user administration + project member management (admin-surface carve) | Accepted | 2026-06-07 |
+| [ADR-063](#adr-063-structured-node-output-channel-p1--run-context-file-p7) | Structured node output channel (P1) + run-context file (P7) | Accepted | 2026-06-07 |
+| [ADR-064](#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section) | Authored flow-graph layout in the flow.yaml presentation section | Accepted | 2026-06-07 |
 
 ---
 
@@ -3754,6 +3756,168 @@ No last-owner guard is implemented.
 - **Last-owner guard on project members:** D8 rationale — `owner` role confers no
   extra capability and global admins are implicit owners, so the guard would be
   purely cosmetic overhead. Rejected.
+
+---
+
+### ADR-063: Structured node output channel (P1) + run-context file (P7)
+
+**Date:** 2026-06-07
+**Status:** Accepted
+**Context:** Today only `human`/HITL nodes write a structured result into
+`node_attempts.vars`; `ai_coding`, `cli`, `check`, and `judge` nodes emit only
+free `stdout` text and files-on-disk (`vars` is always `{}` for them). The flow
+engine therefore cannot pass a node's *structured* result to a later node, route
+on a node's self-reported outcome, or feed first-class node signals to the
+Observatory. A cleared/resumed agent session also has no session-independent view
+of run-level state. M26 delivers the Wave-1 keystone pair (P1 + P7) with **no DB
+migration and no new dependency**. Frozen SSOT:
+`.ai-factory/specs/feature-m26-structured-output-run-context.md`.
+
+**Decision:**
+
+**D1 — Opt-in per node.** P1 activates for a node only when its manifest declares
+`output.result`. A node without it behaves byte-identically to today (`vars: {}`,
+no transport provisioning, no parsing). Graph (`nodes[]`) engine only; legacy
+linear `steps[]` is out of scope.
+
+**D2 — One grammar, no new dependency.** The existing `formSchemaSchema` grammar
+is reused (no `ajv`): `validateHitlResponse` is generalized into a single shared
+`validateStructuredOutput(value, schema)`; HITL forms keep delegating to it. The
+grammar gains a nested `object` type with recursive `fields`; all prior flat types
+(`string | number | boolean | enum | array`) are unchanged.
+
+**D3 — Schema is a `./path`.** `output.result = { schema: <"./path">, required? }`
+attaches to the node `output` block (sibling of the M12 `produces[]`). `schema`
+is resolved against the flow install dir with the same escape-guard +
+`realpath` canonicalization as `form_schema`, then validated as a
+`formSchemaSchema` document. `required` defaults to `false`.
+
+**D4 — Hybrid transport by execution mechanism.** `ai_coding`/`judge` (agent):
+the agent ends its response with a single sentinel-tagged ` ```json maister:output `
+fenced block; the runner extracts the **last** such block from the 1 MiB-capped
+`result.stdout` (a block pushed past the cap is **absent**); the agent writes no
+file (it cannot write outside its worktree cwd). `cli`/`check`: the runner injects
+`MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json`; the command writes
+JSON there and the runner reads it.
+
+**D5 — Failure → `CONFIG`.** Payload absent-while-`required`, oversize, invalid
+JSON, or schema mismatch fails the attempt with `MaisterError("CONFIG")` — no new
+error code. Validated `vars` fold into the **existing single** `markNodeSucceeded`
+UPDATE: no new write, no new crash window.
+
+**D6 — Run-context file in the worktree.** `<worktreePath>/.maister/run.json`
+(inside the agent cwd → readable by `claude` and `codex`). The runner idempotently
+appends `.maister/` to the repo's git exclude (`git rev-parse --git-path
+info/exclude`) so `run.json` never appears in `git status` or the base→run diff.
+Shape: `{ intent, nodes:{<id>:{summary,vars}}, gates:{<id>:{status,verdict?}},
+promoted:{} }` — `status` always present (the signal for null-verdict
+`command_check`/`human_review`). Run **logs** stay at `<runDir>`.
+
+**D7 — P7 is a derived projection.** `run.json` is rebuilt idempotently from
+`node_attempts` + `gate_results` + `task.prompt` after each ledger terminal
+transition. It is self-healing — correctness **never** depends on it; a fresh,
+cleared, or resumed session reconstructs identical state from the ledger. It draws
+only from `vars` + gate results + intent, **never** from `context.env` (no env
+secret can enter the file).
+
+**D8 — Engine gate `1.2.0 → 1.3.0`.** `MAISTER_ENGINE_VERSION` bumps to `1.3.0`;
+`OUTPUT_ENGINE_MIN = "1.3.0"` mirrors `ARTIFACT_ENGINE_MIN`. A manifest declaring
+`output.result` on any node MUST declare `compat.engine_min >= 1.3.0`, else
+`validateGraphManifest` rejects it with `CONFIG`. A manifest without
+`output.result` stays valid at any `engine_min` (back-compat). `aif` declares no
+`engine_max`, so the bump is safe.
+
+**D9 — Size cap is an env var.** `MAISTER_NODE_OUTPUT_MAX_BYTES` (default
+`262144` = 256 KiB) caps the raw payload before parse, read via an
+`instance-config.ts` helper mirroring `workbenchMaxFileBytes()`. Wired into
+`.env.example` + `docs/configuration.md` **only** — never `compose.yml` (`web`
+runs on the host, ADR-023; matches the `MAISTER_WORKBENCH_MAX_FILE_BYTES`
+precedent).
+
+**D10 — P7 projection hardcoded "all".** M26 projects intent + every node's
+`vars` + every gate result; a config-driven selector is deferred to a later wave.
+
+**D11 — Per-attempt cli file.** `output-<nodeId>-<attempt>.json` so a non-writing
+rework attempt N never inherits attempt N-1's file. Agents have no file → moot.
+
+**D12 — No new surface.** No DB migration, no HTTP route, no `runs.status`/enum,
+no new `MaisterError` code. P1/P7 converge on the existing `node_attempts.vars`
+channel and the M17 `extraVars` rework-comment channel — never a parallel store.
+
+**Consequences:**
+- A downstream node resolves `{{steps.<id>.vars.<key>}}` from an upstream node's
+  validated output via `reduceLedger` (highest-attempt-wins), with no new plumbing.
+- Richer Observatory (E2) signals and the unblock of Wave-2 (P2 prompt injection,
+  P4 dynamic routing, P3 diff-path assertions, P6 session continuity).
+- Zero migration, zero new dependency.
+- Delivery is **phased**: Phase 1 (the shared validator, the `output.result`
+  manifest field, and the engine 1.3.0 gate) is implemented; the runtime transport
+  + validate seam (Phase 2) and the `run.json` projection (Phase 3) follow. Until
+  Phase 2 lands, `output.result` parses and is engine-gated but is not yet read at
+  run time.
+
+**Alternatives Considered:**
+- **`ajv` / JSON-Schema dependency:** rejected — the existing `formSchemaSchema`
+  grammar (extended with a nested `object` type) covers the need with no new dep.
+- **Inline schema in the manifest:** rejected — a `./path` is consistent with
+  `form_schema` and the M12 `produces[].schema` precedent.
+- **Agent writes the output file directly:** rejected — agents cannot write outside
+  their worktree cwd; hence the hybrid agent-stdout / cli-file transport.
+- **`run.json` under `<runDir>`:** rejected — the agent cannot read outside its
+  worktree cwd; the worktree location is the only one both `claude` and `codex`
+  can read with no `.claude`-settings assumption.
+- **A new parallel structured-output channel:** rejected — P1/P7 converge on
+  `node_attempts.vars` + the M17 `extraVars` channel; a second store would split
+  the source of truth.
+
+---
+
+### ADR-064: Authored flow-graph layout in the flow.yaml presentation section
+
+**Date:** 2026-06-07
+**Status:** Accepted
+**Supersedes:** ADR-051 (the interim `flow_graph_layouts` DB layout store).
+**Context:** M22 shipped the workbench flow-graph view. ADR-051 stored per-node
+manual positions in a project-scoped `flow_graph_layouts` table (migration
+`0024`), written by a runtime drag-persist route
+(`PUT /api/runs/{runId}/graph/layout`, gated by an `editFlowLayout` member
+action). That made layout a **per-project runtime write against an immutable,
+shared, tag-pinned bundle**: layout state diverged from the flow it describes and
+required a table, an RBAC action, and a write route to maintain.
+
+**Decision:** Reverse the layout store. Authored node positions live in the
+`flow.yaml` `presentation` section — `presentation.nodes[].{id, x, y, width,
+height, color}` — shipped with the immutable bundle. The section is **additive and
+runner/engine-ignored**, so the logic-only DSL invariant holds with **no engine
+bump**. The read-only flow-graph view projects positions via
+`presentationLayout(manifest)` into a `nodeId → {x,y}` map; `dagre` seeds any node
+without an entry; entries for ids absent from the topology are harmless (no
+phantom nodes). Size/color are accepted in the manifest but **not** projected — the
+live run view colors by node status, so authored color must not override it. The
+`flow_graph_layouts` table is dropped (migration `0030`, `DROP TABLE IF EXISTS`),
+along with the layout write route, the `editFlowLayout` authz action, the
+per-project drag-persist (`nodesDraggable=false`), and the `saveError` i18n key.
+Layout **editing** is a flow-editor concern on the source `flow.yaml` (deferred),
+not a runtime write.
+
+**Consequences:**
+- No DB layout store, no layout write route, no `editFlowLayout` action; the view
+  is read-only.
+- Layout is versioned with the flow it describes and shared identically across
+  every project and run that pins the bundle.
+- One fewer table + RBAC action + i18n key; net code reduction.
+- Per-project runtime drag-persist is deliberately unsupported — a pinned bundle is
+  immutable and shared, so layout editing belongs on the source file.
+
+**Alternatives Considered:**
+- **Keep the ADR-051 DB store:** rejected — a per-project mutable layout against an
+  immutable, shared bundle is a category error; the layout diverges from the flow.
+- **Inline positions in the `steps[]`/`nodes[]` DSL:** rejected — it pollutes the
+  logic-only DSL and would force an engine bump; presentation is a separate,
+  runner-ignored section.
+- **Runtime drag-persist into the `presentation` section:** rejected — the bundle
+  is immutable and shared; editing belongs to the flow editor on the source
+  `flow.yaml`, not a runtime write into a pinned artifact.
 
 ---
 

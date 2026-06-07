@@ -622,10 +622,10 @@ runner-agent enforcement is queued for a follow-up patch.
 
 - ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
   [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror),
-  ADR-050 (HITL assessment taxonomy — `criticality`/`human_confidence`; Implemented — M17),
-  ADR-051 (HITL response service + HITL-over-MCP + token-actor + D7/D8 gates; Implemented — M17),
-  ADR-052 (flat-runner `on_reject` atomic repark; Implemented — M17),
-  ADR-053 (HITL hybrid-surface composition — cross-project inbox; Implemented — M17).
+  ADR-054 (HITL assessment taxonomy — `criticality`/`human_confidence`; Implemented — M17),
+  ADR-055 (HITL response service + HITL-over-MCP + token-actor + D7/D8 gates; Implemented — M17),
+  ADR-056 (flat-runner `on_reject` atomic repark; Implemented — M17),
+  ADR-057 (HITL hybrid-surface composition — cross-project inbox; Implemented — M17).
 - ERD: [`../db/hitl-domain.md`](../db/hitl-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`form_schema versioning`;

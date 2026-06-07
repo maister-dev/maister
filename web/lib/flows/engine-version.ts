@@ -14,7 +14,8 @@ const log = pino({
 // Bumped 1.0.0 -> 1.1.0 for Flow graph v1 (`nodes[]`); graph flows MUST declare
 // `compat.engine_min >= 1.1.0` (ADR-026).
 // Bumped 1.1.0 -> 1.2.0 for typed artifact produces/requires validation (M12).
-export const MAISTER_ENGINE_VERSION = "1.2.0";
+// Bumped 1.2.0 -> 1.3.0 for structured node output (`output.result`) validation (M26).
+export const MAISTER_ENGINE_VERSION = "1.3.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

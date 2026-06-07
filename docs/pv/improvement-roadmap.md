@@ -157,7 +157,7 @@ the M20 dogfood** (E1 editor / the Wave-3 "Flow-graph editor" track): bring
 visual flow authoring forward so the flows we dogfood with are built and tuned on
 the canvas, not hand-edited in `flow.yaml`.
 The **view already shipped (M22)** — flow-graph view with live node-status, but
-**read-only** (layout authored in the `flow.yaml` presentation section, ADR-062;
+**read-only** (layout authored in the `flow.yaml` presentation section, ADR-064;
 no write action). This bet adds the **edit** slice. **Write-target decision
 (owner): lay in the authoring/override layer from the start** — edits land as
 authored catalog revisions (M25 `authored_capabilities`, draft→publish), not by
@@ -237,7 +237,7 @@ already exists (evidence graph, artifacts, worktree). This unblocked the M20
 dogfood as intended. **Remaining bet:** the flow-graph **editor** (write path),
 pulled earlier per *Owner-directed next bets §6*.
 
-**Graph rendering & layout.** The flow-graph view (shipped M22, ADR-062) and the editor (§6)
+**Graph rendering & layout.** The flow-graph view (shipped M22, ADR-064) and the editor (§6)
 reuse the stack already in the codebase — **`@xyflow/react` (React Flow) +
 dagre**, the same xyflow family the evidence graph uses (ADR-039) — so no new
 dependency. **Display options live in a separate section of `flow.yaml`, apart

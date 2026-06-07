@@ -503,7 +503,7 @@ describe("runReconcileSweep (integration)", () => {
     expect(runFlow).toHaveBeenCalledWith(checkRun);
   }, 60_000);
 
-  it("crashes a reparked-Running LINEAR run on a human goto target (window-(c)), retaining resume_target_step_id — does NOT redispatch (ADR-052)", async () => {
+  it("crashes a reparked-Running LINEAR run on a human goto target (window-(c)), retaining resume_target_step_id — does NOT redispatch (ADR-056)", async () => {
     // M17 window-(c): a flat steps[] run reparked onto a human on_reject goto
     // target, whose process died AFTER the repark CAS commit, is Running with
     // currentStepId on the human goto target and no live session. A bare

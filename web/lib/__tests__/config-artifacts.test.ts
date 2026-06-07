@@ -544,4 +544,54 @@ describe("validateGraphManifest — artifact validation (M12 Phase 2)", () => {
       expect(manifest.compat?.engine_min).toBe("1.1.0");
     });
   });
+
+  describe("engine-gate rule (M26/AC11): output.result requires engine_min >= 1.3.0", () => {
+    it("accepts a node declaring output.result with engine_min 1.3.0", async () => {
+      const path = await writeGraph("output-result-new-engine.yaml", (m) => {
+        m.compat.engine_min = "1.3.0";
+        (m.nodes[0].output as any).result = { schema: "./schemas/out.json" };
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect(manifest.compat?.engine_min).toBe("1.3.0");
+      expect((manifest.nodes![0].output as any)?.result?.schema).toBe(
+        "./schemas/out.json",
+      );
+    });
+
+    it("rejects a node declaring output.result while engine_min < 1.3.0", async () => {
+      const path = await writeGraph("output-result-old-engine.yaml", (m) => {
+        m.compat.engine_min = "1.2.0";
+        (m.nodes[0].output as any).result = { schema: "./schemas/out.json" };
+      });
+
+      let caught: unknown;
+
+      try {
+        await loadFlowManifest(path);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(isMaisterError(caught)).toBe(true);
+      expect((caught as any).code).toBe("CONFIG");
+      const msg = caught instanceof Error ? caught.message : "";
+
+      expect(msg).toMatch(
+        /output\.result.*engine_min.*1\.3\.0|output\.result.*requires.*engine/i,
+      );
+    });
+
+    it("accepts a manifest WITHOUT output.result at engine_min 1.2.0 (back-compat)", async () => {
+      const path = await writeGraph("no-output-result-1.2.0.yaml", (m) => {
+        m.compat.engine_min = "1.2.0";
+        // base manifest declares no output.result anywhere
+      });
+
+      const manifest = await loadFlowManifest(path);
+
+      expect(manifest.compat?.engine_min).toBe("1.2.0");
+    });
+  });
 });

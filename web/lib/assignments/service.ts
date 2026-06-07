@@ -312,7 +312,7 @@ export type EnsureApiTokenActorArgs = {
   label?: string | null;
 };
 
-// M17 (ADR-051): the api_token actor for external HITL responses. Upserts on the
+// M17 (ADR-055): the api_token actor for external HITL responses. Upserts on the
 // partial unique (project_id, token_id) WHERE kind='api_token' so repeated
 // answers from the same token attribute to one actor row.
 export async function ensureApiTokenActor(

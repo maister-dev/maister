@@ -57,7 +57,7 @@ export async function handleExt(
     // SKIPS its success after-audit on a <400 response, but STILL writes the
     // failure audit on >=400 (work never reaches its in-tx audit on failure).
     successAuditInWork?: boolean;
-    // M17 §D8 (ADR-051): opt-in scope enforcement. When set, the actor MUST hold
+    // M17 §D8 (ADR-055): opt-in scope enforcement. When set, the actor MUST hold
     // `scopeLabel` (or the `*` wildcard) or the request is rejected 403 BEFORE
     // work() runs. ONLY the two HITL routes opt in; every other ext route leaves
     // this unset and keeps ADR-046 binary (scope label audit-only). The 403 body
