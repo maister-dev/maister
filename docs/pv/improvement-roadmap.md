@@ -23,6 +23,15 @@ that has not yet dogfooded (M20 open), the leverage order is:
 Moat work (learning loop, benchmarking, project memory) **deepens** flow→PR.
 Background actors / integrations / multi-user **widen** it. Deepen first.
 
+**North star — one place to run people *and* agents.** Solo-operator is the
+*first approximation*, not the destination: the concept moves toward **teams and
+a single control plane where humans and agents are managed, assigned, and
+observed together.** That promotes the *widen* layer (E4 agents-as-actors, E5
+multi-user / governance, the external surface) from "later, if we go team" to the
+**target shape**. Deepen-first still governs near-term sequencing — the M20
+dogfood gate is real and cheap signal beats speculative surface — but select
+widen bets are pulled forward on owner direction (see *Owner-directed next bets*).
+
 The two priority blocks below — **feature epics** and **foundational
 primitives** — are interleaved into delivery **waves** so independent work runs
 in parallel.
@@ -41,7 +50,7 @@ pleasant enough to run the M20 dogfood, and every run emits structured signal.**
 
 | Track | Scope | Notes / current state |
 |---|---|---|
-| **UX — workbench visibility** | Flow-graph **view** (live node-status), repo **file-tree** browser in project + workbench, **diff** in the workbench | Mostly read-only over existing data (evidence graph, worktree, artifacts). Diff review exists from M18 — extend into the workbench. (The HITL hybrid surface is in-flight M17, not a roadmap item — see *Builds on in-flight M17*.) |
+| **UX — workbench visibility** *(shipped M22)* | Flow-graph **view** (live node-status), repo **file-tree** browser in project + workbench, **diff** in the workbench | **Shipped M22** (read-only over evidence graph / worktree / artifacts; diff extends M18). The flow-graph **editor** is the remaining slice — see *Owner-directed next bets §6*. |
 | **Signals — observatory** | `correction_rate` heatmap, **Autonomy Score**, read-only signal harvesting | Pure read over `node_attempts`, gate verdicts, HITL timings. No schema change. Proves/disproves the moat hypothesis cheaply. |
 | **Foundations — flow-engine primitives** | **Structured node output channel** (P1, schema-validated, keystone) + **run-context file** (P7), activate `hash`/`size_bytes`, tighten `input.requires` contract | Reuses `node_attempts.vars` + `reduceLedger`; today only human nodes populate `vars`. P1+P7 are the keystone pair (authoritative vars + agent-readable projection). |
 | **Long-lead — catalog & clock** | **Authoring→publication** groundwork (cap catalog model), **scheduler service** (polymorphic cron) | Independent, heavy; start early so it lands by Wave 2/3. Scheduler generalizes the existing GC cron route. |
@@ -76,6 +85,86 @@ pleasant enough to run the M20 dogfood, and every run emits structured signal.**
 | **Narrow tools & hands** | Tool-count budgets, capability labels, sandbox profiles, warn-first policy on risky ops, on top of M14 caps (`PRODUCT_VIEW.md` §Phase 2.3) |
 | **Automation surface** | Reusable hooks/skills/snippets/recurring routines visible in Project Settings; standard automations; specialist checks off the main run context (`PRODUCT_VIEW.md` §Phase 2.4) |
 | **Flow & intake expansion** | More Flow templates; additional ACP executors after the claude/codex contract proves stable; CI/log intake + external board sync (gated on draft/publish/dedup/severity/cooldown) (`PRODUCT_VIEW.md` §Phase 2.7) |
+
+---
+
+## Owner-directed next bets
+
+A curated short-list the owner has flagged as the next priorities (June 2026).
+This is a **priority lens over the waves above**, not a sequence and not a second
+parallelization plan; per-item timing tags carry the sequencing, and detail stays
+in the epic/primitive each one extends (docs R7). The theme is to keep new surface
+**flow-native and HITL-first** rather than bolt on a generic agent board.
+
+### 1. Scheduled triggers — task, flow, and agent calls *(no hard dependency)*
+Builds on **P5 scheduler** (the M24 slice shipped the clock, atomic claim, and
+handler seams for all four `job_kind`s). Targets to schedule: a **task**, a
+**flow**, and **agent calls** — likely through **one polymorphic mechanism**
+(P5 already models `flow_run` / `agent_tick` / `command` as job kinds), possibly
+two, possibly one — **to be settled by trying it**, not decided up front. Net-new:
+- wire the `flow_run` (and, gated on E4, `agent_tick`) handlers from the existing
+  seams,
+- UI to create/edit a cron schedule on a task / flow / agent call,
+- concurrency mapped to the **global cap (ADR #4)** per job kind — an over-cap
+  tick queues or skips per the schedule's policy; never a second clock.
+
+Kept inside the Flow/run spine: a schedule fires a real run with the same
+gates / HITL / promotion, not a freeform side-channel.
+
+### 2. Cost & observability — confirmed, after dogfood *(owner: after the M20 dogfood)*
+Builds on **E2 Observatory** (read-only over ledgers; M23 slice shipped) and the
+**Cost & economics** track (Wave 3, extends `cost.jsonl`). Owner direction: a
+**confirmed** item, but sequenced **after the M20 dogfood** — roughly its
+existing Wave-3 home, now a definite rather than a maybe (not pulled earlier).
+Land the cost slice in the same read-only Observatory surface as the E2
+correction-rate / Autonomy metrics. Net-new: spend by run / node / executor /
+flow, the cache-resume (~$0.28/respawn) cost, and host memory for parallel runs.
+No schema change beyond the existing `cost.jsonl` capture.
+
+### 3. Mention-to-spawn — @actor triggers a run *(gated on E4)*
+Builds on **E4 agents-as-actors** and the **M17 actor union** (`user |
+api_token`, extended by an `internal_agent` actor). Net-new: @mention an
+agent-actor on a task/run thread to spawn run N+1 against that task — the 1:N
+task→run model already allows N+1; the mention is the new trigger.
+**Explicitly deferred until agents-as-actors lands** (per owner).
+
+### 4. External-agent surface — API + MCP for a separate conversational agent *(hypothesis — think first)*
+Reframes a bespoke Telegram bridge. Builds on the **external-operations API + MCP
+facade** (current scope), **M17 HITL-over-MCP** (`hitl_list` / `hitl_respond`),
+and **E5 external surface**. Hypothesis to evaluate: instead of a custom IM
+integration, expose enough operations through the API/MCP that a *separate
+conversational agent* (its own ACP session / bot, its own context) drives MAIster
+over that surface — create tasks, launch/track runs, answer permission/form HITL,
+read readiness. A Telegram bot becomes one **client** of this agent-over-API
+pattern, not a special case. Open questions:
+- which operations the conversational agent needs beyond today's facade,
+- whether the bot's agent runs as an `internal_agent` actor (ties to E4),
+- auth/scoping for a long-lived conversational token,
+- whether `human`-typed HITL stays human-only (M17 rule) when a person answers
+  *through* the bot.
+
+Status: **hypothesis, no commitment** — decide after thinking it through.
+
+### 5. chat-with-agent — deferred to post-dogfood
+A lightweight ad-hoc conversation with an agent, lighter than a **Scratch run**
+(which already spins a worktree). Owner direction: revisit after the **M20
+dogfood** — real usage will show whether scratch runs already cover this or a
+lighter chat surface is wanted. Status: **deferred, decide post-dogfood**.
+
+### 6. Flow design — pull the editor earlier *(candidate: before dogfood)*
+Owner direction: move the **Flow-graph editor** earlier, possibly even **before
+the M20 dogfood** (E1 editor / the Wave-3 "Flow-graph editor" track): bring
+visual flow authoring forward so the flows we dogfood with are built and tuned on
+the canvas, not hand-edited in `flow.yaml`.
+The **view already shipped (M22)** — flow-graph view with live node-status, but
+**read-only** (layout authored in the `flow.yaml` presentation section, ADR-062;
+no write action). This bet adds the **edit** slice. **Write-target decision
+(owner): lay in the authoring/override layer from the start** — edits land as
+authored catalog revisions (M25 `authored_capabilities`, draft→publish), not by
+mutating pinned plugin `flow.yaml`, so the editor works for installed (immutable,
+tag-pinned) flows too. Pairs with an **agent-assisted Flow authoring** surface (a
+coding agent that edits flows from a description, published via proposal→approve)
+— see [`flow-authoring-assistant.md`](flow-authoring-assistant.md).
 
 ---
 
@@ -140,14 +229,15 @@ roadmap-driven correction to the plan itself is warranted.
 
 ## Feature epics (reference detail)
 
-### E1 — Workbench usability *(Wave 1; editor in Wave 3)*
-Flow-graph **view** with live node-status coloring; a repo **file-tree** browser
-in the project and per-run workbench; **diff** rendering in the workbench
-(extending the M18 base→run→target review surface). Mostly read-only over data
-that already exists (evidence graph, artifacts, worktree). Highest near-term
-leverage because it unblocks the dogfood that every later moat item needs.
+### E1 — Workbench usability *(view/file-tree/diff shipped M22; editor → §6)*
+**Shipped (M22):** flow-graph **view** with live node-status coloring; a repo
+**file-tree** browser in the project and per-run workbench; base→run **diff** in
+the workbench (extending the M18 review surface) — read-only over data that
+already exists (evidence graph, artifacts, worktree). This unblocked the M20
+dogfood as intended. **Remaining bet:** the flow-graph **editor** (write path),
+pulled earlier per *Owner-directed next bets §6*.
 
-**Graph rendering & layout.** The flow-graph view (Wave 1) and editor (Wave 3)
+**Graph rendering & layout.** The flow-graph view (shipped M22, ADR-062) and the editor (§6)
 reuse the stack already in the codebase — **`@xyflow/react` (React Flow) +
 dagre**, the same xyflow family the evidence graph uses (ADR-039) — so no new
 dependency. **Display options live in a separate section of `flow.yaml`, apart
@@ -206,12 +296,17 @@ See [`agents-as-environment-actors.md`](agents-as-environment-actors.md). Built
 on a single **scheduler service** (one clock, polymorphic jobs) and staged
 flow-bound → standalone → continuous. **Dynamic routing** is a flow-engine
 increment that fits here. Standalone/continuous actors widen the surface — gate
-them behind the wedge-dilution risk noted in the sibling doc.
+them behind the wedge-dilution risk noted in the sibling doc. **Mention-to-spawn**
+(@actor triggers run N+1) is an owner-directed bet riding on this actor model —
+see *Owner-directed next bets §3*.
 
 ### E5 — Multi-user / governance / external surface *(Wave 4)*
 RBAC with real action-blocking (today roles are routing/audit labels),
 team boundaries, role-scoped inboxes; bidirectional webhooks. Pull forward only
 when going from single-operator toward team use and the 3 external installs.
+The **external-agent surface** (API + MCP driving a separate conversational
+agent, a Telegram client as the first consumer) is an owner-directed hypothesis
+under this epic — see *Owner-directed next bets §4*.
 
 ---
 
@@ -385,6 +480,8 @@ JSON projection.
   validation (PRODUCT_VIEW Phase 2).
 - Standalone/continuous actors before external validation (wedge-dilution risk).
 - Hosted/managed agent runtime as anything other than a future additive option.
+- **chat-with-agent** (ad-hoc non-flow conversation) — revisit after the M20
+  dogfood (see *Owner-directed next bets §5*).
 
 ## Relationship to existing docs
 

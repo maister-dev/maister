@@ -9,14 +9,13 @@ status, scratch-run persistence, the selectable capability catalog, the
 and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
 assignment tables, and the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
-column. For partial views by domain, see
-and `ARTIFACT_PROJECTION_CURSORS`, and the **M16 (Implemented, migration
-`0018_m16_api_tokens.sql`)** integrations tables `PROJECT_TOKENS` and
-`TOKEN_AUDIT_LOG`. For partial views by domain, see
-[`projects-domain.md`](projects-domain.md), [`runs-domain.md`](runs-domain.md),
-[`hitl-domain.md`](hitl-domain.md), [`artifacts-domain.md`](artifacts-domain.md),
-[`assignments-domain.md`](assignments-domain.md), and
-[`capabilities-domain.md`](capabilities-domain.md).
+column, and the **M16 (Implemented, migration `0018_m16_api_tokens.sql`)**
+integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`. For partial views by
+domain, see [`projects-domain.md`](projects-domain.md),
+[`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
+[`artifacts-domain.md`](artifacts-domain.md),
+[`assignments-domain.md`](assignments-domain.md),
+[`capabilities-domain.md`](capabilities-domain.md), and
 [`integrations-domain.md`](integrations-domain.md).
 
 ```mermaid
@@ -681,12 +680,10 @@ M12 (Implemented, migration `0015`) `artifact_instances` /
 (see [`assignments-domain.md`](assignments-domain.md)), and the **M14 (Implemented,
 migration `0019`)** `capability_imports` table and
 `node_attempts.materialization_plan` column (see
-[`capabilities-domain.md`](capabilities-domain.md)). The remaining roadmap
-additive persistence — artifact edges, API tokens, and external operation
-events — is not drawn until its migrations exist. See
-[`artifacts-domain.md`](artifacts-domain.md)). The remaining M13-M18 additive persistence — artifact edges, assignments — is
-not drawn until its migrations exist. `project_tokens` and `token_audit_log`
-(M16, migration `0018_m16_api_tokens.sql`) are now drawn above. See
+[`capabilities-domain.md`](capabilities-domain.md)), and the **M16 (migration
+`0018_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
+above). Remaining roadmap-additive persistence (e.g. artifact edges and
+external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
 ## Indexes
