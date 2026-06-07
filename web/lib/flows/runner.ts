@@ -400,7 +400,7 @@ export async function runFlow(
         // Re-executing an already-run step needs a fresh attempt number to avoid
         // the step_runs unique constraint (run_id, step_id, attempt). Two cases:
         //   1. on_reject repark re-entry (reparkResume).
-        //   2. ADR-052 crash-resume re-entering a step whose latest step_run is
+        //   2. ADR-056 crash-resume re-entering a step whose latest step_run is
         //      already terminal — the pre-repark-CAS crash window: markStepSucceeded
         //      committed but the repark CAS had not, so crashRunningRun retained the
         //      human step (not the goto) in resume_target_step_id and Recover
@@ -423,7 +423,7 @@ export async function runFlow(
         if (reExecuting && reparkResumeStepId === null) {
           log2.info(
             { stepId: step.id, attempt, priorAttempts: attemptsForStep.length },
-            "[FIX] crash-resume re-entering a terminal step — fresh attempt (ADR-052 pre-CAS window)",
+            "[FIX] crash-resume re-entering a terminal step — fresh attempt (ADR-056 pre-CAS window)",
           );
         }
 
@@ -449,7 +449,7 @@ export async function runFlow(
       // M17 Phase 3: inject rework comments as extraVars when present.
       // rework-comments-<step.id>.json is written by the repark path (pre-tx)
       // before the repark CAS commits. Left on disk (harmless orphan; overwritten
-      // on next repark — ADR-052 crash-window (c)).
+      // on next repark — ADR-056 crash-window (c)).
       let reworkComments: Record<string, unknown> | undefined;
       const reworkCommentsPath = join(
         runtimeRoot,
@@ -543,7 +543,7 @@ export async function runFlow(
           );
         }
 
-        // maxLoops guard (ADR-052): bound BOTH this human step's own loops AND
+        // maxLoops guard (ADR-056): bound BOTH this human step's own loops AND
         // the run-WIDE repark budget, so N independent human on_reject steps
         // cannot each loop MAX_REWORK_LOOPS times (the 5×N gap). A repark always
         // re-runs its triggering human step, so the run-wide repark count ==
@@ -600,7 +600,7 @@ export async function runFlow(
           db,
         );
 
-        // ORDER MATTERS (ADR-052 clause 2):
+        // ORDER MATTERS (ADR-056 clause 2):
         // 1. (over)write rework-comments-<gotoStepId>.json (pre-tx). UNCONDITIONAL
         //    so a prior pass's comments for this SAME goto target can never be
         //    re-injected when the current reject carries no comments_var — write

@@ -34,7 +34,7 @@ erDiagram
 > `schema` at creation and copies the resolved values into these columns at claim
 > time. See [`../system-analytics/flow-graph.md`](../system-analytics/flow-graph.md).
 
-> **(M17 — Implemented, migration `0024`.)** The HITL assessment taxonomy (ADR-050):
+> **(M17 — Implemented, migration `0025`.)** The HITL assessment taxonomy (ADR-054):
 > - `criticality` — flow-author-declared severity (`low | medium | high | critical`,
 >   enforced at the app layer), copied from the `human` node/step manifest into the
 >   row at INSERT. **Write-once**: set at creation, never updated; `NULL` when the

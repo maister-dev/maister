@@ -125,7 +125,7 @@ export type RespondInput = {
   body: {
     optionId?: string;
     response?: unknown;
-    // M17 ADR-050: responder self-reported confidence in [0,1].
+    // M17 ADR-054: responder self-reported confidence in [0,1].
     confidence?: unknown;
   };
 };
@@ -1097,7 +1097,7 @@ export async function respondToHitl(
   if (actor.kind === "user") {
     await requireProjectAction(runRow.projectId, "answerHitl");
   } else {
-    // D7 (ADR-051): a `human`-kind HITL (incl. graph human_review) is a Flow gate
+    // D7 (ADR-055): a `human`-kind HITL (incl. graph human_review) is a Flow gate
     // that ONLY a human actor may satisfy. A machine token can never answer it,
     // even holding hitl:respond scope. Enforced here (the shared chokepoint),
     // BEFORE any mutation — so neither the session route nor the ext route can

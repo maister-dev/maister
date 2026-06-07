@@ -1002,7 +1002,7 @@ describe("respondToHitl service — actor kind", () => {
   });
 });
 
-// M17 ADR-050: human_confidence assessment field tests
+// M17 ADR-054: human_confidence assessment field tests
 describe("respondToHitl service — M17 human_confidence", () => {
   it("form response with confidence: 0.8 stores humanConfidence and echoes in response", async () => {
     const { runId, hitlRequestId } = seedFormRow("form");

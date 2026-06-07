@@ -43,7 +43,7 @@ export type HumanStepLike = {
     goto_step: string;
     comments_var?: string;
   };
-  // M17 ADR-050: flow-author-declared criticality; write-once at INSERT.
+  // M17 ADR-054: flow-author-declared criticality; write-once at INSERT.
   criticality?: "low" | "medium" | "high" | "critical";
 };
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * M17 ADR-050: criticality creation-path tests for linear human steps
+ * M17 ADR-054: criticality creation-path tests for linear human steps
  * Verify that criticality is written ONCE at hitl_requests INSERT and never updated.
  */
 

@@ -120,12 +120,12 @@ export type ResolvedReviewDecision = {
   // Set only when the decision routes to a rework target.
   workspacePolicy?: string;
   reworkTarget?: string;
-  // M17 ADR-050: responder self-reported confidence in [0,1].
+  // M17 ADR-054: responder self-reported confidence in [0,1].
   confidence?: number;
 };
 
 /**
- * M17 ADR-050: resolve the raw confidence value from the response body.
+ * M17 ADR-054: resolve the raw confidence value from the response body.
  * undefined → undefined (absent is valid).
  * finite number in [0,1] → that number.
  * anything else → throws NEEDS_INPUT.
@@ -185,7 +185,7 @@ export function validateReviewDecision(
     };
   }
 
-  // M17 ADR-050: confidence may arrive as a field inside the response object
+  // M17 ADR-054: confidence may arrive as a field inside the response object
   // (graph review path) or as a separate rawConfidence argument (service layer).
   // Prefer the explicit argument; fall back to response.confidence.
   const confidenceRaw =

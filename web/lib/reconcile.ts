@@ -72,7 +72,7 @@ export interface ReconcileInput {
   latestAttemptStartedAt: Date | null;
   nowMs: number;
   graceSeconds: number;
-  // M17 (ADR-052): true when the run executes a flat `steps[]` flow (vs a
+  // M17 (ADR-056): true when the run executes a flat `steps[]` flow (vs a
   // graph `nodes[]` flow). A linear run has NO graph resume — bare `runFlow`
   // restarts from step 0 and re-runs prior side-effects — so a session-less
   // gate/human orphan (incl. the repark window-(c) state) must reconcile to
@@ -152,7 +152,7 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   // (no graph node-resume; bare re-entry restarts at step 0 and re-runs prior
   // side-effects). Crash it instead so `crashRunningRun` retains the node in
   // `resume_target_step_id` and operator Recover resumes from it via
-  // `crashResume` (ADR-052 window-(c)). Graph runs keep gate-redispatch.
+  // `crashResume` (ADR-056 window-(c)). Graph runs keep gate-redispatch.
   if (input.isLinearFlow) {
     return { action: "crash", reason: "linear-gate-orphan" };
   }

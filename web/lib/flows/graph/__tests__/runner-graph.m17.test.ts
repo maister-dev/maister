@@ -3,7 +3,7 @@ import type { CompiledNode } from "@/lib/flows/graph/compile";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 /**
- * M17 ADR-050: criticality creation-path tests for graph human_review nodes
+ * M17 ADR-054: criticality creation-path tests for graph human_review nodes
  * Verify that criticality from node.settings is written ONCE at hitl_requests INSERT.
  */
 

@@ -780,7 +780,7 @@ describe("nodeSchema", () => {
     ).toThrow();
   });
 
-  // M17 ADR-050: criticality field on human node settings
+  // M17 ADR-054: criticality field on human node settings
   it("human node accepts optional criticality in settings", () => {
     const base = {
       id: "review",
@@ -848,7 +848,7 @@ describe("stepSchema", () => {
     expect(() => stepSchema.parse({ id: "x", type: "human" })).toThrow();
   });
 
-  // M17 ADR-050: criticality field on human steps
+  // M17 ADR-054: criticality field on human steps
   it("human step accepts optional criticality: low|medium|high|critical", () => {
     const base = { id: "x", type: "human", form_schema: "schemas/review.json" };
 
