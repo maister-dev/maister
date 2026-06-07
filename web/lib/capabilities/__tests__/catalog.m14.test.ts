@@ -57,6 +57,16 @@ function makeMockDb() {
 
   function makeTx() {
     return {
+      // assertConfigDoesNotOverwriteAuthoredRecord reads the existing row before
+      // each upsert; no fixture here is authored, so an empty result lets the
+      // guard pass through to the insert/disable paths under test.
+      select: (_columns: unknown) => ({
+        from: (_table: unknown) => ({
+          where: (_where: unknown) => ({
+            limit: (_n: number) => Promise.resolve([]),
+          }),
+        }),
+      }),
       insert: (_table: unknown) => ({
         values: (values: Record<string, unknown>) => ({
           onConflictDoUpdate: (oc: {
