@@ -100,7 +100,7 @@ interface FlowGraphRuntimeState {
 }
 
 function formatCount(template: string | undefined, count: number): string {
-  return (template ?? "{count}").replace("{count}", String(count));
+  return (template ?? "$count").replace("$count", String(count));
 }
 
 export function resolveFlowEdgeLabel(

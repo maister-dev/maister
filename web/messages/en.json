@@ -595,9 +595,9 @@
       "empty": "No flow graph for this run.",
       "currentNode": "Current node",
       "saveError": "Could not save the node position.",
-      "declaredGateSummary": "{count} declared gates",
-      "gateSummary": "{count} gates",
-      "blockingGateSummary": "{count} blocking",
+      "declaredGateSummary": "$count declared gates",
+      "gateSummary": "$count gates",
+      "blockingGateSummary": "$count blocking",
       "node": {
         "Pending": "Pending",
         "Running": "Running",

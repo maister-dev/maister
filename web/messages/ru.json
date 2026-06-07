@@ -595,9 +595,9 @@
       "empty": "Для этого запуска нет графа потока.",
       "currentNode": "Текущий узел",
       "saveError": "Не удалось сохранить позицию узла.",
-      "declaredGateSummary": "{count} объявленных проверок",
-      "gateSummary": "{count} проверок",
-      "blockingGateSummary": "{count} блокирующих",
+      "declaredGateSummary": "$count объявленных проверок",
+      "gateSummary": "$count проверок",
+      "blockingGateSummary": "$count блокирующих",
       "node": {
         "Pending": "В ожидании",
         "Running": "Выполняется",

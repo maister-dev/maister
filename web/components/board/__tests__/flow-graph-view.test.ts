@@ -61,9 +61,9 @@ type FlowNodeBodyProps = {
 
 const baseLabels: FlowNodeBodyProps["labels"] = {
   currentNode: "Current node",
-  gateSummary: "{count} gates",
-  blockingGateSummary: "{count} blocking",
-  declaredGateSummary: "{count} declared gates",
+  gateSummary: "$count gates",
+  blockingGateSummary: "$count blocking",
+  declaredGateSummary: "$count declared gates",
 };
 
 function render(props: FlowNodeBodyProps): string {
@@ -149,6 +149,40 @@ describe("FlowNodeBody — visual graph metadata", () => {
     expect(html).toContain("2 gates");
     expect(html).toContain("1 blocking");
     expect(html).toContain('data-testid="gate-rollup"');
+  });
+
+  it("uses non-ICU count templates so server translations do not require values", () => {
+    const html = render({
+      label: "checks",
+      status: "Running",
+      isCurrent: false,
+      rollup: "none",
+      declaredGateSummary: {
+        total: 1,
+        blocking: 1,
+        advisory: 0,
+        kinds: ["command_check"],
+      },
+      runtimeGateSummary: {
+        total: 1,
+        blockingTotal: 1,
+        advisoryTotal: 0,
+        worstBlockingStatus: "passed",
+        failedBlocking: 0,
+        staleBlocking: 0,
+      },
+      labels: {
+        currentNode: "Current node",
+        declaredGateSummary: "$count declared gates",
+        gateSummary: "$count gates",
+        blockingGateSummary: "$count blocking",
+      },
+    });
+
+    expect(html).toContain("1 declared gates");
+    expect(html).toContain("1 gates");
+    expect(html).toContain("1 blocking");
+    expect(html).not.toContain("$count");
   });
 });
 

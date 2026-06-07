@@ -40,13 +40,13 @@ Decisions:
 - Implement visual richness by enriching the graph read model and React Flow rendering: labels, node-kind affordances, declared-gate summaries, runtime gate/status summaries, edge labels, and loop styling.
 - Keep gates inside their owning node in the flow graph. The separate evidence graph remains the detailed artifact/gate explorer.
 - Keep static manifest-derived metadata in the `GET /graph` topology and runtime node/gate status in the `GET /graph-status` snapshot; do not add per-node API calls or DB reads to the pure topology transform.
-- Add a UI-only terminal affordance for `done` only if Phase 0 confirms it does not confuse promotion readiness with execution completion.
+- Do not render a terminal `done` pseudo-node in this follow-up. Terminal transitions stay omitted from topology edges, matching the existing M22 graph contract and avoiding confusion with promotion readiness.
 
-Open questions:
+Resolved questions:
 
-- Should terminal `done` be rendered as a pseudo-node, or should terminal outcomes stay edge badges on the source node?
-- Should `success` edges be visually quiet while non-default outcomes (`rework`, `takeover`, `approve`) get labels?
-- Is `.ai-factory/ROADMAP.md` M22's ADR-062/read-only wording stale, or is the code/docs worktree behind the intended contract? Phase 0 must resolve this before any implementation task starts.
+- Terminal `done` stays omitted from topology edges; no pseudo-node or source-node terminal badge is added in this slice.
+- `success` and `default` edges keep visible labels but stay visually quiet; review-loop outcomes (`rework`, `reject`, `takeover`) get animated/classed edge affordances.
+- The ADR-062/read-only `flow.yaml` presentation-layout wording was stale for this branch. ADR-051 remains the implemented contract: DB-backed `flow_graph_layouts` overrides with `editFlowLayout`.
 
 ## Existing State
 
@@ -118,7 +118,7 @@ Open questions:
   - Acceptance:
     - Additive response shape is documented for both `GET /graph` and `GET /graph-status`.
     - Existing consumers can continue using `id`, `nodeType`, `label`, `source`, `target`, and `outcome`.
-    - Open question about `done` pseudo-node is resolved in writing.
+    - Open question about `done` pseudo-node is resolved in writing: terminal transitions stay omitted.
     - Static declared-gate metadata is not confused with runtime `gate_results` status.
 
 - [x] Task 3: Add deterministic graph visual fixtures before RED tests.
@@ -363,6 +363,7 @@ Open questions:
 ## Verification Notes
 
 - `$aif-fix review findings` fixed the post-review gaps: unknown/custom edge outcomes now prefer the computed `displayLabel`, live graph-status snapshots update local terminal `runStatus` so terminal runs stop refetching, and gate-summary rows wrap/truncate inside fixed-width nodes.
+- `$aif-fix review findings` fixed the final review gaps: graph count labels now use non-ICU `$count` templates so server translation lookup does not require runtime values, OpenAPI marks the emitted visual DTO fields as required, and the SDD plan records the terminal `done` omission decision.
 - `pnpm --filter maister-web exec vitest run --project unit components/board/__tests__/flow-graph-view.test.ts` passed: 13 tests.
 - `pnpm --filter maister-web exec vitest run --project unit lib/queries/__tests__/flow-graph-view.test.ts lib/queries/__tests__/run-node-status.test.ts lib/board/__tests__/flow-graph-view-layout.test.ts components/board/__tests__/flow-graph-view.test.ts 'app/api/runs/[runId]/graph/__tests__/route.test.ts' 'app/api/runs/[runId]/graph-status/__tests__/route.test.ts' 'app/api/runs/[runId]/graph/layout/__tests__/route.test.ts' lib/__tests__/i18n-readiness-keys.test.ts` passed: 90 tests.
 - `pnpm --filter maister-web typecheck` passed.

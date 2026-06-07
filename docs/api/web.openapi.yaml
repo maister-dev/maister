@@ -5115,7 +5115,16 @@ components:
           items: { $ref: "#/components/schemas/GraphTopologyEdge" }
     GraphTopologyNode:
       type: object
-      required: [id, nodeType, label]
+      required:
+        [
+          id,
+          nodeType,
+          label,
+          displayLabel,
+          nodeTypeLabel,
+          nodeRole,
+          declaredGateSummary,
+        ]
       properties:
         id: { type: string }
         nodeType:
@@ -5135,7 +5144,7 @@ components:
           $ref: "#/components/schemas/DeclaredGateSummary"
     GraphTopologyEdge:
       type: object
-      required: [id, source, target, outcome]
+      required: [id, source, target, outcome, displayLabel, edgeRole]
       properties:
         id: { type: string }
         source: { type: string }
@@ -5175,7 +5184,7 @@ components:
           additionalProperties: { $ref: "#/components/schemas/GraphNodeStatus" }
     GraphNodeStatus:
       type: object
-      required: [status, attempt, gates, rollup]
+      required: [status, attempt, gates, rollup, gateSummary]
       properties:
         status:
           type: string
