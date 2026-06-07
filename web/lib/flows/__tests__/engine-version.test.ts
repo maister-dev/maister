@@ -6,6 +6,12 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 
+describe("MAISTER_ENGINE_VERSION", () => {
+  it("is 1.3.0 (M26 structured-output bump)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("1.3.0");
+  });
+});
+
 describe("isEngineCompatible", () => {
   it("is compatible with an open-ended (no bounds) range", () => {
     expect(isEngineCompatible().compatible).toBe(true);
@@ -21,8 +27,8 @@ describe("isEngineCompatible", () => {
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    // Engine is 1.2.0 (M12 bump); a min above it must be rejected.
-    const r = isEngineCompatible("1.3.0");
+    // Engine is 1.3.0 (M26 bump); a min above it must be rejected.
+    const r = isEngineCompatible("1.4.0");
 
     expect(r.compatible).toBe(false);
     expect(r.reason).toContain("engine_min");

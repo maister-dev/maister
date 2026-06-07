@@ -214,20 +214,20 @@ agent/body-controlled.
   <!-- Commit checkpoint: tasks 1-3 -->
 
 ### Phase 1 — Schema grammar + manifest declaration + engine gate. [each task: QA-RED → impl-GREEN → review]
-- [ ] **Task 4: Shared output validator.** Generalize `validateHitlResponse` (`hitl-validate.ts`)
+- [x] **Task 4: Shared output validator.** Generalize `validateHitlResponse` (`hitl-validate.ts`)
   into `validateStructuredOutput(value, schema) → {ok}|{ok:false,message}` over `formSchemaSchema`;
   add **nested-object** support; keep `hitl-validate.ts` delegating (HITL forms unchanged — migrate
   its existing tests, assert green). QA-RED: per-type pass/fail incl. nested + existing HITL cases.
   Logging: INFO on validation fail with node id (no values). Owns: `web/lib/flows/output-schema.ts`
   (or extend hitl-validate), `__tests__`.
-- [ ] **Task 5: `output.result` manifest field.** Extend `nodeOutputSchema`
+- [x] **Task 5: `output.result` manifest field.** Extend `nodeOutputSchema`
   (`config.schema.ts:383-400`) with `result: { schema: z.string() (./path), required?: boolean }`.
   Runtime path resolution reuses `runner-human.ts:63-70` (resolve vs `flowInstallPath` + escape-guard);
   resolved file validated against `formSchemaSchema`. Manifest-level Zod errors → `CONFIG`. QA-RED:
   valid decl parses; path-escape rejected; node without `output.result` unaffected. Owns:
   `config.schema.ts`, `config.ts`, `validateGraphManifest`, `__tests__`. (Shares `config.ts` with
   Task 6 → run Tasks 5,6 sequentially.)
-- [ ] **Task 6: Engine 1.3.0 + gate.** Bump `MAISTER_ENGINE_VERSION`→`1.3.0` (`engine-version.ts:17`);
+- [x] **Task 6: Engine 1.3.0 + gate.** Bump `MAISTER_ENGINE_VERSION`→`1.3.0` (`engine-version.ts:17`);
   add `OUTPUT_ENGINE_MIN="1.3.0"` in `config.ts` mirroring `ARTIFACT_ENGINE_MIN` (:606);
   `validateGraphManifest` rejects (`CONFIG`) a flow declaring any `output.result` without
   `compat.engine_min >= 1.3.0`; update the `engine-version.test.ts` assertion. QA-RED: gated

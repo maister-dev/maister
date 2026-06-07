@@ -10,6 +10,7 @@ import {
   judgeSettingsSchema,
   maisterYamlV2Schema,
   maisterCapabilitiesSchema,
+  nodeOutputSchema,
   nodeSchema,
   stepSchema,
 } from "@/lib/config.schema";
@@ -912,8 +913,100 @@ describe("formSchemaSchema", () => {
     expect(() =>
       formSchemaSchema.parse({
         schemaVersion: 1,
-        fields: [{ name: "n", type: "object" }],
+        fields: [{ name: "n", type: "tuple" }],
       }),
     ).toThrow();
+  });
+
+  it("accepts a nested object type with recursive fields (M26)", () => {
+    expect(() =>
+      formSchemaSchema.parse({
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "result",
+            type: "object",
+            required: true,
+            fields: [
+              { name: "ok", type: "boolean" },
+              {
+                name: "inner",
+                type: "object",
+                fields: [{ name: "leaf", type: "string" }],
+              },
+            ],
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+});
+
+// --- M26 (ADR-063): node output.result declaration --------------------------
+describe("nodeOutputSchema.result (M26)", () => {
+  it("accepts a node output with a valid result declaration", () => {
+    const parsed = nodeOutputSchema.parse({
+      result: { schema: "./schemas/output.json", required: true },
+    }) as { result?: { schema: string; required?: boolean } };
+
+    expect(parsed.result).toMatchObject({
+      schema: "./schemas/output.json",
+      required: true,
+    });
+  });
+
+  it("accepts result without required (required is optional)", () => {
+    const parsed = nodeOutputSchema.parse({
+      result: { schema: "./schemas/output.json" },
+    }) as { result?: { schema: string; required?: boolean } };
+
+    expect(parsed.result?.schema).toBe("./schemas/output.json");
+    expect(parsed.result?.required).toBeUndefined();
+  });
+
+  it("still parses a node output WITHOUT result (back-compat)", () => {
+    expect(() =>
+      nodeOutputSchema.parse({
+        produces: [{ id: "plan", kind: "diff" }],
+      }),
+    ).not.toThrow();
+    expect(() => nodeOutputSchema.parse({})).not.toThrow();
+  });
+
+  it("rejects result with an empty schema string", () => {
+    expect(() => nodeOutputSchema.parse({ result: { schema: "" } })).toThrow();
+  });
+
+  it("rejects result with a missing schema", () => {
+    expect(() =>
+      nodeOutputSchema.parse({ result: { required: true } }),
+    ).toThrow();
+  });
+
+  it("rejects result with a non-boolean required", () => {
+    expect(() =>
+      nodeOutputSchema.parse({
+        result: { schema: "./s.json", required: "yes" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects result with an unknown key (strict result shape)", () => {
+    expect(() =>
+      nodeOutputSchema.parse({
+        result: { schema: "./s.json", bogus: 1 },
+      }),
+    ).toThrow();
+  });
+
+  it("wires output.result through a full ai_coding node", () => {
+    expect(() =>
+      nodeSchema.parse({
+        id: "implement",
+        type: "ai_coding",
+        action: { prompt: "go" },
+        output: { result: { schema: "./schemas/impl.json" } },
+      }),
+    ).not.toThrow();
   });
 });

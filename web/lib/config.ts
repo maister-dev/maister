@@ -1,6 +1,7 @@
 import "server-only";
 
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import Mustache from "mustache";
 import pino from "pino";
@@ -16,6 +17,7 @@ import {
   type CapabilityAgent,
   type CapabilityKind,
   type FlowYamlV1,
+  type FormSchema,
   type MaisterYamlV2,
   type McpCapabilityConfig,
   type NodeDef,
@@ -605,6 +607,10 @@ function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
 // engine_min >= this value.
 const ARTIFACT_ENGINE_MIN = "1.2.0";
 
+// Structured-output floor version (M26): manifests with any node declaring
+// `output.result` must declare engine_min >= this value.
+const OUTPUT_ENGINE_MIN = "1.3.0";
+
 // Returns true when the manifest uses any artifact feature (produces, artifact
 // input.requires, or artifact_required gates). Used to gate the engine-min check.
 function declaresArtifacts(nodes: NodeDef[]): boolean {
@@ -623,6 +629,16 @@ function declaresArtifacts(nodes: NodeDef[]): boolean {
     for (const g of n.pre_finish?.gates ?? []) {
       if (g.kind === "artifact_required") return true;
     }
+  }
+
+  return false;
+}
+
+// Returns true when any node declares the M26 structured-output channel
+// (`output.result`). Used to gate the engine-min check.
+function declaresOutputResult(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    if (n.output?.result) return true;
   }
 
   return false;
@@ -658,6 +674,15 @@ function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring artifacts but engine_min "${engineMin}" < ${ARTIFACT_ENGINE_MIN} — bump compat.engine_min to ${ARTIFACT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // Engine gate (M26): manifests declaring `output.result` require
+  // engine_min >= 1.3.0. Manifests without it stay valid at any engine_min.
+  if (declaresOutputResult(nodes) && !semverGte(engineMin, OUTPUT_ENGINE_MIN)) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 
@@ -1048,4 +1073,59 @@ export function validateFormSchemaVersion(
       `form_schema version mismatch: expected ${expectedVersion}, got ${parsed.data.schemaVersion}`,
     );
   }
+}
+
+// M26 (ADR-063): resolve a node `output.result.schema` relative path against the
+// flow install dir, then read+parse+validate it as a formSchemaSchema document.
+// Mirrors the form_schema resolution in runner-human.ts (same escape-guard);
+// reuses the single formSchemaSchema grammar rather than duplicating it.
+export async function resolveOutputResultSchema(
+  flowInstallPath: string,
+  relPath: string,
+): Promise<FormSchema> {
+  const joined = path.resolve(flowInstallPath, relPath);
+
+  if (!joined.startsWith(path.resolve(flowInstallPath) + path.sep)) {
+    throw new MaisterError(
+      "CONFIG",
+      `output.result schema path escapes flow install dir: ${relPath}`,
+    );
+  }
+
+  let raw: string;
+
+  try {
+    raw = await readFile(joined, "utf8");
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `cannot read output.result schema ${joined}: ${asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  let data: unknown;
+
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `output.result schema is not valid JSON (${joined}): ${asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+
+  const parsed = formSchemaSchema.safeParse(data);
+
+  if (!parsed.success) {
+    throw new MaisterError(
+      "CONFIG",
+      `invalid output.result schema (${joined}): ${parsed.error.issues
+        .map((i) => i.message)
+        .join("; ")}`,
+    );
+  }
+
+  return parsed.data;
 }

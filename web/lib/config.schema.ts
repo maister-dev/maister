@@ -396,6 +396,16 @@ export const nodeOutputSchema = z
         }),
       )
       .optional(),
+    // M26 (ADR-063): opt-in structured-output declaration. `schema` is a
+    // relative `./path` resolved+validated as a formSchemaSchema doc at runtime
+    // (resolveOutputResultSchema). `required` defaults to false at the seam.
+    result: z
+      .object({
+        schema: z.string().min(1),
+        required: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .passthrough();
 
@@ -691,14 +701,30 @@ export const flowYamlV1Schema = z
     message: "flow manifest must declare exactly one of steps[] or nodes[]",
   });
 
-const formFieldSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().min(1).optional(),
-  type: z.enum(["string", "number", "boolean", "enum", "array"]),
-  required: z.boolean().optional(),
-  default: z.unknown().optional(),
-  options: z.array(z.string()).optional(),
-});
+// M26 (ADR-063): the grammar gains a nested `object` type with recursive
+// `fields`, so a structured node output can declare a tree. Recursion needs an
+// explicit element type for `z.lazy`; all prior flat types are unchanged.
+type FormFieldShape = {
+  name: string;
+  label?: string;
+  type: "string" | "number" | "boolean" | "enum" | "array" | "object";
+  required?: boolean;
+  default?: unknown;
+  options?: string[];
+  fields?: FormFieldShape[];
+};
+
+const formFieldSchema: z.ZodType<FormFieldShape> = z.lazy(() =>
+  z.object({
+    name: z.string().min(1),
+    label: z.string().min(1).optional(),
+    type: z.enum(["string", "number", "boolean", "enum", "array", "object"]),
+    required: z.boolean().optional(),
+    default: z.unknown().optional(),
+    options: z.array(z.string()).optional(),
+    fields: z.array(formFieldSchema).optional(),
+  }),
+);
 
 export const formSchemaSchema = z.object({
   schemaVersion: z.number().int().positive(),
