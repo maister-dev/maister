@@ -176,9 +176,10 @@ sequenceDiagram
 - `POST /api/projects/{slug}/members` attaches an **existing** platform user only; it MUST NOT create a new `users` row.
 - Adding a user stamps `project_members.added_by = actorId`; a role change stamps `updated_by = actorId` and `updated_at = now()`.
 - A `memberId` is scoped to its project; the same numeric id in a different project resolves to not-found.
-- A concurrent stale role-change or delete (detected by row absence or version conflict) MUST return `CONFLICT` (409), not silently succeed.
+- Role-change and remove are an optimistic CAS keyed on the caller-observed role (`expectedRole`, carried in the PATCH body and the DELETE `?expectedRole=` query): a concurrent stale change or delete matches 0 rows and MUST return `CONFLICT` (409), never silently overwrite the other admin's write.
 - `users.password_hash` MUST NEVER appear in any member list or candidates response.
 - `GET /api/projects/{slug}/members` is readable by any project `viewer+` or global admin; no mutation capability is implied.
+- Every membership route authenticates (`requireActiveSession`) BEFORE resolving the `slug`; an unauthenticated (or must-change-password) caller MUST receive the auth error regardless of whether the project exists — the route is never an existence oracle.
 
 ## Edge cases
 
@@ -186,7 +187,7 @@ sequenceDiagram
 - **Add nonexistent user** -> `users` lookup returns no row; `MaisterError("PRECONDITION", ...)`; 409.
 - **`memberId` from a different project** -> `SELECT … AND project_id=?` finds no row; 404 not found.
 - **Raced delete then role-change (stale memberId)** -> row absent; `MaisterError("CONFLICT", ...)`; 409.
-- **Raced concurrent role-change** -> optimistic check on row version or re-SELECT detects staleness; `MaisterError("CONFLICT", ...)`; 409.
+- **Raced concurrent role-change** -> the `expectedRole` CAS predicate no longer matches the current row; `MaisterError("CONFLICT", ...)`; 409.
 
 ## Linked artifacts
 

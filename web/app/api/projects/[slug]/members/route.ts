@@ -4,7 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction, requireProjectRole } from "@/lib/authz";
+import {
+  requireActiveSession,
+  requireProjectAction,
+  requireProjectRole,
+} from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { addProjectMember, listProjectMembers } from "@/lib/project-members";
 import { getProjectBySlug } from "@/lib/queries/project";
@@ -78,6 +82,10 @@ export async function GET(
   const { slug } = await params;
 
   try {
+    // Auth-first: authenticate before resolving the slug so unauthenticated
+    // callers cannot distinguish existing from missing projects.
+    await requireActiveSession();
+
     const project = await getProjectBySlug(slug);
 
     if (!project || project.archivedAt) {
@@ -101,6 +109,9 @@ export async function POST(
   const { slug } = await params;
 
   try {
+    // Auth-first: authenticate before resolving the slug (see GET).
+    await requireActiveSession();
+
     const project = await getProjectBySlug(slug);
 
     if (!project || project.archivedAt) {

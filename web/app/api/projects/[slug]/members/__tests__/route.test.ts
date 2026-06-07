@@ -17,6 +17,7 @@ const { MaisterError } = vi.hoisted(() => {
   return { MaisterError };
 });
 
+const requireActiveSessionMock = vi.hoisted(() => vi.fn());
 const requireProjectRoleMock = vi.hoisted(() => vi.fn());
 const requireProjectActionMock = vi.hoisted(() => vi.fn());
 const getProjectBySlugMock = vi.hoisted(() => vi.fn());
@@ -29,6 +30,7 @@ vi.mock("@/lib/errors", () => ({
 }));
 
 vi.mock("@/lib/authz", () => ({
+  requireActiveSession: requireActiveSessionMock,
   requireProjectRole: requireProjectRoleMock,
   requireProjectAction: requireProjectActionMock,
 }));
@@ -56,12 +58,14 @@ function postRequest(slug: string, body: unknown): NextRequest {
 describe("/api/projects/[slug]/members", () => {
   beforeEach(() => {
     vi.resetModules();
+    requireActiveSessionMock.mockReset();
     requireProjectRoleMock.mockReset();
     requireProjectActionMock.mockReset();
     getProjectBySlugMock.mockReset();
     listProjectMembersMock.mockReset();
     addProjectMemberMock.mockReset();
 
+    requireActiveSessionMock.mockResolvedValue({ id: "actor1" });
     getProjectBySlugMock.mockResolvedValue({ id: "prj1", archivedAt: null });
     requireProjectRoleMock.mockResolvedValue({
       user: { id: "actor1" },
@@ -122,6 +126,23 @@ describe("/api/projects/[slug]/members", () => {
 
       expect(res.status).toBe(409);
       expect(body.code).toBe("PRECONDITION");
+    });
+
+    it("returns 401 and never resolves the slug when unauthenticated", async () => {
+      requireActiveSessionMock.mockRejectedValueOnce(
+        new MaisterError("UNAUTHENTICATED", "Sign in required"),
+      );
+      const { GET } = await import("../route");
+
+      const res = await GET(getRequest("demo"), {
+        params: Promise.resolve({ slug: "demo" }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(401);
+      expect(body.code).toBe("UNAUTHENTICATED");
+      expect(getProjectBySlugMock).not.toHaveBeenCalled();
+      expect(listProjectMembersMock).not.toHaveBeenCalled();
     });
   });
 
@@ -205,6 +226,24 @@ describe("/api/projects/[slug]/members", () => {
 
       expect(res.status).toBe(409);
       expect(body.code).toBe("PRECONDITION");
+      expect(addProjectMemberMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 401 and never resolves the slug when unauthenticated", async () => {
+      requireActiveSessionMock.mockRejectedValueOnce(
+        new MaisterError("UNAUTHENTICATED", "Sign in required"),
+      );
+      const { POST } = await import("../route");
+
+      const res = await POST(
+        postRequest("demo", { userId: "user-x", role: "member" }),
+        { params: Promise.resolve({ slug: "demo" }) },
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(401);
+      expect(body.code).toBe("UNAUTHENTICATED");
+      expect(getProjectBySlugMock).not.toHaveBeenCalled();
       expect(addProjectMemberMock).not.toHaveBeenCalled();
     });
   });

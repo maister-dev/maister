@@ -899,6 +899,7 @@
     "noMembers": "No members yet.",
     "noCandidates": "No users found.",
     "alreadyMember": "This user is already a member.",
+    "staleConflict": "This member was changed by someone else. Refresh and try again.",
     "lastError": "Something went wrong. Try again."
   }
 }

@@ -138,7 +138,7 @@ function RemoveDialog({
 
     try {
       const res = await fetch(
-        `/api/projects/${slug}/members/${member.memberId}`,
+        `/api/projects/${slug}/members/${member.memberId}?expectedRole=${member.role}`,
         { method: "DELETE" },
       );
 
@@ -150,7 +150,7 @@ function RemoveDialog({
         const code = body?.code;
 
         if (code === "CONFLICT") {
-          setError(t("alreadyMember"));
+          setError(t("staleConflict"));
         } else {
           setError(body?.message ?? t("lastError"));
         }
@@ -279,7 +279,7 @@ function RoleDialog({
       const res = await fetch(
         `/api/projects/${slug}/members/${member.memberId}`,
         {
-          body: JSON.stringify({ role }),
+          body: JSON.stringify({ role, expectedRole: member.role }),
           headers: { "content-type": "application/json" },
           method: "PATCH",
         },
@@ -293,9 +293,7 @@ function RoleDialog({
         const code = body?.code;
 
         if (code === "CONFLICT") {
-          setError(t("alreadyMember"));
-        } else if (code === "PRECONDITION") {
-          setError(body?.message ?? t("lastError"));
+          setError(t("staleConflict"));
         } else {
           setError(body?.message ?? t("lastError"));
         }

@@ -943,6 +943,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body — bad/missing `role` or `expectedRole` (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [projects]
       summary: Remove a member from a project
@@ -962,6 +967,14 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: expectedRole
+          in: query
+          required: true
+          description: |
+            The role the caller observed in the roster. The delete is a CAS:
+            it only removes the row when it still holds this role, else `409`
+            (`CONFLICT`) on a concurrent stale-remove race.
+          schema: { $ref: "#/components/schemas/ProjectMemberRole" }
       responses:
         "200":
           description: Member removed.
@@ -976,6 +989,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: Project not found or archived (`PRECONDITION`), or concurrent race (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Missing or invalid `expectedRole` query parameter (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -4230,10 +4248,16 @@ components:
         role: { $ref: "#/components/schemas/ProjectMemberRole" }
     UpdateProjectMemberRoleBody:
       type: object
-      required: [role]
+      required: [role, expectedRole]
       additionalProperties: false
       properties:
         role: { $ref: "#/components/schemas/ProjectMemberRole" }
+        expectedRole:
+          allOf: [{ $ref: "#/components/schemas/ProjectMemberRole" }]
+          description: |
+            The role the caller observed in the roster. The update is a CAS:
+            it only lands when the row still holds this role, else `409`
+            (`CONFLICT`) on a concurrent stale-update race.
     PostRunBody:
       type: object
       required: [taskId]

@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   changeProjectMemberRole,
@@ -17,9 +17,12 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+const roleEnum = z.enum(["owner", "admin", "member", "viewer"]);
+
 const patchBodySchema = z
   .object({
-    role: z.enum(["owner", "admin", "member", "viewer"]),
+    role: roleEnum,
+    expectedRole: roleEnum,
   })
   .strict();
 
@@ -80,6 +83,11 @@ export async function PATCH(
   const { slug, memberId } = await params;
 
   try {
+    // Auth-first: clear the session/account gate BEFORE resolving the slug so an
+    // unauthenticated caller cannot probe project existence via the 409-vs-403
+    // response split. Project membership is enforced below against project.id.
+    await requireActiveSession();
+
     const project = await getProjectBySlug(slug);
 
     if (!project || project.archivedAt) {
@@ -102,6 +110,7 @@ export async function PATCH(
       projectId: project.id,
       memberId,
       role: parsed.data.role,
+      expectedRole: parsed.data.expectedRole,
       actorId: access.user.id,
     });
 
@@ -114,12 +123,15 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug, memberId } = await params;
 
   try {
+    // Auth-first (see PATCH): authenticate before resolving the slug.
+    await requireActiveSession();
+
     const project = await getProjectBySlug(slug);
 
     if (!project || project.archivedAt) {
@@ -128,9 +140,21 @@ export async function DELETE(
 
     const access = await requireProjectAction(project.id, "manageMembers");
 
+    const expectedRole = roleEnum.safeParse(
+      req.nextUrl.searchParams.get("expectedRole"),
+    );
+
+    if (!expectedRole.success) {
+      throw new MaisterError(
+        "CONFIG",
+        "missing or invalid expectedRole query parameter",
+      );
+    }
+
     await removeProjectMember({
       projectId: project.id,
       memberId,
+      expectedRole: expectedRole.data,
       actorId: access.user.id,
     });
 

@@ -60,12 +60,14 @@ export interface ChangeProjectMemberRoleInput {
   projectId: string;
   memberId: string;
   role: ProjectRole;
+  expectedRole: ProjectRole;
   actorId: string;
 }
 
 export interface RemoveProjectMemberInput {
   projectId: string;
   memberId: string;
+  expectedRole: ProjectRole;
   actorId: string;
 }
 
@@ -164,37 +166,30 @@ export async function addProjectMember(
 export async function changeProjectMemberRole(
   input: ChangeProjectMemberRoleInput,
 ): Promise<void> {
-  const { projectId, memberId, role, actorId } = input;
+  const { projectId, memberId, role, expectedRole, actorId } = input;
 
-  await db().transaction(async (tx) => {
-    const rows = await tx
-      .select({ id: projectMembers.id })
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.id, memberId),
-          eq(projectMembers.projectId, projectId),
-        ),
-      )
-      .for("update");
+  // Optimistic CAS: the update only lands when the row still holds the role the
+  // caller observed in the roster. A concurrent role-change (or remove) shifts
+  // the row off `expectedRole`, so this matches 0 rows and surfaces as CONFLICT
+  // instead of silently clobbering the other admin's write.
+  const updated = await db()
+    .update(projectMembers)
+    .set({ role, updatedBy: actorId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(projectMembers.id, memberId),
+        eq(projectMembers.projectId, projectId),
+        eq(projectMembers.role, expectedRole),
+      ),
+    )
+    .returning({ id: projectMembers.id });
 
-    if (rows.length === 0) {
-      throw new MaisterError(
-        "CONFLICT",
-        "Member not found or changed concurrently",
-      );
-    }
-
-    await tx
-      .update(projectMembers)
-      .set({ role, updatedBy: actorId, updatedAt: new Date() })
-      .where(
-        and(
-          eq(projectMembers.id, memberId),
-          eq(projectMembers.projectId, projectId),
-        ),
-      );
-  });
+  if (updated.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      "Member not found or changed concurrently",
+    );
+  }
 
   log.info(
     { projectId, memberId, actorId, action: "changeProjectMemberRole", role },
@@ -205,36 +200,28 @@ export async function changeProjectMemberRole(
 export async function removeProjectMember(
   input: RemoveProjectMemberInput,
 ): Promise<void> {
-  const { projectId, memberId, actorId } = input;
+  const { projectId, memberId, expectedRole, actorId } = input;
 
-  await db().transaction(async (tx) => {
-    const rows = await tx
-      .select({ id: projectMembers.id })
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.id, memberId),
-          eq(projectMembers.projectId, projectId),
-        ),
-      )
-      .for("update");
+  // Optimistic CAS: only delete the row the caller observed. If another admin
+  // re-roled or removed it first, the role predicate matches 0 rows and we
+  // surface CONFLICT rather than silently dropping a row that changed underneath.
+  const removed = await db()
+    .delete(projectMembers)
+    .where(
+      and(
+        eq(projectMembers.id, memberId),
+        eq(projectMembers.projectId, projectId),
+        eq(projectMembers.role, expectedRole),
+      ),
+    )
+    .returning({ id: projectMembers.id });
 
-    if (rows.length === 0) {
-      throw new MaisterError(
-        "CONFLICT",
-        "Member not found or changed concurrently",
-      );
-    }
-
-    await tx
-      .delete(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.id, memberId),
-          eq(projectMembers.projectId, projectId),
-        ),
-      );
-  });
+  if (removed.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      "Member not found or changed concurrently",
+    );
+  }
 
   log.info(
     { projectId, memberId, actorId, action: "removeProjectMember" },

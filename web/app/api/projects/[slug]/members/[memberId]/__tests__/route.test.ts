@@ -17,6 +17,7 @@ const { MaisterError } = vi.hoisted(() => {
   return { MaisterError };
 });
 
+const requireActiveSessionMock = vi.hoisted(() => vi.fn());
 const requireProjectActionMock = vi.hoisted(() => vi.fn());
 const getProjectBySlugMock = vi.hoisted(() => vi.fn());
 const changeProjectMemberRoleMock = vi.hoisted(() => vi.fn());
@@ -28,6 +29,7 @@ vi.mock("@/lib/errors", () => ({
 }));
 
 vi.mock("@/lib/authz", () => ({
+  requireActiveSession: requireActiveSessionMock,
   requireProjectAction: requireProjectActionMock,
 }));
 
@@ -54,9 +56,15 @@ function patchRequest(
   );
 }
 
-function deleteRequest(slug: string, memberId: string): NextRequest {
+function deleteRequest(
+  slug: string,
+  memberId: string,
+  expectedRole: string | null = "member",
+): NextRequest {
+  const query = expectedRole === null ? "" : `?expectedRole=${expectedRole}`;
+
   return new NextRequest(
-    `http://localhost/api/projects/${slug}/members/${memberId}`,
+    `http://localhost/api/projects/${slug}/members/${memberId}${query}`,
     { method: "DELETE" },
   );
 }
@@ -64,11 +72,13 @@ function deleteRequest(slug: string, memberId: string): NextRequest {
 describe("/api/projects/[slug]/members/[memberId]", () => {
   beforeEach(() => {
     vi.resetModules();
+    requireActiveSessionMock.mockReset();
     requireProjectActionMock.mockReset();
     getProjectBySlugMock.mockReset();
     changeProjectMemberRoleMock.mockReset();
     removeProjectMemberMock.mockReset();
 
+    requireActiveSessionMock.mockResolvedValue({ id: "actor1" });
     getProjectBySlugMock.mockResolvedValue({ id: "prj1", archivedAt: null });
     requireProjectActionMock.mockResolvedValue({
       user: { id: "actor1" },
@@ -82,7 +92,10 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       const { PATCH } = await import("../route");
 
       const res = await PATCH(
-        patchRequest("demo", "mem-1", { role: "admin" }),
+        patchRequest("demo", "mem-1", {
+          role: "admin",
+          expectedRole: "member",
+        }),
         { params: Promise.resolve({ slug: "demo", memberId: "mem-1" }) },
       );
       const body = await res.json();
@@ -93,6 +106,7 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
         projectId: "prj1",
         memberId: "mem-1",
         role: "admin",
+        expectedRole: "member",
         actorId: "actor1",
       });
       expect(requireProjectActionMock).toHaveBeenCalledWith(
@@ -105,7 +119,10 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       const { PATCH } = await import("../route");
 
       const res = await PATCH(
-        patchRequest("demo", "mem-1", { role: "superadmin" }),
+        patchRequest("demo", "mem-1", {
+          role: "superadmin",
+          expectedRole: "member",
+        }),
         { params: Promise.resolve({ slug: "demo", memberId: "mem-1" }) },
       );
       const body = await res.json();
@@ -115,16 +132,62 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       expect(changeProjectMemberRoleMock).not.toHaveBeenCalled();
     });
 
-    it("returns 422 on missing role field", async () => {
+    it("returns 422 on missing expectedRole field", async () => {
       const { PATCH } = await import("../route");
 
-      const res = await PATCH(patchRequest("demo", "mem-1", {}), {
-        params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
-      });
+      const res = await PATCH(
+        patchRequest("demo", "mem-1", { role: "admin" }),
+        {
+          params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
+        },
+      );
       const body = await res.json();
 
       expect(res.status).toBe(422);
       expect(body.code).toBe("CONFIG");
+      expect(changeProjectMemberRoleMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 CONFLICT on a stale role change", async () => {
+      changeProjectMemberRoleMock.mockRejectedValueOnce(
+        new MaisterError(
+          "CONFLICT",
+          "Member not found or changed concurrently",
+        ),
+      );
+      const { PATCH } = await import("../route");
+
+      const res = await PATCH(
+        patchRequest("demo", "mem-1", {
+          role: "viewer",
+          expectedRole: "member",
+        }),
+        { params: Promise.resolve({ slug: "demo", memberId: "mem-1" }) },
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(body.code).toBe("CONFLICT");
+    });
+
+    it("returns 401 and never resolves the slug when unauthenticated", async () => {
+      requireActiveSessionMock.mockRejectedValueOnce(
+        new MaisterError("UNAUTHENTICATED", "Sign in required"),
+      );
+      const { PATCH } = await import("../route");
+
+      const res = await PATCH(
+        patchRequest("demo", "mem-1", {
+          role: "admin",
+          expectedRole: "member",
+        }),
+        { params: Promise.resolve({ slug: "demo", memberId: "mem-1" }) },
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(401);
+      expect(body.code).toBe("UNAUTHENTICATED");
+      expect(getProjectBySlugMock).not.toHaveBeenCalled();
       expect(changeProjectMemberRoleMock).not.toHaveBeenCalled();
     });
 
@@ -135,7 +198,10 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       const { PATCH } = await import("../route");
 
       const res = await PATCH(
-        patchRequest("demo", "mem-1", { role: "member" }),
+        patchRequest("demo", "mem-1", {
+          role: "member",
+          expectedRole: "admin",
+        }),
         { params: Promise.resolve({ slug: "demo", memberId: "mem-1" }) },
       );
       const body = await res.json();
@@ -151,7 +217,7 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       removeProjectMemberMock.mockResolvedValue(undefined);
       const { DELETE } = await import("../route");
 
-      const res = await DELETE(deleteRequest("demo", "mem-1"), {
+      const res = await DELETE(deleteRequest("demo", "mem-1", "member"), {
         params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
       });
       const body = await res.json();
@@ -161,12 +227,26 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       expect(removeProjectMemberMock).toHaveBeenCalledWith({
         projectId: "prj1",
         memberId: "mem-1",
+        expectedRole: "member",
         actorId: "actor1",
       });
       expect(requireProjectActionMock).toHaveBeenCalledWith(
         "prj1",
         "manageMembers",
       );
+    });
+
+    it("returns 422 when expectedRole query param is missing", async () => {
+      const { DELETE } = await import("../route");
+
+      const res = await DELETE(deleteRequest("demo", "mem-1", null), {
+        params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(body.code).toBe("CONFIG");
+      expect(removeProjectMemberMock).not.toHaveBeenCalled();
     });
 
     it("returns 409 when removeProjectMember rejects CONFLICT", async () => {
@@ -178,7 +258,7 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       );
       const { DELETE } = await import("../route");
 
-      const res = await DELETE(deleteRequest("demo", "mem-1"), {
+      const res = await DELETE(deleteRequest("demo", "mem-1", "member"), {
         params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
       });
       const body = await res.json();
@@ -187,13 +267,30 @@ describe("/api/projects/[slug]/members/[memberId]", () => {
       expect(body.code).toBe("CONFLICT");
     });
 
+    it("returns 401 and never resolves the slug when unauthenticated", async () => {
+      requireActiveSessionMock.mockRejectedValueOnce(
+        new MaisterError("UNAUTHENTICATED", "Sign in required"),
+      );
+      const { DELETE } = await import("../route");
+
+      const res = await DELETE(deleteRequest("demo", "mem-1", "member"), {
+        params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(401);
+      expect(body.code).toBe("UNAUTHENTICATED");
+      expect(getProjectBySlugMock).not.toHaveBeenCalled();
+      expect(removeProjectMemberMock).not.toHaveBeenCalled();
+    });
+
     it("returns 403 when requireProjectAction rejects UNAUTHORIZED", async () => {
       requireProjectActionMock.mockRejectedValueOnce(
         new MaisterError("UNAUTHORIZED", "Requires manageMembers"),
       );
       const { DELETE } = await import("../route");
 
-      const res = await DELETE(deleteRequest("demo", "mem-1"), {
+      const res = await DELETE(deleteRequest("demo", "mem-1", "member"), {
         params: Promise.resolve({ slug: "demo", memberId: "mem-1" }),
       });
       const body = await res.json();

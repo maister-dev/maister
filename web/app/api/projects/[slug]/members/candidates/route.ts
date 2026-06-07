@@ -3,7 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { searchMemberCandidates } from "@/lib/project-members";
 import { getProjectBySlug } from "@/lib/queries/project";
@@ -59,6 +59,10 @@ export async function GET(
   const { slug } = await params;
 
   try {
+    // Auth-first: authenticate before resolving the slug so the candidate
+    // search cannot be used to probe project existence unauthenticated.
+    await requireActiveSession();
+
     const project = await getProjectBySlug(slug);
 
     if (!project || project.archivedAt) {

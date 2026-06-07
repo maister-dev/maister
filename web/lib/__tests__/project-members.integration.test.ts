@@ -175,6 +175,7 @@ describe("changeProjectMemberRole", () => {
       projectId,
       memberId,
       role: "admin",
+      expectedRole: "member",
       actorId: "usr_other_admin",
     });
 
@@ -202,6 +203,7 @@ describe("changeProjectMemberRole", () => {
       projectId,
       memberId,
       role: "viewer",
+      expectedRole: "owner",
       actorId: ACTOR,
     });
 
@@ -221,6 +223,7 @@ describe("changeProjectMemberRole", () => {
         projectId,
         memberId: randomUUID(),
         role: "admin",
+        expectedRole: "member",
         actorId: ACTOR,
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
@@ -242,9 +245,48 @@ describe("changeProjectMemberRole", () => {
         projectId: projectB,
         memberId,
         role: "admin",
+        expectedRole: "member",
         actorId: ACTOR,
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("rejects a stale role-change (expectedRole no longer matches) with CONFLICT and keeps the winner's write", async () => {
+    const projectId = await seedProject();
+    const userId = await seedUser("race-role");
+    const { memberId } = await api.addProjectMember({
+      projectId,
+      userId,
+      role: "member",
+      actorId: ACTOR,
+    });
+
+    // First admin wins: member -> admin.
+    await api.changeProjectMemberRole({
+      projectId,
+      memberId,
+      role: "admin",
+      expectedRole: "member",
+      actorId: ACTOR,
+    });
+
+    // Second admin acted on the stale roster (still saw "member") -> CONFLICT.
+    await expect(
+      api.changeProjectMemberRole({
+        projectId,
+        memberId,
+        role: "viewer",
+        expectedRole: "member",
+        actorId: "usr_loser_admin",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const rows = await db
+      .select()
+      .from(projectMembers)
+      .where(eq(projectMembers.id, memberId));
+
+    expect(rows[0].role).toBe("admin");
   });
 });
 
@@ -259,7 +301,12 @@ describe("removeProjectMember", () => {
       actorId: ACTOR,
     });
 
-    await api.removeProjectMember({ projectId, memberId, actorId: ACTOR });
+    await api.removeProjectMember({
+      projectId,
+      memberId,
+      expectedRole: "owner",
+      actorId: ACTOR,
+    });
 
     expect(await api.listProjectMembers(projectId)).toHaveLength(0);
   });
@@ -274,11 +321,63 @@ describe("removeProjectMember", () => {
       actorId: ACTOR,
     });
 
-    await api.removeProjectMember({ projectId, memberId, actorId: ACTOR });
+    await api.removeProjectMember({
+      projectId,
+      memberId,
+      expectedRole: "member",
+      actorId: ACTOR,
+    });
 
     await expect(
-      api.removeProjectMember({ projectId, memberId, actorId: ACTOR }),
+      api.removeProjectMember({
+        projectId,
+        memberId,
+        expectedRole: "member",
+        actorId: ACTOR,
+      }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("rejects a stale remove after a concurrent role-change, then succeeds with the current role", async () => {
+    const projectId = await seedProject();
+    const userId = await seedUser("rm-stale");
+    const { memberId } = await api.addProjectMember({
+      projectId,
+      userId,
+      role: "member",
+      actorId: ACTOR,
+    });
+
+    // Another admin re-roled the member out from under the stale roster.
+    await api.changeProjectMemberRole({
+      projectId,
+      memberId,
+      role: "admin",
+      expectedRole: "member",
+      actorId: ACTOR,
+    });
+
+    // Stale remove (saw "member") -> CONFLICT, row survives.
+    await expect(
+      api.removeProjectMember({
+        projectId,
+        memberId,
+        expectedRole: "member",
+        actorId: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(await api.listProjectMembers(projectId)).toHaveLength(1);
+
+    // Remove with the current role succeeds.
+    await api.removeProjectMember({
+      projectId,
+      memberId,
+      expectedRole: "admin",
+      actorId: ACTOR,
+    });
+
+    expect(await api.listProjectMembers(projectId)).toHaveLength(0);
   });
 });
 
