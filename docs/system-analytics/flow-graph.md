@@ -207,9 +207,12 @@ folds the validated object into the attempt's `vars`. A node **without**
 `run.json` lives at `<worktreePath>/.maister/run.json`, written via
 `atomicWriteJson` **inside the agent's worktree cwd** so both `claude` and `codex`
 read it from their own working dir (no out-of-cwd-read assumption, no dependence on
-`.claude` settings). The runner git-excludes `.maister/` for the worktree
-(idempotent append of `.maister/` to the path from `git rev-parse --git-path
-info/exclude`) so `run.json` never enters `git status` or the base→run diff. The
+`.claude` settings). The runner excludes `.maister/` for the repo by idempotently
+appending it to the repo's git exclude file (resolved via `git rev-parse --git-path
+info/exclude`). That file lives in the **shared common git dir**, so the exclude is
+**repo-wide** (every worktree + the main checkout) and persists after worktree
+removal — benign because `.maister/` is MAIster's runtime dir and is never committed.
+So `run.json` never enters `git status` or the base→run diff. The
 run logs (`<stepId>.log`, `run.events.jsonl`, `cost.jsonl`) stay at `<runDir>`;
 only `run.json` lives in the worktree. Its shape (M26 hardcoded "all"):
 
@@ -230,9 +233,11 @@ only `run.json` lives in the worktree. Its shape (M26 hardcoded "all"):
   (from `gate_results.status`) is **always present** (the only signal for
   `command_check`/`human_review`, whose `verdict` is null); `verdict` is included
   only when non-null.
-- `promoted` = a flat last-wins union of every node's `vars` (the single place an
-  agent reads all structured state). Reserved to become selective when the P7
-  selector lands (later wave).
+- `promoted` = a flat union of every node's `vars` (the single place an agent reads
+  all structured state); the key-collision tiebreak is **last-wins by `reduceLedger`
+  node-iteration order** (stable for a given ledger, so regeneration is
+  byte-identical). Reserved to become selective when the P7 selector lands (later
+  wave).
 
 `run.json` is a **pure projection** of `node_attempts` + `gate_results` +
 `task.prompt`, rebuilt by `buildRunContext(...)` and rewritten (a) once at run
@@ -362,9 +367,11 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   a node WITHOUT `output.result` stays byte-identical to today (`vars: {}`) and
   requires `compat.engine_min >= 1.3.0`.
 - **(M26 — Designed)** `run.json` MUST exist per run at
-  `<worktreePath>/.maister/run.json`, separate from logs (which stay at `<runDir>`)
-  and git-excluded for the worktree (absent from `git status` and the base→run
-  diff), as a pure idempotent projection of `node_attempts` + `gate_results` +
+  `<worktreePath>/.maister/run.json`, separate from logs (which stay at `<runDir>`),
+  with `.maister/` appended to the repo's git exclude
+  (`$(git rev-parse --git-path info/exclude)`, repo-wide and benign) so `run.json`
+  is absent from `git status` and the base→run diff, as a pure idempotent projection
+  of `node_attempts` + `gate_results` +
   `task.prompt` (`{intent, nodes(summary+vars), gates(status+verdict?), promoted}`)
   that a fresh/cleared/resumed session reconstructs identically; correctness MUST
   never depend on it, every agent node's prompt MUST carry the `[Run context: <abs
@@ -419,6 +426,21 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **(M26 — Designed) Node with no `output.result`** → the validate seam is a
   no-op; the attempt is byte-identical to pre-M26 (`vars: {}`), no transport is
   provisioned, and no `CONFIG` can arise from the seam.
+- **(M26 — Designed) `array` field element shape is unconstrained** → an
+  `{ type: "array" }` output field validates only `Array.isArray`; the grammar has
+  no `items` slot, so element type is not checked and any array (incl. mixed/empty)
+  passes. Phase-2 `items?` is the candidate. Not a `CONFIG` — an accepted
+  loose-validation gap.
+- **(M26 — Designed) Bad `output.result.schema` path not caught at flow load** →
+  `resolveOutputResultSchema` resolves + parses + validates the schema `./path` at
+  the runtime parse seam (Phase 2), NOT at manifest load
+  (`validateGraphManifest`); a missing/non-JSON/malformed schema file surfaces as a
+  run-time `CONFIG` at the post-action seam, not at flow install/load.
+- **(M26 — Designed) `enum` field declared with no `options`** → validation matches
+  the value against an empty option list, so **every** value fails and the attempt
+  fails `CONFIG` at the seam. A schema-authoring footgun (pre-existing in the
+  `formSchemaSchema` grammar, now reachable via `output.result`); declare
+  `options` for every `enum` field.
 
 ## Linked artifacts
 

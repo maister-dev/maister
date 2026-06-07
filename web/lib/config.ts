@@ -1,6 +1,6 @@
 import "server-only";
 
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import Mustache from "mustache";
@@ -1054,52 +1054,90 @@ function validateSettingsRoleRefs(
   }
 }
 
-export function validateFormSchemaVersion(
-  formSchema: unknown,
-  expectedVersion: number,
-): void {
-  const parsed = formSchemaSchema.safeParse(formSchema);
+function parseFormSchemaDoc(data: unknown, contextLabel: string): FormSchema {
+  const parsed = formSchemaSchema.safeParse(data);
 
   if (!parsed.success) {
     throw new MaisterError(
       "CONFIG",
-      `Invalid form_schema: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+      `${contextLabel}: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     );
   }
 
-  if (parsed.data.schemaVersion !== expectedVersion) {
+  return parsed.data;
+}
+
+export function validateFormSchemaVersion(
+  formSchema: unknown,
+  expectedVersion: number,
+): void {
+  const parsed = parseFormSchemaDoc(formSchema, "Invalid form_schema");
+
+  if (parsed.schemaVersion !== expectedVersion) {
     throw new MaisterError(
       "CONFIG",
-      `form_schema version mismatch: expected ${expectedVersion}, got ${parsed.data.schemaVersion}`,
+      `form_schema version mismatch: expected ${expectedVersion}, got ${parsed.schemaVersion}`,
     );
   }
 }
 
-// M26 (ADR-063): resolve a node `output.result.schema` relative path against the
-// flow install dir, then read+parse+validate it as a formSchemaSchema document.
-// Mirrors the form_schema resolution in runner-human.ts (same escape-guard);
-// reuses the single formSchemaSchema grammar rather than duplicating it.
-export async function resolveOutputResultSchema(
+// M26 (ADR-063): the single form_schema document loader. Resolves a relative
+// `./path` against the flow install dir, escape-guards, follows the symlink to
+// its real path (Flow bundles are symlinked into the project, so the real path
+// must be inside the install dir too), reads, JSON-parses, and validates the
+// formSchemaSchema grammar. Both the HITL `form_schema` loader (runner-human)
+// and the node `output.result.schema` resolver call this — one read+parse+
+// validate procedure, four `CONFIG` failure modes (escape, ENOENT, bad JSON,
+// bad shape).
+export async function readAndValidateFormSchemaDoc(
   flowInstallPath: string,
   relPath: string,
 ): Promise<FormSchema> {
-  const joined = path.resolve(flowInstallPath, relPath);
+  const base = path.resolve(flowInstallPath);
+  const joined = path.resolve(base, relPath);
 
-  if (!joined.startsWith(path.resolve(flowInstallPath) + path.sep)) {
+  if (!joined.startsWith(base + path.sep)) {
     throw new MaisterError(
       "CONFIG",
-      `output.result schema path escapes flow install dir: ${relPath}`,
+      `form_schema path escapes flow install dir: ${relPath}`,
+    );
+  }
+
+  let resolvedPath: string;
+
+  try {
+    resolvedPath = await realpath(joined);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFIG",
+      `form_schema file not found: ${joined} (${asError(err).message})`,
+      { cause: asError(err) },
+    );
+  }
+
+  // Canonicalize the base too: on macOS the temp/install root may itself sit
+  // behind a symlink (/var -> /private/var), so the post-symlink prefix check
+  // must compare real paths on both sides or it would reject legitimate files.
+  const canonicalBase = await realpath(base);
+
+  if (
+    resolvedPath !== canonicalBase &&
+    !resolvedPath.startsWith(canonicalBase + path.sep)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `form_schema path escapes flow install dir: ${relPath}`,
     );
   }
 
   let raw: string;
 
   try {
-    raw = await readFile(joined, "utf8");
+    raw = await readFile(resolvedPath, "utf8");
   } catch (err) {
     throw new MaisterError(
       "CONFIG",
-      `cannot read output.result schema ${joined}: ${asError(err).message}`,
+      `cannot read form_schema ${resolvedPath}: ${asError(err).message}`,
       { cause: asError(err) },
     );
   }
@@ -1111,21 +1149,17 @@ export async function resolveOutputResultSchema(
   } catch (err) {
     throw new MaisterError(
       "CONFIG",
-      `output.result schema is not valid JSON (${joined}): ${asError(err).message}`,
+      `form_schema is not valid JSON (${resolvedPath}): ${asError(err).message}`,
       { cause: asError(err) },
     );
   }
 
-  const parsed = formSchemaSchema.safeParse(data);
+  return parseFormSchemaDoc(data, `invalid form_schema (${resolvedPath})`);
+}
 
-  if (!parsed.success) {
-    throw new MaisterError(
-      "CONFIG",
-      `invalid output.result schema (${joined}): ${parsed.error.issues
-        .map((i) => i.message)
-        .join("; ")}`,
-    );
-  }
-
-  return parsed.data;
+export async function resolveOutputResultSchema(
+  flowInstallPath: string,
+  relPath: string,
+): Promise<FormSchema> {
+  return readAndValidateFormSchemaDoc(flowInstallPath, relPath);
 }

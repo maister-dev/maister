@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -20,9 +20,11 @@ const validSchemaDoc = {
 };
 
 let flowInstallPath: string;
+let outsideDir: string;
 
 beforeAll(async () => {
   flowInstallPath = await mkdtemp(path.join(tmpdir(), "m26-output-schema-"));
+  outsideDir = await mkdtemp(path.join(tmpdir(), "m26-output-outside-"));
   await mkdir(path.join(flowInstallPath, "schemas"), { recursive: true });
   await writeFile(
     path.join(flowInstallPath, "schemas", "review.json"),
@@ -42,10 +44,23 @@ beforeAll(async () => {
     }),
     "utf8",
   );
+
+  // A symlink inside the install dir whose real target escapes it: the prefix
+  // check on the joined path passes, but the realpath resolution must reject it.
+  await writeFile(
+    path.join(outsideDir, "secret.json"),
+    JSON.stringify(validSchemaDoc),
+    "utf8",
+  );
+  await symlink(
+    path.join(outsideDir, "secret.json"),
+    path.join(flowInstallPath, "schemas", "escape.json"),
+  );
 });
 
 afterAll(async () => {
   await rm(flowInstallPath, { recursive: true, force: true });
+  await rm(outsideDir, { recursive: true, force: true });
 });
 
 describe("resolveOutputResultSchema", () => {
@@ -88,5 +103,14 @@ describe("resolveOutputResultSchema", () => {
     await expect(
       resolveOutputResultSchema(flowInstallPath, "./schemas/wrong-shape.json"),
     ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+
+  it("rejects a symlink whose real target escapes the install dir with CONFIG", async () => {
+    await expect(
+      resolveOutputResultSchema(flowInstallPath, "./schemas/escape.json"),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    await expect(
+      resolveOutputResultSchema(flowInstallPath, "./schemas/escape.json"),
+    ).rejects.toBeInstanceOf(MaisterError);
   });
 });

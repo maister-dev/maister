@@ -1,11 +1,10 @@
 import "server-only";
 
 import { MaisterError } from "@/lib/errors";
-import { validateStructuredOutput } from "@/lib/flows/output-schema";
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
+import {
+  isPlainObject,
+  validateStructuredOutput,
+} from "@/lib/flows/output-schema";
 
 // M26 (ADR-063): HITL form validation delegates to the single shared
 // structured-output validator (same `formSchemaSchema` grammar). Verdict is

@@ -28,7 +28,8 @@ with **no DB migration and no new dependency**.
 
 ## Non-goals
 
-- No legacy linear `steps[]` support — graph engine (`runner-graph.ts` / `node_attempts`) only.
+- No legacy linear `steps[]` support — graph engine (`web/lib/flows/graph/runner-graph.ts` /
+  `node_attempts`) only.
 - No P2 (prompt content injection), P4 (`decide` table), P6 (session continuity), or P3 (diff-path
   assertions / `hash`·`size_bytes`).
 - No config-driven P7 projection selector — M26 hardcodes "all" (intent + every node's vars + every
@@ -65,7 +66,7 @@ work, not reuse-as-is; nested validation is RED-test territory in Phase 1.
 `human` nodes are unchanged (their `vars` come from the HITL input artifact). The cli output file lives
 under `<runDir>` (not the worktree) because the **runner**, not the agent, reads it.
 
-**Validation pipeline** (insert at `runner-graph.ts` ~1124-1138 — *after* `if (!result.ok)` returns and
+**Validation pipeline** (insert at `web/lib/flows/graph/runner-graph.ts` ~1124-1138 — *after* `if (!result.ok)` returns and
 `result.vars` is still mutable, *before* `if (node.gates.length > 0)` and `markNodeSucceeded`; only when
 the node declares `output.result` and the manifest's `compat.engine_min >= 1.3.0`):
 
@@ -93,9 +94,12 @@ prompt resolves `{{steps.<nodeId>.vars.<key>}}` with no new plumbing.
 runner via `atomicWriteJson`. It lives **inside the agent's worktree cwd** so both `claude` and `codex`
 can read it from their own working directory with no out-of-cwd-read assumption and no dependence on
 `.claude` settings (codex ignores those). To keep the user's repository clean regardless of its
-`.gitignore`, the runner ensures `.maister/` is git-excluded for the worktree (idempotently appends
-`.maister/` to the worktree's `info/exclude`, resolved via `git rev-parse --git-path info/exclude`) so
-`run.json` never appears in `git status` or the base→run diff. Run **logs** (`<stepId>.log`,
+`.gitignore`, the runner ensures `.maister/` is excluded for the repo by idempotently appending
+`.maister/` to the repo's git exclude file (resolved via `git rev-parse --git-path info/exclude`). That
+file lives in the **shared common git dir**, so the exclude is **repo-wide** (it covers every worktree
+and the main checkout) and persists after worktree removal — benign here because `.maister/` is
+MAIster's runtime dir and is never committed. As a result `run.json` never appears in `git status` or
+the base→run diff. Run **logs** (`<stepId>.log`,
 `run.events.jsonl`, `cost.jsonl`) stay at `<runDir>` (operator-facing); only `run.json` (agent-facing)
 lives in the worktree.
 
@@ -118,8 +122,12 @@ lives in the worktree.
 - `gates.<id>` = `{ status, verdict? }` — **`status` is always present** (the source of truth for
   `command_check`/`human_review`, whose `gate_results.verdict` is null); `verdict` is included when
   non-null. Latest result per gate.
-- `promoted` = a flat convenience union of every node's `vars`, execution-order last-wins on key
-  collision. Reserved to become selective when the P7 selector lands (later wave).
+- `promoted` = a flat convenience union of every node's `vars`. The tiebreak on a key collision is
+  **last-wins by `reduceLedger` node-iteration order** — the insertion order of the per-node
+  highest-attempt rows `reduceLedger` already returns (NOT execution/topo order, which `reduceLedger`
+  does not carry). That order is stable for a given ledger, so regenerating `promoted` from the same
+  ledger yields byte-identical content. Reserved to become selective when the P7 selector lands (later
+  wave).
 
 **Derivation & lifecycle.** `run.json` is a **pure projection** of `node_attempts` + `gate_results` +
 `task.prompt`, rebuilt by `buildRunContext(...)` and rewritten (a) once at run start (intent only) and
@@ -167,8 +175,10 @@ wired into `.env.example` + the `docs/configuration.md` env table **only** — *
   write, no migration, no new crash window.
 - A downstream node MUST resolve `{{steps.<id>.vars.<key>}}` from an upstream node's validated output
   via `reduceLedger` (highest-attempt-wins), with no new templating plumbing.
-- `run.json` MUST live at `<worktreePath>/.maister/run.json`, be git-excluded for the worktree (never
-  in `git status` / the base→run diff), and be readable by the agent from its own cwd (claude and codex).
+- `run.json` MUST live at `<worktreePath>/.maister/run.json`; the runner MUST append `.maister/` to the
+  repo's git exclude (`$(git rev-parse --git-path info/exclude)`, repo-wide and benign) so `run.json`
+  never appears in `git status` / the base→run diff, and it MUST be readable by the agent from its own
+  cwd (claude and codex).
 - `run.json` MUST contain `{intent, nodes(summary+vars), gates(status+verdict?), promoted}`, be a derived
   projection regenerated from the ledger; a fresh/cleared/resumed session MUST reconstruct identical
   content with no dependency on prior in-process state.
@@ -194,11 +204,13 @@ wired into `.env.example` + the `docs/configuration.md` env table **only** — *
 - AC6 — Rework: attempt 2 of a node that does not re-emit output does NOT inherit attempt 1's
   `output-<nodeId>-1.json` (per-attempt isolation).
 - AC7 — `run.json` exists with `intent`, per-node `summary`+`vars`, gate `{status, verdict?}` (incl. a
-  `command_check` gate represented by `status` with null verdict), and a flat `promoted` union;
-  regenerating from the ledger yields identical content.
+  `command_check` gate represented by `status` with null verdict), and a flat `promoted` union whose
+  key-collision tiebreak is last-wins by `reduceLedger` node-iteration order; regenerating from the same
+  ledger yields byte-identical content (including identical `promoted` collision winners).
 - AC8 — `run.json` contains no value present in the run's `context.env` (secret-safety).
-- AC9 — `run.json` lives at `<worktree>/.maister/run.json`, is git-excluded (absent from `git status`
-  and the base→run diff), and is readable from the agent's cwd.
+- AC9 — `run.json` lives at `<worktree>/.maister/run.json`; `.maister/` is appended to the repo's git
+  exclude (`$(git rev-parse --git-path info/exclude)`, repo-wide) so `run.json` is absent from
+  `git status` and the base→run diff, and it is readable from the agent's cwd.
 - AC10 — Every agent node's dispatched prompt contains `[Run context: <abs run.json path>]` in both
   `new-session` and `slash-in-existing` modes.
 - AC11 — A flow declaring `output.result` without `compat.engine_min >= 1.3.0` is rejected (`CONFIG`);
@@ -248,8 +260,21 @@ Plus Phase-4 Playwright e2e: happy (AC1+AC3+AC7) and negative (AC4 surfaced in r
   **extended** with a nested `object` type (Phase 1, Task 4); HITL forms keep delegating to it.
 - The 1 MiB-capped `result.stdout` snapshot is the only stdout available; the `maister:output` block is
   expected to be small and near the end. A block lost to the cap is an absent block (Edge case).
-- The post-action seam (`runner-graph.ts` ~1124-1138) has `result.ok === true` and `result.vars`
+- The post-action seam (`web/lib/flows/graph/runner-graph.ts` ~1124-1138) has `result.ok === true` and `result.vars`
   mutable before `markNodeSucceeded`; no ACP deferred is open there (the turn reached `end_turn`).
 - Gate `status` is read from `gate_results.status` (always set); `verdict` from `gate_results.verdict`
   (nullable) for the `gates` projection.
 - `attempt` is threaded into `RunCliStepCtx` (new field) for the per-attempt cli output filename.
+
+## Known limitations (Phase 1)
+
+- **`array` element shape is unconstrained.** A `{ type: "array" }` field validates only `Array.isArray`
+  (`output-schema.ts` `case "array"`); the grammar has no `items` slot
+  (`config.schema.ts` `formFieldSchema` has `name/label/type/required/default/options/fields` only), so
+  element type is not checked. `{ type: "array" }` accepts any array, including a mixed/empty one. A
+  Phase-2 `items?` field is the candidate to add element typing.
+- **`output.result.schema` paths are NOT validated at manifest load.** `resolveOutputResultSchema`
+  (`web/lib/config.ts`) reads + parses + `formSchemaSchema`-validates the `./path` at the **runtime parse
+  seam** (Phase 2), not at flow install/load (`validateGraphManifest`). A non-existent, non-JSON, or
+  malformed schema file is therefore caught at the post-action seam (run-time `CONFIG`), not at flow
+  install/load time yet. Manifest-load-time resolution is a Phase-2 candidate.

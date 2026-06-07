@@ -29,6 +29,10 @@ vi.mock("@/lib/assignments/service", () => ({
 
 vi.mock("@/lib/config", () => ({
   validateFormSchemaVersion: vi.fn(),
+  readAndValidateFormSchemaDoc: vi.fn(async () => ({
+    schemaVersion: 1,
+    fields: [],
+  })),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {

@@ -3,7 +3,7 @@ import "server-only";
 import type { FlowContext, StepResult } from "./types";
 
 import { randomUUID } from "node:crypto";
-import { readFile, realpath, unlink } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -12,7 +12,10 @@ import { renderStrict } from "./templating";
 
 import { atomicWriteJson } from "@/lib/atomic";
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
-import { validateFormSchemaVersion } from "@/lib/config";
+import {
+  readAndValidateFormSchemaDoc,
+  validateFormSchemaVersion,
+} from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -57,30 +60,6 @@ export type RunHumanStepCtx = {
   promptTemplate?: string;
   db?: unknown;
 };
-
-async function resolveSchemaPath(
-  flowInstallPath: string,
-  formSchema: string,
-): Promise<string> {
-  const joined = path.resolve(flowInstallPath, formSchema);
-
-  if (!joined.startsWith(path.resolve(flowInstallPath) + path.sep)) {
-    throw new MaisterError(
-      "CONFIG",
-      `form_schema path escapes flow install dir: ${formSchema}`,
-    );
-  }
-
-  try {
-    return await realpath(joined);
-  } catch (err) {
-    throw new MaisterError(
-      "CONFIG",
-      `form_schema file not found: ${joined} (${(err as Error).message})`,
-      { cause: err as Error },
-    );
-  }
-}
 
 async function tryReadInputArtifact(
   inputPath: string,
@@ -178,34 +157,10 @@ export async function runHumanStep(
     };
   }
 
-  const resolvedPath = await resolveSchemaPath(
+  const schema = await readAndValidateFormSchemaDoc(
     ctx.flowInstallPath,
     step.form_schema,
   );
-
-  let raw: string;
-
-  try {
-    raw = await readFile(resolvedPath, "utf8");
-  } catch (err) {
-    throw new MaisterError(
-      "CONFIG",
-      `cannot read form_schema ${resolvedPath}: ${(err as Error).message}`,
-      { cause: err as Error },
-    );
-  }
-
-  let schema: unknown;
-
-  try {
-    schema = JSON.parse(raw);
-  } catch (err) {
-    throw new MaisterError(
-      "CONFIG",
-      `form_schema is not valid JSON (${resolvedPath}): ${(err as Error).message}`,
-      { cause: err as Error },
-    );
-  }
 
   validateFormSchemaVersion(schema, FORM_SCHEMA_VERSION);
 
@@ -295,7 +250,7 @@ export async function runHumanStep(
       stepId: step.id,
       hitlRequestId,
       needsInputPath,
-      schemaPath: resolvedPath,
+      schemaPath: path.resolve(ctx.flowInstallPath, step.form_schema),
     },
     "[FIX:M13] human step wrote needs-input.json + HITL assignment",
   );

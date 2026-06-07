@@ -1,26 +1,17 @@
 import "server-only";
 
+import type { FormSchema } from "@/lib/config.schema";
+
 // M26 (ADR-063): the single structured-output validator. HITL forms and graph
 // node `output.result` both validate against the same `formSchemaSchema`
 // grammar (string/number/boolean/enum/array/object-with-fields). Pure function,
-// returns a discriminated result — never throws.
+// returns a discriminated result — never throws. The field/schema types are
+// derived from the Zod-owned `FormSchema` so the validator can never drift from
+// the parser grammar.
 
-type FieldType = "string" | "number" | "boolean" | "enum" | "array" | "object";
+type SchemaField = FormSchema["fields"][number];
 
-type SchemaField = {
-  name: string;
-  type: FieldType;
-  required?: boolean;
-  options?: string[];
-  fields?: ReadonlyArray<SchemaField>;
-};
-
-type FormSchemaLike = {
-  schemaVersion?: number;
-  fields: ReadonlyArray<SchemaField>;
-};
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -83,15 +74,15 @@ export function validateStructuredOutput(
   if (!schema || typeof schema !== "object") {
     return { ok: false, message: "schema is missing or malformed" };
   }
-  const fields = (schema as FormSchemaLike).fields;
+  const rawFields = (schema as { fields?: unknown }).fields;
 
-  if (!Array.isArray(fields)) {
+  if (!Array.isArray(rawFields)) {
     return { ok: false, message: "schema.fields is not an array" };
   }
   if (!isPlainObject(value)) {
     return { ok: false, message: "value must be a JSON object" };
   }
-  for (const field of fields) {
+  for (const field of rawFields as FormSchema["fields"]) {
     const err = checkField(value[field.name], field);
 
     if (err) return { ok: false, message: err };
