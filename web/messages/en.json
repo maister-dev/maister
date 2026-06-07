@@ -594,7 +594,6 @@
       "title": "Flow graph",
       "empty": "No flow graph for this run.",
       "currentNode": "Current node",
-      "saveError": "Could not save the node position.",
       "node": {
         "Pending": "Pending",
         "Running": "Running",

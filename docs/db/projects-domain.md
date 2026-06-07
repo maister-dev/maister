@@ -12,7 +12,6 @@ erDiagram
     PLATFORM_ACP_RUNNERS ||--o{ PROJECTS : "default_runner_id override"
     PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "attachment default"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner binding"
-    FLOWS ||--o{ FLOW_GRAPH_LAYOUTS : "graph-view node positions (M22)"
 
     PROJECTS {
         text id PK
@@ -63,17 +62,11 @@ erDiagram
         timestamp created_at
         timestamp updated_at
     }
-
-    FLOW_GRAPH_LAYOUTS {
-        text id PK
-        text flow_id FK "per-project key; project-isolated (M22)"
-        text node_id "compiled-manifest node id"
-        double x
-        double y
-        text updated_by_user_id FK "nullable, SET NULL"
-        timestamp updated_at
-    }
 ```
+
+> **Note (ADR-062):** `FLOW_GRAPH_LAYOUTS` (M22) was dropped in migration `0029`.
+> Authored flow-graph node positions now live in the `flow.yaml` `presentation`
+> section, not a DB table.
 
 ## Constraints
 
@@ -85,11 +78,6 @@ erDiagram
   as project Flow ids.
 - `project_flow_runner_defaults_project_flow_uq` on `(project_id, flow_id)` —
   one project Flow runner binding per attachment.
-- `flow_graph_layouts` UNIQUE `(flow_id, node_id)` (M22) — one pinned node
-  position per project Flow; child of `flows` (CASCADE), so it survives a
-  `flow_revisions` bump and M19 revision GC. Keyed on `flows.id` (per-project),
-  never `flow_revisions.id`, so a project's layout write cannot touch another
-  project's rows.
 
 ## Notes
 

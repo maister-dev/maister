@@ -114,26 +114,4 @@ describe("workbench project actions (integration)", () => {
       requireProjectAction("wb-rrf-member-proj", "readRepoFiles"),
     ).resolves.toMatchObject({ role: "member" });
   });
-
-  it("denies a viewer the editFlowLayout action", async () => {
-    await seedUser("wb-efl-viewer", "member");
-    await seedProject("wb-efl-view");
-    await seedMembership("wb-efl-viewer", "wb-efl-view", "viewer");
-    sessionRef.value = { user: { id: "wb-efl-viewer", role: "member" } };
-
-    await expect(
-      requireProjectAction("wb-efl-view", "editFlowLayout"),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-  });
-
-  it("admits a member to the editFlowLayout action", async () => {
-    await seedUser("wb-efl-member", "member");
-    await seedProject("wb-efl-member-proj");
-    await seedMembership("wb-efl-member", "wb-efl-member-proj", "member");
-    sessionRef.value = { user: { id: "wb-efl-member", role: "member" } };
-
-    await expect(
-      requireProjectAction("wb-efl-member-proj", "editFlowLayout"),
-    ).resolves.toMatchObject({ role: "member" });
-  });
 });

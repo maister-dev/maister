@@ -54,7 +54,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
-| `flow_graph_layouts`          | **(M22 — Implemented, migration `0024`)** Per-node manual graph-view positions for the workbench flow-graph view. Separate presentation store — never in `flow.yaml`. Keyed `(flow_id, node_id)`; `editFlowLayout` (member) upserts.                                                                                            | `flows.id`, `users.id` (updated_by, SET NULL)                             |
+| `flow_graph_layouts`          | **(Removed — migration `0029`, ADR-062.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
 | `agent_schedules`             | **(M24 — Implemented, migration `0027`)** Narrow scheduler bridge for project-local agent refs. `agent_ref` is typed text in M24 and has no FK to authored catalog rows.                                                                                                                                                             | `projects.id`, `scheduler_jobs.id`                                         |
@@ -353,37 +353,16 @@ M10 (ADR-021) repurposed `flows` as the project **enablement pointer**:
 denormalized cache of the _enabled_ revision; runtime byte authority is
 `flow_revisions` via `runs.flow_revision_id`.
 
-## `flow_graph_layouts`
+## `flow_graph_layouts` (removed — ADR-062)
 
-**(M22 — Implemented, migration `0024`, additive; ADR-051.)** Per-node manual
-positions for the workbench flow-graph **view**. A **separate presentation
-store** — node positions NEVER live in `flow.yaml` (the DSL stays logic-only;
-engine stays `1.2.0`).
-
-```ts
-{
-  id,                            // text PK (UUID v4)
-  flowId,                        // FK -> flows.id ON DELETE CASCADE.
-                                 //   Keyed on the per-project flows.id (NOT
-                                 //   flow_revisions.id): the layout is
-                                 //   project-isolated by construction AND
-                                 //   upgrade-stable (survives a revision bump).
-  nodeId,                        // compiled-manifest node id
-  x, y,                          // double precision; React Flow position
-  updatedByUserId?,              // FK -> users.id ON DELETE SET NULL
-  updatedAt
-}
-```
-
-UNIQUE `(flowId, nodeId)` — one pinned position per node per project Flow.
-`PUT /api/runs/{runId}/graph/layout` upserts on this key (`onConflictDoUpdate`,
-last-writer-wins). dagre always seeds a baseline for every node; a row overrides
-it. A `nodeId` absent from the run's pinned manifest is rejected with
-`MaisterError("CONFIG")` (no write); a stored row whose `nodeId` is no longer in
-the compiled topology (a revision dropped the node) is ignored at render. RBAC:
-the write requires the `editFlowLayout` action (`member`). Cascade: child of
-`flows` (NOT `flow_revisions`) — survives M19 revision GC; removed only when the
-project/flow is deleted.
+**Dropped in migration `0029`.** This M22 table (migration `0024`, ADR-051) held
+per-project flow-graph node positions written by a runtime drag-persist route.
+[ADR-062](decisions.md#adr-062-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
+moved authored node positions into the `flow.yaml` `presentation` section
+(`presentation.nodes[].{x,y,width,height,color}`), read by the read-only
+flow-graph view via `presentationLayout(manifest)`. There is no DB layout store
+and no layout write route; layout editing is a flow-editor concern on the source
+`flow.yaml`.
 
 ## `flow_revisions`
 
@@ -1186,10 +1165,10 @@ by `schema` (see [Configuration](configuration.md) §form_schema versioning).
 `on_reject` clause; today it is wire-equivalent to `kind=form` (response
 captured, runner advances to the next step). **(M17 — Implemented.)** The flat
 `steps[]` `on_reject.goto_step` rerouting loop (with `comments_var` injection)
-is **Implemented** in the linear runner (ADR-052 — atomic-repark landed in Phase 3).
+is **Implemented** in the linear runner (ADR-056 — atomic-repark landed in Phase 3).
 The graph runner executes its equivalent rework path unchanged.
 
-**(M17 — Implemented, migration `0024`.)** Two additive assessment columns (ADR-050):
+**(M17 — Implemented, migration `0025`.)** Two additive assessment columns (ADR-054):
 
 - `criticality` (`text`, nullable) — flow-author-declared severity, app-layer
   enum `low | medium | high | critical`. **Write-once**: copied from the `human`
@@ -1202,7 +1181,7 @@ The graph runner executes its equivalent rework path unchanged.
   responder's self-report and is **distinct from** the M15 AI-judge
   `GateVerdict.confidence` carried on `gate_results.verdict` (machine confidence);
   the two are never conflated. Neither column re-gates readiness — escalate-to-human
-  stays the Flow's `human_review` gate (ADR-024 clause closed by ADR-050).
+  stays the Flow's `human_review` gate (ADR-024 clause closed by ADR-054).
 
 For `kind=permission`, `schema` is not null and stores the live
 permission descriptor: `{ requestId, options, toolCall,
@@ -1338,13 +1317,11 @@ users
   ├── accounts           (FK userId, cascade)
   ├── sessions           (FK userId, cascade)
   ├── project_members    (FK userId, cascade)
-  ├── node_attempts.owner_user_id (FK userId, SET NULL)  ← M11b takeover owner
-  └── flow_graph_layouts.updated_by_user_id (FK userId, SET NULL)  ← M22
+  └── node_attempts.owner_user_id (FK userId, SET NULL)  ← M11b takeover owner
 
 projects
   ├── project_members    (FK projectId, cascade)
   ├── flows              (FK projectId, cascade)
-  │     └── flow_graph_layouts (FK flowId, cascade)         ← M22
   ├── capability_records (FK projectId, cascade)
   ├── capability_imports (FK projectId, cascade)      ← M14 Implemented
   ├── project_flow_roles (FK projectId, cascade)      ← M13
@@ -1452,11 +1429,8 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 `actor_identities(project_id, user_id)`, `(id, attempt_number)`,
 `(run_id, step_id, attempt)`, `scratch_messages(run_id, sequence)`,
 `scratch_capability_profiles.run_id`,
-`artifact_projection_cursors(run_id, scope)`,
-`assignments.hitl_request_id`, and `flow_graph_layouts(flow_id, node_id)`
-(M22)) implicitly create their own indexes in Postgres. The
-`flow_graph_layouts` UNIQUE `(flow_id, node_id)` index also serves the
-`getFlowLayout(flowId)` prefix lookup — no separate index needed.
+`artifact_projection_cursors(run_id, scope)`, and
+`assignments.hitl_request_id`) implicitly create their own indexes in Postgres.
 
 ## Workflow
 

@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
-import { getFlowLayout } from "@/lib/queries/flow-layout";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 
 vi.mock("@/lib/authz", () => ({
@@ -33,10 +32,6 @@ vi.mock("@/lib/queries/flow-graph-view", () => ({
   buildGraphTopology: vi.fn(),
 }));
 
-vi.mock("@/lib/queries/flow-layout", () => ({
-  getFlowLayout: vi.fn(),
-}));
-
 vi.mock("@/lib/flows/graph/compile", () => ({
   compileManifest: vi.fn(() => ({
     entry: "plan",
@@ -52,7 +47,14 @@ const TOPOLOGY = {
   ],
 };
 const LAYOUT = { plan: { x: 10, y: 20 } };
-const MANIFEST = { schemaVersion: 1, name: "aif", steps: [] };
+// Authored layout (ADR-062): the route derives `layout` from the manifest's
+// presentation section via the real presentationLayout projection.
+const MANIFEST = {
+  schemaVersion: 1,
+  name: "aif",
+  steps: [],
+  presentation: { nodes: [{ id: "plan", x: 10, y: 20 }] },
+};
 
 async function invokeGet(runId: string) {
   const { GET } = await import("../route");
@@ -92,9 +94,6 @@ beforeEach(() => {
 
   vi.mocked(buildGraphTopology).mockReset();
   vi.mocked(buildGraphTopology).mockReturnValue(TOPOLOGY as never);
-
-  vi.mocked(getFlowLayout).mockReset();
-  vi.mocked(getFlowLayout).mockResolvedValue(LAYOUT);
 });
 
 describe("GET /api/runs/[runId]/graph", () => {
@@ -125,7 +124,7 @@ describe("GET /api/runs/[runId]/graph", () => {
 
     expect(res.status).toBe(404);
     expect(requireProjectAction).not.toHaveBeenCalled();
-    expect(getFlowLayout).not.toHaveBeenCalled();
+    expect(buildGraphTopology).not.toHaveBeenCalled();
   });
 
   it("returns 401 when the session is not authenticated", async () => {
@@ -148,6 +147,5 @@ describe("GET /api/runs/[runId]/graph", () => {
 
     expect(res.status).toBe(403);
     expect(buildGraphTopology).not.toHaveBeenCalled();
-    expect(getFlowLayout).not.toHaveBeenCalled();
   });
 });

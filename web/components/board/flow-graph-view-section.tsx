@@ -22,7 +22,6 @@ export interface FlowGraphViewSectionProps {
   currentStepId: string | null;
   runStatus: string;
   labels: FlowGraphViewLabels;
-  editable: boolean;
 }
 
 export function FlowGraphViewSection({
@@ -33,12 +32,10 @@ export function FlowGraphViewSection({
   currentStepId,
   runStatus,
   labels,
-  editable,
 }: FlowGraphViewSectionProps): ReactElement {
   return (
     <FlowGraphView
       currentStepId={currentStepId}
-      editable={editable}
       initialStatuses={initialStatuses}
       labels={labels}
       layout={layout}

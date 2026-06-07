@@ -250,7 +250,7 @@ const humanStepSchema = z.object({
     })
     .optional(),
   retry_safe: z.boolean().optional(),
-  // M17 ADR-050: flow-author-declared criticality for this HITL step.
+  // M17 ADR-054: flow-author-declared criticality for this HITL step.
   criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
 });
 
@@ -549,7 +549,7 @@ export const humanSettingsSchema = z
     slaHours: z.number().positive().optional(),
     stalenessHint: z.string().min(1).optional(),
     returnRequires: z.array(z.string().min(1)).optional(),
-    // M17 ADR-050: flow-author-declared criticality for this HITL node.
+    // M17 ADR-054: flow-author-declared criticality for this HITL node.
     criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
   })
   .strict();
@@ -631,6 +631,31 @@ export const nodeSchema = z.discriminatedUnion("type", [
   humanNodeSchema,
 ]);
 
+// M22 (ADR-062): additive, runner-ignored presentation section — per-node
+// canvas display options (position/size/color) keyed by node `id`, authored
+// WITH the flow and shipped in the bundle. The flow-graph view reads it; dagre
+// seeds any node without an entry. The engine never reads this, so the
+// logic-only DSL invariant holds with no engine bump. Per-project runtime
+// drag-persist deliberately does NOT live here: a pinned bundle is shared and
+// immutable, so layout EDITING belongs to the flow editor on the source
+// flow.yaml, not a runtime write into this section.
+export const flowNodePresentationSchema = z
+  .object({
+    id: z.string().min(1),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    color: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const flowPresentationSchema = z
+  .object({
+    nodes: z.array(flowNodePresentationSchema).optional(),
+  })
+  .strict();
+
 export const flowYamlV1Schema = z
   .object({
     schemaVersion: z.literal(1),
@@ -659,6 +684,8 @@ export const flowYamlV1Schema = z
     // M11a; it is now optional so the refine can reject both-absent.
     steps: z.array(stepSchema).min(1).optional(),
     nodes: z.array(nodeSchema).min(1).optional(),
+    // Additive presentation metadata (ADR-062); runner/engine never reads it.
+    presentation: flowPresentationSchema.optional(),
   })
   .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {
     message: "flow manifest must declare exactly one of steps[] or nodes[]",
@@ -706,6 +733,8 @@ export type MaisterCapabilitiesConfig = z.infer<
   typeof maisterCapabilitiesSchema
 >;
 export type FlowYamlV1 = z.infer<typeof flowYamlV1Schema>;
+export type FlowPresentation = z.infer<typeof flowPresentationSchema>;
+export type FlowNodePresentation = z.infer<typeof flowNodePresentationSchema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;
 export type Step = z.infer<typeof stepSchema>;
 export type FormSchema = z.infer<typeof formSchemaSchema>;

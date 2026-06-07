@@ -4,7 +4,7 @@
 > **workbench**: a flow-graph VIEW with live node-status coloring, a read-only
 > git-tracked file browser, and the base→run diff — all three tracks shipped.
 > Three independent tracks:
-> **A — flow-graph view** ([ADR-051](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed),
+> **A — flow-graph view** ([ADR-062](../decisions.md#adr-062-authored-flow-graph-layout-in-the-flowyaml-presentation-section),
 > [ADR-052](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch)),
 > **B — file-tree** ([ADR-053](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads)),
 > **C — diff** (reuses M18). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
@@ -13,13 +13,14 @@
 ## Purpose
 
 The **workbench** domain is M22's run-inspection surface: it makes a run's
-execution legible without leaving the control plane. Its boundary is **read +
-reposition only** — it visualizes the compiled flow graph and colors nodes by
-live status (Track A), browses the run/project's **git-tracked** files (Track
-B), and renders the base→branch diff for any run state (Track C). It owns one
-new write — a node-position upsert into a **separate, project-scoped** layout
-store — and nothing else: it never edits node logic (the graph *editor* is
-Wave-3), never mutates run state, and never reads untracked/working-copy files.
+execution legible without leaving the control plane. Its boundary is
+**read-only** — it visualizes the compiled flow graph and colors nodes by live
+status (Track A), browses the run/project's **git-tracked** files (Track B), and
+renders the base→branch diff for any run state (Track C). Node positions are
+**authored in the `flow.yaml` `presentation` section** (ADR-062) and read at
+render; the view owns **no write** — it never edits node logic or layout (the
+graph *editor* is Wave-3), never mutates run state, and never reads
+untracked/working-copy files.
 The execution model it visualizes is [`flow-graph.md`](flow-graph.md); the run
 state machine is [`runs.md`](runs.md); the worktree it reads is
 [`workspaces.md`](workspaces.md).
@@ -30,9 +31,11 @@ state machine is [`runs.md`](runs.md); the worktree it reads is
   nodes (`id`, `nodeType`, `label`) + edges (`source`, `target`, `outcome`),
   with **no x/y**. Source: `web/lib/flows/graph/compile.ts` (`FlowGraph`,
   `CompiledNode.transitions`).
-- **Layout override** — a `flow_graph_layouts` row: `(flow_id, node_id) → {x, y}`,
-  the operator's pinned position. Persisted, project-scoped, keyed on the
-  per-project `flow_id`. See ERD [`../db/projects-domain.md`](../db/projects-domain.md).
+- **Authored layout** — entries in the manifest's `presentation.nodes[]`
+  (`{ id, x?, y?, width?, height?, color? }`), authored with the flow and shipped
+  in the bundle (ADR-062). `presentationLayout(manifest)` projects entries with
+  both coordinates into a `nodeId → {x, y}` map; dagre seeds the rest. No DB
+  store, no runtime write. Source: `web/lib/flows/graph/presentation-layout.ts`.
 - **Node-status snapshot** — per node, the highest-`attempt` `node_attempts.status`
   + a gate rollup over `gate_results.status`, plus `runs.current_step_id`. Read
   model only; no new column. Source: `getRunTimeline` (`web/lib/queries/run.ts`).
@@ -64,16 +67,20 @@ stateDiagram-v2
     danger --> [*]: run terminal (color frozen)
 ```
 
-## State machine — layout override (persistence axis)
+## Layout resolution (authored, read-only)
 
-```mermaid
-stateDiagram-v2
-    [*] --> Seeded: dagre baseline (no flow_graph_layouts row)
-    Seeded --> Pinned: onNodeDragStop -> PUT graph/layout (editFlowLayout)
-    Pinned --> Pinned: drag again (onConflictDoUpdate, last-writer-wins)
-    Pinned --> Seeded: row's node_id absent from a newer revision (ignored at render)
-    Pinned --> [*]: flow/project deleted (FK CASCADE)
-```
+Layout is not a runtime persistence axis: positions are **authored in
+`flow.yaml`** and read at render (ADR-062). Resolution is a pure merge with no
+state to transition:
+
+1. dagre computes the baseline for every node;
+2. `presentationLayout(manifest)` overrides position for any node whose
+   `presentation` entry declares both `x` and `y`;
+3. a `presentation` entry whose `id` is absent from the compiled topology is
+   ignored (no phantom node); a node with no entry keeps its dagre seed.
+
+Editing the authored layout (drag-to-arrange) is a flow-editor concern on the
+source `flow.yaml` (roadmap §E1, Wave 3), not a workbench write.
 
 ## Process flows
 
@@ -86,9 +93,9 @@ sequenceDiagram
     participant S as SSE /api/runs/{runId}/stream
     participant ST as GET /api/runs/{runId}/graph-status
 
-    P->>P: compile topology, getFlowLayout(run.flow_id), getRunNodeStatuses
-    P->>C: props (topology, layout, initialStatuses, currentStepId, runStatus, editable)
-    C->>C: layoutGraph (dagre, once) then apply layout overrides on top
+    P->>P: compile topology, presentationLayout(manifest), getRunNodeStatuses
+    P->>C: props (topology, layout, initialStatuses, currentStepId, runStatus)
+    C->>C: layoutGraph (dagre, once) then apply authored positions on top
     C->>C: color nodes from initialStatuses (colorForNodeStatus)
     alt runStatus is live (not terminal)
         C->>S: subscribe useRunStream(runId)
@@ -102,18 +109,13 @@ sequenceDiagram
     end
 ```
 
-### Layout drag → upsert → reload round-trip
+### Authored layout read (no write)
 
 ```mermaid
 flowchart TD
-    Drag["onNodeDragStop x,y"] --> Auth{"viewer has editFlowLayout?"}
-    Auth -- no --> Hide["no drag handlers wired server-side"]
-    Auth -- yes --> Put["PUT /api/runs/{runId}/graph/layout {nodeId,x,y}"]
-    Put --> Resolve["resolve flow_id from run server-state"]
-    Resolve --> Allow{"nodeId in pinned-manifest node set?"}
-    Allow -- no --> Cfg["CONFIG 400, no write"]
-    Allow -- yes --> Upsert["onConflictDoUpdate flow_graph_layouts (flow_id,node_id)"]
-    Upsert --> Reload["reload: dagre baseline + override merge = pinned position"]
+    Load["loadRunManifest(runId)"] --> Proj["presentationLayout(manifest)"]
+    Proj --> Merge["dagre baseline + authored x/y override merge"]
+    Merge --> Render["render (non-draggable view)"]
 ```
 
 ### Lazy tracked file-tree expand + open
@@ -155,16 +157,14 @@ flowchart LR
   (gate rollup over `gate_results.status`); a node with no attempt renders
   `Pending`/default.
 - The graph topology is logic-only (`compileManifest`) and carries **no x/y**;
-  manual positions live ONLY in `flow_graph_layouts`, NEVER in `flow.yaml` (engine stays `1.2.0`).
-- `flow_graph_layouts` is keyed `UNIQUE (flow_id, node_id)` on the per-project
-  `flows.id`; a write authorized against one project MUST NOT alter another
-  project's rows.
-- A layout `PUT` MUST resolve `flow_id` from the run server-state and reject a
-  `nodeId` absent from the run's pinned-manifest node set with `MaisterError("CONFIG")` (no write).
-- Layout `PUT` requires the `editFlowLayout` action (min role `member`); a `viewer`
-  is refused `UNAUTHORIZED` and the client wires no drag handlers.
-- A stored layout row whose `node_id` is absent from the compiled topology is
-  ignored at render (dagre seeds that node) — never an error.
+  authored positions live in the `flow.yaml` `presentation` section (ADR-062),
+  additive and engine-ignored (no `compat`/engine bump, DSL stays logic-only).
+- `presentationLayout(manifest)` positions only nodes whose `presentation` entry
+  declares both `x` and `y`; every other node is dagre-seeded at render.
+- A `presentation` entry whose `id` is absent from the compiled topology is
+  ignored at render (no phantom node) — never an error.
+- The flow-graph view is **read-only**: it wires no drag handlers and exposes no
+  layout write route; editing authored layout is a flow-editor concern (§E1, Wave 3).
 - Live recolor refetches `…/graph-status` ONLY on an SSE event tick (debounced),
   NEVER on a timer, and MUST NOT refetch once `runs.status` is terminal.
 - File reads require the `readRepoFiles` action (min role `member`) — strictly
@@ -182,10 +182,8 @@ flowchart LR
 
 ## Edge cases
 
-- **Layout `PUT` with an unknown `nodeId`** (not in the pinned manifest) → `CONFIG`
-  (400), no write.
-- **Layout `PUT` on a flow-less (scratch) run** (no `runs.flow_id`) → `CONFIG`
-  (400); scratch runs have no flow graph.
+- **A `presentation` entry for an unknown `nodeId`** (not in the compiled
+  topology) → ignored at render (no phantom node), never an error.
 - **`…/graph` or `…/graph-status` for a run with no flow / no pinned manifest** → `404`.
 - **File path traversal / absolute / leading `-` / NUL** (`repoRelPathSchema` reject) → `400` (`CONFIG`).
 - **`.git/config`, a gitignored `.env`, or an untracked file path** → `404` (not in
@@ -195,8 +193,6 @@ flowchart LR
   project) → `403` (`UNAUTHORIZED`) via `requireProjectAction` against the
   server-derived project (the app-wide convention); a genuinely unknown
   `runId`/`slug` → `404`.
-- **Cross-project layout write** (a project-A member naming project-B's flow) →
-  structurally impossible via `flow_id` keying; defense-in-depth refusal, not a leak.
 - **SSE refetch after a run goes terminal** → MUST NOT happen (the view freezes on
   the server snapshot); regression-asserted by the e2e.
 - **Legacy run with null `workspaces.base_commit`** → diff base falls back to
@@ -207,25 +203,25 @@ flowchart LR
 
 - ADRs:
   [ADR-039 renderer](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer),
-  [ADR-051 layout store](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed),
+  [ADR-062 authored layout](../decisions.md#adr-062-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
+  (supersedes [ADR-051](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed)),
   [ADR-052 live coloring](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-053 file-tree](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads).
-- ERD: [`../db/projects-domain.md`](../db/projects-domain.md) (`flow_graph_layouts`),
-  [`../db/erd.md`](../db/erd.md); narrative [`../database-schema.md`](../database-schema.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`…/graph`,
-  `…/graph-status`, `…/graph/layout`, `…/files[/content]`,
+  `…/graph-status`, `…/files[/content]`,
   `/api/projects/{slug}/files[/content]`, the flow-run `…/diff` case).
 - Config: [`../configuration.md`](../configuration.md) §Environment variables
   (`MAISTER_WORKBENCH_MAX_FILE_BYTES`).
 - Errors: [`../error-taxonomy.md`](../error-taxonomy.md) (`CONFIG` / `PRECONDITION`
   caller rows; no new code).
 - RBAC: [`../../web/CLAUDE.md`](../../web/CLAUDE.md) §RBAC model
-  (`readRepoFiles`, `editFlowLayout`).
+  (`readRepoFiles`).
 - Related: [`flow-graph.md`](flow-graph.md) (execution model the view renders),
   [`runs.md`](runs.md) (run state / diff), [`workspaces.md`](workspaces.md)
   (worktree the tree reads).
-- Source (Implemented, M22): `web/lib/queries/flow-graph-view.ts`,
-  `web/lib/queries/run-node-status.ts`, `web/lib/queries/flow-layout.ts`,
-  `web/lib/runs/flow-layout-write.ts`, `web/lib/board/flow-graph-view-layout.ts`,
+- Source (Implemented, M22; layout reworked per ADR-062):
+  `web/lib/queries/flow-graph-view.ts`, `web/lib/queries/run-node-status.ts`,
+  `web/lib/flows/graph/presentation-layout.ts`,
+  `web/lib/board/flow-graph-view-layout.ts`,
   `web/components/board/flow-graph-view.tsx`,
   `web/components/workbench/*`, `web/lib/worktree.ts` (`listTree`/`readBlob`/`diffNameStatus`).

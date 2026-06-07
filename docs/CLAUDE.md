@@ -80,7 +80,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/observatory.md`](system-analytics/observatory.md) | Read-only Observatory metrics: correction rate, Autonomy Score, and repeatable signal clusters (M23). |
 | [`system-analytics/instance-config.md`](system-analytics/instance-config.md) | Read-only host roots, host-tool status, admin `/settings` page. |
 | [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
-| [`system-analytics/workbench.md`](system-analytics/workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, project-scoped layout store. |
+| [`system-analytics/workbench.md`](system-analytics/workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, authored layout in `flow.yaml` (ADR-062). |
 | [`system-analytics/project-membership.md`](system-analytics/project-membership.md) | Project membership management: roster, add/change-role/remove, manageMembers action, no last-owner guard (M-admin-surface). |
 
 ### Cross-cutting reference

@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
-  doublePrecision,
   index,
   integer,
   jsonb,
@@ -338,36 +337,9 @@ export const flows = pgTable(
   }),
 );
 
-// M22 (ADR-051): per-node manual positions for the workbench flow-graph view.
-// Separate presentation store — never in flow.yaml. Keyed on the per-project
-// flows.id so the layout is project-isolated AND upgrade-stable (survives a
-// revision bump; child of flows, NOT flow_revisions).
-export const flowGraphLayouts = pgTable(
-  "flow_graph_layouts",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    flowId: text("flow_id")
-      .notNull()
-      .references(() => flows.id, { onDelete: "cascade" }),
-    nodeId: text("node_id").notNull(),
-    x: doublePrecision("x").notNull(),
-    y: doublePrecision("y").notNull(),
-    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => ({
-    flowNodeUq: unique("flow_graph_layouts_flow_node_uq").on(
-      t.flowId,
-      t.nodeId,
-    ),
-  }),
-);
+// M22 flow-graph layout: authored node positions live in the flow.yaml
+// `presentation` section (ADR-062), NOT a DB store. The dropped
+// `flow_graph_layouts` table (migration 0024) is reverted in migration 0030.
 
 // M13 (ADR-040): Flow roles are project-scoped routing labels, not RBAC.
 // Authorization still comes from project_members.role through authz.ts.

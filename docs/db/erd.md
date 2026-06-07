@@ -46,8 +46,6 @@ erDiagram
     FLOWS ||--o{ RUNS : "selected at launch"
     FLOWS ||--o{ TASKS : "selected at create"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
-    FLOWS ||--o{ FLOW_GRAPH_LAYOUTS : "graph-view node positions (M22)"
-    USERS ||--o{ FLOW_GRAPH_LAYOUTS : "updated_by SET NULL (M22)"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
@@ -212,16 +210,6 @@ erDiagram
         jsonb manifest "parsed flow.yaml"
         integer schema_version
         timestamp created_at
-    }
-
-    FLOW_GRAPH_LAYOUTS {
-        text id PK
-        text flow_id FK "per-project key; project-isolated (M22)"
-        text node_id "compiled-manifest node id"
-        double x
-        double y
-        text updated_by_user_id FK "nullable, SET NULL"
-        timestamp updated_at
     }
 
     PROJECT_FLOW_RUNNER_DEFAULTS {
@@ -710,7 +698,7 @@ external-operation events) is not drawn until its migrations exist. See
 | `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
 | `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind=api_token` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
 | `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
-| `flow_graph_layouts` | `flow_graph_layouts_flow_node_uq` | `(flow_id, node_id)` UNIQUE | **(M22 Implemented, migration `0024`)** Per-project flow graph layout positions. |
+| `flow_graph_layouts` | — | — | **(Removed — migration `0029`, ADR-062.)** Authored positions moved to the `flow.yaml` `presentation` section. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
 | `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today; the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |

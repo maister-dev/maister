@@ -120,17 +120,15 @@ defined as a string union in `web/lib/errors.ts`.
 >   case.
 
 > **M22 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
-> closed union; ADR-051/052/053). The workbench reuses one existing code (`CONFIG`)
+> closed union; ADR-062/052/053). The workbench reuses one existing code (`CONFIG`)
 > at new call sites (all Implemented, M22), plus HTTP-only 404/413/415 statuses that
 > are NOT `MaisterError`s:
 >
-> - **`CONFIG` → HTTP 400** new call sites: `PUT /api/runs/{runId}/graph/layout`
->   when `nodeId` is not in the run's pinned-manifest node set (allow-list reject,
->   no write) or the run has no `flow_id` (a flow-less scratch run); and every
->   `…/files[/content]` route (run + project) when `?path=` fails `repoRelPathSchema`
->   (`..` segment, absolute, leading `/` or `-`, NUL). Thrown by
->   `web/lib/runs/flow-layout-write.ts:upsertNodeLayout` and `web/lib/worktree.ts`
->   (`repoRelPathSchema`). Names the offending node id / path.
+> - **`CONFIG` → HTTP 400** new call sites: every `…/files[/content]` route (run +
+>   project) when `?path=` fails `repoRelPathSchema` (`..` segment, absolute,
+>   leading `/` or `-`, NUL). Thrown by `web/lib/worktree.ts` (`repoRelPathSchema`).
+>   Names the offending path. (The flow-graph layout `PUT` was removed with the
+>   layout store — ADR-062 moves authored layout into `flow.yaml`.)
 > - **HTTP 404 (bare, NOT a thrown `MaisterError`)**: `GET …/graph` /
 >   `…/graph-status` for a genuinely unknown run, a run with no flow, or no pinned
 >   manifest; the file routes when a validated `?path=` is not in the git-tracked
@@ -206,7 +204,7 @@ ignoring a newly added code.
 | HTTP status | When returned |
 | ----------- | ------------- |
 | **401** | Invalid, expired, or revoked project token. Also: missing or invalid inbound bearer on the Streamable-HTTP MCP transport. |
-| **403** | **(Implemented — M17, ADR-051.)** Two distinct cases, both on the HITL ext routes only — other `/api/v1/ext/*` routes keep the existing binary enforcement (ADR-046 unchanged): **(D8) missing scope** — `GET /api/v1/ext/runs/{runId}/hitl` requires scope `hitl:read`; `POST …/hitl/{id}/respond` requires scope `hitl:respond`; a token without the matching scope (and without `*`) is refused 403 via `handleExt({requireScope:true})`; the response does not reveal which scopes the token holds. **(D7) actor-kind gate** — a token (`api_token`) or internal-agent actor answering a `human`-kind HITL request (`hitlRow.kind === "human"`) is refused 403; token/agent actors may answer only `permission`/`form`-kind requests. A `*`-scoped token passes the D8 check but is still subject to D7. |
+| **403** | **(Implemented — M17, ADR-055.)** Two distinct cases, both on the HITL ext routes only — other `/api/v1/ext/*` routes keep the existing binary enforcement (ADR-046 unchanged): **(D8) missing scope** — `GET /api/v1/ext/runs/{runId}/hitl` requires scope `hitl:read`; `POST …/hitl/{id}/respond` requires scope `hitl:respond`; a token without the matching scope (and without `*`) is refused 403 via `handleExt({requireScope:true})`; the response does not reveal which scopes the token holds. **(D7) actor-kind gate** — a token (`api_token`) or internal-agent actor answering a `human`-kind HITL request (`hitlRow.kind === "human"`) is refused 403; token/agent actors may answer only `permission`/`form`-kind requests. A `*`-scoped token passes the D8 check but is still subject to D7. |
 | **404** | Token's project ≠ addressed resource (existence-hide). Also: unknown or non-`external_check` gate; unknown task or run id. **(M17, Implemented)** on HITL ext routes: `run.projectId ≠ token.projectId`, or unknown `runId`/`hitlRequestId`, or `hitlRow.runId ≠ runId` — all return 404 without distinguishing which check failed (existence-hide). |
 | **409** | Domain conflict — a gate report on a terminal run (`Done`/`Abandoned`/`Crashed`/`Failed`), or a launch/create precondition conflict (`CONFLICT`/`PRECONDITION` from the shared service). **(M17, Implemented)** on the HITL respond ext route: idempotency conflict when the HITL request already has a `respondedAt` timestamp (the shared `respondToHitl` service returns 409, same as the session route). |
 | **422** | Request body failed schema validation, or a `CONFIG` `MaisterError` from the shared service (unknown flow/executor, invalid config). Mapped by the shared `httpStatusForExtCode`. **(M17, Implemented — `NEEDS_INPUT`)** on the HITL respond ext route: bad response payload — `response` body fails the `respondToHitl` service validation (unknown `optionId`, out-of-range `confidence`, schema mismatch) — mapped from `MaisterError("NEEDS_INPUT")` to 422. |
@@ -217,7 +215,7 @@ are added to the project-token scope vocabulary. They are enforced via opt-in
 existing ext routes remain on the prior binary enforcement model (no
 `requireScope`). A `["*"]`-scoped token passes the scope check on all routes
 including the new HITL routes; it is still subject to the actor-kind gate
-(D7). See [ADR-051](decisions.md#adr-051) and
+(D7). See [ADR-055](decisions.md#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates) and
 [`api/external/operations.openapi.yaml`](api/external/operations.openapi.yaml).
 
 ## See Also

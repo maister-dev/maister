@@ -6,8 +6,8 @@ import pino from "pino";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
-import { getFlowLayout } from "@/lib/queries/flow-layout";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 
 const log = pino({
@@ -67,7 +67,7 @@ export async function GET(
     await requireProjectAction(loaded.projectId, "readBoard");
 
     const topology = buildGraphTopology(compileManifest(loaded.manifest));
-    const layout = await getFlowLayout(loaded.flowId);
+    const layout = presentationLayout(loaded.manifest);
 
     log.info({ runId, nodes: topology.nodes.length }, "graph served");
 

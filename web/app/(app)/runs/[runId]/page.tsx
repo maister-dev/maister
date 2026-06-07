@@ -45,7 +45,7 @@ import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
-import { getFlowLayout } from "@/lib/queries/flow-layout";
+import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getRunReadiness } from "@/lib/queries/readiness";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
@@ -201,10 +201,6 @@ export default async function RunDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
-  // editFlowLayout min-role is `member` (ADR-051). Kept distinct from canAct so a
-  // future tightening of editFlowLayout does not silently follow canAct.
-  const canEditFlowLayout =
-    role === "owner" || role === "admin" || role === "member";
   const t = await getTranslations("run");
 
   const timeline = await getRunTimeline(runId);
@@ -239,12 +235,12 @@ export default async function RunDetailPage({
     kindDecision: tEvidence("kindDecision"),
   };
 
-  // M22 (T3.3): the flow-graph view for a flow run — compiled topology + stored
-  // layout overrides + initial node statuses, all server-state. Scratch runs
-  // have no flow graph and skip the section.
+  // M22 (ADR-062): the flow-graph view for a flow run — compiled topology +
+  // authored layout from the manifest presentation section + initial node
+  // statuses, all server-state. Scratch runs have no flow graph and skip it.
   let flowGraphData: {
     topology: ReturnType<typeof buildGraphTopology>;
-    layout: Awaited<ReturnType<typeof getFlowLayout>>;
+    layout: Record<string, { x: number; y: number }>;
     statuses: Awaited<ReturnType<typeof getRunNodeStatuses>>;
     labels: FlowGraphViewLabels;
     tabLabels: WorkbenchTabsLabels;
@@ -257,10 +253,8 @@ export default async function RunDetailPage({
 
     if (loadedM) {
       const topology = buildGraphTopology(compileManifest(loadedM.manifest));
-      const [graphLayout, nodeStatuses] = await Promise.all([
-        getFlowLayout(loadedM.flowId),
-        getRunNodeStatuses(runId),
-      ]);
+      const graphLayout = presentationLayout(loadedM.manifest);
+      const nodeStatuses = await getRunNodeStatuses(runId);
       const tWorkbench = await getTranslations("workbench");
 
       flowGraphData = {
@@ -271,7 +265,6 @@ export default async function RunDetailPage({
           title: tWorkbench("graph.title"),
           empty: tWorkbench("graph.empty"),
           currentNode: tWorkbench("graph.currentNode"),
-          saveError: tWorkbench("graph.saveError"),
           node: {
             Pending: tWorkbench("graph.node.Pending"),
             Running: tWorkbench("graph.node.Running"),
@@ -642,7 +635,6 @@ export default async function RunDetailPage({
           {activeWb === "graph" ? (
             <FlowGraphViewSection
               currentStepId={flowGraphData.statuses.currentStepId}
-              editable={canEditFlowLayout}
               initialStatuses={flowGraphData.statuses.nodes}
               labels={flowGraphData.labels}
               layout={flowGraphData.layout}
