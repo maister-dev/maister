@@ -54,7 +54,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
-| `flow_graph_layouts`          | **(Removed — migration `0029`, ADR-062.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
+| `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
 | `agent_schedules`             | **(M24 — Implemented, migration `0027`)** Narrow scheduler bridge for project-local agent refs. `agent_ref` is typed text in M24 and has no FK to authored catalog rows.                                                                                                                                                             | `projects.id`, `scheduler_jobs.id`                                         |
@@ -353,11 +353,11 @@ M10 (ADR-021) repurposed `flows` as the project **enablement pointer**:
 denormalized cache of the _enabled_ revision; runtime byte authority is
 `flow_revisions` via `runs.flow_revision_id`.
 
-## `flow_graph_layouts` (removed — ADR-062)
+## `flow_graph_layouts` (removed — ADR-064)
 
-**Dropped in migration `0029`.** This M22 table (migration `0024`, ADR-051) held
+**Dropped in migration `0030`.** This M22 table (migration `0024`, ADR-051) held
 per-project flow-graph node positions written by a runtime drag-persist route.
-[ADR-062](decisions.md#adr-062-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
+[ADR-064](decisions.md#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
 moved authored node positions into the `flow.yaml` `presentation` section
 (`presentation.nodes[].{x,y,width,height,color}`), read by the read-only
 flow-graph view via `presentationLayout(manifest)`. There is no DB layout store

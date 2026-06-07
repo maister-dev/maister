@@ -47,7 +47,7 @@ const TOPOLOGY = {
   ],
 };
 const LAYOUT = { plan: { x: 10, y: 20 } };
-// Authored layout (ADR-062): the route derives `layout` from the manifest's
+// Authored layout (ADR-064): the route derives `layout` from the manifest's
 // presentation section via the real presentationLayout projection.
 const MANIFEST = {
   schemaVersion: 1,

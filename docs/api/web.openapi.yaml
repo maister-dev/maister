@@ -1790,7 +1790,7 @@ paths:
         Requires project membership at `viewer` or above (`readBoard`). Compiles
         the run's pinned manifest into a logic-only topology (nodes + edges, no
         x/y) and returns the authored layout from the manifest `presentation`
-        section (ADR-062), as a `nodeId → {x,y}` map. `runId` is the url-param;
+        section (ADR-064), as a `nodeId → {x,y}` map. `runId` is the url-param;
         `projectId`/`flow_id`/pinned manifest are server-state. dagre seeds
         positions client-side; authored positions merge on top.
       operationId: getRunGraph
@@ -5098,7 +5098,7 @@ components:
         layout:
           type: object
           description: |
-            (ADR-062) Authored layout from the manifest `presentation` section,
+            (ADR-064) Authored layout from the manifest `presentation` section,
             keyed by node id; a node absent from the map is dagre-seeded
             client-side.
           additionalProperties: { $ref: "#/components/schemas/GraphNodePosition" }

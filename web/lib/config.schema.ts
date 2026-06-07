@@ -641,7 +641,7 @@ export const nodeSchema = z.discriminatedUnion("type", [
   humanNodeSchema,
 ]);
 
-// M22 (ADR-062): additive, runner-ignored presentation section — per-node
+// M22 (ADR-064): additive, runner-ignored presentation section — per-node
 // canvas display options (position/size/color) keyed by node `id`, authored
 // WITH the flow and shipped in the bundle. The flow-graph view reads it; dagre
 // seeds any node without an entry. The engine never reads this, so the
@@ -694,7 +694,7 @@ export const flowYamlV1Schema = z
     // M11a; it is now optional so the refine can reject both-absent.
     steps: z.array(stepSchema).min(1).optional(),
     nodes: z.array(nodeSchema).min(1).optional(),
-    // Additive presentation metadata (ADR-062); runner/engine never reads it.
+    // Additive presentation metadata (ADR-064); runner/engine never reads it.
     presentation: flowPresentationSchema.optional(),
   })
   .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {

@@ -3,7 +3,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 export type FlowLayout = Record<string, { x: number; y: number }>;
 
 /**
- * Project a flow manifest's authored `presentation` section (ADR-062) into the
+ * Project a flow manifest's authored `presentation` section (ADR-064) into the
  * nodeId -> {x,y} map the flow-graph view consumes. Only entries that declare
  * both coordinates are positioned; every other node is dagre-seeded at render,
  * and entries for ids absent from the topology are harmless (no phantom nodes —

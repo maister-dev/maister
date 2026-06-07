@@ -64,7 +64,7 @@ erDiagram
     }
 ```
 
-> **Note (ADR-062):** `FLOW_GRAPH_LAYOUTS` (M22) was dropped in migration `0029`.
+> **Note (ADR-064):** `FLOW_GRAPH_LAYOUTS` (M22) was dropped in migration `0030`.
 > Authored flow-graph node positions now live in the `flow.yaml` `presentation`
 > section, not a DB table.
 

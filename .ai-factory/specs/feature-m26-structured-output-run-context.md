@@ -39,7 +39,7 @@ with **no DB migration and no new dependency**.
 - No `compose.yml` change — `web` runs on the host (ADR-023); env vars it reads are wired in
   `.env.example` + `docs/configuration.md` only, never a compose service block.
 - No change to the M17 `extraVars` rework-comment channel (P1/P7 converge on it, never duplicate it).
-- Not in scope and not this milestone: the in-flight M22/ADR-062 `flow_graph_layouts` drop.
+- Not in scope and not this milestone: the in-flight M22/ADR-064 `flow_graph_layouts` drop.
 
 ## Transport & validation model (P1)
 

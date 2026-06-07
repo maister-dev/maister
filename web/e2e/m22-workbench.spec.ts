@@ -13,7 +13,7 @@
 //      the `plan` node reflects its seeded Succeeded status; the current node
 //      (`implement`) carries data-current="true".
 //   2. layout   — GET /graph returns the authored layout from the flow.yaml
-//      presentation section (ADR-062); the removed PUT /graph/layout is 404.
+//      presentation section (ADR-064); the removed PUT /graph/layout is 404.
 //   3. files    — ?wb=files lists tracked files; expanding `src` reveals its
 //      file; opening a file shows file-content; opening the oversized file shows
 //      file-too-large; a .git/config path → 404 and a ../etc path → 400.
@@ -94,7 +94,7 @@ test("GET /graph returns the authored layout from the flow manifest, and there i
   await page.goto(`/runs/${fx.runId}?wb=graph`);
   await expect(page.locator('[data-testid="flow-graph-view"]')).toBeVisible();
 
-  // ADR-062: layout is authored in the flow.yaml presentation section and read
+  // ADR-064: layout is authored in the flow.yaml presentation section and read
   // back by GET /graph — no per-project runtime store, no drag-persist route.
   const graphRes = await page.request.get(`/api/runs/${fx.runId}/graph`);
 

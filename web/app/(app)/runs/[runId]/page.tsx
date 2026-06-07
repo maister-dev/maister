@@ -235,7 +235,7 @@ export default async function RunDetailPage({
     kindDecision: tEvidence("kindDecision"),
   };
 
-  // M22 (ADR-062): the flow-graph view for a flow run — compiled topology +
+  // M22 (ADR-064): the flow-graph view for a flow run — compiled topology +
   // authored layout from the manifest presentation section + initial node
   // statuses, all server-state. Scratch runs have no flow graph and skip it.
   let flowGraphData: {

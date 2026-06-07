@@ -66,7 +66,7 @@ signals (E2) — without a DB migration and without a new dependency.
 - **Out (explicitly):** legacy linear `steps[]` flows (use `runner.ts`/`step_runs`, unchanged —
   the bundled `aif` flow is already `nodes[]`); P2 prompt content injection; P3 diff-path
   assertions / `hash`·`size_bytes` activation; P4 `decide` table; P6 session continuity.
-- **Not this plan:** the in-flight M22/ADR-062 `flow_graph_layouts` drop in the working tree is a
+- **Not this plan:** the in-flight M22/ADR-064 `flow_graph_layouts` drop in the working tree is a
   **separate** change (tracked outside M26).
 
 ## Current state (verified anchors)
@@ -341,7 +341,7 @@ agent/body-controlled.
   agent node's prompt.
 - Engine `1.3.0`; flows using `output.result` gated on `compat.engine_min >= 1.3.0`.
 - Zero DB migrations; zero new routes/statuses/error-codes. `MAISTER_NODE_OUTPUT_MAX_BYTES` wired into
-  `.env.example`/compose/configuration. Docs Implemented; ROADMAP M26 logged; full suite + m26 e2e green.
+  `.env.example` + `docs/configuration.md` (NOT `compose.yml`). Docs Implemented; ROADMAP M26 logged; full suite + m26 e2e green.
 
 ---
 
@@ -349,7 +349,7 @@ agent/body-controlled.
 All design forks confirmed with the user on 2026-06-07:
 1. ✅ Transport — **hybrid** (agent → stdout `maister:output` block; cli/check → `MAISTER_OUTPUT_FILE`).
 2. ✅ cli env name — `MAISTER_OUTPUT_FILE`; per-attempt file `output-<nodeId>-<attempt>.json`.
-3. ✅ P7 path — `<runDir>/run.json`, separate file from logs.
+3. ✅ P7 path — `<worktreePath>/.maister/run.json` (in the agent's worktree cwd; B3 re-freeze), separate file from logs.
 4. ✅ Size-cap — env var `MAISTER_NODE_OUTPUT_MAX_BYTES`, default 256 KiB (deployment-wired).
 5. ✅ Schema grammar — reuse existing `formSchemaSchema` (no ajv); schema declared as a `./path`.
 6. ✅ P7 selector — hardcode "all" now (intent + all node vars + all gate verdicts); knob later.
@@ -359,4 +359,4 @@ All design forks confirmed with the user on 2026-06-07:
 ## Codex adversarial review (pass 2) — dispositions
 - ✅ **SDD artifact missing** → Task 1 creates `.ai-factory/specs/feature-m26-structured-output-run-context.md` as the frozen SSOT.
 - ✅ **Agent execution model undefined** → `## Multiagent Execution Model` section + per-task role rotation + per-phase adversarial checkpoint.
-- ↗ **`flow_graph_layouts` drop (data loss)** → out of M26 scope; tracked as a separate task (M22/ADR-062 working-tree change).
+- ↗ **`flow_graph_layouts` drop (data loss)** → out of M26 scope; tracked as a separate task (M22/ADR-064 working-tree change).

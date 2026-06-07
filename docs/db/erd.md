@@ -698,7 +698,7 @@ external-operation events) is not drawn until its migrations exist. See
 | `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
 | `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind=api_token` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
 | `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
-| `flow_graph_layouts` | — | — | **(Removed — migration `0029`, ADR-062.)** Authored positions moved to the `flow.yaml` `presentation` section. |
+| `flow_graph_layouts` | — | — | **(Removed — migration `0030`, ADR-064.)** Authored positions moved to the `flow.yaml` `presentation` section. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
 | `tasks` | `tasks_id_attempt_uq` | `(id, attempt_number)` UNIQUE | Vacuous today; the designed per-attempt guard is `UNIQUE (task_id, attempt_number)` on `runs`. |
 | `runs` | `runs_project_status_idx` | `(project_id, status)` | Portfolio + per-project queries. |

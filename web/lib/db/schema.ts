@@ -338,7 +338,7 @@ export const flows = pgTable(
 );
 
 // M22 flow-graph layout: authored node positions live in the flow.yaml
-// `presentation` section (ADR-062), NOT a DB store. The dropped
+// `presentation` section (ADR-064), NOT a DB store. The dropped
 // `flow_graph_layouts` table (migration 0024) is reverted in migration 0030.
 
 // M13 (ADR-040): Flow roles are project-scoped routing labels, not RBAC.

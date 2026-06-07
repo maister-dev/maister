@@ -120,7 +120,7 @@ defined as a string union in `web/lib/errors.ts`.
 >   case.
 
 > **M22 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
-> closed union; ADR-062/052/053). The workbench reuses one existing code (`CONFIG`)
+> closed union; ADR-064/052/053). The workbench reuses one existing code (`CONFIG`)
 > at new call sites (all Implemented, M22), plus HTTP-only 404/413/415 statuses that
 > are NOT `MaisterError`s:
 >
@@ -128,7 +128,7 @@ defined as a string union in `web/lib/errors.ts`.
 >   project) when `?path=` fails `repoRelPathSchema` (`..` segment, absolute,
 >   leading `/` or `-`, NUL). Thrown by `web/lib/worktree.ts` (`repoRelPathSchema`).
 >   Names the offending path. (The flow-graph layout `PUT` was removed with the
->   layout store — ADR-062 moves authored layout into `flow.yaml`.)
+>   layout store — ADR-064 moves authored layout into `flow.yaml`.)
 > - **HTTP 404 (bare, NOT a thrown `MaisterError`)**: `GET …/graph` /
 >   `…/graph-status` for a genuinely unknown run, a run with no flow, or no pinned
 >   manifest; the file routes when a validated `?path=` is not in the git-tracked

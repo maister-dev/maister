@@ -4,7 +4,7 @@
 > **workbench**: a flow-graph VIEW with live node-status coloring, a read-only
 > git-tracked file browser, and the base→run diff — all three tracks shipped.
 > Three independent tracks:
-> **A — flow-graph view** ([ADR-062](../decisions.md#adr-062-authored-flow-graph-layout-in-the-flowyaml-presentation-section),
+> **A — flow-graph view** ([ADR-064](../decisions.md#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section),
 > [ADR-052](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch)),
 > **B — file-tree** ([ADR-053](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads)),
 > **C — diff** (reuses M18). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
@@ -17,7 +17,7 @@ execution legible without leaving the control plane. Its boundary is
 **read-only** — it visualizes the compiled flow graph and colors nodes by live
 status (Track A), browses the run/project's **git-tracked** files (Track B), and
 renders the base→branch diff for any run state (Track C). Node positions are
-**authored in the `flow.yaml` `presentation` section** (ADR-062) and read at
+**authored in the `flow.yaml` `presentation` section** (ADR-064) and read at
 render; the view owns **no write** — it never edits node logic or layout (the
 graph *editor* is Wave-3), never mutates run state, and never reads
 untracked/working-copy files.
@@ -33,7 +33,7 @@ state machine is [`runs.md`](runs.md); the worktree it reads is
   `CompiledNode.transitions`).
 - **Authored layout** — entries in the manifest's `presentation.nodes[]`
   (`{ id, x?, y?, width?, height?, color? }`), authored with the flow and shipped
-  in the bundle (ADR-062). `presentationLayout(manifest)` projects entries with
+  in the bundle (ADR-064). `presentationLayout(manifest)` projects entries with
   both coordinates into a `nodeId → {x, y}` map; dagre seeds the rest. No DB
   store, no runtime write. Source: `web/lib/flows/graph/presentation-layout.ts`.
 - **Node-status snapshot** — per node, the highest-`attempt` `node_attempts.status`
@@ -70,7 +70,7 @@ stateDiagram-v2
 ## Layout resolution (authored, read-only)
 
 Layout is not a runtime persistence axis: positions are **authored in
-`flow.yaml`** and read at render (ADR-062). Resolution is a pure merge with no
+`flow.yaml`** and read at render (ADR-064). Resolution is a pure merge with no
 state to transition:
 
 1. dagre computes the baseline for every node;
@@ -157,7 +157,7 @@ flowchart LR
   (gate rollup over `gate_results.status`); a node with no attempt renders
   `Pending`/default.
 - The graph topology is logic-only (`compileManifest`) and carries **no x/y**;
-  authored positions live in the `flow.yaml` `presentation` section (ADR-062),
+  authored positions live in the `flow.yaml` `presentation` section (ADR-064),
   additive and engine-ignored (no `compat`/engine bump, DSL stays logic-only).
 - `presentationLayout(manifest)` positions only nodes whose `presentation` entry
   declares both `x` and `y`; every other node is dagre-seeded at render.
@@ -203,7 +203,7 @@ flowchart LR
 
 - ADRs:
   [ADR-039 renderer](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer),
-  [ADR-062 authored layout](../decisions.md#adr-062-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
+  [ADR-064 authored layout](../decisions.md#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
   (supersedes [ADR-051](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed)),
   [ADR-052 live coloring](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-053 file-tree](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads).
@@ -219,7 +219,7 @@ flowchart LR
 - Related: [`flow-graph.md`](flow-graph.md) (execution model the view renders),
   [`runs.md`](runs.md) (run state / diff), [`workspaces.md`](workspaces.md)
   (worktree the tree reads).
-- Source (Implemented, M22; layout reworked per ADR-062):
+- Source (Implemented, M22; layout reworked per ADR-064):
   `web/lib/queries/flow-graph-view.ts`, `web/lib/queries/run-node-status.ts`,
   `web/lib/flows/graph/presentation-layout.ts`,
   `web/lib/board/flow-graph-view-layout.ts`,

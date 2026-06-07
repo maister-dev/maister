@@ -92,7 +92,7 @@ server action). The column is reusable for admin-forced resets.
   **M22 (ADR-053) adds `readRepoFiles`** (`member`), gating the workbench
   git-tracked file routes — strictly above `readBoard`/`viewer`, so a viewer
   cannot browse source. The flow-graph **view** is read-only (authored layout in
-  `flow.yaml`, ADR-062 — no layout write action). The workbench **diff** stays
+  `flow.yaml`, ADR-064 — no layout write action). The workbench **diff** stays
   `readBoard` (`viewer`, run-scoped).
 - `httpStatusForAuthz(code)` — maps `UNAUTHENTICATED`→401,
   `UNAUTHORIZED`→403 for use in API route error handlers.

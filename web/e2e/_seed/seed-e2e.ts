@@ -749,7 +749,7 @@ const M22_MANIFEST = {
       transitions: { approve: "done", rework: M22_CURRENT_NODE },
     },
   ],
-  // Authored layout (ADR-062): node positions ship in the flow manifest, read
+  // Authored layout (ADR-064): node positions ship in the flow manifest, read
   // by the read-only flow-graph view. There is no runtime layout store.
   presentation: {
     nodes: [
