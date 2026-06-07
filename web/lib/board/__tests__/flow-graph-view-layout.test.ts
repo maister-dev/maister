@@ -27,9 +27,48 @@ import {
 function sampleTopology(): GraphTopology {
   return {
     nodes: [
-      { id: "plan", nodeType: "ai_coding", label: "plan" },
-      { id: "implement", nodeType: "ai_coding", label: "implement" },
-      { id: "review", nodeType: "human", label: "review" },
+      {
+        id: "plan",
+        nodeType: "ai_coding",
+        label: "plan",
+        displayLabel: "Plan",
+        nodeTypeLabel: "Agent",
+        nodeRole: "agent",
+        declaredGateSummary: {
+          total: 0,
+          blocking: 0,
+          advisory: 0,
+          kinds: [],
+        },
+      },
+      {
+        id: "implement",
+        nodeType: "ai_coding",
+        label: "implement",
+        displayLabel: "Implement",
+        nodeTypeLabel: "Agent",
+        nodeRole: "agent",
+        declaredGateSummary: {
+          total: 2,
+          blocking: 1,
+          advisory: 1,
+          kinds: ["command_check", "skill_check"],
+        },
+      },
+      {
+        id: "review",
+        nodeType: "human",
+        label: "review",
+        displayLabel: "Review",
+        nodeTypeLabel: "Human review",
+        nodeRole: "human",
+        declaredGateSummary: {
+          total: 0,
+          blocking: 0,
+          advisory: 0,
+          kinds: [],
+        },
+      },
     ],
     edges: [
       {
@@ -37,21 +76,35 @@ function sampleTopology(): GraphTopology {
         source: "plan",
         target: "implement",
         outcome: "default",
+        displayLabel: "Default",
+        edgeRole: "default",
       },
       {
         id: "implement:default",
         source: "implement",
         target: "review",
         outcome: "default",
+        displayLabel: "Default",
+        edgeRole: "default",
       },
       {
         id: "review:reject",
         source: "review",
         target: "plan",
         outcome: "reject",
+        displayLabel: "Reject",
+        edgeRole: "reject",
+      },
+      {
+        id: "review:custom_exit",
+        source: "review",
+        target: "implement",
+        outcome: "custom_exit",
+        displayLabel: "Custom exit",
+        edgeRole: "other",
       },
     ],
-  };
+  } as unknown as GraphTopology;
 }
 
 describe("toFlowGraphView — base nodes/edges", () => {
@@ -69,6 +122,23 @@ describe("toFlowGraphView — base nodes/edges", () => {
 
     expect(data.label).toBe("plan");
     expect(data.nodeType).toBe("ai_coding");
+  });
+
+  it("carries visual node metadata in React Flow data", () => {
+    const topology = sampleTopology();
+    const { nodes } = toFlowGraphView(topology, {});
+    const implement = nodes.find((n) => n.id === "implement");
+    const data = implement?.data as Record<string, unknown>;
+
+    expect(data.displayLabel).toBe("Implement");
+    expect(data.nodeTypeLabel).toBe("Agent");
+    expect(data.nodeRole).toBe("agent");
+    expect(data.declaredGateSummary).toEqual({
+      total: 2,
+      blocking: 1,
+      advisory: 1,
+      kinds: ["command_check", "skill_check"],
+    });
   });
 
   it("maps every topology edge preserving id/source/target and carrying {outcome} in data", () => {
@@ -89,6 +159,30 @@ describe("toFlowGraphView — base nodes/edges", () => {
         (mapped?.data as Record<string, unknown> | undefined)?.outcome,
       ).toBe(src.outcome);
     }
+  });
+
+  it("carries visual edge metadata and styles review-loop edges", () => {
+    const topology = sampleTopology();
+    const { edges } = toFlowGraphView(topology, {});
+    const reject = edges.find((e) => e.id === "review:reject");
+    const data = reject?.data as Record<string, unknown>;
+
+    expect(data.displayLabel).toBe("Reject");
+    expect(data.edgeRole).toBe("reject");
+    expect(reject?.animated).toBe(true);
+    expect(reject?.className).toContain("flow-edge--reject");
+  });
+
+  it("keeps custom/unknown outcome metadata without throwing", () => {
+    const topology = sampleTopology();
+    const { edges } = toFlowGraphView(topology, {});
+    const custom = edges.find((e) => e.id === "review:custom_exit");
+    const data = custom?.data as Record<string, unknown>;
+
+    expect(data.displayLabel).toBe("Custom exit");
+    expect(data.edgeRole).toBe("other");
+    expect(custom?.source).toBe("review");
+    expect(custom?.target).toBe("implement");
   });
 });
 

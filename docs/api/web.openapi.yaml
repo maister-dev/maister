@@ -1788,11 +1788,11 @@ paths:
       summary: Implemented (M22) — flow-graph topology + authored layout
       description: |
         Requires project membership at `viewer` or above (`readBoard`). Compiles
-        the run's pinned manifest into a logic-only topology (nodes + edges, no
-        x/y) and returns the authored layout from the manifest `presentation`
-        section (ADR-064), as a `nodeId → {x,y}` map. `runId` is the url-param;
-        `projectId`/`flow_id`/pinned manifest are server-state. dagre seeds
-        positions client-side; authored positions merge on top.
+        x/y) plus additive visual metadata, and returns the authored layout from
+        the manifest `presentation` section (ADR-064), as a `nodeId → {x,y}`
+        map. `runId` is the url-param; `projectId`/`flow_id`/pinned manifest are
+        server-state. dagre seeds positions client-side; authored positions merge
+        on top.
       operationId: getRunGraph
       parameters:
         - name: runId
@@ -1819,9 +1819,10 @@ paths:
       description: |
         Requires project membership at `viewer` or above (`readBoard`). Returns
         the highest-`attempt` `node_attempts.status` per node, a gate rollup over
-        `gate_results.status`, and `runs.current_step_id` + `runs.status`. The
-        client refetches this ONLY on an SSE event tick (debounced), never on a
-        timer, and stops once the run is terminal (ADR-052 — no polling).
+        `gate_results.status`, additive runtime gate-summary counts, and
+        `runs.current_step_id` + `runs.status`. The client refetches this ONLY on
+        an SSE event tick (debounced), never on a timer, and stops once the run is
+        terminal (ADR-052 — no polling).
       operationId: getRunGraphStatus
       parameters:
         - name: runId
@@ -5121,6 +5122,17 @@ components:
           type: string
           enum: [ai_coding, cli, check, judge, human, guard]
         label: { type: string }
+        displayLabel:
+          type: string
+          description: Human-readable label derived from the node id; additive.
+        nodeTypeLabel:
+          type: string
+          description: Human-readable node type label; additive.
+        nodeRole:
+          type: string
+          enum: [agent, command, check, judge, human, terminal, other]
+        declaredGateSummary:
+          $ref: "#/components/schemas/DeclaredGateSummary"
     GraphTopologyEdge:
       type: object
       required: [id, source, target, outcome]
@@ -5129,6 +5141,22 @@ components:
         source: { type: string }
         target: { type: string }
         outcome: { type: string }
+        displayLabel:
+          type: string
+          description: Human-readable outcome label; additive.
+        edgeRole:
+          type: string
+          enum: [success, default, rework, reject, takeover, approve, other]
+    DeclaredGateSummary:
+      type: object
+      required: [total, blocking, advisory, kinds]
+      properties:
+        total: { type: integer, minimum: 0 }
+        blocking: { type: integer, minimum: 0 }
+        advisory: { type: integer, minimum: 0 }
+        kinds:
+          type: array
+          items: { type: string }
     GraphNodePosition:
       type: object
       required: [x, y]
@@ -5159,6 +5187,21 @@ components:
         rollup:
           type: string
           description: Worst-blocking gate rollup driving the node badge tint.
+        gateSummary:
+          $ref: "#/components/schemas/RuntimeGateSummary"
+    RuntimeGateSummary:
+      type: object
+      required: [total, blockingTotal, advisoryTotal, worstBlockingStatus, failedBlocking, staleBlocking]
+      properties:
+        total: { type: integer, minimum: 0 }
+        blockingTotal: { type: integer, minimum: 0 }
+        advisoryTotal: { type: integer, minimum: 0 }
+        worstBlockingStatus:
+          type: string
+          nullable: true
+          enum: [pending, running, passed, failed, stale, skipped, overridden, null]
+        failedBlocking: { type: integer, minimum: 0 }
+        staleBlocking: { type: integer, minimum: 0 }
     GraphGateStatus:
       type: object
       required: [blocking, status]

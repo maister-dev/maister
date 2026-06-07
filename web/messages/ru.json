@@ -594,6 +594,10 @@
       "title": "Граф потока",
       "empty": "Для этого запуска нет графа потока.",
       "currentNode": "Текущий узел",
+      "saveError": "Не удалось сохранить позицию узла.",
+      "declaredGateSummary": "{count} объявленных проверок",
+      "gateSummary": "{count} проверок",
+      "blockingGateSummary": "{count} блокирующих",
       "node": {
         "Pending": "В ожидании",
         "Running": "Выполняется",
@@ -602,6 +606,24 @@
         "NeedsInput": "Нужен ввод",
         "Reworked": "Переделано",
         "Stale": "Устарело"
+      },
+      "role": {
+        "agent": "Агент",
+        "command": "Команда",
+        "check": "Проверка",
+        "judge": "Оценка",
+        "human": "Ревью",
+        "terminal": "Финал",
+        "other": "Другое"
+      },
+      "edge": {
+        "success": "Успех",
+        "default": "По умолчанию",
+        "rework": "Переделка",
+        "reject": "Отклонить",
+        "takeover": "Забрать",
+        "approve": "Одобрить",
+        "other": "Другое"
       }
     },
     "files": {

@@ -28,17 +28,20 @@ state machine is [`runs.md`](runs.md); the worktree it reads is
 ## Domain entities
 
 - **Graph topology** — the logic-only graph from `compileManifest(pinnedManifest)`:
-  nodes (`id`, `nodeType`, `label`) + edges (`source`, `target`, `outcome`),
-  with **no x/y**. Source: `web/lib/flows/graph/compile.ts` (`FlowGraph`,
-  `CompiledNode.transitions`).
+  nodes (`id`, `nodeType`, `label`, additive display metadata) + edges
+  (`source`, `target`, `outcome`, additive display metadata), with **no x/y**.
+  Source: `web/lib/flows/graph/compile.ts` (`FlowGraph`,
+  `CompiledNode.transitions`) through `buildGraphTopology`.
 - **Authored layout** — entries in the manifest's `presentation.nodes[]`
   (`{ id, x?, y?, width?, height?, color? }`), authored with the flow and shipped
   in the bundle (ADR-064). `presentationLayout(manifest)` projects entries with
   both coordinates into a `nodeId → {x, y}` map; dagre seeds the rest. No DB
   store, no runtime write. Source: `web/lib/flows/graph/presentation-layout.ts`.
 - **Node-status snapshot** — per node, the highest-`attempt` `node_attempts.status`
-  + a gate rollup over `gate_results.status`, plus `runs.current_step_id`. Read
-  model only; no new column. Source: `getRunTimeline` (`web/lib/queries/run.ts`).
+  + a gate rollup over `gate_results.status`, plus `runs.current_step_id`. It
+  also carries additive runtime gate-summary counts derived from the same gate
+  list. Read model only; no new column. Source: `getRunTimeline`
+  (`web/lib/queries/run.ts`) through `getRunNodeStatuses`.
 - **Tracked file node** — a one-level `git ls-tree` entry (`name`,
   `type: file|dir`) under a server-resolved `ref`; never a raw `fs` entry.
 - **Tracked blob** — a `git cat-file` read result:
@@ -156,6 +159,13 @@ flowchart LR
 - Node color is the **highest-`attempt` `node_attempts.status`** for each `node_id`
   (gate rollup over `gate_results.status`); a node with no attempt renders
   `Pending`/default.
+- Static graph display metadata is additive and derived from the pinned manifest:
+  `displayLabel`, `nodeTypeLabel`, `nodeRole`, and `declaredGateSummary` on
+  nodes; `displayLabel` and `edgeRole` on edges. The compatibility fields
+  (`id`, `nodeType`, `label`, `source`, `target`, `outcome`) stay stable.
+- Runtime gate display metadata stays in `…/graph-status`, not topology:
+  `gateSummary` counts total/blocking/advisory gates and exposes the worst
+  blocking status used by the existing rollup. No per-node API calls are allowed.
 - The graph topology is logic-only (`compileManifest`) and carries **no x/y**;
   authored positions live in the `flow.yaml` `presentation` section (ADR-064),
   additive and engine-ignored (no `compat`/engine bump, DSL stays logic-only).

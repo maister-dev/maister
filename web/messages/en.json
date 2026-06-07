@@ -594,6 +594,10 @@
       "title": "Flow graph",
       "empty": "No flow graph for this run.",
       "currentNode": "Current node",
+      "saveError": "Could not save the node position.",
+      "declaredGateSummary": "{count} declared gates",
+      "gateSummary": "{count} gates",
+      "blockingGateSummary": "{count} blocking",
       "node": {
         "Pending": "Pending",
         "Running": "Running",
@@ -602,6 +606,24 @@
         "NeedsInput": "Needs input",
         "Reworked": "Reworked",
         "Stale": "Stale"
+      },
+      "role": {
+        "agent": "Agent",
+        "command": "Command",
+        "check": "Check",
+        "judge": "Judge",
+        "human": "Human review",
+        "terminal": "Terminal",
+        "other": "Other"
+      },
+      "edge": {
+        "success": "Success",
+        "default": "Default",
+        "rework": "Rework",
+        "reject": "Reject",
+        "takeover": "Takeover",
+        "approve": "Approve",
+        "other": "Custom"
       }
     },
     "files": {

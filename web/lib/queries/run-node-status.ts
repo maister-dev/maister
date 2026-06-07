@@ -24,11 +24,21 @@ export interface GraphGateStatus {
   status: string;
 }
 
+export interface RuntimeGateSummary {
+  total: number;
+  blockingTotal: number;
+  advisoryTotal: number;
+  worstBlockingStatus: string | null;
+  failedBlocking: number;
+  staleBlocking: number;
+}
+
 export interface GraphNodeStatus {
   status: string;
   attempt: number;
   gates: GraphGateStatus[];
   rollup: string;
+  gateSummary: RuntimeGateSummary;
 }
 
 export interface RunNodeStatuses {
@@ -63,6 +73,21 @@ function blockingRollup(gates: GraphGateStatus[]): string {
   }
 
   return worst ?? "none";
+}
+
+function gateSummary(gates: GraphGateStatus[]): RuntimeGateSummary {
+  const blocking = gates.filter((gate) => gate.blocking);
+  const worstBlockingStatus = blockingRollup(gates);
+
+  return {
+    total: gates.length,
+    blockingTotal: blocking.length,
+    advisoryTotal: gates.length - blocking.length,
+    worstBlockingStatus:
+      worstBlockingStatus === "none" ? null : worstBlockingStatus,
+    failedBlocking: blocking.filter((gate) => gate.status === "failed").length,
+    staleBlocking: blocking.filter((gate) => gate.status === "stale").length,
+  };
 }
 
 function highestAttemptByNode(
@@ -105,6 +130,7 @@ export async function getRunNodeStatuses(
       attempt: entry.attempt,
       gates,
       rollup: blockingRollup(gates),
+      gateSummary: gateSummary(gates),
     };
   }
 

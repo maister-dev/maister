@@ -161,6 +161,65 @@ describe("getRunNodeStatuses — gate rollup (worst blocking)", () => {
   });
 });
 
+describe("getRunNodeStatuses — runtime gate summary", () => {
+  it("counts total, blocking, advisory, failed blocking, and stale blocking gates", async () => {
+    mockTimeline([
+      entry({
+        nodeId: "checks",
+        gates: [
+          gate({ mode: "blocking", status: "failed" }),
+          gate({ mode: "blocking", status: "stale" }),
+          gate({ mode: "advisory", status: "failed" }),
+        ],
+      }),
+    ]);
+
+    const result = await getRunNodeStatuses("run-1");
+
+    expect(result.nodes.checks.gateSummary).toEqual({
+      total: 3,
+      blockingTotal: 2,
+      advisoryTotal: 1,
+      worstBlockingStatus: "failed",
+      failedBlocking: 1,
+      staleBlocking: 1,
+    });
+  });
+
+  it("uses the existing rollup priority for worstBlockingStatus", async () => {
+    mockTimeline([
+      entry({
+        nodeId: "checks",
+        gates: [
+          gate({ mode: "blocking", status: "passed" }),
+          gate({ mode: "blocking", status: "running" }),
+          gate({ mode: "blocking", status: "stale" }),
+        ],
+      }),
+    ]);
+
+    const result = await getRunNodeStatuses("run-1");
+
+    expect(result.nodes.checks.rollup).toBe("stale");
+    expect(result.nodes.checks.gateSummary.worstBlockingStatus).toBe("stale");
+  });
+
+  it("returns a stable zero summary for nodes without gates", async () => {
+    mockTimeline([entry({ nodeId: "plan", gates: [] })]);
+
+    const result = await getRunNodeStatuses("run-1");
+
+    expect(result.nodes.plan.gateSummary).toEqual({
+      total: 0,
+      blockingTotal: 0,
+      advisoryTotal: 0,
+      worstBlockingStatus: null,
+      failedBlocking: 0,
+      staleBlocking: 0,
+    });
+  });
+});
+
 describe("getRunNodeStatuses — gate blocking flag", () => {
   it("derives gate.blocking from mode === 'blocking'", async () => {
     mockTimeline([

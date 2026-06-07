@@ -22,18 +22,48 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { FlowNodeBody } from "@/components/board/flow-graph-view";
+import {
+  FlowEdgeLabel,
+  FlowNodeBody,
+  applyFlowGraphStatusSnapshot,
+  resolveFlowEdgeLabel,
+} from "@/components/board/flow-graph-view";
 
 type FlowNodeBodyProps = {
   label: string;
+  displayLabel?: string;
+  nodeTypeLabel?: string;
+  nodeRole?: string;
   status: string;
   isCurrent: boolean;
   rollup: string;
-  labels: { currentNode: string };
+  declaredGateSummary?: {
+    total: number;
+    blocking: number;
+    advisory: number;
+    kinds: string[];
+  };
+  runtimeGateSummary?: {
+    total: number;
+    blockingTotal: number;
+    advisoryTotal: number;
+    worstBlockingStatus: string | null;
+    failedBlocking: number;
+    staleBlocking: number;
+  };
+  labels: {
+    currentNode: string;
+    gateSummary?: string;
+    blockingGateSummary?: string;
+    declaredGateSummary?: string;
+  };
 };
 
 const baseLabels: FlowNodeBodyProps["labels"] = {
   currentNode: "Current node",
+  gateSummary: "{count} gates",
+  blockingGateSummary: "{count} blocking",
+  declaredGateSummary: "{count} declared gates",
 };
 
 function render(props: FlowNodeBodyProps): string {
@@ -68,6 +98,57 @@ describe("FlowNodeBody — node status rendering", () => {
 
     expect(html).toContain('data-node-status="Succeeded"');
     expect(html).toContain("chip--success");
+  });
+});
+
+describe("FlowNodeBody — visual graph metadata", () => {
+  it("renders display label and node type label instead of only the raw node id", () => {
+    const html = render({
+      label: "implement-work",
+      displayLabel: "Implement work",
+      nodeTypeLabel: "Agent",
+      nodeRole: "agent",
+      status: "Running",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    expect(html).toContain("Implement work");
+    expect(html).toContain("Agent");
+    expect(html).toContain('data-node-role="agent"');
+  });
+
+  it("renders declared and runtime gate summaries visibly", () => {
+    const html = render({
+      label: "checks",
+      displayLabel: "Checks",
+      nodeTypeLabel: "Check",
+      nodeRole: "check",
+      status: "Failed",
+      isCurrent: false,
+      rollup: "failed",
+      declaredGateSummary: {
+        total: 2,
+        blocking: 1,
+        advisory: 1,
+        kinds: ["command_check", "skill_check"],
+      },
+      runtimeGateSummary: {
+        total: 2,
+        blockingTotal: 1,
+        advisoryTotal: 1,
+        worstBlockingStatus: "failed",
+        failedBlocking: 1,
+        staleBlocking: 0,
+      },
+      labels: baseLabels,
+    });
+
+    expect(html).toContain("2 declared gates");
+    expect(html).toContain("2 gates");
+    expect(html).toContain("1 blocking");
+    expect(html).toContain('data-testid="gate-rollup"');
   });
 });
 
@@ -153,5 +234,58 @@ describe("FlowNodeBody — current-node emphasis", () => {
 
     expect(html).toContain('data-current="false"');
     expect(html).not.toContain("aria-current");
+  });
+});
+
+describe("FlowEdgeLabel — visual edge metadata", () => {
+  it("renders the edge label with role-specific data attributes", () => {
+    const html = renderToStaticMarkup(
+      createElement(FlowEdgeLabel, {
+        label: "Rework",
+        edgeRole: "rework",
+      }),
+    );
+
+    expect(html).toContain("Rework");
+    expect(html).toContain('data-edge-role="rework"');
+    expect(html).toContain('data-testid="flow-edge-label"');
+  });
+
+  it("prefers the custom display label for unknown edge roles", () => {
+    const label = resolveFlowEdgeLabel(
+      {
+        edge: {
+          other: "Other",
+        },
+      },
+      {
+        displayLabel: "Custom exit",
+        edgeRole: "other",
+        outcome: "custom_exit",
+      },
+      "review:custom_exit",
+    );
+
+    expect(label).toBe("Custom exit");
+  });
+});
+
+describe("FlowGraphView runtime snapshot state", () => {
+  it("updates the local run status from graph-status snapshots", () => {
+    const next = applyFlowGraphStatusSnapshot(
+      {
+        currentStep: "implement",
+        runStatus: "Running",
+        statuses: {},
+      },
+      {
+        currentStepId: null,
+        runStatus: "Done",
+        nodes: {},
+      },
+    );
+
+    expect(next.runStatus).toBe("Done");
+    expect(next.currentStep).toBeNull();
   });
 });

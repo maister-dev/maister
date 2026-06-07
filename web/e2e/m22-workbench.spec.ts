@@ -11,7 +11,9 @@
 // Asserted, deterministic, supervisor-independent outcomes:
 //   1. graph    — /runs/<id> (default ?wb=graph) renders the flow-graph view;
 //      the `plan` node reflects its seeded Succeeded status; the current node
-//      (`implement`) carries data-current="true".
+//      (`implement`) carries data-current="true"; node role labels, declared
+//      gate summaries, runtime gate summaries, and rework edge labels are
+//      visible for the seeded graph.
 //   2. layout   — GET /graph returns the authored layout from the flow.yaml
 //      presentation section (ADR-064); the removed PUT /graph/layout is 404.
 //   3. files    — ?wb=files lists tracked files; expanding `src` reveals its
@@ -83,6 +85,33 @@ test("flow-graph view renders node statuses and the current-node emphasis", asyn
   // The current node (`implement` = current_step_id) carries data-current.
   await expect(
     page.locator('[data-testid="flow-node"][data-current="true"]'),
+  ).toBeVisible();
+
+  await expect(page.locator('[data-node-role="agent"]').first()).toContainText(
+    "Agent",
+  );
+  await expect(page.locator('[data-node-role="check"]').first()).toContainText(
+    "Check",
+  );
+  await expect(
+    page.locator('[data-testid="declared-gate-summary"]', {
+      hasText: "1 declared gates",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-testid="runtime-gate-summary"]', {
+      hasText: "1 gates",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-testid="blocking-gate-summary"]', {
+      hasText: "1 blocking",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-testid="flow-edge-label"][data-edge-role="rework"]', {
+      hasText: "Rework",
+    }),
   ).toBeVisible();
 });
 

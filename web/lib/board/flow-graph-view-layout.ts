@@ -1,4 +1,9 @@
-import type { GraphTopology } from "@/lib/queries/flow-graph-view";
+import type {
+  DeclaredGateSummary,
+  GraphEdgeRole,
+  GraphNodeRole,
+  GraphTopology,
+} from "@/lib/queries/flow-graph-view";
 import type { Edge, Node } from "@xyflow/react";
 
 import {
@@ -53,11 +58,32 @@ export function colorForNodeStatus(
 export type FlowNodeData = {
   label: string;
   nodeType: string;
+  displayLabel: string;
+  nodeTypeLabel: string;
+  nodeRole: GraphNodeRole;
+  declaredGateSummary: DeclaredGateSummary;
 };
 
 export type FlowEdgeData = {
   outcome: string;
+  displayLabel: string;
+  edgeRole: GraphEdgeRole;
 };
+
+function edgeClassName(role: GraphEdgeRole): string | undefined {
+  switch (role) {
+    case "rework":
+    case "reject":
+    case "takeover":
+      return `flow-edge--${role}`;
+    default:
+      return undefined;
+  }
+}
+
+function edgeAnimated(role: GraphEdgeRole): boolean {
+  return role === "rework" || role === "reject" || role === "takeover";
+}
 
 // Map the server graph topology onto React Flow nodes/edges, run the dagre LR
 // baseline, then apply stored layout overrides on top (override x/y wins;
@@ -68,7 +94,14 @@ export function toFlowGraphView(
   layoutOverrides: Record<string, { x: number; y: number }>,
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = topology.nodes.map((n) => {
-    const data: FlowNodeData = { label: n.label, nodeType: n.nodeType };
+    const data: FlowNodeData = {
+      label: n.label,
+      nodeType: n.nodeType,
+      displayLabel: n.displayLabel,
+      nodeTypeLabel: n.nodeTypeLabel,
+      nodeRole: n.nodeRole,
+      declaredGateSummary: n.declaredGateSummary,
+    };
 
     return {
       id: n.id,
@@ -81,13 +114,21 @@ export function toFlowGraphView(
   });
 
   const edges: Edge[] = topology.edges.map((e) => {
-    const data: FlowEdgeData = { outcome: e.outcome };
+    const data: FlowEdgeData = {
+      outcome: e.outcome,
+      displayLabel: e.displayLabel,
+      edgeRole: e.edgeRole,
+    };
+    const className = edgeClassName(e.edgeRole);
 
     return {
       id: e.id,
       source: e.source,
       target: e.target,
+      type: "flowEdge",
       data: data as unknown as Record<string, unknown>,
+      ...(edgeAnimated(e.edgeRole) ? { animated: true } : {}),
+      ...(className ? { className } : {}),
     };
   });
 

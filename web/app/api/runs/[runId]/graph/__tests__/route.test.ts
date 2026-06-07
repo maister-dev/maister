@@ -41,9 +41,31 @@ vi.mock("@/lib/flows/graph/compile", () => ({
 }));
 
 const TOPOLOGY = {
-  nodes: [{ id: "plan", nodeType: "ai_coding", label: "plan" }],
+  nodes: [
+    {
+      id: "plan",
+      nodeType: "ai_coding",
+      label: "plan",
+      displayLabel: "Plan",
+      nodeTypeLabel: "Agent",
+      nodeRole: "agent",
+      declaredGateSummary: {
+        total: 1,
+        blocking: 1,
+        advisory: 0,
+        kinds: ["command_check"],
+      },
+    },
+  ],
   edges: [
-    { id: "plan:success", source: "plan", target: "done", outcome: "success" },
+    {
+      id: "plan:success",
+      source: "plan",
+      target: "done",
+      outcome: "success",
+      displayLabel: "Success",
+      edgeRole: "success",
+    },
   ],
 };
 const LAYOUT = { plan: { x: 10, y: 20 } };

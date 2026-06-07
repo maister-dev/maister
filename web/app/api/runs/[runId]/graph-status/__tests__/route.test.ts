@@ -36,12 +36,33 @@ const SNAPSHOT = {
   currentStepId: "review",
   runStatus: "NeedsInput",
   nodes: {
-    implement: { status: "Succeeded", attempt: 2, gates: [], rollup: "none" },
+    implement: {
+      status: "Succeeded",
+      attempt: 2,
+      gates: [],
+      rollup: "none",
+      gateSummary: {
+        total: 0,
+        blockingTotal: 0,
+        advisoryTotal: 0,
+        worstBlockingStatus: null,
+        failedBlocking: 0,
+        staleBlocking: 0,
+      },
+    },
     review: {
       status: "NeedsInput",
       attempt: 1,
       gates: [{ blocking: true, status: "passed" }],
       rollup: "passed",
+      gateSummary: {
+        total: 1,
+        blockingTotal: 1,
+        advisoryTotal: 0,
+        worstBlockingStatus: "passed",
+        failedBlocking: 0,
+        staleBlocking: 0,
+      },
     },
   },
 };
