@@ -8,6 +8,8 @@ import type { Dispatch, ReactElement, SetStateAction } from "react";
 
 import { useMemo, useState } from "react";
 
+import { CodeEditor } from "./code-editor";
+
 const PACKAGE_FILE_KINDS: readonly AuthoredFlowPackageFileKind[] = [
   "asset",
   "skill",
@@ -108,23 +110,23 @@ export function PackageFilesEditor({
             )}
           </div>
 
-          <label className="mt-3 grid gap-1.5">
+          <div className="mt-3 grid gap-1.5">
             <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-mute">
               {labels.content}
             </span>
-            <textarea
-              className="min-h-[150px] resize-y rounded-md border border-line bg-paper px-3 py-2 font-mono text-[12px] leading-[1.5] text-ink outline-none focus:border-amber disabled:opacity-70"
-              disabled={disabled}
-              spellCheck={false}
+            <CodeEditor
+              ariaLabel={`${labels.content}: ${file.path}`}
+              kind={file.kind}
+              readOnly={disabled}
               value={file.content}
-              onChange={(event) => {
+              onChange={(next) => {
                 updateFile(setDraftFiles, index, {
                   ...file,
-                  content: event.target.value,
+                  content: next,
                 });
               }}
             />
-          </label>
+          </div>
         </div>
       ))}
 

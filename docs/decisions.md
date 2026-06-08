@@ -4041,9 +4041,11 @@ Monaco is rejected for the current surfaces (see Alternatives).
 - **Authored-Flow editing — CodeMirror 6** (`@uiw/react-codemirror`, dynamic
   `ssr:false`) replaces the `<textarea>`s. Per-kind language (yaml / json /
   markdown+frontmatter / shell). "Smart" editing = inline validation (a
-  `@codemirror/lint` source reusing the existing `validateAuthoredFlowPackageBody`
-  validator) + context autocomplete (step types `cli|agent|guard|human`, runner
-  names, known frontmatter/tool keys).
+  **client-side** `@codemirror/lint` source — `validateAuthoredFlowPackageBody`
+  is `server-only`, so the lint reuses its client-safe primitives `parseYaml`
+  (precise YAML line markers) + `flowYamlV1Schema` (file-level schema issues);
+  graph/digest validation stays server-side on save) + context autocomplete
+  (step types `cli|agent|guard|human`, runner names, known frontmatter/tool keys).
 - **Single Shiki major — `shiki@4`.** The read-view and the diff share `shiki@4`
   (it dropped legacy Node support — smaller and more stable), run server-side
   only. The diff plugs Shiki in through a thin custom `DiffHighlighter` adapter

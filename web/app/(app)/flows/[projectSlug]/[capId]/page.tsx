@@ -12,6 +12,7 @@ import {
   publishAuthoredFlowAction,
   updateAuthoredFlowAction,
 } from "@/app/(app)/flows/actions";
+import { CodeEditor } from "@/components/flows/code-editor";
 import {
   PackageFilesEditor,
   type PackageFilesEditorLabels,
@@ -119,18 +120,18 @@ export default async function FlowDetailPage({
               />
             </label>
 
-            <label className="grid gap-1.5">
+            <div className="grid gap-1.5">
               <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-mute">
                 flow.yaml
               </span>
-              <textarea
-                className="min-h-[620px] resize-y rounded-lg border border-line bg-ivory px-3 py-3 font-mono text-[12px] leading-[1.55] text-ink outline-none focus:border-amber disabled:opacity-70"
-                defaultValue={flowYaml}
-                disabled={!canManage}
+              <CodeEditor
+                ariaLabel={t("editor.flowYamlAria")}
+                kind="flow"
                 name="flowYaml"
-                spellCheck={false}
+                readOnly={!canManage}
+                value={flowYaml}
               />
-            </label>
+            </div>
 
             <section className="mt-4">
               <h2 className="m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-mute">

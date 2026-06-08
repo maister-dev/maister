@@ -141,6 +141,13 @@
       "notReady": "Не готово",
       "ready": "Готово"
     },
+    "editor": {
+      "flowYamlAria": "Редактор flow.yaml",
+      "yamlError": "Синтаксическая ошибка YAML",
+      "jsonError": "Синтаксическая ошибка JSON",
+      "schemaError": "Ошибка схемы манифеста",
+      "validating": "Проверка"
+    },
     "packageFileKind": {
       "asset": "Файл",
       "agent_definition": "Профиль агента",

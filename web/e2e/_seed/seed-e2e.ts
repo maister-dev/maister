@@ -3503,6 +3503,113 @@ async function seedM23Fixture(
   };
 }
 
+// --- flows-authoring fixture: a DRAFT authored Flow capability to open in the
+// CodeMirror editor (ADR-066 Phase 3). No real repo/worktree — the editor reads
+// `body.flowYaml` straight from the revision row. The page resolves `capId`
+// against `authored_capabilities.id`, scoped to the project.
+
+const FLOWS_AUTHORING_SLUG = "e2e-flows-authoring";
+const FLOWS_AUTHORING_CAP_SLUG = "e2e-authoring-flow";
+
+const FLOWS_AUTHORING_FLOW_YAML = `schemaVersion: 1
+name: E2E Authoring Flow
+steps:
+  - id: plan
+    type: agent
+    mode: new-session
+    prompt: "/aif-plan {{ task.prompt }}"
+`;
+
+type FlowsAuthoringFixtureRecord = {
+  projectSlug: string;
+  capId: string;
+  capSlug: string;
+};
+
+async function seedFlowsAuthoringFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FlowsAuthoringFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    member: randomUUID(),
+    cap: randomUUID(),
+    revision: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const body = {
+    flowYaml: FLOWS_AUTHORING_FLOW_YAML,
+    manifest: null,
+    packageMetadata: {
+      slug: FLOWS_AUTHORING_CAP_SLUG,
+      name: "E2E Authoring Flow",
+      versionLabel: "none",
+    },
+    files: [],
+    validation: {
+      status: "valid",
+      issueCount: 0,
+      issues: [],
+      manifestDigest: null,
+      contentHash: null,
+    },
+  };
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [
+    FLOWS_AUTHORING_SLUG,
+  ]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      FLOWS_AUTHORING_SLUG,
+      "MAIster E2E Flows Authoring",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  await pool.query(
+    `INSERT INTO authored_capabilities
+       (id, project_id, kind, slug, title, lifecycle, draft_version,
+        current_draft_revision_id)
+     VALUES ($1, $2, 'flow', $3, $4, 'DRAFT', 1, $5)`,
+    [
+      ids.cap,
+      ids.project,
+      FLOWS_AUTHORING_CAP_SLUG,
+      "E2E Authoring Flow",
+      ids.revision,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO authored_capability_revisions
+       (id, capability_id, project_id, kind, revision_number, lifecycle,
+        draft_version, title, body, manifest, schema_version, content_hash)
+     VALUES ($1, $2, $3, 'flow', 1, 'DRAFT', 1, $4, $5::jsonb, NULL, 1, $6)`,
+    [
+      ids.revision,
+      ids.cap,
+      ids.project,
+      "E2E Authoring Flow",
+      JSON.stringify(body),
+      "e2e0000000000000000000000000000000000000000000000000000000000000",
+    ],
+  );
+
+  return {
+    projectSlug: FLOWS_AUTHORING_SLUG,
+    capId: ids.cap,
+    capSlug: FLOWS_AUTHORING_CAP_SLUG,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -3531,6 +3638,7 @@ async function main(): Promise<void> {
         M16_SLUG,
         M18_SLUG,
         M22_SLUG,
+        FLOWS_AUTHORING_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -3672,6 +3780,7 @@ async function main(): Promise<void> {
     const m18 = await seedM18Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
     const m23 = await seedM23Fixture(pool, admin.id);
+    const flowsAuthoring = await seedFlowsAuthoringFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -3715,6 +3824,7 @@ async function main(): Promise<void> {
         m18,
         m22,
         m23,
+        flowsAuthoring,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -3734,7 +3844,8 @@ async function main(): Promise<void> {
         `, m17 proj1 ${m17.project1RunId} proj2 ${m17.project2RunId} (${M17_PROJECT1_SLUG}, ${M17_PROJECT2_SLUG})` +
         `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
         `, m22 run ${m22.runId} (${M22_SLUG})` +
-        `, m23 project ${m23.projectSlug}`,
+        `, m23 project ${m23.projectSlug}` +
+        `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})`,
     );
   } finally {
     await pool.end();

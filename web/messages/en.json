@@ -141,6 +141,13 @@
       "notReady": "Not ready",
       "ready": "Ready"
     },
+    "editor": {
+      "flowYamlAria": "flow.yaml editor",
+      "yamlError": "YAML syntax error",
+      "jsonError": "JSON syntax error",
+      "schemaError": "Manifest schema error",
+      "validating": "Validating"
+    },
     "packageFileKind": {
       "asset": "Asset",
       "agent_definition": "Agent definition",
