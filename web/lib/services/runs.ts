@@ -21,6 +21,10 @@ import {
   resolveRunner,
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
+import {
+  copyBundleArtifactsToWorktree,
+  writeAiFactoryConfigOverride,
+} from "@/lib/capabilities/materialize-bundle";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -46,6 +50,7 @@ import {
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
+  capabilityImports,
   capabilityRecords,
   flowRevisions,
   flowRunnerRemaps,
@@ -577,6 +582,39 @@ export async function launchRun(
   });
 
   try {
+    // Deliver AIF capability bundles into the fresh worktree's .claude/ and
+    // write the per-run .ai-factory/config.yaml git-ownership override. Gated
+    // on >=1 Installed import so non-AIF projects never get a stray config.
+    // A failure here lands in the catch below → worktree compensation + abort.
+    const installedImports = await _db
+      .select({ installedPath: capabilityImports.installedPath })
+      .from(capabilityImports)
+      .where(
+        and(
+          eq(capabilityImports.projectId, project.id),
+          eq(capabilityImports.packageStatus, "Installed"),
+        ),
+      );
+
+    if (installedImports.length > 0) {
+      for (const imp of installedImports) {
+        await copyBundleArtifactsToWorktree({
+          installedPath: imp.installedPath,
+          worktreePath,
+        });
+      }
+      await writeAiFactoryConfigOverride({ worktreePath, baseBranch: base });
+      log.info(
+        {
+          runId,
+          worktreePath,
+          bundles: installedImports.length,
+          baseBranch: base,
+        },
+        "[capabilities] materialized capability bundles + AIF config override into worktree",
+      );
+    }
+
     await _db.transaction(async (tx: any) => {
       // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
       // so the workspace insert would violate it if it ran first.
@@ -629,7 +667,7 @@ export async function launchRun(
     // PRECONDITION "already exists" failure.
     log.warn(
       { runId, err: (err as Error).message },
-      "DB transaction failed after addWorktree — removing worktree",
+      "launch setup failed after addWorktree — removing worktree",
     );
     await removeWorktree({
       projectRepoPath: project.repoPath,
