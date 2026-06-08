@@ -1,62 +1,72 @@
 # AIF Flow package
 
-Portable MAIster Flow package for AI-Factory-style planning, implementation,
-checks, judgment, and human review. The package can be imported as an authored
-Flow draft, exported to a git-ready directory, or installed through the
-trust-gated Flow package lifecycle.
+The **AI Factory (AIF) flow package for MAIster**. A self-contained plugin
+that wraps the [AI Factory](https://github.com/lee-to/ai-factory/tree/2.x)
+agent workflows (plan, implement, review, fix, evolve, roadmap, init) as
+MAIster flows backed by a shared skills + subagents bundle.
 
-## Package inventory
+This package is self-contained and will move to its own git repo; nothing
+here imports from MAIster core.
 
-| Path                  | Purpose                                                      |
-| --------------------- | ------------------------------------------------------------ |
-| `flow.yaml`           | Flow manifest and graph.                                     |
-| `README.md`           | Package overview and operator notes.                         |
-| `setup.sh`            | Optional setup hook; runs only after package trust.          |
-| `schemas/review.json` | Human review form schema.                                    |
-| `skills/aif/SKILL.md` | Package-scoped AIF usage guidance.                           |
-| `rules/base.md`       | Portable operating rules for the package.                    |
-| `agents/*.md`         | Coordinator, QA, implementor, and reviewer role definitions. |
-| `scripts/aif-flow.sh` | Small helper CLI for package-local checks.                   |
+## Provenance
 
-## Register against a project
+- **Framework**: AI Factory `2.x` —
+  https://github.com/lee-to/ai-factory/tree/2.x
+  (Apache-2.0). Its skills and subagents are vendored under `capability/`.
+- **Dev workflow**:
+  https://github.com/lee-to/ai-factory/blob/2.x/docs/workflow.md
+- **Config reference**:
+  https://github.com/lee-to/ai-factory/blob/2.x/docs/configuration.md
 
-```bash
-pnpm --filter maister-web install-flow \
-  --project <slug> \
-  --source file:///<abs-repo-path>/plugins/aif \
-  --version local-dev \
-  --flow-id aif
-```
+## Flows
 
-For authored package workflows:
+Five flows ship with this package, each routed by what the incoming task is.
 
-```bash
-pnpm --filter maister-web validate-authored-flow --source-dir ../plugins/aif
-pnpm --filter maister-web import-flow-package-draft --project <slug> --source-dir ../plugins/aif
-pnpm --filter maister-web export-authored-flow --project <slug> --slug aif --output-dir /tmp/aif-flow
-pnpm --filter maister-web install-authored-flow-package --project <slug> --source-dir /tmp/aif-flow --version authored-aif-local --flow-id aif
-```
+| flow id       | route_when                                                                                    |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `aif-dev`     | A feature / enhancement / refactor with a clear spec (plan → review → implement → review → fix). |
+| `aif-bugfix`  | A reported bug / error / regression to fix (`/aif-fix` loop; emits a self-improvement patch).  |
+| `aif-evolve`  | Periodic maintenance: distill accumulated fix-patches into better skills (not feature work).   |
+| `aif-roadmap` | A large / multi-milestone initiative needing a roadmap before planning.                         |
+| `aif-init`    | One-time: project not yet AIF-initialized (`/aif` + `/aif-architecture`).                       |
 
-When this plugin moves to its own repo, flip `--source` to the git URL
-and bump `--version` to a semver tag. `installFlowPlugin()` auto-detects
-the `file://` (or absolute-path) source and `fs.cp`s the directory
-instead of `git clone`-ing — no other code change is required.
+Flow sources live under `flows/<id>/flow.yaml`.
 
-## Steps
+## Package layout
 
-| id          | type        | Purpose                                                                    |
-| ----------- | ----------- | -------------------------------------------------------------------------- |
-| `plan`      | `ai_coding` | Produce an implementation plan from the task prompt.                       |
-| `implement` | `ai_coding` | Execute `/aif-implement` with package skills and instructed tool settings. |
-| `checks`    | `check`     | Run the package check command and produce a lint report.                   |
-| `judge`     | `judge`     | Produce an advisory JSON quality verdict.                                  |
-| `review`    | `human`     | Gate final approval, rework, or takeover.                                  |
+| Path                          | Purpose                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `capability/`                 | Shared bundle — vendored AIF skills (`skills/`) + subagents (`agents/`). |
+| `flows/<id>/flow.yaml`        | The 5 flow sources listed above.                                        |
+| `config/ai-factory.config.yaml` | Default `.ai-factory/config.yaml` template for a consuming project.    |
+| `setup.sh`                    | Inert no-op (see below).                                                |
 
-The review node can approve, loop back to `implement` for bounded rework, or
-hand control to a local takeover path that resumes at `checks`.
+## How MAIster consumes it
+
+A consuming project's `maister.yaml` registers this package twice over:
+
+- **One shared `capability_imports` bundle** pointing at `capability/`.
+  All five flows reuse the same vendored skills + subagents instead of each
+  carrying their own copy. MAIster materializes these into the workspace
+  (per ADR-043) — there is no `ai-factory init` and no npm install.
+- **Five `flows[]` sources**, one per `flows/<id>/flow.yaml` above. Each flow
+  resolves its steps against the shared capability bundle.
+
+If a project has no `.ai-factory/config.yaml`, it receives
+`config/ai-factory.config.yaml` as the default. The MAIster-compat overrides
+in that template matter most for `git`: `git.create_branches: false` —
+**MAIster owns the worktree and branch**, so AIF must not create its own.
+
+Interactivity (questions, approvals, review gates) is delivered by
+**MAIster-native HITL** (form / permission steps), not the AIF
+`AskUserQuestion` tool.
+
+> **Run the `aif-init` flow first** if the project has no
+> `.ai-factory/DESCRIPTION.md`. The other flows assume an initialized AIF
+> project (description + architecture present).
 
 ## setup.sh
 
-`setup.sh` runs `ai-factory init` if the CLI is on PATH; otherwise it
-logs a notice and exits 0. MAIster never runs it during authored import/export
-or package install; it runs only after the package is trusted and enabled.
+`setup.sh` is an **inert no-op**: it prints a one-line notice to stderr and
+exits `0`. MAIster delivers AIF skills through capability materialization, so
+there is nothing to install at flow-setup time.
