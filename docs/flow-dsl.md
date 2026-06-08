@@ -8,17 +8,22 @@ separately from the DSL itself. See
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md) for
 the planned M10 package lifecycle.
 
+Authored Flows use the same `flow.yaml` DSL. The platform `/flows` editor may
+store invalid draft YAML while an author is working, but publish/export/install
+requires the manifest and graph validation described in this document. Authoring
+does not run `setup.sh`, scripts, agents, or hooks.
+
 ## Step types
 
 A Flow is an ordered list of steps. Each step has an `id` (unique within
 the flow) and a `type` chosen from:
 
-| type    | what it does                                                              |
-| ------- | ------------------------------------------------------------------------- |
-| `cli`   | shells out to `bash -c <command>` with `cwd = worktreePath`               |
-| `agent` | drives an ACP session through `claude-agent-acp` / `codex-acp`           |
-| `guard` | observational gate — writes metrics, never blocks today                   |
-| `human` | suspends the run, writes `needs-input.json`, inserts a `hitl_requests` row|
+| type    | what it does                                                               |
+| ------- | -------------------------------------------------------------------------- |
+| `cli`   | shells out to `bash -c <command>` with `cwd = worktreePath`                |
+| `agent` | drives an ACP session through `claude-agent-acp` / `codex-acp`             |
+| `guard` | observational gate — writes metrics, never blocks today                    |
+| `human` | suspends the run, writes `needs-input.json`, inserts a `hitl_requests` row |
 
 ## Flow graph node lifecycle (M11a — Designed)
 
@@ -78,7 +83,7 @@ nodes:
         - no-secret-env
       permissionMode: ask
       enforcement:
-        restrictions: strict    # strict | instruct (default) | off, per class
+        restrictions: strict # strict | instruct (default) | off, per class
       limits:
         maxDurationMinutes: 45
         maxCostUsd: 5
@@ -134,11 +139,12 @@ nodes:
     transitions:
       approve: review
       rework: implement
-      takeover: checks       # M11b (Implemented): takeover returns to a real
-                             # validation node (`checks`) so the gates rerun over
-                             # the human's commits — NOT `implement` (would clobber
-                             # the human edits), NOT the `human_edit` node TYPE
-                             # below (that type is M18-Designed).
+      takeover:
+        checks # M11b (Implemented): takeover returns to a real
+        # validation node (`checks`) so the gates rerun over
+        # the human's commits — NOT `implement` (would clobber
+        # the human edits), NOT the `human_edit` node TYPE
+        # below (that type is M18-Designed).
     rework:
       allowedTargets: [implement]
       # M11a executes `keep`; rewind-to-node-checkpoint / fresh-attempt are
@@ -177,16 +183,16 @@ nodes:
 
 Lifecycle sections:
 
-| section | purpose |
-| ------- | ------- |
-| `input` | Declares required artifacts, prior outputs, human answers, and environment. |
-| `settings` | Holds type-specific capability, role, policy, timeout, cost, and restriction controls. |
-| `action` | Performs the node work: AI coding, CLI, check, judge, human review, human edit, or merge. |
-| `output` | Declares typed artifacts the node produces for later inputs, gates, review, and merge. |
-| `pre_finish` | Runs Flow-declared gates before the node can finish. |
-| `finish` | Captures final gates such as human review, branch return, or merge acceptance. |
-| `transitions` | Maps declared outcomes to declared node ids. |
-| `rework` | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
+| section       | purpose                                                                                        |
+| ------------- | ---------------------------------------------------------------------------------------------- |
+| `input`       | Declares required artifacts, prior outputs, human answers, and environment.                    |
+| `settings`    | Holds type-specific capability, role, policy, timeout, cost, and restriction controls.         |
+| `action`      | Performs the node work: AI coding, CLI, check, judge, human review, human edit, or merge.      |
+| `output`      | Declares typed artifacts the node produces for later inputs, gates, review, and merge.         |
+| `pre_finish`  | Runs Flow-declared gates before the node can finish.                                           |
+| `finish`      | Captures final gates such as human review, branch return, or merge acceptance.                 |
+| `transitions` | Maps declared outcomes to declared node ids.                                                   |
+| `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input. |
 
 **Top-level `retry_safe?` (boolean, default `false`).** A per-node opt-in
 (also accepted on linear `steps[]`) that gates operator crash-recovery
@@ -316,14 +322,14 @@ A node's `pre_finish.gates` run in declared order before the node can finish.
 Each gate writes a `gate_results` row. Gate kinds and their M11a execution
 status:
 
-| kind | purpose | M11a |
-| ---- | ------- | ---- |
-| `command_check` | Runs formatter, test, lint, typecheck, build, or custom command via `bash -c`; exit 0 = `passed`, else `failed`. | **Executes** |
-| `ai_judgment` | Produces a structured model verdict over the diff/logs/requirements via an agent session (defaults to `new-session`). | **Executes** |
-| `human_review` | Captures approve/rework decisions through the review HITL. | **Executes** |
-| `skill_check` | Runs an internal slash command (e.g. `/aif-review`) via an agent session. | **Executes (best-effort)** — no capability scoping until M14 |
-| `artifact_required` | Verifies required evidence exists and is current. | **Stubbed** → `skipped` + WARN + `TODO(M12)` (needs M12 artifact instances) |
-| `external_check` | Waits for CI / another system to report through the operations API. | **Executes (M16)** → report ingestion via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report` flips `pending → passed\|failed` and records a `test_report` artifact |
+| kind                | purpose                                                                                                               | M11a                                                                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command_check`     | Runs formatter, test, lint, typecheck, build, or custom command via `bash -c`; exit 0 = `passed`, else `failed`.      | **Executes**                                                                                                                                                          |
+| `ai_judgment`       | Produces a structured model verdict over the diff/logs/requirements via an agent session (defaults to `new-session`). | **Executes**                                                                                                                                                          |
+| `human_review`      | Captures approve/rework decisions through the review HITL.                                                            | **Executes**                                                                                                                                                          |
+| `skill_check`       | Runs an internal slash command (e.g. `/aif-review`) via an agent session.                                             | **Executes (best-effort)** — no capability scoping until M14                                                                                                          |
+| `artifact_required` | Verifies required evidence exists and is current.                                                                     | **Stubbed** → `skipped` + WARN + `TODO(M12)` (needs M12 artifact instances)                                                                                           |
+| `external_check`    | Waits for CI / another system to report through the operations API.                                                   | **Executes (M16)** → report ingestion via `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report` flips `pending → passed\|failed` and records a `test_report` artifact |
 
 ### `gates[].external` block (M16 — Implemented)
 
@@ -334,14 +340,14 @@ status:
   kind: external_check
   mode: blocking
   external:
-    description: "GitHub Actions full test suite on the run branch."   # optional
-    staleOnNewCommit: true                                             # optional; default true
+    description: "GitHub Actions full test suite on the run branch." # optional
+    staleOnNewCommit: true # optional; default true
 ```
 
-| field | type | default | meaning |
-| ----- | ---- | ------- | ------- |
-| `description` | `string` (min 1) | (none) | Human-readable label surfaced in the `GET /api/v1/ext/runs/{runId}/readiness` response so CI consumers know what each gate expects. |
-| `staleOnNewCommit` | `boolean` | `true` | When `true` (or absent), a new gate report that carries a different `commitSha` than the current `passed` report supersedes the prior result and marks the gate `stale`. Set to `false` to opt out of commit-based staleness for gates whose result is commit-independent. |
+| field              | type             | default | meaning                                                                                                                                                                                                                                                                    |
+| ------------------ | ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `description`      | `string` (min 1) | (none)  | Human-readable label surfaced in the `GET /api/v1/ext/runs/{runId}/readiness` response so CI consumers know what each gate expects.                                                                                                                                        |
+| `staleOnNewCommit` | `boolean`        | `true`  | When `true` (or absent), a new gate report that carries a different `commitSha` than the current `passed` report supersedes the prior result and marks the gate `stale`. Set to `false` to opt out of commit-based staleness for gates whose result is commit-independent. |
 
 The block is meaningful only for `kind: external_check`. Placing it on any other gate kind is a manifest validation error (`CONFIG`).
 
@@ -387,16 +393,16 @@ validity: `current`, `stale`, `superseded`, `failed`, or `skipped`.
 **`output.produces[]`.** A node's `output` block declares the typed artifacts it
 produces. Each entry:
 
-| field | type | meaning |
-| ----- | ---- | ------- |
-| `id` | string, **unique within the manifest** | Stable artifact id other nodes' `input.requires` and `artifact_required` gates reference. |
-| `kind` | enum (closed catalog) | One of `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, `generic_file`. |
-| `schema?` | string | Optional schema id/ref describing the payload shape. |
-| `path?` | string | Optional run-relative / worktree path to the payload. |
-| `ref?` | string | Optional git ref (used by `commit_set` / `diff`). |
-| `visibility?` | `internal` \| `shared` | Who may read the artifact. **Declared/recorded in M12; access enforcement is M14.** |
-| `retention?` | `run` \| `ephemeral` | Lifetime policy. **Declared/recorded in M12; enforcement is M14.** |
-| `requiredFor?` | (`"review"` \| `"merge"`)[] | Phases this artifact blocks if missing/stale. It is a field ON a `produces[]` entry, so the artifact is always produced by the declaring node. |
+| field          | type                                   | meaning                                                                                                                                        |
+| -------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | string, **unique within the manifest** | Stable artifact id other nodes' `input.requires` and `artifact_required` gates reference.                                                      |
+| `kind`         | enum (closed catalog)                  | One of `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, `generic_file`.        |
+| `schema?`      | string                                 | Optional schema id/ref describing the payload shape.                                                                                           |
+| `path?`        | string                                 | Optional run-relative / worktree path to the payload.                                                                                          |
+| `ref?`         | string                                 | Optional git ref (used by `commit_set` / `diff`).                                                                                              |
+| `visibility?`  | `internal` \| `shared`                 | Who may read the artifact. **Declared/recorded in M12; access enforcement is M14.**                                                            |
+| `retention?`   | `run` \| `ephemeral`                   | Lifetime policy. **Declared/recorded in M12; enforcement is M14.**                                                                             |
+| `requiredFor?` | (`"review"` \| `"merge"`)[]            | Phases this artifact blocks if missing/stale. It is a field ON a `produces[]` entry, so the artifact is always produced by the declaring node. |
 
 **`input.requires[]`.** A node's `input` block declares the typed artifacts it
 consumes. Each entry is **either** a bare artifact id (string) — referencing an
@@ -457,25 +463,25 @@ behaves byte-identically to today (no transport provisioning, no parsing).
 ```yaml
 output:
   result:
-    schema: ./schemas/plan-output.json   # path, resolved against the flow install dir
-    required: false                       # default false
-  produces:                               # M12, unchanged
+    schema: ./schemas/plan-output.json # path, resolved against the flow install dir
+    required: false # default false
+  produces: # M12, unchanged
     - id: plan-summary
       kind: generic_file
 ```
 
-| field | type | meaning |
-| ----- | ---- | ------- |
-| `schema` | string | A **path** (not inline) resolved against the flow install dir with the same escape-guard as `form_schema`; the resolved file is validated as a `formSchemaSchema` document. M26 **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
-| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds. |
+| field       | type    | meaning                                                                                                                                                                                                                                                                                                                                     |
+| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`    | string  | A **path** (not inline) resolved against the flow install dir with the same escape-guard as `form_schema`; the resolved file is validated as a `formSchemaSchema` document. M26 **adds** a nested `object` type to that grammar (flat today: `string \| number \| boolean \| enum \| array`) — net-new work, still no `ajv` and no new dep. |
+| `required?` | boolean | Default `false`. When `true`, an absent payload fails the attempt; when `false`, an absent payload leaves `vars: {}` and the node proceeds.                                                                                                                                                                                                 |
 
 **Per-node-type output transport.** Transport is chosen by the node's execution
 mechanism, not declared:
 
-| Node types | Transport |
-| ---------- | --------- |
+| Node types                            | Transport                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ai_coding`, `judge` (agent-executed) | The agent ends its response with a **single** sentinel-tagged fenced block ` ```json maister:output … ``` `; the runner extracts the **last** such block from the **1 MiB-capped** `result.stdout` capture (a block pushed past the cap is treated as **absent** → `CONFIG` if `required`). The agent writes **no file** (it cannot write outside its worktree `cwd`). |
-| `cli`, `check` (cli-executed) | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file. |
+| `cli`, `check` (cli-executed)         | The runner injects `MAISTER_OUTPUT_FILE=<runDir>/output-<nodeId>-<attempt>.json` into the command env; the command writes its JSON there and the runner reads that file. The filename is **per-attempt**, so a non-writing rework attempt never inherits a prior attempt's file.                                                                                       |
 
 `human` nodes are unchanged — their `vars` come from the HITL input artifact.
 
@@ -493,7 +499,7 @@ in [`configuration.md`](configuration.md). Rationale lives in
 
 ## Planned M15: readiness policy and verdict calibration
 
-> **Re-scoped (ADR-028).** M11a annexed gate *execution* — the kinds, status
+> **Re-scoped (ADR-028).** M11a annexed gate _execution_ — the kinds, status
 > lifecycle, structured verdicts, blocking/advisory modes, staleness, and
 > override-without-erasure now live under **Gate execution (M11a)** above. M15
 > keeps only the readiness-policy DSL, verdict calibration, and `external_check`
@@ -527,13 +533,13 @@ state directly; they attach evidence to the gate.
 An external check report `POST /api/v1/ext/runs/{runId}/gates/{gateId}/report`
 carries this body (the `gateId` is in the URL, not the body):
 
-| field | purpose |
-| ----- | ------- |
-| `status` | `passed` or `failed`. A gate with no report stays `pending`. |
-| `externalRunUrl` | Optional URL to the external job/check. |
-| `commitSha` | Optional commit checked by the external system. Used for staleness. |
-| `summary` | Short human-readable result. |
-| `payload` | Structured reporter-specific details. |
+| field            | purpose                                                             |
+| ---------------- | ------------------------------------------------------------------- |
+| `status`         | `passed` or `failed`. A gate with no report stays `pending`.        |
+| `externalRunUrl` | Optional URL to the external job/check.                             |
+| `commitSha`      | Optional commit checked by the external system. Used for staleness. |
+| `summary`        | Short human-readable result.                                        |
+| `payload`        | Structured reporter-specific details.                               |
 
 The server records `reporterTokenId` and `reportedAt` in the gate verdict from
 the authenticated token — they are not client-supplied.
@@ -557,8 +563,8 @@ token authorization, readiness, or artifact recording.
 - id: lint
   type: cli
   command: "pnpm lint"
-  pre_guards:   []   # optional, observational only
-  post_guards:  []
+  pre_guards: [] # optional, observational only
+  post_guards: []
 ```
 
 The `command` is rendered via the templating engine before execution. The
@@ -572,9 +578,9 @@ flow with `runs.status = "Failed"`. Timeout default is 5 min
 ```yaml
 - id: plan
   type: agent
-  mode: new-session            # OR slash-in-existing
+  mode: new-session # OR slash-in-existing
   prompt: "/aif-plan {{ task.prompt }}"
-  pre_guards:  []
+  pre_guards: []
   post_guards: []
 ```
 
@@ -599,8 +605,8 @@ is success; `max_tokens` / `max_turn_requests` / `refusal` map to
 ```yaml
 - id: budget
   type: guard
-  cost: 10000   # tokens
-  time: 300     # seconds
+  cost: 10000 # tokens
+  time: 300 # seconds
   regex: "ERROR"
 ```
 
@@ -615,7 +621,7 @@ success.
 - id: review
   type: human
   form_schema: ./schemas/review.json
-  criticality: high          # optional — low | medium | high | critical
+  criticality: high # optional — low | medium | high | critical
   on_reject:
     goto_step: implement
     comments_var: review_comments
@@ -673,24 +679,24 @@ are not HTML.
 
 Context paths available inside templates:
 
-| path                             | source                                     |
-| -------------------------------- | ------------------------------------------ |
-| `task.id`                        | `tasks.id`                                 |
-| `task.title`                     | `tasks.title`                              |
-| `task.prompt`                    | `tasks.prompt`                             |
-| `task.attemptNumber`             | `tasks.attempt_number`                     |
-| `run.id`                         | `runs.id`                                  |
-| `run.attemptNumber`              | mirrors `task.attemptNumber` until run-level attempts land |
-| `run.projectSlug`                | `projects.slug`                            |
-| `runner.id`                      | Resolved platform ACP runner id            |
-| `runner.capabilityAgent`         | Adapter-registry identity, e.g. `claude` or `codex` |
-| `runner.model`                   | Snapshotted runner model label             |
-| `runner.providerKind`            | Snapshotted provider kind                  |
-| `runner.resolutionTier`          | Launch override, step target, project Flow, platform Flow, project default, or platform default |
-| `steps.<id>.output`              | `node_attempts.stdout` (highest attempt), `step_runs.stdout` fallback, truncated to 8 KiB |
-| `steps.<id>.vars.<name>`         | `node_attempts.vars` jsonb (highest attempt), `step_runs.vars` fallback |
-| `steps.<id>.exitCode`            | `node_attempts.exit_code` (highest attempt), `step_runs.exit_code` fallback |
-| `env.<KEY>`                      | filtered process.env (see below)           |
+| path                     | source                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `task.id`                | `tasks.id`                                                                                      |
+| `task.title`             | `tasks.title`                                                                                   |
+| `task.prompt`            | `tasks.prompt`                                                                                  |
+| `task.attemptNumber`     | `tasks.attempt_number`                                                                          |
+| `run.id`                 | `runs.id`                                                                                       |
+| `run.attemptNumber`      | mirrors `task.attemptNumber` until run-level attempts land                                      |
+| `run.projectSlug`        | `projects.slug`                                                                                 |
+| `runner.id`              | Resolved platform ACP runner id                                                                 |
+| `runner.capabilityAgent` | Adapter-registry identity, e.g. `claude` or `codex`                                             |
+| `runner.model`           | Snapshotted runner model label                                                                  |
+| `runner.providerKind`    | Snapshotted provider kind                                                                       |
+| `runner.resolutionTier`  | Launch override, step target, project Flow, platform Flow, project default, or platform default |
+| `steps.<id>.output`      | `node_attempts.stdout` (highest attempt), `step_runs.stdout` fallback, truncated to 8 KiB       |
+| `steps.<id>.vars.<name>` | `node_attempts.vars` jsonb (highest attempt), `step_runs.vars` fallback                         |
+| `steps.<id>.exitCode`    | `node_attempts.exit_code` (highest attempt), `step_runs.exit_code` fallback                     |
+| `env.<KEY>`              | filtered process.env (see below)                                                                |
 
 Highest-attempt-wins: when a node has been retried (or reworked, M11a),
 `steps.<id>` resolves to the highest-`attempt` `node_attempts` row, falling back
@@ -789,6 +795,34 @@ enablement/launch (`web/lib/flows/engine-version.ts`); the lists are opaque
 until M11+ gives them runtime meaning. See
 [`configuration.md`](configuration.md) and
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md).
+
+## Authored package files
+
+An authored Flow package is portable when `flow.yaml` is accompanied by typed
+text artifacts that can be committed to git and imported into another MAIster
+installation. The DSL remains the execution contract; package files carry the
+supporting artifacts.
+
+Supported authored package artifact kinds:
+
+| Kind               | Purpose                                                     |
+| ------------------ | ----------------------------------------------------------- |
+| `skill`            | Agent skill instructions shipped with the Flow package.     |
+| `rule`             | Project or Flow-specific rule text.                         |
+| `script`           | CLI/helper script shipped with the package.                 |
+| `agent_definition` | Adapter or agent profile material.                          |
+| `schema`           | JSON schema such as HITL form schemas.                      |
+| `template`         | Text templates used by scripts or agents.                   |
+| `readme`           | Human package documentation.                                |
+| `setup`            | Setup hook content; executed only by M10 trust-gated setup. |
+| `asset`            | Unclassified portable text files retained during import.    |
+
+Before publish/export, package file paths must be safe relative text paths with
+no duplicate normalized path and no file-vs-directory collisions. Package file
+content must be valid UTF-8 text. Authored package validation also re-runs
+manifest schema checks, graph checks, and engine compatibility checks. Project
+reference checks run on project-context install, load, and launch paths that
+provide role/capability registries.
 
 ## See also
 

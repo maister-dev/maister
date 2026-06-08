@@ -20,6 +20,28 @@ execution. See
 [`capability-catalog.md`](capability-catalog.md) and
 [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 
+## Authored package boundary
+
+The platform `/flows` section manages both authored catalog content and installed
+Flow package attachments, but the execution boundary remains M10:
+
+1. **Authored draft** — DB-authored package content. It may be invalid and is
+   editable.
+2. **Published local catalog content** — immutable local authored revision. It
+   is inert and cannot launch a run.
+3. **Exported portable package** — a git-ready directory with `flow.yaml` plus
+   typed package artifacts (`asset`, `skill`, `rule`, `script`,
+   `agent_definition`, `schema`, `template`, `readme`, `setup`).
+4. **Installed executable package revision** — M10 `flow_revisions` row created
+   by install/fetch/copy and validated before enablement.
+5. **Enabled project attachment** — M10 `flows.enabled_revision_id` pointer used
+   by new runs.
+
+An authored Flow never skips from step 2 to step 5. The bridge, when
+implemented, must go through export/import or package-revision creation, then
+trust review, then setup, then enablement. Local authored sources are not
+auto-trusted merely because they were created in MAIster.
+
 ## Domain entities
 
 - **Flow package** — logical delivery process identified by stable
@@ -122,6 +144,55 @@ sequenceDiagram
     W-->>UI: package enabled (or setup-failed) for new runs
 ```
 
+### Authored export to installer bridge (Designed, CLI bridge implemented)
+
+```mermaid
+sequenceDiagram
+    actor U as Operator
+    participant CLI as Operator CLI
+    participant CAT as Authored catalog
+    participant EXP as Exporter
+    participant PKG as Package installer
+    participant DB as Postgres
+
+    U->>CLI: Export or install authored Flow
+    CLI->>CAT: load authored revision by project + capId
+    CAT-->>CLI: package body + validation
+    CLI->>EXP: export valid package to temp dir
+    EXP-->>CLI: manifest digest + content hash + file count
+    CLI->>PKG: create/select package revision from exported source
+    PKG->>DB: record Installing/Installed revision (NO setup)
+    CLI->>U: show trust review
+    U->>CLI: trust and enable
+    CLI->>PKG: run setup.sh after trust only
+    PKG->>DB: update setup + enablement pointer
+```
+
+Implemented CLI bridge:
+
+- `export-authored-flow` writes portable package bytes through temp + rename.
+- `install-authored-flow-package` creates or selects the exported package
+  revision with `trust_status='untrusted'` and `enablement_state='Installed'`.
+- The bridge never runs `setup.sh`; setup can run only through the existing
+  trust/enable lifecycle after an explicit trust decision.
+
+Failure classification:
+
+| Failure                             | Classification                         | Result                                                        |
+| ----------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
+| Authored package invalid            | `CONFIG` or authoring validation issue | Refuse export/install; keep draft or published content inert. |
+| Source/path mismatch                | `PRECONDITION`                         | Refuse bridge; do not create executable revision.             |
+| Trust missing                       | `PRECONDITION`                         | Keep installed revision unavailable for launch.               |
+| Setup failure                       | `FLOW_INSTALL` / `PRECONDITION`        | Mark setup/package failed; refuse enable.                     |
+| Already referenced revision removal | `PRECONDITION`                         | Preserve run-pinned revision.                                 |
+
+Identifier trust:
+
+- `slug` is a URL parameter and is resolved to a project row.
+- `capId` is resolved from server state under that project.
+- revision id is server state after package-revision creation or lookup.
+- filesystem output/input paths are never body-trusted launch authority.
+
 ### Launch with pinned package revision
 
 ```mermaid
@@ -179,7 +250,8 @@ flowchart TD
 
 - Current M4 loader remains the low-level installer, but M10 adds product
   lifecycle state above it.
-- Tags are user-facing pins. Resolved git SHA and manifest digest are runtime
+- Tags are user-facing pins. Resolved git SHA for git sources, local package
+  content digest for local/authored sources, and manifest digest are runtime
   truth.
 - Installed package revisions are immutable and can coexist for the same Flow
   id.
@@ -190,6 +262,10 @@ flowchart TD
 - Package install validates manifest schema, package contract, compatibility
   range, declared capabilities, gates, artifacts, setup hooks, and external
   operation needs before enablement.
+- Authored package export validates the same manifest/graph/package-file
+  invariants before producing portable bytes.
+- Authored export does not mutate `flow_revisions`, `flows`, trust decisions,
+  setup state, or run launch preconditions.
 - Setup scripts are revision-scoped, idempotent, and run only after trust
   confirmation.
 - Install/upgrade UI shows source, version, resolved revision, manifest digest,
@@ -213,13 +289,13 @@ flowchart TD
 At `POST /api/runs`, after resolving the project-enabled revision via
 `flows.enabled_revision_id`, launch refuses before any workspace creation:
 
-| Condition | `MaisterError` code | HTTP |
-| --------- | ------------------- | ---- |
-| `flows.enabled_revision_id` is null | `PRECONDITION` | 409 |
-| `flows.enablement_state` in `{Disabled, Failed}` | `PRECONDITION` | 409 |
-| `flows.trust_status = untrusted` | `PRECONDITION` | 409 |
-| revision `setup_status` in `{pending, failed}` | `PRECONDITION` | 409 |
-| engine/schema incompatible (`compat` vs `MAISTER_ENGINE_VERSION` / `SUPPORTED_FLOW_SCHEMA_VERSIONS`) | `CONFIG` | 422 |
+| Condition                                                                                            | `MaisterError` code | HTTP |
+| ---------------------------------------------------------------------------------------------------- | ------------------- | ---- |
+| `flows.enabled_revision_id` is null                                                                  | `PRECONDITION`      | 409  |
+| `flows.enablement_state` in `{Disabled, Failed}`                                                     | `PRECONDITION`      | 409  |
+| `flows.trust_status = untrusted`                                                                     | `PRECONDITION`      | 409  |
+| revision `setup_status` in `{pending, failed}`                                                       | `PRECONDITION`      | 409  |
+| engine/schema incompatible (`compat` vs `MAISTER_ENGINE_VERSION` / `SUPPORTED_FLOW_SCHEMA_VERSIONS`) | `CONFIG`            | 422  |
 
 On success the run snapshots `runs.flow_revision_id` (plus the existing
 `flow_version` / `flow_revision` text columns) and the runner resolves the
@@ -247,6 +323,8 @@ manifest + install path from that pinned revision.
   leaving the bytes until it is genuinely unreferenced. No error raised.
 - **Rollback target incompatible with current project config** ->
   `PRECONDITION`; user must resolve config/capability mismatch first.
+- **Authored package publish/export invalid** -> validation refusal; authored
+  content remains a draft or inert local revision and cannot become executable.
 
 ## Linked artifacts
 

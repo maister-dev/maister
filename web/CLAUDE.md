@@ -168,6 +168,10 @@ pnpm dev      # next dev — http://localhost:3000
 pnpm build    # next build
 pnpm start    # next start (after build)
 pnpm lint     # eslint --fix
+pnpm validate-authored-flow   # validate a portable authored Flow package dir
+pnpm import-flow-package-draft # import a package as an inert authored draft
+pnpm export-authored-flow     # export an authored Flow to a portable dir
+pnpm install-authored-flow-package # bridge export as untrusted installed package
 ```
 
 `pnpm typecheck` runs `tsc --noEmit` (`noEmit: true` in tsconfig).
@@ -193,7 +197,7 @@ web/
 │   └── counter.tsx       # HeroUI <Button> demo (delete when no longer used)
 ├── config/
 │   ├── site.ts           # navItems, navMenuItems, external links
-│   └── fonts.ts          # Inter (sans) + Fira Code (mono) via next/font
+│   └── fonts.ts          # system font CSS variable class names
 ├── styles/
 │   └── globals.css       # @import "tailwindcss"; @import "@heroui/styles";
 │                         # declares @custom-variant dark (&:is(.dark *))

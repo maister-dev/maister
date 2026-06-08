@@ -274,6 +274,60 @@ stores immutable local catalog content only and does not mutate `flows`,
 See [`system-analytics/capability-catalog.md`](system-analytics/capability-catalog.md)
 and [ADR-061](decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 
+Authored Flow packages store their editable body in
+`authored_capability_revisions.body`, not in `maister.yaml`. The body contains
+raw `flow.yaml`, parsed manifest when available, package metadata, typed package
+files, and validation status. Draft save may persist invalid content, but local
+publish/export/install requires a valid package:
+
+- `flow.yaml` parses and validates as schemaVersion 1.
+- graph/transition/gate/artifact validation passes.
+- package file paths are safe relative text paths: no absolute paths, no
+  `..` segments, no duplicate normalized paths, and no file-vs-directory
+  collisions.
+- package file content is valid UTF-8 text; binary payloads are refused.
+- setup/script artifacts remain inert until the M10 trust-gated setup lifecycle.
+
+The platform `/flows` UI and actions use project-scoped `manageCatalog` for
+create, edit, publish, import, and export. Project admin/owner is sufficient
+even when the user's global role is only `member`; global `admin` continues to
+work through the existing project-role bypass. User-facing status and enum text
+is localized through EN/RU message keys.
+
+Portable authored package files may include:
+
+| Kind               | Typical path                            | Executed by authoring? |
+| ------------------ | --------------------------------------- | ---------------------- |
+| `readme`           | `README.md`                             | no                     |
+| `setup`            | `setup.sh`                              | no                     |
+| `schema`           | `schemas/*.json`                        | no                     |
+| `skill`            | `skills/<id>/SKILL.md`                  | no                     |
+| `rule`             | `rules/*.md`                            | no                     |
+| `agent_definition` | `agents/*.md` or adapter-specific files | no                     |
+| `script`           | `scripts/*`                             | no                     |
+| `template`         | `templates/*`                           | no                     |
+| `asset`            | unclassified portable text files        | no                     |
+
+Export writes portable bytes only. Install, trust, setup, enablement, and launch
+remain Flow package lifecycle operations.
+
+Operational CLIs use the same package body and validation boundary:
+
+- `pnpm --filter maister-web validate-authored-flow --source-dir <dir>` reads a
+  portable directory and fails with `CONFIG` when `flow.yaml` or package files
+  are invalid.
+- `pnpm --filter maister-web import-flow-package-draft --project <slug>
+  --source-dir <dir>` creates a Draft authored Flow from portable bytes. It
+  does not install a package, execute setup, or trust executable content.
+- `pnpm --filter maister-web export-authored-flow --project <slug> (--cap-id
+  <id> | --slug <package-slug>) --output-dir <dir>` writes `flow.yaml` plus
+  typed package files through temp + rename and refuses invalid bodies.
+- `pnpm --filter maister-web install-authored-flow-package --project <slug>
+  --source-dir <dir> --version <label> --flow-id <id>` bridges exported bytes
+  into the installed package lifecycle as `trust_status='untrusted'` and
+  `enablement_state='Installed'`; setup and enablement remain explicit follow-up
+  lifecycle actions.
+
 #### `capabilities.agent_definitions[]` and `capabilities.env_profiles[]` (Implemented, M14)
 
 Two new arrays extend the existing `capabilities` block. Both follow the same

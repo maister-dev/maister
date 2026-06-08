@@ -7,6 +7,62 @@ export type { AuthoredCapabilityKind, AuthoredCapabilityLifecycle };
 
 export type AuthoredCapabilityBody = Record<string, unknown>;
 
+export type AuthoredFlowPackageFileKind =
+  | "asset"
+  | "skill"
+  | "rule"
+  | "script"
+  | "agent_definition"
+  | "schema"
+  | "template"
+  | "readme"
+  | "setup";
+
+export type AuthoredFlowPackageFile = {
+  kind: AuthoredFlowPackageFileKind;
+  path: string;
+  content: string;
+};
+
+export type AuthoredFlowPackageMetadata = {
+  slug: string;
+  name: string;
+  description?: string;
+  versionLabel?: string;
+};
+
+export type AuthoredFlowPackageValidationIssueCode =
+  | "yaml_parse"
+  | "schema"
+  | "graph"
+  | "unsafe_path"
+  | "duplicate_path"
+  | "path_conflict"
+  | "unsupported_kind"
+  | "binary_content";
+
+export type AuthoredFlowPackageValidationIssue = {
+  code: AuthoredFlowPackageValidationIssueCode;
+  path: string;
+  message: string;
+};
+
+export type AuthoredFlowPackageValidation = {
+  status: "valid" | "invalid" | "unknown";
+  issueCount: number;
+  issues: AuthoredFlowPackageValidationIssue[];
+  manifestDigest: string | null;
+  contentHash: string | null;
+};
+
+export type AuthoredFlowPackageBody = {
+  flowYaml: string;
+  manifest: AuthoredCapabilityBody | null;
+  packageMetadata: AuthoredFlowPackageMetadata;
+  files: AuthoredFlowPackageFile[];
+  validation: AuthoredFlowPackageValidation;
+};
+
 export type AuthoredCapability = {
   id: string;
   projectId: string;

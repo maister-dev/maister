@@ -158,7 +158,7 @@ mAIster/
     │
     ├── config/                     # ── SITE-LEVEL CONFIG (static) ──
     │   ├── site.ts                 # navItems (Portfolio/Projects/Settings)
-    │   └── fonts.ts                # Inter + Fira Code via next/font
+    │   └── fonts.ts                # system font CSS variable class names
     │
     ├── lib/                        # ── TECHNICAL-LAYER MODULES (server-only) ──
     │   ├── errors.ts               # MaisterError discriminated union (expanded taxonomy)

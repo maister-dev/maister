@@ -156,23 +156,24 @@ export async function createAuthoredCapability(args: {
 }> {
   const db = args.db ?? (getDb() as unknown as TransactionalCatalogDb);
 
-  return db.transaction(async (tx) => {
-    const projectId = await resolveProjectId(tx, args.projectSlug);
-    const capId = randomUUID();
-    const revisionId = randomUUID();
-    const draftVersion = 1;
-    const body = args.input.body ?? {};
-    const manifest = args.input.manifest ?? null;
-    const schemaVersion = args.input.schemaVersion ?? 1;
-    const now = new Date();
-    const contentHash = canonicalAuthoredContentHash({
-      kind: args.input.kind,
-      body,
-      manifest,
-      schemaVersion,
-    });
+  try {
+    return await db.transaction(async (tx) => {
+      const projectId = await resolveProjectId(tx, args.projectSlug);
+      const capId = randomUUID();
+      const revisionId = randomUUID();
+      const draftVersion = 1;
+      const body = args.input.body ?? {};
+      const manifest = args.input.manifest ?? null;
+      const schemaVersion = args.input.schemaVersion ?? 1;
+      const now = new Date();
+      const contentHash = canonicalAuthoredContentHash({
+        kind: args.input.kind,
+        body,
+        manifest,
+        schemaVersion,
+      });
 
-    await tx.execute(sql`
+      await tx.execute(sql`
       INSERT INTO authored_capabilities (
         id,
         project_id,
@@ -198,7 +199,7 @@ export async function createAuthoredCapability(args: {
         now()
       )
     `);
-    await tx.execute(sql`
+      await tx.execute(sql`
       INSERT INTO authored_capability_revisions (
         id,
         capability_id,
@@ -231,45 +232,48 @@ export async function createAuthoredCapability(args: {
       )
     `);
 
-    log.info(
-      { projectId, capId, kind: args.input.kind, revisionId },
-      "authored capability draft created",
-    );
+      log.info(
+        { projectId, capId, kind: args.input.kind, revisionId },
+        "authored capability draft created",
+      );
 
-    return {
-      capability: {
-        id: capId,
-        projectId,
-        kind: args.input.kind,
-        slug: args.input.slug,
-        title: args.input.title,
-        lifecycle: "DRAFT",
-        draftVersion,
-        currentDraftRevisionId: revisionId,
-        currentPublishedRevisionId: null,
-        archivedAt: null,
-        createdAt: now,
-        updatedAt: now,
-      },
-      draft: {
-        id: revisionId,
-        capabilityId: capId,
-        projectId,
-        kind: args.input.kind,
-        revisionNumber: 1,
-        lifecycle: "DRAFT",
-        draftVersion,
-        title: args.input.title,
-        body,
-        manifest,
-        schemaVersion,
-        contentHash,
-        publishedAt: null,
-        archivedAt: null,
-        createdAt: now,
-      },
-    };
-  });
+      return {
+        capability: {
+          id: capId,
+          projectId,
+          kind: args.input.kind,
+          slug: args.input.slug,
+          title: args.input.title,
+          lifecycle: "DRAFT",
+          draftVersion,
+          currentDraftRevisionId: revisionId,
+          currentPublishedRevisionId: null,
+          archivedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        draft: {
+          id: revisionId,
+          capabilityId: capId,
+          projectId,
+          kind: args.input.kind,
+          revisionNumber: 1,
+          lifecycle: "DRAFT",
+          draftVersion,
+          title: args.input.title,
+          body,
+          manifest,
+          schemaVersion,
+          contentHash,
+          publishedAt: null,
+          archivedAt: null,
+          createdAt: now,
+        },
+      };
+    });
+  } catch (err) {
+    throw mapAuthoredCapabilityCreateError(err, args);
+  }
 }
 
 export async function updateAuthoredDraft(args: {
@@ -416,6 +420,8 @@ export async function updateAuthoredDraft(args: {
 export async function publishAuthoredCapabilityLocal(args: {
   projectSlug: string;
   capId: string;
+  expectedDraftVersion?: number;
+  validateDraftRevision?: (revision: AuthoredCapabilityRevision) => void;
   db?: TransactionalCatalogDb;
 }): Promise<{
   revision: AuthoredCapabilityRevision;
@@ -435,21 +441,22 @@ export async function publishAuthoredCapabilityLocal(args: {
     }
 
     const revision = await loadDraftRevision(tx, args.capId);
+    const expectedDraftVersion = args.expectedDraftVersion ?? cap.draft_version;
     const publishedAt = new Date();
     let materializedRecordId: string | null = null;
 
+    assertDraftVersion({
+      expectedDraftVersion,
+      actualDraftVersion: cap.draft_version,
+    });
+    args.validateDraftRevision?.(toRevision(revision));
     await assertNoNonAuthoredProjectCollision(
       tx,
       projectId,
       cap.kind,
       cap.slug,
     );
-    await tx.execute(sql`
-      UPDATE authored_capability_revisions
-      SET lifecycle = 'PUBLISHED', published_at = now()
-      WHERE id = ${revision.id}
-    `);
-    await tx.execute(sql`
+    const updatedCapability = await tx.execute(sql`
       UPDATE authored_capabilities
       SET
         lifecycle = 'PUBLISHED',
@@ -458,7 +465,33 @@ export async function publishAuthoredCapabilityLocal(args: {
         updated_at = now()
       WHERE id = ${args.capId}
         AND project_id = ${projectId}
+        AND lifecycle <> 'ARCHIVED'
+        AND draft_version = ${expectedDraftVersion}
+        AND current_draft_revision_id = ${revision.id}
+      RETURNING id
     `);
+
+    if (rowsOf<UpdatedCapabilityRow>(updatedCapability).length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `stale authored capability draft publish: expected draft_version=${expectedDraftVersion}`,
+      );
+    }
+    const updatedRevision = await tx.execute(sql`
+      UPDATE authored_capability_revisions
+      SET lifecycle = 'PUBLISHED', published_at = now()
+      WHERE id = ${revision.id}
+        AND capability_id = ${args.capId}
+        AND lifecycle = 'DRAFT'
+      RETURNING id
+    `);
+
+    if (rowsOf<UpdatedCapabilityRow>(updatedRevision).length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `authored capability draft revision is no longer publishable: ${args.capId}`,
+      );
+    }
 
     if (cap.kind === "rule" || cap.kind === "skill") {
       materializedRecordId = await upsertAuthoredCapabilityRecord(
@@ -777,6 +810,33 @@ function toRevision(row: RevisionRow): AuthoredCapabilityRevision {
 
 function rowsOf<T>(result: QueryResult): T[] {
   return (result.rows ?? []) as T[];
+}
+
+function mapAuthoredCapabilityCreateError(
+  err: unknown,
+  args: {
+    projectSlug: string;
+    input: CreateAuthoredCapabilityInput;
+  },
+): unknown {
+  if (err instanceof MaisterError) return err;
+  if (isUniqueViolation(err, "authored_capabilities_project_kind_slug_uq")) {
+    return new MaisterError(
+      "CONFLICT",
+      `authored ${args.input.kind} slug "${args.input.slug}" already exists in project ${args.projectSlug}`,
+      { cause: err instanceof Error ? err : undefined },
+    );
+  }
+
+  return err;
+}
+
+function isUniqueViolation(err: unknown, constraint: string): boolean {
+  if (err === null || typeof err !== "object") return false;
+
+  const record = err as Record<string, unknown>;
+
+  return record.code === "23505" && record.constraint === constraint;
 }
 
 function nullableDate(value: Date | string | null): Date | null {

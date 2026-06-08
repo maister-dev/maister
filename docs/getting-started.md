@@ -86,14 +86,15 @@ see [`deployment.md`](deployment.md).
 What you should see (M9+): the MAIster login page at `/login`. Sign in with
 the credentials from `pnpm db:seed`. Active routes:
 
-| Route | Description |
-| ----- | ----------- |
-| `/login` | Credentials sign-in (Auth.js v5). |
-| `/` | Portfolio home — workspaces grid across all projects. |
-| `/projects` | Registered projects list + "Add project" button (admin only). |
-| `/projects/new` | Add-project form (admin only). Accepts absolute path to `maister.yaml` dir. |
-| `/projects/[slug]` | Per-project board — Backlog, Prepare, In Delivery, In Review columns. |
-| `/projects/[slug]/tasks/new` | Task creation form (member+). |
+| Route                        | Description                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `/login`                     | Credentials sign-in (Auth.js v5).                                           |
+| `/`                          | Portfolio home — workspaces grid across all projects.                       |
+| `/projects`                  | Registered projects list + "Add project" button (admin only).               |
+| `/projects/new`              | Add-project form (admin only). Accepts absolute path to `maister.yaml` dir. |
+| `/projects/[slug]`           | Per-project board — Backlog, Prepare, In Delivery, In Review columns.       |
+| `/projects/[slug]/tasks/new` | Task creation form (member+).                                               |
+| `/flows`                     | Authored Flow drafts and installed package inventory.                       |
 
 The old HeroUI template stubs (`/about`, `/blog`, `/docs`, `/pricing`) have
 been removed.
@@ -120,6 +121,12 @@ db:studio          # drizzle-kit studio
 backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
                          # existing flows rows after applying migration 0007
                          # (idempotent; run once after upgrading to M10)
+validate-authored-flow   # validate a portable authored Flow package directory
+import-flow-package-draft # import a portable package as an inert authored draft
+export-authored-flow     # export an authored Flow draft/published revision
+                         # to a git-ready portable directory
+install-authored-flow-package # install an exported authored package as
+                              # untrusted; trust/enable remains separate
 ```
 
 > **Upgrading to M10:** after `pnpm db:migrate` applies `0006`, run
@@ -130,12 +137,12 @@ backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
 > [configuration](configuration.md)) to auto-trust your internal Flow sources.
 
 > **`test:e2e` prerequisites (no manual setup):** `pnpm --filter maister-web
-> test:e2e` (or `cd web && pnpm test:e2e`) is self-provisioning. Its
+test:e2e` (or `cd web && pnpm test:e2e`) is self-provisioning. Its
 > `globalSetup` creates and migrates a **disposable** `maister_e2e` Postgres DB
 > (`E2E_DB_URL`, defaults to the local dev Postgres — never the dev DB), seeds
 > one per-spec fixture each, and Playwright's `webServer` boots `next dev` on
 > `E2E_PORT` (3100) against it. It needs **only a reachable Postgres** (`docker
-> compose up -d db`); no supervisor and no `git` config beyond a `git` binary.
+compose up -d db`); no supervisor and no `git` config beyond a `git` binary.
 > The seed `git init`s a real parent repo + `git worktree add`s each authed
 > spec's run branch under `<repo>/.worktrees/`, so the M11b manual-takeover spec
 > exercises real `git log`/`git diff`/`merge-base` on return. If a prior run
@@ -265,6 +272,59 @@ row into the `flows` table. The Add-Project UI will replace
 this CLI for end users — it is a manual smoke-test surface only.
 
 Full pipeline reference: [Flow Installer](flow-installer.md).
+
+## Author a portable Flow package
+
+The `/flows` section manages authored Flow drafts and installed executable
+packages in one place. Authored packages are inert until explicitly installed
+through the trust-gated Flow package lifecycle. A portable package directory
+contains `flow.yaml` plus optional files such as `README.md`, `setup.sh`,
+`schemas/*`, `skills/*`, `rules/*`, `agents/*`, `scripts/*`, and `templates/*`.
+
+Validate the canonical AIF package without touching the database:
+
+```bash
+pnpm --filter maister-web validate-authored-flow \
+  --source-dir ../plugins/aif
+```
+
+Import it as a project-scoped authored draft:
+
+```bash
+DB_URL=postgres://maister:maister@localhost:5432/maister \
+  pnpm --filter maister-web import-flow-package-draft \
+    --project maister-dev \
+    --source-dir ../plugins/aif
+```
+
+Export a valid authored Flow by capability id or package slug. Export writes a
+new directory via temp + rename, refuses invalid package bodies, and does not
+run `setup.sh`, mutate `flow_revisions`, enable a project attachment, or launch
+anything:
+
+```bash
+DB_URL=postgres://maister:maister@localhost:5432/maister \
+  pnpm --filter maister-web export-authored-flow \
+    --project maister-dev \
+    --slug aif \
+    --output-dir /tmp/maister-aif-flow
+```
+
+To bridge an exported package into the executable package lifecycle, install
+the exported directory as an explicitly untrusted package revision:
+
+```bash
+DB_URL=postgres://maister:maister@localhost:5432/maister \
+  pnpm --filter maister-web install-authored-flow-package \
+    --project maister-dev \
+    --source-dir /tmp/maister-aif-flow \
+    --version authored-aif-local \
+    --flow-id aif
+```
+
+This creates or selects the installed revision and leaves it `Installed` /
+`untrusted`; use the existing Flow package trust and enable UI/API to run
+`setup.sh` and enable it.
 
 ## Launch a run
 

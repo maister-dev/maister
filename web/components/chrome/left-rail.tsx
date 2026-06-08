@@ -151,7 +151,7 @@ export async function LeftRail({
   }[] = [
     { id: "projects", label: tNav("projects"), href: "/", ready: true },
     { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: false },
-    { id: "flows", label: tNav("flows"), href: "/flows", ready: false },
+    { id: "flows", label: tNav("flows"), href: "/flows", ready: true },
     { id: "agents", label: tNav("agents"), href: "/agents", ready: false },
     { id: "mcps", label: tNav("mcps"), href: "/mcps", ready: false },
   ];

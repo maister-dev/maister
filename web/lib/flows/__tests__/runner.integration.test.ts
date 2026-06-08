@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,14 +14,21 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
-import { installFlowPlugin } from "@/lib/flows";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
+import {
+  installAuthoredFlowPackageBridge,
+  installFlowPlugin,
+} from "@/lib/flows";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
   flows,
+  flowRevisions,
   nodeAttempts,
   projects,
   runs,
@@ -33,8 +40,8 @@ const {
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: any;
-let homeDir: string;
-let workspaceRoot: string;
+let homeDir = "";
+let workspaceRoot = "";
 let projectId: string;
 let executorId: string;
 let cliFlowId: string;
@@ -100,7 +107,9 @@ beforeAll(async () => {
     maisterYamlPath: join(workspaceRoot, "demo-repo", "maister.yaml"),
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db
     .update(projects)
@@ -148,8 +157,12 @@ afterAll(async () => {
   }
   await pool?.end();
   await container?.stop();
-  await rm(homeDir, { recursive: true, force: true });
-  await rm(workspaceRoot, { recursive: true, force: true });
+  if (homeDir) {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+  if (workspaceRoot) {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
 });
 
 async function seedRun(args: {
@@ -289,6 +302,64 @@ describe("installFlowPlugin — local source path", () => {
     // M10 (ADR-021): local sources are content-addressed by manifest digest,
     // not the version label, so the cache dir is aif@<12-hex-digest-prefix>.
     expect(rows[0].installedPath).toMatch(/\/aif@[0-9a-f]{12}$/);
+  });
+
+  it("authored bridge installs local exported bytes as untrusted without running setup", async () => {
+    const sourceDir = await mkdtemp(join(workspaceRoot, "authored-bridge-"));
+    const setupSentinel = join(workspaceRoot, "authored-setup-ran");
+
+    await writeFile(
+      join(sourceDir, "flow.yaml"),
+      [
+        "schemaVersion: 1",
+        "name: authored-bridge",
+        "compat:",
+        "  engine_min: 1.1.0",
+        "nodes:",
+        "  - id: plan",
+        "    type: ai_coding",
+        "    action:",
+        "      prompt: Plan",
+        "    transitions:",
+        "      success: done",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(sourceDir, "setup.sh"),
+      `#!/usr/bin/env bash\ntouch ${JSON.stringify(setupSentinel)}\n`,
+      "utf8",
+    );
+    await chmod(join(sourceDir, "setup.sh"), 0o755);
+
+    const result = await installAuthoredFlowPackageBridge({
+      source: sourceDir,
+      version: "authored-bridge-local",
+      projectId,
+      projectSlug: "demo-app",
+      flowId: "authored-bridge",
+      workspaceRoot,
+      db,
+    });
+
+    const flowRows = await db
+      .select()
+      .from(flows)
+      .where(eq(flows.flowRefId, "authored-bridge"));
+    const revisionRows = await db
+      .select()
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, result.revisionId));
+
+    expect(result.trustStatus).toBe("untrusted");
+    expect(result.enablementState).toBe("Installed");
+    expect(flowRows[0].trustStatus).toBe("untrusted");
+    expect(flowRows[0].enablementState).toBe("Installed");
+    expect(revisionRows[0].setupStatus).toBe("pending");
+    await expect(access(setupSentinel)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 

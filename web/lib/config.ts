@@ -647,7 +647,7 @@ function declaresOutputResult(nodes: NodeDef[]): boolean {
 // Cross-reference + cycle + engine validation for a graph (`nodes[]`) manifest
 // (ADR-026). zod has already validated node/gate shape; this enforces the
 // graph-level invariants that zod cannot express.
-function validateGraphManifest(
+export function validateGraphManifest(
   manifest: FlowYamlV1,
   nodes: NodeDef[],
   flowYamlPath: string,

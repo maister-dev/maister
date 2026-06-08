@@ -4,12 +4,14 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { TrustStatus } from "@/lib/flows/trust";
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
   lstat,
   mkdir,
   mkdtemp,
+  readFile,
+  readdir,
   readlink,
   rename,
   rm,
@@ -31,6 +33,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
+import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring";
 import { resolveTrust } from "@/lib/flows/trust";
 import {
   flowIdSchema,
@@ -55,9 +58,8 @@ const CLONE_TIMEOUT_MS = 120_000;
 const SETUP_SH_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
-// First 40 hex chars of the manifest sha256 — content-addresses local sources
-// while satisfying the 40-hex revision schema (flow-paths). The full digest is
-// stored separately in flow_revisions.manifest_digest.
+// First 40 hex chars of the local package sha256 — content-addresses all local
+// source bytes while satisfying the 40-hex revision schema (flow-paths).
 const LOCAL_REVISION_LEN = 40;
 
 const inFlightInstalls = new Map<string, Promise<InstallResult>>();
@@ -396,6 +398,75 @@ export async function isLocalDirectorySource(
   }
 }
 
+export async function localDirectoryContentDigest(
+  sourceDir: string,
+): Promise<string> {
+  const root = resolvePath(sourceDir);
+  const entries = await listLocalDirectoryDigestEntries(root);
+  const hash = createHash("sha256");
+
+  for (const entry of entries) {
+    hash.update(entry.kind);
+    hash.update("\0");
+    hash.update(entry.relativePath);
+    hash.update("\0");
+    hash.update(entry.content);
+    hash.update("\0");
+  }
+
+  return hash.digest("hex");
+}
+
+type LocalDirectoryDigestEntry = {
+  kind: "file" | "symlink";
+  relativePath: string;
+  content: string;
+};
+
+async function listLocalDirectoryDigestEntries(
+  root: string,
+): Promise<LocalDirectoryDigestEntry[]> {
+  const entries: LocalDirectoryDigestEntry[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    const dirEntries = await readdir(dir, { withFileTypes: true });
+
+    for (const entry of dirEntries) {
+      const absolutePath = join(dir, entry.name);
+      const relativePath = path
+        .relative(root, absolutePath)
+        .split(path.sep)
+        .join("/");
+
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        entries.push({
+          kind: "symlink",
+          relativePath,
+          content: await readlink(absolutePath),
+        });
+        continue;
+      }
+      if (entry.isFile()) {
+        const content = await readFile(absolutePath);
+
+        entries.push({
+          kind: "file",
+          relativePath,
+          content: content.toString("base64"),
+        });
+      }
+    }
+  }
+
+  await walk(root);
+
+  return entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
 async function loadManifestOrThrow(
   flowYamlPath: string,
   source: string,
@@ -540,10 +611,9 @@ export async function installRevision(opts: {
       version,
       { roleRefs, capabilityRefIds },
     );
-    resolvedRevision = manifestDigest(manifestForIntent).slice(
-      0,
-      LOCAL_REVISION_LEN,
-    );
+    resolvedRevision = (
+      await localDirectoryContentDigest(sourceKind.absPath)
+    ).slice(0, LOCAL_REVISION_LEN);
     target = systemCachePath(flowId, resolvedRevision);
   } else {
     tmpDir = await mkdtemp(
@@ -808,6 +878,7 @@ async function upsertFlowEnablementRow(opts: {
 
 async function installFlowPluginImpl(
   args: InstallFlowPluginArgs,
+  trustStatusOverride?: TrustStatus,
 ): Promise<InstallResult> {
   const { source, version, projectId, projectSlug, flowId, roleRefs, signal } =
     args;
@@ -824,7 +895,7 @@ async function installFlowPluginImpl(
     capabilityRefIds: args.capabilityRefIds,
   });
 
-  const trustStatus = resolveTrust(source);
+  const trustStatus = trustStatusOverride ?? resolveTrust(source);
   // Trusted-by-policy sources auto-enable to preserve the one-shot register UX;
   // untrusted sources install but stay Installed until explicit trust + enable.
   // Setup.sh runs HERE (trust already established by policy) before enabling,
@@ -923,4 +994,47 @@ export async function installFlowPlugin(
   inFlightInstalls.set(dedupKey, promise);
 
   return promise;
+}
+
+export async function installAuthoredFlowPackageBridge(
+  args: InstallFlowPluginArgs,
+): Promise<InstallResult> {
+  validateBoundary(args);
+  const source = resolvePath(args.source);
+  const packageBody = await readAuthoredFlowPackageDirectory(source);
+
+  if (packageBody.validation.status !== "valid") {
+    log.warn(
+      {
+        projectId: args.projectId,
+        projectSlug: args.projectSlug,
+        flowId: args.flowId,
+        source,
+        issueCount: packageBody.validation.issueCount,
+        issues: packageBody.validation.issues.map((issue) => ({
+          code: issue.code,
+          path: issue.path,
+        })),
+      },
+      "[FIX] authored Flow package bridge install refused",
+    );
+
+    throw new MaisterError(
+      "CONFIG",
+      `cannot install invalid authored Flow package ${packageBody.packageMetadata.slug}: ${packageBody.validation.issueCount} validation issue(s)`,
+    );
+  }
+
+  log.info(
+    {
+      projectId: args.projectId,
+      projectSlug: args.projectSlug,
+      flowId: args.flowId,
+      source,
+      version: args.version,
+    },
+    "install authored Flow package bridge start",
+  );
+
+  return installFlowPluginImpl({ ...args, source }, "untrusted");
 }
