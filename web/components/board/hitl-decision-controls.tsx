@@ -19,6 +19,8 @@ export interface HitlDecisionControlsLabels {
   schemaLabel: string;
   submit: string;
   reviewCommentsPlaceholder: string;
+  formInstructions: string;
+  formCustomPlaceholder: string;
 }
 
 export interface ReviewSchema {
@@ -26,6 +28,38 @@ export interface ReviewSchema {
   transitions?: Record<string, string>;
   reworkTargets?: string[];
   workspacePolicies?: string[];
+}
+
+// A single field view derived from a stored `form_schema` doc (config.schema
+// `formSchemaSchema`). Narrowed structurally so the pure presentational layer
+// stays decoupled from the server-side Zod type.
+export interface HitlFormFieldView {
+  name: string;
+  label?: string;
+  type?: string;
+  required?: boolean;
+  options?: string[];
+}
+
+// A `form` HITL renders option buttons + free-text per field ONLY when the
+// stored schema is a form-schema doc with a non-empty `fields[]`. Any other
+// schema (or a non-form kind) falls back to the raw-JSON response textarea.
+export function formFieldsFromSchema(
+  schema: unknown,
+): HitlFormFieldView[] | null {
+  if (!schema || typeof schema !== "object") return null;
+  const fields = (schema as { fields?: unknown }).fields;
+
+  if (!Array.isArray(fields) || fields.length === 0) return null;
+
+  const views = fields.filter(
+    (f): f is HitlFormFieldView =>
+      !!f &&
+      typeof f === "object" &&
+      typeof (f as { name?: unknown }).name === "string",
+  );
+
+  return views.length > 0 ? views : null;
 }
 
 export interface HitlDecisionControlsProps {
@@ -38,6 +72,7 @@ export interface HitlDecisionControlsProps {
   confidence: string;
   comments: string;
   jsonValue: string;
+  formValues: Record<string, string>;
   disabled: boolean;
   compact?: boolean;
   error: string | null;
@@ -45,10 +80,12 @@ export interface HitlDecisionControlsProps {
   onConfidenceChange: (v: string) => void;
   onCommentsChange: (v: string) => void;
   onJsonChange: (v: string) => void;
+  onFormFieldChange: (name: string, value: string) => void;
   onDecision: (decision: string) => void;
   onSendBack: () => void;
   onOption: (optionId: string) => void;
   onSubmitJson: () => void;
+  onSubmitForm: () => void;
 }
 
 const CRITICALITY_PILL: Record<"low" | "medium" | "high" | "critical", string> =
@@ -120,6 +157,64 @@ function ConfidenceInput({
   );
 }
 
+function FormFieldControl({
+  field,
+  value,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  field: HitlFormFieldView;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  onChange: (v: string) => void;
+}): ReactElement {
+  const options = field.options ?? [];
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label
+        className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+        htmlFor={`hitl-form-field-${field.name}`}
+      >
+        {field.label ?? field.name}
+        {field.required ? " *" : ""}
+      </label>
+      {options.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {options.map((opt) => (
+            <button
+              key={opt}
+              className={clsx(
+                "rounded-lg border px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
+                value === opt
+                  ? "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2"
+                  : "border-line bg-paper text-mute hover:border-mute hover:text-ink-2",
+                disabled && "opacity-60",
+              )}
+              disabled={disabled}
+              type="button"
+              onClick={() => onChange(opt)}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <input
+        className="rounded-[7px] border border-line bg-paper px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-amber"
+        disabled={disabled}
+        id={`hitl-form-field-${field.name}`}
+        placeholder={placeholder}
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
 export function HitlDecisionControls({
   kind,
   reviewSchema,
@@ -130,6 +225,7 @@ export function HitlDecisionControls({
   confidence,
   comments,
   jsonValue,
+  formValues,
   disabled,
   compact,
   error,
@@ -137,11 +233,14 @@ export function HitlDecisionControls({
   onConfidenceChange,
   onCommentsChange,
   onJsonChange,
+  onFormFieldChange,
   onDecision,
   onSendBack,
   onOption,
   onSubmitJson,
+  onSubmitForm,
 }: HitlDecisionControlsProps): ReactElement {
+  const formFields = kind === "form" ? formFieldsFromSchema(schema) : null;
   const decisionLabel = (d: string): string => {
     if (d === "approve") return labels.decisionApprove;
     if (d === "rework") return labels.decisionRework;
@@ -242,6 +341,28 @@ export function HitlDecisionControls({
               {opt.label}
             </button>
           ))}
+        </div>
+      ) : formFields ? (
+        <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>
+          <p className="text-[12px] text-mute">{labels.formInstructions}</p>
+          {formFields.map((field) => (
+            <FormFieldControl
+              key={field.name}
+              disabled={disabled}
+              field={field}
+              placeholder={labels.formCustomPlaceholder}
+              value={formValues[field.name] ?? ""}
+              onChange={(v) => onFormFieldChange(field.name, v)}
+            />
+          ))}
+          <button
+            className="mt-1 inline-flex w-max items-center rounded-full bg-amber px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_8px_24px_-8px_var(--amber)] transition-all hover:bg-amber-2 disabled:opacity-60"
+            disabled={disabled}
+            type="button"
+            onClick={onSubmitForm}
+          >
+            {labels.submit}
+          </button>
         </div>
       ) : (
         <>

@@ -8,7 +8,10 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 
-import { HitlDecisionControls } from "@/components/board/hitl-decision-controls";
+import {
+  HitlDecisionControls,
+  formFieldsFromSchema,
+} from "@/components/board/hitl-decision-controls";
 
 // Typed MaisterError codes the respond route can return; each has a message in
 // messages/*.json under `run.error.<CODE>`. Anything else → `run.error.generic`.
@@ -54,6 +57,7 @@ export function RunHitlResponse({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [json, setJson] = useState("{}");
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
   const [confidence, setConfidence] = useState("");
 
@@ -119,6 +123,37 @@ export function RunHitlResponse({
     }
 
     void post(payload);
+  }
+
+  function handleFormFieldChange(name: string, value: string): void {
+    setFormValues((prev) => ({ ...prev, [name]: value }));
+  }
+
+  // Structured form (intake): build the response object from the per-field
+  // values, coercing by the field's declared type. The server re-validates
+  // against the stored form_schema, so omitted/required fields surface as a
+  // NEEDS_INPUT error rather than failing client-side.
+  function submitForm(): void {
+    const fields = formFieldsFromSchema(schema) ?? [];
+    const response: Record<string, unknown> = {};
+
+    for (const field of fields) {
+      const raw = formValues[field.name];
+
+      if (raw === undefined || raw === "") continue;
+
+      if (field.type === "number") {
+        const n = Number(raw);
+
+        response[field.name] = Number.isFinite(n) ? n : raw;
+      } else if (field.type === "boolean") {
+        response[field.name] = raw === "true";
+      } else {
+        response[field.name] = raw;
+      }
+    }
+
+    void post({ response });
   }
 
   const disabled = busy || pending || !canAct;
@@ -190,6 +225,8 @@ export function RunHitlResponse({
     schemaLabel: t("schemaLabel"),
     submit: busy ? t("submitting") : t("submit"),
     reviewCommentsPlaceholder: t("reviewCommentsPlaceholder"),
+    formInstructions: t("formInstructions"),
+    formCustomPlaceholder: t("formCustomPlaceholder"),
   };
 
   return (
@@ -200,6 +237,7 @@ export function RunHitlResponse({
       criticality={criticality}
       disabled={disabled}
       error={error}
+      formValues={formValues}
       jsonValue={json}
       kind={kind}
       labels={labels}
@@ -210,9 +248,11 @@ export function RunHitlResponse({
       onCommentsChange={setComments}
       onConfidenceChange={setConfidence}
       onDecision={handleDecision}
+      onFormFieldChange={handleFormFieldChange}
       onJsonChange={setJson}
       onOption={(optionId) => void post({ optionId })}
       onSendBack={handleSendBack}
+      onSubmitForm={submitForm}
       onSubmitJson={submitJson}
     />
   );

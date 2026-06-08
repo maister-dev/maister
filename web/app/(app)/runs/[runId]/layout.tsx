@@ -284,6 +284,7 @@ export default async function RunDetailLayout({
             check: tWorkbench("graph.role.check"),
             judge: tWorkbench("graph.role.judge"),
             human: tWorkbench("graph.role.human"),
+            form: tWorkbench("graph.role.form"),
             terminal: tWorkbench("graph.role.terminal"),
             other: tWorkbench("graph.role.other"),
           },

@@ -84,6 +84,27 @@ const visualGraph: FlowYamlV1 = {
   ],
 } as FlowYamlV1;
 
+// A graph with a `form` intake node (T4). The form node collects values against
+// `settings.form_schema` and finishes on `transitions.success`.
+const formGraph: FlowYamlV1 = {
+  schemaVersion: 1,
+  name: "intake-aif",
+  nodes: [
+    {
+      id: "intake",
+      type: "form",
+      settings: { form_schema: "./schemas/intake.json" },
+      transitions: { success: "plan" },
+    },
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "/aif-plan" },
+      transitions: { success: "done" },
+    },
+  ],
+} as FlowYamlV1;
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
@@ -195,6 +216,14 @@ describe("buildGraphTopology — visual metadata", () => {
     expect(byId.get("plan-work")?.nodeTypeLabel).toBe("Agent");
     expect(byId.get("review")?.nodeRole).toBe("human");
     expect(byId.get("audit")?.nodeRole).toBe("judge");
+  });
+
+  it("maps a form intake node to the 'form' role and 'Form' label", () => {
+    const topo = buildGraphTopology(compileManifest(formGraph));
+    const byId = new Map(topo.nodes.map((n) => [n.id, asRecord(n)]));
+
+    expect(byId.get("intake")?.nodeRole).toBe("form");
+    expect(byId.get("intake")?.nodeTypeLabel).toBe("Form");
   });
 
   it("summarizes declared blocking/advisory gates without runtime status", () => {

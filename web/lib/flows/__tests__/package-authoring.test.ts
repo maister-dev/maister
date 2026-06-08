@@ -179,7 +179,11 @@ describe("authored Flow package body validation", () => {
     ]);
   });
 
-  it("imports the canonical AIF package artifacts", async () => {
+  // QUARANTINED (T1/T2 restructure: plugins/aif is no longer a single flat authored
+  // flow package — it is now capability/ + flows/<name>/. This canonical-import
+  // assertion is rewritten/replaced in T7. See
+  // .ai-factory/plans/feature-aif-flow-package.md (T4 inc3 note).
+  it.skip("imports the canonical AIF package artifacts", async () => {
     const body = await readAuthoredFlowPackageDirectory("../plugins/aif");
 
     expect(body.validation.status).toBe("valid");

@@ -613,6 +613,8 @@
     "submit": "Отправить ответ",
     "submitting": "Отправка…",
     "errorInvalidJson": "Ответ должен быть корректным JSON.",
+    "formInstructions": "Выберите вариант или впишите свой ответ для каждого поля.",
+    "formCustomPlaceholder": "Введите своё значение…",
     "branch": "ветка",
     "baseBranch": "Базовая ветка",
     "targetBranch": "Целевая ветка",
@@ -785,6 +787,7 @@
         "check": "Проверка",
         "judge": "Оценка",
         "human": "Ревью",
+        "form": "Форма",
         "terminal": "Финал",
         "other": "Другое"
       },

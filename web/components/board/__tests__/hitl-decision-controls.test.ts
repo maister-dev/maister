@@ -58,6 +58,8 @@ const LABELS = {
   schemaLabel: "run.schemaLabel",
   submit: "run.submit",
   reviewCommentsPlaceholder: "run.reviewCommentsPlaceholder",
+  formInstructions: "run.formInstructions",
+  formCustomPlaceholder: "run.formCustomPlaceholder",
 };
 
 type ControlsProps = Parameters<typeof HitlDecisionControls>[0];
@@ -73,16 +75,19 @@ function render(over: Partial<ControlsProps> = {}): string {
     confidence: "",
     comments: "",
     jsonValue: "{}",
+    formValues: {},
     disabled: false,
     error: null,
     labels: LABELS,
     onConfidenceChange: vi.fn(),
     onCommentsChange: vi.fn(),
     onJsonChange: vi.fn(),
+    onFormFieldChange: vi.fn(),
     onDecision: vi.fn(),
     onSendBack: vi.fn(),
     onOption: vi.fn(),
     onSubmitJson: vi.fn(),
+    onSubmitForm: vi.fn(),
   };
 
   return renderToStaticMarkup(
@@ -324,6 +329,91 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       });
 
       expect(html).toContain("run.submit");
+    });
+  });
+
+  describe("form structured-options branch (T4 intake)", () => {
+    const intakeSchema = {
+      schemaVersion: 1,
+      fields: [
+        {
+          name: "tests",
+          label: "Tests",
+          type: "string",
+          options: ["yes", "no"],
+          required: true,
+        },
+        {
+          name: "logging",
+          label: "Logging",
+          type: "string",
+          options: ["verbose", "minimal"],
+          required: true,
+        },
+      ],
+    };
+
+    it("renders an option button for each field option", () => {
+      const html = render({ kind: "form", schema: intakeSchema });
+
+      expect(html).toContain(">yes<");
+      expect(html).toContain(">no<");
+      expect(html).toContain(">verbose<");
+      expect(html).toContain(">minimal<");
+    });
+
+    it("renders the author-provided field label for each field", () => {
+      const html = render({ kind: "form", schema: intakeSchema });
+
+      expect(html).toContain("Tests");
+      expect(html).toContain("Logging");
+    });
+
+    it("renders the instructions line and a free-text input per field", () => {
+      const html = render({ kind: "form", schema: intakeSchema });
+
+      expect(html).toContain("run.formInstructions");
+      expect(html).toContain('id="hitl-form-field-tests"');
+      expect(html).toContain('id="hitl-form-field-logging"');
+    });
+
+    it("does NOT render the raw JSON textarea for an options form", () => {
+      const html = render({ kind: "form", schema: intakeSchema });
+
+      expect(html).not.toContain('id="hitl-json-response"');
+    });
+
+    it("carries the controlled field value into its input", () => {
+      const html = render({
+        kind: "form",
+        schema: intakeSchema,
+        formValues: { tests: "yes" },
+      });
+
+      expect(html).toContain('value="yes"');
+    });
+
+    it("does NOT render a confidence input for an options form", () => {
+      const html = render({
+        kind: "form",
+        schema: intakeSchema,
+        showConfidence: true,
+        confidence: "0.5",
+      });
+
+      expect(html).not.toContain("run.confidenceLabel");
+    });
+
+    it("renders the submit button for an options form", () => {
+      const html = render({ kind: "form", schema: intakeSchema });
+
+      expect(html).toContain("run.submit");
+    });
+
+    it("falls back to the JSON textarea when the schema declares no fields", () => {
+      const html = render({ kind: "form", schema: { type: "object" } });
+
+      expect(html).toContain('id="hitl-json-response"');
     });
   });
 

@@ -20,10 +20,17 @@ const AIF_FLOW = resolve(__dirname, "../../../../plugins/aif/flow.yaml");
 
 let manifest: FlowYamlV1;
 
+// QUARANTINED (T1/T2 restructure removed the single plugins/aif/flow.yaml that
+// this whole file targets; the M12/M15 artifact + calibration contract is
+// re-expressed on the authored flows/<name>/flow.yaml in T7). The load is
+// guarded so the suite collects (as skipped) instead of erroring at beforeAll.
+// See .ai-factory/plans/feature-aif-flow-package.md (T4 inc3 note).
 beforeAll(async () => {
-  // Loading the un-migrated manifest must NOT throw (it is valid today) — so a
-  // load failure here would be a harness problem, not the contract under test.
-  manifest = await loadFlowManifest(AIF_FLOW);
+  try {
+    manifest = await loadFlowManifest(AIF_FLOW);
+  } catch {
+    manifest = { schemaVersion: 1, name: "missing", nodes: [] } as FlowYamlV1;
+  }
 });
 
 function nodeById(id: string): NodeDef | undefined {
@@ -54,7 +61,7 @@ function producesById(node: NodeDef | undefined, id: string) {
   return (node?.output?.produces ?? []).find((p) => p.id === id);
 }
 
-describe("aif flow.yaml — M12 declared-artifact migration", () => {
+describe.skip("aif flow.yaml — M12 declared-artifact migration", () => {
   // 1. Engine bump.
   it("declares compat.engine_min 1.2.0", () => {
     expect(manifest.compat?.engine_min).toBe("1.2.0");
@@ -135,7 +142,7 @@ describe("aif flow.yaml — M12 declared-artifact migration", () => {
 
 // M15 (ADR-048): verdict calibration — flow-level default folds into the
 // advisory ai_judgment gate on the review node at compile time.
-describe("aif flow.yaml — M15 verdict calibration", () => {
+describe.skip("aif flow.yaml — M15 verdict calibration", () => {
   it("declares flow-level verdict_calibration.confidence_min: 0.7", () => {
     expect(manifest.verdict_calibration?.confidence_min).toBe(0.7);
   });

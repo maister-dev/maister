@@ -613,6 +613,8 @@
     "submit": "Submit response",
     "submitting": "Submitting…",
     "errorInvalidJson": "Response must be valid JSON.",
+    "formInstructions": "Pick an option or type your own answer for each field.",
+    "formCustomPlaceholder": "Type a custom value…",
     "branch": "branch",
     "baseBranch": "Base branch",
     "targetBranch": "Target branch",
@@ -785,6 +787,7 @@
         "check": "Check",
         "judge": "Judge",
         "human": "Human review",
+        "form": "Form",
         "terminal": "Terminal",
         "other": "Other"
       },

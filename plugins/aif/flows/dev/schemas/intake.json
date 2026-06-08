@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    {
+      "name": "tests",
+      "label": "Tests",
+      "type": "string",
+      "required": true,
+      "options": ["yes", "no"]
+    },
+    {
+      "name": "logging",
+      "label": "Logging",
+      "type": "string",
+      "required": true,
+      "options": ["verbose", "normal", "none"]
+    },
+    {
+      "name": "docs",
+      "label": "Docs",
+      "type": "string",
+      "required": true,
+      "options": ["yes", "no"]
+    }
+  ]
+}
