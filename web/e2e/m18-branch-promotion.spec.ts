@@ -54,10 +54,14 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   await page.goto(`/runs/${fx.mergeRunId}`);
 
   // The base→run→target review surface renders for the flow Review run: all
-  // three branch names appear, and the raw diff is shown in a <pre>.
+  // three branch names appear, and the diff is shown in the ADR-066 diff-view
+  // (git-diff-view), not a raw <pre>.
   await expect(page.getByText(fx.mergeBranch, { exact: false }).first()).toBeVisible();
   await expect(page.getByText(fx.targetBranch, { exact: false }).first()).toBeVisible();
-  await expect(page.locator("pre", { hasText: "clean merge change" })).toBeVisible();
+  const diffView = page.locator('[data-testid="diff-view"]');
+
+  await expect(diffView).toBeVisible();
+  await expect(diffView).toContainText("clean merge change");
 
   // The promote action NAMES the exact target branch.
   const promote = page.getByRole("button", { name: new RegExp(fx.targetBranch) });

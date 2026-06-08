@@ -8,7 +8,19 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
-import { RawDiff } from "@/components/runs/raw-diff";
+import {
+  DiffView,
+  type PreparedFile,
+  type RunDiffFile,
+} from "@/components/workbench/diff-view";
+
+// The prepared diff DTO the page builds server-side (`prepareDiff`): a per-file
+// summary (path/status + `+`/`−` counts) and the syntax bundles the client diff
+// hydrates. Repo-relative paths only — no server handles (FINDING C).
+export type ReviewPanelDiff = {
+  files: RunDiffFile[];
+  perFile: PreparedFile[];
+};
 
 type PromotionMode = "local_merge" | "pull_request";
 
@@ -38,7 +50,7 @@ export interface ReviewPanelProps {
   promotionMode: PromotionMode;
   reviewedTargetCommit: string | null;
   readiness: ReadinessDTO | null;
-  diff: string;
+  diff: ReviewPanelDiff;
   labels: ReviewPanelLabels;
   prUrl?: string | null;
   prNumber?: number | null;
@@ -83,6 +95,7 @@ export function ReviewPanel({
   canPromote = true,
 }: ReviewPanelProps): ReactElement {
   const t = useTranslations("run");
+  const tWorkbench = useTranslations("workbench");
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
   const [busy, setBusy] = useState(false);
@@ -218,8 +231,21 @@ export function ReviewPanel({
         </div>
       ) : null}
 
-      {/* raw diff */}
-      <RawDiff diff={diff} />
+      {/* ADR-066 diff (server-built Shiki bundle, split/inline) */}
+      <div className="mb-4">
+        <DiffView
+          files={diff.files}
+          labels={{
+            empty: tWorkbench("diff.empty"),
+            added: tWorkbench("diff.added"),
+            removed: tWorkbench("diff.removed"),
+            viewMode: tWorkbench("diff.viewMode"),
+            split: tWorkbench("diff.split"),
+            unified: tWorkbench("diff.unified"),
+          }}
+          perFile={diff.perFile}
+        />
+      </div>
 
       {prUrl ? (
         <p className="mb-4 font-mono text-[11px]">

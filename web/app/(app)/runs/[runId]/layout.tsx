@@ -30,6 +30,7 @@ import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
 import {
   ReviewPanel,
+  type ReviewPanelDiff,
   type ReviewPanelLabels,
 } from "@/components/runs/review-panel";
 import FileTree, {
@@ -40,6 +41,7 @@ import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
+import { prepareDiff } from "@/lib/diff/prepare";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
@@ -65,13 +67,15 @@ type RunDetailForReview = Awaited<ReturnType<typeof getRunDetail>> & object;
 // Resolve the ReviewPanel props for a flow run at `Review`. Legacy-row safe
 // (§3.6): null branch metadata is filled from project defaults / merge-base;
 // when no safe diff base can be derived the panel renders the relaunch state.
+const EMPTY_DIFF: ReviewPanelDiff = { files: [], perFile: [] };
+
 async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   baseBranch: string | null;
   baseCommit: string | null;
   targetBranch: string | null;
   reviewedTargetCommit: string | null;
   promotionMode: "local_merge" | "pull_request";
-  diff: string;
+  diff: ReviewPanelDiff;
   driftDetected: boolean;
   legacyNeedsRelaunch: boolean;
 }> {
@@ -103,18 +107,19 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
         targetBranch: null,
         reviewedTargetCommit: null,
         promotionMode,
-        diff: "",
+        diff: EMPTY_DIFF,
         driftDetected: false,
         legacyNeedsRelaunch: true,
       };
     }
   }
 
-  const diff = await diffRange({
+  const rawDiff = await diffRange({
     worktreePath: detail.worktreePath,
     baseRef: diffBaseRef,
     branch: detail.branch,
   });
+  const diff = await prepareDiff(rawDiff);
 
   // The live target HEAD this surface is reviewed against — carried into the
   // promote payload as the optimistic-concurrency drift token (§3.7). Drift is
@@ -303,6 +308,11 @@ export default async function RunDetailLayout({
           empty: tWorkbench("diff.empty"),
           error: tWorkbench("diff.error"),
           changedFiles: tWorkbench("diff.changedFiles"),
+          added: tWorkbench("diff.added"),
+          removed: tWorkbench("diff.removed"),
+          viewMode: tWorkbench("diff.viewMode"),
+          split: tWorkbench("diff.split"),
+          unified: tWorkbench("diff.unified"),
         },
       };
     }
@@ -388,7 +398,7 @@ export default async function RunDetailLayout({
             detail.promotionMode === "pull_request"
               ? "pull_request"
               : "local_merge",
-          diff: "",
+          diff: EMPTY_DIFF,
           driftDetected: false,
           legacyNeedsRelaunch: true,
         };

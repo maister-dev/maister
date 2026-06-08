@@ -12,8 +12,9 @@ import type { ReadinessDTO } from "@/lib/queries/readiness";
 // PRESENTATIONAL — render is driven entirely by props (no fetch on mount) so
 // renderToStaticMarkup is deterministic. It shows the base→run→target spine
 // (named branches + base commit), the readiness summary (from a ReadinessDTO
-// prop), the raw diff in a <pre>, a promotion-mode selector
-// (local_merge|pull_request), and a "Promote to <targetBranch>" action that
+// prop), the ADR-066 diff-view (git-diff-view, NOT a raw <pre>), a
+// promotion-mode selector (local_merge|pull_request), and a "Promote to
+// <targetBranch>" action that
 // POSTs /api/runs/{runId}/promote with {mode, targetBranch, reviewedTargetCommit,
 // allowTargetDrift?}. On a PRECONDITION "target advanced" response it shows a
 // drift warning + an explicit "Promote anyway" (allowTargetDrift:true). On
@@ -41,6 +42,12 @@ vi.mock("next-intl", () => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  // The ADR-066 <DiffView> (rendered by the panel) reads `?diffview=` and
+  // builds the split↔unified toggle href from the pathname; supply a real
+  // URLSearchParams + a pathname so the diff-view container renders under
+  // static markup.
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/runs/run-1",
 }));
 
 import { ReviewPanel } from "@/components/runs/review-panel";
@@ -75,6 +82,12 @@ const LABELS = {
 
 type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
 
+// ADR-066 (T2.6): the `diff` prop changes from a raw `string` to the prepared
+// CLIENT DTO ({ files, perFile }) that the diff-view hydrates. A minimal empty
+// DTO is enough for the STRUCTURE assertion (the container renders); the diff
+// content itself is exercised in the workbench e2e, not here.
+const EMPTY_DIFF_DTO = { files: [], perFile: [] };
+
 function render(over: Partial<ReviewPanelProps> = {}): string {
   const base: ReviewPanelProps = {
     runId: "run-1",
@@ -85,13 +98,11 @@ function render(over: Partial<ReviewPanelProps> = {}): string {
     promotionMode: "local_merge",
     reviewedTargetCommit: "deadbeefcafe0123",
     readiness: READY,
-    diff: "diff --git a/file.txt b/file.txt\n+run change\n",
+    diff: EMPTY_DIFF_DTO,
     labels: LABELS,
-  } as ReviewPanelProps;
+  } as unknown as ReviewPanelProps;
 
-  return renderToStaticMarkup(
-    createElement(ReviewPanel, { ...base, ...over }),
-  );
+  return renderToStaticMarkup(createElement(ReviewPanel, { ...base, ...over }));
 }
 
 describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => {
@@ -119,15 +130,14 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     expect(html).toContain("impl-diff");
   });
 
-  it("renders the raw diff text inside a <pre>", () => {
+  it("renders the ADR-066 diff-view container (not a raw <pre>)", () => {
     const html = render();
 
-    expect(html).toContain("<pre");
-    expect(html).toContain("+run change");
-    // The diff lives inside the <pre>, not elsewhere.
-    const pre = html.slice(html.indexOf("<pre"));
-
-    expect(pre).toContain("+run change");
+    // The panel now mounts the diff-view wrapper (git-diff-view, fed the server
+    // bundle) instead of the old raw-diff <pre>. We assert the STRUCTURE — the
+    // wrapper's stable container testid — NOT Shiki/git-diff-view internals,
+    // which do not render meaningfully under renderToStaticMarkup.
+    expect(html).toContain('data-testid="diff-view"');
   });
 
   it("names the exact target in the Promote button label", () => {

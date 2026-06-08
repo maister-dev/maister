@@ -8,6 +8,11 @@ import {
   createHighlighter,
 } from "shiki";
 
+// The hast `Root` Shiki returns from `codeToHast`. Derived from Shiki's own
+// declared return type so we don't take a direct `@types/hast` dependency
+// (it is only present transitively under pnpm).
+export type HastRoot = ReturnType<Highlighter["codeToHast"]>;
+
 const log = pino({
   name: "highlight",
   level: process.env.LOG_LEVEL ?? "info",
@@ -55,19 +60,26 @@ export function langFromPath(path: string): string {
 }
 
 let highlighterPromise: Promise<Highlighter> | null = null;
+let highlighterSync: Highlighter | null = null;
 
 function getHighlighter(): Promise<Highlighter> {
   if (highlighterPromise === null) {
     highlighterPromise = createHighlighter({
       themes: [LIGHT_THEME, DARK_THEME],
       langs: [],
-    }).catch((err: unknown) => {
-      // Reset so a transient init failure (e.g. a slow wasm fetch) can retry on
-      // the next call instead of poisoning the cached promise permanently.
-      highlighterPromise = null;
-      log.warn({ err }, "shiki highlighter init failed");
-      throw err;
-    });
+    })
+      .then((h) => {
+        highlighterSync = h;
+
+        return h;
+      })
+      .catch((err: unknown) => {
+        // Reset so a transient init failure (e.g. a slow wasm fetch) can retry on
+        // the next call instead of poisoning the cached promise permanently.
+        highlighterPromise = null;
+        log.warn({ err }, "shiki highlighter init failed");
+        throw err;
+      });
   }
 
   return highlighterPromise;
@@ -114,6 +126,52 @@ export async function highlightToHtml(
   const effective = await resolveLang(highlighter, lang);
 
   return highlighter.codeToHtml(code, {
+    lang: effective,
+    themes: { light: LIGHT_THEME, dark: DARK_THEME },
+    defaultColor: false,
+  });
+}
+
+export async function preloadDiffLangs(
+  langs: readonly string[],
+): Promise<void> {
+  const highlighter = await getHighlighter();
+
+  await Promise.all(langs.map((lang) => resolveLang(highlighter, lang)));
+}
+
+export function isDiffLangReady(lang: string): boolean {
+  if (lang === PLAINTEXT) return true;
+  if (highlighterSync === null) return false;
+
+  return highlighterSync.getLoadedLanguages().includes(lang);
+}
+
+// Emits DUAL-theme hast (`defaultColor:false`) so each token's inline `style`
+// carries `--shiki-light` / `--shiki-dark` CSS vars instead of a concrete
+// `color:#...`. The diff syntax bundle is built ONCE (theme-independent) and
+// recolored on light/dark toggle via CSS — matching `highlightToHtml`. The
+// `theme` param is vestigial (the bundle is no longer single-theme) but kept so
+// the `DiffFileHighlighter.getAST(raw, fileName, lang, theme)` shape is honored.
+export function codeToHastSync(
+  code: string,
+  lang: string,
+  _theme: "light" | "dark",
+): HastRoot {
+  if (highlighterSync === null) {
+    throw new Error(
+      "codeToHastSync called before preloadDiffLangs resolved the highlighter",
+    );
+  }
+
+  const effective =
+    lang !== PLAINTEXT && highlighterSync.getLoadedLanguages().includes(lang)
+      ? lang
+      : PLAINTEXT;
+
+  if (effective === PLAINTEXT && lang !== PLAINTEXT) warnUnknownLangOnce(lang);
+
+  return highlighterSync.codeToHast(code, {
     lang: effective,
     themes: { light: LIGHT_THEME, dark: DARK_THEME },
     defaultColor: false,

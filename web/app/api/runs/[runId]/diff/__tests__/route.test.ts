@@ -294,7 +294,8 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
       sourceBranch?: string;
       targetBranch?: string;
       diff?: string;
-      files?: { path: string; status: string }[];
+      files?: { path: string; status: string; additions: number; deletions: number }[];
+      perFile?: { path: string; fileLang: string; bundle: unknown }[];
     };
 
     expect(res.status).toBe(200);
@@ -303,7 +304,24 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(body.sourceBranch).toBe("maister/feature-x");
     expect(body.targetBranch).toBe("release");
     expect(body.diff).toContain("diff --git");
-    expect(body.files).toEqual([{ path: "file.txt", status: "M" }]);
+    // ADR-066 T2.4: files[] gains additive per-file +/- counts (no hunks in the
+    // mocked diff → 0/0); the per-file prepared payload rides alongside.
+    expect(body.files).toEqual([
+      { path: "file.txt", status: "M", additions: 0, deletions: 0 },
+    ]);
+    expect(Array.isArray(body.perFile)).toBe(true);
+    // FINDING C: the response is a client DTO — no server-only handle leaks.
+    const serialized = JSON.stringify(body);
+
+    for (const key of [
+      "worktree",
+      "worktreePath",
+      "repoPath",
+      "acpSessionId",
+      "acp_session_id",
+    ]) {
+      expect(serialized).not.toContain(`"${key}"`);
+    }
   });
 
   it("computes the flow diff over workspace.worktreePath, not parentRepoPath", async () => {

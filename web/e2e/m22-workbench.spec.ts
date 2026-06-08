@@ -30,8 +30,10 @@
 //      `--shiki` span WITHOUT refetching the run/file route (CSS-var dual-theme).
 //   4. denial   — a fresh-context VIEWER (global+project role viewer) is denied
 //      the file route (403); the admin/owner is NOT denied.
-//   5. diff     — ?wb=diff renders the run-diff with the committed change in the
-//      <pre> and a changed-file entry.
+//   5. diff     — ?wb=diff renders the ADR-066 git-diff-view (data-testid
+//      diff-view) with the committed change, line-number gutters, per-file
+//      `+`/`−` badges, `?diffview=split|unified` toggle (data-diff-mode), and a
+//      data-theme recolor on theme toggle (NOT a raw <pre>).
 //   6. repo tab — /projects/<slug>?tab=repo renders the file-tree for an admin
 //      (member+) listing tracked repo files.
 import { readFileSync } from "node:fs";
@@ -364,7 +366,7 @@ test("a viewer project-member is denied the repo file route (member-gate)", asyn
   }
 });
 
-test("run-diff renders the committed run-branch change with a changed-file entry", async ({
+test("run-diff renders the ADR-066 diff-view with line numbers + per-file +/− badges", async ({
   page,
 }) => {
   const fx = loadM22Fixture();
@@ -373,14 +375,95 @@ test("run-diff renders the committed run-branch change with a changed-file entry
 
   await expect(page.locator('[data-testid="run-diff"]')).toBeVisible();
 
-  // The committed change (README.md modified on the run branch vs base).
-  await expect(
-    page.locator("pre", { hasText: "workbench diff change" }),
-  ).toBeVisible();
+  // The raw <pre> is replaced by the git-diff-view container (ADR-066). Default
+  // mode is split.
+  const diffView = page.locator('[data-testid="diff-view"]');
 
+  await expect(diffView).toBeVisible();
+  await expect(diffView).toHaveAttribute("data-diff-mode", "split");
+
+  // The committed change (README.md modified on the run branch vs base) renders
+  // inside the diff body.
+  await expect(diffView).toContainText("workbench diff change");
+
+  // The changed-files list shows the file with its server-computed +/− counts.
+  const changedFile = page.locator('[data-testid="changed-file"]', {
+    hasText: "README.md",
+  });
+
+  await expect(changedFile).toBeVisible();
   await expect(
-    page.locator('[data-testid="changed-file"]', { hasText: "README.md" }),
-  ).toBeVisible();
+    changedFile.locator('[data-testid="changed-file-additions"]'),
+  ).toContainText("+");
+  await expect(
+    changedFile.locator('[data-testid="changed-file-deletions"]'),
+  ).toContainText("−");
+
+  // Split mode renders git-diff-view line-number gutters (old + new columns).
+  await expect(diffView.locator(".diff-line-old-num").first()).toBeVisible();
+  await expect(diffView.locator(".diff-line-new-num").first()).toBeVisible();
+});
+
+test("diff-view toggles split↔unified via ?diffview= and recolors with the theme", async ({
+  page,
+}) => {
+  const fx = loadM22Fixture();
+
+  // Unified deep-link → the container reports unified and renders the single
+  // unified line-number gutter.
+  await page.goto(`/runs/${fx.runId}?wb=diff&diffview=unified`);
+
+  const diffView = page.locator('[data-testid="diff-view"]');
+
+  await expect(diffView).toBeVisible();
+  await expect(diffView).toHaveAttribute("data-diff-mode", "unified");
+  await expect(diffView.locator(".diff-line-num").first()).toBeVisible();
+
+  // Switch to split via the query param → split line-number columns appear.
+  await page.goto(`/runs/${fx.runId}?wb=diff&diffview=split`);
+  await expect(diffView).toHaveAttribute("data-diff-mode", "split");
+  await expect(diffView.locator(".diff-line-new-num").first()).toBeVisible();
+
+  // Server highlighting actually reached the screen (B1 guard): the diff body
+  // carries ≥1 Shiki token span with a `--shiki` CSS var. This only passes when
+  // the FULL bundle's syntax survived hydration AND `diffViewHighlight={true}`
+  // rendered <DiffSyntax> (not the plain <DiffString>) — i.e. the original
+  // "plain monochrome diff" bug is gone.
+  const token = diffView.locator('span[style*="--shiki"]').first();
+
+  await expect(token).toBeVisible();
+  expect(
+    await diffView.locator('span[style*="--shiki"]').count(),
+  ).toBeGreaterThan(0);
+
+  // The git-diff-view wrapper carries data-theme on `.diff-tailwindcss-wrapper`
+  // (verified against the rendered DOM — NOT `.diff-view-wrapper`, which has no
+  // such attribute); toggling the app theme flips it (the diff chrome re-applies
+  // on the `key={resolvedTheme}` remount), with no run-page document refetch (the
+  // diff payload is already client-side).
+  const wrapper = diffView.locator(".diff-tailwindcss-wrapper").first();
+
+  await expect(wrapper).toBeVisible();
+  const themeBefore = await wrapper.getAttribute("data-theme");
+  const colorBefore = await token.evaluate((el) => getComputedStyle(el).color);
+
+  await page.locator('button[aria-label$="mode"]').click();
+
+  // (S1 guard) the wrapper's data-theme flips on toggle ...
+  await expect
+    .poll(async () => wrapper.getAttribute("data-theme"))
+    .not.toBe(themeBefore);
+
+  // ... AND the Shiki token recolors via the `--shiki-light`/`--shiki-dark`
+  // CSS-var dual theme (the bundle is built once; the toggle is pure CSS).
+  await expect
+    .poll(async () =>
+      diffView
+        .locator('span[style*="--shiki"]')
+        .first()
+        .evaluate((el) => getComputedStyle(el).color),
+    )
+    .not.toBe(colorBefore);
 });
 
 test("project repo tab renders the file-tree of tracked repo files", async ({

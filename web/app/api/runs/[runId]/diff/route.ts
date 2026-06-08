@@ -7,6 +7,7 @@ import pino from "pino";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { prepareDiff } from "@/lib/diff/prepare";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   diffNameStatus,
@@ -177,10 +178,22 @@ export async function GET(
       baseCommit: base,
       branch: workspace.branch,
     });
-    const files = await diffNameStatus({
+    const nameStatus = await diffNameStatus({
       worktreePath: workspace.worktreePath,
       baseRef: base,
       branch: workspace.branch,
+    });
+    const prepared = await prepareDiff(diff);
+    const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
+    const files = nameStatus.map((entry) => {
+      const counts = countsByPath.get(entry.path);
+
+      return {
+        path: entry.path,
+        status: entry.status,
+        additions: counts?.additions ?? 0,
+        deletions: counts?.deletions ?? 0,
+      };
     });
 
     return NextResponse.json({
@@ -191,6 +204,7 @@ export async function GET(
         workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
       diff,
       files,
+      perFile: prepared.perFile,
     });
   } catch (err) {
     return errorResponse(err, runId);

@@ -10,12 +10,13 @@
 > **C — diff** (reuses M18). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
 > No-polling reaffirms [ADR #1 / ADR-007](../decisions.md#adr-007-sse-pipe-to-disk-for-step-output).
 
-> **Diff rendering upgrade (Designed, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
+> **Diff rendering upgrade (Implemented, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
 > Track B's server-rendered Shiki file view with a `?file=` deep-link **shipped**
-> (see below). Track C diff (today `RawDiff` `<pre>`) becomes a
-> `@git-diff-view/react` split/inline view with per-file `+`/`−` counts; the
-> `/diff` response gains `additions`/`deletions`. The read-only boundary and the
-> `readBoard` gate are unchanged.
+> and Track C diff now renders through `@git-diff-view/react` (split/inline via
+> `?diffview=`, per-file `+`/`−` counts, server-built Shiki bundle); the `/diff`
+> response carries `additions`/`deletions`. The read-only boundary and the
+> `readBoard` gate are unchanged. (The authored-Flow CodeMirror editor slice
+> remains Designed.)
 
 ## Purpose
 
@@ -156,7 +157,7 @@ flowchart TD
 
 ### Flow-run diff render (Track C)
 
-Flow runs render through `@git-diff-view/react` (Designed, ADR-066); the scratch
+Flow runs render through `@git-diff-view/react` (Implemented, ADR-066); the scratch
 diff (`scratch-dialog`) stays a raw `pre` and is out of this slice's scope.
 
 ```mermaid
@@ -168,7 +169,7 @@ flowchart LR
     SB --> SRange["diffRunWorkspace base..branch"]
     FB --> FRange["diffRunWorkspace base..branch + diffNameStatus (per-file +/- server-side)"]
     SRange --> SPre["raw pre in scratch-dialog (unchanged)"]
-    FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Designed, ADR-066)"]
+    FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Implemented, ADR-066)"]
 ```
 
 ## Expectations
@@ -211,7 +212,7 @@ flowchart LR
   (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
   `runs.status` value and reuses the M18 diff response shape plus a `files` summary.
   Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
-  per-file `additions`/`deletions` computed server-side (Designed, ADR-066); the
+  per-file `additions`/`deletions` computed server-side (Implemented, ADR-066); the
   scratch diff stays a raw `pre`.
 
 ## Edge cases
@@ -241,7 +242,7 @@ flowchart LR
   (supersedes [ADR-051](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed)),
   [ADR-052 live coloring](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-053 file-tree](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
-  [ADR-066 editor/diff rendering](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Designed).
+  [ADR-066 editor/diff rendering](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (file view + diff Implemented; authored editor Designed).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`…/graph`,
   `…/graph-status`, `…/files[/content]`,
   `/api/projects/{slug}/files[/content]`, the flow-run `…/diff` case).

@@ -5046,9 +5046,26 @@ components:
           description: |
             (M22) Changed-files summary from `git diff --name-status base..branch`,
             rendered beside the diff in the workbench. Present for flow runs.
-            (Designed, ADR-066) Each entry additionally carries per-file
+            (Implemented, ADR-066) Each entry additionally carries per-file
             `additions`/`deletions` line counts computed server-side.
           items: { $ref: "#/components/schemas/DiffFileEntry" }
+        perFile:
+          type: array
+          description: |
+            (Implemented, ADR-066) Per-file syntax payload for the client diff
+            renderer (`@git-diff-view/react`): the file's repo-relative `path`,
+            resolved `fileLang`, and a server-built `bundle` (Shiki-highlighted
+            `DiffFile.getBundle()` output) hydrated on the client with no
+            client-side highlighting. Present for flow runs. The `bundle` shape
+            is the library's serialization detail and is not specified field by
+            field here.
+          items:
+            type: object
+            required: [path, fileLang, bundle]
+            properties:
+              path: { type: string }
+              fileLang: { type: string }
+              bundle: { type: object }
     DiffFileEntry:
       type: object
       required: [path, status]
@@ -5060,13 +5077,13 @@ components:
         additions:
           type: integer
           description: |
-            (Designed, ADR-066) Added-line count for this file, computed
+            (Implemented, ADR-066) Added-line count for this file, computed
             server-side from the unified diff (`+` lines, excluding the `+++`
             file header). Populated for flow runs; absent on legacy rows.
         deletions:
           type: integer
           description: |
-            (Designed, ADR-066) Removed-line count for this file, computed
+            (Implemented, ADR-066) Removed-line count for this file, computed
             server-side (`-` lines, excluding the `---` file header).
     RunGraphResponse:
       type: object
