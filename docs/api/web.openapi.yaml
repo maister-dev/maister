@@ -723,45 +723,6 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /api/projects/{slug}/files/content:
-    get:
-      tags: [projects]
-      summary: Implemented (M22) — read a git-tracked project-repo file
-      description: |
-        Requires the `readRepoFiles` action (project `member`). Reads a single
-        tracked blob via `git cat-file` against `projects.main_branch` HEAD,
-        capped at `MAISTER_WORKBENCH_MAX_FILE_BYTES`. Over-cap → `413`; binary →
-        `415`; untracked/unknown path → `404`; traversal → `400`.
-      operationId: readProjectFile
-      parameters:
-        - name: slug
-          in: path
-          required: true
-          schema: { type: string }
-        - name: path
-          in: query
-          required: true
-          description: Repo-relative file path. Validated by `repoRelPathSchema`.
-          schema: { type: string }
-      responses:
-        "200":
-          description: Tracked text file content.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FileContentResponse" }
-        "400":
-          $ref: "#/components/responses/Config"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "413":
-          $ref: "#/components/responses/FileTooLarge"
-        "415":
-          $ref: "#/components/responses/FileBinary"
-
   /api/projects/{slug}/tasks:
     post:
       tags: [projects]
@@ -1929,45 +1890,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-
-  /api/runs/{runId}/files/content:
-    get:
-      tags: [runs]
-      summary: Implemented (M22) — read a git-tracked worktree file
-      description: |
-        Requires the `readRepoFiles` action (project `member`). Reads a single
-        tracked blob via `git cat-file` against the run branch tip, capped at
-        `MAISTER_WORKBENCH_MAX_FILE_BYTES`. Over-cap → `413`; binary → `415`;
-        untracked/unknown path → `404`; traversal → `400`.
-      operationId: readRunFile
-      parameters:
-        - name: runId
-          in: path
-          required: true
-          schema: { type: string }
-        - name: path
-          in: query
-          required: true
-          description: Repo-relative file path. Validated by `repoRelPathSchema`.
-          schema: { type: string }
-      responses:
-        "200":
-          description: Tracked text file content.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FileContentResponse" }
-        "400":
-          $ref: "#/components/responses/Config"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "413":
-          $ref: "#/components/responses/FileTooLarge"
-        "415":
-          $ref: "#/components/responses/FileBinary"
 
   /api/runs/{runId}/artifacts:
     get:
@@ -3981,18 +3903,6 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/NotFoundBody" }
-    FileTooLarge:
-      description: |
-        (M22) Tracked file exceeds `MAISTER_WORKBENCH_MAX_FILE_BYTES`; bytes are
-        not served.
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/FileTooLargeBody" }
-    FileBinary:
-      description: (M22) Tracked file is binary; content is not served.
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/FileBinaryBody" }
     Precondition:
       description: Precondition failed or conflict (`PRECONDITION` / `CONFLICT`).
       content:
@@ -5300,23 +5210,6 @@ components:
       properties:
         name: { type: string }
         type: { type: string, enum: [file, dir] }
-    FileContentResponse:
-      type: object
-      required: [kind, content]
-      properties:
-        kind: { type: string, enum: [text] }
-        content: { type: string }
-    FileTooLargeBody:
-      type: object
-      required: [kind, size]
-      properties:
-        kind: { type: string, enum: [too-large] }
-        size: { type: integer, description: Blob size in bytes. }
-    FileBinaryBody:
-      type: object
-      required: [kind]
-      properties:
-        kind: { type: string, enum: [binary] }
     NotFoundBody:
       type: object
       required: [message]

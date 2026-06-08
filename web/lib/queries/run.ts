@@ -18,6 +18,7 @@ import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { cache } from "react";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -139,7 +140,12 @@ export function isRunRecoverable(input: {
   );
 }
 
-export async function getRunDetail(runId: string): Promise<RunDetail | null> {
+// Wrapped in React `cache()` so the run-detail layout + the `?file=` page child
+// (which both need this row) dedupe to a single query per request — the page
+// re-renders on `?file=` soft-navs, the layout does not.
+export const getRunDetail = cache(async function getRunDetail(
+  runId: string,
+): Promise<RunDetail | null> {
   const client = db();
   const rows = await client
     .select({
@@ -305,7 +311,7 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
         }
       : null,
   };
-}
+});
 
 // --- M11b: run-detail timeline read model (ADR-030) -----------------------
 

@@ -52,7 +52,13 @@ function parseTab(raw: string | string[] | undefined): ProjectTab {
 
 interface PageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{ tab?: string | string[]; file?: string | string[] }>;
+}
+
+function parseFile(raw: string | string[] | undefined): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  return value && value.length > 0 ? value : null;
 }
 
 export default async function ProjectBoardPage({
@@ -60,8 +66,9 @@ export default async function ProjectBoardPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { slug } = await params;
-  const { tab: rawTab } = await searchParams;
+  const { tab: rawTab, file: rawFile } = await searchParams;
   const tab = parseTab(rawTab);
+  const file = parseFile(rawFile);
 
   const user = await getSessionUser();
 
@@ -94,8 +101,8 @@ export default async function ProjectBoardPage({
     empty: tWorkbench("files.empty"),
     tooLarge: tWorkbench("files.tooLarge"),
     binary: tWorkbench("files.binary"),
+    notFound: tWorkbench("files.notFound"),
     loadError: tWorkbench("files.loadError"),
-    loading: tWorkbench("files.loading"),
     forbidden: tWorkbench("files.forbidden"),
     treeLabel: tWorkbench("files.treeLabel"),
   };
@@ -247,7 +254,11 @@ export default async function ProjectBoardPage({
       {tab === "repo" ? (
         <RepoFilesPanel
           canReadRepoFiles={canReadRepoFiles}
+          file={file}
           labels={filesLabels}
+          mainBranch={project.mainBranch}
+          projectId={project.id}
+          repoPath={project.repoPath}
           slug={slug}
         />
       ) : null}

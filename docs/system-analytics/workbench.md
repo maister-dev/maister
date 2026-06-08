@@ -10,13 +10,12 @@
 > **C — diff** (reuses M18). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
 > No-polling reaffirms [ADR #1 / ADR-007](../decisions.md#adr-007-sse-pipe-to-disk-for-step-output).
 
-> **Rendering upgrade (Designed, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
-> Track B file content (today a plain `<pre>`) becomes a server-rendered Shiki
-> view with a `?file=` deep-link; Track C diff (today `RawDiff` `<pre>`) becomes a
-> `@git-diff-view/react` split/inline view with per-file `+`/`−` counts. The
-> read-only boundary, git-tracked-only reads, `readRepoFiles`/`readBoard` gates,
-> and 413/415 caps are unchanged; only presentation and the `/diff` response
-> (gains `additions`/`deletions`) change.
+> **Diff rendering upgrade (Designed, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
+> Track B's server-rendered Shiki file view with a `?file=` deep-link **shipped**
+> (see below). Track C diff (today `RawDiff` `<pre>`) becomes a
+> `@git-diff-view/react` split/inline view with per-file `+`/`−` counts; the
+> `/diff` response gains `additions`/`deletions`. The read-only boundary and the
+> `readBoard` gate are unchanged.
 
 ## Purpose
 
@@ -131,12 +130,12 @@ flowchart TD
 
 ### Lazy tracked file-tree expand + open
 
-The `…/files` tree expand is Implemented (M22). The file **open + render** path
-is the ADR-066 target (Designed): selecting a file is a `?file=` soft-navigation
-that the server component validates (`repoRelPathSchema`), authorizes
+The `…/files` tree expand and the file **open + render** path are both
+Implemented (M22 + ADR-066): selecting a file is a `?file=` soft-navigation that
+the server component validates (`repoRelPathSchema`), authorizes
 (`readRepoFiles`), and reads via `readBlob`, then renders with server-side Shiki
-— the standalone `…/files/content` route is retired (Phase 1). The 413/415/404
-caps and the read-only boundary are unchanged.
+— the standalone `…/files/content` route was retired. The 413/415/404 caps and
+the read-only boundary are unchanged.
 
 ```mermaid
 flowchart TD
@@ -150,7 +149,7 @@ flowchart TD
     LsTree -- entries --> Render["dirs-first list"]
     Render --> OpenF["open file: ?file= soft-nav (RSC server-reads blob via readBlob)"]
     OpenF --> Blob["git cat-file -s then blob, cap MAISTER_WORKBENCH_MAX_FILE_BYTES"]
-    Blob -- text --> Pre["server-rendered Shiki dual-theme HTML + line numbers (Designed, ADR-066)"]
+    Blob -- text --> Pre["server-rendered Shiki dual-theme HTML + line numbers (Implemented, ADR-066)"]
     Blob -- too-large --> F413["413 marker"]
     Blob -- binary --> F415["415 marker"]
 ```
@@ -197,13 +196,13 @@ flowchart LR
   NEVER on a timer, and MUST NOT refetch once `runs.status` is terminal.
 - File reads require the `readRepoFiles` action (min role `member`) — strictly
   above `readBoard` — on every git-tracked-file read: the `…/files` tree route
-  and the `?file=` RSC blob read (Designed, ADR-066, superseding `…/files/content`);
+  and the `?file=` RSC blob read (Implemented, ADR-066; replaced `…/files/content`);
   a `viewer` is refused.
 - File reads return ONLY git-tracked content via `git ls-tree` / `git cat-file`
   under a server-resolved `ref`; `.git/`, gitignored, `node_modules`, and
   untracked paths are unreachable and surface as `404`. Text blobs render as
   server-rendered Shiki dual-theme HTML (0 KB client), switched by the
-  `.light`/`.dark` class (Designed, ADR-066).
+  `.light`/`.dark` class (Implemented, ADR-066).
 - An untrusted `?path=` MUST pass `repoRelPathSchema` (no `..`, not absolute, no
   leading `/` or `-`, no NUL); a violation is `400` (`CONFIG`), never a disclosed path.
 - A blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` returns `413` and a binary blob

@@ -795,6 +795,7 @@
       "tooLarge": "File is too large to display",
       "binary": "Binary file — not shown",
       "loadError": "Could not load file",
+      "notFound": "File not found",
       "loading": "Loading…",
       "forbidden": "You do not have access to repository files",
       "treeLabel": "Repository file tree"
