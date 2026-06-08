@@ -322,6 +322,9 @@ export const flows = pgTable(
     })
       .notNull()
       .default("untrusted"),
+    versionBinding: text("version_binding", { enum: ["pinned", "latest"] })
+      .notNull()
+      .default("latest"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

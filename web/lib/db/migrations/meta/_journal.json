@@ -225,6 +225,13 @@
       "when": 1780618300000,
       "tag": "0031_m27_authored_source_flow_ref",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1780618400000,
+      "tag": "0032_m27_flows_version_binding",
+      "breakpoints": true
     }
   ]
 }
