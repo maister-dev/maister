@@ -564,6 +564,20 @@ export const humanSettingsSchema = z
   })
   .strict();
 
+// T4: form-collection (intake) HITL node settings. Unlike humanSettingsSchema
+// (decision-driven review), a form node only declares the JSON form_schema doc
+// it collects against; it finishes on `transitions.success` with the submitted
+// values exposed as the node's output vars. `settings` is REQUIRED on a form
+// node (the form_schema is the whole point), unlike the optional settings on a
+// human node.
+export const formSettingsSchema = z
+  .object({
+    form_schema: z.string().min(1),
+    roles: z.array(z.string().min(1)).optional(),
+    criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
+  })
+  .strict();
+
 export const cliCheckSettingsSchema = z
   .object({
     command: z.string().min(1).optional(),
@@ -633,12 +647,22 @@ const humanNodeSchema = z.object({
   settings: humanSettingsSchema.optional(),
 });
 
+// T4: form intake node — collects values against `settings.form_schema` and
+// finishes on `transitions.success`. No `action` (it is a HITL collection node,
+// like human); `settings` is required.
+const formNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("form"),
+  settings: formSettingsSchema,
+});
+
 export const nodeSchema = z.discriminatedUnion("type", [
   aiCodingNodeSchema,
   judgeNodeSchema,
   cliNodeSchema,
   checkNodeSchema,
   humanNodeSchema,
+  formNodeSchema,
 ]);
 
 // M22 (ADR-064): additive, runner-ignored presentation section — per-node

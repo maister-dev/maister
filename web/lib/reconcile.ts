@@ -65,6 +65,7 @@ export interface ReconcileInput {
     | "judge"
     | "guard"
     | "human"
+    | "form"
     | null;
   worktreeExists: boolean;
   liveSession: boolean;
@@ -147,7 +148,7 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     return { action: "crash", reason: "agent-session-gone" };
   }
 
-  // check / judge / guard / human / null → retry-safe gate re-dispatch.
+  // check / judge / guard / human / form / null → retry-safe gate re-dispatch.
   // A linear (flat `steps[]`) run cannot resume mid-flow through `runFlow`
   // (no graph node-resume; bare re-entry restarts at step 0 and re-runs prior
   // side-effects). Crash it instead so `crashRunningRun` retains the node in

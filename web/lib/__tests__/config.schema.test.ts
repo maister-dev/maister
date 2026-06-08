@@ -1056,3 +1056,98 @@ describe("nodeOutputSchema.result (M26)", () => {
     ).not.toThrow();
   });
 });
+
+// --- T4 (increment 1): `form` graph node type ------------------------------
+// RED until `formNodeSchema` (type: z.literal("form"), settings REQUIRED) is
+// added to the `nodeSchema` discriminated union. A HITL intake-collection node
+// that uses `transitions.success` (no decisions, unlike human review). Tests 1
+// & 2 must fail because the union does not yet know `type: "form"`.
+describe("form node (T4)", () => {
+  const formGraphYaml = (formNode: Record<string, unknown>) => ({
+    schemaVersion: 1,
+    name: "aif",
+    compat: { engine_min: "1.1.0" },
+    nodes: [
+      {
+        id: "intake",
+        type: "form",
+        ...formNode,
+      },
+      {
+        id: "plan",
+        type: "ai_coding",
+        action: { prompt: "/aif-plan {{ task.prompt }}" },
+        transitions: { success: "done" },
+      },
+    ],
+  });
+
+  it("parses a manifest with a form intake node", () => {
+    const result = flowYamlV1Schema.safeParse(
+      formGraphYaml({
+        settings: { form_schema: "./schemas/intake.json" },
+        transitions: { success: "plan" },
+      }),
+    );
+
+    expect(result.success).toBe(true);
+  });
+
+  it("parses with optional roles + criticality", () => {
+    const result = flowYamlV1Schema.safeParse(
+      formGraphYaml({
+        settings: {
+          form_schema: "x",
+          roles: ["reviewer"],
+          criticality: "high",
+        },
+        transitions: { success: "plan" },
+      }),
+    );
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a missing form_schema", () => {
+    const result = flowYamlV1Schema.safeParse(
+      formGraphYaml({
+        settings: {},
+        transitions: { success: "plan" },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a form node with no settings (settings required)", () => {
+    const result = flowYamlV1Schema.safeParse(
+      formGraphYaml({
+        transitions: { success: "plan" },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown settings key (strict)", () => {
+    const result = flowYamlV1Schema.safeParse(
+      formGraphYaml({
+        settings: { form_schema: "x", bogus: true },
+        transitions: { success: "plan" },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty form_schema (min 1)", () => {
+    const result = flowYamlV1Schema.safeParse(
+      formGraphYaml({
+        settings: { form_schema: "" },
+        transitions: { success: "plan" },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+});

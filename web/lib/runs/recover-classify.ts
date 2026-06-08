@@ -11,6 +11,7 @@ export type NodeKind =
   | "judge"
   | "guard"
   | "human"
+  | "form"
   | null;
 
 export type RecoverPlan = "resume-agent" | "redispatch" | "discard-only";

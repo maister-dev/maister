@@ -1263,7 +1263,7 @@ export const nodeAttempts = pgTable(
     // compiles to a guard node); manifest `nodes[]` use the other five. The DB
     // column is plain text (no CHECK), so this enum is TS-level only.
     nodeType: text("node_type", {
-      enum: ["ai_coding", "cli", "check", "judge", "human", "guard"],
+      enum: ["ai_coding", "cli", "check", "judge", "human", "guard", "form"],
     }).notNull(),
     attempt: integer("attempt").notNull().default(1),
     // PascalCase node-lifecycle vocabulary: extends step_runs (adds
