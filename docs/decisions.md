@@ -3921,6 +3921,73 @@ not a runtime write.
 
 ---
 
+### ADR-065: Platform ACP runner CRUD in `/settings` — hard delete blocked by any usage reference
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** The platform ACP runner catalog (`platform_acp_runners`, ADR-005
+runner identity) had server-side `POST` (create) and `PATCH` (update) routes and
+an admin `/settings` panel that could only set the platform default and toggle
+`enabled`. There was **no `DELETE` route** and **no create/edit UI** — runners
+could only be born via a raw API call, never removed. Worse, the `/settings`
+page was unreachable: its `left-rail.tsx` entry was hard-coded `ready: false`
+(rendered as a non-navigating "coming soon" span), and no other nav surface
+linked it. The OpenAPI contract (`web.openapi.yaml`) already documented
+`deleteAdminAcpRunner` returning **204** and `postAdminAcpRunner` returning
+**409** on id conflict — the code lagged the contract.
+
+**Decision:** Ship full CRUD for the runner catalog **inside `/settings`** (no
+separate route or menu item) and make the page reachable.
+
+- **Delete semantics:** `DELETE /api/admin/acp-runners/{runnerId}` is a **hard
+  delete** (the `enabled` flag already covers soft-disable). It is refused with
+  `MaisterError("CONFLICT")` (409) when `loadRunnerUsageReferences` returns **any**
+  reference — **symmetric with the existing `assertCanDisable` guard** — and
+  enumerates the blocking kinds (platform/project/flow default, flow-step remap,
+  active run, historical run snapshot, scratch run). Zero references → **204**.
+  The NOT-NULL FK `platform_runtime_settings.default_runner_id` is a second,
+  DB-level guard for the platform-default case; the app check returns the
+  friendly enumerated message first. Historical run autonomy is preserved by the
+  self-contained `runs.runner_snapshot` (ADR-005), so the "block on any ref"
+  rule is conservative, not a correctness requirement.
+- **Create hardening:** `POST` pre-checks id existence and returns
+  `MaisterError("CONFLICT")` (409) on a duplicate instead of a raw DB
+  unique-violation 500 — matching the published contract.
+- **UI:** a view-only runner table (the data-management bar, `users-table.tsx`)
+  with an `acp-runner-modal.tsx` (one component, `create | edit` mode) for
+  create/edit/delete; `id`/`adapter` immutable on edit; secrets only as
+  `env:NAME`; readiness computed server-side; mutations reconcile via
+  `router.refresh()`. Adapter-driven field logic is a pure, unit-tested
+  `lib/acp-runners/runner-form.ts`.
+- **Reachability:** the `settings` entry moves into the admin-only section of
+  `left-rail.tsx` as `ready: true` (mirrors `users`/`scheduler`); the route still
+  enforces `requireGlobalRole("admin")`.
+- **Layout:** `/settings` becomes full-width, two-column on desktop; modals/forms
+  stay narrow.
+
+**Consequences:**
+- The runner catalog is fully manageable from the UI; code now matches the
+  OpenAPI contract (204 delete, 409 dup-id).
+- Delete and disable share one usage-guard, so a runner used by any past run can
+  be soft-disabled and deleted only after its references clear — predictable but
+  conservative (a runner referenced solely by a historical snapshot cannot be
+  hard-deleted until that run is GC'd).
+- No new table, migration, or RBAC action; the surface reuses existing routes
+  plus one `DELETE` handler.
+
+**Alternatives Considered:**
+- **Block delete only on *live* references** (allow delete when only historical
+  snapshots remain): rejected — asymmetric with `assertCanDisable` and
+  surprising; the conservative rule is simpler and snapshots are GC'd anyway.
+- **Soft-delete only (no hard delete):** rejected — `enabled=false` already is
+  the soft path; admins need real cleanup.
+- **A separate `/admin/runners` page or top-level nav item:** rejected — the
+  catalog is one admin concern that belongs with the rest of platform settings.
+- **Two modal components (create + edit):** rejected — one `mode`-switched modal
+  is less code for an identical adapter-driven form.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.
@@ -3966,6 +4033,14 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
 
 ## TODO (tracked doc defects)
 
+- **Pre-existing acp-runner contract drift (not addressed by ADR-065).** The
+  `web.openapi.yaml` admin acp-runner block documents `getAdminAcpRunners`
+  returning `platformDefaultRunnerId` + `usage references`, and
+  `postAdminAcpRunner`/`patchAdminAcpRunner` returning `{ runner }`. The code
+  returns `defaultRunnerId` (no usage refs) on GET and `{ ok, id }` / `{ ok }`
+  on POST/PATCH. ADR-065 only aligned the DELETE (204) and POST dup-id (409)
+  paths it touched; the GET/PATCH/POST body-shape drift is left for a dedicated
+  contract-sync pass (fix code OR spec, never both silently — docs/CLAUDE.md R3).
 - **Duplicate `### ADR-048` heading (resolved).** The collision was resolved by renumbering the M18
   "Branch targeting at launch, shared promotion service, promote-time readiness re-gate" ADR to
   **ADR-058**; the M15 "Readiness enforcement over all blocking gate kinds + verdict calibration" ADR

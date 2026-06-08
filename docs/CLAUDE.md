@@ -82,6 +82,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/git-integration.md`](system-analytics/git-integration.md) | Provider detection + host-credential, provider-neutral git ops. |
 | [`system-analytics/workbench.md`](system-analytics/workbench.md) | Workbench visibility (M22): flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, authored layout in `flow.yaml` (ADR-064). |
 | [`system-analytics/project-membership.md`](system-analytics/project-membership.md) | Project membership management: roster, add/change-role/remove, manageMembers action, no last-owner guard (M-admin-surface). |
+| [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
 
 ### Cross-cutting reference
 

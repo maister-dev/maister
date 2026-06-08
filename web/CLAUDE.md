@@ -449,6 +449,14 @@ rewrite page functionality later. Reference impl:
 `components/admin/users-table.tsx` + `components/admin/user-edit-modal.tsx` +
 `app/(app)/admin/users/page.tsx`.
 
+The admin `/settings` **platform ACP runner catalog** is a second instance of
+this pattern: `components/settings/acp-runners-panel.tsx` (view-only table) +
+`components/settings/acp-runner-modal.tsx` (one `create | edit` modal, also owns
+delete) + the `DELETE /api/admin/acp-runners/[runnerId]` usage-guard. Runner
+CRUD is admin-only and the page is reachable from the admin section of
+`left-rail.tsx`. Domain contract: [`docs/system-analytics/acp-runners.md`](../docs/system-analytics/acp-runners.md)
++ ADR-065. (Filters are intentionally omitted — small N.)
+
 - **Tables are view-only.** No inline editing, row dropdowns, or row-level
   mutate buttons. Rows display data only.
 - **Edit lives in a popup or a dedicated edit page**, never inline. Popup =
