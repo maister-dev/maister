@@ -516,6 +516,7 @@
     "createMcpTitle": "Создать MCP-сервер",
     "editMcpTitle": "Изменить MCP-сервер",
     "deleteMcp": "Удалить",
+    "deleteMcpConfirm": "Удалить этот MCP-сервер? Действие необратимо.",
     "colTransport": "Транспорт",
     "colTarget": "Команда / URL",
     "colAgents": "Агенты",

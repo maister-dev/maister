@@ -35,10 +35,13 @@ const postBodySchema = z
       .min(1)
       .regex(/^[A-Za-z0-9._-]+$/),
     transport: z.enum(["stdio", "sse", "http"]),
-    command: z.string().min(1).optional(),
+    // nullable: the client sends the normalized body (off-transport fields as
+    // null); validateMcpServerDraft + buildCreateBody handle the nulls. Matches
+    // the PATCH schema.
+    command: z.string().min(1).nullable().optional(),
     args: z.array(z.string()).optional(),
     envKeys: z.array(envKeyRefSchema).optional(),
-    url: z.string().url().optional(),
+    url: z.string().url().nullable().optional(),
     headerKeys: z.array(envKeyRefSchema).optional(),
     supportedAgents: z
       .array(z.enum(["claude", "codex"]))

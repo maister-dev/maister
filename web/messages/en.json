@@ -516,6 +516,7 @@
     "createMcpTitle": "Create MCP server",
     "editMcpTitle": "Edit MCP server",
     "deleteMcp": "Delete",
+    "deleteMcpConfirm": "Delete this MCP server? This cannot be undone.",
     "colTransport": "Transport",
     "colTarget": "Command / URL",
     "colAgents": "Agents",

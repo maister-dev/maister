@@ -516,7 +516,7 @@ export function McpServerModal({
                 type="button"
                 onClick={() => void remove()}
               >
-                {confirmingDelete ? t("deleteConfirm") : t("deleteMcp")}
+                {confirmingDelete ? t("deleteMcpConfirm") : t("deleteMcp")}
               </button>
             ) : null}
           </div>

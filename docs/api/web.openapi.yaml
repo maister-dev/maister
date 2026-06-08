@@ -6728,7 +6728,8 @@ components:
         transport: { $ref: "#/components/schemas/McpTransport" }
         command:
           type: string
-          description: Required when `transport=stdio`. Ignored for sse/http.
+          nullable: true
+          description: Required when `transport=stdio`. Null/omitted for sse/http.
         args:
           type: array
           items: { type: string }
@@ -6745,7 +6746,8 @@ components:
             pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
         url:
           type: string
-          description: Required when `transport=sse` or `transport=http`.
+          nullable: true
+          description: Required when `transport=sse` or `transport=http`. Null/omitted for stdio.
         headerKeys:
           type: array
           description: |

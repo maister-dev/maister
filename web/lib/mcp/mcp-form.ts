@@ -1,9 +1,8 @@
-import "server-only";
-
 // M27/T-C2: pure form logic for the platform MCP-server admin CRUD (mirrors
-// lib/acp-runners/runner-form.ts). No I/O — validation + body builders the
-// admin UI + route handlers reuse. Secrets are NEVER values: env/header
-// entries are `env:NAME` references (or bare NAMES) resolved supervisor-side.
+// lib/acp-runners/runner-form.ts). NOT server-only — shared by the client admin
+// modal AND the server route handlers. No I/O — validation + body builders only.
+// Secrets are NEVER values: env/header entries are `env:NAME` references (or
+// bare NAMES) resolved supervisor-side.
 
 export const MCP_TRANSPORTS = ["stdio", "sse", "http"] as const;
 export type McpTransport = (typeof MCP_TRANSPORTS)[number];
