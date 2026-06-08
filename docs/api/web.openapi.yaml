@@ -4358,7 +4358,7 @@ paths:
                   transport: stdio
                   command: npx
                   args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
-                  env: { SOME_KEY: "env:SOME_KEY" }
+                  envKeys: ["env:SOME_KEY"]
                   supportedAgents: [claude]
                   enabled: true
               sse-server:
@@ -4367,7 +4367,7 @@ paths:
                   id: my-sse-server
                   transport: sse
                   url: "https://mcp.example.com/sse"
-                  headers: { Authorization: "env:MY_SERVER_TOKEN" }
+                  headerKeys: ["env:MY_SERVER_TOKEN"]
                   supportedAgents: [claude, codex]
                   enabled: true
       responses:
@@ -4403,8 +4403,8 @@ paths:
       tags: [mcp-management, admin]
       summary: (M27) Update a platform MCP server
       description: |
-        (M27 — Designed.) Admin-only. Mutates transport, command, args, env,
-        url, headers, supportedAgents, trustStatus, or enabled. At least one
+        (M27 — Designed.) Admin-only. Mutates transport, command, args,
+        envKeys, url, headerKeys, supportedAgents, or enabled. At least one
         field required. Disabling while active usage references exist is refused
         (`409 CONFLICT`, mirrors `assertCanDisable`). Secret values must remain
         `env:NAME` references.
@@ -4431,30 +4431,30 @@ paths:
                 args:
                   type: array
                   items: { type: string }
-                env:
-                  type: object
+                envKeys:
+                  type: array
                   description: |
-                    Key→`env:NAME` map. Values MUST match `^env:[A-Za-z_][A-Za-z0-9_]*$`.
-                  additionalProperties:
+                    Env-var NAME references for stdio transport (`env:NAME` or
+                    bare `NAME`). Replaces the stored set. Ignored for sse/http.
+                  items:
                     type: string
-                    pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+                    pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
                 url:
                   type: string
                   nullable: true
                   description: Required when `transport=sse` or `transport=http`. Ignored for stdio.
-                headers:
-                  type: object
+                headerKeys:
+                  type: array
                   description: |
-                    Key→`env:NAME` map for sse/http transport headers.
-                  additionalProperties:
+                    HTTP header NAME references for sse/http transport
+                    (`env:NAME` or bare `NAME`). Replaces the stored set.
+                    Ignored for stdio.
+                  items:
                     type: string
-                    pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+                    pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
                   items: { type: string, enum: [claude, codex] }
-                trustStatus:
-                  type: string
-                  enum: [untrusted, trusted, trusted_by_policy]
                 enabled: { type: boolean }
       responses:
         "200":
@@ -6733,25 +6733,28 @@ components:
           type: array
           items: { type: string }
           default: []
-        env:
-          type: object
+        envKeys:
+          type: array
           description: |
-            Key→`env:NAME` map for stdio env vars. Values MUST match
-            `^env:[A-Za-z_][A-Za-z0-9_]*$`; actual values are never stored.
-          additionalProperties:
+            Env-var NAME references for stdio transport. Each entry is an
+            `env:NAME` reference or a bare `NAME`; plain secret values are
+            refused (`422 CONFIG`). Only the NAME is stored; values resolve
+            supervisor-side. Ignored for sse/http.
+          items:
             type: string
-            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+            pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
         url:
           type: string
           description: Required when `transport=sse` or `transport=http`.
-        headers:
-          type: object
+        headerKeys:
+          type: array
           description: |
-            Key→`env:NAME` map for sse/http request headers. Values MUST match
-            `^env:[A-Za-z_][A-Za-z0-9_]*$`; actual values are never stored.
-          additionalProperties:
+            HTTP header NAME references for sse/http transport. Each entry is
+            an `env:NAME` reference or a bare `NAME`; values resolve
+            supervisor-side and are never stored. Ignored for stdio.
+          items:
             type: string
-            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+            pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex] }

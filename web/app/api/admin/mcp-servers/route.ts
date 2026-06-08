@@ -8,7 +8,7 @@ import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { buildCreateBody } from "@/lib/mcp/mcp-form";
+import { buildCreateBody, validateMcpServerDraft } from "@/lib/mcp/mcp-form";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -17,59 +17,36 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const idSchema = z
-  .string()
-  .min(1)
-  .regex(/^[A-Za-z0-9._-]+$/);
-// Secret key references only: `env:NAME` or a bare env NAME. Plaintext values
-// are NEVER accepted, stored, or echoed (§7.2.1).
 const envKeyRefSchema = z
   .string()
   .regex(
     /^(env:)?[A-Za-z_][A-Za-z0-9_]*$/,
     "secret must be env:NAME, not a value",
   );
-const agentsSchema = z.array(z.enum(["claude", "codex"])).min(1);
 
-const stdioMemberSchema = z
+// Flat shape (mirrors the permissive OpenAPI PlatformMcpServerBody + the PATCH
+// route). Transport-specific requirements (stdio→command, sse/http→url) are
+// enforced by validateMcpServerDraft; off-transport fields are normalized away
+// by buildCreateBody so a stray field never persists.
+const postBodySchema = z
   .object({
-    id: idSchema,
-    transport: z.literal("stdio"),
-    command: z.string().trim().min(1),
+    id: z
+      .string()
+      .min(1)
+      .regex(/^[A-Za-z0-9._-]+$/),
+    transport: z.enum(["stdio", "sse", "http"]),
+    command: z.string().min(1).optional(),
     args: z.array(z.string()).optional(),
     envKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: agentsSchema.optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
-
-const sseMemberSchema = z
-  .object({
-    id: idSchema,
-    transport: z.literal("sse"),
-    url: z.string().url(),
+    url: z.string().url().optional(),
     headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: agentsSchema.optional(),
+    supportedAgents: z
+      .array(z.enum(["claude", "codex"]))
+      .min(1)
+      .optional(),
     enabled: z.boolean().optional(),
   })
   .strict();
-
-const httpMemberSchema = z
-  .object({
-    id: idSchema,
-    transport: z.literal("http"),
-    url: z.string().url(),
-    headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: agentsSchema.optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
-
-const mcpBodySchema = z.discriminatedUnion("transport", [
-  stdioMemberSchema,
-  sseMemberSchema,
-  httpMemberSchema,
-]);
 
 function statusForCode(code: string): number {
   switch (code) {
@@ -136,12 +113,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     await requireGlobalRole("admin");
 
-    const parsed = mcpBodySchema.safeParse(await parseJson(req));
+    const parsed = postBodySchema.safeParse(await parseJson(req));
 
     if (!parsed.success) {
       throw new MaisterError(
         "CONFIG",
         `invalid POST body: ${parsed.error.message}`,
+      );
+    }
+
+    const validation = validateMcpServerDraft(parsed.data);
+
+    if (!validation.ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid MCP server: ${validation.errors.map((e) => `${e.field}: ${e.message}`).join("; ")}`,
       );
     }
 
