@@ -243,6 +243,13 @@ export async function enableRevision(args: {
         updatedAt: new Date(),
       })
       .where(eq(flows.id, flow.id));
+
+    // Enabling a revision confirms trust — flip exec_trust so any subsequent
+    // setup.sh run (e.g. from the trust-executable endpoint) is permitted.
+    await tx
+      .update(flowRevisions)
+      .set({ execTrust: "trusted" })
+      .where(eq(flowRevisions.id, rev.id));
   });
 
   await repointSymlink(db, args.projectId, args.flowRefId, rev.installedPath);

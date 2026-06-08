@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { publishAuthoredCapabilityLocal } from "@/lib/catalog/authored-service";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
+import { bridgePublishedAuthoredFlow } from "@/lib/flows/authored-bridge";
 import { assertPublishableAuthoredFlowRevision } from "@/lib/flows/package-authoring";
 
 type RouteContext = {
@@ -31,7 +32,37 @@ export async function POST(
       },
     });
 
-    return NextResponse.json(result.revision, { status: 200 });
+    // Two-phase: publish tx committed above; bridge runs AFTER the commit.
+    // flow kind → bridge into flows + flow_revisions (ADR-061, T-B2).
+    let flowBridge: { flowRowId: string; revisionId: string } | undefined;
+
+    if (result.revision.kind === "flow") {
+      flowBridge = await bridgePublishedAuthoredFlow({
+        projectSlug: slug,
+        projectId: result.revision.projectId,
+        capId,
+        revision: {
+          id: result.revision.id,
+          revisionNumber: result.revision.revisionNumber,
+          contentHash: result.revision.contentHash,
+          body: result.revision.body,
+          title: result.revision.title,
+        },
+      });
+    }
+
+    return NextResponse.json(
+      {
+        ...result.revision,
+        ...(flowBridge !== undefined
+          ? {
+              flowRowId: flowBridge.flowRowId,
+              revisionId: flowBridge.revisionId,
+            }
+          : {}),
+      },
+      { status: 200 },
+    );
   } catch (err) {
     return catalogErrorResponse(err);
   }

@@ -232,6 +232,13 @@
       "when": 1780618400000,
       "tag": "0032_m27_flows_version_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780618500000,
+      "tag": "0033_m27_flow_revisions_exec_trust",
+      "breakpoints": true
     }
   ]
 }

@@ -268,6 +268,11 @@ export const flowRevisions = pgTable(
     })
       .notNull()
       .default("Installing"),
+    // Two-axis trust (§4.2): exec_trust gates setup.sh and MCP stdio spawn.
+    // Default 'untrusted'; flipped to 'trusted' via POST trust-executable (T-B3).
+    execTrust: text("exec_trust", { enum: ["untrusted", "trusted"] })
+      .notNull()
+      .default("untrusted"),
     installedAt: timestamp("installed_at", {
       withTimezone: true,
       mode: "date",
@@ -1823,6 +1828,7 @@ export type FlowEnablementState = Flow["enablementState"];
 export type FlowTrustStatus = Flow["trustStatus"];
 export type FlowPackageStatus = FlowRevision["packageStatus"];
 export type FlowSetupStatus = FlowRevision["setupStatus"];
+export type FlowRevisionExecTrust = FlowRevision["execTrust"];
 export type ProjectFlowRole = typeof projectFlowRoles.$inferSelect;
 export type ActorIdentity = typeof actorIdentities.$inferSelect;
 export type ActorIdentityKind = ActorIdentity["kind"];
