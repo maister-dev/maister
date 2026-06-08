@@ -42,12 +42,6 @@ const labels: ToolbarProps["labels"] = {
     external_check: "External check",
     human_review: "Human review",
   },
-  graph: {
-    title: "Flow",
-    empty: "Empty",
-    currentNode: "Current node",
-    node: {},
-  },
 };
 
 function render(selectedNodeId: string | null): string {

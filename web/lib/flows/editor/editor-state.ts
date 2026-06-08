@@ -171,6 +171,26 @@ export function setNodeAction(
 }
 
 /**
+ * Replace the node with id `id` wholesale (same array position). Used by the
+ * side-form, which edits a node's detail fields (action/settings/transitions/
+ * rework/output/finish/gates) and emits the full rebuilt node. No-op-safe if
+ * the id is absent; always returns a new object. The caller keeps the id stable
+ * (renames are not handled here — transitions pointing at the old id would
+ * dangle).
+ */
+export function replaceNode(
+  manifest: FlowYamlV1,
+  id: string,
+  node: NonNullable<FlowYamlV1["nodes"]>[number],
+): FlowYamlV1 {
+  const updatedNodes = (manifest.nodes ?? []).map((n) =>
+    n.id === id ? node : n,
+  );
+
+  return { ...manifest, nodes: updatedNodes };
+}
+
+/**
  * Add a blank gate of `kind` (id `gateId`) to nodes[nodeId].pre_finish.gates.
  * Throws CONFIG on duplicate gateId within the node.
  */

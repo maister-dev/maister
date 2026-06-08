@@ -10,6 +10,7 @@ import {
   moveNode,
   removeGate,
   removeNode,
+  replaceNode,
   setNodeAction,
   setNodeSettings,
   setTransition,
@@ -507,6 +508,53 @@ describe("moveNode", () => {
     const before = snapshot(BASE_MANIFEST);
 
     moveNode(BASE_MANIFEST, "plan", { x: 999, y: 999 });
+    expect(snapshot(BASE_MANIFEST)).toBe(before);
+  });
+});
+
+// ─── replaceNode ─────────────────────────────────────────────────────────────
+
+describe("replaceNode", () => {
+  // Mirror how the side-form builds the next node: start from the existing
+  // (typed) NodeDef and override edited fields, so the parsed-output type
+  // (e.g. ai_coding settings' defaulted `runner_type`) stays intact.
+  const basePlan = BASE_MANIFEST.nodes?.find(
+    (n) => n.id === "plan",
+  ) as NonNullable<FlowYamlV1["nodes"]>[number];
+  const nextPlan = {
+    ...basePlan,
+    action: { prompt: "REPLACED prompt" },
+  } as NonNullable<FlowYamlV1["nodes"]>[number];
+
+  it("swaps the matching node wholesale and leaves siblings untouched", () => {
+    const result = replaceNode(BASE_MANIFEST, "plan", nextPlan);
+    const plan = result.nodes?.find((n) => n.id === "plan");
+    const review = result.nodes?.find((n) => n.id === "review");
+
+    expect(plan).toEqual(nextPlan);
+    expect((plan as { action: { prompt: string } }).action.prompt).toBe(
+      "REPLACED prompt",
+    );
+    expect(review).toEqual(BASE_MANIFEST.nodes?.find((n) => n.id === "review"));
+  });
+
+  it("produces a manifest that still parses", () => {
+    const result = replaceNode(BASE_MANIFEST, "plan", nextPlan);
+
+    expect(() => flowYamlV1Schema.parse(result)).not.toThrow();
+  });
+
+  it("is a no-op (new object, equal content) when the id is absent", () => {
+    const result = replaceNode(BASE_MANIFEST, "nope", nextPlan);
+
+    expect(result).not.toBe(BASE_MANIFEST);
+    expect(snapshot(result)).toBe(snapshot(BASE_MANIFEST));
+  });
+
+  it("does not mutate the input", () => {
+    const before = snapshot(BASE_MANIFEST);
+
+    replaceNode(BASE_MANIFEST, "plan", nextPlan);
     expect(snapshot(BASE_MANIFEST)).toBe(before);
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
+import type { NodeSideFormLabels } from "@/components/flows/node-form/node-side-form";
 import type { FlowNodeData } from "@/lib/board/flow-graph-view-layout";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { GateKind, NodeType } from "@/lib/flows/editor/editor-state";
@@ -28,26 +29,32 @@ import {
 } from "@xyflow/react";
 
 import { FlowNodeBody } from "@/components/board/flow-graph-view";
+import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import {
   addGate,
   addNode,
   moveNode,
   removeNode,
+  replaceNode,
   setTransition,
 } from "@/lib/flows/editor/editor-state";
 import { GATE_KINDS, NODE_TYPES } from "@/lib/flows/editor/node-form";
 
 import "@xyflow/react/dist/style.css";
 
-export type FlowGraphEditorLabels = {
+export type FlowEditorToolbarLabels = {
   addNode: string;
   removeNode: string;
   addGate: string;
   selectNodeHint: string;
   nodeType: Record<NodeType, string>;
   gateKind: Record<GateKind, string>;
+};
+
+export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   graph: FlowGraphViewLabels;
+  nodeForm: NodeSideFormLabels;
 };
 
 export interface FlowGraphEditorProps {
@@ -84,7 +91,7 @@ export function FlowEditorToolbar({
   onRemoveNode,
   onAddGate,
 }: {
-  labels: FlowGraphEditorLabels;
+  labels: FlowEditorToolbarLabels;
   selectedNodeId: string | null;
   onAddNode: (type: NodeType) => void;
   onRemoveNode: () => void;
@@ -290,6 +297,7 @@ export default function FlowGraphEditor({
     toEditorEdges(seeded.edges),
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [manifest, setManifest] = useState<FlowYamlV1>(initialManifest);
 
   const manifestRef = useRef<FlowYamlV1>(initialManifest);
 
@@ -303,6 +311,7 @@ export default function FlowGraphEditor({
       const next = fn(manifestRef.current);
 
       manifestRef.current = next;
+      setManifest(next);
       debugLog(op);
       onChange?.({ manifest: next, draftVersion });
     },
@@ -394,36 +403,62 @@ export default function FlowGraphEditor({
     [onNodesChange, applyManifest],
   );
 
+  const handleNodeFormChange = useCallback(
+    (next: NonNullable<FlowYamlV1["nodes"]>[number]): void => {
+      if (selectedNodeId === null) return;
+
+      applyManifest(
+        (m) => replaceNode(m, selectedNodeId, next),
+        `edit-node:${selectedNodeId}`,
+      );
+    },
+    [applyManifest, selectedNodeId],
+  );
+
+  const selectedNode =
+    selectedNodeId === null
+      ? null
+      : (manifest.nodes?.find((nd) => nd.id === selectedNodeId) ?? null);
+
   return (
-    <div
-      className="overflow-hidden rounded-[10px] border border-line bg-paper"
-      data-testid="flow-graph-editor"
-    >
-      <FlowEditorToolbar
-        labels={labels}
-        selectedNodeId={selectedNodeId}
-        onAddGate={handleAddGate}
-        onAddNode={handleAddNode}
-        onRemoveNode={handleRemoveNode}
-      />
-      <div className="h-[440px] w-full">
-        <ReactFlow
-          fitView
-          nodesConnectable
-          nodesDraggable
-          edges={edges}
-          nodeTypes={nodeTypes}
-          nodes={nodes}
-          onConnect={handleConnect}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={(_event, node) => select(node.id)}
-          onNodesChange={handleNodesChange}
-          onPaneClick={() => select(null)}
-        >
-          <Background />
-          <Controls showInteractive={false} />
-        </ReactFlow>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div
+        className="overflow-hidden rounded-[10px] border border-line bg-paper"
+        data-testid="flow-graph-editor"
+      >
+        <FlowEditorToolbar
+          labels={labels}
+          selectedNodeId={selectedNodeId}
+          onAddGate={handleAddGate}
+          onAddNode={handleAddNode}
+          onRemoveNode={handleRemoveNode}
+        />
+        <div className="h-[440px] w-full">
+          <ReactFlow
+            fitView
+            nodesConnectable
+            nodesDraggable
+            edges={edges}
+            nodeTypes={nodeTypes}
+            nodes={nodes}
+            onConnect={handleConnect}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={(_event, node) => select(node.id)}
+            onNodesChange={handleNodesChange}
+            onPaneClick={() => select(null)}
+          >
+            <Background />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div>
       </div>
+      <aside data-testid="flow-graph-editor-sidebar">
+        <NodeSideForm
+          labels={labels.nodeForm}
+          node={selectedNode}
+          onChange={handleNodeFormChange}
+        />
+      </aside>
     </div>
   );
 }
