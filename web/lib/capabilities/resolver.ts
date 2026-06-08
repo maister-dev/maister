@@ -10,12 +10,31 @@ import type {
 import { createHash } from "node:crypto";
 
 import { and, eq, isNull } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 const { capabilityRecords } = schemaModule as unknown as Record<string, any>;
+
+const log = pino({
+  name: "capability-resolver",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+// M27/T-C7 (§6.1): uniform local-first precedence for EVERY capability kind.
+// Lower number wins. A project record shadows a platform record of the same
+// (kind, refId), which shadows a flow-package record — no merge, no duplicate.
+const SOURCE_PRECEDENCE: Record<string, number> = {
+  project: 0,
+  platform: 1,
+  "flow-package": 2,
+};
+
+function sourceRank(source: string): number {
+  return SOURCE_PRECEDENCE[source] ?? Number.MAX_SAFE_INTEGER;
+}
 
 export type ResolveCapabilityProfileArgs = {
   projectId: string;
@@ -145,21 +164,25 @@ function selectedRecords(
     byRef.set(record.capabilityRefId, records);
   }
 
-  return ids.flatMap((id) => {
+  return ids.map((id) => {
     const records = byRef.get(id);
 
-    if (!records) {
+    if (!records || records.length === 0) {
       throw new MaisterError(
         "CONFIG",
         `Unknown or unavailable ${kind} capability id "${id}"`,
       );
     }
 
+    // Local-first winner (§6.1): exactly ONE record per (kind, refId) by
+    // source precedence project > platform > flow-package. Same id at a lower
+    // precedence is shadowed (NOT merged, NOT duplicated). Tie-break on the
+    // unique row id for determinism.
     return [...records].sort((a, b) => {
-      const sourceOrder = a.source.localeCompare(b.source);
+      const bySource = sourceRank(a.source) - sourceRank(b.source);
 
-      return sourceOrder === 0 ? a.id.localeCompare(b.id) : sourceOrder;
-    });
+      return bySource !== 0 ? bySource : a.id.localeCompare(b.id);
+    })[0];
   });
 }
 
@@ -189,6 +212,18 @@ export function resolveCapabilityProfile(
     ...selectedRecords(catalog, "agent_definition", selectedAgentDefinitionIds),
     ...selectedRecords(catalog, "restriction", selectedRestrictionIds),
   ];
+
+  log.debug(
+    {
+      projectId: args.projectId,
+      executorAgent: args.executorAgent,
+      winners: selected.map(
+        (r) => `${r.kind}/${r.capabilityRefId}@${r.source}`,
+      ),
+    },
+    "[capabilities.resolver] local-first winners selected",
+  );
+
   const enforced: CapabilityProfileEntry[] = [];
   const instructed: CapabilityProfileEntry[] = [];
   const supported: CapabilityProfileEntry[] = [];

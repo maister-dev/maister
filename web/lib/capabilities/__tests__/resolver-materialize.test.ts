@@ -77,7 +77,7 @@ describe("resolveCapabilityProfile", () => {
     expect(profile.enforced).toEqual([]);
   });
 
-  it("resolves same MCP ref ids across platform and project scopes without overwriting", () => {
+  it("resolves a same MCP ref id across scopes to the project winner (local-first, no duplicate) — M27/T-C7", () => {
     const profile = resolveCapabilityProfile({
       projectId: "project-1",
       executorAgent: "claude",
@@ -97,10 +97,11 @@ describe("resolveCapabilityProfile", () => {
       ],
     });
 
+    // §6.1 local-first: project shadows platform — exactly ONE winner, no dup.
     expect(profile.selectedMcpIds).toEqual(["github"]);
     expect(
       profile.enforced.map((e) => `${e.source}:${e.capabilityRefId}`),
-    ).toEqual(["platform:github", "project:github"]);
+    ).toEqual(["project:github"]);
   });
 
   it("rejects unknown selected ids", () => {
