@@ -33,6 +33,7 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
 import { tryStartRun } from "@/lib/scheduler";
@@ -279,10 +280,18 @@ export async function launchRun(
     );
   }
 
+  // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-068).
+  // `pinned` = the enabled pointer (unchanged behavior); `latest` = the newest
+  // Installed revision for this flow_ref_id (a just-published authored revision
+  // floats in via the bridge). The per-revision guards below still gate the
+  // RESOLVED revision (packageStatus/setupStatus/engine/schema).
+  const effectiveRevisionId =
+    (await resolveEffectiveFlowRevision(_db, flow)) ?? flow.enabledRevisionId;
+
   const revisionRows = await _db
     .select()
     .from(flowRevisions)
-    .where(eq(flowRevisions.id, flow.enabledRevisionId));
+    .where(eq(flowRevisions.id, effectiveRevisionId));
   const revision = revisionRows[0];
 
   if (!revision) {
