@@ -666,10 +666,40 @@ export const flowPresentationSchema = z
   })
   .strict();
 
+// Optional manifest `metadata` block: routing hints + provenance links. Additive
+// and runner-ignored — stored verbatim in `flow_revisions.manifest`. Modeled
+// (not passthrough) so the strict sub-objects reject malformed links/sources.
+export const flowMetadataLinkSchema = z
+  .object({
+    kind: z.string().min(1).optional(),
+    title: z.string().min(1),
+    url: z.string().url(),
+  })
+  .strict();
+
+export const flowMetadataSourceSchema = z
+  .object({
+    component: z.string().min(1),
+    origin: z.string().min(1),
+  })
+  .strict();
+
+export const flowMetadataSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    summary: z.string().min(1).optional(),
+    labels: z.array(z.string().min(1)).optional(),
+    route_when: z.string().min(1).optional(),
+    links: z.array(flowMetadataLinkSchema).optional(),
+    sources: z.array(flowMetadataSourceSchema).optional(),
+  })
+  .strict();
+
 export const flowYamlV1Schema = z
   .object({
     schemaVersion: z.literal(1),
     name: z.string().min(1),
+    metadata: flowMetadataSchema.optional(),
     recommended_executor: z.never().optional(),
     runner_profiles: z
       .record(capabilityRefIdSchema, flowRunnerProfileSchema)
@@ -759,6 +789,7 @@ export type MaisterCapabilitiesConfig = z.infer<
   typeof maisterCapabilitiesSchema
 >;
 export type FlowYamlV1 = z.infer<typeof flowYamlV1Schema>;
+export type FlowMetadata = z.infer<typeof flowMetadataSchema>;
 export type FlowPresentation = z.infer<typeof flowPresentationSchema>;
 export type FlowNodePresentation = z.infer<typeof flowNodePresentationSchema>;
 export type FlowCompat = z.infer<typeof flowCompatSchema>;

@@ -464,6 +464,52 @@ describe("flowYamlV1Schema — graph (nodes[])", () => {
   });
 });
 
+describe("flowYamlV1Schema — metadata block", () => {
+  const fullMetadata = {
+    title: "Bugfix flow",
+    summary: "Fixes a bug end to end",
+    labels: ["bugfix", "qa"],
+    route_when: "task.kind == 'bug'",
+    links: [
+      {
+        kind: "spec",
+        title: "Design doc",
+        url: "https://example.com/spec",
+      },
+      { title: "Issue", url: "https://example.com/issues/1" },
+    ],
+    sources: [{ component: "planner", origin: "github.com/org/aif-plan" }],
+  };
+
+  it("round-trips a full metadata block (not stripped)", () => {
+    const parsed = flowYamlV1Schema.parse({
+      ...goldenFlowYaml,
+      metadata: fullMetadata,
+    }) as { metadata?: typeof fullMetadata };
+
+    expect(parsed.metadata).toEqual(fullMetadata);
+  });
+
+  it("is optional — a manifest without metadata still parses", () => {
+    const parsed = flowYamlV1Schema.parse(goldenFlowYaml) as {
+      metadata?: unknown;
+    };
+
+    expect(parsed.metadata).toBeUndefined();
+  });
+
+  it("rejects a link with a non-URL url", () => {
+    expect(() =>
+      flowYamlV1Schema.parse({
+        ...goldenFlowYaml,
+        metadata: {
+          links: [{ title: "Bad", url: "not-a-url" }],
+        },
+      }),
+    ).toThrow();
+  });
+});
+
 // --- M11c: typed per-node `settings` schemas (tasks 1.1–1.6) -----------------
 // These exercise the exported settings sub-schemas directly. They are RED until
 // the implementor adds the schemas + exports to config.schema.ts.
