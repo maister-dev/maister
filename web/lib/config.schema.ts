@@ -828,6 +828,7 @@ export type EnforcementMap = z.infer<typeof enforcementMapSchema>;
 export type AiCodingSettings = z.infer<typeof aiCodingSettingsSchema>;
 export type JudgeSettings = z.infer<typeof judgeSettingsSchema>;
 export type HumanSettings = z.infer<typeof humanSettingsSchema>;
+export type FormSettings = z.infer<typeof formSettingsSchema>;
 export type CliCheckSettings = z.infer<typeof cliCheckSettingsSchema>;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 export type NodeOutput = z.infer<typeof nodeOutputSchema>;

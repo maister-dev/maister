@@ -7,6 +7,7 @@ import type {
 } from "@/lib/db/schema";
 import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { FormSettings } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
@@ -52,6 +53,10 @@ import {
   mergeRunnerAdapterLaunch,
   runnerSupervisorInput,
 } from "@/lib/acp-runners/spawn-intent";
+import {
+  readAndValidateFormSchemaDoc,
+  validateFormSchemaVersion,
+} from "@/lib/config";
 import { semverGte } from "@/lib/flows/engine-version";
 import {
   assertNodeLaunchable,
@@ -99,6 +104,9 @@ type TransactionalDb = Db & {
 // Hard backstop on total node executions per run — a defense beyond per-node
 // rework.maxLoops so a misdeclared graph can never spin forever.
 const HARD_NODE_EXECUTION_CEILING = 500;
+
+// T4: the form_schema doc version this runner collects against.
+const FORM_SCHEMA_VERSION = 1;
 
 type NodeResult = StepResult & {
   needsInput?: boolean;
@@ -313,6 +321,122 @@ export async function runReviewHuman(
   };
 }
 
+// T4: form intake node. Mirrors runReviewHuman's HITL/needs-input lifecycle but
+// for a value-collection form: on first visit it reads+validates the node's
+// `form_schema` doc, pauses with a `kind:"form"` HITL; on resume the submitted
+// input artifact's object IS the node's output vars (no decision ⇒ the graph
+// outcome resolves to "success", following `transitions.success`).
+export async function runFormCollect(
+  node: CompiledNode,
+  loaded: LoadedRun,
+  settings: FormSettings,
+  ctx: { runtimeRoot: string; db: Db },
+): Promise<NodeResult> {
+  const startedAt = Date.now();
+  const dir = runDir(ctx.runtimeRoot, loaded.projectSlug, loaded.run.id);
+  const inputPath = path.join(dir, `input-${node.id}.json`);
+  const existing = await tryReadInputArtifact(inputPath);
+
+  if (existing) {
+    // NOT unlinked here (unlike runReviewHuman): the submitted values become the
+    // node's persisted output vars (markNodeSucceeded -> node_attempts.vars),
+    // which is what downstream {{steps.<id>.vars.*}} reads — the file is never
+    // re-read. A form node declares only transitions.success (no rework/on_reject
+    // re-entry in the schema), so a stale artifact can't be re-consumed. If
+    // on_reject is ever added to form nodes, this branch must unlink first.
+    return {
+      ok: true,
+      stdout: "",
+      vars: existing,
+      durationMs: Date.now() - startedAt,
+      needsInput: false,
+    };
+  }
+
+  const schema = await readAndValidateFormSchemaDoc(
+    loaded.flowInstallPath,
+    settings.form_schema,
+  );
+
+  validateFormSchemaVersion(schema, FORM_SCHEMA_VERSION);
+
+  const prompt = `Awaiting form input for "${node.id}"`;
+  const needsInputPath = path.join(dir, "needs-input.json");
+
+  await atomicWriteJson(needsInputPath, {
+    nodeId: node.id,
+    kind: "form",
+    schema,
+    prompt,
+    requestedAt: new Date().toISOString(),
+  });
+
+  const hitlRequestId = randomUUID();
+  const roleRefs = settings.roles ?? [];
+  const criticality = settings.criticality ?? null;
+
+  const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
+    await tx.insert(hitlRequests).values({
+      id: hitlRequestId,
+      runId: loaded.run.id,
+      stepId: node.id,
+      kind: "form",
+      schema,
+      prompt,
+      criticality,
+    });
+    await createHitlAssignmentForRun({
+      db: tx,
+      runId: loaded.run.id,
+      hitlRequestId,
+      nodeId: node.id,
+      actionKind: "form",
+      roleRefs,
+      title: prompt,
+    });
+  };
+
+  try {
+    if (
+      typeof (ctx.db as { transaction?: unknown }).transaction === "function"
+    ) {
+      await (ctx.db as TransactionalDb).transaction(
+        persistHitlRequestAndAssignment,
+      );
+    } else {
+      await persistHitlRequestAndAssignment(ctx.db);
+    }
+  } catch (err) {
+    await unlink(needsInputPath).catch((cleanupErr: unknown) => {
+      log.error(
+        {
+          runId: loaded.run.id,
+          nodeId: node.id,
+          hitlRequestId,
+          needsInputPath,
+          err: asError(err).message,
+          cleanupErr: asError(cleanupErr).message,
+        },
+        "failed to remove form needs-input.json after HITL persistence failure",
+      );
+    });
+    throw err;
+  }
+
+  log.info(
+    { runId: loaded.run.id, nodeId: node.id, hitlRequestId, roleRefs },
+    "form intake HITL created — pausing NeedsInput",
+  );
+
+  return {
+    ok: false,
+    stdout: "",
+    vars: {},
+    durationMs: Date.now() - startedAt,
+    needsInput: true,
+  };
+}
+
 // Execute a graph node's action. Reuses the per-step runners by adapting the
 // node into the shape they expect; human nodes go through the review HITL.
 async function executeNodeAction(
@@ -389,6 +513,11 @@ async function executeNodeAction(
       );
     case "human":
       return runReviewHuman(node, loaded, `Review "${node.id}"`, {
+        runtimeRoot: ctx.runtimeRoot,
+        db: ctx.db,
+      });
+    case "form":
+      return runFormCollect(node, loaded, def.settings, {
         runtimeRoot: ctx.runtimeRoot,
         db: ctx.db,
       });

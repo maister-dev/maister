@@ -88,7 +88,10 @@ function assertCompiledFlowRolesLaunchable(args: {
       );
     }
 
-    if (node.source.kind !== "node" || node.source.node.type !== "human") {
+    if (
+      node.source.kind !== "node" ||
+      (node.source.node.type !== "human" && node.source.node.type !== "form")
+    ) {
       continue;
     }
 
