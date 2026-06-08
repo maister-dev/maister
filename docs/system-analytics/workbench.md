@@ -83,7 +83,11 @@ state to transition:
    ignored (no phantom node); a node with no entry keeps its dagre seed.
 
 Editing the authored layout (drag-to-arrange) is a flow-editor concern on the
-source `flow.yaml` (roadmap §E1, Wave 3), not a workbench write.
+source `flow.yaml`, not a workbench write. **(Designed, M27)** ADR-064 is now
+read+write: the M27 flow-graph editor authors the `presentation` section (node
+`{id, x, y, width, height, color}`) as part of canvas edits serialized on save.
+The workbench read path (rendering the authored layout) is unchanged. See
+[`flow-studio.md`](flow-studio.md).
 
 ## Process flows
 

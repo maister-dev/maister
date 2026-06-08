@@ -78,6 +78,34 @@ Rules:
 - Admin APIs and UI may show secret ref names and readiness reason codes, but
   never raw token values or generated config bodies.
 
+### MCP capability template — `platform_mcp_servers` (Designed, M27)
+
+**(Designed, M27)** Platform MCP servers are stored in the `platform_mcp_servers`
+table (admin-only CRUD, mirrors `platform_acp_runners`). The transport field is
+discriminated:
+
+| `transport` | Required fields | Optional fields |
+| ----------- | --------------- | --------------- |
+| `stdio` | `command` | `args`, `env_keys` |
+| `sse` | `url` | `header_keys` |
+| `http` | `url` | `header_keys` |
+
+`env_keys` and `header_keys` store **names only** (`env:NAME`; regex
+`^env:[A-Za-z_][A-Za-z0-9_]*$`). Secret **values** are resolved supervisor-side
+from `process.env` at session spawn and MUST NEVER be stored in `platform_mcp_servers`,
+returned in any HTTP response, written to any DB column, or included in an ACP
+`session/update` payload visible to the browser. This is the same `env:NAME`
+secret-ref policy used by `platform_acp_runners` (ADR-044 + ADR-065).
+
+`exec_trust` on the `flow_revisions` row gates MCP stdio `command` spawn: a revision
+with `exec_trust=untrusted` MUST NOT spawn a stdio MCP command even if `trustStatus`
+is `trusted_by_policy` (logic-trust alone is insufficient — see
+[`system-analytics/flow-packages.md`](system-analytics/flow-packages.md) §M27).
+
+**No new web environment variable is required by M27.** MCP server secrets travel
+only as env-var names; the supervisor resolves them from its existing `process.env`
+at spawn. The env table above is unchanged by M27.
+
 ## `maister.yaml` v2
 
 ```yaml

@@ -110,6 +110,10 @@ tags:
     description: Project-local authored capability catalog groundwork (M25, ADR-061).
   - name: capabilities
     description: Capability import trust-confirm route (M14, Designed, ADR-042).
+  - name: flow-studio
+    description: M27 Flow Studio — graph editor, draft/publish, version-binding, exec-trust.
+  - name: mcp-management
+    description: M27 MCP capability management — platform-admin and project-scoped MCP servers.
 paths:
   /api/admin/acp-runners:
     get:
@@ -3202,13 +3206,27 @@ paths:
 
   /api/projects/{slug}/catalog/caps/{capId}/publish-local:
     post:
-      tags: [catalog]
-      summary: (M25) Publish an authored capability inside this MAIster instance
+      tags: [catalog, flow-studio]
+      summary: (M25/M27) Publish an authored capability inside this MAIster instance
       description: |
-        Implemented, M25. Local publish of a rule/skill projects an authored-origin
-        `capability_records` row in the same transaction. Local publish of a
-        flow stores only immutable authored catalog content and never mutates
-        `flows` or `flow_revisions`.
+        Implemented, M25. Extended by M27 for `kind=flow`.
+
+        **M25 behavior (rule/skill):** local publish of a rule/skill projects
+        an authored-origin `capability_records` row in the same transaction.
+        Response is the published `AuthoredCapabilityRevision` only.
+
+        **M27 extension (flow):** in addition to the M25 catalog commit, the
+        route runs the two-phase executable bridge:
+        `installAuthoredFlowPackageBridge(trusted_by_policy)` → intent row
+        `Installing` → disk export → finalize `Installed`. The bridge produces
+        a `flows` row + `flow_revisions` row with `trustStatus=trusted_by_policy`
+        and `exec_trust=untrusted`. The `validateGraphManifest`+`compileManifest`
+        hard-gate runs before the revision commit; an invalid manifest returns
+        `422 CONFIG` without persisting anything. Requires `manageCatalog` project
+        action (project admin or above).
+
+        For non-flow kinds the response shape is the same as M25
+        (`revision` only, no `flowRowId`/`revisionId`).
       operationId: publishLocalAuthoredCapability
       parameters:
         - name: slug
@@ -3221,11 +3239,73 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Published local revision.
+          description: |
+            Published local revision. For `kind=flow` (M27), additionally
+            includes the bridged `flows` and `flow_revisions` row ids.
           content:
             application/json:
               schema:
-                { $ref: "#/components/schemas/AuthoredCapabilityRevision" }
+                type: object
+                required: [revision]
+                properties:
+                  revision:
+                    $ref: "#/components/schemas/AuthoredCapabilityRevision"
+                  flowRowId:
+                    type: string
+                    format: uuid
+                    description: |
+                      (M27) Present only for `kind=flow`. The `flows.id` of
+                      the bridged executable flow row.
+                  revisionId:
+                    type: string
+                    format: uuid
+                    description: |
+                      (M27) Present only for `kind=flow`. The
+                      `flow_revisions.id` produced by the bridge.
+              examples:
+                rule-skill-publish:
+                  summary: Non-flow publish (M25)
+                  value:
+                    revision:
+                      id: rev-abc123
+                      capabilityId: cap-xyz
+                      projectId: proj-000
+                      kind: rule
+                      revisionNumber: 1
+                      draftVersion: 2
+                      lifecycle: PUBLISHED
+                      title: My rule
+                      body: "Always respond in English."
+                      manifest: null
+                      schemaVersion: 1
+                      contentHash: sha256:def
+                      publishedAt: "2026-06-08T12:00:00Z"
+                      archivedAt: null
+                      createdAt: "2026-06-08T12:00:00Z"
+                flow-publish-with-bridge:
+                  summary: Flow publish with executable bridge (M27)
+                  value:
+                    revision:
+                      id: rev-def456
+                      capabilityId: cap-flow-001
+                      projectId: proj-000
+                      kind: flow
+                      revisionNumber: 2
+                      draftVersion: 4
+                      lifecycle: PUBLISHED
+                      title: Bugfix v2
+                      body: null
+                      manifest:
+                        schemaVersion: 1
+                        name: Bugfix
+                        steps: []
+                      schemaVersion: 1
+                      contentHash: sha256:abc
+                      publishedAt: "2026-06-08T12:00:00Z"
+                      archivedAt: null
+                      createdAt: "2026-06-08T12:00:00Z"
+                    flowRowId: f1b2c3d4-0000-0000-0000-000000000001
+                    revisionId: a1b2c3d4-0000-0000-0000-000000000002
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -3933,6 +4013,785 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  # ── M27 Flow Studio ─────────────────────────────────────────────────────────
+
+  /api/projects/{slug}/catalog/caps/{capId}/graph:
+    get:
+      tags: [flow-studio, catalog]
+      summary: (M27) Get the flow-graph topology and authored layout for an authored capability
+      description: |
+        (M27 — Designed.) Requires project membership at `viewer` or above
+        (`readBoard`). `slug` and `capId` are url-params resolved to server
+        state; `capId` is asserted to belong to `slug`. Returns the compiled
+        topology from `buildGraphTopology`, the authored layout from the
+        manifest `presentation` section (ADR-064), the current draft version
+        (for optimistic-concurrency on subsequent PATCH /draft), and the
+        capability kind. Only `kind=flow` capabilities return topology; other
+        kinds return `topology: null`.
+      operationId: getCapabilityGraph
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Flow-graph topology, authored layout, draft version, and capability kind.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [topology, layout, draftVersion, kind]
+                properties:
+                  topology:
+                    type: object
+                    nullable: true
+                    description: |
+                      Compiled graph topology (`GraphTopology` shape). Null for non-flow kinds.
+                    properties:
+                      nodes:
+                        type: array
+                        items: { $ref: "#/components/schemas/GraphTopologyNode" }
+                      edges:
+                        type: array
+                        items: { $ref: "#/components/schemas/GraphTopologyEdge" }
+                  layout:
+                    type: object
+                    description: |
+                      Authored layout from the manifest `presentation` section
+                      (ADR-064), keyed by node id; absent nodes are dagre-seeded
+                      client-side. Empty object when no presentation is stored.
+                    additionalProperties: { $ref: "#/components/schemas/GraphNodePosition" }
+                  draftVersion:
+                    type: integer
+                    minimum: 1
+                    description: |
+                      Current `authored_capabilities.draft_version`. Used as
+                      `expectedDraftVersion` in subsequent PATCH /draft calls.
+                  kind:
+                    $ref: "#/components/schemas/AuthoredCapabilityKind"
+              examples:
+                flow-graph:
+                  summary: A two-step flow capability graph
+                  value:
+                    draftVersion: 3
+                    kind: flow
+                    topology:
+                      nodes:
+                        - id: plan
+                          nodeType: ai_coding
+                          label: plan
+                          displayLabel: Plan
+                          nodeTypeLabel: Agent
+                          nodeRole: agent
+                          declaredGateSummary:
+                            total: 0
+                            blocking: 0
+                            advisory: 0
+                            kinds: []
+                        - id: review
+                          nodeType: human
+                          label: review
+                          displayLabel: Review
+                          nodeTypeLabel: Human
+                          nodeRole: human
+                          declaredGateSummary:
+                            total: 0
+                            blocking: 0
+                            advisory: 0
+                            kinds: []
+                      edges:
+                        - id: plan->review
+                          source: plan
+                          target: review
+                          outcome: success
+                          displayLabel: Success
+                          edgeRole: success
+                    layout:
+                      plan: { x: 100, y: 100 }
+                      review: { x: 300, y: 100 }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{slug}/catalog/caps/{capId}/diff:
+    get:
+      tags: [flow-studio, catalog]
+      summary: (M27) Get published vs draft YAML diff for an authored capability
+      description: |
+        (M27 — Designed.) Requires project membership at `viewer` or above
+        (`readBoard`). Returns the serialized YAML of the currently published
+        revision and the current draft revision for side-by-side diffing in the
+        Flow Studio editor. If no published revision exists, `publishedYaml` is
+        null. If no draft revision exists, `draftYaml` is null.
+      operationId: getCapabilityDiff
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: capId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Published and draft YAML strings for diff rendering.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publishedYaml, draftYaml]
+                properties:
+                  publishedYaml:
+                    type: string
+                    nullable: true
+                    description: YAML-serialized manifest of the currently published revision. Null if no published revision exists.
+                  draftYaml:
+                    type: string
+                    nullable: true
+                    description: YAML-serialized manifest of the current draft revision. Null if no draft exists.
+              examples:
+                with-both:
+                  summary: Both published and draft exist
+                  value:
+                    publishedYaml: "schemaVersion: 1\nname: Bugfix\nsteps:\n  - id: plan\n    type: agent\n"
+                    draftYaml: "schemaVersion: 1\nname: Bugfix\nsteps:\n  - id: plan\n    type: agent\n  - id: review\n    type: human\n"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{slug}/flows/{flowId}/version-binding:
+    patch:
+      tags: [flow-studio]
+      summary: (M27) Set the version-binding for a project flow
+      description: |
+        (M27 — Designed.) Requires `managePackages` project action (project
+        admin or above). Sets `flows.version_binding` to `pinned` or `latest`.
+
+        - `pinned`: launch resolves `flows.enabled_revision_id` (the M10
+          pointer).
+        - `latest`: launch resolves the newest PUBLISHED `flow_revisions`
+          for the `flow_ref_id`, never a draft; authored-wins tie-break.
+
+        `slug` and `flowId` are url-params resolved server-side; no
+        body-controlled project or flow identifiers.
+      operationId: patchFlowVersionBinding
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: flowId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [binding]
+              additionalProperties: false
+              properties:
+                binding:
+                  type: string
+                  enum: [pinned, latest]
+                  description: |
+                    `pinned` — resolve `flows.enabled_revision_id` at launch.
+                    `latest` — resolve the newest PUBLISHED revision at launch.
+            examples:
+              set-latest:
+                summary: Switch to always-latest resolution
+                value:
+                  binding: latest
+              set-pinned:
+                summary: Pin to the currently enabled revision
+                value:
+                  binding: pinned
+      responses:
+        "200":
+          description: Version binding updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Invalid `binding` enum value (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/flows/{flowId}/trust-executable:
+    post:
+      tags: [flow-studio]
+      summary: (M27) Flip exec_trust to trusted on the enabled flow revision
+      description: |
+        (M27 — Designed.) Requires global `admin` role
+        (`requireGlobalRole("admin")`). Flips `flow_revisions.exec_trust` to
+        `trusted` on the currently enabled revision of the flow. This is the
+        explicit operator gate before `setup.sh` runs and before any MCP stdio
+        `command` may be spawned for this revision.
+
+        **Invariant (§4.2):** `flows.trustStatus` (LOGIC) alone NEVER runs
+        `setup.sh` or an MCP stdio command. A separate explicit exec-trust flip
+        via this route is always required.
+
+        After the flip, `runRevisionSetup` (physically separate, sentinel
+        once-only) is queued server-side. Empty request body.
+      operationId: trustExecutableFlowRevision
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: flowId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: exec_trust flipped to trusted on the enabled revision.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, exec_trust]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  exec_trust:
+                    type: string
+                    enum: [trusted]
+                    description: The new exec_trust value of the enabled revision.
+              examples:
+                trusted:
+                  summary: Exec trust granted
+                  value:
+                    ok: true
+                    exec_trust: trusted
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── M27 Platform MCP server admin ───────────────────────────────────────────
+
+  /api/admin/mcp-servers:
+    get:
+      tags: [mcp-management, admin]
+      summary: (M27) List platform MCP servers
+      description: |
+        (M27 — Designed.) Admin-only (`requireGlobalRole("admin")`). Returns
+        the full `platform_mcp_servers` catalog with trust, readiness, and
+        enabled state. Secret values are NEVER returned — `env_keys` contains
+        env-var NAME strings only; actual values are resolved supervisor-side.
+      operationId: getAdminMcpServers
+      responses:
+        "200":
+          description: Platform MCP server catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [servers]
+                properties:
+                  servers:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlatformMcpServer" }
+              examples:
+                list:
+                  summary: Two platform MCP servers
+                  value:
+                    servers:
+                      - id: filesystem
+                        transport: stdio
+                        command: npx
+                        args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+                        envKeys: []
+                        url: null
+                        headerKeys: []
+                        supportedAgents: [claude, codex]
+                        trustStatus: trusted
+                        readinessStatus: Ready
+                        readinessReasons: []
+                        enabled: true
+                        createdAt: "2026-06-01T10:00:00Z"
+                        updatedAt: "2026-06-01T10:00:00Z"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [mcp-management, admin]
+      summary: (M27) Create a platform MCP server
+      description: |
+        (M27 — Designed.) Admin-only. Creates a `platform_mcp_servers` row.
+        Mirrors the `POST /api/admin/acp-runners` pattern (ADR-065).
+
+        **Secret constraint:** all env var values and header values MUST be
+        supplied as `env:NAME` references (pattern `^env:[A-Za-z_][A-Za-z0-9_]*$`).
+        Actual secret values are NEVER accepted, stored, or echoed. Only the
+        NAME portion is stored in `env_keys`/`header_keys`.
+
+        A duplicate `id` returns `409` (via `onConflictDoNothing().returning()`,
+        never a raw 500).
+      operationId: postAdminMcpServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlatformMcpServerBody" }
+            examples:
+              stdio-server:
+                summary: Create a stdio MCP server
+                value:
+                  id: filesystem
+                  transport: stdio
+                  command: npx
+                  args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+                  env: { SOME_KEY: "env:SOME_KEY" }
+                  supportedAgents: [claude]
+                  enabled: true
+              sse-server:
+                summary: Create an SSE MCP server
+                value:
+                  id: my-sse-server
+                  transport: sse
+                  url: "https://mcp.example.com/sse"
+                  headers: { Authorization: "env:MY_SERVER_TOKEN" }
+                  supportedAgents: [claude, codex]
+                  enabled: true
+      responses:
+        "201":
+          description: |
+            MCP server created. Readiness is derived server-side (never
+            accepted from the body). Fetch via GET to read the created row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: MCP server id already exists (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: |
+            Invalid body — bad transport, missing required fields for the
+            transport kind, or a secret value not in `env:NAME` form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/mcp-servers/{id}:
+    patch:
+      tags: [mcp-management, admin]
+      summary: (M27) Update a platform MCP server
+      description: |
+        (M27 — Designed.) Admin-only. Mutates transport, command, args, env,
+        url, headers, supportedAgents, trustStatus, or enabled. At least one
+        field required. Disabling while active usage references exist is refused
+        (`409 CONFLICT`, mirrors `assertCanDisable`). Secret values must remain
+        `env:NAME` references.
+      operationId: patchAdminMcpServer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                transport: { type: string, enum: [stdio, sse, http] }
+                command:
+                  type: string
+                  nullable: true
+                  description: Required when `transport=stdio`. Ignored for sse/http.
+                args:
+                  type: array
+                  items: { type: string }
+                env:
+                  type: object
+                  description: |
+                    Key→`env:NAME` map. Values MUST match `^env:[A-Za-z_][A-Za-z0-9_]*$`.
+                  additionalProperties:
+                    type: string
+                    pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+                url:
+                  type: string
+                  nullable: true
+                  description: Required when `transport=sse` or `transport=http`. Ignored for stdio.
+                headers:
+                  type: object
+                  description: |
+                    Key→`env:NAME` map for sse/http transport headers.
+                  additionalProperties:
+                    type: string
+                    pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+                supportedAgents:
+                  type: array
+                  items: { type: string, enum: [claude, codex] }
+                trustStatus:
+                  type: string
+                  enum: [untrusted, trusted, trusted_by_policy]
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: MCP server updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Disabling the server is refused because active usage references
+            exist (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or secret value not in `env:NAME` form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [mcp-management, admin]
+      summary: (M27) Delete a platform MCP server
+      description: |
+        (M27 — Designed.) Admin-only. Deletes the `platform_mcp_servers` row.
+        Refused (`409 CONFLICT`) while any usage reference exists (mirrors
+        `assertCanDisable` pattern from the ACP runner admin surface). Zero
+        references → `204`.
+      operationId: deleteAdminMcpServer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: MCP server deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            MCP server is still referenced by capability records, active runs,
+            or project configurations (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  # ── M27 Project-scoped MCP management ───────────────────────────────────────
+
+  /api/projects/{slug}/mcp:
+    get:
+      tags: [mcp-management]
+      summary: (M27) List project-scoped MCP servers
+      description: |
+        (M27 — Designed.) Requires project membership at `viewer` or above
+        (`readBoard`). Returns `capability_records` rows for this project with
+        `kind=mcp` and `source=project`. Secret values are NEVER returned —
+        env-var names are shown but their values are resolved supervisor-side.
+      operationId: listProjectMcpServers
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Project-scoped MCP server capability records.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [servers]
+                properties:
+                  servers:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectMcpServer" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+    post:
+      tags: [mcp-management]
+      summary: (M27) Create a project-scoped MCP server
+      description: |
+        (M27 — Designed.) Requires the `manageCatalog` project action (project
+        admin or global admin). Creates a `capability_records` row with
+        `kind=mcp`, `source=project` for this project.
+
+        Secret values MUST be `env:NAME` references; values are NEVER accepted
+        or stored. A duplicate `refId` within the project returns `409 CONFLICT`.
+      operationId: postProjectMcpServer
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectMcpServerBody" }
+            examples:
+              stdio-server:
+                summary: Add a project stdio MCP server
+                value:
+                  refId: my-project-mcp
+                  transport: stdio
+                  command: node
+                  args: ["./tools/my-mcp-server.js"]
+                  env: {}
+                  supportedAgents: [claude]
+      responses:
+        "201":
+          description: Project MCP server created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Project not found/archived (`PRECONDITION`) or `refId` duplicate
+            within this project (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or secret value not in `env:NAME` form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/mcp/{mcpId}:
+    patch:
+      tags: [mcp-management]
+      summary: (M27) Update a project-scoped MCP server
+      description: |
+        (M27 — Designed.) Requires the `manageCatalog` project action (project
+        admin or global admin). Mutates transport, command, args, env, url,
+        headers, or supportedAgents. At least one field required. Disabling
+        while referenced by active launches is refused (`409 CONFLICT`). Secret
+        values must remain `env:NAME` references.
+      operationId: patchProjectMcpServer
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mcpId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                transport: { type: string, enum: [stdio, sse, http] }
+                command: { type: string, nullable: true }
+                args:
+                  type: array
+                  items: { type: string }
+                env:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+                url: { type: string, nullable: true }
+                headers:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+                supportedAgents:
+                  type: array
+                  items: { type: string, enum: [claude, codex] }
+      responses:
+        "200":
+          description: Project MCP server updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Project not found/archived (`PRECONDITION`) or server referenced
+            by active launches (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or secret value not in `env:NAME` form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [mcp-management]
+      summary: (M27) Delete a project-scoped MCP server
+      description: |
+        (M27 — Designed.) Requires the `manageCatalog` project action.
+        Soft-deletes or hard-deletes the `capability_records` row. Refused
+        (`409 CONFLICT`) while the server is referenced by in-flight run
+        resolved-sets.
+      operationId: deleteProjectMcpServer
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mcpId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Project MCP server deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Server is still referenced by in-flight run resolved-sets (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/mcp/resolve:
+    post:
+      tags: [mcp-management]
+      summary: (M27) Resolve the effective MCP set for a project (setup wizard)
+      description: |
+        (M27 — Designed.) Requires project membership at `member` or above.
+        Computes the MCP capability resolution for the project: applies
+        project > platform > flow-package precedence (§6.1), deduplicates
+        by `(kind, refId)`, and returns the resolved winner set plus a list
+        of proposed additions (absent required MCPs that block launch).
+
+        This route is used by the MCP setup wizard to show the operator
+        what MCPs are resolved and what required MCPs are missing before
+        launch. Confirmation of proposed additions (with `env:NAME`
+        references for secrets) is the operator action.
+
+        Secret values accepted in the body MUST be `env:NAME` references;
+        values are NEVER stored or returned.
+      operationId: resolveProjectMcpServers
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                context:
+                  type: object
+                  description: |
+                    Optional operator-confirmed parameters (e.g. proposed MCP
+                    configurations with `env:NAME` references) to evaluate
+                    alongside the stored catalog.
+                  additionalProperties: true
+            examples:
+              empty:
+                summary: Resolve without context (read-only check)
+                value: {}
+      responses:
+        "200":
+          description: Resolved MCP winner set and list of missing required MCPs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resolved, proposed]
+                properties:
+                  resolved:
+                    type: array
+                    description: |
+                      The effective, deduplicated MCP set after applying
+                      project > platform > flow-package precedence. Each
+                      entry is the winning `capability_records` row for its
+                      `(kind, refId)`.
+                    items: { $ref: "#/components/schemas/ResolvedMcpEntry" }
+                  proposed:
+                    type: array
+                    description: |
+                      MCPs declared as REQUIRED by installed flows that
+                      cannot currently be resolved — the operator must
+                      configure these to unblock launch.
+                    items:
+                      type: object
+                      required: [refId, declaredBy]
+                      properties:
+                        refId: { type: string }
+                        declaredBy:
+                          type: string
+                          description: The flow ref id that declared this MCP as required.
+              examples:
+                resolved:
+                  summary: One resolved MCP, one missing required
+                  value:
+                    resolved:
+                      - refId: filesystem
+                        scope: platform
+                        transport: stdio
+                        command: npx
+                        args: ["-y", "@modelcontextprotocol/server-filesystem"]
+                        envKeys: []
+                        supportedAgents: [claude, codex]
+                    proposed:
+                      - refId: my-build-tool
+                        declaredBy: bugfix-flow
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
 
 components:
   securitySchemes:
@@ -5780,3 +6639,240 @@ components:
         tokens:
           type: array
           items: { $ref: "#/components/schemas/ProjectTokenListItem" }
+
+    # ── M27 MCP schemas ──────────────────────────────────────────────────────
+
+    McpTransport:
+      type: string
+      enum: [stdio, sse, http]
+      description: |
+        (M27) MCP server transport kind.
+        `stdio` — spawns a local subprocess; `command` required; gated by
+        `exec_trust` of the owning revision.
+        `sse` / `http` — connects to a remote endpoint; `url` required.
+
+    PlatformMcpServer:
+      type: object
+      description: |
+        (M27) A `platform_mcp_servers` row. Secret values are NEVER included
+        — `envKeys` and `headerKeys` list only the env-var NAME strings.
+      required:
+        - id
+        - transport
+        - args
+        - envKeys
+        - headerKeys
+        - supportedAgents
+        - trustStatus
+        - readinessStatus
+        - readinessReasons
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        transport: { $ref: "#/components/schemas/McpTransport" }
+        command:
+          type: string
+          nullable: true
+          description: Subprocess command for `stdio` transport. Null for sse/http.
+        args:
+          type: array
+          items: { type: string }
+        envKeys:
+          type: array
+          items: { type: string }
+          description: |
+            Env-var NAME strings (`env:NAME` without the prefix) that the
+            supervisor resolves from the host environment. Values are NEVER
+            stored or returned.
+        url:
+          type: string
+          nullable: true
+          description: Endpoint URL for `sse`/`http` transport. Null for stdio.
+        headerKeys:
+          type: array
+          items: { type: string }
+          description: |
+            HTTP header NAME strings whose values are resolved supervisor-side
+            from `env:NAME` references.
+        supportedAgents:
+          type: array
+          items: { type: string, enum: [claude, codex] }
+        trustStatus:
+          type: string
+          enum: [untrusted, trusted, trusted_by_policy]
+        readinessStatus:
+          type: string
+          enum: [Unknown, Ready, NotReady]
+        readinessReasons:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PlatformMcpServerBody:
+      type: object
+      description: |
+        (M27) Request body for creating a platform MCP server. Secret values
+        MUST be supplied as `env:NAME` references (`^env:[A-Za-z_][A-Za-z0-9_]*$`).
+        Plain secret values are refused with `422 CONFIG`.
+      required: [id, transport]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Unique platform-scoped id for this MCP server.
+        transport: { $ref: "#/components/schemas/McpTransport" }
+        command:
+          type: string
+          description: Required when `transport=stdio`. Ignored for sse/http.
+        args:
+          type: array
+          items: { type: string }
+          default: []
+        env:
+          type: object
+          description: |
+            Key→`env:NAME` map for stdio env vars. Values MUST match
+            `^env:[A-Za-z_][A-Za-z0-9_]*$`; actual values are never stored.
+          additionalProperties:
+            type: string
+            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        url:
+          type: string
+          description: Required when `transport=sse` or `transport=http`.
+        headers:
+          type: object
+          description: |
+            Key→`env:NAME` map for sse/http request headers. Values MUST match
+            `^env:[A-Za-z_][A-Za-z0-9_]*$`; actual values are never stored.
+          additionalProperties:
+            type: string
+            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        supportedAgents:
+          type: array
+          items: { type: string, enum: [claude, codex] }
+          default: ["claude", "codex"]
+        enabled:
+          type: boolean
+          default: true
+
+    ProjectMcpServer:
+      type: object
+      description: |
+        (M27) A project-scoped MCP server capability record (`capability_records`
+        row with `kind=mcp`, `source=project`). Secret values are NEVER
+        included — only env-var NAME strings are returned.
+      required:
+        - id
+        - refId
+        - transport
+        - args
+        - envKeys
+        - headerKeys
+        - supportedAgents
+        - createdAt
+      properties:
+        id: { type: string, format: uuid }
+        refId:
+          type: string
+          description: Capability ref id — unique within the project.
+        transport: { $ref: "#/components/schemas/McpTransport" }
+        command:
+          type: string
+          nullable: true
+        args:
+          type: array
+          items: { type: string }
+        envKeys:
+          type: array
+          items: { type: string }
+          description: Env-var NAME strings. Values are resolved supervisor-side.
+        url:
+          type: string
+          nullable: true
+        headerKeys:
+          type: array
+          items: { type: string }
+        supportedAgents:
+          type: array
+          items: { type: string, enum: [claude, codex] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProjectMcpServerBody:
+      type: object
+      description: |
+        (M27) Request body for creating a project-scoped MCP server. Secret
+        values MUST be `env:NAME` references.
+      required: [refId, transport]
+      additionalProperties: false
+      properties:
+        refId:
+          type: string
+          minLength: 1
+          description: Capability ref id — must be unique within the project.
+        transport: { $ref: "#/components/schemas/McpTransport" }
+        command:
+          type: string
+          description: Required when `transport=stdio`.
+        args:
+          type: array
+          items: { type: string }
+          default: []
+        env:
+          type: object
+          additionalProperties:
+            type: string
+            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        url:
+          type: string
+          description: Required when `transport=sse` or `transport=http`.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        supportedAgents:
+          type: array
+          items: { type: string, enum: [claude, codex] }
+          default: ["claude", "codex"]
+
+    ResolvedMcpEntry:
+      type: object
+      description: |
+        (M27) One winner in the capability resolution result set.
+        Produced by `selectedRecords` after applying project > platform >
+        flow-package precedence. Secret values are NEVER included.
+      required: [refId, scope, transport, args, envKeys, supportedAgents]
+      properties:
+        refId:
+          type: string
+          description: Capability ref id — unique in the resolved set.
+        scope:
+          type: string
+          enum: [project, platform, flow-package]
+          description: The winning precedence scope.
+        transport: { $ref: "#/components/schemas/McpTransport" }
+        command:
+          type: string
+          nullable: true
+        args:
+          type: array
+          items: { type: string }
+        envKeys:
+          type: array
+          items: { type: string }
+          description: Env-var NAME strings resolved supervisor-side.
+        url:
+          type: string
+          nullable: true
+        headerKeys:
+          type: array
+          items: { type: string }
+        supportedAgents:
+          type: array
+          items: { type: string, enum: [claude, codex] }

@@ -239,6 +239,10 @@ state renders through message keys. Raw enum strings are not user-facing copy.
 - Authored Flow package content MUST be portable across MAIster installations
   through git-ready package directories.
 
+## Authored flow → executable bridge (Designed, M27)
+
+**(Designed, M27)** M27 extends the ADR-061 catalog-only boundary: a published authored `flow` can now become **executable** without a manual export+install cycle. The in-app publish-local route calls `installAuthoredFlowPackageBridge(trusted_by_policy)`, which bridges the authored catalog revision directly into a `flows` + `flow_revisions` row (`trustStatus=trusted_by_policy`, `exec_trust=untrusted`). The catalog-only invariant (publish ≠ enable) is preserved: the bridged revision still requires an explicit `exec_trust` flip before `runRevisionSetup` or an MCP stdio `command` can run. Logic-trust alone (`trustStatus=trusted_by_policy`) never executes setup.sh. See ADR-067 and [`flow-packages.md`](flow-packages.md) §M27.
+
 ## Edge cases
 
 - Stale `draft_version` returns `CONFLICT` and leaves the draft unchanged.

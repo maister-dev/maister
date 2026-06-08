@@ -39,6 +39,7 @@ erDiagram
         text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
+        text version_binding "M27 Designed: pinned|latest (DEFAULT latest)"
         timestamp created_at
     }
 
@@ -52,6 +53,23 @@ erDiagram
         text sidecar_id FK
         text readiness_status
         boolean enabled
+    }
+
+    PLATFORM_MCP_SERVERS {
+        text id PK
+        text transport "stdio|sse|http"
+        text command "nullable; stdio only"
+        jsonb args "DEFAULT []"
+        jsonb env_keys "env:NAME refs only; DEFAULT []"
+        text url "nullable; sse|http only"
+        jsonb header_keys "env:NAME refs only; DEFAULT []"
+        jsonb supported_agents "DEFAULT [claude,codex]"
+        text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
+        text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
+        jsonb readiness_reasons "DEFAULT []"
+        boolean enabled "DEFAULT true"
+        timestamp created_at
+        timestamp updated_at
     }
 
     PROJECT_FLOW_RUNNER_DEFAULTS {
@@ -90,10 +108,13 @@ erDiagram
 - `flows.manifest` stores the **parsed** `flow.yaml` — full step DSL,
   portable runner profiles, etc. Source of truth for the runtime step
   loader; the on-disk `flow.yaml` is only read on install / refresh.
+- `flows.version_binding` **(Designed, M27)**: `pinned` resolves `flows.enabled_revision_id`; `latest` picks the newest published `flow_revisions` row for the `flow_ref_id`, never a draft.
 - Project Flow runner defaults live in `project_flow_runner_defaults`.
 - Planned M10 splits immutable Flow package revisions from project Flow
   enablement. Until that lands, `flows` is still the mutable current pointer;
   run safety comes from `runs.flow_revision`.
+- `flow_revisions.exec_trust` **(Designed, M27)**: second independent trust axis. `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) and MCP stdio command spawn. Default `untrusted`; requires an explicit operator flip. Drawn in the narrative; `FLOW_REVISIONS` is not included in this partial ERD.
+- `platform_mcp_servers` **(Designed, M27)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface.
 
 ## Linked artifacts
 

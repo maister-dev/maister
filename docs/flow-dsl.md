@@ -252,6 +252,49 @@ The resolved profile is agent-aware: the same abstract tool id (e.g.
 cells `instructed → enforced` as spike-verified materialization lands (the
 contract only ever tightens, never loosens — see ADR-042).
 
+**M27 (Designed) — node `settings.mcps` required vs additional distinction.**
+`settings.mcps` is extended to discriminate REQUIRED from ADDITIONAL MCP refs.
+A bare `string[]` remains back-compat (treated as `additional`). The explicit form:
+
+```yaml
+settings:
+  mcps:
+    required: [github]      # launch refused if cannot resolve+materialize
+    additional: [filesystem] # non-fatal if absent; session augmented if present
+```
+
+`judge` settings carry the same extension. The `required` / `additional` split is
+validated by `config.schema.ts:mcpCapabilitySchema`. A REQUIRED MCP that cannot
+resolve+materialize at launch throws `MaisterError("CONFIG")` (unknown ref) or
+`MaisterError("EXECUTOR_UNAVAILABLE")` (agent does not support it); an ADDITIONAL
+MCP that is absent is silently non-fatal. For long-living `slash-in-existing`
+sessions the resolved MCP profile is shared across nodes via the existing
+`profileDigest` consistency (see `runner-agent.ts`). See
+[`configuration.md`](configuration.md) §MCP capability template and
+[`system-analytics/flow-studio.md`](system-analytics/flow-studio.md).
+
+**M27 (Designed) — flow-package top-level `mcps?` declaration.**
+A `flow.yaml` may declare `mcps?` at the top level to list the capability ref-ids
+the flow package requires as MCP capabilities. This is validated by the
+`validateGraphManifest` hard-gate: an unknown ref (not present in any
+`capability_records` for the project) → `CONFIG` (422). Removing an `mcps?`
+entry from the flow package and republishing clears the requirement (SET/CLEAR
+symmetry). Re-adding it restores the requirement. Example:
+
+```yaml
+schemaVersion: 1
+name: bugfix
+mcps:
+  - github          # capability ref-id; validated at publish/install time
+  - filesystem
+steps:
+  - id: implement
+    ...
+```
+
+See `config.schema.ts:flowYamlV1Schema` (`mcps?` field) and
+[`system-analytics/flow-studio.md`](system-analytics/flow-studio.md).
+
 For long-living ACP sessions (`slash-in-existing` mode), every AI node that
 reuses the session MUST share the same resolved `profileDigest`. On digest
 mismatch, the runner either starts a fresh session at a Flow-declared session

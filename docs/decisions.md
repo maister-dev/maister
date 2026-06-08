@@ -90,6 +90,11 @@
 | [ADR-062](#adr-062-platform-user-administration--project-member-management-admin-surface-carve) | Platform user administration + project member management (admin-surface carve) | Accepted | 2026-06-07 |
 | [ADR-063](#adr-063-structured-node-output-channel-p1--run-context-file-p7) | Structured node output channel (P1) + run-context file (P7) | Accepted | 2026-06-07 |
 | [ADR-064](#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section) | Authored flow-graph layout in the flow.yaml presentation section | Accepted | 2026-06-07 |
+| [ADR-065](#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) | Platform ACP runner CRUD in `/settings` — hard delete blocked by any usage reference | Accepted | 2026-06-08 |
+| [ADR-066](#adr-066-flow-editor-write-path--canvas-edits-as-m25-authored-flow-drafts-with-hard-gate-before-persist) | Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist | Accepted | 2026-06-08 |
+| [ADR-067](#adr-067-authoredexecutable-flow-bridge--two-axis-trust-gate-supersedes-adr-061-publish-boundary) | Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary) | Accepted | 2026-06-08 |
+| [ADR-068](#adr-068-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
+| [ADR-069](#adr-069-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 
 ---
 
@@ -3994,6 +3999,247 @@ separate route or menu item) and make the page reachable.
   catalog is one admin concern that belongs with the rest of platform settings.
 - **Two modal components (create + edit):** rejected — one `mode`-switched modal
   is less code for an identical adapter-driven form.
+
+---
+
+### ADR-066: Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** The M22 workbench ships a read-only flow-graph view (`flow-graph-view.tsx`,
+`nodesDraggable=false`). M27 turns it into an editor for any installed flow. The
+key constraint is that a pinned flow bundle is immutable and shared across projects
+(ADR-021); editors must never mutate the installed bundle in `~/.maister/flows/<id>@<tag>/`.
+A second constraint is that invalid manifests must never reach the DB — the runner
+reads manifests and an invalid stored draft would silently corrupt a future launch.
+
+**Decision:** Editing any installed flow seeds an M25 authored draft (ADR-061 reuse)
+from the pinned manifest — the draft lives in `authored_capabilities`/`authored_capability_revisions`,
+NOT in the flow bundle. The new `authored_capabilities.source_flow_ref_id` column
+(SDD §3.1) links the draft back to the installed flow's `flow_ref_id` so a later
+publish targets the same `flows` lineage.
+
+Canvas edits serialize into the manifest + `flow.yaml` `presentation` section
+(ADR-064: `nodes[].{id,x,y,width,height,color}`; logic DSL is runner-facing,
+presentation is runner-ignored). Before any `draft_version` CAS write, the server
+runs `validateGraphManifest` + `compileManifest` in full; an invalid manifest throws
+`MaisterError("CONFIG")` with HTTP 422 and the draft row is NOT mutated. Stale
+`expectedDraftVersion` fails with `MaisterError("CONFLICT")` / 409. The CAS itself
+is the `updateAuthoredDraft` path at `web/lib/catalog/authored-service.ts:279-352`.
+
+The editor is `manageCatalog`-gated (write). The run-scoped flow-graph view stays
+read-only (`readBoard`), consistent with ADR-052.
+
+**Consequences:**
+- The installed flow bundle is never touched by editor operations; ADR-021 immutability holds.
+- Invalid manifests are structurally impossible to persist — the hard-gate is the only write path.
+- The `source_flow_ref_id` link enables publish→bridge to land in the correct `flows` lineage without a parallel catalog store.
+- `draft_version` CAS prevents lost-update races between concurrent editors (same guarantee as rules/skills, ADR-061).
+
+**Alternatives Considered:**
+- **Mutate the installed bundle in place:** rejected — the bundle is shared and
+  immutable; editing it would corrupt other projects pinned to the same revision.
+- **Validate only on publish, not on save:** rejected — a stored invalid draft
+  would silently break any subsequent launch that resolves `latest`; fail fast at
+  the earliest write.
+- **Store canvas layout separately from the manifest (ADR-051 DB store):** rejected
+  by ADR-064; presentation is versioned with the flow source, not stored per-project
+  at runtime.
+
+---
+
+### ADR-067: Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary)
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** ADR-061 explicitly prohibited authored `flow` revisions from becoming
+`flow_revisions`: "Local publish of authored `flow` revisions … never mutates `flows`,
+`flow_revisions`, install caches, setup status, or project enablement." That boundary
+was correct for M25 (authoring only, no execution). M27 introduces in-app publish
+that must produce a runnable flow — the ADR-061 boundary must be superseded for the
+publish step only.
+
+Additionally, the existing single trust axis (`flows.trustStatus`: logic trust) gates
+launch but also gates `runRevisionSetup` (setup.sh execution), creating a conflation:
+logic trust (`trusted_by_policy` from the in-app bridge) could inadvertently permit
+`setup.sh` execution. A second, independent axis is required.
+
+**Decision:** This ADR supersedes the ADR-061 prohibition on authored flows producing
+`flow_revisions` and the ADR-061 rejected alternative "Turn authored flows directly
+into `flow_revisions`."
+
+The in-app publish path **reuses** `installAuthoredFlowPackageBridge`
+(`web/lib/flows.ts:999`, previously CLI-only), parameterized to `trustStatus=trusted_by_policy`
+(logic trust, gates launch precondition #9). The bridge's two-phase intent→finalize
+path (`ensureRevisionIntentRow` at `:507`, finalize at `:588`/`:811`) is called
+unchanged; the authored revision lands in the installed flow's **own** `flows`/`flow_revisions`
+lineage (same `flow_ref_id`, recorded via `authored_capabilities.source_flow_ref_id`).
+There is no parallel catalog store and no merge problem; "authored wins" is the
+tie-break in the `latest` selector (ADR-068).
+
+A **net-new second trust axis** `flow_revisions.exec_trust` (`untrusted | trusted`,
+default `untrusted`) gates `runRevisionSetup` (setup.sh) AND MCP stdio `command`
+spawn — independently of `flows.trustStatus`. The bridge sets `exec_trust=untrusted`
+on publish. An explicit operator action (`POST /api/projects/[slug]/flows/[flowId]/trust-executable`)
+flips it to `trusted`. `runRevisionSetup`'s guard changes from `flows.trustStatus`
+to `flow_revisions.exec_trust === 'trusted'`. **Invariant:** logic-trust alone
+(`trusted_by_policy`) never executes setup.sh or an MCP stdio command.
+
+**Consequences:**
+- Authored flow revisions become runnable after publish + exec_trust flip — the M27 goal.
+- The two-axis model eliminates the "trusted_by_policy accidentally runs setup.sh" risk.
+- `installAuthoredFlowPackageBridge` is unchanged at the call site; parameterization is
+  a single new `trustStatusOverride` arg.
+- Operators must make two explicit decisions (publish → exec_trust flip) to reach shell
+  execution — a deliberate friction point against accidental privilege escalation.
+- ADR-061's authored-inert-in-M25 guarantee is preserved for rules and skills; only
+  the `flow` kind publish boundary is superseded here.
+
+**Alternatives Considered:**
+- **Keep ADR-061 as-is, add a separate bridge table:** rejected — a parallel store
+  for "runnable authored flows" with its own merge logic is more complex than routing
+  the existing bridge.
+- **Single trust axis (fold exec_trust into trustStatus):** rejected — a third enum
+  value on `flows.trustStatus` would be per-flow (not per-revision) and would require
+  downgrade semantics when a new revision is published; per-revision `exec_trust` is
+  cleaner and more auditable.
+- **Auto-flip exec_trust on publish for internal/authored flows:** rejected — setup.sh
+  execution must be an explicit operator decision regardless of source.
+
+---
+
+### ADR-068: `version_binding` (pinned|latest) + resolve-at-launch + unified resolved-set snapshot
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** M10 introduced `flows.enabled_revision_id` as the pinned-revision pointer
+for launch. M14 introduced capability-revision snapshots into runs. M27 adds authored
+revisions that can become `flow_revisions` (ADR-067) and a `latest` selection mode,
+which requires a deterministic "newest published, never draft" resolver. The two
+snapshot mechanisms (M10 flow-revision pointer, M14 capability-revision) are currently
+separate; a unified resolved-set snapshot is needed so in-flight runs are fully
+immutable regardless of catalog changes during execution (ADR-021).
+
+**Decision:** A new `flows.version_binding` column (`pinned | latest`, default `latest`)
+controls how `resolveEffectiveFlowRevision` selects the revision at launch.
+
+- `pinned`: resolves to `flows.enabled_revision_id` (the existing M10 pointer).
+- `latest`: resolves to the newest PUBLISHED `flow_revisions` row for the `flow_ref_id`,
+  **never a draft**, with **authored-wins** tie-break when an authored and a git revision
+  share the same recency.
+
+`resolveEffectiveFlowRevision` runs at launch inside `launchRun`
+(`web/lib/services/runs.ts:215-543`), inserted after the existing trust/setup/engine-compat
+guards and before the worktree creation + snapshot write (SDD §6.3 insertion point 1).
+The resolved revision still passes trust precondition #9 + setupStatus + engine-compat.
+
+A new `runs.resolved_capability_set jsonb NULL` column (SDD §3.1) unifies the M10
+flow-revision snapshot and the M14 capability-revision snapshot into a single frozen
+record: `{ flowRevisionId, flowOrigin: "authored"|"git", capabilities: [{refId,kind,sha}],
+mcps: [{refId,sha,scope}] }`. This is written in the existing `runs` INSERT transaction
+(`runs.ts:590`). The runner reads the snapshot via `runner-core.ts:loadRun` and never
+queries the live catalog for a run already in flight (invariant from ADR-021).
+
+No new `runs.status` values are introduced.
+
+**Consequences:**
+- Catalog edits (publish, version-binding change, capability CRUD) during an active run
+  do not affect that run — the snapshot is the only source of truth for runners.
+- `version_binding=latest` with authored-wins gives authors immediate "use my latest
+  publish" semantics without manual pin updates.
+- The unified resolved-set replaces the implicit "read M10 pointer at runner start"
+  pattern that was vulnerable to TOCTOU races on `enabled_revision_id`.
+- Migration `0031+` adds `version_binding` (DDL in SDD §3.1).
+
+**Alternatives Considered:**
+- **Two separate snapshots (M10 pointer + M14 caps) retained as-is:** rejected — they
+  are written at different points in `launchRun` and can diverge on a retry; a single
+  atomic snapshot eliminates the race.
+- **`latest` resolves to any revision including drafts:** rejected — an in-progress
+  draft being resolved at launch would produce non-deterministic run behaviour; PUBLISHED
+  is the only safe boundary.
+- **authored-wins tie-break removed (git wins on tie):** rejected — the primary use
+  case for `latest` in M27 is testing the just-published authored revision; demoting it
+  behind git on equal timestamps defeats the purpose.
+
+---
+
+### ADR-069: MCP + capability management model — 3-scope identity, local-first precedence, platform storage, setup-time resolve
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** Three independent gaps accumulated in the capability resolution layer:
+(1) `web/lib/capabilities/resolver.ts:selectedRecords` (`134-164`) returns ALL
+matching `capability_records` without a winner-picking rule, producing latent
+duplicate materialization when the same `(kind, refId)` appears at multiple scopes.
+(2) Platform-level MCP servers had no dedicated storage table — they were seeded via
+a JSON registry shim, unlike `platform_acp_runners` which have a proper CRUD table.
+(3) The MCP transport shape in `mcpCapabilitySchema` was stdio-only; `sse`/`http`
+transports required for remote MCP servers were not represented.
+
+**Decision:**
+
+**Precedence (all capability kinds).** The resolver picks exactly ONE winner per
+`(kind, capability_ref_id)` using **project > platform > flow-package** precedence —
+local-first, consistent with the runner-resolution chain documented in the root
+CLAUDE.md §5 (project default outranks platform default). Lower-precedence records are
+shadowed with no merge and no duplicate emitted. This supersedes the current
+return-all/no-winner behaviour in `resolver.ts` and fixes its latent
+duplicate-materialization bug.
+
+**Platform MCP storage.** A new `platform_mcp_servers` table (SDD §3.1) mirrors
+`platform_acp_runners` (ADR-065): admin CRUD at `/api/admin/mcp-servers/**`, the same
+usage-guard hard-delete pattern (`assertCanDisable`-equivalent: 409 while any usage
+reference exists, 204 on zero refs), and 409 on duplicate id. Rows are projected into
+`capability_records` as `source='platform'`, replacing the JSON-registry seam.
+
+**Transport.** `mcpCapabilitySchema` becomes a discriminated union: `stdio` `{command,
+args?, env?}` | `sse` | `http` `{url, headers?}`. Secrets accepted only as `env:NAME`
+(regex `^env:[A-Za-z_][A-Za-z0-9_]*$`); values resolved supervisor-side and never
+stored, logged, or echoed in any response.
+
+**Required vs additional MCP at launch.** Flow-package `flow.yaml` declares
+`mcps: string[]` (capability ref ids). Node `settings.mcps` distinguishes
+`required` vs `additional` (back-compat: bare `string[]` treated as `additional`).
+At launch (SDD §6.3 insertion point 2, after the M14 cap-ref check at `runs.ts:475`):
+REQUIRED MCP that cannot resolve + materialize → launch refused (`MaisterError("CONFIG")`
+/ 409, or `EXECUTOR_UNAVAILABLE` / 503 if the agent does not support MCP). ADDITIONAL
+MCP absence is non-fatal.
+
+**Setup-time resolve.** A `POST /api/projects/[slug]/mcp/resolve` route accepts
+operator-confirmed params (env:NAME references only). Present-by-id → reuse/dedupe
+(no silent duplicate). Absent REQUIRED → propose-to-configure; remains unresolved →
+blocks launch. Resolved MCP revisions are included in the `runs.resolved_capability_set`
+snapshot (ADR-068).
+
+**Codex MCP.** Materialization reuses M14 (`materialize.ts` / `agent-map.ts` /
+supervisor `acp-client.ts:172`). Codex MCP support: materialized if `codex-acp`
+supports it at integration time; otherwise explicitly documented as a gap (no silent
+degrade). No parallel materialization path.
+
+**Consequences:**
+- Duplicate capability materialization is eliminated at the resolver layer — one winner
+  per `(kind, refId)`, deterministic.
+- Platform MCP servers are first-class catalog rows with the same lifecycle guarantees as
+  platform ACP runners (ADR-065).
+- `sse`/`http` transport support unblocks remote MCP servers without a schema change.
+- Required MCP blocking launch gives operators a clear failure signal and a resolve path
+  instead of silent omission.
+- Secrets never appear in DB, logs, or wire — supervisor-side resolution is the only
+  place env values are materialised.
+
+**Alternatives Considered:**
+- **Project < platform precedence (platform wins):** rejected — inconsistent with the
+  local-first runner chain; operators would lose the ability to override platform-wide
+  MCP settings at the project level.
+- **Merge configs across scopes (additive):** rejected — additive merge of MCP args/env
+  across scopes produces unpredictable effective configs; a clean shadow is safer.
+- **Keep JSON-registry seam for platform MCPs:** rejected — a DB table gives the same
+  CRUD, usage-guard, and audit trail as other platform catalog entities; JSON seam was
+  always a temporary shim.
+- **Block launch on absent ADDITIONAL MCPs:** rejected — additional MCPs are
+  best-effort augmentation; a missing optional capability should degrade gracefully, not
+  refuse the run.
 
 ---
 

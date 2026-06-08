@@ -31,6 +31,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE. Can reference a platform default runner override.                                                                                                                                                                                                                       | (root)                                                                     |
 | `platform_router_sidecars`    | Platform-managed router sidecars such as CCR. Stores typed config refs, lifecycle, readiness, and no raw secrets.                                                                                                                                                                                                           | (root)                                                                     |
 | `platform_acp_runners`        | Platform ACP runner catalog. Stores adapter id, derived capability agent, model, provider shape, permission policy, readiness, sidecar ref, and enablement.                                                                                                                                                                  | optional `platform_router_sidecars.id`                                      |
+| `platform_mcp_servers`        | **(M27 — Designed)** Platform-admin-managed MCP server catalog. Stores transport shape, env-var name refs only (no secret values), supported-agent list, trust status, and readiness. Mirrors `platform_acp_runners` in admin CRUD surface.                                                                                  | (root — no FK)                                                              |
 | `platform_runtime_settings`   | Singleton platform runtime row with the required default runner id.                                                                                                                                                                                                                                                         | `platform_acp_runners.id`                                                  |
 | `flows`                       | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
 | `project_flow_runner_defaults` | Per-project Flow attachment runner default. `runner_id = null` means inherit project default.                                                                                                                                                                                                                              | `projects.id`, `flows.id`, optional `platform_acp_runners.id`              |
@@ -258,6 +259,39 @@ platform_runtime_settings {
 launch. `provider` and sidecar fields store secret refs only. A runner or
 sidecar usage-reference service guards disable/delete actions.
 
+## `platform_mcp_servers` (Designed, M27)
+
+**(M27 — Designed, migration `0031+`.)** Platform-admin-managed MCP server
+catalog. Mirrors `platform_acp_runners` in admin CRUD surface and usage-guard
+semantics. Secrets are stored **only** as `env:NAME` references — values are
+never stored and are resolved supervisor-side.
+
+```ts
+{
+  id,                            // PK (admin-assigned, stable ref id)
+  transport: 'stdio' | 'sse' | 'http',
+  command?,                      // stdio only; spawn gated on exec_trust
+  args (jsonb, DEFAULT '[]'),
+  envKeys (jsonb, DEFAULT '[]'), // env-var NAMES only (env:NAME pattern);
+                                 //   values are never stored
+  url?,                          // sse | http only
+  headerKeys (jsonb, DEFAULT '[]'), // header NAMES only (env:NAME pattern)
+  supportedAgents (jsonb, DEFAULT '["claude","codex"]'),
+  trustStatus: 'untrusted' | 'trusted' | 'trusted_by_policy',
+                                 // DEFAULT 'untrusted'; mirrors
+                                 //   platform_acp_runners.trustStatus semantics
+  readinessStatus: 'Unknown' | 'Ready' | 'NotReady', // DEFAULT 'Unknown'
+  readinessReasons (jsonb, DEFAULT '[]'),
+  enabled (DEFAULT true),
+  createdAt, updatedAt
+}
+```
+
+A platform MCP DELETE is refused (409) while any `capability_records` row
+references it (mirrors `assertCanDisable`). A duplicate id on POST returns 409
+via `onConflictDoNothing().returning()`, never a raw 500. Stdio `command` spawn
+is gated on `exec_trust = 'trusted'` for the owning `flow_revisions` row (§4.2).
+
 ## `project_flow_roles`
 
 (M13, migration `0018`.)
@@ -342,6 +376,12 @@ project and preserves audit labels if the linked user is later removed.
                                  //   Failed (default Installed)
   trustStatus,                   // M10 enum: untrusted | trusted |
                                  //   trusted_by_policy (default untrusted)
+  versionBinding,                // (M27 — Designed, migration 0031+)
+                                 //   'pinned' | 'latest' (DEFAULT 'latest').
+                                 //   pinned → resolves flows.enabled_revision_id;
+                                 //   latest → newest PUBLISHED flow_revisions row
+                                 //   for the flow_ref_id, never a draft;
+                                 //   authored-wins tie-break.
   createdAt, updatedAt
 }
 ```
@@ -389,6 +429,15 @@ project-scoped.
   setupStatus,                   // not_required | pending | done | failed
   packageStatus,                 // GLOBAL lifecycle: Discovered | Installing |
                                  //   Installed | Failed | Removed
+  execTrust,                     // (M27 — Designed, migration 0031+)
+                                 //   'untrusted' | 'trusted' (DEFAULT 'untrusted').
+                                 //   Second independent trust axis — EXECUTABLE.
+                                 //   Gates runRevisionSetup (setup.sh) AND MCP
+                                 //   stdio command spawn. Distinct from
+                                 //   flows.trustStatus (logic trust). Invariant:
+                                 //   logic-trust alone NEVER runs setup.sh or
+                                 //   an MCP stdio command. Flip requires explicit
+                                 //   operator POST to /trust-executable.
   installedAt
 }
 ```
@@ -493,6 +542,12 @@ authored_capabilities {
   originType?, originRefId?,
   currentDraftRevisionId?,
   currentPublishedRevisionId?,
+  sourceFlowRefId?,              // (M27 — Designed, migration 0031+)
+                                 //   nullable text. Links an authored flow-kind
+                                 //   draft (created by editing an installed flow)
+                                 //   to its originating flows.flow_ref_id. When
+                                 //   set, publish→bridge targets the SAME flows
+                                 //   lineage. NULL for net-new authored flows.
   archivedAt?,
   createdAt, updatedAt
 }
@@ -580,6 +635,15 @@ queries.
   resumeTargetStepId?,           // M19 (text, migration 0016) node id retained
                                  //   at crash time for Recover; current_step_id
                                  //   is nulled on crash; see below
+  resolvedCapabilitySet?,        // (M27 — Designed, migration 0031+)
+                                 //   jsonb NULL. Frozen at launch by launchRun;
+                                 //   the runner reads this snapshot, never the
+                                 //   live catalog. An edit or publish during a run
+                                 //   MUST NOT mutate this field.
+                                 //   Shape: { flowRevisionId: string,
+                                 //     flowOrigin: "authored"|"git",
+                                 //     capabilities: {refId,kind,sha}[],
+                                 //     mcps: {refId,sha,scope}[] }.
   startedAt, endedAt?
 }
 ```

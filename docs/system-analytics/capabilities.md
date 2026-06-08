@@ -281,6 +281,19 @@ refusal is `MaisterError("EXECUTOR_UNAVAILABLE")`. No new error code
 ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror) closed
 union).
 
+## Capability resolution precedence (Designed, M27)
+
+**(Designed, M27)** The uniform local-first resolution order applies to **all** capability kinds (`mcp`, `skill`, `rule`, `agent_definition`, `restriction`, and any future kind): **project > platform > flow-package**.
+
+Winner per `(kind, capability_ref_id)`: the highest-precedence record in the chain is used; lower-precedence records with the same `(kind, refId)` are **shadowed — no merge, no duplicate emitted**. This is consistent with the runner-resolution chain (root CLAUDE.md §5) and supersedes the current `resolver.ts` behavior that returns all records for a ref-id without picking a winner, which produces latent duplicate-materialization bugs.
+
+Concretely:
+- A project-scoped MCP with `id=github` shadows a platform-scoped MCP with the same id.
+- A platform-scoped skill shadows a flow-package-scoped skill of the same id.
+- Same id + different params across scopes → higher-precedence record used; lower record not emitted.
+
+This behavior is enforced inside `resolveCapabilityProfile` (`web/lib/capabilities/resolver.ts`) and tested in `resolver-precedence.test.ts` (see SDD M27 §9 test matrix). No duplicate capability record reaches materialization for the same `(kind, refId)`.
+
 ## Expectations
 
 These are the steady-state invariants the M14 code MUST satisfy (Designed (M14) —
@@ -330,6 +343,12 @@ they hold once the milestone lands, not before).
   its `materialization_plan.profileDigest` equals the new node's resolved digest;
   a mismatch MUST start a fresh session at a declared boundary or refuse with
   `MaisterError("CONFIG")`.
+- **(Designed, M27)** `resolveCapabilityProfile` MUST emit exactly ONE winner per
+  `(kind, capability_ref_id)` using the precedence **project > platform >
+  flow-package** across ALL capability kinds; a lower-precedence record with the
+  same `(kind, refId)` MUST be shadowed (not merged, not emitted as a duplicate).
+  This supersedes the current return-all/no-winner behavior and fixes the latent
+  duplicate-materialization bug.
 
 ## Edge cases
 

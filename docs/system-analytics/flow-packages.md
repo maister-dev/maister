@@ -246,6 +246,28 @@ flowchart TD
     Delete --> Done([next row])
 ```
 
+## Version binding and authored→executable bridge (Designed, M27)
+
+**(Designed, M27)** `flows.version_binding` (`pinned | latest`, default `latest`) controls
+how `launchRun` resolves the effective revision at launch time (ADR-067/068; see
+[`flow-studio.md`](flow-studio.md)):
+
+- `pinned` → use `flows.enabled_revision_id` (the M10 pointer, unchanged).
+- `latest` → resolve the newest **PUBLISHED** `flow_revisions` row for the
+  `flow_ref_id`, **never a draft**; authored-origin revision wins on tie when an
+  authored and a git revision share the same newest published timestamp.
+
+The resolved revision is passed through the existing trust / setup / engine-compat
+guards, then snapshotted into `runs.resolved_capability_set` (immutable for the
+run's lifetime; a mid-run publish cannot mutate an in-flight run).
+
+**(Designed, M27)** The **authored→executable bridge** (`installAuthoredFlowPackageBridge`) turns an authored `flow` draft into a runnable `flows` + `flow_revisions` row. It is called by the in-app publish-local route and parameterized with `trustStatus=trusted_by_policy` and `exec_trust=untrusted` on the produced `flow_revisions` row. Two independent trust axes govern execution:
+
+- `flows.trustStatus` (LOGIC, existing M10): `untrusted | trusted | trusted_by_policy`. Gates launch precondition #9.
+- `flow_revisions.exec_trust` (EXECUTABLE, new M27): `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) AND MCP stdio `command` spawn. An explicit `POST trust-executable` flip is required — logic-trust alone never runs setup.sh or an MCP stdio command.
+
+See ADR-067 (`version_binding`), ADR-068 (`exec_trust`), and [`flow-studio.md`](flow-studio.md).
+
 ## Expectations
 
 - Current M4 loader remains the low-level installer, but M10 adds product

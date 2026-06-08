@@ -160,6 +160,11 @@ flowchart TD
   [readiness.md](readiness.md) (readiness evaluation),
   [instance-config.md](instance-config.md) (host roots / host tools on the same
   page), [capability-catalog.md](capability-catalog.md).
+  **(Designed, M27)** The platform MCP server admin CRUD (`platform_mcp_servers`
+  table, `/api/admin/mcp-servers` routes, settings panel) mirrors this runner
+  CRUD pattern precisely — same usage-guard delete, same `onConflictDoNothing`
+  duplicate-id protection, same `env:NAME` secret policy, same `admin`-only gate
+  (ADR-065 precedent). See [`mcp-management.md`](mcp-management.md).
 - **Errors:** [error-taxonomy.md](../error-taxonomy.md) —
   `CONFIG | CONFLICT | PRECONDITION`.
 - **Source:** `web/app/api/admin/acp-runners/route.ts`,

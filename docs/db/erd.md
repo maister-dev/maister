@@ -10,7 +10,10 @@ and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
 assignment tables, and the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
 column, and the **M16 (Implemented, migration `0018_m16_api_tokens.sql`)**
-integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`. For partial views by
+integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`, and the
+**M27 (Designed, migration `0031+`)** schema deltas: `FLOWS.version_binding`,
+`FLOW_REVISIONS.exec_trust`, `AUTHORED_CAPABILITIES.source_flow_ref_id`,
+`RUNS.resolved_capability_set`, and the new `PLATFORM_MCP_SERVERS` table. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
@@ -31,6 +34,7 @@ erDiagram
     PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
     PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "flow binding"
     PROJECTS ||--o{ FLOWS : has
+    FLOWS ||--o{ FLOW_REVISIONS : "revisions (M10)"
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
     PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
     PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
@@ -188,6 +192,23 @@ erDiagram
         timestamp updated_at
     }
 
+    PLATFORM_MCP_SERVERS {
+        text id PK
+        text transport "stdio|sse|http"
+        text command "nullable; stdio only"
+        jsonb args "DEFAULT []"
+        jsonb env_keys "env:NAME refs only; DEFAULT []"
+        text url "nullable; sse|http only"
+        jsonb header_keys "env:NAME refs only; DEFAULT []"
+        jsonb supported_agents "DEFAULT [claude,codex]"
+        text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
+        text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
+        jsonb readiness_reasons "DEFAULT []"
+        boolean enabled "DEFAULT true"
+        timestamp created_at
+        timestamp updated_at
+    }
+
     EXECUTORS {
         text id PK
         text project_id FK
@@ -209,7 +230,24 @@ erDiagram
         text installed_path "current pointer; runs use flow_revision"
         jsonb manifest "parsed flow.yaml"
         integer schema_version
+        text version_binding "M27 Designed: pinned|latest (DEFAULT latest)"
         timestamp created_at
+    }
+
+    FLOW_REVISIONS {
+        text id PK
+        text flow_ref_id FK "links to flows.flow_ref_id"
+        text source "git URL"
+        text version_label "user-facing tag pin"
+        text resolved_revision "40-hex git SHA; immutable cache key"
+        text manifest_digest "sha256 of canonical manifest JSON"
+        jsonb manifest "snapshot the runner reads"
+        integer schema_version
+        text installed_path
+        text setup_status "not_required|pending|done|failed"
+        text package_status "Discovered|Installing|Installed|Failed|Removed"
+        text exec_trust "M27 Designed: untrusted|trusted (DEFAULT untrusted); gates setup.sh + MCP stdio spawn"
+        timestamp installed_at
     }
 
     PROJECT_FLOW_RUNNER_DEFAULTS {
@@ -293,6 +331,7 @@ erDiagram
         integer draft_version
         text current_draft_revision_id
         text current_published_revision_id
+        text source_flow_ref_id "M27 Designed: nullable; links edited installed flow to its flows.flow_ref_id"
         timestamp archived_at
         timestamp created_at
         timestamp updated_at
@@ -395,6 +434,7 @@ erDiagram
         timestamp keepalive_until "30min sliding"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         text resume_target_step_id "node id retained at crash time for Recover (M19, 0016)"
+        jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch (flowRevisionId,capabilities,mcps)"
         timestamp started_at
         timestamp ended_at
     }
