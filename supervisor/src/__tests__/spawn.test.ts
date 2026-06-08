@@ -107,12 +107,15 @@ describe("spawnSession", () => {
     expect(contents).toContain(`"line 1"`);
   });
 
-  it("passes --resume flag when resumeSessionId is set", async () => {
+  it("does NOT add a --resume CLI flag for resumeSessionId (resume is a protocol call)", async () => {
+    // Resume is performed via the ACP session/resume call in
+    // createAcpConnection, not a CLI flag — both adapters ignore `--resume` on
+    // argv. spawn.ts must therefore never inject it.
     const request = makeRequest({
       runId: "run-resume",
       resumeSessionId: "uuid-abc-123",
     });
-    const { child, emitter } = await spawnSession({
+    const { child } = await spawnSession({
       sessionId: "session-r",
       request,
       runtimeRoot: tempDir,
@@ -121,24 +124,13 @@ describe("spawnSession", () => {
       preArgs: [FIXTURE_PATH, "--lines", "0"],
     });
 
-    const eventsPromise = collectEvents(emitter);
+    expect(child.spawnargs).not.toContain("--resume");
+    expect(child.spawnargs).not.toContain("uuid-abc-123");
 
     await new Promise<void>((r) => child.once("exit", () => r()));
-
-    const events = await eventsPromise;
-    const lineEvents = events.filter((e) => e.type === "session.line");
-
-    expect(lineEvents.length).toBeGreaterThanOrEqual(1);
-    const first = JSON.parse((lineEvents[0] as { line: string }).line) as {
-      type: string;
-      sessionId: string;
-    };
-
-    expect(first.type).toBe("resumed");
-    expect(first.sessionId).toBe("uuid-abc-123");
   });
 
-  it("applies versioned runner payload before spawning and preserves resume ordering", async () => {
+  it("applies versioned runner payload before spawning", async () => {
     const request = makeRequest({
       runId: "run-runner",
       executor: { agent: "codex", model: "legacy-ignored" },
@@ -162,14 +154,9 @@ describe("spawnSession", () => {
       preArgs: [FIXTURE_PATH, "--lines", "0"],
     });
 
-    const dangerousIndex = child.spawnargs.indexOf(
-      "--dangerously-skip-permissions",
-    );
-    const resumeIndex = child.spawnargs.indexOf("--resume");
-
-    expect(dangerousIndex).toBeGreaterThan(-1);
-    expect(resumeIndex).toBeGreaterThan(-1);
-    expect(dangerousIndex).toBeLessThan(resumeIndex);
+    expect(child.spawnargs).toContain("--dangerously-skip-permissions");
+    // Resume never appears on argv — it is a session/resume protocol call.
+    expect(child.spawnargs).not.toContain("--resume");
 
     await new Promise<void>((r) => child.once("exit", () => r()));
   });

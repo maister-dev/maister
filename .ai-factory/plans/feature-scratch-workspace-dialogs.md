@@ -63,6 +63,42 @@ This plan keeps scratch-run capability selection compatible with the current imp
 - Reuse the same resolved capability profile identity for scratch runs and Flow node sessions so future native provisioning stays auditable against the already-persisted `scratch_capability_profiles` row.
 - Keep the supervisor out of trust decisions: web resolves and materializes the profile/provisioning files, then passes paths/env to the ACP session.
 
+## Designed Follow-Up: Dialog Interaction Model (Backlog)
+
+Surfaced during first dogfooding (2026-06-08). Shipped now (Phase 1): the
+transcript renderer (`web/components/scratch/scratch-transcript.tsx` +
+`web/lib/scratch-runs/transcript.ts`) coalesces ACP `session.update` events
+into clean assistant/tool/thought/usage rows (no raw JSON-RPC), tool groups
+collapse to a count summary and auto-expand the active group while running,
+prose questions become quick-reply chips, user bubbles show the launching
+user's name, and a `Crashed` run is resumable directly from the composer
+(Send → `POST /api/scratch-runs/{runId}/recover`, no separate panel).
+
+Deferred (need their own plan because they touch locked decisions):
+
+- **Waiting runs survive a restart (touches §7 reconcile/lifecycle).** Today
+  `runStatusForDialogStatus("WaitingForUser") === "Running"`
+  (`web/lib/scratch-runs/state.ts`), so on a supervisor/web restart the child
+  ACP process is gone and `reconcile.ts` classifies the run
+  `{action:"crash", reason:"agent-session-gone"}` → `Crashed`. A run merely
+  waiting for the user has a valid `acp_session_id` checkpoint and should stay
+  interactable (resume via `session/resume` on the next message) instead of being
+  hard-crashed. Phase 1 makes this survivable (recover from the composer) but
+  the run still shows `Crashed`. Options: special-case scratch
+  `WaitingForUser`/`NeedsInput` in reconcile classification, or a non-`Running`
+  runs.status for waiting scratch dialogs (audit the concurrency-cap count and
+  board queries first). Needs a mini-ADR against §7.
+
+- **Mid-run interjection / prompt queueing (touches §1 ACP execution).** CC lets
+  the user send a message while the agent works (`/btw`-style); the
+  claude-agent-acp adapter advertises `promptQueueing:true`, but the supervisor
+  has no queue handling (`supervisor/src` has no queue path). Work: implement
+  ACP prompt queueing in the supervisor, relax
+  `assertScratchCanAcceptUserMessage` (`web/lib/scratch-runs/state.ts`,
+  currently `inputReadyDialogStatuses = {WaitingForUser}` only) to accept a
+  queued message during `Running`, and surface it in the composer (enable input
+  while running → "queued" affordance). Larger; new supervisor capability.
+
 ## Identifier Trust Boundaries
 
 - `POST /api/scratch-runs`

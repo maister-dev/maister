@@ -508,7 +508,7 @@ Discriminated on `type`:
 gates operator crash-recovery re-dispatch of a session-less node — a `Crashed`
 run whose recover target is session-less (`cli`/`check`/`judge`/`guard`/`human`)
 is redispatch-recoverable only when its config declares `retry_safe: true`;
-`ai_coding` ignores it (recovered via `--resume`). See
+`ai_coding` ignores it (recovered via `session/resume`). See
 [ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
 and [`flow-dsl.md`](flow-dsl.md).
 
@@ -819,7 +819,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
-| `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | M8 resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed via `--resume`, the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
+| `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | M8 resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed (ACP `session/resume`), the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
 | `MAISTER_WORKBENCH_MAX_FILE_BYTES` | no | `524288` (512 KiB) | **(M22 — Implemented, ADR-053.)** Max size of a single git-tracked blob the workbench file viewer serves. A larger file returns a `413` `too-large` marker; bytes are never sent. Read by `web/lib/instance-config.ts:workbenchMaxFileBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
 | `MAISTER_NODE_OUTPUT_MAX_BYTES` | no | `262144` (256 KiB) | **(M26 — Designed, [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).)** Caps a graph node's structured-output payload (the agent ` ```json maister:output ` block or the cli `MAISTER_OUTPUT_FILE` contents) before parse/validate at the post-action seam; exceeding it fails the attempt with `MaisterError({ code: "CONFIG" })`. Read by `web/lib/instance-config.ts:nodeOutputMaxBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_WORKBENCH_MAX_FILE_BYTES` precedent). See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26 and [`flow-dsl.md`](flow-dsl.md) §M26. |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
@@ -1045,7 +1045,8 @@ with real values):
 ## Cost tracking on resume (M8)
 
 Every line appended to `.maister/<projectSlug>/runs/<runId>/cost.jsonl`
-by a supervisor session that was spawned via `--resume <id>` carries
+by a supervisor session that was resumed (spawned with a `resumeSessionId`,
+restored via the ACP `session/resume` call) carries
 `"resumed": true`. The marker is added in `supervisor/src/cost.ts`'s
 `attachCost(opts)` from `opts.resumed = Boolean(parsed.resumeSessionId)`
 at session creation time. The M0 spike measured ~$0.28 of

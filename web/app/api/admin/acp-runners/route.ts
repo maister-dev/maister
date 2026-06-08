@@ -64,17 +64,13 @@ const runnerBodySchema = z
       .min(1)
       .regex(/^[A-Za-z0-9._-]+$/),
     adapter: z.enum(["claude", "codex"]),
-    model: z.string().min(1),
+    model: z.string().trim().min(1),
     provider: providerSchema,
     permissionPolicy: z
       .enum(["default", "dangerously_skip_permissions"])
       .default("default"),
     sidecarId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().default(true),
-    readinessStatus: z
-      .enum(["Unknown", "Ready", "NotReady"])
-      .default("Unknown"),
-    readinessReasons: z.array(z.string().min(1)).default([]),
   })
   .strict();
 
@@ -252,20 +248,17 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const body = await parseJson(req).catch(errorResponse);
-
-  if (body instanceof NextResponse) return body;
-
-  const parsed = runnerBodySchema.safeParse(body);
-
-  if (!parsed.success) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid POST body: ${parsed.error.message}`),
-    );
-  }
-
   try {
     await requireGlobalRole("admin");
+
+    const parsed = runnerBodySchema.safeParse(await parseJson(req));
+
+    if (!parsed.success) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid POST body: ${parsed.error.message}`,
+      );
+    }
     assertProviderSupported({
       adapter: parsed.data.adapter,
       providerKind: parsed.data.provider.kind,
@@ -273,14 +266,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     const db = getDb() as any;
-    const existing = await db.select().from(platformAcpRunners);
-
-    if (existing.some((r: any) => r.id === parsed.data.id)) {
-      throw new MaisterError(
-        "CONFLICT",
-        `ACP runner already exists: ${parsed.data.id}`,
-      );
-    }
     const diagnostics = await loadDiagnosticsForReadiness();
     const sidecarRows =
       parsed.data.sidecarId !== null && parsed.data.sidecarId !== undefined
@@ -303,18 +288,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       sidecar,
     });
 
-    await db.insert(platformAcpRunners).values({
-      id: parsed.data.id,
-      adapter: parsed.data.adapter,
-      capabilityAgent: capabilityAgentForAdapter(parsed.data.adapter),
-      model: parsed.data.model,
-      provider: parsed.data.provider,
-      permissionPolicy: parsed.data.permissionPolicy,
-      sidecarId: parsed.data.sidecarId ?? null,
-      enabled: parsed.data.enabled,
-      readinessStatus: readiness.status,
-      readinessReasons: readiness.reasons,
-    });
+    // Race-safe create: rely on the id primary-key constraint, not a
+    // read-then-write SELECT (two concurrent POSTs both pass the SELECT and the
+    // second would raise a raw 23505 -> 500). onConflictDoNothing + an empty
+    // returning() yields the documented 409 without a unique-violation crash.
+    const inserted = await db
+      .insert(platformAcpRunners)
+      .values({
+        id: parsed.data.id,
+        adapter: parsed.data.adapter,
+        capabilityAgent: capabilityAgentForAdapter(parsed.data.adapter),
+        model: parsed.data.model,
+        provider: parsed.data.provider,
+        permissionPolicy: parsed.data.permissionPolicy,
+        sidecarId: parsed.data.sidecarId ?? null,
+        enabled: parsed.data.enabled,
+        readinessStatus: readiness.status,
+        readinessReasons: readiness.reasons,
+      })
+      .onConflictDoNothing()
+      .returning({ id: platformAcpRunners.id });
+
+    if (inserted.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `ACP runner already exists: ${parsed.data.id}`,
+      );
+    }
 
     return NextResponse.json({ ok: true, id: parsed.data.id }, { status: 201 });
   } catch (err) {
@@ -323,23 +323,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 }
 
 export async function PATCH(req: NextRequest): Promise<NextResponse> {
-  const body = await parseJson(req).catch(errorResponse);
-
-  if (body instanceof NextResponse) return body;
-
-  const parsed = settingsBodySchema.safeParse(body);
-
-  if (!parsed.success || parsed.data.defaultRunnerId === undefined) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid PATCH body: ${parsed.success ? "no fields to update" : parsed.error.message}`,
-      ),
-    );
-  }
-
   try {
     await requireGlobalRole("admin");
+
+    const parsed = settingsBodySchema.safeParse(await parseJson(req));
+
+    if (!parsed.success || parsed.data.defaultRunnerId === undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid PATCH body: ${parsed.success ? "no fields to update" : parsed.error.message}`,
+      );
+    }
 
     const db = getDb() as any;
 

@@ -68,9 +68,12 @@ Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
   `@agentclientprotocol/codex-acp@0.0.44`, bundles
   `@openai/codex@^0.128.0`). Supervisor spawns one adapter process per
   active session via Node `child_process.spawn`. Permission HITL is
-  resolved live. Checkpoint/resume is implemented and uses the
-  adapter's session id with `--resume <session-id>`. Each respawn costs
-  roughly `$0.28` cache_creation tokens.
+  resolved live. Checkpoint/resume is implemented: a fresh adapter process
+  is spawned and the prior conversation is restored via the ACP
+  `session/resume` protocol call on `runs.acp_session_id` (NOT a `--resume`
+  CLI flag — both adapters ignore that on argv; `session/resume` restores
+  context without replaying history). Each respawn costs roughly `$0.28`
+  cache_creation tokens.
 - **Model routing**: Two modes supported. **(a) env-router** — set
   `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` in `executor.env` for
   single Anthropic-API-compatible third-party provider (z.ai GLM:
@@ -114,11 +117,12 @@ HITL lifecycle:
   `input-<step-id>.json` via `atomicWriteJson`.
 - The response route never flips `runs.status` back to `Running`; the
   runner owns `NeedsInput -> Running`.
-- The idle checkpoint path (`NeedsInput -> NeedsInputIdle -> --resume`) is
+- The idle checkpoint path (`NeedsInput -> NeedsInputIdle -> resume`) is
   implemented (M8): the web keep-alive sweeper idles `NeedsInput` rows past
   `keepalive_until`, the supervisor's real `POST /sessions/:id/checkpoint`
   cancels open permission deferreds and SIGTERMs the agent, and a stored HITL
-  response respawns via `--resume <acp-session-id>`. The resume round-trip is
+  response respawns a fresh adapter and restores context via the ACP
+  `session/resume` call on `acp_session_id`. The resume round-trip is
   exercised in CI via a mock ACP adapter; live-agent resume was verified in
   the M0 spike, not yet in CI.
 
@@ -345,7 +349,8 @@ opencode / Aider executors.
   monotonic `id` for `lastEventId` reconnect.
 - **Agent process lifetime**: spawned and owned by `supervisor/`, NOT by
   Next.js. Permission HITL stays live through supervisor deferreds.
-  Checkpoint/idle resume is implemented and uses `--resume <session-id>`.
+  Checkpoint/idle resume is implemented via the ACP `session/resume` protocol
+  call on `acp_session_id` (not a `--resume` CLI flag).
 - **Server-only secrets**: API keys read from `.env` server-side (Next.js)
   or supervisor-side. Never logged, never streamed, never sent to client.
   Never embedded in ACP `session/update` payloads visible to the browser.
@@ -366,12 +371,19 @@ opencode / Aider executors.
    binary (`claude-agent-acp`, `codex-acp`). Underlying SDK is
    `@anthropic-ai/claude-agent-sdk@0.3.146` (NOT the `@anthropic-ai/claude-code`
    CLI package).
-2. ✅ **Cross-process resume verified live**. `claude --session-id <uuid>` +
-   `claude --resume <uuid>` from a fresh process returns the prior context
-   ("ALBATROSS-42" round-trip). Sessions persist at
+2. ✅ **Cross-process resume**. The M0 spike verified the raw CLI
+   (`claude --session-id <uuid>` + `claude --resume <uuid>` returns prior
+   context, "ALBATROSS-42" round-trip). Sessions persist at
    `~/.claude/projects/<cwd-encoded>/<uuid>.jsonl`, append-only, survive
    parent-process kill. **`runs.acp_session_id` is sufficient as the
-   checkpoint handle — no separate checkpoint format needed.**
+   checkpoint handle — no separate checkpoint format needed.** ⚠ Adapter
+   caveat (found in dogfooding 2026-06-08): the **ACP adapter** does NOT
+   resume via the `--resume` CLI flag — its binary ignores argv flags. The
+   supervisor resumes at the protocol level with the ACP `session/resume`
+   call (restores context, no history replay; both bundled adapters advertise
+   `sessionCapabilities.resume`). Calling `session/new` on resume silently
+   creates an EMPTY session and orphans the conversation — the original bug.
+   See `supervisor/src/acp-client.ts`.
 3. ✅ **Codex** has no native ACP, but `codex-acp` adapter (bundles its own
    `@openai/codex@^0.128.0`) exposes the same wire protocol as
    `claude-agent-acp`. Supervisor `spawn.ts` dispatches on
@@ -404,7 +416,7 @@ session, `session/update` events stream to UI → at least one HITL round-trip
 works for both flavors (binary approve/deny via `session/request_permission`
 AND structured form via artifact) → NeedsInput keep-alive extends on web
 activity → on idle timeout, run checkpoints to `NeedsInputIdle`; user
-response respawns via `--resume` → diff visible → branch-targeted promotion
+response respawns + resumes via `session/resume` → diff visible → branch-targeted promotion
 works on clean local-merge or PR case → run survives Next.js restart AND supervisor restart with
 `Crashed` reconciliation → 3 concurrent runs scheduled across projects, 4th
 queues with position badge → retry loop works (Failed/Abandoned run → task

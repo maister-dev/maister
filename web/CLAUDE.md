@@ -249,7 +249,7 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   per-step log file populated by `supervisor-client`)
 - `POST /api/runs/[id]/hitl-response` (atomic write `input-<step-id>.json`
   under the project subtree → if worker live, supervisor delivers ACP
-  message; if checkpointed, supervisor respawns with `--resume`)
+  message; if checkpointed, supervisor respawns + resumes via `session/resume`)
 - `POST /api/runs/[id]/activity` (extend `keepalive_until` by 30 min while
   user is actively on the run page)
 - `GET /api/runs/[id]/diff` (`git diff` raw → `<pre>`, no syntax highlighting)
@@ -257,8 +257,8 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   stays `Review`)
 - `POST /api/runs/[id]/abandon` (supervisor `DELETE /sessions/:id` if alive;
   mark worktree stale; task → `Abandoned`)
-- `POST /api/runs/[id]/recover` (Crashed → respawn via `--resume <session-id>`
-  if `acp_session_id` present; otherwise force-discard worktree)
+- `POST /api/runs/[id]/recover` (Crashed → respawn + `session/resume` on
+  `acp_session_id` if present; otherwise force-discard worktree)
 - `GET /api/runs/[id]/artifacts` (M12 — list the typed-artifact evidence index;
   optional `node`/`kind`/`validity` filters)
 - `GET /api/runs/[id]/artifacts/[artifactId]/payload` (M12 — raw payload per
@@ -340,7 +340,7 @@ Drizzle schema sketch (server-only, `lib/db/schema.ts`):
 // runs                                    // task : runs is 1 : N (retry / ralph-loop)
 { id, project_id, task_id?, flow_id?, workspace_id, runner_id?,
   runner_resolution_tier?, capability_agent?, runner_snapshot?,
-  acp_session_id?,                         // resume handle for --resume
+  acp_session_id?,                         // resume handle for session/resume
   flow_version_tag,                        // snapshot at launch time
   status:
     'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle' | 'Review' |
@@ -396,11 +396,12 @@ NeedsInputIdle/Review/Crashed`.
 - User submits response → `lib/atomic.ts` writes `input-<step-id>.json` →
   - If `Running/NeedsInput` (worker live) → supervisor delivers ACP message
     → resume in-process.
-  - If `NeedsInputIdle` → supervisor spawns a fresh process with
-    `--resume <acp_session_id>` → reads the input artifact → `Running`.
+  - If `NeedsInputIdle` → supervisor spawns a fresh process and restores
+    context via `session/resume` on `acp_session_id` → reads the input
+    artifact → `Running`.
 - 24h in `NeedsInputIdle` without response → `Abandoned`.
 - Crash mid-`Running` (heartbeat dead, no checkpoint) → `Crashed`. UI
-  surfaces "Recover or discard" — Recover attempts `--resume` with the
+  surfaces "Recover or discard" — Recover attempts `session/resume` with the
   last `acp_session_id` if present, otherwise discard worktree.
 
 This shape supports ralph-loop style retry without recreating tasks, AND

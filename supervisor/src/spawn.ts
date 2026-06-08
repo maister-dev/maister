@@ -152,9 +152,10 @@ export async function spawnSession(
     args.push(...request.adapterLaunch.preArgs);
   }
 
-  if (request.resumeSessionId) {
-    args.push("--resume", request.resumeSessionId);
-  }
+  // Resume is performed at the ACP protocol level via session/resume (see
+  // createAcpConnection), NOT a CLI flag: both claude-agent-acp and codex-acp
+  // ignore `--resume` on argv. request.resumeSessionId still drives the cost
+  // `resumed` marker below and is forwarded to createAcpConnection.
 
   if (request.adapterLaunch?.postArgs) {
     args.push(...request.adapterLaunch.postArgs);

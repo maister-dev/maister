@@ -112,7 +112,7 @@ For the full vision, product model, architecture, and roadmap see
 |                  | `@agentclientprotocol/sdk`.                                       |
 |                  | One agent process (`claude`, `codex`) per active session via      |
 |                  | Node `child_process.spawn`. Permission HITL resolves live;         |
-|                  | checkpoint+respawn via `--resume <session-id>` is implemented.    |
+|                  | checkpoint+respawn via the ACP `session/resume` call implemented. |
 | Model routing    | CCR (Claude Code Router) bundled for `router: ccr` — z.ai GLM,    |
 |                  | MiniMax via Anthropic-API-compatible providers.                   |
 | Web ↔ supervisor | HTTP + SSE (supervisor may run on a different host)               |
@@ -144,7 +144,7 @@ MAIster is split into two Node processes:
   Drizzle DB access + SSE bridge to supervisor. No agent processes here.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per active session, heartbeat
-  watchdog, checkpoint + respawn via `--resume`, token-count →
+  watchdog, checkpoint + respawn via the ACP `session/resume` call, token-count →
   cost-on-disk. HTTP+SSE interface; can run on a different host than `web/`.
 
 Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
@@ -154,7 +154,7 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
    live path; artifact presence (`needs-input.json`) drives the durable
    path. `NeedsInput` keep-alive ≤30 min, extended by web-console
    activity; the checkpoint path moves `NeedsInput` to `NeedsInputIdle`
-   and later respawns via `--resume`.
+   and later respawns + resumes via the ACP `session/resume` call.
    No `fs.watch`, no `chokidar`, no polling for state transitions.
 2. **SSE pipe-to-disk**: every ACP `session/update` line streamed to per-
    step log file via `fs.createWriteStream` *in parallel* with SSE
@@ -192,7 +192,7 @@ cards · Cursor / opencode / Aider executors.
 - **Crash recovery**: on startup, reconcile `runs` table vs `git worktree
   list` vs supervisor's live session set. `Running` rows with no live ACP
   session AND no checkpoint → `Crashed`; UI surfaces "Recover or discard"
-  (Recover attempts `--resume <session-id>` if `acp_session_id` present).
+  (Recover attempts the ACP `session/resume` call if `acp_session_id` present).
   `NeedsInputIdle` rows with a valid checkpoint stay valid.
 - **TTL**: runs sitting in `NeedsInputIdle` for 24h without user response
   transition to `Abandoned`.
@@ -221,7 +221,7 @@ worktree created with precondition checks → supervisor spawns Claude Code
 at least one HITL round-trip works for both flavors (binary approve/deny
 via `session/request_permission` AND structured form via artifact) →
 NeedsInput keep-alive extends on web-console activity → on idle timeout
-run checkpoints to `NeedsInputIdle`; user response respawns via `--resume`
+run checkpoints to `NeedsInputIdle`; user response respawns + resumes via `session/resume`
 → diff visible → merge-to-main works on clean-merge case → run survives
 Next.js restart AND supervisor restart with `Crashed` reconciliation →
 3 concurrent runs scheduled across projects, 4th queues with position

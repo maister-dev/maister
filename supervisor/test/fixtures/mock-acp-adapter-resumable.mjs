@@ -1,23 +1,22 @@
 #!/usr/bin/env node
-// M8 spike fixture (T1):
-// extension of mock-acp-adapter.mjs with cross-process session persistence
-// modelling the assumed behaviour of claude-agent-acp under `--resume`:
+// M8 fixture: cross-process session persistence modelling claude-agent-acp /
+// codex-acp resume via the ACP `session/resume` protocol call:
 //
 //   1. On a cancelled requestPermission whose outcome marker is
 //      `reason="checkpoint"`, the adapter records the pending toolCall in
-//      its on-disk session journal so a future `--resume` instance can
-//      replay it.
-//   2. On startup with `--resume <id>` AND a matching journal file, the
-//      adapter restores the prior `acpSessionId` and replays the recorded
-//      permission request on the FIRST `prompt()` call.
+//      its on-disk session journal so a future resumed instance can replay it.
+//   2. A fresh process resumes through `resumeSession({ sessionId })` (NOT a
+//      `--resume` CLI flag — the real adapters ignore that on argv). It loads
+//      the journal for that id and replays the recorded permission request on
+//      the FIRST `prompt()` call. Per the ACP spec, session/resume MUST NOT
+//      replay conversation history.
 //
 // Why this fixture exists:
 //   The real claude-agent-acp records cancelled-with-reason events in its
 //   own JSONL session store (`~/.claude/projects/<cwd>/<uuid>.jsonl`,
-//   verified in docs/kaa-maister-m0-spike-findings-20260525.md). T1's
-//   user-locked decision (2026-05-29) is "mock-only validation, no paid
-//   real-adapter run", so this fixture is the contract we lock for the
-//   rest of M8 (T4 graceful checkpoint, T11 runner-agent auto-deliver).
+//   verified in docs/kaa-maister-m0-spike-findings-20260525.md). M8 locks
+//   mock-only validation, so this fixture is the contract for the rest of M8
+//   (T4 graceful checkpoint, T11 runner-agent auto-deliver).
 //
 // Env vars:
 //   MOCK_ACP_STATE_DIR        directory where session journals are stored
@@ -25,9 +24,6 @@
 //                             Required for resume behaviour to work.
 //   MOCK_ACP_STOP_REASON      stopReason returned from prompt(). Default "end_turn".
 //   MOCK_ACP_REQUEST_PERMISSION  "1" → call requestPermission on first prompt.
-//
-// CLI args:
-//   --resume <acpSessionId>   restore prior session journal.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -47,16 +43,6 @@ function log(level, payload) {
   process.stderr.write(
     `[mock-resumable] ${level} ${JSON.stringify(payload)}\n`,
   );
-}
-
-function parseResumeArg(argv) {
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--resume" && i + 1 < argv.length) {
-      return argv[i + 1];
-    }
-  }
-
-  return null;
 }
 
 function statePathFor(acpSessionId) {
@@ -101,33 +87,10 @@ function extractText(blocks) {
     .join(" ");
 }
 
-const RESUMED_FROM = parseResumeArg(process.argv);
-// pendingReplay is hydrated from the journal at startup; gets cleared
-// after the replay round-trip completes (selected) or is re-issued
+// pendingReplay is hydrated from the journal inside resumeSession(); gets
+// cleared after the replay round-trip completes (selected) or is re-issued
 // (cancelled-again).
 let pendingReplay = null;
-let hydratedAcpSessionId = null;
-
-if (RESUMED_FROM) {
-  const journal = readJournal(RESUMED_FROM);
-
-  if (journal && journal.acpSessionId === RESUMED_FROM) {
-    hydratedAcpSessionId = RESUMED_FROM;
-    if (journal.pendingPermission) {
-      pendingReplay = journal.pendingPermission;
-    }
-    log("info", {
-      msg: "resumed-from-journal",
-      acpSessionId: RESUMED_FROM,
-      hasPending: Boolean(pendingReplay),
-    });
-  } else {
-    log("warn", {
-      msg: "resume-journal-missing",
-      acpSessionId: RESUMED_FROM,
-    });
-  }
-}
 
 class MockAgent {
   constructor(connection) {
@@ -138,26 +101,22 @@ class MockAgent {
   async initialize() {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
+      // Advertise session/resume so the supervisor resumes via that protocol
+      // call (restores context WITHOUT replaying history) — mirroring
+      // claude-agent-acp/codex-acp, which both expose sessionCapabilities.resume.
+      agentCapabilities: {
+        promptCapabilities: {},
+        sessionCapabilities: { resume: {} },
+      },
     };
   }
 
   async newSession() {
-    // When resuming, reuse the prior acpSessionId so the supervisor's
-    // pendingPermissions registry can still be addressed by the
-    // original id at the wire level. This is the protocol invariant
-    // claude-agent-acp also preserves (verified in the M0 spike round-trip).
-    const acpSessionId = hydratedAcpSessionId ?? `mock-${randomUUID()}`;
+    const acpSessionId = `mock-${randomUUID()}`;
 
     this.sessions.set(acpSessionId, { prompts: 0 });
-    if (!hydratedAcpSessionId) {
-      writeJournal(acpSessionId, { acpSessionId });
-    }
-    log("info", {
-      msg: "new-session",
-      acpSessionId,
-      resumed: Boolean(hydratedAcpSessionId),
-    });
+    writeJournal(acpSessionId, { acpSessionId });
+    log("info", { msg: "new-session", acpSessionId });
 
     return { sessionId: acpSessionId };
   }
@@ -166,7 +125,23 @@ class MockAgent {
     return {};
   }
 
-  async resumeSession() {
+  // session/resume: restore the prior session by id from the on-disk journal
+  // (no `--resume` CLI flag — the real adapters ignore that) and arm any
+  // recorded pending-permission for replay on the next prompt. MUST NOT replay
+  // conversation history, per the ACP spec.
+  async resumeSession(params) {
+    this.sessions.set(params.sessionId, { prompts: 0 });
+    const journal = readJournal(params.sessionId);
+
+    if (journal && journal.pendingPermission) {
+      pendingReplay = journal.pendingPermission;
+    }
+    log("info", {
+      msg: "resume-session",
+      acpSessionId: params.sessionId,
+      hasPending: Boolean(pendingReplay),
+    });
+
     return {};
   }
 

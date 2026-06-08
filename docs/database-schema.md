@@ -557,7 +557,7 @@ queries.
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
-  acpSessionId?,                 // resume handle for --resume <id>
+  acpSessionId?,                 // resume handle for the ACP session/resume call
   currentStepId?,                // id of the step the runner is on
   flowVersion,                   // Flow tag snapshot; "scratch" sentinel for
                                  //   scratch runs

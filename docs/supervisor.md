@@ -113,7 +113,7 @@ Request body:
     "preArgs": ["--config", "/repos/myapp/.maister/runs/run-abc/adapter.json"],
     "postArgs": []
   },
-  "resumeSessionId": "uuid-abc"             // optional, M8 path (passed as `--resume`)
+  "resumeSessionId": "uuid-abc"             // optional, M8 path (resumed via the ACP session/resume call, NOT a CLI flag)
 }
 ```
 
@@ -142,9 +142,12 @@ override the adapter binary, `cwd`, run id, project slug, or worktree path.
 
 - `env`: additional environment variables from the materializer. These are
   merged after `executor.env` and must not be logged as values.
-- `preArgs`: extra adapter arguments inserted before the supervisor-managed
-  `--resume <id>` pair.
+- `preArgs`: extra adapter arguments inserted before supervisor-managed args.
 - `postArgs`: extra adapter arguments appended after supervisor-managed args.
+
+(Resume is NOT a CLI argument: when `resumeSessionId` is set the supervisor
+restores the prior conversation via the ACP `session/resume` protocol call —
+see the "Checkpoint + Resume lifecycle" section below.)
 
 The supervisor rejects malformed paths, `..` segments, non-string env values,
 and oversized arg/env lists with `409 PRECONDITION`.
@@ -262,7 +265,7 @@ calls this endpoint, which:
 1. Cancels every pending permission with `reason="checkpoint"`. The
    agent observes `{outcome:"cancelled"}` at the ACP layer and records
    the cancellation in its own session JSONL store so a future
-   `--resume <acpSessionId>` can replay the request. See
+   `session/resume <acpSessionId>` can replay the request. See
    [`kaa-maister-m8-spike-findings-20260529.md`](kaa-maister-m8-spike-findings-20260529.md)
    for the verified-via-mock-adapter contract.
 2. Marks the session intentional with reason `"checkpoint"`. Heartbeat
@@ -291,11 +294,15 @@ calls this endpoint, which:
 Operator response on `NeedsInputIdle` runs goes through web's
 `POST /api/runs/:runId/hitl/:hitlRequestId/respond` (idle branch);
 the web tier calls `resumeRun(runId)` which issues a fresh
-`POST /sessions` with `resumeSessionId: <acpSessionId>`. The
-supervisor passes `--resume <acpSessionId>` to the adapter binary
-(see `spawn.ts:147-151`), the adapter's `newSession()` returns the
-prior `acpSessionId`, and on the next prompt re-issues
-`session.permission_request` for the cancelled tool call. The
+`POST /sessions` with `resumeSessionId: <acpSessionId>`. The supervisor
+spawns a fresh adapter process and restores the prior conversation via the
+ACP `session/resume` call on `<acpSessionId>` (restores context without
+replaying history; both bundled adapters advertise
+`sessionCapabilities.resume`; see `acp-client.ts:createAcpConnection`).
+Resume is NOT a CLI flag — both adapters ignore `--resume` on argv. The
+resumed session keeps the SAME
+`acpSessionId` (never minted anew), and on the next prompt the agent
+re-issues `session.permission_request` for the cancelled tool call. The
 runner-agent's permission handler auto-delivers the stored intent
 against the new requestId; the original `hitl_requests` row's
 `respondedAt` is set with audit

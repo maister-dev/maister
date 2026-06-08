@@ -171,14 +171,14 @@ describe("scratch message and state helpers", () => {
 });
 
 describe("scratch event projection", () => {
-  it("projects supervisor events to dialog messages and statuses", () => {
+  it("maps lifecycle events to dialog statuses and drops protocol lines", () => {
     expect(
       projectSupervisorEventToScratch({
         type: "session.line",
         monotonicId: 1,
-        line: "hello",
-      }).message,
-    ).toMatchObject({ role: "assistant", content: "hello" });
+        line: '{"jsonrpc":"2.0","id":0}',
+      }),
+    ).toEqual({});
 
     expect(
       projectSupervisorEventToScratch({
@@ -190,8 +190,16 @@ describe("scratch event projection", () => {
 
     expect(
       projectSupervisorEventToScratch({
-        type: "session.crashed",
+        type: "session.exited",
         monotonicId: 3,
+        reason: "intentional",
+      }),
+    ).toMatchObject({ dialogStatus: "Review" });
+
+    expect(
+      projectSupervisorEventToScratch({
+        type: "session.crashed",
+        monotonicId: 4,
       }),
     ).toMatchObject({ dialogStatus: "Crashed" });
   });
@@ -235,5 +243,100 @@ describe("scratch event projection", () => {
       }),
     ).rejects.toThrow(/insert failed/);
     expect(cancelled).toEqual([{ sessionId: "sup-1", requestId: "req-1" }]);
+  });
+
+  it("assigns gap-free unique sequences to a burst of projected events", async () => {
+    // Models the Postgres read-modify-write window: the sequence SELECT resolves
+    // on a microtask, the INSERT commits on a later macrotask. Concurrent
+    // projection then reads the same max before any insert lands and collides on
+    // scratch_messages_run_sequence_uq. Sequential projection must not.
+    const rows: Array<{ runId: string; sequence: number }> = [];
+    const db = {
+      select() {
+        return {
+          from() {
+            return {
+              async where() {
+                await Promise.resolve();
+
+                return rows.map((row) => ({ sequence: row.sequence }));
+              },
+            };
+          },
+        };
+      },
+      insert() {
+        return {
+          values(row: { runId: string; sequence: number }) {
+            return new Promise<void>((resolve, reject) => {
+              setTimeout(() => {
+                if (
+                  rows.some(
+                    (existing) =>
+                      existing.runId === row.runId &&
+                      existing.sequence === row.sequence,
+                  )
+                ) {
+                  reject(
+                    new Error(
+                      `duplicate key (run_id, sequence)=(${row.runId}, ${row.sequence})`,
+                    ),
+                  );
+
+                  return;
+                }
+                rows.push({ runId: row.runId, sequence: row.sequence });
+                resolve();
+              }, 0);
+            });
+          },
+        };
+      },
+      update() {
+        return {
+          set() {
+            return { async where() {} };
+          },
+        };
+      },
+    };
+    const toolCount = 6;
+    const api = {
+      async cancelPermission() {
+        return { ok: true as const };
+      },
+      async sendPrompt() {
+        return { stopReason: "end_turn" as const };
+      },
+      async *streamSession() {
+        for (let i = 1; i <= toolCount; i += 1) {
+          yield {
+            type: "session.update" as const,
+            sessionId: "sup-1",
+            monotonicId: i,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: `tc-${i}`,
+              title: "Bash",
+              kind: "execute",
+              status: "pending",
+              rawInput: { command: `cmd ${i}` },
+              content: [],
+            },
+          };
+        }
+      },
+    };
+
+    await sendScratchPromptAndProjectEvents({
+      runId: "run-1",
+      sessionId: "sup-1",
+      stepId: "dialog",
+      prompt: "go",
+      db,
+      api,
+    });
+
+    expect(rows.map((row) => row.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 });

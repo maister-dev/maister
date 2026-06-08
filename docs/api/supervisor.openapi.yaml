@@ -692,9 +692,10 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._-]+$'
           description: |
-            Optional. When set, the supervisor adds `--resume <id>` to the
-            adapter's argv. M5 wires it through verbatim; M8 uses it as
-            the checkpoint-resume handle.
+            Optional checkpoint-resume handle (M8). When set, the supervisor
+            restores the prior conversation via the ACP `session/resume`
+            protocol call on this id (no history replay). It is NOT passed as a
+            CLI flag — the adapters ignore `--resume` on argv.
     AdapterLaunch:
       type: object
       additionalProperties: false
@@ -746,9 +747,9 @@ components:
           minLength: 1
           maxLength: 128
           description: |
-            ACP session id surfaced by `session/new` (or echoed back from
-            `resumeSessionId` on resume). Doubles as the `--resume` handle
-            for the M8 checkpoint/resume path. Cached at
+            ACP session id surfaced by `session/new` (or the SAME
+            `resumeSessionId`, echoed back unchanged, on a `session/resume`).
+            It is the M8 checkpoint/resume handle. Cached at
             `runs.acp_session_id` by the web tier.
     SendPromptRequest:
       type: object

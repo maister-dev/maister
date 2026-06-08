@@ -37,7 +37,7 @@ stateDiagram-v2
     NeedsInput --> NeedsInputIdle: now > keepalive_until<br/>(sweeper-driven checkpoint)
     NeedsInput --> NeedsInputIdle: runner observes<br/>session.exited.reason=checkpoint
     NeedsInput --> Running: user submits input<br/>(supervisor delivers via ACP)
-    NeedsInputIdle --> Running: user submits input<br/>(supervisor respawns --resume)
+    NeedsInputIdle --> Running: user submits input<br/>(respawn + session/resume)
     NeedsInputIdle --> Abandoned: 24h elapsed<br/>without response
 
     NeedsInput --> HumanWorking: takeover claim<br/>(human_review takeover decision)
@@ -49,7 +49,7 @@ stateDiagram-v2
     Running --> Crashed: heartbeat dead<br/>no checkpoint
     Running --> Failed: agent exits non-zero<br/>(no recovery path)
 
-    Crashed --> Running: Recover click<br/>(--resume with acp_session_id)
+    Crashed --> Running: Recover click<br/>(session/resume with acp_session_id)
     Crashed --> Abandoned: Discard click<br/>(GC countdown, no sync removal)
 
     Review --> Done: promotion succeeds
@@ -140,7 +140,7 @@ invariants bind it to the run machine:
    a `cli` node is `Crashed` (`cli-not-retry-safe`) and never auto-re-dispatched.
 4. **Hybrid Recover.** `POST /api/runs/{runId}/recover` flips `Crashed → Running`
    and stamps `runs.resume_started_at` BEFORE the supervisor side-effect, then
-   `--resume`s an agent node or re-dispatches a session-less gate node. It
+   resumes an agent node (ACP `session/resume`) or re-dispatches a session-less gate node. It
    re-admits through the global cap (a `Crashed` run already released its slot):
    slot-free resumes now, cap-full queues as `Pending` (202) and the scheduler
    resumes it on slot-free. `POST /api/runs/{runId}/discard` marks `Abandoned`
@@ -322,9 +322,9 @@ flowchart TD
   (default 30 min); every web-activity event extends `keepalive_until`.
 - Idle past `keepalive_until` triggers graceful checkpoint → run becomes
   `NeedsInputIdle` with `runs.acp_session_id` retained as the resume handle.
-- `NeedsInputIdle` resume respawns the adapter with
-  `--resume <acp_session_id>` and incurs ~$0.28 cache-creation cost
-  per respawn (operator-visible if surfaced).
+- `NeedsInputIdle` resume respawns the adapter and restores context via the
+  ACP `session/resume` call on `acp_session_id` (not a CLI flag) and incurs
+  ~$0.28 cache-creation cost per respawn (operator-visible if surfaced).
 - 24 h elapsed in `NeedsInputIdle` without operator response →
   `Abandoned`. This sweeper transition does not raise `HITL_TIMEOUT`.
 - **(Designed)** Full Flow-run state survives Next.js restart AND

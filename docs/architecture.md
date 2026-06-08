@@ -189,7 +189,7 @@ C4Component
 | ---- | ---- | ------- | ---------------- | ------------ |
 | `main` | `supervisor/src/main.ts` | Process entrypoint. | Read env, build Fastify + pino, wire components, listen, graceful shutdown. | `http-api`, `registry`, `heartbeat`. |
 | `http-api` | `supervisor/src/http-api.ts` | HTTP surface. | Session lifecycle routes, prompt route, permission input route, checkpoint route, SSE pipe with `Last-Event-ID` replay, error mapping. | `spawn`, `registry`, `heartbeat`, `cost`, `pending-permissions`, `types`. |
-| `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, append `--resume <id>` when present, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. When `executor.router === "ccr"`, await `ccr-manager.ensureRunning()` and inject `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into childEnv beneath the explicit `executor.env` overlay. | `registry` (channel constant), `ccr-manager`, `types`. |
+| `spawn` | `supervisor/src/spawn.ts` | Process launcher. | Pick binary by `executor.agent`, merge env, line-buffer stdout, write `<stepId>.log`, emit `session.line` events. (Resume is NOT a spawn arg — it is the ACP `session/resume` call in `acp-client.ts`; the adapters ignore `--resume` on argv.) When `executor.router === "ccr"`, await `ccr-manager.ensureRunning()` and inject `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into childEnv beneath the explicit `executor.env` overlay. | `registry` (channel constant), `ccr-manager`, `types`. |
 | `ccr-manager` | `supervisor/src/ccr-manager.ts` | CCR daemon lifecycle controller. **Implemented.** | Singleton state machine (`idle | starting | ready | failed | stopping`). Lazy-start the bundled CCR proxy on demand. Parse host+port from `~/.claude-code-router/config.json` (defaults `127.0.0.1:3456`). Exponential-backoff `GET /` health check ≤10 s. Graceful shutdown on SIGTERM/SIGINT via existing `main.ts` handler. | `node:child_process`, `node:fs/promises`, `types`. |
 | `registry` | `supervisor/src/registry.ts` | In-memory session table. | Register, get, list, subscribe, snapshotEvents (1000-entry ring), markIntentionalShutdown. | `types`. |
 | `heartbeat` | `supervisor/src/heartbeat.ts` | Lifecycle watcher. | exit/error → `session.exited`/`session.crashed`, orphan-PID polling via `process.kill(pid, 0)`. | `registry`, `types`. |
@@ -358,13 +358,13 @@ stateDiagram-v2
     NeedsInput --> NeedsInput: user activity on run page<br/>bumps keepalive_until +30min
     NeedsInput --> NeedsInputIdle: now > keepalive_until<br/>(graceful checkpoint, agent exits)
     NeedsInput --> Running: user submits input<br/>(supervisor delivers via ACP)
-    NeedsInputIdle --> Running: user submits input<br/>(supervisor respawns with --resume)
+    NeedsInputIdle --> Running: user submits input<br/>(respawn + session/resume)
     NeedsInputIdle --> Abandoned: 24h elapsed<br/>without response
 
     Running --> Review: agent exits 0
     Running --> Crashed: agent exits non-zero<br/>or heartbeat dead
 
-    Crashed --> Running: user clicks Recover<br/>(--resume from acp_session_id)
+    Crashed --> Running: user clicks Recover<br/>(session/resume from acp_session_id)
     Crashed --> Abandoned: user clicks Discard
 
     Review --> Done: user clicks Promote<br/>(local merge succeeds)

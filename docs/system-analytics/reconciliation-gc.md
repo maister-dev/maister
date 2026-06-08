@@ -34,7 +34,7 @@ GC is the deferred removal that never destroys un-committed work.
 - **`retry_safe` opt-in** — a per-node boolean on graph nodes (`flow.yaml`
   `nodes[]`) and linear steps (`steps[]`), default `false`. A crashed
   session-less node is redispatch-recoverable only when its config declares
-  `retry_safe: true` (`ai_coding` ignores it — recovered via `--resume`). See
+  `retry_safe: true` (`ai_coding` ignores it — recovered via `session/resume`). See
   [`../flow-dsl.md`](../flow-dsl.md).
 - **Workspace** — `workspaces` row / git worktree. GC entities added by
   migration 0015 (**Designed, M19**):
@@ -147,14 +147,15 @@ crash time; `current_step_id` is nulled on crash), falling back to
 
 | recover target node | `acpSessionId` | node `retry_safe` | plan | recoverable? |
 | ------------------- | -------------- | ----------------- | ---- | ------------ |
-| `ai_coding` (agent) | present | ignored | `resume-agent` — `--resume <acpSessionId>` | yes (200 resumed / 202 queued) |
+| `ai_coding` (agent) | present | ignored | `resume-agent` — ACP `session/resume <acpSessionId>` | yes (200 resumed / 202 queued) |
 | `ai_coding` (agent) | null | ignored | `discard-only` | no (409) |
 | session-less (`cli`/`check`/`judge`/`guard`/`human`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
 | session-less | irrelevant | `false` (default) | `discard-only` | no (409) |
 | unresolvable target node | — | — | `discard-only` | no (409) |
 
-An agent node continues the prior agent session via `--resume <acpSessionId>`
-(`createSession({ resumeSessionId })` + `scheduleResumedSessionDrive`) — the
+An agent node continues the prior agent session via the ACP `session/resume`
+call on `acpSessionId` (`createSession({ resumeSessionId })` +
+`scheduleResumedSessionDrive`) — the
 same mechanism M8 idle-resume uses, and the continuation is exercised in CI
 against the mock ACP adapter. A session-less node carries no resumable session
 and is re-dispatched via `runFlow` **only** when its manifest config declares
@@ -247,7 +248,7 @@ flowchart TD
 - Operator Recover MUST classify via `classifyRecover(run, nodeKind,
   retrySafe)` over the recover target (`resume_target_step_id`, else
   `current_step_id`): an agent node with an `acpSessionId` resumes via
-  `--resume`; a session-less node re-dispatches ONLY when its config is
+  the ACP `session/resume` call; a session-less node re-dispatches ONLY when its config is
   `retry_safe: true`; every other case is discard-only — and the crash-resume
   runner MUST claim single-winner via a CAS-clear of `resume_started_at`.
 - GC MUST select terminal candidates by the effective deadline

@@ -38,6 +38,9 @@ export type CreateAcpConnectionArgs = {
   logger: Logger;
   pendingPermissions?: PendingPermissionRegistry;
   mcpServers?: McpServerInput[];
+  // When set, resume the prior ACP session via the `session/resume` call
+  // (restores context, no history replay) instead of creating a `session/new`.
+  resumeSessionId?: string;
 };
 
 export type CreateAcpConnectionResult = {
@@ -168,6 +171,42 @@ export async function createAcpConnection(
     args: s.args,
     env: s.envKeys.map((k) => ({ name: k, value: process.env[k] ?? "" })),
   }));
+
+  // Resume uses the ACP `session/resume` call: it restores the prior
+  // conversation into the agent's context WITHOUT replaying history (ACP spec:
+  // "the Agent MUST NOT replay the conversation history") — which is exactly
+  // what we want, the transcript is already persisted. The session id is
+  // REUSED, never minted anew, so runs.acp_session_id keeps pointing at the
+  // real conversation. (Resume is a protocol call, NOT a CLI flag: both
+  // adapters ignore `--resume` on argv.)
+  if (args.resumeSessionId) {
+    const agentCaps = (initResp.agentCapabilities ?? {}) as {
+      sessionCapabilities?: { resume?: unknown };
+    };
+
+    if (agentCaps.sessionCapabilities?.resume) {
+      await connection.resumeSession({
+        sessionId: args.resumeSessionId,
+        cwd: worktreePath,
+        mcpServers: acpMcpServers as acp.McpServer[],
+      });
+      logger.info(
+        { sessionId, acpSessionId: args.resumeSessionId },
+        "acp resume-session",
+      );
+      record.acpSessionId = args.resumeSessionId;
+
+      return { connection, acpSessionId: args.resumeSessionId };
+    }
+    // Unreachable for the bundled claude/codex adapters (both advertise
+    // sessionCapabilities.resume). FAIL LOUD rather than silently falling
+    // through to newSession — an empty session would orphan the conversation
+    // (the original resume bug). Surfaces as the documented terminal CHECKPOINT.
+    throw new SupervisorError(
+      "CHECKPOINT",
+      `resume requested but adapter does not advertise sessionCapabilities.resume (acpSessionId=${args.resumeSessionId})`,
+    );
+  }
 
   const newSessionResp = await connection.newSession({
     cwd: worktreePath,

@@ -68,9 +68,16 @@ const fakeDb = {
       const tableName = getTableName(table as never);
 
       state.inserts.push({ tableName, values });
+      const id = (values as { id?: string }).id;
+      const conflict =
+        tableName === "platform_acp_runners" &&
+        state.runners.some((r) => (r as { id?: string }).id === id);
 
       return {
         onConflictDoUpdate: async () => undefined,
+        onConflictDoNothing: () => ({
+          returning: async () => (conflict ? [] : [{ id }]),
+        }),
       };
     },
   }),
@@ -201,7 +208,7 @@ describe("admin ACP runner API", () => {
     expect(state.inserts).toEqual([]);
   });
 
-  it("derives readiness instead of trusting caller-provided Ready status", async () => {
+  it("derives readiness server-side on create (readiness is not a client field)", async () => {
     const { POST } = await import("../route");
     const res = await POST(
       jsonRequest({
@@ -214,7 +221,6 @@ describe("admin ACP runner API", () => {
           baseUrl: "https://api.z.ai/api/paas/v4",
           wireApi: "responses",
         },
-        readinessStatus: "Ready",
       }),
     );
 
@@ -291,7 +297,7 @@ describe("admin ACP runner API", () => {
     expect(state.inserts).toEqual([]);
   });
 
-  it("derives readiness on runner PATCH instead of trusting caller-provided Ready status", async () => {
+  it("derives readiness server-side on runner PATCH (readiness is not a client field)", async () => {
     const { PATCH } = await import("../[runnerId]/route");
     const res = await PATCH(
       jsonRequest({
@@ -300,7 +306,6 @@ describe("admin ACP runner API", () => {
           authToken: "env:ZAI_API_KEY",
           baseUrl: "https://api.z.ai/api/anthropic",
         },
-        readinessStatus: "Ready",
       }),
       { params: Promise.resolve({ runnerId: "claude-code" }) },
     );
@@ -369,6 +374,25 @@ describe("admin ACP runner API", () => {
 
       expect(res.status).toBe(409);
       expect(body.code).toBe("CONFLICT");
+      // The race-safe insert is attempted (onConflictDoNothing) and no-ops on the
+      // id constraint; the empty returning() yields the 409 — no row persisted.
+    });
+
+    it("derives readiness server-side and rejects a caller-provided readiness field", async () => {
+      const { POST } = await import("../route");
+      const res = await POST(
+        jsonRequest({
+          id: "codex-new",
+          adapter: "codex",
+          model: "glm-5.1",
+          provider: { kind: "openai" },
+          readinessStatus: "Ready",
+        }),
+      );
+      const body = (await res.json()) as { code?: string };
+
+      expect(res.status).toBe(422);
+      expect(body.code).toBe("CONFIG");
       expect(state.inserts).toEqual([]);
     });
   });

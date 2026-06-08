@@ -92,7 +92,7 @@ sweeps**:
 2. **Continuous reconcile** (opt-in daemons) — **not** state-transition polling
    (forbidden by ADR #1). Daemon liveness = **supervisor heartbeat** (already
    exists). The tick runs only the ADR #1-sanctioned *recovery sweep*: daemon
-   with no live session but a valid checkpoint → respawn `--resume`; otherwise
+   with no live session but a valid checkpoint → respawn + `session/resume`; otherwise
    `Crashed` + "Recover/discard".
 3. **GC** — current 7-day worktree/checkpoint logic, unchanged.
 
@@ -182,7 +182,7 @@ No new error codes — map onto `lib/errors.ts`:
 - Destructive agent while enforcement blocked (ADR-041) → `PRECONDITION`.
 - Spawn / protocol → `SPAWN` / `ACP_PROTOCOL`. HITL timeout on an agent-run →
   `HITL_TIMEOUT` + the idle-checkpoint path (`NeedsInput → NeedsInputIdle →
-  --resume`); N/A for continuous (guard above).
+  session/resume`); N/A for continuous (guard above).
 
 Scheduler:
 - Budget full → run goes `Pending` with queue position (ADR #4).
@@ -190,7 +190,7 @@ Scheduler:
   thundering herd); `next_run_at` advances one period.
 
 Continuous daemons (the one genuinely new guard):
-- Crash → supervisor heartbeat + reconcile-sweep respawns `--resume` (valid
+- Crash → supervisor heartbeat + reconcile-sweep respawns + `session/resume` (valid
   checkpoint) or `CRASH` + "Recover/discard".
 - **Crash-loop → exponential backoff; after N attempts → `Crashed` + stop.** No
   infinite respawn (protects tokens/slots).

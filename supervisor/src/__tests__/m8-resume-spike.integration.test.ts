@@ -1,11 +1,12 @@
-// M8 T1 spike: validate the cancel-as-checkpoint → SIGTERM → respawn --resume
+// M8 T1: validate the cancel-as-checkpoint → SIGTERM → respawn → session/resume
 // → re-issue requestPermission cycle through the real supervisor wire.
 //
-// Per user-locked decision (2026-05-29), this spike runs against the
-// resumable mock adapter at `web/lib/__tests__/_fixtures/mock-acp-adapter-resumable.mjs`
-// only — no paid `claude-agent-acp` run. The mock models the assumed
-// behaviour: a cancelled-with-reason permission is journaled and replayed
-// by a fresh adapter process spawned with `--resume <acpSessionId>`.
+// Per user-locked decision (2026-05-29), this runs against the resumable mock
+// adapter at `supervisor/test/fixtures/mock-acp-adapter-resumable.mjs` only —
+// no paid `claude-agent-acp` run. The mock models the behaviour: a
+// cancelled-with-reason permission is journaled and replayed by a fresh adapter
+// process that resumes via the ACP `session/resume` call (reusing the prior
+// acpSessionId), NOT a `--resume` CLI flag.
 //
 // Findings doc: docs/kaa-maister-m8-spike-findings-20260529.md
 import type { ChildProcess } from "node:child_process";
@@ -188,7 +189,7 @@ afterEach(async () => {
 });
 
 describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", () => {
-  it("journals a cancelled-with-reason permission and replays it on --resume", async () => {
+  it("journals a cancelled-with-reason permission and replays it on session/resume", async () => {
     if (!booted) throw new Error("not booted");
     const { url, registry, stateDir } = booted;
 
@@ -253,13 +254,14 @@ describe("M8 T1 spike — cancel→checkpoint→resume→re-issue round-trip", (
     expect(journal.pendingPermission).toBeDefined();
     expect(journal.pendingPermission.toolCall.toolCallId).toBe("tc-1");
 
-    // Spawn a FRESH supervisor session with --resume <acpSessionId>.
-    // The supervisor's spawn.ts already wires this arg through.
+    // Spawn a FRESH supervisor session that resumes <acpSessionId>. Resume is
+    // an ACP protocol call: createAcpConnection invokes session/resume (the
+    // adapter advertises sessionCapabilities.resume) — NOT a --resume CLI flag.
     const second = await createSession(url, first.acpSessionId);
 
-    // The mock's newSession() returns the SAME acpSessionId because
-    // the journal is hydrated. This is the protocol invariant
-    // claude-agent-acp also preserves (verified M0 spike).
+    // Resume REUSES the prior acpSessionId (never mints a new one), so the
+    // checkpoint handle keeps pointing at the real conversation. The supervisor
+    // session id differs (fresh process) but the ACP session id is preserved.
     expect(second.acpSessionId).toBe(first.acpSessionId);
     expect(second.sessionId).not.toBe(first.sessionId);
 

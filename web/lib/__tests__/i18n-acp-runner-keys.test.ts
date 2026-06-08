@@ -51,6 +51,10 @@ const ACP_RUNNER_KEYS = [
   "policyDefault",
   "policyDangerous",
   "saveFailed",
+  // Generic settings keys the runner modal also depends on (modal save/cancel).
+  "cancel",
+  "save",
+  "saving",
 ] as const;
 
 type Catalog = Record<string, Record<string, unknown>>;

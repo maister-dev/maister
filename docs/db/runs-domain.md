@@ -55,7 +55,7 @@ erDiagram
         text capability_agent
         jsonb runner_snapshot
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|Review|Crashed|Done|Abandoned|Failed"
-        text acp_session_id "resume handle (--resume)"
+        text acp_session_id "resume handle (ACP session/resume)"
         text current_step_id "runner cursor"
         text flow_version "tag snapshot; scratch sentinel"
         text flow_revision "git SHA snapshot; manual sentinel"

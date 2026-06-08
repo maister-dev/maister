@@ -62,15 +62,13 @@ const providerSchema = z.discriminatedUnion("kind", [
 
 const patchBodySchema = z
   .object({
-    model: z.string().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
     provider: providerSchema.optional(),
     permissionPolicy: z
       .enum(["default", "dangerously_skip_permissions"])
       .optional(),
     sidecarId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().optional(),
-    readinessStatus: z.enum(["Unknown", "Ready", "NotReady"]).optional(),
-    readinessReasons: z.array(z.string().min(1)).optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
@@ -268,23 +266,18 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runnerId } = await params;
-  const body = await parseJson(req).catch((err) =>
-    errorResponse(err, runnerId),
-  );
-
-  if (body instanceof NextResponse) return body;
-
-  const parsed = patchBodySchema.safeParse(body);
-
-  if (!parsed.success) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid PATCH body: ${parsed.error.message}`),
-      runnerId,
-    );
-  }
 
   try {
     await requireGlobalRole("admin");
+
+    const parsed = patchBodySchema.safeParse(await parseJson(req));
+
+    if (!parsed.success) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid PATCH body: ${parsed.error.message}`,
+      );
+    }
 
     const db = getDb() as any;
 

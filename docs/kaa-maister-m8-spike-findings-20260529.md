@@ -5,6 +5,16 @@
 **Scope**: T1 of the M8 task plan (`.ai-factory/plans/feature-m8-worker-lifecycle.md`).
 **Outcome**: PASS. The resume strategy locked in `D4` of the plan is viable. T4–T19 may proceed.
 
+> **Mechanism correction (2026-06-08, first dogfooding).** This spike modelled
+> resume as a `--resume <id>` CLI flag. That is wrong for the ACP adapters:
+> `claude-agent-acp` / `codex-acp` ignore `--resume` on argv. Resume is a
+> **protocol** call — `session/resume` (restores context, no history replay;
+> both adapters advertise `sessionCapabilities.resume`). The mock fixture and
+> `supervisor/src/acp-client.ts` now use `session/resume`; read every
+> "`--resume`" below as "the `session/resume` protocol call". Calling
+> `session/new` on resume silently starts an EMPTY session — the bug this
+> corrects.
+
 ## Goal
 
 Prove the M8 design assumption that under the chosen graceful-checkpoint

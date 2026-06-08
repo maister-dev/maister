@@ -13,7 +13,7 @@
     "test:unit": "vitest run --project unit --passWithNoTests",
     "test:integration": "vitest run --project integration --passWithNoTests",
     "test:watch": "vitest --project unit",
-    "test:e2e": "playwright test --pass-with-no-tests",
+    "test:e2e": "NODE_ENV=test playwright test --pass-with-no-tests",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx lib/db/migrate.ts",
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
@@ -41,6 +41,8 @@
     "pino": "^9.14.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "react-markdown": "9.0.1",
+    "remark-gfm": "4.0.0",
     "server-only": "^0.0.1",
     "yaml": "^2.9.0",
     "zod": "^3.25.76"

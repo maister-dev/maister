@@ -176,8 +176,14 @@ over stdio JSONL.
 - Adding a third executor (Cursor, Aider) is "find or write the ACP
   adapter binary, add an entry to `BINARY_BY_AGENT`" — no protocol
   changes in MAIster.
-- Cross-process resume works via `--resume <session-id>` — verified in
-  M0 spike ("ALBATROSS-42" round-trip).
+- Cross-process resume works by spawning a fresh adapter and restoring the
+  prior conversation via the ACP `session/resume` protocol call on the stored
+  `acp_session_id`. (The M0 spike verified the round-trip with the raw CLI's
+  `claude --resume <uuid>`, "ALBATROSS-42"; the ACP **adapter** does not take a
+  `--resume` CLI flag — it ignores argv flags — so the supervisor uses the
+  `session/resume` call (both bundled adapters advertise
+  `sessionCapabilities.resume`). Using `session/new` on resume silently starts
+  an empty session; corrected 2026-06-08, see `supervisor/src/acp-client.ts`.)
 - Sessions persist as JSONL files at
   `~/.claude/projects/<cwd-encoded>/<uuid>.jsonl`. The agent's own
   session store IS the checkpoint — no separate checkpoint format.
@@ -274,8 +280,10 @@ Neither extreme works.
    asks the agent to exit gracefully (the agent persists its own JSONL
    session store). Run state → `NeedsInputIdle`. `runs.acp_session_id`
    is the resume handle.
-3. **Resume via `--resume`** — when the user responds, supervisor
-   spawns a fresh adapter process with `--resume <session-id>`.
+3. **Resume via `session/resume`** — when the user responds, the supervisor
+   spawns a fresh adapter process and restores the prior conversation with the
+   ACP `session/resume` call on `<session-id>` (no history replay; not a CLI
+   flag; both bundled adapters advertise `sessionCapabilities.resume`).
 
 **Consequences:**
 
@@ -1563,8 +1571,9 @@ Locked properties of the engine:
 **Status:** Accepted
 **Context:** A `Crashed` flow run owes recovery
 ([ADR-011](#adr-011-workspace-lifecycle-via-git-worktree)). The cross-process
-`--resume` plumbing already exists (`web/lib/runs/resume.ts`,
-`web/lib/runs/resume-driver.ts`, the scratch recover route), and
+resume plumbing already exists (`web/lib/runs/resume.ts`,
+`web/lib/runs/resume-driver.ts`, the scratch recover route — resume is the ACP
+`session/resume` call, not a CLI flag), and
 `crashRunningRun` ([ADR-033](#adr-033-crash-reconciliation-model-startup--periodic-sweeper-allow-list-running-only))
 produces the `Crashed` row. M19 must decide *how* a user recovers a `Crashed`
 flow run: a mid-turn agent node and a session-less gate node need different
@@ -1640,7 +1649,7 @@ is the url-param (trusted via route shape + RBAC); `projectId` is server-state
 
 **Consequences:**
 
-- A mid-turn agent crash resumes via `--resume`; a session-less gate crash
+- A mid-turn agent crash resumes via `session/resume`; a session-less gate crash
   re-dispatches; an unresumable run offers discard-only — no false resume.
 - No crash window leaves a leaked ACP session or a double-spawn: the durable
   marker precedes the side-effect, the CAS makes a second Recover a 409, and the
@@ -1653,7 +1662,7 @@ is the url-param (trusted via route shape + RBAC); `projectId` is server-state
   `EXECUTOR_UNAVAILABLE`).
 - `runs.resume_started_at` (migration 0015) is the durable in-flight marker AND
   the reconcile grace anchor.
-- Live-agent graph `--resume` continuation semantics are CI-verified only on the
+- Live-agent graph `session/resume` continuation semantics are CI-verified only on the
   mock adapter (M8) + the M0 single-session live spike; if mid-turn continuation
   proves unsafe, agent nodes fall back to `redispatch` (re-run the node fresh) —
   this ADR is updated before that code change.
@@ -1688,7 +1697,7 @@ target column:
   re-running a session-less node repeats its side effects (accepted-risk),
   so the opt-in is explicit. This is the manifest opt-in foreshadowed in
   `system-analytics/reconciliation-gc.md`. `ai_coding` ignores `retry_safe`
-  (it is always recovered via `--resume`, never re-run from scratch).
+  (it is always recovered via `session/resume`, never re-run from scratch).
 - **`runs.resume_target_step_id` retention (migration 0016, nullable text).**
   `crashRunningRun` copies `current_step_id → resume_target_step_id` and nulls
   `current_step_id` (the clean-terminal read of §ADR-033 is preserved). Recover
@@ -4033,14 +4042,15 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
 
 ## TODO (tracked doc defects)
 
-- **Pre-existing acp-runner contract drift (not addressed by ADR-065).** The
-  `web.openapi.yaml` admin acp-runner block documents `getAdminAcpRunners`
-  returning `platformDefaultRunnerId` + `usage references`, and
-  `postAdminAcpRunner`/`patchAdminAcpRunner` returning `{ runner }`. The code
-  returns `defaultRunnerId` (no usage refs) on GET and `{ ok, id }` / `{ ok }`
-  on POST/PATCH. ADR-065 only aligned the DELETE (204) and POST dup-id (409)
-  paths it touched; the GET/PATCH/POST body-shape drift is left for a dedicated
-  contract-sync pass (fix code OR spec, never both silently — docs/CLAUDE.md R3).
+- **acp-runner GET/POST/PATCH contract drift (resolved 2026-06-08).** Earlier the
+  `web.openapi.yaml` admin acp-runner block documented `getAdminAcpRunners`
+  returning `platformDefaultRunnerId` and
+  `postAdminAcpRunner`/`patchAdminAcpRunner` returning `{ runner }`, while the
+  code returned `defaultRunnerId` (+ `adapters`/`sidecars`) on GET and
+  `{ ok, id }` / `{ ok }` on POST/PATCH. The OpenAPI block was synced to the code
+  in the same `feature/acp-runner-crud-config` branch (GET →
+  `defaultRunnerId`/`adapters`/`sidecars`; POST → `{ ok, id }`; PATCH → `{ ok }`),
+  alongside the ADR-065 DELETE (204) + dup-id (409) alignment.
 - **Duplicate `### ADR-048` heading (resolved).** The collision was resolved by renumbering the M18
   "Branch targeting at launch, shared promotion service, promote-time readiness re-gate" ADR to
   **ADR-058**; the M15 "Readiness enforcement over all blocking gate kinds + verdict calibration" ADR

@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { ScratchDialogStatus, ScratchMessageRole } from "@/lib/db/schema";
-import type { ScratchMessageDraft } from "@/lib/scratch-runs/types";
 
 import { randomUUID } from "node:crypto";
 
@@ -12,6 +11,14 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { nextScratchMessageSequence } from "@/lib/scratch-runs/messages";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
+import {
+  encodePermissionPayload,
+  encodeThoughtPayload,
+  encodeToolPayload,
+  encodeUsagePayload,
+  interpretScratchUpdate,
+  type ScratchToolStatus,
+} from "@/lib/scratch-runs/transcript";
 import {
   cancelPermission,
   sendPrompt,
@@ -44,7 +51,6 @@ const defaultSupervisorApi: ScratchSupervisorApi = {
 
 export type ScratchSupervisorEventProjection = {
   dialogStatus?: ScratchDialogStatus;
-  message?: Omit<ScratchMessageDraft, "sequence">;
   hitlRequestId?: string;
 };
 
@@ -74,42 +80,16 @@ type MinimalSupervisorEvent =
       monotonicId: number;
     };
 
-function roleForLine(line: string): ScratchMessageRole {
-  return line.startsWith("[tool]") ? "tool" : "assistant";
-}
-
+// Dialog-status / HITL side effects only. Message content is produced by the
+// stateful consumer below (it must coalesce streamed chunks and tool-call
+// lifecycles, which a pure per-event mapper cannot do). `session.line` carries
+// the raw ACP JSON-RPC transport frames and is intentionally not projected.
 export function projectSupervisorEventToScratch(
   event: MinimalSupervisorEvent,
 ): ScratchSupervisorEventProjection {
-  const supervisorEventId = String(event.monotonicId);
-
   switch (event.type) {
-    case "session.line":
-      return {
-        message: {
-          role: roleForLine(event.line),
-          content: event.line,
-          supervisorEventId,
-        },
-      };
-    case "session.update":
-      return {
-        message: {
-          role: "system",
-          content: JSON.stringify(event.update),
-          supervisorEventId,
-        },
-      };
     case "session.permission_request":
-      return {
-        dialogStatus: "NeedsInput",
-        hitlRequestId: event.requestId,
-        message: {
-          role: "system",
-          content: "Permission request",
-          supervisorEventId,
-        },
-      };
+      return { dialogStatus: "NeedsInput", hitlRequestId: event.requestId };
     case "session.exited":
       return {
         dialogStatus:
@@ -117,14 +97,18 @@ export function projectSupervisorEventToScratch(
       };
     case "session.crashed":
       return { dialogStatus: "Crashed" };
+    default:
+      return {};
   }
 }
 
-async function appendProjectedMessage(args: {
+async function appendScratchMessageRow(args: {
   db: DbClientLike;
   runId: string;
-  message: Omit<ScratchMessageDraft, "sequence">;
-}): Promise<void> {
+  role: ScratchMessageRole;
+  content: string;
+  supervisorEventId?: string;
+}): Promise<string> {
   const sequenceRows: Array<{ sequence: number }> = await args.db
     .select({ sequence: scratchMessages.sequence })
     .from(scratchMessages)
@@ -132,16 +116,30 @@ async function appendProjectedMessage(args: {
   const sequence = nextScratchMessageSequence(
     sequenceRows.map((row) => row.sequence),
   );
+  const id = randomUUID();
 
   await args.db.insert(scratchMessages).values({
-    id: randomUUID(),
+    id,
     runId: args.runId,
     sequence,
-    role: args.message.role,
-    content: args.message.content,
-    supervisorEventId: args.message.supervisorEventId ?? null,
+    role: args.role,
+    content: args.content,
+    supervisorEventId: args.supervisorEventId ?? null,
     createdAt: new Date(),
   });
+
+  return id;
+}
+
+async function updateScratchMessageRow(args: {
+  db: DbClientLike;
+  messageId: string;
+  content: string;
+}): Promise<void> {
+  await args.db
+    .update(scratchMessages)
+    .set({ content: args.content })
+    .where(eq(scratchMessages.id, args.messageId));
 }
 
 async function applyDialogStatus(args: {
@@ -185,6 +183,7 @@ async function persistPermissionRequest(args: {
   api: ScratchSupervisorApi;
 }): Promise<void> {
   const hitlRequestId = randomUUID();
+  const prompt = permissionPrompt(args.event);
 
   try {
     await args.db.transaction(async (tx: DbClientLike) => {
@@ -199,21 +198,19 @@ async function persistPermissionRequest(args: {
           toolCall: args.event.toolCall,
           supervisorSessionId: args.sessionId,
         },
-        prompt: permissionPrompt(args.event),
+        prompt,
       });
       await applyDialogStatus({
         db: tx,
         runId: args.runId,
         dialogStatus: "NeedsInput",
       });
-      await appendProjectedMessage({
+      await appendScratchMessageRow({
         db: tx,
         runId: args.runId,
-        message: {
-          role: "system",
-          content: "Permission request",
-          supervisorEventId: String(args.event.monotonicId),
-        },
+        role: "system",
+        content: encodePermissionPayload(prompt),
+        supervisorEventId: String(args.event.monotonicId),
       });
     });
   } catch (err) {
@@ -236,6 +233,184 @@ async function persistPermissionRequest(args: {
   }
 }
 
+type ToolRowState = {
+  id: string;
+  name: string;
+  toolKind: string;
+  status: ScratchToolStatus;
+  arg: string;
+  rawInput: unknown;
+  result: string;
+};
+
+// Per-turn coalescing buffers. Streamed assistant/thought text arrives as many
+// chunks (often empty) and tool calls arrive as a `tool_call` followed by
+// several `tool_call_update`s sharing a toolCallId — these are merged into a
+// single message row each. The consumer is serialized, so this in-memory state
+// is race-free.
+function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
+  let openText: { id: string; text: string } | null = null;
+  let openThought: { id: string; text: string } | null = null;
+  let usageRow: { id: string } | null = null;
+  const toolsByCallId = new Map<string, ToolRowState>();
+
+  function resetOpenText(): void {
+    openText = null;
+    openThought = null;
+  }
+
+  async function handleUpdate(
+    update: unknown,
+    supervisorEventId: string,
+  ): Promise<void> {
+    const interpreted = interpretScratchUpdate(update);
+
+    if (!interpreted) return;
+
+    switch (interpreted.kind) {
+      case "text": {
+        openThought = null;
+        if (openText) {
+          openText.text += interpreted.text;
+          await updateScratchMessageRow({
+            db: args.db,
+            messageId: openText.id,
+            content: openText.text,
+          });
+        } else {
+          const id = await appendScratchMessageRow({
+            db: args.db,
+            runId: args.runId,
+            role: "assistant",
+            content: interpreted.text,
+            supervisorEventId,
+          });
+
+          openText = { id, text: interpreted.text };
+        }
+
+        return;
+      }
+      case "thought": {
+        openText = null;
+        if (openThought) {
+          openThought.text += interpreted.text;
+          await updateScratchMessageRow({
+            db: args.db,
+            messageId: openThought.id,
+            content: encodeThoughtPayload(openThought.text),
+          });
+        } else {
+          const text = interpreted.text;
+          const id = await appendScratchMessageRow({
+            db: args.db,
+            runId: args.runId,
+            role: "system",
+            content: encodeThoughtPayload(text),
+            supervisorEventId,
+          });
+
+          openThought = { id, text };
+        }
+
+        return;
+      }
+      case "tool_call": {
+        resetOpenText();
+        const state: Omit<ToolRowState, "id"> = {
+          name: interpreted.name,
+          toolKind: interpreted.toolKind,
+          status: interpreted.status,
+          arg: interpreted.arg,
+          rawInput: interpreted.rawInput,
+          result: interpreted.result,
+        };
+        const id = await appendScratchMessageRow({
+          db: args.db,
+          runId: args.runId,
+          role: "tool",
+          content: encodeToolPayload(state),
+          supervisorEventId,
+        });
+
+        toolsByCallId.set(interpreted.toolCallId, { id, ...state });
+
+        return;
+      }
+      case "tool_update": {
+        const existing = toolsByCallId.get(interpreted.toolCallId);
+
+        if (!existing) {
+          const state: Omit<ToolRowState, "id"> = {
+            name: interpreted.name ?? "tool",
+            toolKind: interpreted.toolKind ?? "other",
+            status: interpreted.status ?? "pending",
+            arg: interpreted.arg ?? "",
+            rawInput: interpreted.rawInput ?? null,
+            result: interpreted.result ?? "",
+          };
+          const id = await appendScratchMessageRow({
+            db: args.db,
+            runId: args.runId,
+            role: "tool",
+            content: encodeToolPayload(state),
+            supervisorEventId,
+          });
+
+          toolsByCallId.set(interpreted.toolCallId, { id, ...state });
+
+          return;
+        }
+
+        if (interpreted.name) existing.name = interpreted.name;
+        if (interpreted.toolKind) existing.toolKind = interpreted.toolKind;
+        if (interpreted.status) existing.status = interpreted.status;
+        if (interpreted.arg && !existing.arg) existing.arg = interpreted.arg;
+        if (interpreted.rawInput !== undefined) {
+          existing.rawInput = interpreted.rawInput;
+        }
+        if (interpreted.result) {
+          existing.result = existing.result
+            ? `${existing.result}\n${interpreted.result}`
+            : interpreted.result;
+        }
+        await updateScratchMessageRow({
+          db: args.db,
+          messageId: existing.id,
+          content: encodeToolPayload(existing),
+        });
+
+        return;
+      }
+      case "usage": {
+        const content = encodeUsagePayload(interpreted.used, interpreted.size);
+
+        if (usageRow) {
+          await updateScratchMessageRow({
+            db: args.db,
+            messageId: usageRow.id,
+            content,
+          });
+        } else {
+          const id = await appendScratchMessageRow({
+            db: args.db,
+            runId: args.runId,
+            role: "system",
+            content,
+            supervisorEventId,
+          });
+
+          usageRow = { id };
+        }
+
+        return;
+      }
+    }
+  }
+
+  return { handleUpdate, resetOpenText };
+}
+
 function startScratchEventConsumer(args: {
   db: DbClientLike;
   runId: string;
@@ -244,54 +419,71 @@ function startScratchEventConsumer(args: {
   api: ScratchSupervisorApi;
 }) {
   const abort = new AbortController();
-  const pendingWork: Promise<void>[] = [];
   let permissionPersistFailure: { reason: string } | null = null;
+  const projector = createTranscriptProjector({
+    db: args.db,
+    runId: args.runId,
+  });
 
+  // Events are projected sequentially: each write commits before the next event
+  // is read. Sequence allocation is read-modify-write (appendScratchMessageRow),
+  // so concurrent appends would all read the same max and collide on
+  // scratch_messages_run_sequence_uq. Sequential projection also preserves
+  // monotonic transcript order and keeps the coalescing buffers race-free.
   const done = (async () => {
     try {
       for await (const event of args.api.streamSession(args.sessionId, {
         signal: abort.signal,
       })) {
         if (event.type === "session.permission_request") {
-          pendingWork.push(
-            persistPermissionRequest({
+          try {
+            await persistPermissionRequest({
               db: args.db,
               runId: args.runId,
               stepId: args.stepId,
               sessionId: args.sessionId,
               event,
               api: args.api,
-            }).catch((err) => {
-              if (!permissionPersistFailure) {
-                permissionPersistFailure = {
-                  reason: err instanceof Error ? err.message : String(err),
-                };
-              }
-            }),
-          );
+            });
+            projector.resetOpenText();
+          } catch (err) {
+            if (!permissionPersistFailure) {
+              permissionPersistFailure = {
+                reason: err instanceof Error ? err.message : String(err),
+              };
+            }
+          }
           continue;
         }
 
-        const projection = projectSupervisorEventToScratch(event);
+        try {
+          if (event.type === "session.update") {
+            await projector.handleUpdate(
+              event.update,
+              String(event.monotonicId),
+            );
+          } else {
+            const projection = projectSupervisorEventToScratch(event);
 
-        if (projection.dialogStatus) {
-          pendingWork.push(
-            applyDialogStatus({
-              db: args.db,
-              runId: args.runId,
-              dialogStatus: projection.dialogStatus,
-            }),
+            if (projection.dialogStatus) {
+              await applyDialogStatus({
+                db: args.db,
+                runId: args.runId,
+                dialogStatus: projection.dialogStatus,
+              });
+            }
+          }
+        } catch (err) {
+          log.warn(
+            {
+              sessionId: args.sessionId,
+              monotonicId: event.monotonicId,
+              err: (err as Error).message,
+            },
+            "scratch projection write failed",
           );
         }
-        if (projection.message) {
-          pendingWork.push(
-            appendProjectedMessage({
-              db: args.db,
-              runId: args.runId,
-              message: projection.message,
-            }),
-          );
-        }
+
         if (
           event.type === "session.exited" ||
           event.type === "session.crashed"
@@ -305,8 +497,6 @@ function startScratchEventConsumer(args: {
         { sessionId: args.sessionId, err: (err as Error).message },
         "scratch event consumer error",
       );
-    } finally {
-      await Promise.allSettled(pendingWork);
     }
   })();
 

@@ -9,7 +9,7 @@ with technical-layer organization:
   Drizzle DB access + SSE bridge to supervisor. No agent processes.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per session, heartbeat watchdog,
-  graceful checkpoint + respawn via `--resume`. HTTP+SSE IPC.
+  graceful checkpoint + respawn via the ACP `session/resume` call. HTTP+SSE IPC.
 
 Inside `web/`, two organizational axes coexist:
 
@@ -141,7 +141,7 @@ mAIster/
     │       │       ├── diff/route.ts         # GET git diff
     │       │       ├── merge/route.ts        # POST git merge --no-ff
     │       │       ├── abandon/route.ts      # POST abandon
-    │       │       └── recover/route.ts      # POST recover (Crashed → --resume)
+    │       │       └── recover/route.ts      # POST recover (Crashed → session/resume)
     │       └── cron/
     │           └── gc/route.ts               # GET worktree + session GC (all projects)
     │
@@ -448,8 +448,9 @@ export function spawnAgent(opts: {
 
   const args = ['--acp'];                          // pseudocode; exact adapter CLI verified by local spike
 
-  if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
-
+  // NOTE: resume is NOT a CLI flag — the ACP adapters ignore `--resume` on
+  // argv. To resume, spawn fresh and call the ACP `session/resume` method on
+  // opts.resumeSessionId (restores context, no history replay).
   const child = spawn(opts.agent, args, { cwd: opts.cwd, env: opts.env });
 
   let buffer = '';

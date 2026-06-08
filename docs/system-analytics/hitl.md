@@ -318,7 +318,7 @@ sequenceDiagram
 The flow below describes the implemented checkpoint/resume path:
 activity pings extend `runs.keepalive_until`, the sweeper checkpoints
 idle `NeedsInput` runs, and a later HITL response resumes the ACP session
-with `--resume <acp_session_id>`.
+via the `session/resume` call on `acp_session_id` (not a CLI flag).
 
 While a run is in `NeedsInput`, the run-detail page is responsible for
 keeping the worker alive:
@@ -461,13 +461,13 @@ fields:
 - **(Designed)** HITL request lost during supervisor shutdown is
   recoverable via the standard `acp_session_id` resume on next launch —
   no separate reconciliation needed. Depends on checkpoint/resume
-  landing the `--resume <id>` re-spawn path.
+  landing the `session/resume` re-spawn path.
 - **(Implemented M8 — Codex review fix #1)** When the supervisor
   cancels a pending permission as part of a checkpoint flow (sweeper or
   `POST /sessions/:id/checkpoint`), the adapter resolves the deferred
   with `{outcome: "cancelled"}` and returns `stopReason: "end_turn"`
   from `prompt()` — the cancelled permission is journaled for replay
-  on the next `--resume`. The web runner-agent MUST observe
+  on the next `session/resume`. The web runner-agent MUST observe
   `session.exited.reason="checkpoint"` on the SSE stream and suppress
   step success: it calls `markCheckpointedFromExit(runId)`
   (`NeedsInput → NeedsInputIdle`, same SQL as the sweeper's

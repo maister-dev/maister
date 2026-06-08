@@ -155,7 +155,7 @@ stateDiagram-v2
     active --> cleaned: session scope ends, rm node dir (cleanup.done)
     active --> cleanupFailed: rm error (cleanup.failed, no throw on post-terminal seam)
     cleanupFailed --> cleaned: strict cleanup sweeper / worktree GC reclaims
-    active --> restored: NeedsInputIdle --resume re-materializes from persisted plan
+    active --> restored: NeedsInputIdle session/resume re-materializes from persisted plan
     restored --> active: session re-attached
     active --> cancelled: run abandoned/checkpoint-discard (rm node dir, cleanup recorded)
 ```
@@ -164,7 +164,7 @@ The on-disk materialize happens **before** the `db.transaction` that writes the
 plan + `markNodeRunning`; `POST /sessions` happens **after** commit. A death in
 the spawn window is recovered by the existing `Running`-crash reconciler
 ([ADR-033](../decisions.md#adr-033-crash-reconciliation-model-startup--periodic-sweeper-allow-list-running-only));
-on `--resume`/re-dispatch the write-once plan row no-ops and files are restored
+on `session/resume`/re-dispatch the write-once plan row no-ops and files are restored
 from the persisted plan, never re-resolved (immutability — AD-1).
 
 ## Process flows

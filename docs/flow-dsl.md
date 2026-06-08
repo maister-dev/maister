@@ -194,7 +194,7 @@ re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`guard`/`human`).
 A `Crashed` run whose recover target is session-less is redispatch-recoverable
 only when its config declares `retry_safe: true` — re-running a session-less
 node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
-`retry_safe` (they recover via `--resume`, never a fresh re-run). See
+`retry_safe` (they recover via `session/resume`, never a fresh re-run). See
 [ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
 and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
 

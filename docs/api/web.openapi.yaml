@@ -124,17 +124,60 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [runners, platformDefaultRunnerId, presets]
+                required: [runners, defaultRunnerId, presets, adapters, sidecars]
                 properties:
                   runners:
                     type: array
                     items: { type: object }
-                  platformDefaultRunnerId: { type: string, nullable: true }
+                  defaultRunnerId: { type: string, nullable: true }
                   presets:
+                    type: array
+                    items: { type: object }
+                  adapters:
+                    type: array
+                    items: { type: object }
+                  sidecars:
                     type: array
                     items: { type: object }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [admin]
+      summary: Set the platform default ACP runner
+      description: Admin-only. Updates `platform_runtime_settings.defaultRunnerId`. Refuses a runner that is not Ready (by stored status and live supervisor diagnostics).
+      operationId: patchAdminAcpDefaultRunner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [defaultRunnerId]
+              additionalProperties: false
+              properties:
+                defaultRunnerId: { type: string }
+      responses:
+        "200":
+          description: Default runner updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Target runner is missing or not Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     post:
       tags: [admin]
       summary: Create a platform ACP runner
@@ -161,25 +204,17 @@ paths:
                   }
                 sidecarId: { type: string, nullable: true }
                 enabled: { type: boolean, default: true }
-                readinessStatus:
-                  {
-                    type: string,
-                    enum: [Unknown, Ready, NotReady],
-                    default: Unknown,
-                  }
-                readinessReasons:
-                  type: array
-                  items: { type: string }
       responses:
         "201":
-          description: Runner created.
+          description: Runner created. Readiness is derived server-side (never accepted from the body). The created runner is fetched via GET, not echoed here (avoids leaking the stored row).
           content:
             application/json:
               schema:
                 type: object
-                required: [runner]
+                required: [ok, id]
                 properties:
-                  runner: { type: object }
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -203,16 +238,31 @@ paths:
           in: path
           required: true
           schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                model: { type: string }
+                provider: { type: object }
+                permissionPolicy:
+                  { type: string, enum: [default, dangerously_skip_permissions] }
+                sidecarId: { type: string, nullable: true }
+                enabled: { type: boolean }
       responses:
         "200":
-          description: Runner updated.
+          description: Runner updated. Readiness is derived server-side (never accepted from the body).
           content:
             application/json:
               schema:
                 type: object
-                required: [runner]
+                required: [ok]
                 properties:
-                  runner: { type: object }
+                  ok: { type: boolean, enum: [true] }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -2702,7 +2752,7 @@ paths:
 
         | recover target node | `acpSessionId` | node `retry_safe` | plan | result |
         | ------------------- | -------------- | ----------------- | ---- | ------ |
-        | `ai_coding` (agent) | present | ignored | `resume-agent` — `--resume <acpSessionId>` | 200 resumed / 202 queued |
+        | `ai_coding` (agent) | present | ignored | `resume-agent` — ACP `session/resume <acpSessionId>` | 200 resumed / 202 queued |
         | `ai_coding` (agent) | null | ignored | `discard-only` | 409 |
         | session-less (`cli`/`check`/`judge`/`guard`/`human`) | irrelevant | `true` | `redispatch` — re-run the node | 200 redispatched / 202 queued |
         | session-less | irrelevant | `false` (default) | `discard-only` | 409 |
@@ -2758,8 +2808,8 @@ paths:
         "200":
           description: |
             Run resumed now. A slot was free, so the run flipped
-            `Crashed→Running` and the supervisor `--resume` session was
-            dispatched.
+            `Crashed→Running` and the supervisor restored the session via the
+            ACP `session/resume` call.
           content:
             application/json:
               schema:
@@ -2774,8 +2824,8 @@ paths:
         "202":
           description: |
             Cap full at admission. The run flipped `Crashed→Pending` (retaining
-            `acpSessionId`); the scheduler resumes it via the same `--resume`
-            path when a slot frees. No supervisor session was created.
+            `acpSessionId`); the scheduler resumes it via the same
+            `session/resume` path when a slot frees. No supervisor session was created.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecoverQueuedResponse" }
@@ -2797,7 +2847,7 @@ paths:
         "410":
           description: |
             The stored acp session is unresumable — supervisor refused the
-            `--resume` (`CHECKPOINT`). The run is `Crashed`; surface discard-only.
+            `session/resume` (`CHECKPOINT`). The run is `Crashed`; surface discard-only.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -4275,7 +4325,7 @@ components:
         (Designed, M19) Returned by `POST /api/runs/{runId}/recover` with HTTP
         202 when the global concurrency cap was full at admission. The run
         flipped `Crashed→Pending` (retaining `acpSessionId`); the scheduler
-        resumes it via `--resume` when a slot frees.
+        resumes it via `session/resume` when a slot frees.
       required: [state]
       properties:
         state:

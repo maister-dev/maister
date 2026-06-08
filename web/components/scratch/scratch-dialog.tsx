@@ -2,9 +2,18 @@
 
 import type { ReactElement } from "react";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
+
+import {
+  ScratchTranscript,
+  type TranscriptLabels,
+} from "@/components/scratch/scratch-transcript";
+import {
+  parseQuickReplies,
+  parseScratchMessageContent,
+} from "@/lib/scratch-runs/transcript";
 
 type ScratchDialogStatus =
   | "Starting"
@@ -54,6 +63,7 @@ type ScratchDetail = {
     currentStepId: string | null;
     startedAt: string;
     endedAt: string | null;
+    createdByDisplayName: string | null;
   };
   scratch: {
     name: string | null;
@@ -138,6 +148,16 @@ function canSend(status: ScratchDialogStatus): boolean {
   return status === "WaitingForUser";
 }
 
+// A crashed run can be resumed by typing a message (routes Send to /recover,
+// which respawns + resumes via session/resume). Attachments/files stay message-only.
+function canRecover(status: ScratchDialogStatus): boolean {
+  return status === "Crashed";
+}
+
+function canCompose(status: ScratchDialogStatus): boolean {
+  return canSend(status) || canRecover(status);
+}
+
 function attachmentSummary(attachment: ScratchAttachment): string {
   if (attachment.kind === "uploaded_file") {
     const hash = attachment.sha256 ? attachment.sha256.slice(0, 10) : "";
@@ -152,17 +172,6 @@ function attachmentSummary(attachment: ScratchAttachment): string {
     : attachment.value;
 }
 
-function messageTone(role: ScratchMessage["role"]): string {
-  if (role === "user") {
-    return "ml-auto border-amber-line bg-amber-soft text-ink";
-  }
-  if (role === "system") {
-    return "border-line bg-ivory text-mute";
-  }
-
-  return "border-line bg-paper text-ink";
-}
-
 export function ScratchDialog({ runId }: { runId: string }): ReactElement {
   const t = useTranslations("scratch");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
@@ -170,7 +179,6 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [content, setContent] = useState("");
-  const [recoverPrompt, setRecoverPrompt] = useState("");
   const [hitlJson, setHitlJson] = useState("{}");
   const [diff, setDiff] = useState<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<
@@ -243,7 +251,69 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
   const globalAttachments =
     detail?.attachments.filter((attachment) => !attachment.messageId) ?? [];
   const status = detail?.scratch.dialogStatus ?? "Starting";
-  const canSubmitMessage = !!content.trim() && canSend(status);
+  const canSubmitMessage = !!content.trim() && canCompose(status);
+  const latestUsage = useMemo(() => {
+    let usage: { used: number; size: number } | null = null;
+
+    for (const message of detail?.messages ?? []) {
+      const parsed = parseScratchMessageContent(message.role, message.content);
+
+      if (parsed.kind === "usage") {
+        usage = { used: parsed.used, size: parsed.size };
+      }
+    }
+
+    return usage;
+  }, [detail?.messages]);
+  const transcriptLabels: TranscriptLabels = {
+    thinking: t("thinking"),
+    rawEvent: t("rawEvent"),
+    input: t("toolInput"),
+    result: t("toolResult"),
+    copy: t("copy"),
+    copied: t("copied"),
+    toolCount: (name, count) => t("toolCount", { name, count }),
+  };
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const quickReplies = useMemo(() => {
+    if (!canCompose(status)) return [];
+    const messages = detail?.messages ?? [];
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const candidate = messages[index];
+
+      if (candidate.role === "assistant") {
+        return parseQuickReplies(candidate.content);
+      }
+    }
+
+    return [];
+  }, [detail?.messages, status]);
+  const applyQuickReply = useCallback((value: string) => {
+    setContent(value);
+    composerRef.current?.focus();
+  }, []);
+  const renderMessageAttachments = useCallback(
+    (messageId: string) => {
+      const list = attachmentsByMessage.get(messageId) ?? [];
+
+      if (list.length === 0) return null;
+
+      return (
+        <ul className="mt-2 flex list-none flex-col gap-1 p-0">
+          {list.map((attachment) => (
+            <li
+              key={attachment.id}
+              className="rounded-md border border-line bg-paper/70 px-2 py-1 font-mono text-[10.5px] text-mute"
+            >
+              {attachment.kind}: {attachmentSummary(attachment)}
+            </li>
+          ))}
+        </ul>
+      );
+    },
+    [attachmentsByMessage],
+  );
 
   function updateComposerAttachment(
     index: number,
@@ -289,6 +359,37 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
     event: React.FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
+
+    if (canRecover(status)) {
+      const prompt = content.trim();
+
+      if (!prompt) return;
+      setPendingAction("send");
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/scratch-runs/${runId}/recover`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+
+        if (!response.ok) {
+          setError(errorText(await response.json().catch(() => null)));
+
+          return;
+        }
+        setContent("");
+        await loadDetail();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setPendingAction(null);
+      }
+
+      return;
+    }
+
     setPendingAction("send");
     setError(null);
 
@@ -433,63 +534,85 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
               <span>{detail.scratch.reasoningEffort}</span>
             </div>
           </div>
-          <span
-            className={clsx(
-              "rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-semibold",
-              statusClass(status),
-            )}
-          >
-            {t(`status.${status}`)}
-          </span>
+          <div className="flex flex-none flex-col items-end gap-1.5">
+            <span
+              className={clsx(
+                "rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-semibold",
+                statusClass(status),
+              )}
+            >
+              {t(`status.${status}`)}
+            </span>
+            {latestUsage ? (
+              <div
+                className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
+                title={t("tokens")}
+              >
+                <span className="h-1 w-20 overflow-hidden rounded-full bg-ivory">
+                  <span
+                    className="block h-full bg-amber"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.round(
+                          (latestUsage.used / Math.max(1, latestUsage.size)) *
+                            100,
+                        ),
+                      )}%`,
+                    }}
+                  />
+                </span>
+                <span>
+                  {latestUsage.used.toLocaleString()} /{" "}
+                  {latestUsage.size.toLocaleString()}
+                </span>
+              </div>
+            ) : null}
+          </div>
         </header>
 
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
-          {detail.messages.length === 0 ? (
+        {detail.messages.length === 0 ? (
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
             <p className="text-[13px] text-mute">{t("noMessages")}</p>
-          ) : (
-            detail.messages.map((message) => (
-              <article
-                key={message.id}
-                className={clsx(
-                  "max-w-[86%] rounded-lg border px-3 py-2.5",
-                  messageTone(message.role),
-                )}
-              >
-                <div className="mb-1 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-                  <span>{message.role}</span>
-                  <span>{new Date(message.createdAt).toLocaleString()}</span>
-                </div>
-                <p className="whitespace-pre-wrap text-[13px] leading-[1.55]">
-                  {message.content}
-                </p>
-                {(attachmentsByMessage.get(message.id) ?? []).length > 0 ? (
-                  <ul className="mt-2 flex list-none flex-col gap-1 p-0">
-                    {(attachmentsByMessage.get(message.id) ?? []).map(
-                      (attachment) => (
-                        <li
-                          key={attachment.id}
-                          className="rounded-md border border-line bg-paper/70 px-2 py-1 font-mono text-[10.5px] text-mute"
-                        >
-                          {attachment.kind}: {attachmentSummary(attachment)}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                ) : null}
-              </article>
-            ))
-          )}
-        </div>
+          </div>
+        ) : (
+          <ScratchTranscript
+            labels={transcriptLabels}
+            messages={detail.messages}
+            renderAttachments={renderMessageAttachments}
+            running={status === "Running" || status === "Starting"}
+            userLabel={detail.run.createdByDisplayName}
+          />
+        )}
 
         <form
           className="border-t border-line-soft px-4 py-3"
           onSubmit={sendMessage}
         >
+          {quickReplies.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {quickReplies.map((reply, index) => (
+                <button
+                  key={`${index}-${reply.value}`}
+                  className="rounded-full border border-amber-line bg-amber-soft px-3 py-1 text-left font-mono text-[11px] text-ink transition hover:border-amber hover:bg-amber hover:text-white"
+                  type="button"
+                  onClick={() => applyQuickReply(reply.value)}
+                >
+                  {reply.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <textarea
+            ref={composerRef}
             className={clsx(inputBase, "min-h-[110px] resize-y")}
-            disabled={!canSend(status)}
+            disabled={!canCompose(status)}
             placeholder={
-              canSend(status) ? t("messagePlaceholder") : t("messageDisabled")
+              canSend(status)
+                ? t("messagePlaceholder")
+                : canRecover(status)
+                  ? t("recoverPlaceholder")
+                  : t("messageDisabled")
             }
             value={content}
             onChange={(event) => setContent(event.target.value)}
@@ -575,24 +698,32 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
             ) : null}
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <button
-              className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
-              type="button"
-              onClick={() =>
-                setComposerAttachments((current) => [
-                  ...current,
-                  { kind: "text_note", label: "", value: "" },
-                ])
-              }
-            >
-              + {t("attachment")}
-            </button>
+            {canSend(status) ? (
+              <button
+                className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
+                type="button"
+                onClick={() =>
+                  setComposerAttachments((current) => [
+                    ...current,
+                    { kind: "text_note", label: "", value: "" },
+                  ])
+                }
+              >
+                + {t("attachment")}
+              </button>
+            ) : (
+              <span />
+            )}
             <button
               className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={!canSubmitMessage || pendingAction === "send"}
               type="submit"
             >
-              {pendingAction === "send" ? t("sending") : t("send")}
+              {pendingAction === "send"
+                ? t("sending")
+                : canRecover(status)
+                  ? t("recover")
+                  : t("send")}
             </button>
           </div>
         </form>
@@ -701,32 +832,15 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
         </section>
 
         {status === "Crashed" ? (
-          <section className={`${shell} p-3`}>
-            <div className="mb-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-mute">
+          <section
+            className={`${shell} border-[#d9534f]/30 bg-[#d9534f]/5 p-3`}
+          >
+            <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#d9534f]">
               {t("recover")}
             </div>
-            <textarea
-              className={clsx(inputBase, "min-h-[96px]")}
-              placeholder={t("recoverPlaceholder")}
-              value={recoverPrompt}
-              onChange={(event) => setRecoverPrompt(event.target.value)}
-            />
-            <button
-              className="mt-2 w-full rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:opacity-60"
-              disabled={!recoverPrompt.trim()}
-              type="button"
-              onClick={() =>
-                void postAction(
-                  "recover",
-                  `/api/scratch-runs/${runId}/recover`,
-                  {
-                    prompt: recoverPrompt.trim(),
-                  },
-                )
-              }
-            >
-              {t("recover")}
-            </button>
+            <p className="text-[12px] leading-[1.5] text-ink-2">
+              {t("recoverHint")}
+            </p>
           </section>
         ) : null}
 

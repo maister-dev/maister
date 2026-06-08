@@ -76,13 +76,12 @@ sequenceDiagram
     M->>R: buildCreateBody(draft)
     R->>R: requireGlobalRole("admin")
     R->>R: assertProviderSupported(adapter, kind, policy)
-    R->>DB: SELECT id (duplicate check)
-    alt id already exists
+    R->>R: evaluateRunnerReadiness(...)
+    R->>DB: INSERT ... onConflictDoNothing().returning({ id })
+    alt returning() empty (id PK conflict — race-safe, no pre-SELECT)
         R-->>M: 409 CONFLICT (MaisterError)
-    else free
-        R->>R: evaluateRunnerReadiness(...)
-        R->>DB: INSERT row
-        R-->>M: 201 { runner }
+    else inserted
+        R-->>M: 201 { ok, id }
         M->>A: onSaved() → router.refresh()
     end
 ```
@@ -137,8 +136,10 @@ flowchart TD
 
 ## Edge cases
 
-- **Duplicate id on create** → `MaisterError("CONFLICT")` (409), enumerated by
-  pre-insert existence check — see [error-taxonomy.md](../error-taxonomy.md).
+- **Duplicate id on create** → `MaisterError("CONFLICT")` (409) via a race-safe
+  insert (`onConflictDoNothing()` + empty `returning()`), never a pre-insert
+  `SELECT` — two concurrent POSTs both passing a SELECT would surface a raw
+  Postgres `23505` as a 500. See [error-taxonomy.md](../error-taxonomy.md).
 - **Delete of a referenced runner** → `MaisterError("CONFLICT")` (409) listing
   the blocking kinds (platform/project/flow default, flow-step remap, active
   run, historical run snapshot, scratch run); the NOT-NULL FK
