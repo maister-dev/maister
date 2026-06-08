@@ -414,6 +414,8 @@
     "policyDefault": "default",
     "policyDangerous": "пропускать проверки (опасно)",
     "saveFailed": "Не удалось сохранить",
+    "cancel": "Отмена",
+    "saving": "Сохранение…",
     "sub": "Конфигурация инстанса MAIster (только чтение).",
     "repoHome": "Каталог репозиториев",
     "worktreesRoot": "Каталог worktree",

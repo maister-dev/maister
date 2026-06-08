@@ -2,39 +2,31 @@
 
 import type { ReactElement } from "react";
 
-import { useMemo, useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-type Runner = {
-  id: string;
-  adapter: "claude" | "codex";
-  capabilityAgent: "claude" | "codex";
-  model: string;
-  provider: { kind: string };
-  permissionPolicy: string;
-  sidecarId: string | null;
-  readinessStatus: "Unknown" | "Ready" | "NotReady";
-  enabled: boolean;
-};
+import {
+  AcpRunnerModal,
+  type PresetRow as ModalPresetRow,
+  type RunnerRow,
+} from "@/components/settings/acp-runner-modal";
 
-type RunnerPreset = {
-  id: string;
-  adapter: "claude" | "codex";
-  capabilityAgent: "claude" | "codex";
-  model: string;
-  provider: { kind: string };
-  permissionPolicy: string;
+export type { RunnerRow };
+
+type PresetRow = ModalPresetRow & {
   readinessStatus: "Ready" | "NotReady";
   readinessReasons: readonly string[];
 };
 
 type Props = {
   defaultRunnerId: string | null;
-  presets: RunnerPreset[];
-  runners: Runner[];
+  presets: PresetRow[];
+  runners: RunnerRow[];
+  sidecars: { id: string }[];
 };
 
-function statusClass(status: Runner["readinessStatus"]): string {
+function statusClass(status: RunnerRow["readinessStatus"]): string {
   if (status === "Ready") return "border-emerald-500/30 text-emerald-700";
   if (status === "NotReady") return "border-red-500/30 text-red-700";
 
@@ -61,17 +53,22 @@ export function AcpRunnersPanel({
   defaultRunnerId,
   presets,
   runners,
+  sidecars,
 }: Props): ReactElement {
   const t = useTranslations("settings");
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [selectedDefaultRunnerId, setSelectedDefaultRunnerId] = useState(
     defaultRunnerId ?? runners[0]?.id ?? "",
   );
-  const [localRunners, setLocalRunners] = useState(runners);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const defaultRunner = useMemo(
-    () => localRunners.find((runner) => runner.id === selectedDefaultRunnerId),
-    [localRunners, selectedDefaultRunnerId],
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<RunnerRow | null>(null);
+
+  const refresh = (): void => startTransition(() => router.refresh());
+  const defaultRunner = runners.find(
+    (runner) => runner.id === selectedDefaultRunnerId,
   );
 
   async function saveDefaultRunner(): Promise<void> {
@@ -81,6 +78,7 @@ export function AcpRunnersPanel({
       await patchJson("/api/admin/acp-runners", {
         defaultRunnerId: selectedDefaultRunnerId,
       });
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -88,16 +86,15 @@ export function AcpRunnersPanel({
     }
   }
 
-  async function setRunnerEnabled(runnerId: string, enabled: boolean) {
+  async function setRunnerEnabled(
+    runnerId: string,
+    enabled: boolean,
+  ): Promise<void> {
     setPending(runnerId);
     setError(null);
     try {
       await patchJson(`/api/admin/acp-runners/${runnerId}`, { enabled });
-      setLocalRunners((current) =>
-        current.map((runner) =>
-          runner.id === runnerId ? { ...runner, enabled } : runner,
-        ),
-      );
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -120,7 +117,7 @@ export function AcpRunnersPanel({
                 setSelectedDefaultRunnerId(event.target.value)
               }
             >
-              {localRunners.map((runner) => (
+              {runners.map((runner) => (
                 <option
                   key={runner.id}
                   disabled={
@@ -147,53 +144,94 @@ export function AcpRunnersPanel({
           >
             {t("save")}
           </button>
+          <button
+            className="h-10 rounded-[8px] border border-amber bg-amber px-4 text-[13px] font-semibold text-white hover:bg-amber-2"
+            type="button"
+            onClick={() => setCreating(true)}
+          >
+            {t("addRunner")}
+          </button>
         </div>
         {error ? (
           <p className="m-0 text-[12px] leading-[1.45] text-red-700">{error}</p>
         ) : null}
       </div>
 
-      <div className="grid gap-2">
-        {localRunners.map((runner) => (
-          <article
-            key={runner.id}
-            className="rounded-[8px] border border-line bg-canvas px-4 py-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="m-0 truncate text-[14px] font-semibold text-ink">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[860px] border-collapse text-left">
+          <thead className="border-b border-line bg-ivory">
+            <tr className="font-mono text-[10px] uppercase tracking-[0.12em] text-mute">
+              <th className="px-4 py-3">{t("colId")}</th>
+              <th className="px-4 py-3">{t("colAdapter")}</th>
+              <th className="px-4 py-3">{t("colModel")}</th>
+              <th className="px-4 py-3">{t("colProvider")}</th>
+              <th className="px-4 py-3">{t("colSidecar")}</th>
+              <th className="px-4 py-3">{t("colPolicy")}</th>
+              <th className="px-4 py-3">{t("colReadiness")}</th>
+              <th className="px-4 py-3">{t("colEnabled")}</th>
+              <th className="px-4 py-3 text-right">{t("colActions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runners.map((runner) => (
+              <tr
+                key={runner.id}
+                className="border-b border-line align-middle last:border-b-0 text-[12px]"
+              >
+                <td className="px-4 py-3 font-mono font-semibold text-ink">
                   {runner.id}
-                </h3>
-                <p className="m-0 mt-1 text-[12px] leading-[1.4] text-mute">
-                  {runner.adapter} · {runner.model} · {runner.provider.kind}
-                  {runner.sidecarId ? ` · ${runner.sidecarId}` : ""}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${statusClass(
-                    runner.readinessStatus,
-                  )}`}
-                >
-                  {runner.readinessStatus}
-                </span>
-                <button
-                  className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
-                  disabled={
-                    pending !== null ||
-                    (runner.id === defaultRunnerId && runner.enabled)
-                  }
-                  type="button"
-                  onClick={() =>
-                    void setRunnerEnabled(runner.id, !runner.enabled)
-                  }
-                >
-                  {runner.enabled ? t("disable") : t("enable")}
-                </button>
-              </div>
-            </div>
-          </article>
-        ))}
+                </td>
+                <td className="px-4 py-3 text-ink-2">{runner.adapter}</td>
+                <td className="px-4 py-3 font-mono text-ink-2">
+                  {runner.model}
+                </td>
+                <td className="px-4 py-3 text-ink-2">{runner.provider.kind}</td>
+                <td className="px-4 py-3 text-ink-2">
+                  {runner.sidecarId ?? "-"}
+                </td>
+                <td className="px-4 py-3 text-ink-2">
+                  {runner.permissionPolicy}
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${statusClass(
+                      runner.readinessStatus,
+                    )}`}
+                  >
+                    {runner.readinessStatus}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-ink-2">
+                  {runner.enabled ? "✓" : "—"}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <div className="inline-flex items-center gap-2">
+                    <button
+                      className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
+                      type="button"
+                      onClick={() => setEditing(runner)}
+                    >
+                      {t("editAction")}
+                    </button>
+                    <button
+                      className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
+                      disabled={
+                        pending !== null ||
+                        (runner.id === defaultRunnerId && runner.enabled)
+                      }
+                      type="button"
+                      onClick={() =>
+                        void setRunnerEnabled(runner.id, !runner.enabled)
+                      }
+                    >
+                      {runner.enabled ? t("disable") : t("enable")}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="mt-4 border-t border-line pt-4">
@@ -237,6 +275,20 @@ export function AcpRunnersPanel({
           ))}
         </div>
       </div>
+
+      {creating || editing ? (
+        <AcpRunnerModal
+          mode={editing ? "edit" : "create"}
+          presets={presets}
+          runner={editing ?? undefined}
+          sidecars={sidecars}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+          onSaved={refresh}
+        />
+      ) : null}
     </section>
   );
 }

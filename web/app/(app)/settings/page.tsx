@@ -38,7 +38,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
   const diagnostics = isAdmin ? await checkSupervisorDiagnostics() : null;
 
   return (
-    <div className="mx-auto w-full max-w-[520px]">
+    <div className="w-full">
       <header className="mb-7">
         <div className="mb-2.5 inline-flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">
           {t("title")}
@@ -51,74 +51,86 @@ export default async function SettingsPage(): Promise<ReactElement> {
         </p>
       </header>
 
-      <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
-        {isAdmin ? (
-          <dl className="flex flex-col gap-5">
-            <div className="flex flex-col gap-1.5">
-              <dt className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                {t("repoHome")}
-              </dt>
-              <dd className="m-0 break-all font-mono text-[13px] leading-[1.5] text-ink">
-                {reposRoot()}
-              </dd>
+      {isAdmin ? (
+        <>
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
+              <dl className="flex flex-col gap-5">
+                <div className="flex flex-col gap-1.5">
+                  <dt className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                    {t("repoHome")}
+                  </dt>
+                  <dd className="m-0 break-all font-mono text-[13px] leading-[1.5] text-ink">
+                    {reposRoot()}
+                  </dd>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <dt className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                    {t("worktreesRoot")}
+                  </dt>
+                  <dd className="m-0 break-all font-mono text-[13px] leading-[1.5] text-ink">
+                    {worktreesRoot()}
+                  </dd>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <dt className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+                    {t("hostTools")}
+                  </dt>
+                  <dd className="m-0 flex flex-col gap-1">
+                    {tools.map((tool) => (
+                      <div
+                        key={tool.name}
+                        className="flex items-baseline justify-between gap-3 font-mono text-[13px] leading-[1.5]"
+                      >
+                        <span className="text-ink">{tool.name}</span>
+                        <span className="text-mute">
+                          {tool.available
+                            ? `${tool.version} (${t("available")})`
+                            : t("unavailable")}
+                        </span>
+                      </div>
+                    ))}
+                  </dd>
+                </div>
+
+                <p className="text-[11.5px] leading-[1.5] text-mute">
+                  {t("envNote")}
+                </p>
+              </dl>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <dt className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                {t("worktreesRoot")}
-              </dt>
-              <dd className="m-0 break-all font-mono text-[13px] leading-[1.5] text-ink">
-                {worktreesRoot()}
-              </dd>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <dt className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                {t("hostTools")}
-              </dt>
-              <dd className="m-0 flex flex-col gap-1">
-                {tools.map((tool) => (
-                  <div
-                    key={tool.name}
-                    className="flex items-baseline justify-between gap-3 font-mono text-[13px] leading-[1.5]"
-                  >
-                    <span className="text-ink">{tool.name}</span>
-                    <span className="text-mute">
-                      {tool.available
-                        ? `${tool.version} (${t("available")})`
-                        : t("unavailable")}
-                    </span>
-                  </div>
-                ))}
-              </dd>
-            </div>
-
-            <p className="text-[11.5px] leading-[1.5] text-mute">
-              {t("envNote")}
-            </p>
-
-            {runtime ? (
-              <>
-                <AcpRunnersPanel
-                  defaultRunnerId={runtime.defaultRunnerId}
-                  presets={runtime.presets}
-                  runners={runtime.runners}
-                />
-                <RouterSidecarsPanel sidecars={runtime.sidecars} />
+            <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
+              {runtime ? (
                 <AdapterSupportPanel
                   adapters={runtime.adapters}
                   diagnostics={diagnostics}
                   runners={runtime.runners}
                 />
-              </>
-            ) : null}
-          </dl>
-        ) : (
+              ) : null}
+            </div>
+          </div>
+
+          {runtime ? (
+            <div className="mt-5 rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
+              <AcpRunnersPanel
+                defaultRunnerId={runtime.defaultRunnerId}
+                presets={runtime.presets}
+                runners={runtime.runners}
+                sidecars={runtime.sidecars}
+              />
+              <RouterSidecarsPanel sidecars={runtime.sidecars} />
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
           <p className="text-[13.5px] leading-[1.55] text-mute">
             {t("forbidden")}
           </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

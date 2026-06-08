@@ -414,6 +414,8 @@
     "policyDefault": "default",
     "policyDangerous": "dangerously skip permissions",
     "saveFailed": "Save failed",
+    "cancel": "Cancel",
+    "saving": "Saving…",
     "sub": "MAIster instance configuration (read-only).",
     "repoHome": "Repo home",
     "worktreesRoot": "Worktrees root",

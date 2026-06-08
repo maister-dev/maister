@@ -19,9 +19,7 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   await expect(page.getByText("claude-agent-acp")).toBeVisible();
   await expect(page.getByText("codex-acp")).toBeVisible();
   await expect(page.getByText("ccr-default").first()).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "codex-zai-glm" }),
-  ).toBeVisible();
+  await expect(page.getByRole("cell", { name: "codex-zai-glm" })).toBeVisible();
   await expect(page.getByText("NotReady").first()).toBeVisible();
   await expect(
     platformDefault.locator('option[value="codex-zai-glm"]'),
