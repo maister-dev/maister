@@ -86,9 +86,16 @@ const capabilityCommonSchema = z.object({
 
 export const mcpCapabilitySchema = capabilityCommonSchema.extend({
   kind: z.literal("mcp").default("mcp"),
+  // M27/T-C4: transport. Absent ⇒ `stdio` (back-compat) — readers default via
+  // `?? "stdio"`. `stdio` uses command/args/env; `sse`/`http` use url/headers.
+  // Header/env values are NEVER stored — only the NAME keys reach
+  // `capability_records.material`; values resolve supervisor-side.
+  transport: z.enum(["stdio", "sse", "http"]).optional(),
   command: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  url: z.string().url().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   enforceability: capabilityEnforceabilitySchema.default("enforced"),
 });

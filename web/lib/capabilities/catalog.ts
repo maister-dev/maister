@@ -66,11 +66,15 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
       // NEVER store `config` — it is arbitrary user YAML
       // (z.record(z.string(), z.unknown())) that can carry literal secret VALUES,
       // and nothing downstream reads it. Mirrors the env→envKeys redaction:
-      // `env` is reduced to key NAMES, `config` is dropped entirely (ISSUE 2).
+      // `env`/`headers` are reduced to key NAMES (T-C4), `config` is dropped
+      // entirely (ISSUE 2).
       return {
+        transport: c.transport ?? "stdio",
         command: c.command ?? null,
         args: c.args ?? [],
         envKeys: redactedEnv(c.env),
+        url: c.url ?? null,
+        headerKeys: redactedEnv(c.headers),
       };
     case "skill":
       return {

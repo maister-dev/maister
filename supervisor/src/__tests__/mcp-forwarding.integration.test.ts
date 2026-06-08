@@ -66,16 +66,9 @@ async function boot(): Promise<BootResult> {
   return { app, url, registry, runtimeRoot, recordPath };
 }
 
-type McpServerDef = {
-  name: string;
-  command: string;
-  args: string[];
-  envKeys: string[];
-};
-
 async function createSession(
   url: string,
-  mcpServers: McpServerDef[],
+  mcpServers: Array<Record<string, unknown>>,
 ): Promise<Response> {
   return fetch(`${url}/sessions`, {
     method: "POST",
@@ -177,5 +170,35 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
       name: SENTINEL_ENV_KEY,
       value: SENTINEL_ENV_VALUE,
     });
+  });
+
+  it("forwards an http MCP server as type=http with url + headers resolved from process.env (M27/T-C4)", async () => {
+    if (!booted) throw new Error("not booted");
+    const { url, recordPath } = booted;
+
+    const res = await createSession(url, [
+      {
+        name: "remote",
+        transport: "http",
+        url: "https://mcp.example.com/sse",
+        headerKeys: [SENTINEL_ENV_KEY],
+      },
+    ]);
+
+    expect(res.status).toBe(201);
+
+    const record = await readRecord(recordPath);
+    const remote = (record.mcpServers as Array<Record<string, unknown>>).find(
+      (s) => s.name === "remote",
+    );
+
+    expect(remote).toBeDefined();
+    expect(remote?.type).toBe("http");
+    expect(remote?.url).toBe("https://mcp.example.com/sse");
+    expect(remote?.headers).toContainEqual({
+      name: SENTINEL_ENV_KEY,
+      value: SENTINEL_ENV_VALUE,
+    });
+    expect(remote?.command).toBeUndefined();
   });
 });

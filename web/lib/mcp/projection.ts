@@ -24,32 +24,53 @@ function stripEnvPrefix(ref: string): string {
   return ref.startsWith("env:") ? ref.slice(4) : ref;
 }
 
+// NAME references → an `env`/`headers` map keyed by the var/header NAME →
+// `env:NAME` reference. The downstream `redactedEnv` keeps only the NAMES, so
+// no secret VALUE ever reaches `capability_records`.
+function refsToMap(
+  keys: readonly string[] | undefined,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+
+  for (const key of keys ?? []) {
+    const name = stripEnvPrefix(key);
+
+    map[name] = `env:${name}`;
+  }
+
+  return map;
+}
+
 // Map a stored row to the capability-config shape the resolver/materializer
-// consume. `envKeys` (NAME references) become an `env` map keyed by the var
-// NAME → `env:NAME` reference; the downstream `redactedEnv` keeps only the
-// NAMES. (sse/http url/header carry-through lands in T-C4.)
+// consume — transport-aware (T-C4): stdio carries command/args/env; sse/http
+// carry url/headers.
 export function platformMcpRowToCapability(
   row: PlatformMcpServer,
 ): PlatformMcpCapability {
-  const env: Record<string, string> = {};
+  const base = {
+    id: row.id,
+    kind: "mcp" as const,
+    label: row.id,
+    source: "platform" as const,
+    transport: row.transport,
+    agents: row.supportedAgents ?? ["claude", "codex"],
+    enforceability: "enforced" as const,
+    selected_by_default: true,
+  };
 
-  for (const key of row.envKeys ?? []) {
-    const name = stripEnvPrefix(key);
-
-    env[name] = `env:${name}`;
+  if (row.transport === "sse" || row.transport === "http") {
+    return {
+      ...base,
+      url: row.url ?? undefined,
+      headers: refsToMap(row.headerKeys),
+    };
   }
 
   return {
-    id: row.id,
-    kind: "mcp",
-    label: row.id,
-    source: "platform",
+    ...base,
     command: row.command ?? undefined,
     args: row.args ?? [],
-    env,
-    agents: row.supportedAgents ?? ["claude", "codex"],
-    enforceability: "enforced",
-    selected_by_default: true,
+    env: refsToMap(row.envKeys),
   };
 }
 

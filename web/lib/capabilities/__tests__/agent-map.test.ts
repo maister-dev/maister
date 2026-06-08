@@ -167,6 +167,7 @@ describe("mapProfileToAgentArtifacts", () => {
 
     expect(github).toEqual({
       name: "github",
+      transport: "stdio",
       command: "github-mcp",
       args: [],
       envKeys: ["GITHUB_TOKEN"],
@@ -177,6 +178,36 @@ describe("mapProfileToAgentArtifacts", () => {
     expect(serialized).toContain("GITHUB_TOKEN");
     expect(serialized).not.toContain(SECRET_VALUE);
     expect(serialized).not.toContain("value");
+  });
+
+  it("materializes sse/http mcp entries with url + headerKeys and no command (T-C4)", () => {
+    const profile = resolveCapabilityProfile({
+      projectId: "project-1",
+      executorAgent: "claude",
+      planMode: "off",
+      selectedMcpIds: ["remote"],
+      catalog: [
+        record({
+          capabilityRefId: "remote",
+          kind: "mcp",
+          material: {
+            transport: "http",
+            url: "https://mcp.example.com/sse",
+            headerKeys: ["MCP_AUTH"],
+          },
+        }),
+      ],
+    });
+
+    const result = mapProfileToAgentArtifacts({ profile, agent: "claude" });
+    const remote = result.mcpServers.find((s) => s.name === "remote");
+
+    expect(remote).toEqual({
+      name: "remote",
+      transport: "http",
+      url: "https://mcp.example.com/sse",
+      headerKeys: ["MCP_AUTH"],
+    });
   });
 
   it("omits mcpServers when no supported mcp entry exists (assertion 3 negative)", () => {
@@ -232,7 +263,7 @@ describe("mapProfileToAgentArtifacts", () => {
     expect("env" in result).toBe(false);
   });
 
-  it("produces instructed-only empty materialization for codex (assertion 7)", () => {
+  it("materializes mcpServers for codex (MCP via ACP) but no settings.local.json or skills (assertion 7) — M27/T-C4", () => {
     const result = mapProfileToAgentArtifacts({
       profile: codexProfile(),
       agent: "codex",
@@ -240,8 +271,10 @@ describe("mapProfileToAgentArtifacts", () => {
       permissionMode: "deny",
     });
 
+    // codex-acp consumes MCP via ACP session/new — materialized for codex now.
+    expect(result.mcpServers.map((s) => s.name)).toContain("github");
+    // settings.local.json (permissions) is Claude-only; codex skills use `$`.
     expect(result.settingsLocal).toBeNull();
-    expect(result.mcpServers).toEqual([]);
     expect(result.skills).toEqual([]);
   });
 });

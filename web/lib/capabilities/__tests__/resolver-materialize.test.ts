@@ -465,6 +465,7 @@ describe("materializeCapabilityProfile", () => {
 
     expect(github).toEqual({
       name: "github",
+      transport: "stdio",
       command: "github-mcp",
       args: [],
       envKeys: ["GITHUB_TOKEN"],
@@ -624,7 +625,7 @@ describe("materializeCapabilityProfile", () => {
     expect(result.adapterLaunch.preArgs).toBeUndefined();
   });
 
-  it("writes no settings.local.json / mcp defs for codex and leaks no secret (req 7)", async () => {
+  it("materializes mcp defs for codex but writes no settings.local.json and leaks no secret (req 7) — M27/T-C4", async () => {
     const result = await materializeCapabilityProfile({
       runId: "run-1",
       worktreePath: workDir,
@@ -640,7 +641,9 @@ describe("materializeCapabilityProfile", () => {
     expect(basenames).toContain("profile.json");
     expect(basenames).toContain("instructions.md");
     expect(result.settingsLocalPath).toBeNull();
-    expect(result.mcpServers).toEqual([]);
+    // codex-acp consumes MCP via ACP — the github server IS materialized now
+    // (T-C4), but settings.local.json is still never written for codex.
+    expect(result.mcpServers.map((s) => s.name)).toEqual(["github"]);
     expect(result.materializedFiles).toEqual([]);
     expect(result.adapterLaunch.preArgs).toBeUndefined();
 

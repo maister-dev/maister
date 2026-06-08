@@ -61,4 +61,28 @@ describe("platformMcpRowToCapability (T-C3)", () => {
 
     expect(cap.agents).toEqual(["claude"]);
   });
+
+  it("tags a stdio row with transport=stdio", () => {
+    const cap = platformMcpRowToCapability(row({}));
+
+    expect(cap.transport).toBe("stdio");
+  });
+
+  it("maps an http row to transport/url/headers, not command (T-C4)", () => {
+    const cap = platformMcpRowToCapability(
+      row({
+        id: "remote",
+        transport: "http",
+        command: null,
+        envKeys: [],
+        url: "https://mcp.example.com/sse",
+        headerKeys: ["env:MCP_AUTH"],
+      }),
+    );
+
+    expect(cap.transport).toBe("http");
+    expect(cap.url).toBe("https://mcp.example.com/sse");
+    expect(cap.headers).toEqual({ MCP_AUTH: "env:MCP_AUTH" });
+    expect(cap.command).toBeUndefined();
+  });
 });

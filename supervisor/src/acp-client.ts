@@ -165,12 +165,32 @@ export async function createAcpConnection(
     "acp initialized",
   );
 
-  const acpMcpServers = (args.mcpServers ?? []).map((s) => ({
-    name: s.name,
-    command: s.command,
-    args: s.args,
-    env: s.envKeys.map((k) => ({ name: k, value: process.env[k] ?? "" })),
-  }));
+  // M27/T-C4: build the transport-appropriate ACP McpServer. Secret VALUES are
+  // resolved here, supervisor-side, from process.env by NAME — never received
+  // from the web tier (envKeys/headerKeys carry NAMES only).
+  const acpMcpServers: acp.McpServer[] = (args.mcpServers ?? []).map((s) => {
+    if (s.transport === "sse" || s.transport === "http") {
+      return {
+        type: s.transport,
+        name: s.name,
+        url: s.url ?? "",
+        headers: (s.headerKeys ?? []).map((k) => ({
+          name: k,
+          value: process.env[k] ?? "",
+        })),
+      };
+    }
+
+    return {
+      name: s.name,
+      command: s.command ?? "",
+      args: s.args ?? [],
+      env: (s.envKeys ?? []).map((k) => ({
+        name: k,
+        value: process.env[k] ?? "",
+      })),
+    };
+  });
 
   // Resume uses the ACP `session/resume` call: it restores the prior
   // conversation into the agent's context WITHOUT replaying history (ACP spec:
