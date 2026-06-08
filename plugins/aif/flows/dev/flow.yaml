@@ -1,0 +1,165 @@
+schemaVersion: 1
+name: aif-dev
+metadata:
+  title: "AIF — Develop"
+  summary: "Spec-driven delivery: intake → plan → improve → review → implement → checks → review → fix → commit."
+  labels: [feature, enhancement, refactor]
+  route_when: "A feature/enhancement/refactor with a clear spec."
+  links:
+    - { kind: framework, title: "AI Factory 2.x", url: "https://github.com/lee-to/ai-factory/tree/2.x" }
+    - { kind: docs, title: "Dev Workflow", url: "https://github.com/lee-to/ai-factory/blob/2.x/docs/workflow.md" }
+  sources:
+    - { component: "skills/aif-*, agents/*", origin: "github.com/lee-to/ai-factory@2.x" }
+runner_profiles:
+  claude-code:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
+# Graph form (nodes[]) → engine_min >= 1.1.0; typed artifacts → >= 1.2.0.
+compat:
+  engine_min: 1.2.0
+# Flow-level calibration default, folded into the advisory ai_judgment gate at compile.
+verdict_calibration:
+  confidence_min: 0.7
+nodes:
+  # Preferences intake — MAIster-native HITL form (AskUserQuestion is disabled in
+  # the adapter; the skills run non-interactively against these answers).
+  - id: intake
+    type: form
+    settings:
+      form_schema: ./schemas/intake.json
+    transitions:
+      success: plan
+
+  - id: plan
+    type: ai_coding
+    action:
+      prompt: |
+        /aif-plan {{ task.prompt }}
+
+        Non-interactive run — apply these preferences and do NOT ask:
+        Testing={{ steps.intake.vars.tests }}, Logging={{ steps.intake.vars.logging }}, Docs={{ steps.intake.vars.docs }}.
+    transitions:
+      success: improve
+
+  - id: improve
+    type: ai_coding
+    action:
+      prompt: "/aif-improve"
+    transitions:
+      success: plan_review
+
+  - id: plan_review
+    type: human
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve, rework]
+        commentsVar: plan_review_comments
+    transitions:
+      approve: implement
+      rework: plan
+    rework:
+      allowedTargets: [plan]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: plan_review_comments
+
+  - id: implement
+    type: ai_coding
+    action:
+      prompt: "/aif-implement"
+    output:
+      produces:
+        - id: impl-diff
+          kind: diff
+          requiredFor: [review, merge]
+    transitions:
+      success: checks
+
+  # Stack-agnostic verification (no hardcoded pnpm) — emits the gate result artifact.
+  - id: checks
+    type: ai_coding
+    action:
+      prompt: "/aif-verify"
+    input:
+      requires:
+        - artifact: impl-diff
+          kind: diff
+    output:
+      produces:
+        - id: aif-gate-result
+          kind: test_report
+    transitions:
+      success: code_review
+
+  - id: code_review
+    type: ai_coding
+    action:
+      prompt: "/aif-review"
+    input:
+      requires:
+        - artifact: impl-diff
+          kind: diff
+    output:
+      produces:
+        - id: ai-judgment
+          kind: ai_judgment
+    transitions:
+      success: review
+
+  - id: review
+    type: human
+    input:
+      requires:
+        - artifact: ai-judgment
+          kind: ai_judgment
+    pre_finish:
+      gates:
+        - id: impl-diff-required
+          kind: artifact_required
+          mode: blocking
+          inputArtifacts: [impl-diff]
+        - id: ai-quality-advisory
+          kind: ai_judgment
+          mode: advisory
+          prompt: >
+            Assess the implementation diff against the task requirements.
+            Reply with a JSON object:
+            {"verdict":"pass"|"fail","confidence":0-1,"reasons":[...]}
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve, rework, takeover]
+        commentsVar: review_comments
+    transitions:
+      approve: commit
+      rework: fix
+      takeover: commit
+    rework:
+      allowedTargets: [fix]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
+
+  - id: fix
+    type: ai_coding
+    action:
+      prompt: "/aif-fix {{ steps.review.vars.review_comments }}"
+    transitions:
+      success: checks
+
+  - id: commit
+    type: ai_coding
+    action:
+      prompt: "/aif-commit"
+    pre_finish:
+      gates:
+        - id: commit-gate
+          kind: command_check
+          mode: blocking
+          command: "test -z \"$(git status --porcelain --untracked-files=no)\" && git log -1 --pretty=%s | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\([^)]+\\))?!?: .+'"
+    transitions:
+      success: done

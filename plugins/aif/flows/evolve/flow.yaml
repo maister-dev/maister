@@ -1,0 +1,58 @@
+schemaVersion: 1
+name: aif-evolve
+metadata:
+  title: "AIF — Evolve"
+  summary: "Periodic maintenance: distill .ai-factory/patches/* into improved skill-context."
+  labels: [maintenance, skills]
+  route_when: "Periodic: distill fix-patches into better skills (not feature work)."
+  links:
+    - { kind: framework, title: "AI Factory 2.x", url: "https://github.com/lee-to/ai-factory/tree/2.x" }
+    - { kind: docs, title: "Evolve / Reflex Loop", url: "https://github.com/lee-to/ai-factory/blob/2.x/docs/evolve.md" }
+  sources:
+    - { component: "skills/aif-*, agents/*", origin: "github.com/lee-to/ai-factory@2.x" }
+runner_profiles:
+  claude-code:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
+# Graph form, no typed artifacts → engine_min >= 1.1.0.
+compat:
+  engine_min: 1.1.0
+nodes:
+  - id: evolve
+    type: ai_coding
+    action:
+      prompt: "/aif-evolve"
+    transitions:
+      success: review
+
+  - id: review
+    type: human
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve, rework]
+        commentsVar: review_comments
+    transitions:
+      approve: commit
+      rework: evolve
+    rework:
+      allowedTargets: [evolve]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
+
+  - id: commit
+    type: ai_coding
+    action:
+      prompt: "/aif-commit"
+    pre_finish:
+      gates:
+        - id: commit-gate
+          kind: command_check
+          mode: blocking
+          command: "test -z \"$(git status --porcelain --untracked-files=no)\" && git log -1 --pretty=%s | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\([^)]+\\))?!?: .+'"
+    transitions:
+      success: done

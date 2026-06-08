@@ -1,0 +1,113 @@
+schemaVersion: 1
+name: aif-bugfix
+metadata:
+  title: "AIF — Bugfix"
+  summary: "Fast bug loop: fix → checks → review → commit; emits a self-improvement patch."
+  labels: [bug, hotfix, regression]
+  route_when: "A reported bug/error to fix."
+  links:
+    - { kind: framework, title: "AI Factory 2.x", url: "https://github.com/lee-to/ai-factory/tree/2.x" }
+    - { kind: docs, title: "Dev Workflow", url: "https://github.com/lee-to/ai-factory/blob/2.x/docs/workflow.md" }
+  sources:
+    - { component: "skills/aif-*, agents/*", origin: "github.com/lee-to/ai-factory@2.x" }
+runner_profiles:
+  claude-code:
+    capability_agent: claude
+    adapter: claude
+    model: claude-sonnet-4-6
+    provider:
+      kind: anthropic
+compat:
+  engine_min: 1.2.0
+verdict_calibration:
+  confidence_min: 0.7
+nodes:
+  - id: fix
+    type: ai_coding
+    action:
+      prompt: "/aif-fix {{ task.prompt }}"
+    output:
+      produces:
+        - id: impl-diff
+          kind: diff
+          requiredFor: [review, merge]
+        - id: patch
+          kind: generic_file
+    transitions:
+      success: checks
+
+  - id: checks
+    type: ai_coding
+    action:
+      prompt: "/aif-verify"
+    input:
+      requires:
+        - artifact: impl-diff
+          kind: diff
+    output:
+      produces:
+        - id: aif-gate-result
+          kind: test_report
+    transitions:
+      success: code_review
+
+  - id: code_review
+    type: ai_coding
+    action:
+      prompt: "/aif-review"
+    input:
+      requires:
+        - artifact: impl-diff
+          kind: diff
+    output:
+      produces:
+        - id: ai-judgment
+          kind: ai_judgment
+    transitions:
+      success: review
+
+  - id: review
+    type: human
+    input:
+      requires:
+        - artifact: ai-judgment
+          kind: ai_judgment
+    pre_finish:
+      gates:
+        - id: impl-diff-required
+          kind: artifact_required
+          mode: blocking
+          inputArtifacts: [impl-diff]
+        - id: ai-quality-advisory
+          kind: ai_judgment
+          mode: advisory
+          prompt: >
+            Assess the fix diff against the reported bug.
+            Reply with a JSON object:
+            {"verdict":"pass"|"fail","confidence":0-1,"reasons":[...]}
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve, rework]
+        commentsVar: review_comments
+    transitions:
+      approve: commit
+      rework: fix
+    rework:
+      allowedTargets: [fix]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
+
+  - id: commit
+    type: ai_coding
+    action:
+      prompt: "/aif-commit"
+    pre_finish:
+      gates:
+        - id: commit-gate
+          kind: command_check
+          mode: blocking
+          command: "test -z \"$(git status --porcelain --untracked-files=no)\" && git log -1 --pretty=%s | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\([^)]+\\))?!?: .+'"
+    transitions:
+      success: done

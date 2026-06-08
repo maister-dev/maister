@@ -179,25 +179,17 @@ describe("authored Flow package body validation", () => {
     ]);
   });
 
-  // QUARANTINED (T1/T2 restructure: plugins/aif is no longer a single flat authored
-  // flow package — it is now capability/ + flows/<name>/. This canonical-import
-  // assertion is rewritten/replaced in T7. See
-  // .ai-factory/plans/feature-aif-flow-package.md (T4 inc3 note).
-  it.skip("imports the canonical AIF package artifacts", async () => {
-    const body = await readAuthoredFlowPackageDirectory("../plugins/aif");
+  // T7 (post-restructure): `plugins/aif` is no longer a single flat authored flow
+  // package — it is a meta-package (capability/ bundle + flows/<name>/ + config/).
+  // The canonical authored flow package is now each flow source dir; assert the
+  // shipped `flows/dev` reads + validates as a valid authored package.
+  it("imports the canonical AIF dev flow as a valid authored package", async () => {
+    const body = await readAuthoredFlowPackageDirectory(
+      "../plugins/aif/flows/dev",
+    );
 
     expect(body.validation.status).toBe("valid");
-    expect(body.files.map((file) => `${file.kind}:${file.path}`)).toEqual(
-      expect.arrayContaining([
-        "readme:README.md",
-        "setup:setup.sh",
-        "schema:schemas/review.json",
-        "skill:skills/aif/SKILL.md",
-        "rule:rules/base.md",
-        "agent_definition:agents/coordinator.md",
-        "script:scripts/aif-flow.sh",
-      ]),
-    );
+    expect(body.packageMetadata.slug).toBe("aif-dev");
   });
 
   it("preserves unclassified package files as portable assets", async () => {
