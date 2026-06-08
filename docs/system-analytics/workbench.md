@@ -10,6 +10,14 @@
 > **C — diff** (reuses M18). Renderer: [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer).
 > No-polling reaffirms [ADR #1 / ADR-007](../decisions.md#adr-007-sse-pipe-to-disk-for-step-output).
 
+> **Rendering upgrade (Designed, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
+> Track B file content (today a plain `<pre>`) becomes a server-rendered Shiki
+> view with a `?file=` deep-link; Track C diff (today `RawDiff` `<pre>`) becomes a
+> `@git-diff-view/react` split/inline view with per-file `+`/`−` counts. The
+> read-only boundary, git-tracked-only reads, `readRepoFiles`/`readBoard` gates,
+> and 413/415 caps are unchanged; only presentation and the `/diff` response
+> (gains `additions`/`deletions`) change.
+
 ## Purpose
 
 The **workbench** domain is M22's run-inspection surface: it makes a run's
@@ -216,7 +224,8 @@ flowchart LR
   [ADR-064 authored layout](../decisions.md#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section)
   (supersedes [ADR-051](../decisions.md#adr-051-flow-graph-layout-metadata-store-project-scoped-flow_id-keyed)),
   [ADR-052 live coloring](../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
-  [ADR-053 file-tree](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads).
+  [ADR-053 file-tree](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
+  [ADR-066 editor/diff rendering](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Designed).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`…/graph`,
   `…/graph-status`, `…/files[/content]`,
   `/api/projects/{slug}/files[/content]`, the flow-run `…/diff` case).

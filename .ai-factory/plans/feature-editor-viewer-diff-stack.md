@@ -1,0 +1,116 @@
+# Implementation Plan: Editor / viewer / diff stack (ADR-066)
+
+Branch: claude/zen-allen-944361 (existing worktree — NO new branch created per the ADR-066 plan)
+Created: 2026-06-08
+
+Decision of record: [ADR-066](../../docs/decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror).
+Spike: `@git-diff-view/react@0.1.5` verified (split+inline, line numbers, React 19, hast/`registerHighlighter`, `extendData`/`DiffViewWithMultiSelect`); `additionLength`/`deletionLength` NOT populated via public init → `+`/`−` computed server-side.
+
+## Settings
+- Testing: yes
+- Logging: standard — server-side modules (`lib/highlight`, `lib/diff`, the RSC blob read, `authored-lint`) log through the existing pino boundary; client components surface states via UI + error boundaries and avoid `console.*` (repo `no-console` lint rule).
+- Docs: yes — mandatory docs checkpoint. Per the project `aif-plan` skill-context, analytics is FRONT-LOADED in Phase 0 (leading source of truth), not a trailing sync; each code phase flips its `(Designed)` doc piece to `(Implemented)`.
+
+## Roadmap Linkage
+Milestone: "none"
+Rationale: Cross-cutting UI rendering upgrade governed by ADR-066 — enhances the already-shipped M22 workbench (file-tree + diff) and the M25 authored-Flow editing surface; not a standalone roadmap milestone.
+
+## Scope guardrails (do not drift)
+- Repo files stay **view-only** — no file write route (confirmed scope). The workbench read-only boundary (ADR-053/064) is unchanged.
+- Slice 3 swaps the editing **widget** only; the existing `updateAuthoredFlowAction` save path + `manageCatalog` gate + optimistic lock are unchanged.
+- NO new `runs.status` value, enum, or state-changing route. NO new DB column/table. The `/diff` response only gains additive fields.
+- One Shiki major (`shiki@4`), server-side only; the diff plugs it via a thin custom `DiffHighlighter` adapter. No `@git-diff-view/shiki` (it pins `shiki@3`); no `codemirror-json-schema` (stale `shiki@^1`).
+- Comment-ready diff (keep git-diff-view's `extendData`/`DiffViewWithMultiSelect` reachable) but DO NOT build code-review comments here — that is a separate future feature.
+
+## Cross-cutting compliance (project aif-plan skill-context)
+
+### Contract surfaces → spec files (docs phase checklist)
+| Surface that changes | Spec file(s) |
+| --- | --- |
+| `GET /api/runs/[runId]/diff` response gains per-file `additions`/`deletions` (additive) | `docs/api/web.openapi.yaml` + `docs/system-analytics/workbench.md` (Track C) |
+| Run/project file view selection moves to URL `?file=` (page query param; not an HTTP route) | `docs/system-analytics/workbench.md` (Track B) — NOT OpenAPI |
+| New `?diffview=split\|unified` page query param | `docs/system-analytics/workbench.md` (Track C) |
+| Authored-Flow editor widget (`flowYaml` + `files[]`) → CodeMirror | `docs/system-analytics/capability-catalog.md` (editor section) |
+| `GET …/files/content` (run + project) **retired** — orphaned by the RSC viewer (Slice 1) | `docs/api/web.openapi.yaml` (remove paths) + `docs/system-analytics/workbench.md` (Track B) |
+No new env var, error code, DB column, SSE event, or Flow DSL field → those spec files are untouched.
+
+### HTTP identifiers (trust labels)
+- `GET /api/runs/[runId]/diff` — `runId` = `url-param`; `projectId` = `server-state` (from the run row); authz `requireProjectAction(projectId,"readBoard")`. No body.
+- RSC `?file=` read (run-detail + project board, server components) — `runId`/`slug` = `url-param`; `file` = **`body-controlled` (untrusted)** → MUST pass `repoRelPathSchema` (the existing guard in `lib/worktree.ts`: no `..`, not absolute, no leading `-`, no NUL) BEFORE `readBlob`; authz `requireProjectAction(projectId,"readRepoFiles")`. Mirrors `app/api/runs/[runId]/files/content/route.ts` exactly. `ref` stays `server-state` (run branch / project default branch).
+
+### Deployment touchpoints
+N/A — all new deps (`shiki`, `@git-diff-view/react`, `@uiw/react-codemirror`, `@codemirror/*`) are bundled libraries: no new env var, bound port, sidecar binary, or host-mounted file → `Dockerfile`/`compose*.yml`/`.env.example` untouched. One runtime note: the Shiki highlight module runs in the **Node.js runtime** (RSC default), never the Edge runtime (Shiki uses lazy imports; Node ≥20 — host is Node 24).
+
+### Test integrity (every phase)
+- Runner: new unit tests land under `components/**/*.test.ts` or `lib/**/*.test.ts` (the `unit` vitest project, `node` env, no jsdom) and use `renderToStaticMarkup` for server/presentational components. CodeMirror (dynamic `ssr:false`, browser APIs) is NOT unit-testable via `renderToStaticMarkup` → its coverage is Playwright e2e; unit tests cover only its pure helpers. Confirm each new test file matches the `unit` include glob before marking a task done.
+- Per-phase green gate: each phase exits only on `pnpm --filter maister-web lint && pnpm --filter maister-web typecheck && pnpm --filter maister-web test` green (no skips without a tracked reason).
+- Assertion migration is IN-SCOPE in the phase that changes the markup (enumerated per phase below).
+
+## Commit Plan
+- **Commit 1** — Phase 0 (analytics/contracts): `docs(adr-066): editor/diff/editor contracts (workbench Track B/C, /diff shape, authored editor)`
+- **Commit 2** — Phase 1 (Shiki read view): `feat(workbench): server-rendered Shiki file viewer + ?file= deep-link`
+- **Commit 3** — Phase 2 (diff): `feat(workbench): git-diff-view split/inline diff + per-file +/- (workbench + review)`
+- **Commit 4** — Phase 3 (authored editor): `feat(flows): CodeMirror authored-Flow editor (highlight + lint + autocomplete)`
+
+## Tasks
+
+### Phase 0 — Analytics & contracts (docs-first, leading source of truth)
+- [ ] **T0.1 — Workbench Track B + C full contract.** In `docs/system-analytics/workbench.md`, rewrite the Track B file-flow and Track C diff-flow to the target rendering as **(Designed)**: Track B = server-rendered Shiki view selected by `?file=` (validated by `repoRelPathSchema`, `readRepoFiles`, 413/415/not-found preserved, file-tree stays client + navigates `?file=`); Track C = `@git-diff-view/react` split/inline (`?diffview=`), per-file `+`/`−`, collapsible hunks, server-built Shiki bundle. Keep the read-only boundary and existing gates verbatim. Update the two Mermaid flow nodes ("render in pre" → Shiki view; "RawDiff pre" → git-diff-view) and the Expectations bullets. Logging: docs-only. Docs: this file. Verify: `pnpm validate:docs` green (Mermaid + ADR anchors).
+- [ ] **T0.2 — `/diff` shape + retire `/files/content`.** In `docs/api/web.openapi.yaml`: (a) add per-file `additions`/`deletions` (integer) to the `…/diff` response `files[]` (additive); (b) REMOVE the `GET /api/runs/{runId}/files/content` and `GET /api/projects/{slug}/files/content` paths — retired in Slice 1 (replaced by the server RSC read, FINDING E). Verify: `npx @redocly/cli lint docs/api/web.openapi.yaml` clean.
+- [ ] **T0.3 — Authored editor contract.** In `docs/system-analytics/capability-catalog.md`, expand the editor section to the CodeMirror target as **(Designed)**: per-kind language, file-level diagnostics from `validateAuthoredFlowPackageBody` issues (`{code,path,message}`; `yaml_parse` may carry a line marker), static-vocab autocomplete; lifecycle/`manageCatalog`/optimistic-lock/save-action unchanged. Verify: `pnpm validate:docs` green.
+- [ ] **T0.4 — Rules consistency (FINDING D).** Update `.ai-factory/rules/frontend.md:19` ("Render `git diff` … inside a `<pre>` … Syntax highlighting is a Phase 2 enhancement") so it reflects ADR-066 — highlighted file/diff rendering is now the workbench standard. Grep `base.md` / `web/CLAUDE.md` for the same "Phase 2 highlighting" framing and align. Rules/docs-only.
+- [ ] **Phase 0 exit:** the three docs + the `frontend.md` rule are internally consistent and name every state/refusal/param exactly as code will gate; the `/files/content` paths are removed from `web.openapi.yaml`; `pnpm validate:docs` green. (Tags stay `(Designed)`; each code phase flips its piece to `(Implemented)`.)
+
+### Phase 1 — Slice 1: Shiki server-rendered repo file view (FIRST PRIORITY)
+- [ ] **T1.0 — Route-isolation spike (FINDING A; gates the rest of Slice 1).** Confirm in Next 16 App Router that `runId`-scoped heavy loads (flow-graph compile + `getRunNodeStatuses` + `buildReviewPanelData`/diff prep) can be hoisted so a `?file=`/`?wb=`/`?diffview=` change does NOT re-run them. Searchparam changes re-render `page.tsx` and re-run its server loads → without isolation, every file click recompiles the graph and (on a Review-state run, post-Slice-2) re-highlights the whole diff. Compare: a nested `app/(app)/runs/[runId]/layout.tsx` (layouts persist across child navigations and do not re-run their loaders; they can't read `searchParams`, so `?file=` lives in the child) vs a parallel `@file` route slot. **Direction chosen by the user: nested layout / parallel route.** Output: the chosen target structure + a log/micro-bench proving the heavy loaders run ONCE across N file clicks. Do not start T1.4–T1.6 until this is settled.
+- [ ] **T1.1 — Add `shiki@4`.** `pnpm --filter maister-web add shiki` (pin major 4). Commit `package.json` + lockfile. Logging: n/a.
+- [ ] **T1.2 — Highlight core (`web/lib/highlight/shiki.ts`).** Server singleton highlighter with **lazy/dynamic grammar loading** (Shiki on-demand `loadLanguage`, NOT a fixed preload — repo files are open-ended, FINDING F) + `plaintext` fallback for unknown/unsupported langs; lazy-init the singleton via a cached promise (no concurrent double-init); a dual-theme pair, e.g. `github-light`/`github-dark`, `defaultColor:false`; `highlightToHtml(code, lang)` → dual-theme HTML (line numbers); `langFromPath(path)` (shared with Slices 2/3). Logging: pino `warn` on unknown lang (fallback `plaintext`) + on highlighter init failure. Files: `web/lib/highlight/shiki.ts`. Tests (unit, `lib/highlight/__tests__/shiki.test.ts`): `langFromPath` table; `highlightToHtml` returns spans with the dual-theme CSS-var style for a known lang and falls back for unknown — await the async fn directly.
+- [ ] **T1.3 — Dual-theme tokens (`web/styles/globals.css`).** Add the Shiki dual-theme CSS-var rules under `.light`/`.dark` (map `--shiki-*` to switch on the existing `html.dark` class) + line-number gutter styling using forest tokens. Logging: n/a. Tests: covered by the e2e theme-toggle assertion (T1.8); optional `styles/**/*.test.ts` snippet check.
+- [ ] **T1.4 — `web/components/workbench/code-view.tsx` (server component).** Async server component: given a validated blob result, render highlighted HTML + line numbers for `text`; render the existing i18n states for `too-large`/`binary`/`not-found`/`empty` (reuse `workbench.files.*`). No `"use client"`. Logging: pino `debug` on render path (lang, byteLen). Files: new component.
+- [ ] **T1.5 — File tree → `?file=` navigation.** Refactor `web/components/workbench/file-tree.tsx`: keep client-side lazy dir expand via the `…/files` API; selecting a file navigates to `?file=<path>` (preserving `wb=files`) via `<Link>`/`router.push` instead of triggering the old client content fetch. Remove the embedded client file-viewer/content-fetch coupling. The tree component MUST keep stable identity across the `?file=` soft-navigation (do NOT key it on `searchParams`) so `expandedDirs` survives a file open (FINDING B) — e2e-asserted in T1.8. Logging: none (client). Identifiers: the `?file=` it emits is consumed+validated server-side (T1.6).
+- [ ] **T1.6 — Restructure run-detail + project board for isolated `?file=` read (per T1.0).** Apply the T1.0 structure: hoist `runId`-scoped heavy loads into the persistent boundary (`runs/[runId]/layout.tsx` or the chosen parallel-route shape); render `<CodeView>` in the `?file=`-driven child/slot so file navigation does NOT re-run them. The blob read (wherever it lands) MUST, in order: gate `requireProjectAction(projectId,"readRepoFiles")` (auth before read), read `?file=`, **validate with `repoRelPathSchema`**, `readBlob({repo,ref,path,maxBytes:workbenchMaxFileBytes()})`, pass to `<CodeView>`. Same isolation for the project board repo tab (`components/board/panels/repo-files-panel.tsx`) if its loads are measurable. Mirror `parseWb` for `?file=`/`?diffview=`. Logging: pino `warn` on invalid `?file=` (CONFIG). Identifiers: see compliance §HTTP identifiers.
+- [ ] **T1.6b — Retire orphaned content routes (FINDING E).** Once the RSC viewer is the sole reader: `grep -rn "files/content"` to confirm no other consumer; then DELETE `app/api/runs/[runId]/files/content/route.ts` + `app/api/projects/[slug]/files/content/route.ts` and their tests (OpenAPI paths removed in T0.2; workbench.md Track B in T0.1). If a non-viewer consumer is found, keep the route and record why instead. Logging: n/a.
+- [ ] **T1.7 — i18n.** Add any new `workbench.files.*` keys (e.g. line-number aria) to `messages/en.json` + `messages/ru.json`. Verify EN/RU parity.
+- [ ] **T1.8 — Tests + migration (Phase 1).**
+  - Migrate `components/workbench/__tests__/file-viewer.test.ts` → the new `code-view` test: replace the `<pre>` + `data-testid="file-content"` text-state assertions with assertions on the highlighted markup (the highlighted container testid + content present); keep the too-large/binary/loading/empty negative assertions.
+  - e2e `e2e/m22-workbench.spec.ts`: open a file → highlighted content + line numbers; `?file=` deep-link loads directly; theme toggle recolors without refetch; **after opening a file, an expanded dir stays expanded** (FINDING B tree-state assert). Update selectors if the file-content container id changes.
+  - Remove the `…/files/content` route tests retired in T1.6b.
+  - Phase exit: lint + typecheck + `test` green.
+- [ ] **T1.9 — Docs flip.** In `docs/system-analytics/workbench.md` Track B, change the tag from `(Designed)` to `(Implemented)`; remove the now-redundant forward-pointer line for Track B.
+
+### Phase 2 — Slice 2: git-diff-view diff (workbench tab + Review panel)
+- [ ] **T2.1 — Add `@git-diff-view/react`.** Pin the exact `0.1.x` (0.x ⇒ exact). Commit `package.json` + lockfile. Do NOT add `@git-diff-view/shiki`.
+- [ ] **T2.2 — Shiki@4 DiffHighlighter adapter (`web/lib/diff/shiki-adapter.ts`).** Implement the `DiffHighlighter` shape (`name`, `type:"style"`, `getAST` → Shiki `codeToHast` from the shared `lib/highlight` highlighter, `processAST` via the lib's exported helper, `hasRegisteredCurrentLang`, `maxLineToIgnoreSyntax`). Logging: pino `warn` on unsupported lang. Tests (unit): `getAST` returns a hast `Root` for a known lang.
+- [ ] **T2.3 — Server diff-prep (`web/lib/diff/prepare.ts`).** Raw unified diff → `{ files: [{path,status,additions,deletions}], perFile: [{path, hunks, fileLang}], bundle }`: split by file (reuse `extractFileSection` logic), compute `additions`/`deletions` server-side (count `+`/`-` lines excluding `+++/---`), build the `DiffFile` + server-highlighted `getBundle()` per file via the adapter so the client ships zero Shiki. The output is an explicit **client DTO** — repo-relative `path` only, NO absolute worktree paths and NO server-only handles in any field (incl. `DiffFile.fileName` / the bundle), per the project `#response-leak` rule (FINDING C). Logging: pino `debug` (file count, total +/-). Tests (unit, `lib/diff/__tests__/prepare.test.ts`): `+`/`-` counts for a multi-file diff; per-file split; binary/empty diff; **DTO carries no absolute path and no `worktree`/`acp_session_id`-style key**.
+- [ ] **T2.4 — `/diff` route + `buildReviewPanelData` use diff-prep.** `app/api/runs/[runId]/diff/route.ts`: response `files[]` gains `additions`/`deletions` (additive; existing `{path,status}` stable) and the per-file prepared payload. `buildReviewPanelData` (in `app/(app)/runs/[runId]/page.tsx`) returns the same prepared structure instead of a raw `diff: string`. Both responses return the T2.3 DTO; a shape test asserts no extra / server-only keys (FINDING C). Logging: pino on diff size. Identifiers: see compliance.
+- [ ] **T2.5 — `web/components/workbench/diff-view.tsx` (client).** Wrap `DiffView`: `diffViewMode` from `?diffview=split|unified` (default split; mirror `parseWb`), feed the server bundle (override the default lowlight/highlight.js), line numbers + collapsible hunks on; a changed-files list with per-file `+`/`−` badges. Keep `extendData`/`DiffViewWithMultiSelect` reachable (comment-ready) but no comment UI. Logging: none (client). Files: new component.
+- [ ] **T2.6 — Replace BOTH raw-diff usages.** Workbench tab: `components/workbench/run-diff.tsx` renders `<DiffView>` instead of `<RawDiff>`. Review panel: `components/runs/review-panel.tsx` renders `<DiffView>` instead of `<RawDiff>`. Delete `components/runs/raw-diff.tsx` once both consumers move (its only two call sites). Logging: n/a.
+- [ ] **T2.7 — i18n.** Add `workbench.diff.split` / `.unified` / `.viewMode` / `.added` / `.removed` to `en.json` + `ru.json`. EN/RU parity.
+- [ ] **T2.8 — Tests + migration (Phase 2).**
+  - Delete/replace `components/runs/__tests__/raw-diff.test.ts` (component removed).
+  - Migrate `components/runs/__tests__/review-panel.test.ts`: the `<pre>` diff assertions (≈ lines 122–131) → assert the diff-view container renders (the Review panel is client + mocks `next-intl`/`next/navigation`; assert structure, not Shiki internals).
+  - `components/workbench/__tests__/run-diff.test.ts`: keep the changed-files-list assertions; migrate any that assumed `RawDiff`/`extractFileSection` output if the per-file feed changes.
+  - e2e: split↔inline toggle via `?diffview=`, line numbers, per-file `+`/`−` badges, collapsible hunks, theme — in `m22-workbench.spec.ts` (workbench) and a review-panel assertion in `m18-branch-promotion.spec.ts`.
+  - Bundle check (FINDING G): confirm `@git-diff-view/react`'s default `highlight.js`/`lowlight` do NOT land in the diff route's client chunk (we feed a server-built bundle + custom Shiki adapter); if they leak, lazy-load/exclude them.
+  - Phase exit: lint + typecheck + `test` green.
+- [ ] **T2.9 — Docs flip.** `docs/system-analytics/workbench.md` Track C → `(Implemented)`; confirm `web.openapi.yaml` `/diff` matches the shipped fields (T0.2).
+
+### Phase 3 — Slice 3: CodeMirror authored-Flow editor
+- [ ] **T3.1 — Add CodeMirror deps.** `@uiw/react-codemirror`, `@codemirror/lang-yaml`, `@codemirror/lang-json`, `@codemirror/lang-markdown`, `@codemirror/autocomplete`, `@codemirror/lint`, `@codemirror/view`, `@codemirror/state`, `@codemirror/commands`, `@codemirror/legacy-modes` (shell). Commit `package.json` + lockfile.
+- [ ] **T3.2 — `web/components/flows/code-editor.tsx` (client, `dynamic(..., { ssr:false })`).** Per-kind language by `langFromPath`/file kind (yaml/json/markdown+frontmatter/shell); forest theme via `createTheme()` mirroring the Shiki palette, switched by `useTheme()`; `readOnly` mode for non-editable inspection. Logging: none (client). Files: new component.
+- [ ] **T3.3 — Inline validation (`web/lib/flows/authored-lint.ts`).** A `@codemirror/lint` source that runs `validateAuthoredFlowPackageBody` on the current buffer and maps `issues[{code,path,message}]` → CodeMirror diagnostics. **File-level diagnostics** (whole-doc marker) since issues carry no line/col; for `code:"yaml_parse"`, surface the `yaml` parser's `linePos` as a precise line marker when available. Logging: pino `debug` (issue count) when invoked server-adjacent; client lint runs in-editor. Tests (unit, pure mapping fn): issues → diagnostics; `yaml_parse` line extraction; valid body → no diagnostics.
+- [ ] **T3.4 — Context autocomplete (`web/lib/flows/authored-complete.ts`).** Static vocab sources: flow step types (`cli|agent|guard|human`), known `flow.yaml` keys, known frontmatter/tool keys for skill/agent files; runner-name completion from a static list (live runner-catalog autocomplete DEFERRED). Logging: n/a. Tests (unit): completion sources return expected options for a given context.
+- [ ] **T3.5 — Swap textareas (save path unchanged).** In `app/(app)/flows/[projectSlug]/[capId]/page.tsx`, replace the `flowYaml` `<textarea>` with `<CodeEditor>` whose value feeds the SAME form field consumed by `updateAuthoredFlowAction` (keep a hidden input or controlled value so `requireFormRawString(formData,"flowYaml")` still works). In `components/flows/package-files-editor.tsx`, replace each file-content `<textarea>` with `<CodeEditor>` writing back into `draftFiles` (the `packageFilesJson` hidden-input serialization is unchanged). DO NOT change `updateAuthoredFlowAction` / `updateAuthoredDraft`. Logging: none (client).
+- [ ] **T3.6 — i18n.** Add `flows.editor.*` keys (validation/diagnostic labels, editor chrome) to `en.json` + `ru.json`. EN/RU parity.
+- [ ] **T3.7 — Tests + migration (Phase 3).**
+  - Migrate `components/flows/__tests__/package-files-editor.test.ts`: CodeMirror is `ssr:false` → it does not render under `renderToStaticMarkup`; keep/adjust the assertions on the surviving structure (the `name="packageFilesJson"` hidden input, the kind `<select>`, the path `<input>`, Add/Remove controls, the read-only/disabled branch) and drop the textarea-content-in-static-markup expectation.
+  - e2e: new `e2e/flows-authoring.spec.ts` (authed) — open an authored Flow, edit `flow.yaml` with highlighting, see an inline validation marker on a deliberately invalid manifest, trigger autocomplete, save via the existing action and confirm persistence. Confirm the spec matches the playwright `authed` project regex.
+  - Phase exit: lint + typecheck + `test` + e2e green.
+- [ ] **T3.8 — Docs flip.** `docs/system-analytics/capability-catalog.md` editor section → `(Implemented)`.
+
+## Open questions (carried, non-blocking)
+1. Diagnostics granularity: validator issues are file-level (`{code,path,message}`) → whole-editor markers; `yaml_parse` gets a line marker from the `yaml` parser. Per-line diagnostics for `schema`/`graph` issues would need a future locator on the validator — out of scope here.
+2. Runner-name autocomplete is static in v1; wiring the live runner catalog is a deferred follow-up.
+
+## For /aif-implement
+Plan file: `.ai-factory/plans/feature-editor-viewer-diff-stack.md` (pass explicitly — the working branch `claude/zen-allen-944361` is not a `feature/<slug>` branch, so branch-based plan discovery will not auto-match). Order: Phase 0 → 1 → 2 → 3.

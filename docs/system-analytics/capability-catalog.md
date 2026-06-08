@@ -105,6 +105,14 @@ These objects are not interchangeable. Publishing authored content makes it
 visible in the local catalog; it does not install, trust, enable, launch, or run
 setup hooks.
 
+**Editor upgrade (Designed, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
+The authored-Flow editing surface (`flowYaml` raw text and `files[]` content,
+today plain `<textarea>`s) becomes a CodeMirror 6 editor: per-kind language
+(yaml / json / markdown+frontmatter / shell), inline validation reusing
+`validateAuthoredFlowPackageBody`, and context autocomplete (step types, runner
+names, known frontmatter/tool keys). The authored-draft lifecycle, `manageCatalog`
+gate, optimistic lock, and validation gates are unchanged.
+
 ## Authored Flow package states
 
 | State                             | Meaning                                                                        | User actions                                           | Runtime effects                                                                        |
@@ -262,6 +270,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
 - DB: [`../database-schema.md`](../database-schema.md),
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md),
   [`../db/erd.md`](../db/erd.md).
-- ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
+- ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle),
+  [ADR-066 authored editor](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Designed).
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.

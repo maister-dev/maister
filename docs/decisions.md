@@ -3995,6 +3995,111 @@ separate route or menu item) and make the page reachable.
 
 ---
 
+### ADR-066: Editor and diff rendering stack (Shiki, git-diff-view, CodeMirror)
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** Three code-content surfaces render with no syntax highlighting.
+(1) The M22 workbench (ADR-053) shows git-tracked repo files in a plain `<pre>`
+(`file-viewer.tsx`) — no highlighting, no line numbers, read-only. (2) The same
+workbench renders the base→branch diff as raw `git diff` text in a `<pre>`
+(`raw-diff.tsx`) — no side-by-side, no line numbers, no per-file `+`/`−` counts.
+(3) The M25 authored-Flow catalog (ADR-061) edits `flow.yaml` and typed package
+files (`skill`/`rule`/`agent_definition`/`schema`/…) in plain `<textarea>`s — no
+highlighting, no inline validation. We need: highlighted multi-format file
+viewing (first priority), a real diff (side-by-side + inline, line numbers,
+per-file `+`/`−` counts, collapsible hunks), and smart editing for authored Flow
+artifacts (highlighting + inline validation + context autocomplete). Stack
+constraints: Next 16 App Router (RSC + SSR), React 19, Tailwind 4 + HeroUI v3,
+`.light`/`.dark` class on `<html>`, MIT-only deps, a self-hosted (offline-capable)
+host, i18n EN/RU.
+
+**Decision:** Adopt a best-of-breed **hybrid**, not a single all-in-one editor.
+Monaco is rejected for the current surfaces (see Alternatives).
+
+- **Repo file viewing (read-only, first priority) — Shiki, server-rendered.** A
+  React Server Component highlights the blob with `shiki` and ships HTML (**0 KB
+  client**, no worker, no `ssr:false`). Dual-theme output emits CSS variables
+  switched by the existing `.light`/`.dark` class on `<html>` — no theme
+  parameter to the server, no re-render on toggle, no FOUC. The selected file
+  moves into the URL (`?file=`, deep-linkable) per the data-management URL-state
+  convention; the server component reads the blob via the existing
+  `readBlob`/`readRepoFiles` path (git-tracked-only, 413/415 caps preserved). The
+  interactive file tree stays a client component.
+- **Diff — `@git-diff-view/react`.** Split (side-by-side) + unified (inline),
+  line numbers, collapsible hunks. Per-file additions/deletions are **computed
+  server-side** in `GET /api/runs/[id]/diff` (the library's
+  `additionLength`/`deletionLength` are not populated via the public init path —
+  spike-confirmed), and the response gains `additions`/`deletions` per file.
+  Highlighting is the shared Shiki, run **server-side**: the `DiffFile` + bundle
+  are built on the server and hydrated on the client, so **no Shiki ships to the
+  client**; the library's default lowlight/highlight.js highlighter is
+  overridden. The component is comment-ready (`extendData` / `renderExtendLine` /
+  `DiffViewWithMultiSelect`), so the future Human-Gate code-review/rework feature
+  builds on the same diff without re-doing it. Spike-verified: v0.1.5, React 19
+  peer, MIT.
+- **Authored-Flow editing — CodeMirror 6** (`@uiw/react-codemirror`, dynamic
+  `ssr:false`) replaces the `<textarea>`s. Per-kind language (yaml / json /
+  markdown+frontmatter / shell). "Smart" editing = inline validation (a
+  `@codemirror/lint` source reusing the existing `validateAuthoredFlowPackageBody`
+  validator) + context autocomplete (step types `cli|agent|guard|human`, runner
+  names, known frontmatter/tool keys).
+- **Single Shiki major — `shiki@4`.** The read-view and the diff share `shiki@4`
+  (it dropped legacy Node support — smaller and more stable), run server-side
+  only. The diff plugs Shiki in through a thin custom `DiffHighlighter` adapter
+  (`getAST` → Shiki `codeToHast`), avoiding `@git-diff-view/shiki` (which pins a
+  stale `shiki@3`). Shiki never ships to the client.
+
+The workbench **read-only boundary** (ADR-053/064) and the M25 **authored-draft**
+lifecycle (ADR-061) are unchanged: repo files stay view-only (no write route —
+confirmed scope), and authored editing keeps its `manageCatalog` gate, optimistic
+lock, and validation gates. Only presentation and the `/diff` response shape
+change.
+
+**Consequences:**
+- Repo viewing adds ~0 KB to the client (server-rendered); the diff tab adds the
+  `@git-diff-view/react` runtime (~30–60 KB) + a serialized syntax bundle (data,
+  not a highlighter); CodeMirror loads only on the authored-editing route via
+  `ssr:false`.
+- One highlighting system (Shiki) is shared by read-view and diff; CodeMirror is
+  the only editor, used only where a cursor is needed.
+- New MIT deps: `shiki`, `@git-diff-view/react`, `@uiw/react-codemirror` +
+  `@codemirror/*`. `@git-diff-view/react` is `0.x` → pin the exact version.
+- `GET /api/runs/[id]/diff` gains per-file `additions`/`deletions`;
+  `web.openapi.yaml` updates with the code.
+- New syntax-token surface in `globals.css` (Shiki dual-theme CSS vars + a forest
+  CodeMirror theme mirroring them); the forest palette previously had no
+  keyword/string/comment tokens.
+- The diff substrate is comment-ready, lowering the cost of the separate
+  Human-Gate code-review/rework feature (its own ADR, TBD).
+- Domain contracts (`workbench.md`, `capability-catalog.md`) carry a `(Designed)`
+  pointer to this ADR now and are rewritten to the shipped contract per slice.
+
+**Alternatives Considered:**
+- **Monaco everywhere:** rejected for current surfaces — 2–5 MB on the client on
+  every surface incl. the read-first viewer, client-only (loses RSC/SSR), default
+  worker load from the jsDelivr CDN (bad for a self-hosted/offline host;
+  self-hosting workers is extra Turbopack config), and its TS IntelliSense is
+  overkill for YAML/JSON/Markdown. Reserved for Phase 2 (true in-browser TS
+  IntelliSense, e.g. test-run UI / live agent editing).
+- **CodeMirror everywhere** (read + edit + `@codemirror/merge`): rejected as the
+  default — loses Shiki's 0-KB server-rendered read view; `@codemirror/merge` is a
+  merge view, a weaker git-patch renderer than git-diff-view (per-file `+`/`−` +
+  collapsible multi-file).
+- **`@git-diff-view/shiki`:** avoided — it pins a stale `shiki@3`; instead a thin
+  custom `DiffHighlighter` adapter wraps the shared `shiki@4`, and highlighting
+  runs server-side (the bundle is passed to the client), so Shiki never ships to
+  the browser.
+- **`codemirror-json-schema` for YAML/JSON schema:** rejected — pins a stale
+  `shiki@^1` transitive; reuse the existing `yaml` + `zod` validator via
+  `@codemirror/lint`.
+- **react-diff-view / diff2html / react-diff-viewer-continued:** rejected —
+  refractor/Prism/highlight.js/Emotion fragment the highlighting + theme story
+  away from Shiki; the git-diff-view spike cleared every diff requirement plus
+  first-class inline comments.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.
