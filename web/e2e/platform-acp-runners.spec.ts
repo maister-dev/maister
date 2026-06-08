@@ -50,3 +50,86 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
     scratchRunner.locator('option[value="codex-zai-glm"]'),
   ).toHaveAttribute("disabled", "");
 });
+
+test("admin can create, edit, and delete a platform ACP runner via the settings UI", async ({
+  page,
+}) => {
+  const runnerId = "e2e-temp-runner";
+
+  await page.goto("/settings");
+
+  // --- Create: open the modal, fill a valid claude/anthropic_compatible runner.
+  await page.getByRole("button", { name: "Add runner" }).click();
+
+  const modal = page.getByRole("dialog");
+
+  await expect(modal).toBeVisible();
+
+  await modal.getByLabel("Runner id").fill(runnerId);
+  await modal.getByLabel("Model").fill("glm-5.1");
+  // The provider-kind select is labelled "Provider"; switching to the
+  // anthropic-compatible kind reveals the Base URL + Auth token fields.
+  await modal.getByLabel("Provider").selectOption("anthropic_compatible");
+  await modal.getByLabel("Base URL").fill("https://api.z.ai/api/anthropic");
+  await modal.getByLabel("Auth token (env:NAME)").fill("env:ZAI_API_KEY");
+  await modal.getByRole("button", { name: "Save" }).click();
+
+  await expect(page.getByRole("cell", { name: runnerId })).toBeVisible();
+
+  // --- Edit: reopen the runner, change its model, expect the new model in-row.
+  const createdRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: runnerId }) });
+
+  await createdRow.getByRole("button", { name: "Edit" }).click();
+
+  const editModal = page.getByRole("dialog");
+
+  await expect(editModal).toBeVisible();
+  await editModal.getByLabel("Model").fill("glm-5.1-edited");
+  await editModal.getByRole("button", { name: "Save" }).click();
+
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ has: page.getByRole("cell", { name: runnerId }) })
+      .getByRole("cell", { name: "glm-5.1-edited" }),
+  ).toBeVisible();
+
+  // --- Delete: it is NOT the platform default → the 204 path removes the row.
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: runnerId }) })
+    .getByRole("button", { name: "Edit" })
+    .click();
+
+  const deleteModal = page.getByRole("dialog");
+
+  await expect(deleteModal).toBeVisible();
+  // First click arms the confirm gate, second click sends the DELETE.
+  await deleteModal.getByRole("button", { name: "Delete" }).click();
+  await deleteModal.getByRole("button", { name: /Delete this runner/ }).click();
+
+  await expect(page.getByRole("cell", { name: runnerId })).toHaveCount(0);
+
+  // --- Block path: deleting the seeded platform default ("claude-code") is
+  // refused with 409 CONFLICT → the modal surfaces the blocked message.
+  await page
+    .getByRole("row")
+    .filter({
+      has: page.getByRole("cell", { name: "claude-code", exact: true }),
+    })
+    .getByRole("button", { name: "Edit" })
+    .click();
+
+  const blockModal = page.getByRole("dialog");
+
+  await expect(blockModal).toBeVisible();
+  await blockModal.getByRole("button", { name: "Delete" }).click();
+  await blockModal.getByRole("button", { name: /Delete this runner/ }).click();
+
+  await expect(blockModal.getByText("Cannot delete runner")).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "claude-code", exact: true }),
+  ).toBeVisible();
+});
