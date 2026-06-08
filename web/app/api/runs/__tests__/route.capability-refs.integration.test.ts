@@ -31,7 +31,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -160,7 +160,9 @@ async function seedProject(
     enablementState: "Enabled",
     trustStatus: "trusted_by_policy",
   });
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(`exec-${id}`, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(`exec-${id}`, "claude"));
   await db
     .update(schema.projects)
     .set({ defaultRunnerId: `exec-${id}` })
@@ -333,6 +335,28 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+
+    // M27/T-C8 (§7.1.8): the resolved capability set is frozen onto the run.
+    const launched = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-known-skill"));
+
+    expect(launched).toHaveLength(1);
+    const snapshot = (
+      launched[0] as {
+        resolvedCapabilitySet: {
+          flowRevisionId?: string;
+          capabilities?: unknown[];
+          mcps?: unknown[];
+        } | null;
+      }
+    ).resolvedCapabilitySet;
+
+    expect(snapshot).not.toBeNull();
+    expect(typeof snapshot?.flowRevisionId).toBe("string");
+    expect(Array.isArray(snapshot?.capabilities)).toBe(true);
+    expect(Array.isArray(snapshot?.mcps)).toBe(true);
   });
 
   it("launches (202) when the ref resolves to an imported (flow-package) capability", async () => {

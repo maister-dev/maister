@@ -32,6 +32,7 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
+import { buildResolvedCapabilitySet } from "@/lib/capabilities/resolver";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
@@ -584,6 +585,45 @@ export async function launchRun(
     startPoint: baseCommit,
   });
 
+  // M27/T-C8 (§7.1.8): freeze the resolved capability set onto the run so an
+  // edit/publish mid-run cannot mutate it. flowOrigin: authored installs use a
+  // local filesystem source (the bridge temp dir); git installs use a remote ref.
+  const snapshotRecords = (await _db
+    .select({
+      capabilityRefId: capabilityRecords.capabilityRefId,
+      kind: capabilityRecords.kind,
+      source: capabilityRecords.source,
+      revision: capabilityRecords.revision,
+    })
+    .from(capabilityRecords)
+    .where(
+      and(
+        eq(capabilityRecords.projectId, project.id),
+        isNull(capabilityRecords.disabledAt),
+      ),
+    )) as Array<{
+    capabilityRefId: string;
+    kind: string;
+    source: string;
+    revision: string | null;
+  }>;
+  const resolvedCapabilitySet = buildResolvedCapabilitySet({
+    records: snapshotRecords,
+    flowRevisionId: revision.id,
+    flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+  });
+
+  log.debug(
+    {
+      runId,
+      flowRevisionId: revision.id,
+      flowOrigin: resolvedCapabilitySet.flowOrigin,
+      capabilityCount: resolvedCapabilitySet.capabilities.length,
+      mcpCount: resolvedCapabilitySet.mcps.length,
+    },
+    "[service.runs] resolved capability set snapshot built",
+  );
+
   try {
     await _db.transaction(async (tx: any) => {
       // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
@@ -597,6 +637,7 @@ export async function launchRun(
         runnerResolutionTier: runnerResolution.runnerResolutionTier,
         capabilityAgent,
         runnerSnapshot: runnerResolution.runnerSnapshot,
+        resolvedCapabilitySet,
         createdByUserId: ctx.actorUserId,
         status: "Pending",
         // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is

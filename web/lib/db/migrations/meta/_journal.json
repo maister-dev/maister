@@ -246,6 +246,13 @@
       "when": 1780618600000,
       "tag": "0034_m27_platform_mcp_servers",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1780618700000,
+      "tag": "0035_m27_runs_resolved_capability_set",
+      "breakpoints": true
     }
   ]
 }

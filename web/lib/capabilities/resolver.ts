@@ -6,6 +6,7 @@ import type {
   CapabilityProfileEntry,
   ResolvedCapabilityProfile,
 } from "@/lib/capabilities/types";
+import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 
 import { createHash } from "node:crypto";
 
@@ -34,6 +35,53 @@ const SOURCE_PRECEDENCE: Record<string, number> = {
 
 function sourceRank(source: string): number {
   return SOURCE_PRECEDENCE[source] ?? Number.MAX_SAFE_INTEGER;
+}
+
+// M27/T-C8 (§7.1.8): freeze the launch-time resolved capability set. Picks the
+// local-first winner per (kind, refId) — same precedence as selectedRecords —
+// then splits into capabilities (non-mcp) + mcps. Written onto
+// runs.resolved_capability_set so an edit/publish mid-run cannot mutate the run.
+export function buildResolvedCapabilitySet(args: {
+  records: ReadonlyArray<{
+    capabilityRefId: string;
+    kind: string;
+    source: string;
+    revision: string | null;
+  }>;
+  flowRevisionId: string;
+  flowOrigin: "authored" | "git";
+}): ResolvedCapabilitySet {
+  const winnerByKey = new Map<string, (typeof args.records)[number]>();
+
+  for (const record of args.records) {
+    const key = `${record.kind}::${record.capabilityRefId}`;
+    const existing = winnerByKey.get(key);
+
+    if (!existing || sourceRank(record.source) < sourceRank(existing.source)) {
+      winnerByKey.set(key, record);
+    }
+  }
+
+  const winners = [...winnerByKey.values()];
+
+  return {
+    flowRevisionId: args.flowRevisionId,
+    flowOrigin: args.flowOrigin,
+    capabilities: winners
+      .filter((r) => r.kind !== "mcp")
+      .map((r) => ({
+        refId: r.capabilityRefId,
+        kind: r.kind,
+        sha: r.revision,
+      })),
+    mcps: winners
+      .filter((r) => r.kind === "mcp")
+      .map((r) => ({
+        refId: r.capabilityRefId,
+        sha: r.revision,
+        scope: r.source,
+      })),
+  };
 }
 
 export type ResolveCapabilityProfileArgs = {

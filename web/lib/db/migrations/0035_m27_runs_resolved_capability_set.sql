@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "resolved_capability_set" jsonb;

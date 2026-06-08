@@ -908,6 +908,16 @@ export const flowRunnerRemaps = pgTable(
 
 export type RunKind = "flow" | "scratch";
 
+// M27/T-C8 (§3.1, ADR-068): the capability set resolved at launch, frozen onto
+// the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
+// whether the resolved flow revision came from the authored bridge or git.
+export type ResolvedCapabilitySet = {
+  flowRevisionId: string;
+  flowOrigin: "authored" | "git";
+  capabilities: Array<{ refId: string; kind: string; sha: string | null }>;
+  mcps: Array<{ refId: string; sha: string | null; scope: string }>;
+};
+
 export const runs = pgTable(
   "runs",
   {
@@ -993,6 +1003,11 @@ export const runs = pgTable(
     // crashed (current_step_id is nulled for a clean terminal read). Recover
     // re-dispatches THIS node; null → no resumable target → discard-only.
     resumeTargetStepId: text("resume_target_step_id"),
+    // M27/T-C8: capability set resolved + frozen at launch (read by the runner
+    // for in-flight immutability). Nullable for pre-migration / legacy runs.
+    resolvedCapabilitySet: jsonb(
+      "resolved_capability_set",
+    ).$type<ResolvedCapabilitySet>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
