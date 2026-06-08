@@ -71,6 +71,7 @@ import {
 } from "@/lib/assignments/service";
 import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
+  allNodeMcpRefs,
   workspacePolicySchema,
   type WorkspacePolicy,
 } from "@/lib/config.schema";
@@ -463,7 +464,7 @@ async function materializeNodeCapabilities(
 
   const agent = loaded.executor.agent;
   const declares = !!(
-    settings.mcps?.length ||
+    allNodeMcpRefs(settings.mcps).length ||
     settings.skills?.length ||
     settings.restrictions?.length ||
     settings.tools?.[agent]?.length ||
@@ -475,7 +476,10 @@ async function materializeNodeCapabilities(
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
     executorAgent: agent,
-    selectedMcpIds: settings.mcps,
+    // Undefined → resolver selects the default MCP set; a present value
+    // (required ∪ additional, T-C6) → that explicit set.
+    selectedMcpIds:
+      settings.mcps === undefined ? undefined : allNodeMcpRefs(settings.mcps),
     selectedSkillIds: settings.skills,
     selectedRestrictionIds: settings.restrictions,
     planMode: "off",

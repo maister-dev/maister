@@ -10,6 +10,7 @@ import { parse as parseYaml } from "yaml";
 import {
   ARTIFACT_KINDS,
   TERMINAL_TRANSITION_TARGET,
+  allNodeMcpRefs,
   flowYamlV1Schema,
   formSchemaSchema,
   maisterYamlV2Schema,
@@ -18,6 +19,7 @@ import {
   type FormSchema,
   type MaisterYamlV2,
   type NodeDef,
+  type NodeMcpsConfig,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -264,7 +266,7 @@ export function firstUnknownCapabilityRef(
   nodeType: "ai_coding" | "judge",
   settings:
     | {
-        mcps?: readonly string[];
+        mcps?: NodeMcpsConfig;
         skills?: readonly string[];
         restrictions?: readonly string[];
         settingsProfile?: string;
@@ -272,7 +274,8 @@ export function firstUnknownCapabilityRef(
     | undefined,
   capabilityRefIds: CapabilityRefIdSets,
 ): { kind: "mcp" | "skill" | "restriction" | "setting"; ref: string } | null {
-  for (const ref of settings?.mcps ?? []) {
+  // T-C6: validate BOTH required and additional MCP refs (normalized union).
+  for (const ref of allNodeMcpRefs(settings?.mcps)) {
     if (!capabilityRefIds.mcp.has(ref)) return { kind: "mcp", ref };
   }
 

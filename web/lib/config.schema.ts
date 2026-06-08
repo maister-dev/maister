@@ -515,6 +515,39 @@ export const flowRunnerProfileSchema = z
   })
   .strict();
 
+// M27/T-C6 (§3.2): a node's MCP selection is either a bare `string[]`
+// (back-compat — treated as `additional`) or a `{ required?, additional? }`
+// split. REQUIRED MCPs gate launch (T-C8); ADDITIONAL are best-effort. Both
+// branches are validated against the project registry by the hard-gate.
+const nodeMcpsSchema = z.union([
+  z.array(z.string().min(1)),
+  z
+    .object({
+      required: z.array(z.string().min(1)).optional(),
+      additional: z.array(z.string().min(1)).optional(),
+    })
+    .strict(),
+]);
+
+export type NodeMcpsConfig = z.infer<typeof nodeMcpsSchema>;
+
+export function normalizeNodeMcps(mcps: NodeMcpsConfig | undefined): {
+  required: string[];
+  additional: string[];
+} {
+  if (mcps === undefined) return { required: [], additional: [] };
+  if (Array.isArray(mcps)) return { required: [], additional: [...mcps] };
+
+  return { required: mcps.required ?? [], additional: mcps.additional ?? [] };
+}
+
+// Deduped union of required + additional — the full selected set for a node.
+export function allNodeMcpRefs(mcps: NodeMcpsConfig | undefined): string[] {
+  const { required, additional } = normalizeNodeMcps(mcps);
+
+  return [...new Set([...required, ...additional])];
+}
+
 export const aiCodingSettingsSchema = z
   .object({
     runner_type: z.literal("acp").default("acp"),
@@ -522,7 +555,7 @@ export const aiCodingSettingsSchema = z
     executors: z.never().optional(),
     model: z.string().min(1).optional(),
     thinkingEffort: thinkingEffortSchema.optional(),
-    mcps: z.array(z.string().min(1)).optional(),
+    mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
     skills: z.array(z.string().min(1)).optional(),
     settingsProfile: z.string().min(1).optional(),
@@ -537,7 +570,7 @@ export const aiCodingSettingsSchema = z
 
 export const judgeSettingsSchema = z
   .object({
-    mcps: z.array(z.string().min(1)).optional(),
+    mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
     skills: z.array(z.string().min(1)).optional(),
     restrictions: z.array(z.string().min(1)).optional(),
