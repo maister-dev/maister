@@ -107,11 +107,28 @@ setup hooks.
 
 **Editor upgrade (Designed, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
 The authored-Flow editing surface (`flowYaml` raw text and `files[]` content,
-today plain `<textarea>`s) becomes a CodeMirror 6 editor: per-kind language
-(yaml / json / markdown+frontmatter / shell), inline validation reusing
-`validateAuthoredFlowPackageBody`, and context autocomplete (step types, runner
-names, known frontmatter/tool keys). The authored-draft lifecycle, `manageCatalog`
-gate, optimistic lock, and validation gates are unchanged.
+today plain `<textarea>`s) becomes a CodeMirror 6 editor
+(`@uiw/react-codemirror`, dynamic `ssr:false`):
+
+- **Per-kind language** by file kind / path: yaml (`flow.yaml`), json
+  (`schema`), markdown+frontmatter (`skill` / `rule` / `readme` /
+  `agent_definition`), shell (`script` / `setup`); plus a `readOnly` mode for
+  non-editable inspection.
+- **Inline validation** through a `@codemirror/lint` source reusing
+  `validateAuthoredFlowPackageBody`. Its `validation.issues[]` are
+  `{code, path, message}` only (no line/col), so semantic issues
+  (`schema` / `graph` / `path_conflict` / …) render as **file-level**
+  diagnostics. For the YAML buffer the lint source re-parses with `yaml` and
+  maps a `YAMLParseError.linePos` to a precise line marker — the validator
+  stringifies the parse error into `message` and does NOT preserve position.
+- **Context autocomplete** from static vocab: step types
+  (`cli | agent | guard | human`), known `flow.yaml` keys, frontmatter / tool
+  keys for typed files, and a static runner-name list (live runner-catalog
+  autocomplete is a deferred follow-up).
+
+The authored-draft lifecycle, the `manageCatalog` gate, the optimistic lock, the
+`updateAuthoredFlowAction` / `updateAuthoredDraft` save path, and the validation
+gates are unchanged — only the editing widget changes.
 
 ## Authored Flow package states
 

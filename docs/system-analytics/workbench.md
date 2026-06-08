@@ -131,6 +131,13 @@ flowchart TD
 
 ### Lazy tracked file-tree expand + open
 
+The `…/files` tree expand is Implemented (M22). The file **open + render** path
+is the ADR-066 target (Designed): selecting a file is a `?file=` soft-navigation
+that the server component validates (`repoRelPathSchema`), authorizes
+(`readRepoFiles`), and reads via `readBlob`, then renders with server-side Shiki
+— the standalone `…/files/content` route is retired (Phase 1). The 413/415/404
+caps and the read-only boundary are unchanged.
+
 ```mermaid
 flowchart TD
     Expand["expand dir"] --> Files["GET /api/runs/{runId}/files?path=dir"]
@@ -141,14 +148,17 @@ flowchart TD
     Val -- yes --> LsTree["git ls-tree -z ref -- dir/"]
     LsTree -- not in tree --> F404["404 .git/gitignored/untracked"]
     LsTree -- entries --> Render["dirs-first list"]
-    Render --> OpenF["open file: GET .../files/content?path=file"]
+    Render --> OpenF["open file: ?file= soft-nav (RSC server-reads blob via readBlob)"]
     OpenF --> Blob["git cat-file -s then blob, cap MAISTER_WORKBENCH_MAX_FILE_BYTES"]
-    Blob -- text --> Pre["render in pre"]
+    Blob -- text --> Pre["server-rendered Shiki dual-theme HTML + line numbers (Designed, ADR-066)"]
     Blob -- too-large --> F413["413 marker"]
     Blob -- binary --> F415["415 marker"]
 ```
 
 ### Flow-run diff render (Track C)
+
+Flow runs render through `@git-diff-view/react` (Designed, ADR-066); the scratch
+diff (`scratch-dialog`) stays a raw `pre` and is out of this slice's scope.
 
 ```mermaid
 flowchart LR
@@ -156,10 +166,10 @@ flowchart LR
     Diff --> Kind{"run_kind?"}
     Kind -- scratch --> SB["scratch base, readScratchRun"]
     Kind -- flow --> FB["base = workspaces.base_commit ?? resolveBaseRef, readBoard"]
-    SB --> Range["diffRunWorkspace base..branch"]
-    FB --> Range
-    Range --> Names["diffNameStatus = files summary"]
-    Names --> Pre2["RawDiff pre + changed-files list; click anchors pre"]
+    SB --> SRange["diffRunWorkspace base..branch"]
+    FB --> FRange["diffRunWorkspace base..branch + diffNameStatus (per-file +/- server-side)"]
+    SRange --> SPre["raw pre in scratch-dialog (unchanged)"]
+    FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Designed, ADR-066)"]
 ```
 
 ## Expectations
@@ -186,10 +196,14 @@ flowchart LR
 - Live recolor refetches `…/graph-status` ONLY on an SSE event tick (debounced),
   NEVER on a timer, and MUST NOT refetch once `runs.status` is terminal.
 - File reads require the `readRepoFiles` action (min role `member`) — strictly
-  above `readBoard` — on every `…/files` and `…/files/content` route; a `viewer` is refused.
+  above `readBoard` — on every git-tracked-file read: the `…/files` tree route
+  and the `?file=` RSC blob read (Designed, ADR-066, superseding `…/files/content`);
+  a `viewer` is refused.
 - File reads return ONLY git-tracked content via `git ls-tree` / `git cat-file`
   under a server-resolved `ref`; `.git/`, gitignored, `node_modules`, and
-  untracked paths are unreachable and surface as `404`.
+  untracked paths are unreachable and surface as `404`. Text blobs render as
+  server-rendered Shiki dual-theme HTML (0 KB client), switched by the
+  `.light`/`.dark` class (Designed, ADR-066).
 - An untrusted `?path=` MUST pass `repoRelPathSchema` (no `..`, not absolute, no
   leading `/` or `-`, no NUL); a violation is `400` (`CONFIG`), never a disclosed path.
 - A blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` returns `413` and a binary blob
@@ -197,6 +211,9 @@ flowchart LR
 - The workbench diff is run-scoped (`base..branch` only) and gated `readBoard`
   (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
   `runs.status` value and reuses the M18 diff response shape plus a `files` summary.
+  Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
+  per-file `additions`/`deletions` computed server-side (Designed, ADR-066); the
+  scratch diff stays a raw `pre`.
 
 ## Edge cases
 

@@ -256,7 +256,7 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   message; if checkpointed, supervisor respawns + resumes via `session/resume`)
 - `POST /api/runs/[id]/activity` (extend `keepalive_until` by 30 min while
   user is actively on the run page)
-- `GET /api/runs/[id]/diff` (`git diff` raw → `<pre>`, no syntax highlighting)
+- `GET /api/runs/[id]/diff` (raw diff + per-file `+`/`−` summary; rendered split/inline via `@git-diff-view/react`, ADR-066)
 - `POST /api/runs/[id]/merge` (`git merge --no-ff`; conflict → abort, run
   stays `Review`)
 - `POST /api/runs/[id]/abandon` (supervisor `DELETE /sessions/:id` if alive;

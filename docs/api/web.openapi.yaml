@@ -5135,7 +5135,9 @@ components:
           type: array
           description: |
             (M22) Changed-files summary from `git diff --name-status base..branch`,
-            rendered beside the raw diff in the workbench. Present for flow runs.
+            rendered beside the diff in the workbench. Present for flow runs.
+            (Designed, ADR-066) Each entry additionally carries per-file
+            `additions`/`deletions` line counts computed server-side.
           items: { $ref: "#/components/schemas/DiffFileEntry" }
     DiffFileEntry:
       type: object
@@ -5145,6 +5147,17 @@ components:
         status:
           type: string
           description: git name-status letter (`A` add, `M` modify, `D` delete, `R` rename, `C` copy).
+        additions:
+          type: integer
+          description: |
+            (Designed, ADR-066) Added-line count for this file, computed
+            server-side from the unified diff (`+` lines, excluding the `+++`
+            file header). Populated for flow runs; absent on legacy rows.
+        deletions:
+          type: integer
+          description: |
+            (Designed, ADR-066) Removed-line count for this file, computed
+            server-side (`-` lines, excluding the `---` file header).
     RunGraphResponse:
       type: object
       required: [topology, layout]
