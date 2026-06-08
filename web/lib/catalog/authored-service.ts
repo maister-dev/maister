@@ -183,6 +183,7 @@ export async function createAuthoredCapability(args: {
         lifecycle,
         draft_version,
         current_draft_revision_id,
+        source_flow_ref_id,
         created_at,
         updated_at
       )
@@ -195,6 +196,7 @@ export async function createAuthoredCapability(args: {
         'DRAFT',
         ${draftVersion},
         ${revisionId},
+        ${args.input.sourceFlowRefId ?? null},
         now(),
         now()
       )

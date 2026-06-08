@@ -110,6 +110,10 @@ export type CreateAuthoredCapabilityInput = {
   body?: AuthoredCapabilityBody;
   manifest?: AuthoredCapabilityBody | null;
   schemaVersion?: number;
+  // M27/T-A5.1: links an authored draft to the installed flow it was seeded from
+  // (the flow's flow_ref_id), so publish→bridge targets the same flows lineage.
+  // null for net-new authored flows.
+  sourceFlowRefId?: string | null;
 };
 
 export type UpdateAuthoredDraftInput = {

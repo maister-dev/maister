@@ -677,6 +677,7 @@ export const authoredCapabilities = pgTable(
     draftVersion: integer("draft_version").notNull().default(1),
     currentDraftRevisionId: text("current_draft_revision_id"),
     currentPublishedRevisionId: text("current_published_revision_id"),
+    sourceFlowRefId: text("source_flow_ref_id"),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
