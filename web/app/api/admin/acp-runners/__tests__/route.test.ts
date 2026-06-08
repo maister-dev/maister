@@ -21,12 +21,14 @@ const state: {
   settings: Record<string, unknown>[];
   inserts: Array<{ tableName: string; values: unknown }>;
   updates: Array<{ tableName: string; values: unknown }>;
+  deletes: Array<{ tableName: string }>;
 } = {
   runners: [],
   sidecars: [],
   settings: [],
   inserts: [],
   updates: [],
+  deletes: [],
 };
 
 function rowsForTable(table: unknown): Record<string, unknown>[] {
@@ -83,6 +85,11 @@ const fakeDb = {
       };
     },
   }),
+  delete: (table: unknown) => ({
+    where: async () => {
+      state.deletes.push({ tableName: getTableName(table as never) });
+    },
+  }),
 };
 
 vi.mock("@/lib/authz", () => ({
@@ -120,6 +127,7 @@ describe("admin ACP runner API", () => {
     state.settings = [{ id: "singleton", defaultRunnerId: "claude-code" }];
     state.inserts = [];
     state.updates = [];
+    state.deletes = [];
     mocks.checkSupervisorDiagnostics.mockResolvedValue({
       kind: "ready",
       diagnostics: {
@@ -344,5 +352,98 @@ describe("admin ACP runner API", () => {
     expect(res.status).toBe(409);
     expect(body.code).toBe("CONFLICT");
     expect(state.updates).toEqual([]);
+  });
+
+  describe("POST duplicate id", () => {
+    it("rejects creating a runner whose id already exists", async () => {
+      const { POST } = await import("../route");
+      const res = await POST(
+        jsonRequest({
+          id: "claude-code",
+          adapter: "claude",
+          model: "m",
+          provider: { kind: "anthropic" },
+        }),
+      );
+      const body = (await res.json()) as { code?: string };
+
+      expect(res.status).toBe(409);
+      expect(body.code).toBe("CONFLICT");
+      expect(state.inserts).toEqual([]);
+    });
+  });
+
+  describe("DELETE platform ACP runner", () => {
+    function deleteRequest(): NextRequest {
+      return new Request("http://x") as NextRequest;
+    }
+
+    it("rejects non-admin callers", async () => {
+      mocks.requireGlobalRole.mockRejectedValue(
+        new MaisterError("UNAUTHORIZED", "Requires global role: admin"),
+      );
+
+      const { DELETE } = await import("../[runnerId]/route");
+      const res = await DELETE(deleteRequest(), {
+        params: Promise.resolve({ runnerId: "claude-code" }),
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 409 PRECONDITION for an unknown runner id", async () => {
+      state.runners = [];
+
+      const { DELETE } = await import("../[runnerId]/route");
+      const res = await DELETE(deleteRequest(), {
+        params: Promise.resolve({ runnerId: "nope" }),
+      });
+      const body = (await res.json()) as { code?: string };
+
+      expect(res.status).toBe(409);
+      expect(body.code).toBe("PRECONDITION");
+      expect(state.deletes).toEqual([]);
+    });
+
+    it("returns 409 CONFLICT when the runner is still referenced", async () => {
+      const { DELETE } = await import("../[runnerId]/route");
+      const res = await DELETE(deleteRequest(), {
+        params: Promise.resolve({ runnerId: "claude-code" }),
+      });
+      const body = (await res.json()) as { code?: string };
+
+      expect(res.status).toBe(409);
+      expect(body.code).toBe("CONFLICT");
+      expect(state.deletes).toEqual([]);
+    });
+
+    it("deletes an unreferenced runner and returns 204", async () => {
+      state.settings = [{ id: "singleton", defaultRunnerId: "claude-code" }];
+      state.runners = [
+        ...state.runners,
+        {
+          id: "extra",
+          adapter: "claude",
+          capabilityAgent: "claude",
+          model: "m",
+          provider: { kind: "anthropic" },
+          permissionPolicy: "default",
+          sidecarId: null,
+          readinessStatus: "Ready",
+          readinessReasons: [],
+          enabled: true,
+        },
+      ];
+
+      const { DELETE } = await import("../[runnerId]/route");
+      const res = await DELETE(deleteRequest(), {
+        params: Promise.resolve({ runnerId: "extra" }),
+      });
+
+      expect(res.status).toBe(204);
+      expect(state.deletes).toContainEqual({
+        tableName: "platform_acp_runners",
+      });
+    });
   });
 });

@@ -14,7 +14,10 @@ import {
   type PermissionPolicy,
   type ProviderKind,
 } from "@/lib/acp-runners/schema";
-import { loadRunnerUsageReferences } from "@/lib/acp-runners/usage";
+import {
+  loadRunnerUsageReferences,
+  type RunnerUsageReference,
+} from "@/lib/acp-runners/usage";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -194,6 +197,69 @@ async function assertCanDisable(
       "CONFLICT",
       `cannot disable ACP runner ${runnerId}; referenced by ${refs.length} usage references`,
     );
+  }
+}
+
+function summarizeRefs(refs: RunnerUsageReference[]): string {
+  return refs
+    .map((ref) => {
+      switch (ref.kind) {
+        case "platformDefault":
+          return "platformDefault";
+        case "projectDefault":
+          return `projectDefault:${ref.projectId}`;
+        case "platformFlowDefault":
+          return `platformFlowDefault:${ref.flowRevisionId}`;
+        case "projectFlowDefault":
+          return `projectFlowDefault:${ref.projectId}`;
+        case "flowStepRemap":
+          return `flowStepRemap:${ref.stepId}`;
+        case "activeRun":
+          return `activeRun:${ref.runId}`;
+        case "historicalRunSnapshot":
+          return `historicalRunSnapshot:${ref.runId}`;
+        case "scratchRun":
+          return `scratchRun:${ref.runId}`;
+      }
+    })
+    .join(", ");
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  const { runnerId } = await params;
+
+  try {
+    await requireGlobalRole("admin");
+
+    const db = getDb() as any;
+
+    await loadRunner(db, runnerId);
+
+    const refs = await loadRunnerUsageReferences(db, runnerId);
+
+    if (refs.length > 0) {
+      log.info(
+        { runnerId, refs: refs.length },
+        "platform ACP runner delete blocked",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        `cannot delete ACP runner ${runnerId}; referenced by: ${summarizeRefs(refs)}`,
+      );
+    }
+
+    await db
+      .delete(platformAcpRunners)
+      .where(eq(platformAcpRunners.id, runnerId));
+
+    log.info({ runnerId }, "platform ACP runner deleted");
+
+    return new NextResponse(null, { status: 204 });
+  } catch (err) {
+    return errorResponse(err, runnerId);
   }
 }
 

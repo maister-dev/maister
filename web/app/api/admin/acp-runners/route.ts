@@ -273,6 +273,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     const db = getDb() as any;
+    const existing = await db.select().from(platformAcpRunners);
+
+    if (existing.some((r: any) => r.id === parsed.data.id)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `ACP runner already exists: ${parsed.data.id}`,
+      );
+    }
     const diagnostics = await loadDiagnosticsForReadiness();
     const sidecarRows =
       parsed.data.sidecarId !== null && parsed.data.sidecarId !== undefined
