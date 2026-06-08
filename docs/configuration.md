@@ -452,7 +452,7 @@ Each API token record has:
 | `prefix` | Non-secret token prefix shown after creation for identification. |
 | `token_hash` | SHA-256 hash of the token secret. The raw secret is shown once. |
 | `project_id` | The only project the token can operate on. |
-| `scopes` | Forward-compat label list (default `["*"]`). v1 grants the **full project API** per token; scopes are recorded for the audit `scope_used` label and future granular enforcement, not enforced as allow-lists yet (see [ADR-046](decisions.md#adr-046)). |
+| `scopes` | Enforced allow-list for `/api/v1/ext` and MCP calls (default `["*"]`). `*` grants the full project API for broad automation; otherwise the route/tool's required scope must be present. The same value is recorded in audit as `scope_used` (see [ADR-046](decisions.md#adr-046)). |
 | `expires_at` | Optional expiry. Expired tokens fail closed. |
 | `revoked_at` | Revocation timestamp. Revoked tokens fail closed. |
 | `created_by` / `created_at` | Operator and time that created the token. |

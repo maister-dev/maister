@@ -640,9 +640,11 @@ erDiagram
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
         text name "NOT NULL"
+        text token_kind "NOT NULL default project — project|user"
+        text owner_user_id FK "NULL -> users(id) ON DELETE SET NULL"
         text prefix "NOT NULL, INDEX — first 12 chars of the token string"
         text token_hash "NOT NULL — sha256_hex(fullToken); never plaintext"
-        jsonb scopes "NOT NULL default [*]"
+        jsonb scopes "NOT NULL default [*] — enforced route scopes"
         text created_by FK "NULL -> users(id) ON DELETE SET NULL"
         timestamp created_at "NOT NULL default now()"
         timestamp last_used_at "nullable"
@@ -676,7 +678,8 @@ migration `0019`)** `capability_imports` table and
 `node_attempts.materialization_plan` column (see
 [`capabilities-domain.md`](capabilities-domain.md)), and the **M16 (migration
 `0018_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
-above). Remaining roadmap-additive persistence (e.g. artifact edges and
+above), expanded by `0031_token_actor_scope_support.sql` for user-owned tokens
+and enforced scopes. Remaining roadmap-additive persistence (e.g. artifact edges and
 external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
@@ -695,8 +698,8 @@ external-operation events) is not drawn until its migrations exist. See
 | `capability_imports` | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Implemented)** One row per (project, import id, resolved git SHA). |
 | `project_flow_roles` | `project_flow_roles_project_key_uq` | `(project_id, role_ref)` UNIQUE | One Flow role ref per project. |
 | `project_flow_roles` | `project_flow_roles_project_idx` | `(project_id)` | Project Flow role lookup. |
-| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
-| `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind=api_token` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
+| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE, PARTIAL `WHERE kind='user'` | One human actor per project/user. |
+| `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind='api_token'` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
 | `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
 | `flow_graph_layouts` | — | — | **(Removed — migration `0030`, ADR-064.)** Authored positions moved to the `flow.yaml` `presentation` section. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
@@ -738,6 +741,7 @@ external-operation events) is not drawn until its migrations exist. See
 | `workspaces` | implicit | `worktree_path` UNIQUE | Globally unique worktree path. |
 | `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification. |
 | `project_tokens` | `project_tokens_project_idx` | `(project_id)` | **(M16)** List tokens for a project. |
+| `project_tokens` | `project_tokens_owner_idx` | `(owner_user_id)` | User-owned token audit joins. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
 | `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
 

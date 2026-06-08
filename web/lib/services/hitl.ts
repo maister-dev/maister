@@ -117,7 +117,13 @@ function payloadsEqual(a: unknown, b: unknown): boolean {
 
 export type HitlActor =
   | { kind: "user"; userId: string; label: string }
-  | { kind: "api_token"; tokenId: string; projectId: string; label: string };
+  | {
+      kind: "api_token";
+      tokenId: string;
+      projectId: string;
+      label: string;
+      ownerUserId?: string | null;
+    };
 
 export type RespondInput = {
   runId: string;
@@ -139,6 +145,7 @@ type HandlerArgs = {
   hitlRequestId: string;
   startedAt: number;
   actor: HitlActor;
+  recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
 };
 
 type ResponseAssignmentClaim = {
@@ -171,6 +178,7 @@ async function claimAssignmentForResponse(args: {
           db: args.db,
           projectId: args.projectId,
           tokenId: args.actor.tokenId,
+          ownerUserId: args.actor.ownerUserId ?? null,
           label: args.actor.label,
         });
 
@@ -216,6 +224,17 @@ async function completeResponseAssignment(
     actorId: claim.actorId,
     eventKind: "responded",
     payload,
+  });
+}
+
+async function recordSuccessAuditInTransaction(
+  args: HandlerArgs,
+  statusCode: number,
+): Promise<void> {
+  if (!args.recordSuccessAudit) return;
+
+  await args.db.transaction(async (tx: any) => {
+    await args.recordSuccessAudit?.(tx, statusCode);
   });
 }
 
@@ -395,8 +414,11 @@ async function handlePermissionResponse(
     // before `markScratchPermissionDelivered` would otherwise strand a scratch
     // run (HITL delivered, dialogStatus never advanced). Idempotent — no-op for
     // flow runs and for an already-Running scratch run.
-    await markScratchPermissionDelivered(db, runRow, runId);
-    await completeResponseAssignment(db, assignmentClaim, { optionId });
+    await db.transaction(async (tx: any) => {
+      await markScratchPermissionDelivered(tx, runRow, runId);
+      await completeResponseAssignment(tx, assignmentClaim, { optionId });
+      await args.recordSuccessAudit?.(tx, 200);
+    });
 
     log.info(
       {
@@ -426,7 +448,16 @@ async function handlePermissionResponse(
     const { scheduleResumedSessionDrive } = await import(
       "@/lib/runs/resume-driver"
     );
-    const r = await resumeRun(runId, { db });
+    const r = await resumeRun(runId, {
+      db,
+      ...(args.recordSuccessAudit
+        ? {
+            recordSuccessAudit: async (tx: any) => {
+              await args.recordSuccessAudit?.(tx, 202);
+            },
+          }
+        : {}),
+    });
 
     if (r.ok) {
       // [FIX] M8 review finding #2: schedule the actual driver. Until
@@ -479,6 +510,8 @@ async function handlePermissionResponse(
         },
         "concurrent resume in progress — returning 202",
       );
+
+      await recordSuccessAuditInTransaction(args, 202);
 
       return NextResponse.json(
         {
@@ -546,10 +579,8 @@ async function handlePermissionResponse(
     );
     delivered = true;
 
-    // Marker + scratch dialog flip are one atomic unit so a crash cannot strand a
-    // scratch run with respondedAt set but dialogStatus un-advanced. Assignment
-    // completion stays outside (it opens its own transaction; nesting would break
-    // SQLite) and is idempotent-recovered by the already-delivered retry path.
+    // Marker + scratch dialog flip + assignment completion + audit are one atomic
+    // unit so the durable success state cannot commit without its token audit.
     await db.transaction(async (tx: any) => {
       await tx
         .update(hitlRequests)
@@ -561,8 +592,9 @@ async function handlePermissionResponse(
           ),
         );
       await markScratchPermissionDelivered(tx, runRow, runId);
+      await completeResponseAssignment(tx, assignmentClaim, { optionId });
+      await args.recordSuccessAudit?.(tx, 200);
     });
-    await completeResponseAssignment(db, assignmentClaim, { optionId });
 
     log.info(
       {
@@ -633,6 +665,8 @@ async function handlePermissionResponse(
           "[FIX] supervisor 404 on idempotent retry — resume likely in flight; returning 202",
         );
 
+        await recordSuccessAuditInTransaction(args, 202);
+
         return NextResponse.json(
           {
             ok: true,
@@ -644,7 +678,10 @@ async function handlePermissionResponse(
       }
 
       if (outcome.transition === "already-delivered") {
-        await completeResponseAssignment(db, assignmentClaim, { optionId });
+        await db.transaction(async (tx: any) => {
+          await completeResponseAssignment(tx, assignmentClaim, { optionId });
+          await args.recordSuccessAudit?.(tx, 200);
+        });
 
         log.info(
           {
@@ -950,8 +987,11 @@ async function handleFormHumanResponse(
   });
 
   if (claim.kind === "already-delivered") {
-    await completeResponseAssignment(db, assignmentClaim, {
-      response: claim.storedResponse as Record<string, unknown>,
+    await db.transaction(async (tx: any) => {
+      await completeResponseAssignment(tx, assignmentClaim, {
+        response: claim.storedResponse as Record<string, unknown>,
+      });
+      await args.recordSuccessAudit?.(tx, 200);
     });
 
     // Same-payload retry on an already-delivered row. If the run is
@@ -1023,14 +1063,20 @@ async function handleFormHumanResponse(
   // owner of the NeedsInput → Running transition (see runFlow's
   // isResume detection); flipping status here would defeat the
   // resume gate and restart the flow at step 0.
-  await db
-    .update(hitlRequests)
-    .set({ respondedAt: new Date() })
-    .where(
-      and(eq(hitlRequests.id, hitlRequestId), isNull(hitlRequests.respondedAt)),
-    );
-  await completeResponseAssignment(db, assignmentClaim, {
-    response: claim.storedResponse as Record<string, unknown>,
+  await db.transaction(async (tx: any) => {
+    await tx
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(
+        and(
+          eq(hitlRequests.id, hitlRequestId),
+          isNull(hitlRequests.respondedAt),
+        ),
+      );
+    await completeResponseAssignment(tx, assignmentClaim, {
+      response: claim.storedResponse as Record<string, unknown>,
+    });
+    await args.recordSuccessAudit?.(tx, 200);
   });
 
   scheduleResume(runId);
@@ -1056,9 +1102,12 @@ async function handleFormHumanResponse(
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
-  deps: { db: any },
+  deps: {
+    db: any;
+    recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+  },
 ): Promise<NextResponse> {
-  const { db } = deps;
+  const { db, recordSuccessAudit } = deps;
   const { runId, hitlRequestId, body } = input;
   const startedAt = Date.now();
 
@@ -1128,6 +1177,7 @@ export async function respondToHitl(
       hitlRequestId,
       startedAt,
       actor,
+      recordSuccessAudit,
     });
   }
 
@@ -1142,5 +1192,6 @@ export async function respondToHitl(
     hitlRequestId,
     startedAt,
     actor,
+    recordSuccessAudit,
   });
 }

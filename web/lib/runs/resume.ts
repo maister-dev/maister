@@ -46,6 +46,7 @@ export type ResumeRunResult =
 
 export type ResumeRunOptions = {
   db?: Db;
+  recordSuccessAudit?: (db: Db) => Promise<void>;
 };
 
 // M8 T9 / D7: resume a NeedsInputIdle run by spawning a fresh
@@ -184,7 +185,12 @@ export async function resumeRun(
   // NeedsInput and returns CLAIM_RACE so /respond can render 202
   // (concurrent resume in progress) instead of spawning a duplicate
   // worker and surfacing a misleading 410.
-  const claim = await markResumed(runId, { db });
+  const claim = await markResumed(runId, {
+    db,
+    ...(opts.recordSuccessAudit
+      ? { recordSuccessAudit: opts.recordSuccessAudit }
+      : {}),
+  });
 
   if (!claim.ok) {
     log.warn(

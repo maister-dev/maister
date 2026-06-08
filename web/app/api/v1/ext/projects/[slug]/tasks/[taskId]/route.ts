@@ -6,7 +6,11 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getTaskDTO, updateTask } from "@/lib/services/tasks";
-import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
+import {
+  handleExt,
+  httpStatusForExtCode,
+  recordRequiredTokenAudit,
+} from "@/lib/tokens/ext-handler";
 
 const ENDPOINT_TASK_GET = "GET /api/v1/ext/projects/[slug]/tasks/[taskId]";
 const ENDPOINT_TASK_PATCH = "PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]";
@@ -19,6 +23,9 @@ const patchBodySchema = z
   .strict();
 
 type RouteParams = { params: Promise<{ slug: string; taskId: string }> };
+type TransactionalDb = {
+  transaction<T>(scope: (tx: unknown) => Promise<T>): Promise<T>;
+};
 
 export async function GET(
   req: NextRequest,
@@ -65,6 +72,7 @@ export async function PATCH(
       scopeLabel: "tasks:update",
       endpoint: ENDPOINT_TASK_PATCH,
       method: "PATCH",
+      successAuditInWork: true,
       db,
     },
     async (ctx) => {
@@ -93,7 +101,27 @@ export async function PATCH(
       }
 
       try {
-        const updated = await updateTask(taskId, ctx.projectId, body, db);
+        const updated = await (db as TransactionalDb).transaction(
+          async (tx) => {
+            const task = await updateTask(taskId, ctx.projectId, body, tx);
+
+            await recordRequiredTokenAudit(
+              {
+                tokenId: ctx.actor.tokenId,
+                projectId: ctx.actor.projectId,
+                actorLabel: ctx.actor.actorLabel,
+                scopeUsed: "tasks:update",
+                endpoint: ENDPOINT_TASK_PATCH,
+                method: "PATCH",
+                result: "ok",
+                statusCode: 200,
+              },
+              tx,
+            );
+
+            return task;
+          },
+        );
 
         return NextResponse.json(updated, { status: 200 });
       } catch (err) {

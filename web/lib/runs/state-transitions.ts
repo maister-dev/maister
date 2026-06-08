@@ -26,6 +26,7 @@ export type StateTransitionResult =
 
 export type StateTransitionOptions = {
   db?: Db;
+  recordSuccessAudit?: (db: Db) => Promise<void>;
 };
 
 // M8 D3 / D5: NeedsInput → NeedsInputIdle on keep-alive expiry. The
@@ -116,31 +117,41 @@ export async function markResumed(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "NeedsInput",
-      keepaliveUntil: nextKeepaliveAt(),
-      checkpointAt: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
-    .returning({ id: runs.id });
+  const transition = async (tx: Db): Promise<StateTransitionResult> => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "NeedsInput",
+        keepaliveUntil: nextKeepaliveAt(),
+        checkpointAt: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+      .returning({ id: runs.id });
 
-  if (rows.length === 0) {
-    log.warn(
+    if (rows.length === 0) {
+      log.warn(
+        { runId, from: "NeedsInputIdle", to: "NeedsInput" },
+        "markResumed: status-guard mismatch",
+      );
+
+      return { ok: false, reason: "status-guard-mismatch" };
+    }
+
+    await opts.recordSuccessAudit?.(tx);
+
+    log.info(
       { runId, from: "NeedsInputIdle", to: "NeedsInput" },
-      "markResumed: status-guard mismatch",
+      "run-state transition",
     );
 
-    return { ok: false, reason: "status-guard-mismatch" };
+    return { ok: true };
+  };
+
+  if (opts.recordSuccessAudit) {
+    return await (db as { transaction: any }).transaction(transition);
   }
 
-  log.info(
-    { runId, from: "NeedsInputIdle", to: "NeedsInput" },
-    "run-state transition",
-  );
-
-  return { ok: true };
+  return await transition(db);
 }
 
 // M8 T7: activity ping extends the keep-alive window without changing

@@ -191,6 +191,7 @@ function runnerCatalogEntry(
 export type LaunchRunContext = {
   actorUserId?: string | null;
   authorize: (projectId: string) => Promise<void>;
+  recordSuccessAudit?: (db: Db) => Promise<void>;
 };
 
 export async function launchRun(
@@ -619,6 +620,8 @@ export async function launchRun(
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, task.id));
+
+      await ctx.recordSuccessAudit?.(tx);
     });
   } catch (err) {
     // DB transaction rolled back. Compensate: remove the orphan worktree

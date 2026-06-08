@@ -1359,8 +1359,9 @@ paths:
         Admin-only (`requireGlobalRole("admin")`). Permanently removes the
         account. Eligible accounts are those that are `pending`, have never
         signed in, and have no content references (runs, tasks, assignments,
-        project memberships). Accounts that do not meet this predicate should
-        be disabled instead. The route prevents self-delete (`PRECONDITION`).
+        project memberships, token ownership/creation metadata). Accounts that
+        do not meet this predicate should be disabled instead. The route
+        prevents self-delete (`PRECONDITION`).
       operationId: deleteAdminUser
       parameters:
         - name: userId
@@ -2936,8 +2937,10 @@ paths:
         immediately.
 
         `slug` is a URL parameter (server-state). Body-controlled fields are
-        `name` and optional `expiresAt`. All other fields (`id`, `prefix`,
-        `token_hash`, `projectId`, `createdAt`) are set server-side.
+        `name`, optional `kind`, optional `scopes`, and optional `expiresAt`.
+        `kind=user` makes the current session user the token owner for audit
+        attribution. All other fields (`id`, `prefix`, `token_hash`,
+        `projectId`, `createdAt`) are set server-side.
 
         Source: `web/app/api/projects/[slug]/tokens/route.ts`.
       operationId: createProjectToken
@@ -3951,10 +3954,11 @@ components:
         Project-scoped API token for the `/api/v1/ext/` surface (M16,
         ADR-041). Format: `mai_` + base64url(randomBytes(32)). Stored as
         sha256 hex at rest; compared with `timingSafeEqual`; never logged or
-        streamed. In v1 a valid, active, non-expired, non-revoked token grants
-        the full project API. Token failures all map to 401 or 404 per the
-        existence-hide policy. Used only by `docs/api/external/operations.openapi.yaml`
-        routes; session-auth routes do not accept tokens.
+        streamed. Tokens carry route scopes; `*` grants the full project
+        external API. Token failures map to 401, 403, or 404 per the
+        existence-hide and missing-scope policies. Used only by
+        `docs/api/external/operations.openapi.yaml` routes; session-auth routes
+        do not accept tokens.
   responses:
     Unauthenticated:
       description: No valid session (`UNAUTHENTICATED`).
@@ -5694,6 +5698,23 @@ components:
         capabilities: { $ref: "#/components/schemas/ContractDiff" }
         externalOps: { $ref: "#/components/schemas/ContractDiff" }
 
+    TokenScope:
+      type: string
+      enum:
+        - "*"
+        - tasks:create
+        - tasks:read
+        - tasks:update
+        - runs:launch
+        - runs:read
+        - readiness:read
+        - gates:report
+        - hitl:read
+        - hitl:respond
+      description: |
+        Route authorization label for `/api/v1/ext`. `*` grants the full
+        project external API.
+
     CreateProjectTokenBody:
       type: object
       description: (M16) Request body for creating a project API token.
@@ -5704,6 +5725,20 @@ components:
           minLength: 1
           maxLength: 255
           description: Human-readable label for the token (e.g. "CI pipeline").
+        kind:
+          type: string
+          enum: [project, user]
+          default: project
+          description: |
+            `project` is an automation identity for the project. `user` is a
+            named personal/webhook token owned by the current session user.
+        scopes:
+          type: array
+          minItems: 1
+          default: ["*"]
+          items:
+            $ref: "#/components/schemas/TokenScope"
+          description: Required route scopes. `*` is the full-project wildcard.
         expiresAt:
           type: string
           format: date-time
@@ -5718,13 +5753,28 @@ components:
         (M16) Created token metadata plus the plaintext secret. The `token`
         field is shown ONCE — the server does not store it and cannot re-derive
         it. Subsequent list responses omit `token`.
-      required: [id, name, prefix, token, createdAt]
+      required: [id, name, kind, ownerUserId, ownerLabel, scopes, prefix, token, createdAt]
       properties:
         id:
           type: string
           format: uuid
         name:
           type: string
+        kind:
+          type: string
+          enum: [project, user]
+        ownerUserId:
+          type: string
+          nullable: true
+          description: Token owner for `kind=user`; null for project tokens.
+        ownerLabel:
+          type: string
+          nullable: true
+          description: Display label for the user-token owner.
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenScope"
         prefix:
           type: string
           description: First 12 characters of the token string (used for lookup).
@@ -5746,13 +5796,26 @@ components:
       description: |
         (M16) Token metadata for the list endpoint. NEVER includes `token_hash`
         or the plaintext secret.
-      required: [id, name, prefix, createdAt]
+      required: [id, name, kind, ownerUserId, ownerLabel, scopes, prefix, createdAt]
       properties:
         id:
           type: string
           format: uuid
         name:
           type: string
+        kind:
+          type: string
+          enum: [project, user]
+        ownerUserId:
+          type: string
+          nullable: true
+        ownerLabel:
+          type: string
+          nullable: true
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenScope"
         prefix:
           type: string
           description: First 12 characters of the token string.

@@ -8,8 +8,12 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { launchRun } from "@/lib/services/runs";
-import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
-import { TokenAuthError } from "@/lib/tokens/verify";
+import {
+  handleExt,
+  httpStatusForExtCode,
+  recordRequiredTokenAudit,
+} from "@/lib/tokens/ext-handler";
+import { actorUserIdForToken, TokenAuthError } from "@/lib/tokens/verify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { tasks } = schemaModule as unknown as Record<string, any>;
@@ -41,6 +45,7 @@ export async function POST(
       scopeLabel: "runs:launch",
       endpoint: ENDPOINT,
       method: "POST",
+      successAuditInWork: true,
       db,
     },
     async (ctx) => {
@@ -87,12 +92,26 @@ export async function POST(
             targetBranch: body.targetBranch,
           },
           {
-            actorUserId: null,
+            actorUserId: actorUserIdForToken(ctx.actor),
             authorize: async (projectId: string) => {
               if (projectId !== ctx.projectId) {
                 throw new TokenAuthError("wrong-project");
               }
             },
+            recordSuccessAudit: (tx) =>
+              recordRequiredTokenAudit(
+                {
+                  tokenId: ctx.actor.tokenId,
+                  projectId: ctx.actor.projectId,
+                  actorLabel: ctx.actor.actorLabel,
+                  scopeUsed: "runs:launch",
+                  endpoint: ENDPOINT,
+                  method: "POST",
+                  result: "ok",
+                  statusCode: 202,
+                },
+                tx,
+              ),
           },
           db,
         );

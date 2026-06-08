@@ -1,13 +1,16 @@
 import "server-only";
 
+import type { TokenAuditInput } from "@/lib/tokens/audit";
 import type { TokenActor } from "@/lib/tokens/verify";
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { bumpTokenLastUsed, recordTokenAudit } from "@/lib/tokens/audit";
+import { tokenHasScope } from "@/lib/tokens/scopes";
 import {
   httpStatusForTokenAuth,
   TokenAuthError,
@@ -21,6 +24,57 @@ const { projects } = schemaModule as unknown as Record<string, any>;
 type Db = any;
 
 export type ExtCtx = { actor: TokenActor; projectId: string };
+
+const log = pino({
+  name: "ext-token-handler",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function errorFields(err: unknown): { error: string; stack?: string } {
+  if (err instanceof Error) {
+    return { error: err.message, stack: err.stack };
+  }
+
+  return { error: String(err) };
+}
+
+export async function recordRequiredTokenAudit(
+  input: TokenAuditInput,
+  db: Db,
+): Promise<void> {
+  try {
+    await recordTokenAudit(input, db);
+  } catch (err) {
+    log.error(
+      {
+        ...errorFields(err),
+        endpoint: input.endpoint,
+        method: input.method,
+        projectId: input.projectId,
+        result: input.result,
+        scopeUsed: input.scopeUsed,
+        statusCode: input.statusCode,
+        tokenId: input.tokenId,
+      },
+      "[FIX:token-audit-required] token audit write failed",
+    );
+
+    throw err;
+  }
+}
+
+function bumpTokenLastUsedAsync(actor: TokenActor, db: Db): void {
+  void bumpTokenLastUsed(actor.tokenId, db).catch((err: unknown) => {
+    log.warn(
+      {
+        ...errorFields(err),
+        projectId: actor.projectId,
+        tokenId: actor.tokenId,
+      },
+      "[FIX:token-audit-required] token last-used update failed",
+    );
+  });
+}
 
 // Canonical MaisterError `code` → HTTP status for the /api/v1/ext/* surface, so
 // sibling routes never diverge. `CONFIG` (a well-formed but unprocessable
@@ -57,11 +111,9 @@ export async function handleExt(
     // SKIPS its success after-audit on a <400 response, but STILL writes the
     // failure audit on >=400 (work never reaches its in-tx audit on failure).
     successAuditInWork?: boolean;
-    // M17 §D8 (ADR-055): opt-in scope enforcement. When set, the actor MUST hold
-    // `scopeLabel` (or the `*` wildcard) or the request is rejected 403 BEFORE
-    // work() runs. ONLY the two HITL routes opt in; every other ext route leaves
-    // this unset and keeps ADR-046 binary (scope label audit-only). The 403 body
-    // never reveals which scopes the token holds.
+    // Scope enforcement is default-on. A route can explicitly pass
+    // requireScope:false only while preserving an older compatibility contract.
+    // The 403 body never reveals which scopes the token holds.
     requireScope?: boolean;
   },
   work: (ctx: ExtCtx) => Promise<NextResponse>,
@@ -94,7 +146,7 @@ export async function handleExt(
         err.projectId
       ) {
         // Identified failure: write audit row, then return 401.
-        await recordTokenAudit(
+        await recordRequiredTokenAudit(
           {
             tokenId: err.tokenId,
             projectId: err.projectId,
@@ -106,7 +158,7 @@ export async function handleExt(
             statusCode: 401,
           },
           d,
-        ).catch(() => {});
+        );
       }
 
       return NextResponse.json(
@@ -127,7 +179,7 @@ export async function handleExt(
     const project = rows[0];
 
     if (!project || project.archivedAt || project.id !== actor.projectId) {
-      await recordTokenAudit(
+      await recordRequiredTokenAudit(
         {
           tokenId: actor.tokenId,
           projectId: actor.projectId,
@@ -139,7 +191,7 @@ export async function handleExt(
           statusCode: 404,
         },
         d,
-      ).catch(() => {});
+      );
 
       return NextResponse.json(
         { code: "NOT_FOUND", message: "project not found" },
@@ -148,13 +200,12 @@ export async function handleExt(
     }
   }
 
-  // 3b. D8 scope enforcement (opt-in). The 403 body MUST NOT leak which scopes
-  // the token holds.
+  // 3b. Scope enforcement. The 403 body MUST NOT leak which scopes the token holds.
   if (
-    opts.requireScope &&
-    !(actor.scopes.includes(opts.scopeLabel) || actor.scopes.includes("*"))
+    opts.requireScope !== false &&
+    !tokenHasScope(actor.scopes, opts.scopeLabel)
   ) {
-    await recordTokenAudit(
+    await recordRequiredTokenAudit(
       {
         tokenId: actor.tokenId,
         projectId: actor.projectId,
@@ -166,8 +217,8 @@ export async function handleExt(
         statusCode: 403,
       },
       d,
-    ).catch(() => {});
-    void bumpTokenLastUsed(actor.tokenId, d).catch(() => {});
+    );
+    bumpTokenLastUsedAsync(actor, d);
 
     return NextResponse.json(
       { code: "UNAUTHORIZED", message: "insufficient scope" },
@@ -189,7 +240,7 @@ export async function handleExt(
         { status },
       );
 
-      await recordTokenAudit(
+      await recordRequiredTokenAudit(
         {
           tokenId: actor.tokenId,
           projectId: actor.projectId,
@@ -201,9 +252,8 @@ export async function handleExt(
           statusCode: status,
         },
         d,
-      ).catch(() => {});
-      // best-effort last-used bump
-      void bumpTokenLastUsed(actor.tokenId, d).catch(() => {});
+      );
+      bumpTokenLastUsedAsync(actor, d);
 
       return resp;
     }
@@ -217,7 +267,7 @@ export async function handleExt(
   const statusCode = response.status;
 
   if (!(opts.successAuditInWork && statusCode < 400)) {
-    await recordTokenAudit(
+    await recordRequiredTokenAudit(
       {
         tokenId: actor.tokenId,
         projectId: actor.projectId,
@@ -229,10 +279,10 @@ export async function handleExt(
         statusCode,
       },
       d,
-    ).catch(() => {});
+    );
   }
 
-  void bumpTokenLastUsed(actor.tokenId, d).catch(() => {});
+  bumpTokenLastUsedAsync(actor, d);
 
   return response;
 }

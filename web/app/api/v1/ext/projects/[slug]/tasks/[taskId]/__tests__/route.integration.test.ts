@@ -4,6 +4,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
@@ -23,12 +24,37 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
+const auditMockState = vi.hoisted(() => ({
+  failSuccessScopes: new Set<string>(),
+}));
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/tokens/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/tokens/audit")>();
+
+  return {
+    ...actual,
+    recordTokenAudit: vi.fn(
+      async (
+        input: Parameters<typeof actual.recordTokenAudit>[0],
+        d?: Parameters<typeof actual.recordTokenAudit>[1],
+      ) => {
+        if (
+          input.result === "ok" &&
+          auditMockState.failSuccessScopes.has(input.scopeUsed)
+        ) {
+          throw new Error("forced audit failure (atomicity test)");
+        }
+
+        return actual.recordTokenAudit(input, d);
+      },
+    ),
+  };
+});
 
 let GET: typeof import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/route").GET;
 let PATCH: typeof import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/route").PATCH;
@@ -124,6 +150,7 @@ function makeRequest(
 }
 
 beforeEach(async () => {
+  auditMockState.failSuccessScopes.clear();
   await db.delete(schema.tokenAuditLog as any);
 });
 
@@ -296,6 +323,47 @@ describe("PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]", () => {
       status_code: 200,
       scope_used: "tasks:update",
     });
+  });
+
+  it("forced success-audit failure rolls back the task update", async () => {
+    const { slug, projectId, flowId } = {
+      ...(await seedProject(`ext-patch-audit-rb-${randomUUID().slice(0, 8)}`)),
+    };
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+    const token = await issueToken({ projectId, name: "Test Token" }, db);
+
+    auditMockState.failSuccessScopes.add("tasks:update");
+
+    const req = makeRequest("PATCH", taskId, {
+      title: "Should Not Persist",
+      prompt: "Should not persist either",
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    await expect(
+      PATCH(req, {
+        params: Promise.resolve({ slug, taskId }),
+      }),
+    ).rejects.toThrow("forced audit failure");
+
+    const taskRows = await db
+      .select()
+      .from(schema.tasks as any)
+      .where(eq((schema.tasks as any).id, taskId))
+      .execute();
+
+    expect(taskRows[0]).toMatchObject({
+      title: "Test Task",
+      prompt: "Do something",
+    });
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
   });
 
   it("valid token, non-Backlog task → 409 PRECONDITION error, audit row", async () => {

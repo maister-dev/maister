@@ -95,11 +95,11 @@ permitted only when ALL of the following hold: `accountStatus = 'pending'`, the
 user has never completed a sign-in (no `sessions` row and `emailVerified IS
 NULL`), and there are no referencing rows in `runs` (`created_by_user_id`),
 `scratch_runs` (`created_by_user_id`), `node_attempts` (`owner_user_id`),
-`actor_identities` (`user_id`), `project_tokens` (`created_by`),
-`workspaces` (`promotion_owner_user_id`), or `flow_graph_layouts`
-(`updated_by_user_id`). `project_members`, `accounts`, and `sessions` rows
-cascade automatically. Any other user must be disabled (`accountStatus =
-'disabled'`) rather than deleted.
+`actor_identities` (`user_id`), `project_tokens` (`created_by`,
+`owner_user_id`), `tasks` (`created_by_user_id`),
+or `workspaces` (`promotion_owner_user_id`). `project_members`, `accounts`,
+and `sessions` rows cascade automatically. Any other user must be disabled
+(`accountStatus = 'disabled'`) rather than deleted.
 
 `role` is the **global role** used by `requireGlobalRole()` in `lib/authz.ts`.
 The single bootstrap admin is seeded by **migration `0005`**
@@ -302,10 +302,11 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 ```
 
 M13 web routes resolve Auth.js sessions to `kind = 'user'`. API-token,
-internal-agent, and system actors are modeled for attribution and future
-external-operation ingress, but no token-authenticated write path is enabled by
-this milestone. UNIQUE `(projectId, userId)` gives one user actor per
-project and preserves audit labels if the linked user is later removed.
+internal-agent, and system actors are modeled for attribution and external
+operation ingress. The partial unique index
+`actor_identities_project_user_uq` applies only to `kind = 'user'`, giving one
+human actor per project/user while allowing user-owned API-token actors to keep
+their owner `userId` attribution separately.
 
 ## `flows`
 
@@ -526,6 +527,7 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
   stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
   attemptNumber,                 // monotonic per task, starts at 1
+  createdByUserId?,              // nullable FK -> users.id; user-token owner
   createdAt, updatedAt
 }
 ```
@@ -540,6 +542,10 @@ composite UNIQUE guards nothing. Current schema has no DB-level
 per-attempt uniqueness; the designed `UNIQUE (task_id, attempt_number)`
 belongs on `runs`. Indexed on `(projectId, status)` for board
 queries.
+
+`createdByUserId` is nullable for legacy rows and project-token automation.
+User-owned external tokens set it to the token owner's `users.id` when creating
+tasks through `/api/v1/ext/projects/{slug}/tasks`.
 
 ## `runs`
 
@@ -1044,9 +1050,11 @@ secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
 
 ## `project_tokens`
 
-**(M16 — Implemented, migration `0018_m16_api_tokens.sql`.)** Project-scoped API
-tokens that grant external callers (CI, scripts, the MCP facade) access to the
-`/api/v1/ext` surface. See
+**(M16 — Implemented, migration `0018_m16_api_tokens.sql`; expanded by
+`0031_token_actor_scope_support.sql`.)** Project-scoped API tokens and
+user-owned project tokens that grant external callers (CI, scripts, personal
+agents, webhook channels, the MCP facade) access to the `/api/v1/ext` surface.
+See
 [`system-analytics/external-operations.md`](system-analytics/external-operations.md)
 for the token lifecycle FSM and [ADR-046](decisions.md#adr-046) for the model
 rationale.
@@ -1056,12 +1064,15 @@ rationale.
   id,                                       // uuid PK
   projectId,                                // NOT NULL, FK -> projects.id, ON DELETE CASCADE
   name,                                     // NOT NULL; human-readable label
+  tokenKind,                                // NOT NULL DEFAULT 'project'; 'project' | 'user'
+  ownerUserId?,                             // nullable FK -> users.id, ON DELETE SET NULL;
+                                            //   set for user-owned tokens
   prefix,                                   // NOT NULL, INDEX; first 12 chars of the full
                                             //   token string (mai_...) — lookup key
   tokenHash,                                // NOT NULL; sha256_hex(fullToken) — plaintext
                                             //   returned once at creation, never stored
-  scopes (jsonb),                           // NOT NULL, DEFAULT '["*"]'; label list;
-                                            //   v1 enforcement is binary (full project API)
+  scopes (jsonb),                           // NOT NULL, DEFAULT '["*"]'; enforced route labels;
+                                            //   '*' grants the full project API
   createdBy?,                               // nullable FK -> users.id, ON DELETE SET NULL
   createdAt,                                // NOT NULL DEFAULT now()
   lastUsedAt?,                              // updated after each successful verification
@@ -1080,8 +1091,9 @@ Modeled as `TokenAuthError(kind)` + `httpStatusForTokenAuth(kind)` — NOT a
 `MaisterError` code.
 
 Indexes: `project_tokens_prefix_idx` on `(prefix)`, `project_tokens_project_idx`
-on `(project_id)`. Cascade: `ON DELETE CASCADE` from `projects.id`;
-`created_by` is `ON DELETE SET NULL` — token rows survive user deletion.
+on `(project_id)`, `project_tokens_owner_idx` on `(owner_user_id)`. Cascade:
+`ON DELETE CASCADE` from `projects.id`; `created_by` and `owner_user_id` are
+`ON DELETE SET NULL` — token rows survive user deletion.
 
 ## `token_audit_log`
 
@@ -1419,6 +1431,7 @@ Created via Drizzle:
 | `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
 | `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification |
 | `project_tokens` | `project_tokens_project_idx` | `(projectId)` | **(M16)** List tokens for a project |
+| `project_tokens` | `project_tokens_owner_idx` | `(ownerUserId)` | User-owned token audit joins |
 | `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(M16)** Per-token audit trail |
 | `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16)** Chronological audit log per project |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |

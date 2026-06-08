@@ -4,6 +4,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
@@ -23,12 +24,37 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
+const auditMockState = vi.hoisted(() => ({
+  failSuccessScopes: new Set<string>(),
+}));
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/tokens/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/tokens/audit")>();
+
+  return {
+    ...actual,
+    recordTokenAudit: vi.fn(
+      async (
+        input: Parameters<typeof actual.recordTokenAudit>[0],
+        d?: Parameters<typeof actual.recordTokenAudit>[1],
+      ) => {
+        if (
+          input.result === "ok" &&
+          auditMockState.failSuccessScopes.has(input.scopeUsed)
+        ) {
+          throw new Error("forced audit failure (atomicity test)");
+        }
+
+        return actual.recordTokenAudit(input, d);
+      },
+    ),
+  };
+});
 
 let POST: typeof import("@/app/api/v1/ext/projects/[slug]/tasks/route").POST;
 let GET: typeof import("@/app/api/v1/ext/projects/[slug]/tasks/route").GET;
@@ -100,6 +126,7 @@ function makeRequest(method: string, body?: unknown): NextRequest {
 }
 
 beforeEach(async () => {
+  auditMockState.failSuccessScopes.clear();
   await db.delete(schema.tokenAuditLog as any);
 });
 
@@ -206,6 +233,143 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
       scope_used: "tasks:create",
       endpoint: "POST /api/v1/ext/projects/[slug]/tasks",
     });
+  });
+
+  it("forced success-audit failure rolls back the task insert", async () => {
+    const slug = `ext-tasks-audit-rb-${randomUUID().slice(0, 8)}`;
+    const { projectId, flowId } = await seedProject(slug);
+    const token = await issueToken({ projectId, name: "Test Token" }, db);
+
+    auditMockState.failSuccessScopes.add("tasks:create");
+
+    const req = makeRequest("POST", {
+      title: "Audit rollback task",
+      prompt: "Do not persist",
+      flowId,
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    await expect(
+      POST(req, {
+        params: Promise.resolve({ slug }),
+      }),
+    ).rejects.toThrow("forced audit failure");
+
+    const taskRows = await db
+      .select()
+      .from(schema.tasks as any)
+      .where(eq((schema.tasks as any).title, "Audit rollback task"))
+      .execute();
+
+    expect(taskRows).toHaveLength(0);
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
+  });
+
+  it("token missing tasks:create scope → 403, audit row, no task", async () => {
+    const slug = `ext-tasks-scope-${randomUUID().slice(0, 8)}`;
+    const { projectId, flowId } = await seedProject(slug);
+
+    const token = await issueToken(
+      {
+        projectId,
+        name: "Read-only Token",
+        scopes: ["tasks:read"],
+      },
+      db,
+    );
+
+    const req = makeRequest("POST", {
+      title: "Blocked Task",
+      prompt: "Do not create",
+      flowId,
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(res.status).toBe(403);
+
+    const taskRows = await db
+      .select()
+      .from(schema.tasks as any)
+      .where(eq((schema.tasks as any).title, "Blocked Task"))
+      .execute();
+    const blockedTasks = taskRows.filter(
+      (row: any) => row.title === "Blocked Task" && row.projectId === projectId,
+    );
+
+    expect(blockedTasks).toHaveLength(0);
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      result: "error",
+      status_code: 403,
+      scope_used: "tasks:create",
+    });
+  });
+
+  it("user-owned token attributes created task to the owner user", async () => {
+    const slug = `ext-tasks-owner-${randomUUID().slice(0, 8)}`;
+    const { projectId, flowId } = await seedProject(slug);
+    const ownerUserId = randomUUID();
+
+    await db.insert(schema.users).values({
+      id: ownerUserId,
+      email: `owner-${slug}@example.test`,
+      role: "member",
+      accountStatus: "active",
+      passwordHash: "x",
+    });
+
+    const token = await issueToken(
+      {
+        projectId,
+        name: "Personal Agent",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["tasks:create"],
+      },
+      db,
+    );
+
+    const req = makeRequest("POST", {
+      title: "Owned Task",
+      prompt: "Create with owner",
+      flowId,
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(res.status).toBe(201);
+
+    const body = await res.json();
+    const taskRows = await db
+      .select()
+      .from(schema.tasks as any)
+      .where(eq((schema.tasks as any).id, body.taskId))
+      .execute();
+    const [task] = taskRows.filter((row: any) => row.id === body.taskId);
+
+    expect(task.createdByUserId).toBe(ownerUserId);
   });
 });
 

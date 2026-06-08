@@ -405,11 +405,10 @@ export const actorIdentities = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    uniqProjectUserActor: unique("actor_identities_project_user_uq").on(
-      t.projectId,
-      t.userId,
-    ),
-    // M17 (0025): a project's api_token actor is unique per (project, token) so
+    uniqProjectUserActor: uniqueIndex("actor_identities_project_user_uq")
+      .on(t.projectId, t.userId)
+      .where(sql`${t.kind} = 'user'`),
+    // M17 (0026): a project's api_token actor is unique per (project, token) so
     // ensureApiTokenActor upserts. Partial — user/system rows (NULL token_id)
     // stay distinct and unaffected.
     uniqProjectTokenActor: uniqueIndex("actor_identities_project_token_uq")
@@ -767,6 +766,9 @@ export const tasks = pgTable(
       .notNull()
       .default("Backlog"),
     attemptNumber: integer("attempt_number").notNull().default(1),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -1869,6 +1871,12 @@ export const projectTokens = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    token_kind: text("token_kind", { enum: ["project", "user"] })
+      .notNull()
+      .default("project"),
+    owner_user_id: text("owner_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     prefix: text("prefix").notNull(),
     token_hash: text("token_hash").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull().default(["*"]),
@@ -1888,6 +1896,7 @@ export const projectTokens = pgTable(
   (t) => ({
     idxPrefix: index("project_tokens_prefix_idx").on(t.prefix),
     idxProject: index("project_tokens_project_idx").on(t.project_id),
+    idxOwner: index("project_tokens_owner_idx").on(t.owner_user_id),
   }),
 );
 

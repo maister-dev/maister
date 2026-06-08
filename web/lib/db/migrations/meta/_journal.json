@@ -218,6 +218,13 @@
       "when": 1780618200000,
       "tag": "0030_m22_drop_flow_graph_layouts",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1780931982269,
+      "tag": "0031_token_actor_scope_support",
+      "breakpoints": true
     }
   ]
 }

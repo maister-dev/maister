@@ -24,12 +24,37 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
+const auditMockState = vi.hoisted(() => ({
+  failSuccessScopes: new Set<string>(),
+}));
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/tokens/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/tokens/audit")>();
+
+  return {
+    ...actual,
+    recordTokenAudit: vi.fn(
+      async (
+        input: Parameters<typeof actual.recordTokenAudit>[0],
+        d?: Parameters<typeof actual.recordTokenAudit>[1],
+      ) => {
+        if (
+          input.result === "ok" &&
+          auditMockState.failSuccessScopes.has(input.scopeUsed)
+        ) {
+          throw new Error("forced audit failure (atomicity test)");
+        }
+
+        return actual.recordTokenAudit(input, d);
+      },
+    ),
+  };
+});
 vi.mock("@/lib/supervisor-client", () => ({
   checkSupervisorHealth: vi.fn(async () => ({ kind: "available" })),
 }));
@@ -170,6 +195,7 @@ function makeRequest(body?: unknown): NextRequest {
 }
 
 beforeEach(async () => {
+  auditMockState.failSuccessScopes.clear();
   await db.delete(schema.tokenAuditLog as any);
 });
 
@@ -309,5 +335,91 @@ describe("POST /api/v1/ext/runs", () => {
       scope_used: "runs:launch",
       endpoint: "POST /api/v1/ext/runs",
     });
+  });
+
+  it("forced success-audit failure rolls back the run launch rows", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-runs-audit-rb-${randomUUID().slice(0, 8)}`,
+    );
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+    const token = await issueToken({ projectId, name: "Test Token" }, db);
+
+    auditMockState.failSuccessScopes.add("runs:launch");
+
+    const req = makeRequest({ taskId });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    await expect(POST(req, {})).rejects.toThrow("forced audit failure");
+
+    const runRows = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+      .execute();
+
+    expect(runRows).toHaveLength(0);
+
+    const taskRows = await (db as any)
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId))
+      .execute();
+
+    expect(taskRows[0]).toMatchObject({
+      status: "Backlog",
+      attemptNumber: 1,
+    });
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
+  });
+
+  it("user-owned token attributes launched run to the owner user", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-runs-owner-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = randomUUID();
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+
+    await (db as any).insert(schema.users).values({
+      id: ownerUserId,
+      email: `run-owner-${ownerUserId.slice(0, 8)}@example.test`,
+      role: "member",
+      accountStatus: "active",
+      passwordHash: "x",
+    });
+
+    const token = await issueToken(
+      {
+        projectId,
+        name: "Personal Run Agent",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["runs:launch"],
+      },
+      db,
+    );
+
+    const req = makeRequest({ taskId });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {});
+
+    expect(res.status).toBe(202);
+
+    const body = await res.json();
+    const runRows = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, body.runId))
+      .execute();
+
+    expect(runRows[0].createdByUserId).toBe(ownerUserId);
   });
 });

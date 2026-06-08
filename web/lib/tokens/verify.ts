@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { TokenKind } from "@/lib/tokens/issue";
+
 import { eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
@@ -35,6 +37,8 @@ export class TokenAuthError extends Error {
 export type TokenActor = {
   tokenId: string;
   projectId: string;
+  tokenKind: TokenKind;
+  ownerUserId: string | null;
   actorLabel: string;
   scopes: string[];
 };
@@ -89,9 +93,15 @@ export async function verifyToken(
   return {
     tokenId: row.id,
     projectId: row.project_id,
+    tokenKind: row.token_kind ?? "project",
+    ownerUserId: row.owner_user_id ?? null,
     actorLabel: `token:${row.name}`,
     scopes: (row.scopes as string[]) ?? ["*"],
   };
+}
+
+export function actorUserIdForToken(actor: TokenActor): string | null {
+  return actor.tokenKind === "user" ? actor.ownerUserId : null;
 }
 
 /** Map TokenAuthKind to HTTP status code. */
