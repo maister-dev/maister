@@ -243,10 +243,11 @@ export async function readAuthoredFlowPackageDirectory(
   }
 
   const files = await readPackageFiles(root);
-  const slug = parseAuthoredFlowPackageSlug(
-    packageSlugFromFlowYaml(flowYaml) ?? path.basename(root),
-    `Flow package at ${root}`,
-  );
+  const slug = resolvePackageSlug({
+    flowYaml,
+    root,
+  });
+  const packageName = packageNameFromFlowYaml(flowYaml) ?? slug;
 
   log.info(
     {
@@ -260,7 +261,7 @@ export async function readAuthoredFlowPackageDirectory(
   return validateAuthoredFlowPackageBody(
     createAuthoredFlowPackageBody({
       flowYaml,
-      packageMetadata: { slug, name: slug },
+      packageMetadata: { slug, name: packageName },
       files,
     }),
   );
@@ -346,7 +347,21 @@ async function readPackageFiles(
         await walk(absolutePath);
         continue;
       }
-      if (!entry.isFile()) continue;
+      if (!entry.isFile()) {
+        log.warn(
+          {
+            root,
+            packagePath: relativePath,
+            entryKind: describePackageDirectoryEntry(entry),
+          },
+          "[FIX] authored Flow package import refused non-regular entry",
+        );
+
+        throw new MaisterError(
+          "CONFIG",
+          `Flow package file ${relativePath} must be a regular file: ${absolutePath}`,
+        );
+      }
 
       files.push({
         kind: classifyPackageFile(relativePath),
@@ -380,7 +395,7 @@ function classifyPackageFile(
   return "asset";
 }
 
-function packageSlugFromFlowYaml(flowYaml: string): string | null {
+function packageNameFromFlowYaml(flowYaml: string): string | null {
   try {
     const parsed = parseYaml(flowYaml);
 
@@ -397,6 +412,51 @@ function packageSlugFromFlowYaml(flowYaml: string): string | null {
   }
 
   return null;
+}
+
+function resolvePackageSlug(args: { flowYaml: string; root: string }): string {
+  const manifestName = packageNameFromFlowYaml(args.flowYaml);
+  const manifestSlug = manifestName
+    ? tryParseAuthoredFlowPackageSlug(
+        manifestName,
+        `flow.yaml name for Flow package at ${args.root}`,
+      )
+    : null;
+
+  if (manifestSlug) return manifestSlug;
+
+  return parseAuthoredFlowPackageSlug(
+    path.basename(args.root),
+    `Flow package directory name at ${args.root}`,
+  );
+}
+
+function tryParseAuthoredFlowPackageSlug(
+  value: string,
+  context: string,
+): string | null {
+  try {
+    return parseAuthoredFlowPackageSlug(value, context);
+  } catch (err) {
+    if (err instanceof MaisterError) return null;
+    throw err;
+  }
+}
+
+function describePackageDirectoryEntry(entry: {
+  isBlockDevice: () => boolean;
+  isCharacterDevice: () => boolean;
+  isFIFO: () => boolean;
+  isSocket: () => boolean;
+  isSymbolicLink: () => boolean;
+}): string {
+  if (entry.isSymbolicLink()) return "symlink";
+  if (entry.isBlockDevice()) return "block_device";
+  if (entry.isCharacterDevice()) return "character_device";
+  if (entry.isFIFO()) return "fifo";
+  if (entry.isSocket()) return "socket";
+
+  return "unknown";
 }
 
 function packageMetadataFromUnknown(

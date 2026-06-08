@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -302,14 +302,20 @@ describe("authored Flow package body validation", () => {
     ).rejects.toMatchObject({ code: "CONFIG" });
   });
 
-  it("refuses package directories with unsafe manifest-derived slugs", async () => {
-    const sourceDir = await mkdtemp(join(tmpdir(), "maister-package-slug-"));
+  it("uses the directory slug when flow.yaml name is a display label", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "maister-package-slug-"));
+    const sourceDir = join(parent, "bugfix");
 
-    await writeFile(join(sourceDir, "flow.yaml"), validFlowYaml("bad..slug"));
+    await mkdir(sourceDir);
+    await writeFile(join(sourceDir, "flow.yaml"), validFlowYaml("Bugfix"));
 
-    await expect(
-      readAuthoredFlowPackageDirectory(sourceDir),
-    ).rejects.toMatchObject({ code: "CONFIG" });
+    const body = await readAuthoredFlowPackageDirectory(sourceDir);
+
+    expect(body.packageMetadata).toMatchObject({
+      slug: "bugfix",
+      name: "Bugfix",
+    });
+    expect(body.validation.status).toBe("valid");
   });
 
   it("refuses package directories with non-text artifact bytes", async () => {
@@ -344,6 +350,29 @@ describe("authored Flow package body validation", () => {
         projectId: "project-1",
         projectSlug: "demo",
         flowId: "aif",
+        workspaceRoot: sourceDir,
+        db: {},
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+
+  it("refuses authored bridge installs before generic install when package entries are symlinks", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "maister-package-symlink-"));
+    const sourceDir = join(parent, "symlinked-package");
+    const outsideSetup = join(parent, "outside-setup.sh");
+
+    await mkdir(sourceDir);
+    await writeFile(join(sourceDir, "flow.yaml"), validFlowYaml(), "utf8");
+    await writeFile(outsideSetup, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await symlink(outsideSetup, join(sourceDir, "setup.sh"));
+
+    await expect(
+      installAuthoredFlowPackageBridge({
+        source: sourceDir,
+        version: "authored-local",
+        projectId: "project-1",
+        projectSlug: "demo",
+        flowId: "aif-symlink",
         workspaceRoot: sourceDir,
         db: {},
       }),
