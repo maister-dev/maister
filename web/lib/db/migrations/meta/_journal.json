@@ -239,6 +239,13 @@
       "when": 1780618500000,
       "tag": "0033_m27_flow_revisions_exec_trust",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1780618600000,
+      "tag": "0034_m27_platform_mcp_servers",
+      "breakpoints": true
     }
   ]
 }

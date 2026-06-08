@@ -234,6 +234,56 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     .defaultNow(),
 });
 
+// Platform-scoped MCP capability catalog (M27/T-C2, ADR-066). Admin CRUD mirrors
+// platform_acp_runners (ADR-065). Secrets are NEVER stored: env_keys/header_keys
+// are `env:NAME` references resolved supervisor-side, never plaintext values.
+export const platformMcpServers = pgTable(
+  "platform_mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    transport: text("transport", { enum: ["stdio", "sse", "http"] })
+      .notNull()
+      .default("stdio"),
+    command: text("command"),
+    args: jsonb("args").$type<string[]>().notNull().default([]),
+    envKeys: jsonb("env_keys").$type<string[]>().notNull().default([]),
+    url: text("url"),
+    headerKeys: jsonb("header_keys").$type<string[]>().notNull().default([]),
+    supportedAgents: jsonb("supported_agents")
+      .$type<("claude" | "codex")[]>()
+      .notNull()
+      .default(["claude", "codex"]),
+    trustStatus: text("trust_status", {
+      enum: ["untrusted", "trusted", "trusted_by_policy"],
+    })
+      .notNull()
+      .default("untrusted"),
+    readinessStatus: text("readiness_status", {
+      enum: ["Unknown", "Ready", "NotReady"],
+    })
+      .notNull()
+      .default("Unknown"),
+    readinessReasons: jsonb("readiness_reasons")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxTransportEnabled: index("platform_mcp_servers_transport_enabled_idx").on(
+      t.transport,
+      t.enabled,
+    ),
+  }),
+);
+export type PlatformMcpServer = typeof platformMcpServers.$inferSelect;
+
 // Immutable, globally content-addressed Flow package revision (M10, ADR-021).
 // One row per (flow_ref_id, resolved_revision); the system cache
 // ~/.maister/flows/<id>@<sha>/ is shared across projects, so revisions are not
