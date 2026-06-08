@@ -6,7 +6,6 @@ import path from "node:path";
 import Mustache from "mustache";
 import pino from "pino";
 import { parse as parseYaml } from "yaml";
-import { z } from "zod";
 
 import {
   ARTIFACT_KINDS,
@@ -14,12 +13,10 @@ import {
   flowYamlV1Schema,
   formSchemaSchema,
   maisterYamlV2Schema,
-  type CapabilityAgent,
   type CapabilityKind,
   type FlowYamlV1,
   type FormSchema,
   type MaisterYamlV2,
-  type McpCapabilityConfig,
   type NodeDef,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
@@ -31,18 +28,6 @@ import {
 } from "@/lib/flows/engine-version";
 
 const log = pino({ name: "config" });
-
-const platformMcpJsonSchema = z.object({
-  mcpServers: z.record(
-    z.string().min(1),
-    z.object({
-      command: z.string().min(1),
-      args: z.array(z.string()).optional(),
-      env: z.record(z.string(), z.string()).optional(),
-      disabled: z.boolean().optional(),
-    }),
-  ),
-});
 
 function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
@@ -310,71 +295,6 @@ export function firstUnknownCapabilityRef(
   }
 
   return null;
-}
-
-export async function loadPlatformMcpCapabilities(
-  mcpJsonPath: string,
-): Promise<Array<McpCapabilityConfig & { source: "platform" }>> {
-  let raw: string;
-
-  try {
-    raw = await readFile(mcpJsonPath, "utf8");
-  } catch (err) {
-    throw new MaisterError(
-      "CONFIG",
-      `Cannot read MCP registry at ${mcpJsonPath}: ${asError(err).message}`,
-      { cause: asError(err) },
-    );
-  }
-
-  let data: unknown;
-
-  try {
-    data = JSON.parse(raw);
-  } catch (err) {
-    throw new MaisterError(
-      "CONFIG",
-      `Invalid JSON in ${mcpJsonPath}: ${asError(err).message}`,
-      { cause: asError(err) },
-    );
-  }
-
-  const parsed = platformMcpJsonSchema.safeParse(data);
-
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-      .join("; ");
-
-    log.warn({ path: mcpJsonPath, issues }, "MCP registry validation failed");
-    throw new MaisterError(
-      "CONFIG",
-      `MCP registry schema errors in ${mcpJsonPath}: ${issues}`,
-    );
-  }
-
-  const defaultAgents: CapabilityAgent[] = ["claude", "codex"];
-  const capabilities = Object.entries(parsed.data.mcpServers)
-    .filter(([, server]) => server.disabled !== true)
-    .map(([id, server]) => ({
-      id,
-      kind: "mcp" as const,
-      label: id,
-      source: "platform" as const,
-      command: server.command,
-      args: server.args ?? [],
-      env: server.env,
-      agents: defaultAgents,
-      enforceability: "enforced" as const,
-      selected_by_default: true,
-    }));
-
-  log.debug(
-    { path: mcpJsonPath, mcpCount: capabilities.length },
-    "platform MCP registry loaded",
-  );
-
-  return capabilities;
 }
 
 export type CapabilityRefIdsInput = {

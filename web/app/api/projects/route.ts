@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { access, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 
 import { eq, or } from "drizzle-orm";
@@ -10,13 +10,10 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import {
-  buildCapabilityRefIds,
-  loadPlatformMcpCapabilities,
-  loadProjectConfig,
-} from "@/lib/config";
+import { buildCapabilityRefIds, loadProjectConfig } from "@/lib/config";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
+import { loadPlatformMcpCapabilitiesFromDb } from "@/lib/mcp/projection";
 import { syncFlowRunnerReconfigurationRequirements } from "@/lib/acp-runners/flow-reconfiguration";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -39,25 +36,6 @@ const log = pino({
   name: "api-projects",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-async function resolvePlatformMcpRegistryPath(): Promise<string> {
-  const candidates = [
-    path.resolve(process.cwd(), ".mcp.json"),
-    path.resolve(process.cwd(), "../.mcp.json"),
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      await access(candidate);
-
-      return candidate;
-    } catch {
-      // Try the next conventional runtime cwd.
-    }
-  }
-
-  return candidates[0];
-}
 
 // `repoUrl`/`target` are body-controlled and flow into filesystem reads + git
 // clone. Deep path/URL validation lives in resolveProjectSource (sink-invariant
@@ -202,9 +180,6 @@ async function register(
   // NO db row written.
   const config = await loadProjectConfig(maisterYamlPath);
   const flowRoles = config.flow_roles ?? [];
-  const platformMcps = await loadPlatformMcpCapabilities(
-    await resolvePlatformMcpRegistryPath(),
-  );
 
   const slug = deriveSlug(config.project.name);
   const repoPath = resolved.dir;
@@ -216,6 +191,11 @@ async function register(
     delete: any;
     transaction: any;
   };
+
+  // M27/T-C3: platform MCPs come from the admin-managed platform_mcp_servers
+  // table (ADR-066), projected as source='platform' capabilities — replacing
+  // the legacy .mcp.json registry.
+  const platformMcps = await loadPlatformMcpCapabilitiesFromDb(db);
 
   // Phase (b): slug / repo_path uniqueness. Collision → CONFLICT (409).
   const collisions = await db
