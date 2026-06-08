@@ -154,12 +154,6 @@ export async function LeftRail({
     { id: "flows", label: tNav("flows"), href: "/flows", ready: false },
     { id: "agents", label: tNav("agents"), href: "/agents", ready: false },
     { id: "mcps", label: tNav("mcps"), href: "/mcps", ready: false },
-    {
-      id: "settings",
-      label: tNav("settings"),
-      href: "/settings",
-      ready: false,
-    },
   ];
 
   // User management is admin-only and access-controlled at the route too; the
@@ -175,6 +169,12 @@ export async function LeftRail({
       id: "scheduler",
       label: tNav("scheduler"),
       href: "/admin/scheduler",
+      ready: true,
+    });
+    sections.push({
+      id: "settings",
+      label: tNav("settings"),
+      href: "/settings",
       ready: true,
     });
   }
