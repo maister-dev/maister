@@ -1104,5 +1104,88 @@
     "alreadyMember": "Этот пользователь уже является участником.",
     "staleConflict": "Этого участника изменил кто-то другой. Обновите страницу и повторите.",
     "lastError": "Что-то пошло не так. Попробуйте ещё раз."
+  },
+  "flowEditor": {
+    "toolbar": {
+      "addNode": "Добавить узел",
+      "removeNode": "Удалить узел",
+      "addGate": "Добавить гейт",
+      "selectNodeHint": "Выберите узел, чтобы добавить гейт",
+      "nodeType": {
+        "ai_coding": "AI-кодинг",
+        "cli": "CLI",
+        "check": "Проверка",
+        "judge": "Судья",
+        "human": "Человек"
+      },
+      "gateKind": {
+        "command_check": "Проверка команды",
+        "skill_check": "Проверка навыка",
+        "ai_judgment": "AI-суждение",
+        "artifact_required": "Требуется артефакт",
+        "external_check": "Внешняя проверка",
+        "human_review": "Ревью человеком"
+      }
+    },
+    "nodeForm": {
+      "empty": "Выберите узел для редактирования",
+      "action": "Действие",
+      "settings": "Настройки",
+      "gates": "Гейты",
+      "transitions": "Переходы",
+      "rework": "Доработка",
+      "output": "Структурированный вывод",
+      "prompt": "Промпт",
+      "command": "Команда",
+      "model": "Модель",
+      "thinkingEffort": "Уровень рассуждений",
+      "permissionMode": "Режим разрешений",
+      "workspaceAccess": "Доступ к рабочей области",
+      "timeoutMs": "Таймаут (мс)",
+      "environmentPolicy": "Политика окружения",
+      "failureClass": "Класс ошибки",
+      "decisions": "Решения (через запятую)",
+      "criticality": "Критичность",
+      "outputSchema": "Путь к схеме результата",
+      "outputRequired": "Обязательно",
+      "reworkAllowedTargets": "Допустимые цели (через запятую)",
+      "reworkWorkspacePolicies": "Политики рабочей области (через запятую)",
+      "reworkMaxLoops": "Макс. циклов",
+      "reworkCommentsVar": "Переменная комментариев",
+      "transitionOutcome": "Исход",
+      "transitionTarget": "Цель",
+      "addTransition": "Добавить переход",
+      "removeTransition": "Удалить",
+      "noTransitions": "Нет переходов",
+      "noGates": "Нет гейтов"
+    },
+    "gate": {
+      "mode": "Режим",
+      "modeBlocking": "Блокирующий",
+      "modeAdvisory": "Рекомендательный",
+      "command": "Команда",
+      "prompt": "Промпт",
+      "skill": "Навык",
+      "confidenceMin": "Мин. уверенность",
+      "externalDescription": "Описание внешней проверки",
+      "staleOnNewCommit": "Сбрасывать при новом коммите",
+      "remove": "Удалить гейт"
+    },
+    "diff": {
+      "empty": "Нет изменений с последней опубликованной ревизии"
+    },
+    "validation": {
+      "valid": "Нет проблем валидации",
+      "title": "Проблемы валидации"
+    },
+    "page": {
+      "graphTab": "Граф",
+      "yamlTab": "Сырой YAML",
+      "diffTab": "Дифф",
+      "save": "Сохранить черновик",
+      "saving": "Сохранение…",
+      "saved": "Сохранено",
+      "saveError": "Ошибка сохранения"
+    }
   }
 }

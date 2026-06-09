@@ -1104,5 +1104,88 @@
     "alreadyMember": "This user is already a member.",
     "staleConflict": "This member was changed by someone else. Refresh and try again.",
     "lastError": "Something went wrong. Try again."
+  },
+  "flowEditor": {
+    "toolbar": {
+      "addNode": "Add node",
+      "removeNode": "Remove node",
+      "addGate": "Add gate",
+      "selectNodeHint": "Select a node to add a gate",
+      "nodeType": {
+        "ai_coding": "AI coding",
+        "cli": "CLI",
+        "check": "Check",
+        "judge": "Judge",
+        "human": "Human"
+      },
+      "gateKind": {
+        "command_check": "Command check",
+        "skill_check": "Skill check",
+        "ai_judgment": "AI judgment",
+        "artifact_required": "Artifact required",
+        "external_check": "External check",
+        "human_review": "Human review"
+      }
+    },
+    "nodeForm": {
+      "empty": "Select a node to edit",
+      "action": "Action",
+      "settings": "Settings",
+      "gates": "Gates",
+      "transitions": "Transitions",
+      "rework": "Rework",
+      "output": "Structured output",
+      "prompt": "Prompt",
+      "command": "Command",
+      "model": "Model",
+      "thinkingEffort": "Thinking effort",
+      "permissionMode": "Permission mode",
+      "workspaceAccess": "Workspace access",
+      "timeoutMs": "Timeout (ms)",
+      "environmentPolicy": "Environment policy",
+      "failureClass": "Failure class",
+      "decisions": "Decisions (comma-separated)",
+      "criticality": "Criticality",
+      "outputSchema": "Result schema path",
+      "outputRequired": "Required",
+      "reworkAllowedTargets": "Allowed targets (comma-separated)",
+      "reworkWorkspacePolicies": "Workspace policies (comma-separated)",
+      "reworkMaxLoops": "Max loops",
+      "reworkCommentsVar": "Comments variable",
+      "transitionOutcome": "Outcome",
+      "transitionTarget": "Target",
+      "addTransition": "Add transition",
+      "removeTransition": "Remove",
+      "noTransitions": "No transitions",
+      "noGates": "No gates"
+    },
+    "gate": {
+      "mode": "Mode",
+      "modeBlocking": "Blocking",
+      "modeAdvisory": "Advisory",
+      "command": "Command",
+      "prompt": "Prompt",
+      "skill": "Skill",
+      "confidenceMin": "Min confidence",
+      "externalDescription": "External description",
+      "staleOnNewCommit": "Stale on new commit",
+      "remove": "Remove gate"
+    },
+    "diff": {
+      "empty": "No changes since the last published revision"
+    },
+    "validation": {
+      "valid": "No validation issues",
+      "title": "Validation issues"
+    },
+    "page": {
+      "graphTab": "Graph",
+      "yamlTab": "Raw YAML",
+      "diffTab": "Diff",
+      "save": "Save draft",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "saveError": "Save failed"
+    }
   }
 }

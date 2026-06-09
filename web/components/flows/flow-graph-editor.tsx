@@ -1,6 +1,7 @@
 "use client";
 
 import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
+import type { EditorValidationSummaryLabels } from "@/components/flows/editor-validation-summary";
 import type { NodeSideFormLabels } from "@/components/flows/node-form/node-side-form";
 import type { FlowNodeData } from "@/lib/board/flow-graph-view-layout";
 import type { FlowYamlV1 } from "@/lib/config.schema";
@@ -29,6 +30,7 @@ import {
 } from "@xyflow/react";
 
 import { FlowNodeBody } from "@/components/board/flow-graph-view";
+import { EditorValidationSummary } from "@/components/flows/editor-validation-summary";
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import {
@@ -40,6 +42,7 @@ import {
   setTransition,
 } from "@/lib/flows/editor/editor-state";
 import { GATE_KINDS, NODE_TYPES } from "@/lib/flows/editor/node-form";
+import { validateEditorManifest } from "@/lib/flows/editor/validation";
 
 import "@xyflow/react/dist/style.css";
 
@@ -55,6 +58,7 @@ export type FlowEditorToolbarLabels = {
 export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   graph: FlowGraphViewLabels;
   nodeForm: NodeSideFormLabels;
+  validation: EditorValidationSummaryLabels;
 };
 
 export interface FlowGraphEditorProps {
@@ -420,6 +424,8 @@ export default function FlowGraphEditor({
       ? null
       : (manifest.nodes?.find((nd) => nd.id === selectedNodeId) ?? null);
 
+  const validation = validateEditorManifest(manifest);
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div
@@ -452,7 +458,12 @@ export default function FlowGraphEditor({
           </ReactFlow>
         </div>
       </div>
-      <aside data-testid="flow-graph-editor-sidebar">
+      <aside className="grid gap-3" data-testid="flow-graph-editor-sidebar">
+        <EditorValidationSummary
+          labels={labels.validation}
+          result={validation}
+          onSelectNode={select}
+        />
         <NodeSideForm
           labels={labels.nodeForm}
           node={selectedNode}
