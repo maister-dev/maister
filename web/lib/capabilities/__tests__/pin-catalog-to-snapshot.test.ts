@@ -1,5 +1,5 @@
 /**
- * M27/T-B5 (≡ C8b(1), ADR-068): the runner pins its capability universe to the
+ * M27/T-B5 (≡ C8b(1), ADR-069): the runner pins its capability universe to the
  * launch-frozen `runs.resolved_capability_set` snapshot instead of re-reading
  * the live catalog, so an edit/publish mid-run cannot change what the run
  * materializes (in-flight immutability). `pinCatalogToSnapshot` keeps only the

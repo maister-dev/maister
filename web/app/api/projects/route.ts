@@ -193,7 +193,7 @@ async function register(
   };
 
   // M27/T-C3: platform MCPs come from the admin-managed platform_mcp_servers
-  // table (ADR-066), projected as source='platform' capabilities — replacing
+  // table (ADR-067), projected as source='platform' capabilities — replacing
   // the legacy .mcp.json registry.
   const platformMcps = await loadPlatformMcpCapabilitiesFromDb(db);
 

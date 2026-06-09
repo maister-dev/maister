@@ -175,7 +175,7 @@ async function repointSymlink(
 // denormalized flows cache from the revision's manifest.
 /**
  * M27/T-B4: resolve the effective flow revision to launch, honoring
- * `flows.version_binding` (ADR-068).
+ * `flows.version_binding` (ADR-069).
  *
  * Stage-1 semantics: BOTH `pinned` and `latest` resolve the M10 per-project
  * `enabled_revision_id`. This is correct AND safe:

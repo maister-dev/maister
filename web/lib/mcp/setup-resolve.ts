@@ -1,4 +1,4 @@
-// M27/T-C7 (setup-resolve, ADR-069): pure, unit-testable classifier for the
+// M27/T-C7 (setup-resolve, ADR-070): pure, unit-testable classifier for the
 // setup-time "do I already have this MCP?" question. Given a flow package's
 // REQUIRED mcp ref ids and the project's mcp capability records, classify each
 // id as "present" (a winner record exists → reuse/dedupe, no silent duplicate)

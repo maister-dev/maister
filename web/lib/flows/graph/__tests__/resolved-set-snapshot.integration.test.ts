@@ -1,5 +1,5 @@
 /**
- * M27/T-B5 (≡ C8b(1), ADR-068): in-flight immutability — the graph runner
+ * M27/T-B5 (≡ C8b(1), ADR-069): in-flight immutability — the graph runner
  * materializes the capability set frozen onto `runs.resolved_capability_set` at
  * launch, NOT a live re-resolve. Proof: launch froze `github` at scope
  * flow-package; a higher-precedence `github` then appears at scope project

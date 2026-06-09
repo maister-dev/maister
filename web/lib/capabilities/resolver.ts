@@ -85,7 +85,7 @@ export function buildResolvedCapabilitySet(args: {
   };
 }
 
-// M27/T-B5 (≡ C8b(1), ADR-068): constrain the runner's capability universe to
+// M27/T-B5 (≡ C8b(1), ADR-069): constrain the runner's capability universe to
 // the launch-frozen resolved set. Keeps only live records whose
 // (kind, refId, scope) matches a frozen winner, so a record added/republished
 // at any scope mid-run cannot enter (or override) what this run materializes —

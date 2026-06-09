@@ -12,7 +12,7 @@ import { catalogErrorResponse } from "@/lib/catalog/route-errors";
 import { getDb } from "@/lib/db/client";
 import { resolveRequiredMcps } from "@/lib/mcp/setup-resolve";
 
-// M27/T-C7 (setup-resolve, ADR-069): "Present-by-id → reuse/dedupe (no silent
+// M27/T-C7 (setup-resolve, ADR-070): "Present-by-id → reuse/dedupe (no silent
 // duplicate). Absent REQUIRED → propose-to-configure." Classification ONLY —
 // this route never creates records and stores no secrets. The operator
 // configures an absent mcp via the C5 POST /api/projects/[slug]/mcp create

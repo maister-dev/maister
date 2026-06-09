@@ -470,7 +470,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   flow bridges it into `flows` + `flow_revisions` via
   `installAuthoredFlowPackageBridge`. See
   [`workbench.md`](workbench.md) §M27 and
-  [`../system-analytics/flow-studio.md`](flow-studio.md) + ADR-066.
+  [`../system-analytics/flow-studio.md`](flow-studio.md) + ADR-067.
 - Source (Implemented): `web/lib/config.schema.ts` (node/gate schema),
   `web/lib/config.ts` (`loadFlowManifest`),
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`,

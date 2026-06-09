@@ -799,7 +799,7 @@ export async function runGraph(
     lastSeenMonotonicId: 0,
   };
 
-  // M14 T4.1 / M27 T-B5 (ADR-068): load the live selectable catalog ONCE, then
+  // M14 T4.1 / M27 T-B5 (ADR-069): load the live selectable catalog ONCE, then
   // PIN it to the launch-frozen `runs.resolved_capability_set` snapshot so a
   // mid-run edit/publish (a new same-id record at any scope, or a wholly new
   // capability) cannot change what THIS run materializes — in-flight

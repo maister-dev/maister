@@ -1,5 +1,5 @@
 /**
- * M27/T-C6 (C6-top, ADR-069): flow-package `flow.yaml` declares a top-level
+ * M27/T-C6 (C6-top, ADR-070): flow-package `flow.yaml` declares a top-level
  * `mcps: string[]` (capability ref ids) — the package-level REQUIRED MCP
  * declaration. The hard-gate (`validateGraphManifest` via `loadFlowManifest`)
  * rejects an unknown package mcp ref with `CONFIG`, sharing one helper with the

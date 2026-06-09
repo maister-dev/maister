@@ -1,5 +1,5 @@
 /**
- * M27/T-C8b(3) (ADR-067/§4.2 two-axis trust, mcp-management.md §6.2): the graph
+ * M27/T-C8b(3) (ADR-068/§4.2 two-axis trust, mcp-management.md §6.2): the graph
  * runner withholds an MCP `stdio` server (local command spawn) unless the run's
  * pinned `flow_revisions.exec_trust` is `trusted`. Proof: the SAME run + stdio
  * github MCP materializes the server only when the owning revision is

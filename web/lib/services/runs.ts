@@ -286,7 +286,7 @@ export async function launchRun(
     );
   }
 
-  // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-068).
+  // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-069).
   // `pinned` = the enabled pointer (unchanged behavior); `latest` = the newest
   // Installed revision for this flow_ref_id (a just-published authored revision
   // floats in via the bridge). The per-revision guards below still gate the
@@ -513,7 +513,7 @@ export async function launchRun(
       );
     }
 
-    // M27/T-C6 (C6-top, ADR-069): reject package-level required MCP refs
+    // M27/T-C6 (C6-top, ADR-070): reject package-level required MCP refs
     // (manifest top-level `mcps`) absent from the project registry — after the
     // per-node M14 cap-ref check, before any side-effect. The
     // known-but-unmaterializable required-MCP refusal is T-C8.

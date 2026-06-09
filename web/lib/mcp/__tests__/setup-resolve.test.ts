@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveRequiredMcps } from "@/lib/mcp/setup-resolve";
 
-// M27/T-C7 (setup-resolve, ADR-069): setup-time classify each REQUIRED mcp ref
+// M27/T-C7 (setup-resolve, ADR-070): setup-time classify each REQUIRED mcp ref
 // id against the project's mcp capability records. "present" reuses the
 // local-first winner per the SAME precedence as resolver.ts
 // (project > platform > flow-package); "absent" → propose-to-configure. No

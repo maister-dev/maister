@@ -234,7 +234,7 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     .defaultNow(),
 });
 
-// Platform-scoped MCP capability catalog (M27/T-C2, ADR-066). Admin CRUD mirrors
+// Platform-scoped MCP capability catalog (M27/T-C2, ADR-067). Admin CRUD mirrors
 // platform_acp_runners (ADR-065). Secrets are NEVER stored: env_keys/header_keys
 // are `env:NAME` references resolved supervisor-side, never plaintext values.
 export const platformMcpServers = pgTable(
@@ -908,7 +908,7 @@ export const flowRunnerRemaps = pgTable(
 
 export type RunKind = "flow" | "scratch";
 
-// M27/T-C8 (§3.1, ADR-068): the capability set resolved at launch, frozen onto
+// M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
 // whether the resolved flow revision came from the authored bridge or git.
 export type ResolvedCapabilitySet = {

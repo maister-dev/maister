@@ -1,4 +1,4 @@
-// M27/T-C7 (setup-resolve, ADR-069): setup-time MCP resolve-by-id route against
+// M27/T-C7 (setup-resolve, ADR-070): setup-time MCP resolve-by-id route against
 // a real testcontainer postgres. POST classifies each required mcp ref id
 // against the project's mcp capability_records: "present" (a winner record
 // exists, local-first scope) vs "absent" (propose-to-configure). Proves: RBAC

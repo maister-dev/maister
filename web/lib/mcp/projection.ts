@@ -7,7 +7,7 @@ import type { PlatformMcpServer } from "@/lib/db/schema";
 
 import { platformMcpServers } from "@/lib/db/schema";
 
-// M27/T-C3 (ADR-066): project the admin-managed `platform_mcp_servers` catalog
+// M27/T-C3 (ADR-067): project the admin-managed `platform_mcp_servers` catalog
 // (T-C1) into the capability pipeline as `source='platform'` MCP capabilities,
 // replacing the legacy `.mcp.json` registry. The downstream upsert
 // (`upsertCapabilitiesFromConfig`) reduces `env` to NAME-only `envKeys`

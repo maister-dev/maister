@@ -3,7 +3,7 @@
 > **Status: Implemented (M27 Stage 1).** The entities, routes, and state
 > machines below have shipped — contracted in the
 > [M27 Stage-1 SDD](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
-> and now coded. Locked decision: [ADR-069](../decisions.md#adr-069).
+> and now coded. Locked decision: [ADR-070](../decisions.md#adr-070).
 > Extends the M14 materialization surface documented in
 > [capabilities.md](capabilities.md) and the M25 authored catalog documented in
 > [capability-catalog.md](capability-catalog.md).
@@ -172,7 +172,7 @@ The following normative bullets are copied verbatim from SDD §7.2 (Implemented)
 
 ## Linked artifacts
 
-- **Decision:** [ADR-069](../decisions.md#adr-069) — platform MCP admin CRUD surface and delete guard.
+- **Decision:** [ADR-070](../decisions.md#adr-070) — platform MCP admin CRUD surface and delete guard.
 - **SDD:** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md) §3.1 (`platform_mcp_servers` DDL), §3.2 (`mcpCapabilitySchema`, required/additional), §6.2 (required-vs-additional gate), §7.2 (normative MCP bullets), §8 (edge cases).
 - **Capability resolution precedence:** [capabilities.md](capabilities.md) — the project > platform > flow-package winner rule applies to all `kind` values including `mcp`; this file does not restate the full rule.
 - **M14 materialization path:** [capabilities.md](capabilities.md) §Process flows — reused unchanged by M27; M27 extends the transport shape only.

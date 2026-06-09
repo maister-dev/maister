@@ -91,10 +91,10 @@
 | [ADR-063](#adr-063-structured-node-output-channel-p1--run-context-file-p7) | Structured node output channel (P1) + run-context file (P7) | Accepted | 2026-06-07 |
 | [ADR-064](#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section) | Authored flow-graph layout in the flow.yaml presentation section | Accepted | 2026-06-07 |
 | [ADR-065](#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) | Platform ACP runner CRUD in `/settings` — hard delete blocked by any usage reference | Accepted | 2026-06-08 |
-| [ADR-066](#adr-066-flow-editor-write-path--canvas-edits-as-m25-authored-flow-drafts-with-hard-gate-before-persist) | Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist | Accepted | 2026-06-08 |
-| [ADR-067](#adr-067-authoredexecutable-flow-bridge--two-axis-trust-gate-supersedes-adr-061-publish-boundary) | Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary) | Accepted | 2026-06-08 |
-| [ADR-068](#adr-068-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
-| [ADR-069](#adr-069-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
+| [ADR-067](#adr-067-flow-editor-write-path--canvas-edits-as-m25-authored-flow-drafts-with-hard-gate-before-persist) | Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist | Accepted | 2026-06-08 |
+| [ADR-068](#adr-068-authoredexecutable-flow-bridge--two-axis-trust-gate-supersedes-adr-061-publish-boundary) | Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary) | Accepted | 2026-06-08 |
+| [ADR-069](#adr-069-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
+| [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 
 ---
 
@@ -4002,7 +4002,7 @@ separate route or menu item) and make the page reachable.
 
 ---
 
-### ADR-066: Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist
+### ADR-067: Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist
 
 **Date:** 2026-06-08
 **Status:** Accepted
@@ -4048,7 +4048,7 @@ read-only (`readBoard`), consistent with ADR-052.
 
 ---
 
-### ADR-067: Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary)
+### ADR-068: Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary)
 
 **Date:** 2026-06-08
 **Status:** Accepted
@@ -4075,7 +4075,7 @@ path (`ensureRevisionIntentRow` at `:507`, finalize at `:588`/`:811`) is called
 unchanged; the authored revision lands in the installed flow's **own** `flows`/`flow_revisions`
 lineage (same `flow_ref_id`, recorded via `authored_capabilities.source_flow_ref_id`).
 There is no parallel catalog store and no merge problem; "authored wins" is the
-tie-break in the `latest` selector (ADR-068).
+tie-break in the `latest` selector (ADR-069).
 
 A **net-new second trust axis** `flow_revisions.exec_trust` (`untrusted | trusted`,
 default `untrusted`) gates `runRevisionSetup` (setup.sh) AND MCP stdio `command`
@@ -4108,13 +4108,13 @@ to `flow_revisions.exec_trust === 'trusted'`. **Invariant:** logic-trust alone
 
 ---
 
-### ADR-068: `version_binding` (pinned|latest) + resolve-at-launch + unified resolved-set snapshot
+### ADR-069: `version_binding` (pinned|latest) + resolve-at-launch + unified resolved-set snapshot
 
 **Date:** 2026-06-08
 **Status:** Accepted
 **Context:** M10 introduced `flows.enabled_revision_id` as the pinned-revision pointer
 for launch. M14 introduced capability-revision snapshots into runs. M27 adds authored
-revisions that can become `flow_revisions` (ADR-067) and a `latest` selection mode,
+revisions that can become `flow_revisions` (ADR-068) and a `latest` selection mode,
 which requires a deterministic "newest published, never draft" resolver. The two
 snapshot mechanisms (M10 flow-revision pointer, M14 capability-revision) are currently
 separate; a unified resolved-set snapshot is needed so in-flight runs are fully
@@ -4149,7 +4149,7 @@ No new `runs.status` values are introduced.
   publish" semantics without manual pin updates.
 - The unified resolved-set replaces the implicit "read M10 pointer at runner start"
   pattern that was vulnerable to TOCTOU races on `enabled_revision_id`.
-- Migration `0031+` adds `version_binding` (DDL in SDD §3.1).
+- Migration `0032+` adds `version_binding` (DDL in SDD §3.1).
 
 **Alternatives Considered:**
 - **Two separate snapshots (M10 pointer + M14 caps) retained as-is:** rejected — they
@@ -4164,7 +4164,7 @@ No new `runs.status` values are introduced.
 
 ---
 
-### ADR-069: MCP + capability management model — 3-scope identity, local-first precedence, platform storage, setup-time resolve
+### ADR-070: MCP + capability management model — 3-scope identity, local-first precedence, platform storage, setup-time resolve
 
 **Date:** 2026-06-08
 **Status:** Accepted
@@ -4210,7 +4210,7 @@ MCP absence is non-fatal.
 operator-confirmed params (env:NAME references only). Present-by-id → reuse/dedupe
 (no silent duplicate). Absent REQUIRED → propose-to-configure; remains unresolved →
 blocks launch. Resolved MCP revisions are included in the `runs.resolved_capability_set`
-snapshot (ADR-068).
+snapshot (ADR-069).
 
 **Codex MCP.** Materialization reuses M14 (`materialize.ts` / `agent-map.ts` /
 supervisor `acp-client.ts:172`). Codex MCP support: materialized if `codex-acp`

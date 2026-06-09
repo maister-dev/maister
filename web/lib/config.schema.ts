@@ -723,7 +723,7 @@ export const flowYamlV1Schema = z
     gates: z.array(z.string().min(1)).optional(),
     artifacts: z.array(z.string().min(1)).optional(),
     external_ops: z.array(z.string().min(1)).optional(),
-    // M27/T-C6 (ADR-069): package-level REQUIRED MCP declaration — capability
+    // M27/T-C6 (ADR-070): package-level REQUIRED MCP declaration — capability
     // ref ids the flow package needs. The hard-gate rejects unknown refs
     // (CONFIG); launch refuses a required MCP that cannot materialize (T-C8).
     mcps: z.array(z.string().min(1)).optional(),

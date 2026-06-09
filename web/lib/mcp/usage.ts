@@ -5,7 +5,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 
 import { capabilityRecords } from "@/lib/db/schema";
 
-// M27/T-C1 (ADR-066): usage references for a platform MCP server, analogous to
+// M27/T-C1 (ADR-067): usage references for a platform MCP server, analogous to
 // lib/acp-runners/usage.ts. A platform MCP is "in use" when a project has
 // materialized it into its capability set — a `capability_records` row with
 // kind=mcp, source=platform, capability_ref_id=<mcp id>. Deleting/disabling a

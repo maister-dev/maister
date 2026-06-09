@@ -305,7 +305,7 @@ export function firstUnknownCapabilityRef(
  * the project mcp registry, or null when every ref resolves. Shared by the
  * hard-gate (validateGraphManifest) and the launch precondition (POST
  * /api/runs) so both gates agree on "unknown package mcp ref" (R-CONTRACT,
- * mirrors firstUnknownCapabilityRef). M27/T-C6 (C6-top, ADR-069).
+ * mirrors firstUnknownCapabilityRef). M27/T-C6 (C6-top, ADR-070).
  */
 export function firstUnknownPackageMcpRef(
   packageMcps: readonly string[] | undefined,

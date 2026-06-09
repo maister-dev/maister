@@ -142,7 +142,7 @@ detail, state machine, and expectations are in
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
   (Implemented, M18 — gh/glab + Gitea-API token become required-for-PR),
   [ADR-065](../decisions.md#adr-065) (admin CRUD surface pattern; MCP panel mirrors ACP runner panel),
-  [ADR-069](../decisions.md#adr-069) (platform MCP admin CRUD, Designed M27).
+  [ADR-070](../decisions.md#adr-070) (platform MCP admin CRUD, Designed M27).
 - Config reference: [`../configuration.md`](../configuration.md) §Environment
   variables.
 - Related domains: [`projects.md`](projects.md),
