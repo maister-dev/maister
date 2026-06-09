@@ -1,5 +1,10 @@
 import type { AuthoredCapabilityRevision } from "@/lib/catalog/authored-types";
 import type { AuthoredFlowPackageBody } from "@/lib/catalog/authored-types";
+import type { FlowEditorTabsLabels } from "@/components/flows/flow-editor-tabs";
+import type { FlowGraphEditorLabels } from "@/components/flows/flow-graph-editor";
+import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
+import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import type { Metadata } from "next";
 import type { ReactElement, ReactNode } from "react";
 
@@ -12,6 +17,7 @@ import {
   publishAuthoredFlowAction,
   updateAuthoredFlowAction,
 } from "@/app/(app)/flows/actions";
+import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import {
   PackageFilesEditor,
   type PackageFilesEditorLabels,
@@ -20,6 +26,8 @@ import { getAuthoredCapability } from "@/lib/catalog/authored-service";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { isAuthoredFlowPackageFileKind } from "@/lib/flows/package-authoring";
+import { buildAuthoredFlowDiff } from "@/lib/queries/authored-flow-diff";
+import { buildAuthoredFlowGraph } from "@/lib/queries/authored-flow-graph";
 import { getProjectBySlug } from "@/lib/queries/project";
 
 type PageProps = {
@@ -62,6 +70,43 @@ export default async function FlowDetailPage({
   const flowYaml = packageBody?.flowYaml ?? "";
   const packageFiles = packageBody?.files ?? [];
   const isPackageValid = packageBody?.validation.status === "valid";
+
+  // M27/T-A8: server-compile the draft for the canvas + diff (compile is
+  // server-only). An invalid/legacy draft that fails to compile falls back to
+  // the raw-YAML tab only.
+  const editorLabels = buildFlowEditorTabsLabels(
+    await getTranslations("flowEditor"),
+  );
+  const draftManifest = (detail.draft?.manifest ??
+    detail.published?.manifest ??
+    null) as FlowYamlV1 | null;
+  const publishedManifest = (detail.published?.manifest ??
+    null) as FlowYamlV1 | null;
+
+  let canvasAvailable = false;
+  let topology: GraphTopology | null = null;
+  let layout: FlowLayout | null = null;
+  let flowDiff = "";
+
+  if (draftManifest) {
+    try {
+      const graph = buildAuthoredFlowGraph(
+        draftManifest,
+        detail.capability.draftVersion,
+      );
+
+      topology = graph.topology;
+      layout = graph.layout;
+      flowDiff = buildAuthoredFlowDiff(
+        draftManifest,
+        publishedManifest,
+        detail.capability.draftVersion,
+      ).diff;
+      canvasAvailable = true;
+    } catch {
+      canvasAvailable = false;
+    }
+  }
 
   return (
     <div className="mx-auto w-full max-w-[1120px]">
@@ -119,18 +164,22 @@ export default async function FlowDetailPage({
               />
             </label>
 
-            <label className="grid gap-1.5">
+            <div className="grid gap-1.5">
               <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-mute">
                 flow.yaml
               </span>
-              <textarea
-                className="min-h-[620px] resize-y rounded-lg border border-line bg-ivory px-3 py-3 font-mono text-[12px] leading-[1.55] text-ink outline-none focus:border-amber disabled:opacity-70"
-                defaultValue={flowYaml}
+              <FlowEditorTabs
+                canvasAvailable={canvasAvailable}
+                diff={flowDiff}
                 disabled={!canManage}
-                name="flowYaml"
-                spellCheck={false}
+                draftVersion={detail.capability.draftVersion}
+                initialManifest={canvasAvailable ? draftManifest : null}
+                initialYaml={flowYaml}
+                labels={editorLabels}
+                layout={layout}
+                topology={topology}
               />
-            </label>
+            </div>
 
             <section className="mt-4">
               <h2 className="m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-mute">
@@ -408,6 +457,92 @@ function packageFilesEditorLabels(
     kind: t("packageFileKindLabel"),
     path: t("packageFilePath"),
     removeFile: t("removePackageFile"),
+  };
+}
+
+function buildFlowEditorTabsLabels(
+  te: Awaited<ReturnType<typeof getTranslations>>,
+): FlowEditorTabsLabels {
+  const gateKind = {
+    command_check: te("toolbar.gateKind.command_check"),
+    skill_check: te("toolbar.gateKind.skill_check"),
+    ai_judgment: te("toolbar.gateKind.ai_judgment"),
+    artifact_required: te("toolbar.gateKind.artifact_required"),
+    external_check: te("toolbar.gateKind.external_check"),
+    human_review: te("toolbar.gateKind.human_review"),
+  };
+
+  const editor: FlowGraphEditorLabels = {
+    addNode: te("toolbar.addNode"),
+    removeNode: te("toolbar.removeNode"),
+    addGate: te("toolbar.addGate"),
+    selectNodeHint: te("toolbar.selectNodeHint"),
+    nodeType: {
+      ai_coding: te("toolbar.nodeType.ai_coding"),
+      cli: te("toolbar.nodeType.cli"),
+      check: te("toolbar.nodeType.check"),
+      judge: te("toolbar.nodeType.judge"),
+      human: te("toolbar.nodeType.human"),
+    },
+    gateKind,
+    graph: { title: te("page.graphTab"), empty: "", currentNode: "", node: {} },
+    nodeForm: {
+      empty: te("nodeForm.empty"),
+      action: te("nodeForm.action"),
+      settings: te("nodeForm.settings"),
+      gates: te("nodeForm.gates"),
+      transitions: te("nodeForm.transitions"),
+      rework: te("nodeForm.rework"),
+      output: te("nodeForm.output"),
+      prompt: te("nodeForm.prompt"),
+      command: te("nodeForm.command"),
+      model: te("nodeForm.model"),
+      thinkingEffort: te("nodeForm.thinkingEffort"),
+      permissionMode: te("nodeForm.permissionMode"),
+      workspaceAccess: te("nodeForm.workspaceAccess"),
+      timeoutMs: te("nodeForm.timeoutMs"),
+      environmentPolicy: te("nodeForm.environmentPolicy"),
+      failureClass: te("nodeForm.failureClass"),
+      decisions: te("nodeForm.decisions"),
+      criticality: te("nodeForm.criticality"),
+      outputSchema: te("nodeForm.outputSchema"),
+      outputRequired: te("nodeForm.outputRequired"),
+      reworkAllowedTargets: te("nodeForm.reworkAllowedTargets"),
+      reworkWorkspacePolicies: te("nodeForm.reworkWorkspacePolicies"),
+      reworkMaxLoops: te("nodeForm.reworkMaxLoops"),
+      reworkCommentsVar: te("nodeForm.reworkCommentsVar"),
+      transitionOutcome: te("nodeForm.transitionOutcome"),
+      transitionTarget: te("nodeForm.transitionTarget"),
+      addTransition: te("nodeForm.addTransition"),
+      removeTransition: te("nodeForm.removeTransition"),
+      noTransitions: te("nodeForm.noTransitions"),
+      noGates: te("nodeForm.noGates"),
+      gate: {
+        mode: te("gate.mode"),
+        modeBlocking: te("gate.modeBlocking"),
+        modeAdvisory: te("gate.modeAdvisory"),
+        command: te("gate.command"),
+        prompt: te("gate.prompt"),
+        skill: te("gate.skill"),
+        confidenceMin: te("gate.confidenceMin"),
+        externalDescription: te("gate.externalDescription"),
+        staleOnNewCommit: te("gate.staleOnNewCommit"),
+        remove: te("gate.remove"),
+        kind: gateKind,
+      },
+    },
+    validation: {
+      valid: te("validation.valid"),
+      title: te("validation.title"),
+    },
+  };
+
+  return {
+    graphTab: te("page.graphTab"),
+    yamlTab: te("page.yamlTab"),
+    diffTab: te("page.diffTab"),
+    diffEmpty: te("diff.empty"),
+    editor,
   };
 }
 
