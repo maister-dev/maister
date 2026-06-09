@@ -16,6 +16,7 @@ import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
 import { FlowsPanel } from "@/components/board/panels/flows-panel";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
+import { McpPanel } from "@/components/board/panels/mcp-panel";
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
@@ -25,6 +26,7 @@ import { getBoardData } from "@/lib/queries/board";
 import { getFlowPackages } from "@/lib/queries/flow-packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
+import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 import { listTokens } from "@/lib/tokens/list";
@@ -242,7 +244,13 @@ export default async function ProjectBoardPage({
       ) : null}
 
       {tab === "prs" ? <DeferredPanel kind="prs" /> : null}
-      {tab === "mcps" ? <DeferredPanel kind="mcps" /> : null}
+      {tab === "mcps" ? (
+        <McpPanel
+          isAdmin={isAdmin}
+          servers={isAdmin ? await listProjectMcps(project.id) : []}
+          slug={slug}
+        />
+      ) : null}
       {tab === "flows" ? <FlowsPanel flows={pageData.flows} /> : null}
       {tab === "repo" ? (
         <RepoFilesPanel

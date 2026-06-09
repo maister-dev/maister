@@ -31,8 +31,8 @@ describe("ResolvedCapabilitySetPanel", () => {
       flowRevisionId: "rev-abc123",
       flowOrigin: "authored",
       capabilities: [
-        { refId: "lint", kind: "skill", sha: "deadbeef" },
-        { refId: "no-secrets", kind: "rule", sha: null },
+        { refId: "lint", kind: "skill", sha: "deadbeef", scope: "project" },
+        { refId: "no-secrets", kind: "rule", sha: null, scope: "flow-package" },
       ],
       mcps: [{ refId: "github", sha: "cafef00d", scope: "project" }],
     });

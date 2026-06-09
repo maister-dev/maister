@@ -143,3 +143,18 @@ export function mapProfileToAgentArtifacts(
 
   return { settingsLocal, mcpServers, skills };
 }
+
+// M27/T-C8b (mcp-management.md §6.2): an MCP `stdio` server spawns a LOCAL
+// command, so it is withheld until the owning flow revision is exec-trusted
+// (the T-B3 `flow_revisions.exec_trust` axis) — "trust → execute, never
+// execute-then-trust". `sse`/`http` connect to a remote URL (no local exec) and
+// are never gated. The runner applies this to the materialized set BEFORE the
+// servers reach the agent's createSession (the only spawn surface).
+export function gateStdioMcpsByExecTrust(
+  mcpServers: readonly AgentMcpServer[],
+  execTrust: "untrusted" | "trusted",
+): AgentMcpServer[] {
+  if (execTrust === "trusted") return [...mcpServers];
+
+  return mcpServers.filter((s) => s.transport !== "stdio");
+}

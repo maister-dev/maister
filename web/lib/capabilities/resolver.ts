@@ -73,6 +73,7 @@ export function buildResolvedCapabilitySet(args: {
         refId: r.capabilityRefId,
         kind: r.kind,
         sha: r.revision,
+        scope: r.source,
       })),
     mcps: winners
       .filter((r) => r.kind === "mcp")
@@ -82,6 +83,78 @@ export function buildResolvedCapabilitySet(args: {
         scope: r.source,
       })),
   };
+}
+
+// M27/T-B5 (≡ C8b(1), ADR-068): constrain the runner's capability universe to
+// the launch-frozen resolved set. Keeps only live records whose
+// (kind, refId, scope) matches a frozen winner, so a record added/republished
+// at any scope mid-run cannot enter (or override) what this run materializes —
+// in-flight immutability. A null snapshot (legacy / pre-C8a run) falls back to
+// the live catalog unchanged. Material is read from the (still-present) live
+// row; set membership + winning scope are what the snapshot freezes.
+export function pinCatalogToSnapshot<
+  T extends { kind: string; capabilityRefId: string; source: string },
+>(
+  liveCatalog: readonly T[],
+  snapshot: ResolvedCapabilitySet | null | undefined,
+): T[] {
+  if (!snapshot) return liveCatalog as T[];
+
+  const frozen = new Set<string>();
+
+  for (const c of snapshot.capabilities) {
+    frozen.add(`${c.kind}::${c.refId}::${c.scope}`);
+  }
+  for (const m of snapshot.mcps) {
+    frozen.add(`mcp::${m.refId}::${m.scope}`);
+  }
+
+  return liveCatalog.filter((r) =>
+    frozen.has(`${r.kind}::${r.capabilityRefId}::${r.source}`),
+  );
+}
+
+// M27/T-C8b (mcp-management.md §6.2): a REQUIRED mcp whose local-first WINNER
+// record does not support the executor agent cannot materialize → the launch
+// gate refuses with EXECUTOR_UNAVAILABLE. The winner is picked by the same
+// precedence as resolution (project > platform > flow-package), so a shadowed
+// lower-precedence record that WOULD support the agent does not rescue it. An
+// unresolved required ref is owned by the unknown-ref gate (CONFIG); skipped
+// here. Returns the first offending ref, or null when all required mcps resolve
+// to an agent-supporting winner.
+export function firstAgentUnsupportedRequiredMcp(
+  requiredMcpRefs: readonly string[],
+  mcpRecords: ReadonlyArray<{
+    capabilityRefId: string;
+    source: string;
+    agents: CapabilityCatalogRecord["agents"];
+  }>,
+  agent: CapabilityAgent,
+): string | null {
+  if (requiredMcpRefs.length === 0) return null;
+
+  const winner = new Map<
+    string,
+    { rank: number; agents: CapabilityCatalogRecord["agents"] }
+  >();
+
+  for (const r of mcpRecords) {
+    const rank = sourceRank(r.source);
+    const prev = winner.get(r.capabilityRefId);
+
+    if (!prev || rank < prev.rank) {
+      winner.set(r.capabilityRefId, { rank, agents: r.agents });
+    }
+  }
+
+  for (const ref of new Set(requiredMcpRefs)) {
+    const w = winner.get(ref);
+
+    if (!w) continue;
+    if (!supportsAgent(w.agents, agent)) return ref;
+  }
+
+  return null;
 }
 
 export type ResolveCapabilityProfileArgs = {

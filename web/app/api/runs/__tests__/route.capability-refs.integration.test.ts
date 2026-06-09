@@ -112,11 +112,30 @@ function aiCodingManifest(name: string, settings: unknown): unknown {
   };
 }
 
+// M27/T-C6 (C6-top): a manifest that declares package-level required MCPs at
+// the top level (no node settings.mcps) — exercises the launch package-mcp gate.
+function packageMcpManifest(name: string, packageMcps: string[]): unknown {
+  return {
+    schemaVersion: 1,
+    name,
+    mcps: packageMcps,
+    nodes: [
+      {
+        id: "implement",
+        type: "ai_coding",
+        action: { prompt: "/aif-implement" },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+}
+
 type CapabilitySeed = {
   capabilityRefId: string;
   kind: string;
   source: string;
   disabledAt?: Date | null;
+  agents?: string[];
 };
 
 async function seedProject(
@@ -189,7 +208,7 @@ async function seedProject(
       kind: cap.kind,
       label: cap.capabilityRefId,
       source: cap.source,
-      agents: ["claude", "codex"],
+      agents: cap.agents ?? ["claude", "codex"],
       enforceability: "instructed",
       selectedByDefault: true,
       selectable: cap.disabledAt ? false : true,
@@ -274,6 +293,37 @@ beforeAll(async () => {
         disabledAt: new Date(),
       },
     ],
+  );
+  // M27/T-C6 (C6-top): package-level required mcp declared but absent from the
+  // registry → launch refused; declared + registered → launches.
+  await seedProject(
+    "proj-unknown-pkg-mcp",
+    packageMcpManifest("UnknownPkgMcp", ["ghost-pkg-mcp"]),
+    [{ capabilityRefId: "real-mcp", kind: "mcp", source: "project" }],
+  );
+  await seedProject(
+    "proj-known-pkg-mcp",
+    packageMcpManifest("KnownPkgMcp", ["pkg-mcp"]),
+    [{ capabilityRefId: "pkg-mcp", kind: "mcp", source: "project" }],
+  );
+  // M27/T-C8b: a REQUIRED mcp whose record excludes the run's agent (claude) →
+  // EXECUTOR_UNAVAILABLE; one supporting the agent launches.
+  await seedProject(
+    "proj-req-mcp-unsupported",
+    aiCodingManifest("ReqMcpUnsupported", { mcps: { required: ["github"] } }),
+    [
+      {
+        capabilityRefId: "github",
+        kind: "mcp",
+        source: "project",
+        agents: ["codex"],
+      },
+    ],
+  );
+  await seedProject(
+    "proj-req-mcp-supported",
+    aiCodingManifest("ReqMcpSupported", { mcps: { required: ["github"] } }),
+    [{ capabilityRefId: "github", kind: "mcp", source: "project" }],
   );
 
   ({ POST } = await import("@/app/api/runs/route"));
@@ -361,6 +411,58 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
 
   it("launches (202) when the ref resolves to an imported (flow-package) capability", async () => {
     const res = await POST(request("task-proj-import-backed"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unknown package-level mcp ref with 400 CONFIG and NO side-effect (C6-top)", async () => {
+    const res = await POST(request("task-proj-unknown-pkg-mcp"));
+
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+
+    expect(body.code).toBe("CONFIG");
+    expect(body.message).toContain("ghost-pkg-mcp");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-unknown-pkg-mcp"));
+
+    expect(runs).toHaveLength(0);
+  });
+
+  it("launches (202) when the package-level mcp ref resolves to a project record (C6-top)", async () => {
+    const res = await POST(request("task-proj-known-pkg-mcp"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a required mcp whose record excludes the executor agent (503 EXECUTOR_UNAVAILABLE) (C8b)", async () => {
+    const res = await POST(request("task-proj-req-mcp-unsupported"));
+
+    expect(res.status).toBe(503);
+
+    const body = await res.json();
+
+    expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
+    expect(body.message).toContain("github");
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+
+    const runs = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-proj-req-mcp-unsupported"));
+
+    expect(runs).toHaveLength(0);
+  });
+
+  it("launches (202) when the required mcp supports the executor agent (C8b)", async () => {
+    const res = await POST(request("task-proj-req-mcp-supported"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);

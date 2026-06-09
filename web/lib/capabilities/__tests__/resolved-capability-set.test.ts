@@ -43,7 +43,12 @@ describe("buildResolvedCapabilitySet (T-C8)", () => {
       { refId: "github", sha: "sha-mcp", scope: "platform" },
     ]);
     expect(snap.capabilities).toEqual([
-      { refId: "aif-plan", kind: "skill", sha: "sha-skill" },
+      {
+        refId: "aif-plan",
+        kind: "skill",
+        sha: "sha-skill",
+        scope: "flow-package",
+      },
     ]);
   });
 

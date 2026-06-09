@@ -300,6 +300,24 @@ export function firstUnknownCapabilityRef(
   return null;
 }
 
+/**
+ * First flow-package-declared MCP ref (manifest top-level `mcps`) absent from
+ * the project mcp registry, or null when every ref resolves. Shared by the
+ * hard-gate (validateGraphManifest) and the launch precondition (POST
+ * /api/runs) so both gates agree on "unknown package mcp ref" (R-CONTRACT,
+ * mirrors firstUnknownCapabilityRef). M27/T-C6 (C6-top, ADR-069).
+ */
+export function firstUnknownPackageMcpRef(
+  packageMcps: readonly string[] | undefined,
+  mcpRefIds: ReadonlySet<string>,
+): string | null {
+  for (const ref of packageMcps ?? []) {
+    if (!mcpRefIds.has(ref)) return ref;
+  }
+
+  return null;
+}
+
 export type CapabilityRefIdsInput = {
   mcp?: readonly string[] | ReadonlySet<string>;
   skill?: readonly string[] | ReadonlySet<string>;
@@ -655,6 +673,23 @@ export function validateGraphManifest(
   validateNoBlockingHumanReview(nodes, flowYamlPath);
 
   const capabilityRefIds = opts?.capabilityRefIds;
+
+  // M27/T-C6 (C6-top): reject package-level required MCP refs (manifest
+  // top-level `mcps`) absent from the project registry. Skipped when no
+  // registry is supplied (back-compat callers with no project context).
+  if (capabilityRefIds !== undefined) {
+    const unknownPackageMcp = firstUnknownPackageMcpRef(
+      manifest.mcps,
+      capabilityRefIds.mcp,
+    );
+
+    if (unknownPackageMcp !== null) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow package declares unknown required mcp capability ref "${unknownPackageMcp}" in ${flowYamlPath}`,
+      );
+    }
+  }
 
   for (const n of nodes) {
     validateNodeRoleRefs(n, flowYamlPath, roleRefs);

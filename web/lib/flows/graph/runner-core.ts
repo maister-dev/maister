@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   Flow as FlowRow,
+  FlowRevisionExecTrust,
   PlatformAcpRunner,
   Run as RunRow,
   RunnerSnapshot,
@@ -65,6 +66,8 @@ export type LoadedRun = {
   workspace: WorkspaceRow;
   projectSlug: string;
   flowInstallPath: string;
+  // M27/T-C8b: exec-trust of the pinned flow revision; gates stdio-MCP spawn.
+  execTrust: FlowRevisionExecTrust;
 };
 
 export function asError(err: unknown): Error {
@@ -205,15 +208,20 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
 
   let manifest = flow.manifest as FlowYamlV1;
   let flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
+  // M27/T-C8b: a run with no pinned revision (legacy / pre-bridge) is treated as
+  // exec-trusted (no stdio-MCP gate); a pinned revision carries its own axis.
+  let execTrust: FlowRevisionExecTrust = "trusted";
 
   if (run.flowRevisionId) {
     const revisionRows: Array<{
       manifest: unknown;
       installedPath: string;
+      execTrust: FlowRevisionExecTrust;
     }> = await db
       .select({
         manifest: flowRevisions.manifest,
         installedPath: flowRevisions.installedPath,
+        execTrust: flowRevisions.execTrust,
       })
       .from(flowRevisions)
       .where(eq(flowRevisions.id, run.flowRevisionId));
@@ -228,6 +236,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
 
     manifest = revision.manifest as FlowYamlV1;
     flowInstallPath = revision.installedPath;
+    execTrust = revision.execTrust;
   }
 
   return {
@@ -240,6 +249,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     workspace,
     projectSlug,
     flowInstallPath,
+    execTrust,
   };
 }
 

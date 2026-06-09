@@ -914,7 +914,16 @@ export type RunKind = "flow" | "scratch";
 export type ResolvedCapabilitySet = {
   flowRevisionId: string;
   flowOrigin: "authored" | "git";
-  capabilities: Array<{ refId: string; kind: string; sha: string | null }>;
+  // `scope` is the winning record's source (project | platform | flow-package);
+  // the runner pins its materialization universe to (kind, refId, scope) so a
+  // mid-run record added at another scope cannot override the frozen winner
+  // (M27/T-B5 in-flight immutability).
+  capabilities: Array<{
+    refId: string;
+    kind: string;
+    sha: string | null;
+    scope: string;
+  }>;
   mcps: Array<{ refId: string; sha: string | null; scope: string }>;
 };
 
