@@ -1,6 +1,6 @@
 import type { FlowYamlV1, NodeDef } from "@/lib/config.schema";
 
-import { MaisterError } from "@/lib/errors";
+import { MaisterError } from "@/lib/errors-core";
 import {
   applyPresentation,
   readPresentation,

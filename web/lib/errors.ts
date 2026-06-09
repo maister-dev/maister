@@ -1,34 +1,11 @@
 import "server-only";
 
-export type MaisterErrorCode =
-  | "PRECONDITION"
-  | "SPAWN"
-  | "NEEDS_INPUT"
-  | "HITL_TIMEOUT"
-  | "CRASH"
-  | "CONFLICT"
-  | "CONFIG"
-  | "EXECUTOR_UNAVAILABLE"
-  | "FLOW_INSTALL"
-  | "ACP_PROTOCOL"
-  | "CHECKPOINT"
-  | "STEP_CHECKPOINTED"
-  | "UNAUTHENTICATED"
-  | "UNAUTHORIZED"
-  | "PASSWORD_CHANGE_REQUIRED"
-  | "ACCOUNT_INACTIVE";
-
-export class MaisterError extends Error {
-  readonly code: MaisterErrorCode;
-
-  constructor(code: MaisterErrorCode, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "MaisterError";
-    this.code = code;
-    Object.setPrototypeOf(this, MaisterError.prototype);
-  }
-}
-
-export function isMaisterError(err: unknown): err is MaisterError {
-  return err instanceof MaisterError;
-}
+// The MaisterError class + taxonomy live in the client-safe `errors-core` so
+// client bundles (the flow-graph editor reducers) can throw/branch on them
+// without importing this server-only module. This re-export keeps the existing
+// server-side `@/lib/errors` import surface and its server-only boundary intact.
+export {
+  MaisterError,
+  isMaisterError,
+  type MaisterErrorCode,
+} from "@/lib/errors-core";
