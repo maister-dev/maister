@@ -38,10 +38,12 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
   Flow plugins.
 - **Portfolio home (superset.sh-style)** — single grid of every active
   workspace across all projects, with filters by project + status.
-- **Per-project task board** — 2 columns `Backlog | In Flight`. A Backlog
-  card has a **Launch** button; click creates a
-  Run. **task ↔ run is 1:N** — a failed/abandoned run returns the task to
-  Backlog so Launch can fire attempt N+1 (ralph-loop friendly).
+- **Per-project task board** — Kanban-styled (7 derived columns
+  `Backlog · Prepare · InProduction · OnReview · InDelivery · Crashed · Done`
+  over a 4-value task state; no drag-and-drop / WIP limits yet). A Backlog
+  card's **Launch** creates a Run. **task ↔ run is 1:N** — a failed/abandoned
+  run returns the task to Backlog so Launch can fire attempt N+1 (ralph-loop
+  friendly).
 - **Backlog → Flow launch** — task created with title + prompt + Flow
   dropdown and optional platform runner override.
 - **Workspace per run** — `git worktree add` with precondition checks
@@ -56,15 +58,32 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
 - **Live run streaming** — supervisor writes per-step logs and
   `run.events.jsonl`; the web SSE bridge replays durable events with
   `Last-Event-ID`.
-- **Diff + promotion** — raw `git diff` rendered as `<pre>`, then promote the
-  run branch to a selected target branch by local merge or pull request.
-  `local_merge` uses `git merge --no-ff`; conflicts abort to manual resolve.
+- **Diff + promotion** — server-rendered Shiki diff (split/inline, per-file
+  +/-) in the workbench, then promote the run branch to a selected target
+  branch by local merge or pull request. `local_merge` uses
+  `git merge --no-ff`; conflicts abort to manual resolve.
 - **Crash recovery** — startup reconciles the `runs` table against
   `git worktree list` per project; orphaned `Running` rows become `Crashed`.
 - **Concurrency** — global cap `MAISTER_MAX_CONCURRENT_RUNS=3` across all
   projects; runs above the cap queue with a position badge.
 - **Typed errors** — `MaisterError` with a discriminated `code`; UI branches
   on `code`, never on string matching.
+- **Graph flow engine** — typed-node graph (`ai_coding/judge/cli/check/human`)
+  with named transitions, bounded rework, six gate kinds, typed artifacts and
+  a promotion-time readiness gate, over a `node_attempts` ledger.
+- **Flow Studio** — in-app visual graph editor + authored catalog
+  (draft→publish, content-addressed) for rules / skills / flows.
+- **Capabilities & MCP** — per-session `settings.local.json` + MCP
+  materialization with two-axis trust; platform + project MCP / runner catalogs.
+- **Manual takeover & workbench lifecycle** — claim a run, edit the worktree
+  locally, return for re-validation; plus stop / archive / drop / export /
+  handoff-branch.
+- **Scratch runs** — ad-hoc conversational agent sessions in a managed
+  worktree, off the task board.
+- **Observatory** — read-only Autonomy Score, correction-rate, and signal
+  clusters over the run ledgers.
+- **External API** — scoped project tokens + `/api/v1/ext/*` + an MCP facade
+  (incl. HITL-over-MCP).
 
 ## Stack
 
@@ -112,8 +131,10 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | [Error Taxonomy](docs/error-taxonomy.md) | `MaisterError` codes — when each fires, what the UI does |
 | [Configuration](docs/configuration.md) | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | [Flow Installer](docs/flow-installer.md) | `installFlowPlugin()` pipeline, system cache, symlink, DB upsert, ops CLI |
-| [Flow DSL](docs/flow-dsl.md) | Step DSL and runner behavior |
+| [Flow DSL](docs/flow-dsl.md) | Flow graph DSL (+ legacy step DSL) and runner behavior |
 | [AIF Flow Plugin](docs/flow-aif-plugin.md) | Bundled `aif` Flow plugin walkthrough |
+| [Flow Studio](docs/system-analytics/flow-studio.md) | In-app flow authoring + visual graph editor |
+| [Observatory](docs/system-analytics/observatory.md) | Autonomy Score, correction-rate, signal clusters |
 | [Vision](docs/VISION.md) | One-liner, product spine, principles, MVP goal |
 | [Product View](docs/PRODUCT_VIEW.md) | Target user, JTBD, current scope, Phase 2 |
 | [Architecture](docs/architecture.md) | C4 views, component map, data flows |

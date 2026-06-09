@@ -100,10 +100,14 @@ These were earned in two review passes. Reopen them only with new evidence.
 
 ### 1. ACP-driven execution with hybrid HITL
 
-A Flow = sequence of **steps** typed `cli | agent | guard | human`, parsed
-from the Flow plugin's `flow.yaml` manifest. `agent` steps run as ACP
-sessions hosted by `supervisor/`, which spawns one agent process
-(`claude`, `codex`) per active session. State transitions are driven by
+A Flow = a typed-node **graph** (`nodes[]`, canonical at runtime) — node
+types `ai_coding | judge | cli | check | human`, wired by named
+`transitions` with bounded `rework` loops — OR a legacy linear `steps[]`
+list (`cli | agent | guard | human`); both parse from the `flow.yaml`
+manifest and compile to one `FlowGraph`
+(see `docs/flow-dsl.md` + `docs/system-analytics/flow-graph.md`).
+`ai_coding`/`agent` nodes run as ACP sessions hosted by `supervisor/`,
+which spawns one agent process (`claude`, `codex`) per active session. State transitions are driven by
 **ACP notifications** (`session.update`, `session.permission_request`) on
 the live path and by durable input artifacts for form/human responses.
 
@@ -244,6 +248,21 @@ steps:
       comments_var: review_comments
 ```
 
+**Canonical runtime DSL = the typed-node graph (engine `1.3.0`), not linear
+steps.** The `steps:` block above is the **legacy** linear DSL (still runs,
+compiled to a degenerate success-chain). New flows use `nodes:` with named
+`transitions`, bounded `rework`, typed `input.requires`/`output.produces`
+artifacts (kind-matched, presence-enforced → `PRECONDITION`), six gate kinds
+(`command_check | skill_check | ai_judgment | artifact_required |
+external_check | human_review`, each `blocking | advisory`), a promotion-time
+**readiness** gate, per-node capability `settings` + declared `enforcement`,
+and per-capability engine-version floors. Legacy `guard` steps / `pre_guards`
+/ `post_guards` stay metric-only; graph **gates** actually block. Flows are
+also authorable **in-app** (`authored_capabilities`, draft→publish,
+content-addressed, bridged into the same `flow_revisions` lineage) on the
+**Flow Studio** visual graph editor (M25/M27). See
+`docs/system-analytics/{flow-graph,artifacts,readiness,flow-studio}.md`.
+
 Project `slug` is derived from `project.name` (kebab-cased). Both `slug`
 and `repo_path` are unique across registered projects. Refuse to register
 on: `schemaVersion` mismatch (project file or any installed Flow's
@@ -253,9 +272,11 @@ slug collision, `repo_path` collision. Trust the Flow's `setup.sh` on
 first install. Current target trusts internal Flow sources; sandboxing +
 trust UI is Phase 2.
 
-Templating: full Mustache-style interpolation with session context, task
-fields, per-step output vars, executor metadata — required for
-observability traces.
+Templating: full Mustache-style interpolation (strict mode — unknown var
+throws `CONFIG`) with session context, task fields, per-step output vars,
+executor metadata. Note: structured agent/cli `vars` are not yet populated
+(P1 roadmap); `{{ steps.<id>.output }}` carries stdout text today, only
+`human` nodes emit structured `vars`.
 
 ### 7. Workspace lifecycle
 
@@ -273,7 +294,18 @@ observability traces.
   surface "Recover or discard". `NeedsInputIdle` rows with a valid
   `acp_session_id` checkpoint stay valid.
 - Cron route GCs `Abandoned/Done` worktrees + checkpointed sessions older
-  than 7d across all projects.
+  than 7d across all projects (now a `system_sweep` job of the polymorphic
+  scheduler clock, M24).
+- **Manual takeover** (M11b): a reviewer at a `human_review` node claims the
+  run (`NeedsInput → HumanWorking`), edits the existing worktree locally on
+  the host, and returns it for re-validation (downstream nodes go stale). No
+  new branch/session. → `docs/system-analytics/manual-takeover.md`.
+- **Workbench lifecycle** (M27): per-run `stop | archive | drop |
+  snapshot-commit | export-branch | handoff-branch` to preserve/free work or
+  hand a branch to a local dev. → `docs/system-analytics/workbench-lifecycle.md`.
+- **Scratch runs**: ad-hoc conversational ACP session in a managed worktree
+  (`run_kind=scratch`), outside the task board, reusing the run/HITL/diff/
+  promote substrate. → `docs/system-analytics/scratch-runs.md`.
 
 ### 8. Promotion policy
 
@@ -304,11 +336,13 @@ path, run branch, target branch, and failing command. No auto-resolve.
   workspace across all projects — project · branch · status · last activity ·
   executor · quick actions (View / Resume / Abandon). Filters by project +
   status. "Needs you (N)" badge counts pending HITL across all projects.
-- **Per-project task board**: 2 columns — **Backlog** | **In Flight**. In
-  Flight bucket holds `Running | NeedsInput | NeedsInputIdle | Review |
-  Crashed`. A task card in Backlog has a **Launch** button; click =
-  precondition checks → create Run → task moves to In
-  Flight. Done/Abandoned surface in a filter tab, not as additional columns.
+- **Per-project task board**: Kanban-**styled**. Task state is 4 values
+  (`Backlog | InFlight | Done | Abandoned`), rendered as **7 derived columns**
+  (`Backlog · Prepare · InProduction · OnReview · InDelivery · Crashed ·
+  Done`). In-Flight covers `Running | NeedsInput | NeedsInputIdle |
+  HumanWorking | Review | Crashed`. A Backlog card's **Launch** = precondition
+  checks → create Run. **No drag-and-drop, no WIP limits** (full Kanban is
+  Phase 2). → `docs/system-analytics/tasks.md`.
 - **HITL Inbox block**: dedicated panel on the per-project board listing
   pending `NeedsInput`/`NeedsInputIdle` requests (in-card form + send-back-
   with-comments flow for `human`-typed steps).
@@ -325,19 +359,54 @@ path, run branch, target branch, and failing command. No auto-resolve.
   lifecycle**, **promotion policy** — see §1-8 above.
 - **Concurrency**: global cap = 3 (env-configurable). Queue + position badge.
 
+## Built since the original baseline
+
+This file was first written at the M8 (ACP/HITL) baseline; much shipped after.
+Authoritative per-domain truth is in `docs/system-analytics/`. Beyond §1-8 +
+Current Scope, these are **Implemented** today:
+
+- **Graph flow engine** (M11a): typed-node graph, `node_attempts` ledger,
+  gate execution, staleness, review-driven rework. → `flow-graph.md`
+- **Typed artifacts + evidence graph** (M12): `artifact_instances`, validity
+  FSM, produced-output enforcement. → `artifacts.md`
+- **Capability materialization** (M14): per-session `settings.local.json` +
+  ACP `mcpServers`, two-axis trust (`trust_status` + `exec_trust`); strict
+  enforcement deferred (ADR-041). → `flow-settings.md`
+- **Readiness gate** (M15): promotion gating over blocking gates + verdict
+  calibration. → `readiness.md`
+- **Observatory** (M23): read-only Autonomy Score, correction-rate, signal
+  clusters. → `observatory.md`
+- **Scheduler** (M24): one polymorphic cron tick (`system_sweep | command |
+  agent_tick | flow_run`); user-facing cron-schedule UI is a next bet. →
+  `scheduler.md`
+- **Authored catalog + Flow Studio** (M25/M27): in-app create/version of
+  rules/skills/flows + visual graph editor; PR-to-catalog publication is
+  roadmap E3. → `flow-studio.md`
+- **Platform + project MCP & ACP-runner catalogs** (M27, ADR-065/070): CRUD
+  + resolver precedence (project > platform > flow-package). → `acp-runners.md`
+- **External operations API + project tokens + MCP facade** (M16/M17):
+  `/api/v1/ext/*`, scoped tokens, HITL-over-MCP (`hitl_list`/`hitl_respond`).
+  → `external-operations.md`
+
+Product backlog/vision (not built): `docs/pv/improvement-roadmap.md` —
+self-improvement loop, benchmarking, project memory, agents-as-actors.
+
 ## Phase 2 Candidates
 
 These are not forbidden. They need an explicit implementation plan because
-they change product surface, contracts, or operating model:
+they change product surface, contracts, or operating model. (Items shipped
+since the original list — visual Flow designer, diff syntax highlighting,
+judge-node/`ai_judgment` gating — were removed; some below are partially
+landed, see *Built since the original baseline*.)
 
-Flow designer UI · background agents (reviewer/log/dependency) · Telegram ·
-A/B parallel runs · durable orchestration · auth/multi-user/RBAC · AI-Judge ·
-full Kanban (Done as drag-target / WIP limits / swim-lanes) · event log table ·
-test-run UI button · GitHub Actions CI/CD · syntax highlighting in diff view ·
-project archival UI · cross-project task moves · GitHub issue / Linear /
-YouGile sync · custom ACP extensions · cost/time/regex guard enforcement ·
-plugin trust UI / sandboxing · HITL as separate swimlane cards · Cursor /
-opencode / Aider executors.
+background agents (reviewer/log/dependency) · Telegram ·
+A/B benchmark runs · durable orchestration · full multi-user RBAC w/ action-
+blocking · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
+event log table · test-run UI button · GitHub Actions CI/CD · project
+archival UI · cross-project task moves · GitHub issue / Linear / YouGile
+sync · custom ACP extensions · cost/time/regex guard enforcement · plugin
+sandboxing · HITL as separate swimlane cards · Cursor / opencode / Aider
+executors · outbound webhooks (deferred in favor of agent-over-MCP).
 
 ## Conventions
 
