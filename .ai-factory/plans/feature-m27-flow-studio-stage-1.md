@@ -18,7 +18,7 @@ Rationale: `docs/pv/improvement-roadmap.md` *Owner-directed next bets §6* ("Flo
 
 Runs through the project's **SDD + agent-driven TDD** workflow (the model M11c/M12/M15/M19/M26 used). `/aif-implement` is the coordinator; `implement-coordinator` + `implement-worker` carry parallel tasks; `/codex:adversarial-review` is the per-phase challenge gate.
 
-**Phase 0 (spec-freeze) is a HARD GATE.** No code task starts until the SDD spec (`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`) + ADR-066..069 + analytics docs are **complete and internally consistent** (allow-lists written exactly as the code will gate, per `docs/CLAUDE.md` R5a and the skill-context "front-load analytics" rule). The SDD is the **single source of truth**; later deviation requires a **spec amendment**, never an ad-hoc code change.
+**Phase 0 (spec-freeze) is a HARD GATE.** No code task starts until the SDD spec (`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`) + ADR-067..069 + analytics docs are **complete and internally consistent** (allow-lists written exactly as the code will gate, per `docs/CLAUDE.md` R5a and the skill-context "front-load analytics" rule). The SDD is the **single source of truth**; later deviation requires a **spec amendment**, never an ad-hoc code change.
 
 **Per code task — role rotation (RED → GREEN → review):**
 
@@ -179,10 +179,56 @@ No new `runs.status` is planned. **If** implementation proves one unavoidable, f
 
 ## ADRs (Phase 0 — sequential after ADR-065)
 
-- **ADR-066: Flow editor write path — canvas edits as M25 authored `flow` drafts, presentation layout (ADR-064), hard-gate before persist.** Records decisions 5 + 6 + 8 (write target, hard gate, the editor edits ANY installed flow by seeding an authored draft from the pinned manifest). Reuses ADR-061 (draft/optimistic-concurrency) + ADR-064 (presentation) — cite, do not restate.
-- **ADR-067: Authored→executable flow bridge + two-axis trust gate (changes the ADR-061 boundary; REUSES `installAuthoredFlowPackageBridge`).** Records decisions 1 + 2 + 3. The bridge **already exists** (`web/lib/flows.ts:999`, CLI-only); the in-app path **reuses** it, parameterized to `trusted_by_policy` (logic-trust). A **net-new `exec_trust` axis** gates `setup.sh`/MCP-stdio via `runRevisionSetup` (its gate moves from `trustStatus` to `exec_trust`). Authored revisions land in the installed flow's own `flows`/`flow_revisions` lineage (same `flow_ref_id`), so there is no parallel-store merge. Explicitly supersedes ADR-061's "Local publish of authored `flow` revisions … never mutates `flows`, `flow_revisions`, install caches, setup status, or project enablement" and its rejected alternative "Turn authored flows directly into `flow_revisions`".
-- **ADR-068: `version_binding` (pinned|latest) + resolve-at-launch + unified resolved-set snapshot.** Records decisions 7 + 8 + 9 (`flows.version_binding`, latest=newest-published-never-draft, pinned=`enabled_revision_id`, the resolved-set snapshot unifying the flow-revision + M14 capability-revision snapshot, in-flight immutability, the trust+setup+engine-compat gates on a floated revision).
-- **ADR-069: MCP + capability management model (3-scope identity, uniform local-first precedence, platform storage, setup-time resolve, required-vs-additional, env:NAME).** Records decisions 4 + 10 + 11 + 12. Precedence **project→platform→flow-package**, **uniform across ALL capability kinds** — framed as **consistent with** the local-first runner chain (root `CLAUDE.md` §5), explicitly **not** a deviation from the brief; supersedes the current no-winner `resolver.ts` behavior and **fixes its latent duplicate-materialization**. Plus: `platform_mcp_servers` table mirroring ADR-065; setup-time resolve-by-id (present-reuse/absent-propose); required-vs-additional launch refusal; `env:NAME` secret-ref policy; `sse`/`http` transport addition; the codex MCP materialization gap (flip-or-document).
+- **ADR-067: Flow editor write path — canvas edits as M25 authored `flow` drafts, presentation layout (ADR-064), hard-gate before persist.** Records decisions 5 + 6 + 8 (write target, hard gate, the editor edits ANY installed flow by seeding an authored draft from the pinned manifest). Reuses ADR-061 (draft/optimistic-concurrency) + ADR-064 (presentation) — cite, do not restate.
+- **ADR-068: Authored→executable flow bridge + two-axis trust gate (changes the ADR-061 boundary; REUSES `installAuthoredFlowPackageBridge`).** Records decisions 1 + 2 + 3. The bridge **already exists** (`web/lib/flows.ts:999`, CLI-only); the in-app path **reuses** it, parameterized to `trusted_by_policy` (logic-trust). A **net-new `exec_trust` axis** gates `setup.sh`/MCP-stdio via `runRevisionSetup` (its gate moves from `trustStatus` to `exec_trust`). Authored revisions land in the installed flow's own `flows`/`flow_revisions` lineage (same `flow_ref_id`), so there is no parallel-store merge. Explicitly supersedes ADR-061's "Local publish of authored `flow` revisions … never mutates `flows`, `flow_revisions`, install caches, setup status, or project enablement" and its rejected alternative "Turn authored flows directly into `flow_revisions`".
+- **ADR-069: `version_binding` (pinned|latest) + resolve-at-launch + unified resolved-set snapshot.** Records decisions 7 + 8 + 9 (`flows.version_binding`, latest=newest-published-never-draft, pinned=`enabled_revision_id`, the resolved-set snapshot unifying the flow-revision + M14 capability-revision snapshot, in-flight immutability, the trust+setup+engine-compat gates on a floated revision).
+- **ADR-070: MCP + capability management model (3-scope identity, uniform local-first precedence, platform storage, setup-time resolve, required-vs-additional, env:NAME).** Records decisions 4 + 10 + 11 + 12. Precedence **project→platform→flow-package**, **uniform across ALL capability kinds** — framed as **consistent with** the local-first runner chain (root `CLAUDE.md` §5), explicitly **not** a deviation from the brief; supersedes the current no-winner `resolver.ts` behavior and **fixes its latent duplicate-materialization**. Plus: `platform_mcp_servers` table mirroring ADR-065; setup-time resolve-by-id (present-reuse/absent-propose); required-vs-additional launch refusal; `env:NAME` secret-ref policy; `sse`/`http` transport addition; the codex MCP materialization gap (flip-or-document).
+
+---
+
+## Merge integration notes (main divergence — resolved 2026-06-09)
+
+`main` advanced 9 commits past this branch's merge-base (`6c89f31c`): scoped
+project tokens, a **CodeMirror authored-flow editor**, git-diff-view, a Shiki
+file viewer, and an `eslint --fix` sweep. Three structural collisions were
+**pre-resolved branch-local** so the eventual merge is mechanical; one is a
+deliberate integration directive for merge time.
+
+1. **ADR number collision — RESOLVED.** `main` owns `ADR-066` ("Editor and diff
+   rendering stack"). This branch's four M27 ADRs were renumbered
+   **066→067, 067→068, 068→069, 069→070** across all docs + code comments
+   (decisions.md index/headers/anchors/cross-refs verified consistent). The
+   `066` slot is intentionally reserved for main's ADR; the branch index shows
+   `065 → (gap) → 067…070`. Per docs/CLAUDE.md R4 this assigns final numbers to
+   *unmerged* proposals, not renumbering a mainline ADR.
+
+2. **Migration number collision — RESOLVED.** `main` owns
+   `0031_token_actor_scope_support` (idx 31). This branch's migrations were
+   renamed **0031–0035 → 0032–0036** (files + `_journal.json` `tag`+`idx`).
+   The branch journal has an intentional **idx-31 gap** reserved for main's
+   migration — safe because drizzle's `readMigrationFiles` ignores `idx`
+   entirely (iterates `entries` by array order, resolves `${tag}.sql`, orders
+   by `when`). On merge, main's `0031` slots into the gap → idx 0–36
+   contiguous. No test asserts M27 idx values (`migrations.m17.test.ts` only
+   checks idx 25/26).
+
+3. **Dual authored-flow editor — DIRECTIVE (resolve at merge).** Both sides
+   rewrote `web/app/(app)/flows/[projectSlug]/[capId]/page.tsx`: this branch
+   mounts the **React Flow graph editor** + `flow-editor-tabs.tsx`; main adds a
+   **CodeMirror** YAML editor. **Target end-state: keep BOTH** — the branch's
+   `flow-editor-tabs` stays the frame; main's CodeMirror **replaces the plain
+   `<textarea>` (`flow-yaml-textarea`) in the YAML tab** (gaining highlight /
+   lint / autocomplete). Do NOT drop either editor. The shared `flowYaml`
+   state already bridges the graph tab and the YAML tab, so CodeMirror only
+   needs to bind to that same state.
+
+4. **~21 co-modified files** will textually conflict (collisions #1/#2 above are
+   pre-defused, leaving trivial reconciliations): `web/lib/db/schema.ts`,
+   `_journal.json`, `docs/api/web.openapi.yaml`, `docs/decisions.md`,
+   `web/messages/{en,ru}.json`, `web/lib/services/runs.ts`,
+   `web/lib/queries/run.ts`, the three `(app)` pages,
+   `web/e2e/_seed/seed-e2e.ts`, `web/playwright.config.ts`. Resolve by union
+   (both sides' additions are independent).
 
 ---
 
@@ -264,7 +310,7 @@ No new `runs.status` is planned. **If** implementation proves one unavoidable, f
 ### Phase 0 — Analytics + ADR HARD GATE (no code until COMPLETE + INTERNALLY CONSISTENT)
 
 - [x] **T0.1 — SDD spec freeze.** Author `.ai-factory/specs/feature-m27-flow-studio-stage-1.md`: domain model, state machines (authored draft→published→resolved-at-launch→snapshotted; exec-trust untrusted→trusted), every process flow, the **spec-to-test matrix** (each acceptance criterion → named test), and the allow-lists/precedence written exactly as code will gate (MCP precedence `project→platform→flow-package`; required-vs-additional refusal set). Single source of truth.
-- [x] **T0.2 — ADR-066..069** appended to `docs/decisions.md` (next sequential numbers; do not renumber). Each one decision; cite ADR-061/064/065/041/043 rather than restating.
+- [x] **T0.2 — ADR-067..069** appended to `docs/decisions.md` (next sequential numbers; do not renumber). Each one decision; cite ADR-061/064/065/041/043 rather than restating.
 - [x] **T0.3 — NEW `docs/system-analytics/flow-studio.md`** (R5: Purpose; Domain entities; State machine; Process flows; Expectations [R5a normative MUST/NEVER, ≤12, each testable]; Edge cases each → a `MaisterError` code; Linked artifacts) covering authoring + executable-resolution.
 - [x] **T0.4 — NEW `docs/system-analytics/mcp-management.md`** (R5) covering the 3-scope MCP model, setup-time resolve-by-id, required-vs-additional refusal, and the env:NAME secret policy. **The uniform local-first resolution precedence (`project→platform→flow-package`, ALL capability kinds) is documented canonically in `docs/system-analytics/capabilities.md`** (the capability-resolution domain) and cross-referenced here (R7 — no duplication), framed as consistent with the runner-resolution chain. Update `instance-config.md` for the platform admin MCP surface (ADR-065 precedent, R7 cross-ref).
 - [x] **T0.5 — Update (R7, no duplication):** `flow-graph.md` (editor write path), `workbench.md` (ADR-064 now read+write), `flow-packages.md` (binding policy + resolution + bridge), `capability-catalog.md` (authored flow becomes executable), `capabilities.md` (**canonical home for the uniform local-first resolution precedence + the no-winner→winner correction**, ALL capability kinds), `acp-runners.md`/`instance-config.md` (admin-surface precedent), `configuration.md` (MCP template + `env:NAME` + any env-var/registry change), `error-taxonomy.md` (confirm no new reachable code; record any new call sites), `flow-dsl.md` (package MCP declaration + node required/additional).
@@ -274,7 +320,7 @@ No new `runs.status` is planned. **If** implementation proves one unavoidable, f
 - [x] **T0.9 — Append M27 to `.ai-factory/ROADMAP.md`** (milestone entry + Expectations + Acceptance criteria). (Roadmap is `/aif-roadmap`-owned; this is the linkage hook.)
 - [x] **T0.10 — Phase-0 exit gate:** `pnpm validate:docs:all` green; analytics internally consistent (allow-lists == planned code gates); SDD spec-to-test matrix complete; ADRs accepted. **No code task starts until this passes.**
 
-<!-- Commit checkpoint: T0.1-T0.10 — "docs(m27): Phase 0 analytics + ADR-066..069 + SDD freeze" -->
+<!-- Commit checkpoint: T0.1-T0.10 — "docs(m27): Phase 0 analytics + ADR-067..069 + SDD freeze" -->
 
 ### Phase A — Flow editor write path (depends on Phase 0)
 
