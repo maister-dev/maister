@@ -62,6 +62,11 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
 - **Active workspace group** - Implemented. The left rail groups active Flow and
   scratch workspaces by project and each project header exposes a `+` launcher
   action preselecting that project.
+- **Shared workbench lifecycle actions** - Implemented (M27). Scratch detail
+  uses the same visible lifecycle component as Flow workbenches for stopped and
+  terminal workspaces. Live scratch stop still uses the scratch stop route;
+  stopped scratch drop goes through the shared preserve-first run workbench
+  drop route.
 
 ## State machine
 
@@ -85,11 +90,11 @@ stateDiagram-v2
     Running --> Review: operator stops session
     Review --> Done: promote succeeds
     Review --> Review: promotion conflict
-    Review --> Abandoned: discard
+    Review --> Abandoned: drop/discard
 
     Crashed --> Running: recover with resume handle
     WaitingForUser --> Abandoned: discard
-    Crashed --> Abandoned: discard
+    Crashed --> Abandoned: drop/discard
 
     Done --> [*]
     Abandoned --> [*]
@@ -290,6 +295,9 @@ secret material.
 - Active workspace status labels MUST distinguish `Running`,
   `WaitingForUser`, `NeedsInput`, `NeedsInputIdle`, `HumanWorking`, `Review`,
   and `Crashed`.
+- Stopped/terminal scratch detail MUST render workbench lifecycle actions from
+  [`workbench-lifecycle.md`](workbench-lifecycle.md) and keep scratch messages,
+  recover, diff, and promote controls adjacent.
 
 ## Edge cases
 
@@ -309,6 +317,7 @@ secret material.
 | Supervisor prompt delivery fails after message commit | Retryable or crashed dialog status follows existing scratch service behavior; the user message stays visible. |
 | Permission deferred times out | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. |
 | Promote merge conflict | `409 CONFLICT`; run remains `Review` and the worktree stays available. |
+| Shared lifecycle drop from scratch detail | Preserve first, remove only a MAIster-owned worktree, set `removed_at`, and mark non-`Done` runs/dialog metadata `Abandoned`. |
 
 ## Acceptance Criteria
 

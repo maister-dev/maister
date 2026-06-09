@@ -54,13 +54,23 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   await page.goto(`/runs/${fx.mergeRunId}`);
 
   // The base→run→target review surface renders for the flow Review run: all
-  // three branch names appear, and the raw diff is shown in a <pre>.
-  await expect(page.getByText(fx.mergeBranch, { exact: false }).first()).toBeVisible();
-  await expect(page.getByText(fx.targetBranch, { exact: false }).first()).toBeVisible();
-  await expect(page.locator("pre", { hasText: "clean merge change" })).toBeVisible();
+  // three branch names appear, and the diff is shown in the ADR-066 diff-view
+  // (git-diff-view), not a raw <pre>.
+  await expect(
+    page.getByText(fx.mergeBranch, { exact: false }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(fx.targetBranch, { exact: false }).first(),
+  ).toBeVisible();
+  const diffView = page.locator('[data-testid="diff-view"]');
+
+  await expect(diffView).toBeVisible();
+  await expect(diffView).toContainText("clean merge change");
 
   // The promote action NAMES the exact target branch.
-  const promote = page.getByRole("button", { name: new RegExp(fx.targetBranch) });
+  const promote = page.getByRole("button", {
+    name: new RegExp(fx.targetBranch),
+  });
 
   await expect(promote).toBeVisible();
 
@@ -91,7 +101,9 @@ test("conflict scenario — a failed local_merge surfaces the conflict/assignmen
 
   await page.goto(`/runs/${fx.conflictRunId}`);
 
-  const promote = page.getByRole("button", { name: new RegExp(fx.targetBranch) });
+  const promote = page.getByRole("button", {
+    name: new RegExp(fx.targetBranch),
+  });
 
   await expect(promote).toBeVisible();
 
@@ -115,8 +127,12 @@ test("conflict scenario — a failed local_merge surfaces the conflict/assignmen
   // The conflict handoff card surfaces the manual-resolution context: the
   // parent repo path, the run branch, and the target branch are named so the
   // operator can resolve by hand.
-  await expect(page.getByText(fx.repoPath, { exact: false }).first()).toBeVisible();
-  await expect(page.getByText(fx.conflictBranch, { exact: false }).first()).toBeVisible();
+  await expect(
+    page.getByText(fx.repoPath, { exact: false }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(fx.conflictBranch, { exact: false }).first(),
+  ).toBeVisible();
 
   // The run did NOT advance to Done.
   await expect(page.getByText("Done", { exact: true })).toHaveCount(0);
@@ -131,6 +147,8 @@ test("pr scenario — pull_request promotion mode renders the pre-seeded PR link
 
   // The PR-mode run carries a pre-seeded pr_url/pr_number; the panel renders the
   // PR link / `PR #N`. No promote exec is performed in CI.
-  await expect(page.getByText(`#${fx.prNumber}`, { exact: false }).first()).toBeVisible();
+  await expect(
+    page.getByText(`#${fx.prNumber}`, { exact: false }).first(),
+  ).toBeVisible();
   await expect(page.locator(`a[href="${fx.prUrl}"]`)).toBeVisible();
 });

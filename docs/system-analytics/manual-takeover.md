@@ -244,8 +244,9 @@ linear run renders an empty-but-valid timeline (no crash).
 - **Ledger / `markDownstreamStale` throws mid-side-effect** →
   `EXECUTOR_UNAVAILABLE` (503); the `FOR UPDATE` re-read finds the run still
   `HumanWorking`, so a retry replays cleanly.
-- **Oversized diff** — `diffRange` truncates at `EXEC_MAX_BUFFER` with a
-  truncation marker; it does NOT throw.
+- **Oversized diff** — `diffRange` returns `{ text, truncated }` cut at
+  `EXEC_MAX_BUFFER`; it does NOT throw. The takeover-return path re-appends the
+  in-band marker to `returned_diff` so the stored evidence still flags the cut.
 - **Ref/path injection** — `logRange`/`diffRange`/`resolveBaseRef` validate the
   branch (`branchNameSchema`), the worktree path (`absolutePathSchema`), and the
   base ref (`/^[A-Za-z0-9_./-]+$/`, no `..`); a bad ref → `CONFLICT`.

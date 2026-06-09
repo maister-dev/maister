@@ -1,86 +1,148 @@
-// T4.5 (RED): failing render tests for the RepoFilesPanel server-side gate
-// (Track B, Phase 4b). Uses renderToStaticMarkup (no jsdom), mirroring
-// components/board/panels/__tests__/integrations-panel.test.ts.
+// T4.5 / ADR-066 T1.6: render tests for the RepoFilesPanel server-side gate +
+// the `?file=` blob pane. Uses renderToStaticMarkup (no jsdom).
 //
-// RepoFilesPanel is a Server Component that takes a `labels` PROP (built by the
-// project page via getTranslations and passed down — the labels-as-props
-// convention). Because it does NOT call async i18n internally, it is SYNC and
-// renderToStaticMarkup-safe. (Contract ambiguity flagged to the implementor: do
-// NOT make this component `async`/Promise-returning, or these render tests — and
-// the integrations-panel precedent of NOT rendering the async i18n component —
-// break. Keep RepoFilesPanel a sync gate that receives labels.)
+// RepoFilesPanel is now an ASYNC Server Component (it does the gated blob read
+// for the project repo `?file=` pane, mirroring the run-detail workbench): it
+// awaits requireProjectAction(projectId,"readRepoFiles") BEFORE readBlob, and
+// validates the path with repoRelPathSchema BEFORE readBlob. We render it as
+// `renderToStaticMarkup(await RepoFilesPanel(props))` and mock the authz / git
+// boundary. The mounted `FileTree` is a "use client" container whose lazy fetch
+// lives in an effect — effects DO NOT run under renderToStaticMarkup, so only
+// its root mount markup (data-testid="file-tree") appears.
 //
-// It renders the git-tracked file browser ONLY when `canReadRepoFiles` is true;
-// the gate is enforced server-side, so a false value must render a forbidden
-// notice and NO file-tree mount. The `FileTree` it mounts is a "use client"
-// container whose lazy-fetch lives in an effect — effects DO NOT run under
-// renderToStaticMarkup, so only its root mount markup (data-testid="file-tree")
-// appears; that mount is the assertion target.
-//
-// Contract (module not built yet — RED on the missing import):
-//   web/components/board/panels/repo-files-panel.tsx (Server Component) exports
-//     RepoFilesPanel({ slug, canReadRepoFiles, labels }): ReactElement
-//
-//   labels carries at least: { forbidden, ...file-tree/viewer labels }
-//
-//   canReadRepoFiles === false -> data-testid="repo-files-forbidden" + labels.forbidden,
-//                                 and NO data-testid="file-tree".
-//   canReadRepoFiles === true  -> renders <FileTree filesApiBase="/api/projects/<slug>/files">
-//                                 whose root carries data-testid="file-tree".
+// Contract:
+//   canReadRepoFiles === false -> data-testid="repo-files-forbidden" (early,
+//                                 BEFORE any auth/read) + NO data-testid="file-tree".
+//   canReadRepoFiles === true, file === null
+//                              -> <FileTree> mount (data-testid="file-tree") +
+//                                 the no-selection empty pane (data-testid="file-empty").
+//   canReadRepoFiles === true, file = "<bad>"
+//                              -> the not-found pane (data-testid="file-not-found");
+//                                 readBlob is NOT reached.
 
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
+import { requireProjectAction } from "@/lib/authz";
+import { readBlob } from "@/lib/worktree";
 
-type RepoFilesLabels = {
-  forbidden: string;
-  title: string;
-  empty: string;
-  tooLarge: string;
-  binary: string;
-  loadError: string;
-  loading: string;
-};
-
-const labels: RepoFilesLabels = {
+const labels = {
   forbidden: "You do not have access to repository files",
   title: "Repo files",
   empty: "No files",
   tooLarge: "File is too large to display",
   binary: "Binary file — not shown",
+  notFound: "File not found",
   loadError: "Could not load file",
-  loading: "Loading…",
+  treeLabel: "Repository file tree",
 };
 
-function render(slug: string, canReadRepoFiles: boolean): string {
-  return renderToStaticMarkup(
-    createElement(RepoFilesPanel, { slug, canReadRepoFiles, labels }),
-  );
+// FileTree ("use client") reads next/navigation router hooks at render; under
+// renderToStaticMarkup there is no mounted app router, so stub the three hooks.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/projects/acme",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock("@/lib/authz", () => ({
+  requireProjectAction: vi.fn(async () => ({ role: "member" })),
+}));
+
+// Keep the REAL repoRelPathSchema (so a `../` path is rejected BEFORE readBlob);
+// stub only the git blob reader.
+vi.mock("@/lib/worktree", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/worktree")>("@/lib/worktree");
+
+  return {
+    repoRelPathSchema: actual.repoRelPathSchema,
+    readBlob: vi.fn(),
+  };
+});
+
+vi.mock("@/lib/instance-config", () => ({
+  workbenchMaxFileBytes: vi.fn(() => 524288),
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(requireProjectAction).mockResolvedValue({
+    role: "member",
+  } as unknown as Awaited<ReturnType<typeof requireProjectAction>>);
+});
+
+async function render(args: {
+  canReadRepoFiles: boolean;
+  file: string | null;
+}): Promise<string> {
+  const el = await RepoFilesPanel({
+    slug: "acme",
+    projectId: "project-1",
+    repoPath: "/repos/acme",
+    mainBranch: "main",
+    file: args.file,
+    canReadRepoFiles: args.canReadRepoFiles,
+    labels,
+  });
+
+  return renderToStaticMarkup(el);
 }
 
 describe("RepoFilesPanel — viewer gate (canReadRepoFiles=false)", () => {
-  const html = render("acme", false);
+  it("renders the forbidden marker and no file-tree, BEFORE any auth/read", async () => {
+    const html = await render({ canReadRepoFiles: false, file: null });
 
-  it("renders the forbidden marker with data-testid='repo-files-forbidden'", () => {
     expect(html).toContain('data-testid="repo-files-forbidden"');
     expect(html).toContain(labels.forbidden);
-  });
-
-  it("does NOT render the file-tree mount", () => {
     expect(html).not.toContain('data-testid="file-tree"');
+    expect(requireProjectAction).not.toHaveBeenCalled();
+    expect(readBlob).not.toHaveBeenCalled();
   });
 });
 
 describe("RepoFilesPanel — member access (canReadRepoFiles=true)", () => {
-  const html = render("acme", true);
+  it("mounts the file-tree and gates with (projectId,'readRepoFiles')", async () => {
+    const html = await render({ canReadRepoFiles: true, file: null });
 
-  it("renders the file-tree mount with data-testid='file-tree'", () => {
     expect(html).toContain('data-testid="file-tree"');
+    expect(html).not.toContain('data-testid="repo-files-forbidden"');
+    expect(requireProjectAction).toHaveBeenCalledWith(
+      "project-1",
+      "readRepoFiles",
+    );
   });
 
-  it("does NOT render the forbidden marker", () => {
-    expect(html).not.toContain('data-testid="repo-files-forbidden"');
+  it("renders the no-selection empty pane when ?file= is absent (no readBlob)", async () => {
+    const html = await render({ canReadRepoFiles: true, file: null });
+
+    expect(html).toContain('data-testid="file-empty"');
+    expect(readBlob).not.toHaveBeenCalled();
+  });
+
+  it("renders the not-found pane for a traversal path BEFORE readBlob", async () => {
+    const html = await render({ canReadRepoFiles: true, file: "../etc" });
+
+    expect(html).toContain('data-testid="file-not-found"');
+    expect(html).not.toContain(labels.forbidden);
+    expect(readBlob).not.toHaveBeenCalled();
+  });
+
+  it("renders the highlighted code-view for a valid tracked file", async () => {
+    vi.mocked(readBlob).mockResolvedValue({
+      kind: "text",
+      content: "export const x = 1;\n",
+    });
+
+    const html = await render({ canReadRepoFiles: true, file: "src/x.ts" });
+
+    expect(html).toContain('data-testid="code-view"');
+    expect(readBlob).toHaveBeenCalledWith({
+      repo: "/repos/acme",
+      ref: "main",
+      path: "src/x.ts",
+      maxBytes: 524288,
+    });
   });
 });

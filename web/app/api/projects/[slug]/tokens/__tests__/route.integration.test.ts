@@ -78,6 +78,7 @@ async function seedProject(slug: string) {
   await db.insert(schema.users).values([
     {
       id: adminId,
+      name: `Admin ${slug}`,
       email: `admin-${slug}@example.com`,
       role: "admin",
       accountStatus: "active",
@@ -85,6 +86,7 @@ async function seedProject(slug: string) {
     },
     {
       id: memberId,
+      name: `Member ${slug}`,
       email: `member-${slug}@example.com`,
       role: "member",
       accountStatus: "active",
@@ -143,6 +145,59 @@ describe("POST /api/projects/[slug]/tokens", () => {
     expect(body.prefix).toBe(body.token.slice(0, 12));
     expect(body).toHaveProperty("id");
     expect(body).toHaveProperty("name", "CI Token");
+
+    clearSession();
+  });
+
+  it("admin can create a user-owned scoped token and list metadata without secret", async () => {
+    const { slug } = { slug: `tok-user-${randomUUID().slice(0, 8)}` };
+    const { adminId } = await seedProject(slug);
+
+    asAdminSession(adminId);
+
+    const createReq = makeRequest({
+      name: "Personal webhook",
+      kind: "user",
+      scopes: ["tasks:create"],
+    });
+    const createRes = await POST(createReq, {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(createRes.status).toBe(201);
+
+    const created = await createRes.json();
+
+    expect(created).toMatchObject({
+      name: "Personal webhook",
+      kind: "user",
+      ownerUserId: adminId,
+      ownerLabel: `Admin ${slug}`,
+      scopes: ["tasks:create"],
+    });
+    expect(created.token).toMatch(/^mai_/);
+
+    const listReq = new NextRequest(
+      `http://localhost/api/projects/${slug}/tokens`,
+      { method: "GET" },
+    );
+    const listRes = await GET(listReq, {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(listRes.status).toBe(200);
+
+    const body = await listRes.json();
+    const listed = body.tokens.find((item: any) => item.id === created.id);
+
+    expect(listed).toMatchObject({
+      kind: "user",
+      ownerUserId: adminId,
+      ownerLabel: `Admin ${slug}`,
+      scopes: ["tasks:create"],
+    });
+    expect(listed).not.toHaveProperty("token");
+    expect(listed).not.toHaveProperty("token_hash");
 
     clearSession();
   });

@@ -121,10 +121,10 @@ defined as a string union in `web/lib/errors.ts`.
 
 > **M22 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
 > closed union; ADR-064/052/053). The workbench reuses one existing code (`CONFIG`)
-> at new call sites (all Implemented, M22), plus HTTP-only 404/413/415 statuses that
-> are NOT `MaisterError`s:
+> at new call sites (all Implemented, M22), plus a bare HTTP 404 status and RSC
+> blob page states that are NOT `MaisterError`s:
 >
-> - **`CONFIG` → HTTP 400** new call sites: every `…/files[/content]` route (run +
+> - **`CONFIG` → HTTP 400** new call sites: every `…/files?path=` tree route (run +
 >   project) when `?path=` fails `repoRelPathSchema` (`..` segment, absolute,
 >   leading `/` or `-`, NUL). Thrown by `web/lib/worktree.ts` (`repoRelPathSchema`).
 >   Names the offending path. (The flow-graph layout `PUT` was removed with the
@@ -137,10 +137,37 @@ defined as a string union in `web/lib/errors.ts`.
 >   canonical mapping is **409**, code-only). Access denied (non-member or
 >   below-`member` role) is **403** via `requireProjectAction`, the app-wide
 >   convention — NOT 404.
-> - **HTTP-only, no `MaisterError`:** a tracked blob over
->   `MAISTER_WORKBENCH_MAX_FILE_BYTES` returns **413** (`{kind:"too-large",size}`);
->   a binary blob returns **415** (`{kind:"binary"}`). These are content-negotiation
->   markers from `readBlob`, not thrown domain errors.
+> - **RSC blob page states, no HTTP status / no `MaisterError`:** on the `?file=`
+>   render path a tracked blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` renders the
+>   `file-too-large` page state (`readBlob` → `{kind:"too-large",size}`) and a
+>   binary blob the `file-binary` page state (`{kind:"binary"}`). The retired
+>   `…/files/content` route's HTTP **413**/**415** no longer exist (ADR-066); these
+>   are `readBlob` markers the server component branches on, not thrown domain
+>   errors.
+
+> **M27 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+> closed union). Workbench lifecycle actions reuse existing codes at the
+> stop/archive/drop/export/snapshot/handoff routes:
+>
+> - **`CONFIG` → HTTP 400** — strict route-body validation failure, including
+>   spoofed body fields such as project id, worktree path, current branch, or
+>   session handles. The service only sees validated user intent fields.
+> - **`PRECONDITION` → HTTP 409** — live state refused for archive/drop/export/
+>   snapshot/handoff; clean worktree refused for snapshot commit; dirty worktree
+>   refused for handoff; dirty export without explicit snapshot consent; missing
+>   selected remote; unsafe worktree path outside `MAISTER_WORKTREES_ROOT`.
+> - **`CONFLICT` → HTTP 409** — preserve failure, different-head local/remote
+>   branch collision, stale drop run-status CAS, local git conflict, lifecycle
+>   operation claim race on
+>   `workspaces.lifecycle_operation_*`, or export push rejected as
+>   non-fast-forward. The non-fast-forward payload includes
+>   `pushRejected=non_fast_forward`, `canForce=true`, and a retry hint; a user
+>   retry with force uses `git push --force-with-lease`.
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — transient supervisor stop failure,
+>   transient export push failure, handoff remote-existence check failure, or
+>   handoff push failure. Retry leaves the run/workspace in the current state;
+>   transient handoff push failures keep the lifecycle claim retryable and reuse
+>   same-head local/remote handoff refs idempotently.
 
 > **M27 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). M27 reuses four existing codes at new call sites (all Designed, M27):
 >
@@ -223,18 +250,17 @@ ignoring a newly added code.
 | HTTP status | When returned |
 | ----------- | ------------- |
 | **401** | Invalid, expired, or revoked project token. Also: missing or invalid inbound bearer on the Streamable-HTTP MCP transport. |
-| **403** | **(Implemented — M17, ADR-055.)** Two distinct cases, both on the HITL ext routes only — other `/api/v1/ext/*` routes keep the existing binary enforcement (ADR-046 unchanged): **(D8) missing scope** — `GET /api/v1/ext/runs/{runId}/hitl` requires scope `hitl:read`; `POST …/hitl/{id}/respond` requires scope `hitl:respond`; a token without the matching scope (and without `*`) is refused 403 via `handleExt({requireScope:true})`; the response does not reveal which scopes the token holds. **(D7) actor-kind gate** — a token (`api_token`) or internal-agent actor answering a `human`-kind HITL request (`hitlRow.kind === "human"`) is refused 403; token/agent actors may answer only `permission`/`form`-kind requests. A `*`-scoped token passes the D8 check but is still subject to D7. |
+| **403** | Insufficient token scope on `/api/v1/ext/*` — the token must hold the route/tool scope (for example `tasks:create`, `runs:launch`, `hitl:read`, `hitl:respond`) or `*`; the response does not reveal which scopes the token holds. Also **(D7, ADR-055)** actor-kind gate — a token (`api_token`) or internal-agent actor answering a `human`-kind HITL request (`hitlRow.kind === "human"`) is refused 403; token/agent actors may answer only `permission`/`form`-kind requests. A `*`-scoped token passes the scope check but is still subject to D7. |
 | **404** | Token's project ≠ addressed resource (existence-hide). Also: unknown or non-`external_check` gate; unknown task or run id. **(M17, Implemented)** on HITL ext routes: `run.projectId ≠ token.projectId`, or unknown `runId`/`hitlRequestId`, or `hitlRow.runId ≠ runId` — all return 404 without distinguishing which check failed (existence-hide). |
 | **409** | Domain conflict — a gate report on a terminal run (`Done`/`Abandoned`/`Crashed`/`Failed`), or a launch/create precondition conflict (`CONFLICT`/`PRECONDITION` from the shared service). **(M17, Implemented)** on the HITL respond ext route: idempotency conflict when the HITL request already has a `respondedAt` timestamp (the shared `respondToHitl` service returns 409, same as the session route). |
 | **422** | Request body failed schema validation, or a `CONFIG` `MaisterError` from the shared service (unknown flow/executor, invalid config). Mapped by the shared `httpStatusForExtCode`. **(M17, Implemented — `NEEDS_INPUT`)** on the HITL respond ext route: bad response payload — `response` body fails the `respondToHitl` service validation (unknown `optionId`, out-of-range `confidence`, schema mismatch) — mapped from `MaisterError("NEEDS_INPUT")` to 422. |
 
-**New scope labels (M17, Implemented):** `hitl:read` and `hitl:respond`
-are added to the project-token scope vocabulary. They are enforced via opt-in
-`handleExt({requireScope:true})` on the two new HITL ext routes (D8). All
-existing ext routes remain on the prior binary enforcement model (no
-`requireScope`). A `["*"]`-scoped token passes the scope check on all routes
-including the new HITL routes; it is still subject to the actor-kind gate
-(D7). See [ADR-055](decisions.md#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates) and
+**Scope labels (Implemented):** `hitl:read` and `hitl:respond` join the
+project-token scope vocabulary alongside task/run/readiness/gate scopes.
+`handleExt` enforces scopes by default on `/api/v1/ext/*`; `requireScope:
+false` is reserved for explicit compatibility carves. A `["*"]`-scoped token
+passes the scope check on all routes; it is still subject to the actor-kind
+gate (D7). See [ADR-055](decisions.md#adr-055-hitl-response-service--hitl-over-mcp--token-actor--actor-kindscope-auth-gates) and
 [`api/external/operations.openapi.yaml`](api/external/operations.openapi.yaml).
 
 ## See Also

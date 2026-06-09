@@ -25,18 +25,53 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
+const auditMockState = vi.hoisted(() => ({
+  failSuccessScopes: new Set<string>(),
+}));
+const supervisorMocks = vi.hoisted(() => ({
+  checkSupervisorHealth: vi.fn(async () => ({ kind: "available" })),
+  createSession: vi.fn(async () => ({
+    sessionId: "resume-session",
+    acpSessionId: "resume-acp",
+  })),
+  deliverPermission: vi.fn(async () => ({ ok: true })),
+}));
+const resumeDriverMocks = vi.hoisted(() => ({
+  scheduleResumedSessionDrive: vi.fn(() => "resume-drive"),
+}));
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/supervisor-client", () => ({
-  checkSupervisorHealth: vi.fn(async () => ({ kind: "available" })),
-  deliverPermission: vi.fn(async () => ({ ok: true })),
-}));
+vi.mock("@/lib/tokens/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/tokens/audit")>();
+
+  return {
+    ...actual,
+    recordTokenAudit: vi.fn(
+      async (
+        input: Parameters<typeof actual.recordTokenAudit>[0],
+        d?: Parameters<typeof actual.recordTokenAudit>[1],
+      ) => {
+        if (
+          input.result === "ok" &&
+          auditMockState.failSuccessScopes.has(input.scopeUsed)
+        ) {
+          throw new Error("forced audit failure (atomicity test)");
+        }
+
+        return actual.recordTokenAudit(input, d);
+      },
+    ),
+  };
+});
+vi.mock("@/lib/supervisor-client", () => supervisorMocks);
+vi.mock("@/lib/runs/resume-driver", () => resumeDriverMocks);
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
 }));
@@ -146,6 +181,20 @@ async function seedProject(slug: string) {
   return { slug, projectId, flowId, executorId };
 }
 
+async function seedUser(emailPrefix: string): Promise<string> {
+  const userId = randomUUID();
+
+  await (db as any).insert(schema.users).values({
+    id: userId,
+    email: `${emailPrefix}-${userId.slice(0, 8)}@example.test`,
+    role: "member",
+    accountStatus: "active",
+    passwordHash: "x",
+  });
+
+  return userId;
+}
+
 async function seedRun(
   projectId: string,
   flowId: string,
@@ -236,6 +285,37 @@ async function seedHitlRequest(
   return hitlRequestId;
 }
 
+async function seedHitlAssignment(args: {
+  projectId: string;
+  runId: string;
+  hitlRequestId: string;
+  actionKind: "permission" | "form";
+}): Promise<string> {
+  const assignmentId = randomUUID();
+
+  await (db as any).insert(schema.assignments).values({
+    id: assignmentId,
+    projectId: args.projectId,
+    runId: args.runId,
+    hitlRequestId: args.hitlRequestId,
+    actionKind: args.actionKind,
+    status: "open",
+    roleRefs: [],
+    title: "Answer HITL request",
+  });
+
+  return assignmentId;
+}
+
+async function readAssignmentStatus(assignmentId: string): Promise<string> {
+  const rows = await (db as any)
+    .select({ status: schema.assignments.status })
+    .from(schema.assignments)
+    .where(eq(schema.assignments.id, assignmentId));
+
+  return rows[0].status;
+}
+
 function makeGetRequest(runId: string, token: string): NextRequest {
   return new NextRequest(`http://localhost/api/v1/ext/runs/${runId}/hitl`, {
     method: "GET",
@@ -263,6 +343,20 @@ function makePostRequest(
 }
 
 beforeEach(async () => {
+  auditMockState.failSuccessScopes.clear();
+  supervisorMocks.checkSupervisorHealth.mockReset();
+  supervisorMocks.checkSupervisorHealth.mockResolvedValue({
+    kind: "available",
+  });
+  supervisorMocks.createSession.mockReset();
+  supervisorMocks.createSession.mockResolvedValue({
+    sessionId: `resume-session-${randomUUID()}`,
+    acpSessionId: `resume-acp-${randomUUID()}`,
+  });
+  supervisorMocks.deliverPermission.mockReset();
+  supervisorMocks.deliverPermission.mockResolvedValue({ ok: true });
+  resumeDriverMocks.scheduleResumedSessionDrive.mockReset();
+  resumeDriverMocks.scheduleResumedSessionDrive.mockReturnValue("resume-drive");
   await db.delete(schema.tokenAuditLog as any);
 });
 
@@ -526,6 +620,211 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     });
   });
 
+  it("forced success-audit failure rolls back the HITL delivered marker", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-audit-rb-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlId = await seedHitlRequest(runId, "form");
+
+    const token = await issueToken(
+      { projectId, name: "responder-token", createdByUserId: null },
+      db,
+    );
+
+    await (db as any)
+      .update(schema.projectTokens)
+      .set({ scopes: ["hitl:respond"] })
+      .where(eq(schema.projectTokens.id, token.tokenId));
+
+    auditMockState.failSuccessScopes.add("hitl:respond");
+
+    const req = makePostRequest(runId, hitlId, token.secret, {
+      response: { field: "value" },
+    });
+
+    await expect(
+      POST(req, {
+        params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+      }),
+    ).rejects.toThrow("forced audit failure");
+
+    const hitlRows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlId))
+      .execute();
+
+    expect(hitlRows[0].respondedAt).toBeNull();
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
+  });
+
+  it("forced success-audit failure keeps idle permission resume state unclaimed", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-idle-audit-rb-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "NeedsInputIdle");
+    const hitlId = await seedHitlRequest(runId, "permission");
+
+    await (db as any)
+      .update(schema.runs)
+      .set({
+        acpSessionId: "existing-acp-session",
+        checkpointAt: new Date(Date.now() - 60_000),
+      })
+      .where(eq(schema.runs.id, runId));
+
+    const token = await issueToken(
+      { projectId, name: "responder-token", createdByUserId: null },
+      db,
+    );
+
+    await (db as any)
+      .update(schema.projectTokens)
+      .set({ scopes: ["hitl:respond"] })
+      .where(eq(schema.projectTokens.id, token.tokenId));
+
+    auditMockState.failSuccessScopes.add("hitl:respond");
+
+    const req = makePostRequest(runId, hitlId, token.secret, {
+      optionId: "approve",
+    });
+
+    await expect(
+      POST(req, {
+        params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+      }),
+    ).rejects.toThrow("forced audit failure");
+
+    const runRows = await (db as any)
+      .select({ status: schema.runs.status })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(runRows[0].status).toBe("NeedsInputIdle");
+    expect(supervisorMocks.createSession).not.toHaveBeenCalled();
+    expect(
+      resumeDriverMocks.scheduleResumedSessionDrive,
+    ).not.toHaveBeenCalled();
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
+  });
+
+  it("forced success-audit failure rolls back already-delivered form assignment completion", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-form-idem-audit-rb-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlId = await seedHitlRequest(runId, "form");
+    const assignmentId = await seedHitlAssignment({
+      projectId,
+      runId,
+      hitlRequestId: hitlId,
+      actionKind: "form",
+    });
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ response: { field: "value" }, respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, hitlId));
+
+    const token = await issueToken(
+      { projectId, name: "responder-token", createdByUserId: null },
+      db,
+    );
+
+    await (db as any)
+      .update(schema.projectTokens)
+      .set({ scopes: ["hitl:respond"] })
+      .where(eq(schema.projectTokens.id, token.tokenId));
+
+    auditMockState.failSuccessScopes.add("hitl:respond");
+
+    const req = makePostRequest(runId, hitlId, token.secret, {
+      response: { field: "value" },
+    });
+
+    await expect(
+      POST(req, {
+        params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+      }),
+    ).rejects.toThrow("forced audit failure");
+
+    expect(await readAssignmentStatus(assignmentId)).toBe("claimed");
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
+  });
+
+  it("forced success-audit failure rolls back permission concurrent-winner assignment completion", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-perm-race-audit-rb-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlId = await seedHitlRequest(runId, "permission");
+    const assignmentId = await seedHitlAssignment({
+      projectId,
+      runId,
+      hitlRequestId: hitlId,
+      actionKind: "permission",
+    });
+
+    supervisorMocks.deliverPermission.mockImplementationOnce(async () => {
+      await (db as any)
+        .update(schema.hitlRequests)
+        .set({ respondedAt: new Date() })
+        .where(eq(schema.hitlRequests.id, hitlId));
+
+      throw new MaisterError("HITL_TIMEOUT", "forced concurrent winner");
+    });
+
+    const token = await issueToken(
+      { projectId, name: "responder-token", createdByUserId: null },
+      db,
+    );
+
+    await (db as any)
+      .update(schema.projectTokens)
+      .set({ scopes: ["hitl:respond"] })
+      .where(eq(schema.projectTokens.id, token.tokenId));
+
+    auditMockState.failSuccessScopes.add("hitl:respond");
+
+    const req = makePostRequest(runId, hitlId, token.secret, {
+      optionId: "approve",
+    });
+
+    await expect(
+      POST(req, {
+        params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+      }),
+    ).rejects.toThrow("forced audit failure");
+
+    expect(await readAssignmentStatus(assignmentId)).toBe("claimed");
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(0);
+  });
+
   it("returns 404 (existence-hide) when hitlRequestId not found", async () => {
     const { projectId, flowId } = await seedProject(
       `ext-hitl-post-notfound-${randomUUID().slice(0, 8)}`,
@@ -693,12 +992,9 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     expect(body.message).not.toContain("hitl:read");
   });
 
-  it("D8: unrelated routes (gate_report) unaffected by scope enforcement", async () => {
-    // This test verifies that scope enforcement is ONLY on HITL routes,
-    // not globally. A token without gate:report scope still works on
-    // unscoped routes (backward compat).
-    // Since gate_report route is in a different file, we test the principle:
-    // a token with ["*"] passes both HITL routes, and would pass unscoped routes.
+  it("D8: wildcard token satisfies default scope enforcement", async () => {
+    // Scope enforcement is default-on across /api/v1/ext. The ["*"] wildcard is
+    // the compatibility path for broad project automation.
     const { projectId, flowId } = await seedProject(
       `ext-hitl-binary-${randomUUID().slice(0, 8)}`,
     );
@@ -709,8 +1005,7 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
       { projectId, name: "wildcard-token", createdByUserId: null },
       db,
     );
-    // Issued tokens default to the ["*"] wildcard scope (read from the DB row —
-    // issueToken's return does not echo scopes).
+    // Issued tokens default to the ["*"] wildcard scope.
     const tokRows = await (db as any)
       .select()
       .from(schema.projectTokens)
@@ -725,7 +1020,6 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
       params: Promise.resolve({ runId, hitlRequestId: hitlId }),
     });
 
-    // Should NOT be 403 from scope check (may be other errors)
     expect(res.status).not.toBe(403);
   });
 
@@ -772,18 +1066,142 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     expect(apiTokenActors).toHaveLength(1);
   });
 
-  it("migration 0025: partial unique index exists on (projectId, tokenId) WHERE kind='api_token'", async () => {
-    // This test verifies that the migration has run and the partial unique index exists.
-    // We can't directly inspect indexes in SQLite, but in Postgres we can.
-    const result = await pool.query(`
-      SELECT indexname FROM pg_indexes
-      WHERE tablename = 'actor_identities'
-      AND indexname LIKE '%token_uq%'
-    `);
-
-    expect(result.rows.length).toBeGreaterThan(0);
-    expect(result.rows.some((r: any) => r.indexname.includes("token"))).toBe(
-      true,
+  it("user-owned token actor can coexist with the owner human actor", async () => {
+    const { projectId } = await seedProject(
+      `ext-hitl-owner-human-${randomUUID().slice(0, 8)}`,
     );
+    const ownerUserId = await seedUser("hitl-owner-human");
+    const { ensureApiTokenActor, ensureUserActor } = await import(
+      "@/lib/assignments/service"
+    );
+
+    const humanActor = await ensureUserActor({
+      db: db as any,
+      projectId,
+      userId: ownerUserId,
+      label: "Owner Human",
+    });
+    const token = await issueToken(
+      {
+        projectId,
+        name: "owner-webhook",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["hitl:respond"],
+      },
+      db,
+    );
+    const tokenActor = await ensureApiTokenActor({
+      db: db as any,
+      projectId,
+      tokenId: token.tokenId,
+      ownerUserId,
+      label: "token:owner-webhook",
+    });
+
+    expect(tokenActor.id).not.toBe(humanActor.id);
+    expect(tokenActor.userId).toBe(ownerUserId);
+
+    const ownerActors = await db
+      .select()
+      .from(schema.actorIdentities as any)
+      .where(eq(schema.actorIdentities.userId as any, ownerUserId));
+    const ownerActorsInProject = ownerActors.filter(
+      (row: any) => row.projectId === projectId,
+    );
+
+    expect(ownerActorsInProject.map((row: any) => row.kind).sort()).toEqual([
+      "api_token",
+      "user",
+    ]);
+  });
+
+  it("distinct user-owned tokens for the same owner get distinct token actors", async () => {
+    const { projectId } = await seedProject(
+      `ext-hitl-owner-tokens-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = await seedUser("hitl-owner-tokens");
+    const { ensureApiTokenActor } = await import("@/lib/assignments/service");
+
+    const firstToken = await issueToken(
+      {
+        projectId,
+        name: "owner-webhook-a",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["hitl:respond"],
+      },
+      db,
+    );
+    const secondToken = await issueToken(
+      {
+        projectId,
+        name: "owner-webhook-b",
+        tokenKind: "user",
+        ownerUserId,
+        scopes: ["hitl:respond"],
+      },
+      db,
+    );
+    const firstActor = await ensureApiTokenActor({
+      db: db as any,
+      projectId,
+      tokenId: firstToken.tokenId,
+      ownerUserId,
+      label: "token:owner-webhook-a",
+    });
+    const secondActor = await ensureApiTokenActor({
+      db: db as any,
+      projectId,
+      tokenId: secondToken.tokenId,
+      ownerUserId,
+      label: "token:owner-webhook-b",
+    });
+
+    expect(secondActor.id).not.toBe(firstActor.id);
+    expect([firstActor.userId, secondActor.userId]).toEqual([
+      ownerUserId,
+      ownerUserId,
+    ]);
+
+    const ownerTokenActors = await db
+      .select()
+      .from(schema.actorIdentities as any)
+      .where(eq(schema.actorIdentities.userId as any, ownerUserId));
+    const apiTokenActors = ownerTokenActors.filter(
+      (row: any) => row.projectId === projectId && row.kind === "api_token",
+    );
+
+    expect(apiTokenActors).toHaveLength(2);
+    expect(apiTokenActors.map((row: any) => row.tokenId).sort()).toEqual(
+      [firstToken.tokenId, secondToken.tokenId].sort(),
+    );
+  });
+
+  it("partial actor uniqueness indexes exist for user and api-token actors", async () => {
+    const result = await pool.query(`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE tablename = 'actor_identities'
+      AND indexname IN (
+        'actor_identities_project_user_uq',
+        'actor_identities_project_token_uq'
+      )
+    `);
+    const constraints = await pool.query(`
+      SELECT conname FROM pg_constraint
+      WHERE conname = 'actor_identities_project_user_uq'
+    `);
+    const indexDefs = Object.fromEntries(
+      result.rows.map((row: any) => [row.indexname, row.indexdef]),
+    );
+
+    expect(result.rows).toHaveLength(2);
+    expect(indexDefs.actor_identities_project_user_uq).toMatch(
+      /WHERE .*kind.*user/,
+    );
+    expect(indexDefs.actor_identities_project_token_uq).toMatch(
+      /WHERE .*kind.*api_token/,
+    );
+    expect(constraints.rows).toHaveLength(0);
   });
 });

@@ -59,6 +59,7 @@ export async function createTask(
     title: input.title,
     prompt: input.prompt,
     flowId: input.flowId,
+    createdByUserId: ctx.actorUserId ?? null,
     status: "Backlog",
     stage: "Backlog",
   });
@@ -80,6 +81,7 @@ export type TaskDTO = {
   flowId: string;
   latestRunId: string | null;
   attemptNumber: number;
+  createdByUserId: string | null;
   createdAt: Date;
 };
 
@@ -103,6 +105,7 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
     flowId: row.flowId,
     latestRunId: runRows[0]?.id ?? null,
     attemptNumber: row.attemptNumber,
+    createdByUserId: row.createdByUserId ?? null,
     createdAt: row.createdAt,
   };
 }

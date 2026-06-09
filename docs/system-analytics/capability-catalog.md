@@ -105,6 +105,37 @@ These objects are not interchangeable. Publishing authored content makes it
 visible in the local catalog; it does not install, trust, enable, launch, or run
 setup hooks.
 
+**Editor upgrade (Implemented, [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)).**
+The authored-Flow editing surface (`flowYaml` raw text and `files[]` content,
+formerly plain `<textarea>`s) is a CodeMirror 6 editor
+(`@uiw/react-codemirror`, dynamic `ssr:false`):
+
+- **Per-kind language** by file kind / path: yaml (`flow.yaml`), json
+  (`schema`), markdown+frontmatter (`skill` / `rule` / `readme` /
+  `agent_definition`), shell (`script` / `setup`); plus a `readOnly` mode for
+  non-editable inspection.
+- **Inline validation** through a `@codemirror/lint` source that runs
+  **client-side** (the server validator `validateAuthoredFlowPackageBody` is
+  `server-only` — `node:crypto`/`node:path`/`pino` — so it cannot run in the
+  browser editor). The lint reuses the same client-safe primitives the server
+  validator builds on: `parseYaml` (from `yaml`) maps a `YAMLParseError.linePos`
+  to a **precise line marker** for YAML syntax errors, and `flowYamlV1Schema`
+  (from `@/lib/config.schema`, client-safe) yields **file-level** diagnostics
+  for manifest-shape issues (no doc position). `*.json` buffers get a
+  JSON-parse syntax marker; other kinds use the CodeMirror language's built-in
+  highlighting only. Graph / file / digest validation
+  (`validateGraphManifest`, content hash) stays **server-side** on the
+  save/load path and populates `packageBody.validation` (status + issueCount,
+  shown in the panel); it is NOT duplicated in the live lint.
+- **Context autocomplete** from static vocab: step types
+  (`cli | agent | guard | human`), known `flow.yaml` keys, frontmatter / tool
+  keys for typed files, and a static runner-name list (live runner-catalog
+  autocomplete is a deferred follow-up).
+
+The authored-draft lifecycle, the `manageCatalog` gate, the optimistic lock, the
+`updateAuthoredFlowAction` / `updateAuthoredDraft` save path, and the validation
+gates are unchanged — only the editing widget changes.
+
 ## Authored Flow package states
 
 | State                             | Meaning                                                                        | User actions                                           | Runtime effects                                                                        |
@@ -266,6 +297,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
 - DB: [`../database-schema.md`](../database-schema.md),
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md),
   [`../db/erd.md`](../db/erd.md).
-- ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
+- ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle),
+  [ADR-066 authored editor](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Implemented).
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.

@@ -1,12 +1,14 @@
 import "server-only";
 
+import type { TokenKind } from "@/lib/tokens/issue";
+
 import { desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projectTokens } = schemaModule as unknown as Record<string, any>;
+const { projectTokens, users } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -14,6 +16,10 @@ type Db = any;
 export type TokenListItem = {
   id: string;
   name: string;
+  kind: TokenKind;
+  ownerUserId: string | null;
+  ownerLabel: string | null;
+  scopes: string[];
   prefix: string;
   createdAt: Date;
   lastUsedAt: Date | null;
@@ -35,6 +41,11 @@ export async function listTokens(
     .select({
       id: projectTokens.id,
       name: projectTokens.name,
+      kind: projectTokens.token_kind,
+      ownerUserId: projectTokens.owner_user_id,
+      ownerName: users.name,
+      ownerEmail: users.email,
+      scopes: projectTokens.scopes,
       prefix: projectTokens.prefix,
       createdAt: projectTokens.created_at,
       lastUsedAt: projectTokens.last_used_at,
@@ -42,6 +53,7 @@ export async function listTokens(
       revokedAt: projectTokens.revoked_at,
     })
     .from(projectTokens)
+    .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
     .where(eq(projectTokens.project_id, projectId))
     .orderBy(desc(projectTokens.created_at));
 
@@ -49,6 +61,10 @@ export async function listTokens(
     (r: any): TokenListItem => ({
       id: r.id,
       name: r.name,
+      kind: r.kind ?? "project",
+      ownerUserId: r.ownerUserId ?? null,
+      ownerLabel: r.ownerName ?? r.ownerEmail ?? null,
+      scopes: (r.scopes as string[]) ?? ["*"],
       prefix: r.prefix,
       createdAt: r.createdAt,
       lastUsedAt: r.lastUsedAt ?? null,

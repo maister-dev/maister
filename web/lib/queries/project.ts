@@ -12,6 +12,7 @@ import {
   ACTIVE_RUN_STATUSES,
   type AgentRole,
   type PortfolioWorkspace,
+  lifecycleActionsForWorkspace,
   relativeTime,
   runStatusToWorkspace,
   scratchActionForWorkspace,
@@ -132,73 +133,71 @@ export async function getProjectPageData(
   const client = db();
 
   const now = new Date();
-  const [
-    flowRows,
-    runnerRows,
-    platformRuntimeRows,
-    memberRows,
-    activeRunRows,
-  ] = await Promise.all([
-    client
-      .select({
-        id: flows.id,
-        ref: flows.flowRefId,
-        source: flows.source,
-        version: flows.version,
-        manifest: flows.manifest,
-        enabledRevisionId: flows.enabledRevisionId,
-      })
-      .from(flows)
-      .where(eq(flows.projectId, project.id))
-      .orderBy(asc(flows.createdAt)),
-    client
-      .select({
-        id: platformAcpRunners.id,
-        agent: platformAcpRunners.capabilityAgent,
-        adapter: platformAcpRunners.adapter,
-        model: platformAcpRunners.model,
-        readinessStatus: platformAcpRunners.readinessStatus,
-        enabled: platformAcpRunners.enabled,
-      })
-      .from(platformAcpRunners)
-      .orderBy(asc(platformAcpRunners.createdAt)),
+  const [flowRows, runnerRows, platformRuntimeRows, memberRows, activeRunRows] =
+    await Promise.all([
+      client
+        .select({
+          id: flows.id,
+          ref: flows.flowRefId,
+          source: flows.source,
+          version: flows.version,
+          manifest: flows.manifest,
+          enabledRevisionId: flows.enabledRevisionId,
+        })
+        .from(flows)
+        .where(eq(flows.projectId, project.id))
+        .orderBy(asc(flows.createdAt)),
+      client
+        .select({
+          id: platformAcpRunners.id,
+          agent: platformAcpRunners.capabilityAgent,
+          adapter: platformAcpRunners.adapter,
+          model: platformAcpRunners.model,
+          readinessStatus: platformAcpRunners.readinessStatus,
+          enabled: platformAcpRunners.enabled,
+        })
+        .from(platformAcpRunners)
+        .orderBy(asc(platformAcpRunners.createdAt)),
 
-    client.select().from(platformRuntimeSettings),
+      client.select().from(platformRuntimeSettings),
 
-    client
-      .select({
-        name: users.name,
-        email: users.email,
-        role: projectMembers.role,
-      })
-      .from(projectMembers)
-      .innerJoin(users, eq(users.id, projectMembers.userId))
-      .where(eq(projectMembers.projectId, project.id)),
+      client
+        .select({
+          name: users.name,
+          email: users.email,
+          role: projectMembers.role,
+        })
+        .from(projectMembers)
+        .innerJoin(users, eq(users.id, projectMembers.userId))
+        .where(eq(projectMembers.projectId, project.id)),
 
-    client
-      .select({
-        runId: runs.id,
-        status: runs.status,
-        runKind: runs.runKind,
-        acpSessionId: runs.acpSessionId,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
-        branch: workspaces.branch,
-        startedAt: runs.startedAt,
-        scratchDialogStatus: scratchRuns.dialogStatus,
-      })
-      .from(runs)
-      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-      .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
-      .where(
-        and(
-          eq(runs.projectId, project.id),
-          inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-          isNull(workspaces.removedAt),
-        ),
-      )
-      .orderBy(desc(runs.startedAt)),
-  ]);
+      client
+        .select({
+          runId: runs.id,
+          status: runs.status,
+          runKind: runs.runKind,
+          acpSessionId: runs.acpSessionId,
+          capabilityAgent: runs.capabilityAgent,
+          runnerSnapshot: runs.runnerSnapshot,
+          workspaceId: workspaces.id,
+          branch: workspaces.branch,
+          archivedBranch: workspaces.archivedBranch,
+          removedAt: workspaces.removedAt,
+          startedAt: runs.startedAt,
+          scratchDialogStatus: scratchRuns.dialogStatus,
+        })
+        .from(runs)
+        .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+        .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+        .where(
+          and(
+            eq(runs.projectId, project.id),
+            inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+            isNull(workspaces.removedAt),
+          ),
+        )
+        .orderBy(desc(runs.startedAt)),
+    ]);
 
   const flowByRevisionId = new Map(
     flowRows
@@ -286,6 +285,14 @@ export async function getProjectPageData(
       runStatus: row.status,
       dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
       acpSessionId: row.acpSessionId,
+    }),
+    lifecycleActions: lifecycleActionsForWorkspace({
+      runKind: row.runKind as RunKind,
+      runStatus: row.status,
+      dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+      hasWorkspace: Boolean(row.workspaceId),
+      removedAt: row.removedAt,
+      archivedBranch: row.archivedBranch,
     }),
     // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
     readiness: readinessByRun.get(row.runId) ?? "ready",

@@ -263,9 +263,9 @@ sequenceDiagram
 
 Hard-delete is permitted only for accounts that have never been used:
 `account_status='pending'`, `last_login_at IS NULL`, and no rows in
-`runs`, `scratch_runs`, `node_attempts`, `actor_identities`,
-`project_tokens`, `workspaces`, or `flow_graph_layouts`. Otherwise the
-admin is offered disable.
+`runs`, `scratch_runs`, `node_attempts`, `actor_identities`, `tasks`,
+`project_tokens.created_by`, `project_tokens.owner_user_id`, or `workspaces`.
+Otherwise the admin is offered disable.
 
 ```mermaid
 flowchart TD
@@ -286,7 +286,7 @@ flowchart TD
 - `users.password_hash` MUST NEVER be returned by any API response.
 - `users.email` MUST be stored lowercase; admin edit and public registration both normalize before uniqueness check and upsert.
 - Admin mutations MUST NOT allow self-disable, self-demotion, or removing the last active global admin; each guard returns `PRECONDITION` (409).
-- Admin hard-delete is permitted ONLY when `account_status='pending'` AND `last_login_at IS NULL` AND no rows reference the user in `runs`, `scratch_runs`, `node_attempts`, `actor_identities`, `project_tokens`, `workspaces`, or `flow_graph_layouts`; otherwise return `PRECONDITION`. `(Implemented)`
+- Admin hard-delete is permitted ONLY when `account_status='pending'` AND `last_login_at IS NULL` AND no rows reference the user in `runs`, `scratch_runs`, `node_attempts`, `actor_identities`, `tasks`, `project_tokens.created_by`, `project_tokens.owner_user_id`, or `workspaces`; otherwise return `PRECONDITION`. `(Implemented)`
 - Every admin mutation (create/edit) MUST stamp `created_by` on insert and `updated_by` + `updated_at` on update. `(Implemented)`
 - A user with `users.must_change_password = true` MUST be redirected to `/change-password` by the app layout and blocked from role-gated APIs with `PASSWORD_CHANGE_REQUIRED`; the flag clears only after a valid password update.
 - `/account/password` MUST update only the signed-in user's `users.password_hash`; `/account` MUST update only `users.name`.

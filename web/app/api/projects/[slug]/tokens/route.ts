@@ -11,6 +11,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { issueToken } from "@/lib/tokens/issue";
 import { listTokens } from "@/lib/tokens/list";
+import { TOKEN_SCOPE_VALUES } from "@/lib/tokens/scopes";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/runs/route.ts).
 const { projects } = schemaModule as unknown as Record<string, any>;
@@ -22,6 +23,8 @@ const log = pino({
 
 const postBodySchema = z.object({
   name: z.string().min(1),
+  kind: z.enum(["project", "user"]).optional(),
+  scopes: z.array(z.enum(TOKEN_SCOPE_VALUES)).min(1).optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -79,22 +82,22 @@ export async function POST(
 ): Promise<NextResponse> {
   const { slug } = await params;
 
-  let body: z.infer<typeof postBodySchema>;
-
-  try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-      slug,
-    );
-  }
-
   try {
     const user = await requireActiveSession();
+    let body: z.infer<typeof postBodySchema>;
+
+    try {
+      body = postBodySchema.parse(await req.json());
+    } catch (err) {
+      return errorResponse(
+        new MaisterError(
+          "CONFIG",
+          `invalid POST body: ${(err as Error).message}`,
+        ),
+        slug,
+      );
+    }
+
     const db = getDb() as unknown as { select: any; insert: any };
 
     const projectRows = await db
@@ -113,6 +116,9 @@ export async function POST(
     const issued = await issueToken({
       projectId: project.id,
       name: body.name,
+      tokenKind: body.kind ?? "project",
+      ownerUserId: body.kind === "user" ? user.id : null,
+      scopes: body.scopes,
       createdByUserId: user.id,
       expiresAt,
     });
@@ -123,6 +129,13 @@ export async function POST(
       {
         id: issued.tokenId,
         name: issued.name,
+        kind: issued.tokenKind,
+        ownerUserId: issued.ownerUserId,
+        ownerLabel:
+          issued.tokenKind === "user"
+            ? (user.name ?? user.email ?? null)
+            : null,
+        scopes: issued.scopes,
         prefix: issued.prefix,
         token: issued.secret,
         createdAt: issued.createdAt,

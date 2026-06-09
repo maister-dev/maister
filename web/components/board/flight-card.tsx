@@ -10,6 +10,7 @@ import clsx from "clsx";
 
 import { FlightCardHitl } from "@/components/board/flight-card-hitl";
 import { READINESS_BADGE } from "@/components/readiness-badge";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 export interface FlightCardLabels {
   reworking: string;
@@ -67,6 +68,7 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
   const isHumanWorking = card.status === "humanworking";
+  const hasLifecycleActions = card.lifecycleActions.length > 0;
   // A needs card with a pending HITL request must NOT be wrapped in <a> because
   // it contains interactive form elements (<button>/<textarea>). Use a <div>
   // container and an explicit "View" link instead.
@@ -158,7 +160,7 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
           >
             {card.agent}
           </span>
-          {needsInlineHitl ? (
+          {needsInlineHitl || hasLifecycleActions ? (
             <Link
               className="rounded-full border border-line bg-paper px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-mute hover:text-ink"
               href={`/runs/${card.runId}`}
@@ -268,10 +270,18 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
           {card.time}
         </span>
       </div>
+
+      {hasLifecycleActions ? (
+        <WorkbenchLifecycleActions
+          actions={card.lifecycleActions}
+          runId={card.runId}
+          runKind="flow"
+        />
+      ) : null}
     </>
   );
 
-  if (needsInlineHitl) {
+  if (needsInlineHitl || hasLifecycleActions) {
     return <div className={cardClass}>{cardBody}</div>;
   }
 

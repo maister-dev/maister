@@ -446,6 +446,11 @@ flowchart LR
 - **(Designed, M19)** GC MUST NOT merge into main/target; preservation is the
   archive branch (+ optional push when `MAISTER_GC_ARCHIVE_PUSH=true`, default
   `false`) only.
+- **(Implemented, M27)** Operator archive/drop/export/snapshot/handoff actions
+  use the same workspace row and preserve/remove helpers but are explicit UI
+  lifecycle actions, not background GC. Their allow-list, durable operation
+  claim, and trust boundary live in
+  [`workbench-lifecycle.md`](workbench-lifecycle.md).
 - Workspace lifecycle ends at `Removed`; rows are NEVER hard-deleted —
   `removed_at` is set instead.
 - Active workspace rail groups MUST include both `flow` and `scratch` runs
@@ -497,6 +502,10 @@ flowchart LR
   derives fallbacks (`target_branch ?? project.default_branch`, diff base via
   `resolveBaseRef`) or refuses `PRECONDITION` ("relaunch to promote"); never a
   silent null into git.
+- **(Implemented, M27) Concurrent lifecycle action** — archive/drop/export/
+  snapshot/handoff are serialized by `workspaces.lifecycle_operation_*`. A
+  losing claim returns `409 CONFLICT`; a transient push failure leaves the
+  operation retryable rather than marking promotion done.
 
 ## Linked artifacts
 
@@ -507,12 +516,15 @@ flowchart LR
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
   (Implemented, M18).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (workspaces table — base/
-  target/promotion + claim columns, Implemented M18).
+  target/promotion claim columns from M18 and lifecycle operation claim columns
+  from M27).
 - Config reference: [`../configuration.md`](../configuration.md)
   (`promotion.mode`, `MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS`).
 - Related: [`runs.md`](runs.md) (flow `Review → Done` promotion path),
   [`projects.md`](projects.md),
   [`git-integration.md`](git-integration.md) (push + provider PR dispatch),
+  [`workbench-lifecycle.md`](workbench-lifecycle.md) (operator stop/archive/
+  drop/snapshot/export/handoff actions),
   [`artifacts.md`](artifacts.md) (promotion `commit_set`/`diff` artifact),
   [`workbench.md`](workbench.md) (M22 — the worktree is the **tracked-file
   source** for the read-only file-tree + base→run diff).

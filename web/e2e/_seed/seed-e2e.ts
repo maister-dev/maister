@@ -685,6 +685,38 @@ const M18_REVIEW_SCHEMA = {
   workspacePolicies: ["keep"],
 };
 
+// --- M27 fixture: workbench lifecycle actions ------------------------------
+// One project with a Review flow workbench and a Review scratch workbench, both
+// backed by real git worktrees and a file-based `origin` remote. The flow
+// worktree carries dirty untracked work so the smoke can snapshot, create a
+// handoff branch, archive, and drop without sharing mutable state with M18/M22.
+
+const M27_SLUG = "e2e-m27";
+const M27_FLOW_BRANCH = "maister/e2e-m27-flow";
+const M27_SCRATCH_BRANCH = "maister/e2e-m27-scratch";
+
+const M27_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Lifecycle (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "implement {{ task.prompt }}" },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: "implement" },
+    },
+  ],
+};
+
 // --- M22 fixture: workbench (flow-graph view + git-tracked file tree + diff) --
 // ONE project with a REAL parent repo carrying TRACKED files (README.md, a
 // src/ subdir, AND an oversized blob > 524288 bytes so the too-large marker is
@@ -2712,6 +2744,15 @@ type M18FixtureRecord = {
   prNumber: number;
 };
 
+type M27FixtureRecord = {
+  projectSlug: string;
+  repoPath: string;
+  flowRunId: string;
+  scratchRunId: string;
+  flowBranch: string;
+  scratchBranch: string;
+};
+
 // Build one run-branch worktree per scenario, off the `release` target, carrying
 // a committed change. The base commit = the `release` HEAD the run branched from
 // (so `diffRange(base...runBranch)` shows only the run's change). For the
@@ -2785,6 +2826,77 @@ async function provisionM18RunBranch(
       relWt,
     ]);
   }
+
+  return { baseCommit };
+}
+
+async function provisionM27Repo(args: {
+  repoPath: string;
+  remotePath: string;
+  worktreeRoot: string;
+  flowWorktreePath: string;
+  scratchWorktreePath: string;
+}): Promise<{ baseCommit: string }> {
+  mkdirSync(path.dirname(args.repoPath), { recursive: true });
+  await createGitRepo(args.repoPath);
+  resetDir(args.remotePath);
+  resetDir(args.worktreeRoot);
+  await execFileAsync("git", [
+    "-C",
+    args.remotePath,
+    "init",
+    "--bare",
+    "-b",
+    "main",
+  ]);
+  await execFileAsync("git", [
+    "-C",
+    args.repoPath,
+    "remote",
+    "add",
+    "origin",
+    args.remotePath,
+  ]);
+
+  const { stdout: baseSha } = await execFileAsync("git", [
+    "-C",
+    args.repoPath,
+    "rev-parse",
+    "HEAD",
+  ]);
+  const baseCommit = baseSha.trim();
+
+  await execFileAsync("git", [
+    "-C",
+    args.repoPath,
+    "worktree",
+    "add",
+    "-b",
+    M27_FLOW_BRANCH,
+    args.flowWorktreePath,
+    "main",
+  ]);
+  writeFileSync(
+    path.join(args.flowWorktreePath, "dirty-lifecycle.txt"),
+    "snapshot me before handoff\n",
+    "utf8",
+  );
+
+  await execFileAsync("git", [
+    "-C",
+    args.repoPath,
+    "worktree",
+    "add",
+    "-b",
+    M27_SCRATCH_BRANCH,
+    args.scratchWorktreePath,
+    "main",
+  ]);
+  writeFileSync(
+    path.join(args.scratchWorktreePath, "scratch-lifecycle.txt"),
+    "scratch workbench lifecycle\n",
+    "utf8",
+  );
 
   return { baseCommit };
 }
@@ -3033,6 +3145,160 @@ async function seedM18Fixture(
     prBranch: M18_PR_BRANCH,
     prUrl: M18_PR_URL,
     prNumber: M18_PR_NUMBER,
+  };
+}
+
+async function seedM27Fixture(
+  pool: Pool,
+  userId: string,
+): Promise<M27FixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    member: randomUUID(),
+    flowTask: randomUUID(),
+    flowRun: randomUUID(),
+    flowWorkspace: randomUUID(),
+    flowImplement: randomUUID(),
+    flowReview: randomUUID(),
+    flowHitl: randomUUID(),
+    scratchRun: randomUUID(),
+    scratchWorkspace: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const remotePath = `/tmp/maister-e2e/${ids.project}.origin.git`;
+  const worktreeRoot = path.resolve("e2e/.runtime/worktrees", ids.project);
+  const flowWorktreePath = path.join(worktreeRoot, "flow");
+  const scratchWorktreePath = path.join(worktreeRoot, "scratch");
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M27_SLUG]);
+
+  const { baseCommit } = await provisionM27Repo({
+    repoPath,
+    remotePath,
+    worktreeRoot,
+    flowWorktreePath,
+    scratchWorktreePath,
+  });
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      M27_SLUG,
+      "MAIster E2E M27 Lifecycle",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m27@v0.0.1`,
+      JSON.stringify(M27_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, 'E2E M27 lifecycle', 'exercise lifecycle controls', $3, 'InFlight', 'Backlog')`,
+    [ids.flowTask, ids.project, ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, created_by_user_id, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'review', 'v0.0.1', $6, now())`,
+    [ids.flowRun, ids.flowTask, ids.project, ids.flow, ids.runner, userId],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
+    [
+      ids.flowWorkspace,
+      ids.flowRun,
+      ids.project,
+      M27_FLOW_BRANCH,
+      flowWorktreePath,
+      repoPath,
+      baseCommit,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, ended_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'Succeeded', now())`,
+    [ids.flowImplement, ids.flowRun],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 1, 'NeedsInput', now())`,
+    [ids.flowReview, ids.flowRun],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, 'Review the lifecycle fixture.')`,
+    [
+      ids.flowHitl,
+      ids.flowRun,
+      JSON.stringify({
+        review: true,
+        allowedDecisions: ["approve", "rework"],
+        transitions: { approve: "done", rework: "implement" },
+      }),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, run_kind, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, flow_version, created_by_user_id, started_at)
+     VALUES ($1, 'scratch', $2, $3, $4, 'claude', jsonb_build_object('id', $4::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'scratch', $5, now())`,
+    [ids.scratchRun, ids.project, ids.flow, ids.runner, userId],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
+    [
+      ids.scratchWorkspace,
+      ids.scratchRun,
+      ids.project,
+      M27_SCRATCH_BRANCH,
+      scratchWorktreePath,
+      repoPath,
+      baseCommit,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO scratch_runs
+       (run_id, project_id, name, initial_prompt, work_mode, reasoning_effort,
+        plan_mode, base_branch, base_commit, target_branch, dialog_status,
+        created_by_user_id)
+     VALUES ($1, $2, 'M27 scratch lifecycle', 'Exercise scratch lifecycle controls.',
+        'auto', 'high', 'off', 'main', $3, 'main', 'Review', $4)`,
+    [ids.scratchRun, ids.project, baseCommit, userId],
+  );
+
+  return {
+    projectSlug: M27_SLUG,
+    repoPath,
+    flowRunId: ids.flowRun,
+    scratchRunId: ids.scratchRun,
+    flowBranch: M27_FLOW_BRANCH,
+    scratchBranch: M27_SCRATCH_BRANCH,
   };
 }
 
@@ -3509,9 +3775,9 @@ async function seedM23Fixture(
 // diff tabs. The e2e adds a node via the toolbar, saves through the existing
 // updateAuthoredFlowAction form, and asserts persistence + the invalid-edit
 // hard-gate refusal.
-const M27_SLUG = "e2e-m27-editor";
+const M27_EDITOR_SLUG = "e2e-m27-editor";
 
-const M27_MANIFEST = {
+const M27_EDITOR_MANIFEST = {
   schemaVersion: 1,
   name: "M27 Editor Flow",
   compat: { engine_min: "1.3.0" },
@@ -3555,13 +3821,13 @@ async function seedM27FlowEditorFixture(
   };
   const repoPath = `/tmp/maister-e2e/${ids.project}`;
 
-  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M27_SLUG]);
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M27_EDITOR_SLUG]);
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
      VALUES ($1, $2, $3, $4, $5)`,
     [
       ids.project,
-      M27_SLUG,
+      M27_EDITOR_SLUG,
       "M27 Flow Editor (e2e)",
       repoPath,
       `${repoPath}/maister.yaml`,
@@ -3575,8 +3841,8 @@ async function seedM27FlowEditorFixture(
 
   const body = {
     flowYaml: M27_FLOW_YAML,
-    manifest: M27_MANIFEST,
-    packageMetadata: { slug: M27_SLUG, name: "M27 Editor Flow" },
+    manifest: M27_EDITOR_MANIFEST,
+    packageMetadata: { slug: M27_EDITOR_SLUG, name: "M27 Editor Flow" },
     files: [],
     validation: {
       status: "valid",
@@ -3592,7 +3858,7 @@ async function seedM27FlowEditorFixture(
        (id, project_id, kind, slug, title, lifecycle, draft_version,
         current_draft_revision_id)
      VALUES ($1, $2, 'flow', $3, $4, 'DRAFT', 1, $5)`,
-    [ids.cap, ids.project, M27_SLUG, "M27 Editor Flow", ids.revision],
+    [ids.cap, ids.project, M27_EDITOR_SLUG, "M27 Editor Flow", ids.revision],
   );
   await pool.query(
     `INSERT INTO authored_capability_revisions
@@ -3605,12 +3871,119 @@ async function seedM27FlowEditorFixture(
       ids.project,
       "M27 Editor Flow",
       JSON.stringify(body),
-      JSON.stringify(M27_MANIFEST),
+      JSON.stringify(M27_EDITOR_MANIFEST),
       "m27-e2e-seed",
     ],
   );
 
-  return { projectId: ids.project, projectSlug: M27_SLUG, capId: ids.cap };
+  return { projectId: ids.project, projectSlug: M27_EDITOR_SLUG, capId: ids.cap };
+}
+
+// --- flows-authoring fixture: a DRAFT authored Flow capability to open in the
+// CodeMirror editor (ADR-066 Phase 3). No real repo/worktree — the editor reads
+// `body.flowYaml` straight from the revision row. The page resolves `capId`
+// against `authored_capabilities.id`, scoped to the project.
+
+const FLOWS_AUTHORING_SLUG = "e2e-flows-authoring";
+const FLOWS_AUTHORING_CAP_SLUG = "e2e-authoring-flow";
+
+const FLOWS_AUTHORING_FLOW_YAML = `schemaVersion: 1
+name: E2E Authoring Flow
+steps:
+  - id: plan
+    type: agent
+    mode: new-session
+    prompt: "/aif-plan {{ task.prompt }}"
+`;
+
+type FlowsAuthoringFixtureRecord = {
+  projectSlug: string;
+  capId: string;
+  capSlug: string;
+};
+
+async function seedFlowsAuthoringFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FlowsAuthoringFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    member: randomUUID(),
+    cap: randomUUID(),
+    revision: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const body = {
+    flowYaml: FLOWS_AUTHORING_FLOW_YAML,
+    manifest: null,
+    packageMetadata: {
+      slug: FLOWS_AUTHORING_CAP_SLUG,
+      name: "E2E Authoring Flow",
+      versionLabel: "none",
+    },
+    files: [],
+    validation: {
+      status: "valid",
+      issueCount: 0,
+      issues: [],
+      manifestDigest: null,
+      contentHash: null,
+    },
+  };
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [
+    FLOWS_AUTHORING_SLUG,
+  ]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      FLOWS_AUTHORING_SLUG,
+      "MAIster E2E Flows Authoring",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  await pool.query(
+    `INSERT INTO authored_capabilities
+       (id, project_id, kind, slug, title, lifecycle, draft_version,
+        current_draft_revision_id)
+     VALUES ($1, $2, 'flow', $3, $4, 'DRAFT', 1, $5)`,
+    [
+      ids.cap,
+      ids.project,
+      FLOWS_AUTHORING_CAP_SLUG,
+      "E2E Authoring Flow",
+      ids.revision,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO authored_capability_revisions
+       (id, capability_id, project_id, kind, revision_number, lifecycle,
+        draft_version, title, body, manifest, schema_version, content_hash)
+     VALUES ($1, $2, $3, 'flow', 1, 'DRAFT', 1, $4, $5::jsonb, NULL, 1, $6)`,
+    [
+      ids.revision,
+      ids.cap,
+      ids.project,
+      "E2E Authoring Flow",
+      JSON.stringify(body),
+      "e2e0000000000000000000000000000000000000000000000000000000000000",
+    ],
+  );
+
+  return {
+    projectSlug: FLOWS_AUTHORING_SLUG,
+    capId: ids.cap,
+    capSlug: FLOWS_AUTHORING_CAP_SLUG,
+  };
 }
 
 async function main(): Promise<void> {
@@ -3640,8 +4013,10 @@ async function main(): Promise<void> {
         M15_SLUG,
         M16_SLUG,
         M18_SLUG,
-        M22_SLUG,
         M27_SLUG,
+        M22_SLUG,
+        M27_EDITOR_SLUG,
+        FLOWS_AUTHORING_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -3781,9 +4156,11 @@ async function main(): Promise<void> {
     const m16 = await seedM16Fixture(pool, admin.id);
     const m17 = await seedM17Fixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
+    const m27 = await seedM27Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
     const m23 = await seedM23Fixture(pool, admin.id);
-    const m27 = await seedM27FlowEditorFixture(pool, admin.id);
+    const m27Editor = await seedM27FlowEditorFixture(pool, admin.id);
+    const flowsAuthoring = await seedFlowsAuthoringFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -3825,9 +4202,11 @@ async function main(): Promise<void> {
         m16,
         m17,
         m18,
+        m27,
         m22,
         m23,
-        m27,
+        m27Editor,
+        flowsAuthoring,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -3846,8 +4225,10 @@ async function main(): Promise<void> {
         `, m16 run ${m16.runId} gate ${m16.gateId} (${M16_SLUG})` +
         `, m17 proj1 ${m17.project1RunId} proj2 ${m17.project2RunId} (${M17_PROJECT1_SLUG}, ${M17_PROJECT2_SLUG})` +
         `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
+        `, m27 flow ${m27.flowRunId} scratch ${m27.scratchRunId} (${M27_SLUG})` +
         `, m22 run ${m22.runId} (${M22_SLUG})` +
-        `, m23 project ${m23.projectSlug}`,
+        `, m23 project ${m23.projectSlug}` +
+        `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})`,
     );
   } finally {
     await pool.end();

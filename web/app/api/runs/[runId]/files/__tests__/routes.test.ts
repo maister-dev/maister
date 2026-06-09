@@ -1,29 +1,25 @@
-// M22 Phase 4a (RED): failing unit tests for the run-workbench file routes.
+// M22 Phase 4a: unit tests for the run-workbench file (dir-listing) route.
+// (ADR-066 / T1.6b retired the sibling `…/files/content` route — its blob read
+// moved into the run-detail RSC `?file=` page — so the content-route tests are
+// gone; the dir-listing route still backs the client file tree.)
 //
-// Contract (NOT yet built — RED on the missing `../route` + `../content/route`):
+// Contract:
 //   GET /api/runs/[runId]/files          (list)
-//   GET /api/runs/[runId]/files/content  (content)
 //
-// Flow (both routes):
+// Flow:
 //   requireActiveSession()
 //   detail = getRunDetail(runId); !detail → bare 404 {message}
 //   requireProjectAction(detail.projectId, "readRepoFiles")
-//   read ?path from new URL(req.url).searchParams.get("path")
-//     - list:    default ""    (root)
-//     - content: REQUIRED      (missing → 400 CONFIG)
+//   read ?path from new URL(req.url).searchParams.get("path") (default "" root)
 //   non-empty path → repoRelPathSchema (reject → 400 {code:"CONFIG"})
-//   list:    listTree({repo: detail.worktreePath, ref: detail.branch, dir: path})
+//   listTree({repo: detail.worktreePath, ref: detail.branch, dir: path})
 //              → null → 404 ; else 200 {path, entries}
-//   content: readBlob({repo: detail.worktreePath, ref: detail.branch, path,
-//              maxBytes: workbenchMaxFileBytes()})
-//              not-found → 404 {message}; too-large → 413 {kind,size};
-//              binary → 415 {kind}; text → 200 {kind:"text",content}
 //   local httpStatusForCode: CONFIG→400, UNAUTHENTICATED→401,
 //     UNAUTHORIZED/PASSWORD_CHANGE_REQUIRED/ACCOUNT_INACTIVE→403, else 500.
 //
 // authz / queries / instance-config are mocked at the module boundary; the REAL
-// repoRelPathSchema is kept so a `../` path is rejected 400 BEFORE listTree/
-// readBlob are reached.
+// repoRelPathSchema is kept so a `../` path is rejected 400 BEFORE listTree is
+// reached.
 
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +27,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { getRunDetail } from "@/lib/queries/run";
-import { listTree, readBlob } from "@/lib/worktree";
+import { listTree } from "@/lib/worktree";
 
 const RUN_ID = "run-files-1";
 const PROJECT_ID = "project-1";
@@ -69,8 +65,8 @@ vi.mock("@/lib/queries/run", () => ({
   })),
 }));
 
-// Keep the REAL repoRelPathSchema (so a `../` path 400s before listTree/readBlob);
-// stub only the two git readers.
+// Keep the REAL repoRelPathSchema (so a `../` path 400s before listTree);
+// stub only the git tree reader.
 vi.mock("@/lib/worktree", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/worktree")>("@/lib/worktree");
@@ -78,7 +74,6 @@ vi.mock("@/lib/worktree", async () => {
   return {
     repoRelPathSchema: actual.repoRelPathSchema,
     listTree: vi.fn(),
-    readBlob: vi.fn(),
   };
 });
 
@@ -121,17 +116,6 @@ async function invokeList(runId: string, path?: string) {
     path === undefined
       ? `http://localhost/api/runs/${runId}/files`
       : `http://localhost/api/runs/${runId}/files?path=${encodeURIComponent(path)}`;
-  const req = new NextRequest(new Request(url, { method: "GET" }));
-
-  return GET(req, { params: Promise.resolve({ runId }) });
-}
-
-async function invokeContent(runId: string, path?: string) {
-  const { GET } = await import("../content/route");
-  const url =
-    path === undefined
-      ? `http://localhost/api/runs/${runId}/files/content`
-      : `http://localhost/api/runs/${runId}/files/content?path=${encodeURIComponent(path)}`;
   const req = new NextRequest(new Request(url, { method: "GET" }));
 
   return GET(req, { params: Promise.resolve({ runId }) });
@@ -228,106 +212,6 @@ describe("GET /api/runs/[runId]/files (list)", () => {
     vi.mocked(listTree).mockResolvedValue({ path: "", entries: [] });
 
     await invokeList(RUN_ID);
-
-    expect(requireProjectAction).toHaveBeenCalledWith(
-      PROJECT_ID,
-      "readRepoFiles",
-    );
-  });
-});
-
-describe("GET /api/runs/[runId]/files/content", () => {
-  it("returns 200 {kind:'text',content} and calls readBlob with server-state repo+ref", async () => {
-    vi.mocked(readBlob).mockResolvedValue({
-      kind: "text",
-      content: "export const x = 1;\n",
-    });
-
-    const res = await invokeContent(RUN_ID, "src/index.ts");
-    const body = (await res.json()) as { kind: string; content: string };
-
-    expect(res.status).toBe(200);
-    expect(readBlob).toHaveBeenCalledWith({
-      repo: WORKTREE_PATH,
-      ref: BRANCH,
-      path: "src/index.ts",
-      maxBytes: 524288,
-    });
-    expect(body.kind).toBe("text");
-    expect(body.content).toBe("export const x = 1;\n");
-  });
-
-  it("returns 404 when readBlob resolves not-found", async () => {
-    vi.mocked(readBlob).mockResolvedValue({ kind: "not-found" });
-
-    const res = await invokeContent(RUN_ID, "missing.txt");
-
-    expect(res.status).toBe(404);
-  });
-
-  it("returns 413 {kind:'too-large',size} when the blob is over the cap", async () => {
-    vi.mocked(readBlob).mockResolvedValue({ kind: "too-large", size: 999999 });
-
-    const res = await invokeContent(RUN_ID, "big.bin");
-    const body = (await res.json()) as { kind: string; size: number };
-
-    expect(res.status).toBe(413);
-    expect(body.kind).toBe("too-large");
-    expect(body.size).toBe(999999);
-  });
-
-  it("returns 415 {kind:'binary'} for a binary blob", async () => {
-    vi.mocked(readBlob).mockResolvedValue({ kind: "binary" });
-
-    const res = await invokeContent(RUN_ID, "logo.png");
-    const body = (await res.json()) as { kind: string };
-
-    expect(res.status).toBe(415);
-    expect(body.kind).toBe("binary");
-  });
-
-  it("returns 400 CONFIG when ?path is missing (content requires a path)", async () => {
-    const res = await invokeContent(RUN_ID);
-    const body = (await res.json()) as { code?: string };
-
-    expect(res.status).toBe(400);
-    expect(body.code).toBe("CONFIG");
-    expect(readBlob).not.toHaveBeenCalled();
-  });
-
-  it("returns 400 CONFIG for a `../` traversal path before readBlob", async () => {
-    const res = await invokeContent(RUN_ID, "../secret");
-    const body = (await res.json()) as { code?: string };
-
-    expect(res.status).toBe(400);
-    expect(body.code).toBe("CONFIG");
-    expect(readBlob).not.toHaveBeenCalled();
-  });
-
-  it("returns 403 when a viewer is denied (requireProjectAction UNAUTHORIZED)", async () => {
-    vi.mocked(requireProjectAction).mockRejectedValue(
-      new MaisterError("UNAUTHORIZED", "not a project member"),
-    );
-
-    const res = await invokeContent(RUN_ID, "src/index.ts");
-
-    expect(res.status).toBe(403);
-    expect(readBlob).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 when the run does not exist", async () => {
-    vi.mocked(getRunDetail).mockResolvedValue(null);
-
-    const res = await invokeContent(RUN_ID, "src/index.ts");
-
-    expect(res.status).toBe(404);
-    expect(readBlob).not.toHaveBeenCalled();
-  });
-
-  it("authorizes with (detail.projectId, 'readRepoFiles')", async () => {
-    vi.mocked(readBlob).mockResolvedValue({ kind: "text", content: "x" });
-
-    await invokeContent(RUN_ID, "a.txt");
 
     expect(requireProjectAction).toHaveBeenCalledWith(
       PROJECT_ID,

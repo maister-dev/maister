@@ -21,7 +21,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { gcAgeDays } from "@/lib/instance-config";
 import { crashRunningRun, markAbandoned } from "@/lib/runs/state-transitions";
 
@@ -56,7 +59,9 @@ beforeAll(async () => {
     maisterYamlPath: "/repos/crash-app/maister.yaml",
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   flowId = randomUUID();
 

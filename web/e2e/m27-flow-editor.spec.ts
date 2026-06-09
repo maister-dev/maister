@@ -8,9 +8,9 @@ type M27Fixture = { projectId: string; projectSlug: string; capId: string };
 function loadM27(): M27Fixture {
   const all = JSON.parse(
     readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
-  ) as { byKey: { m27: M27Fixture } };
+  ) as { byKey: { m27Editor: M27Fixture } };
 
-  return all.byKey.m27;
+  return all.byKey.m27Editor;
 }
 
 // M27/T-A9: the flow-graph editor mounts on the authored-flow page; a canvas

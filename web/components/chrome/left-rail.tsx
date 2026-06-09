@@ -9,6 +9,7 @@ import clsx from "clsx";
 
 import { PlatformStatusPill } from "@/components/chrome/platform-status";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 // Coarse relative-time copy for the GC removal countdown. Picks the largest unit
 // (days → hours → minutes) and uses Intl.RelativeTimeFormat so EN/RU phrasing
@@ -360,6 +361,14 @@ export async function LeftRail({
                             </span>
                           ) : null}
                         </div>
+                      ) : null}
+                      {ws.lifecycleActions.length > 0 ? (
+                        <WorkbenchLifecycleActions
+                          actions={ws.lifecycleActions}
+                          className="mb-1 px-2.5"
+                          runId={ws.runId}
+                          runKind={ws.runKind}
+                        />
                       ) : null}
                     </li>
                   ))}

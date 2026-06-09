@@ -295,12 +295,18 @@ export async function ensureUserActor(
     })
     .onConflictDoUpdate({
       target: [actorIdentities.projectId, actorIdentities.userId],
+      targetWhere: sql`${actorIdentities.kind} = 'user'`,
       set: {
         label: actorLabel(args),
         updatedAt: now,
       },
     })
     .returning();
+
+  log.debug(
+    { projectId: args.projectId, userId: args.userId, actorId: actor.id },
+    "[FIX:token-actor-uniqueness] user actor ensured",
+  );
 
   return actor as ActorIdentity;
 }
@@ -309,6 +315,7 @@ export type EnsureApiTokenActorArgs = {
   db?: Db;
   projectId: string;
   tokenId: string;
+  ownerUserId?: string | null;
   label?: string | null;
 };
 
@@ -328,15 +335,26 @@ export async function ensureApiTokenActor(
       projectId: args.projectId,
       kind: "api_token",
       label,
+      userId: args.ownerUserId ?? null,
       tokenId: args.tokenId,
       updatedAt: now,
     })
     .onConflictDoUpdate({
       target: [actorIdentities.projectId, actorIdentities.tokenId],
       targetWhere: sql`${actorIdentities.kind} = 'api_token'`,
-      set: { label, updatedAt: now },
+      set: { label, userId: args.ownerUserId ?? null, updatedAt: now },
     })
     .returning();
+
+  log.debug(
+    {
+      projectId: args.projectId,
+      tokenId: args.tokenId,
+      ownerUserId: args.ownerUserId ?? null,
+      actorId: actor.id,
+    },
+    "[FIX:token-actor-uniqueness] api-token actor ensured",
+  );
 
   return actor as ActorIdentity;
 }

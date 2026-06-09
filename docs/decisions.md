@@ -915,7 +915,7 @@ verdicts and the typed taxonomy of ADR-008.
 
 - **External actor auto-answers human review gates:** defeats the gate's purpose; only confidence-thresholded auto-proceed *inside the Flow* is allowed.
 - **MCP as a second orchestration backend:** must be a thin facade over the same services and audit, or it forks the control plane.
-- **Granular scopes up front:** premature without concrete consumers; v1 grants full project API per token, scopes later.
+- **Full-project-only tokens:** too coarse once external task/run/gate/HITL consumers exist; scoped tokens keep the default broad `*` compatibility path while allowing least-privilege automation.
 
 ---
 
@@ -2499,10 +2499,10 @@ The first 12 characters of the full string serve as a `prefix` for indexed looku
 stored as `sha256_hex(fullToken)` — no pepper, no bcrypt. Verification: extract prefix → `SELECT
 WHERE prefix = ?` → `timingSafeEqual(sha256_hex(presented), row.token_hash)` → assert
 `revoked_at IS NULL` AND (`expires_at IS NULL` OR `expires_at > now()`) → cross-check the addressed
-resource's project against `token.projectId` (mismatch → 404, existence-hide). v1 tokens grant the
-**full project API** under `/api/v1/ext/...`; `scopes` is stored as a label list (default `["*"]`)
-for forward-compatibility with finer-grained enforcement in a future version. Every token-attributed
-call writes a row to `token_audit_log` — mandatory per ADR-024. Auth errors are modeled as
+resource's project against `token.projectId` (mismatch → 404, existence-hide). Token `scopes` are
+enforced for every `/api/v1/ext/...` route: `*` grants the full project API for broad automation,
+otherwise the route's required scope must be present. Every token-attributed call writes a row to
+`token_audit_log` — mandatory per ADR-024. Auth errors are modeled as
 `TokenAuthError(kind)` resolved by `httpStatusForTokenAuth(kind)` — **not** a `MaisterError` code
 ([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed union), mirroring the existing
 `httpStatusForAuthz` pattern. Session-auth routes never accept tokens; token-auth routes never
@@ -2518,8 +2518,8 @@ service core without duplicating domain logic.
   requires re-issuance.
 - `sha256` at rest is appropriate for 256-bit-random secrets (brute-force is infeasible);
   bcrypt would add latency with no security benefit here.
-- Scope enforcement is binary in v1 (valid + active + project-matched → full project API); the
-  stored `scopes` label is an audit label and a forward-compat hook, not an enforced capability list.
+- Scope enforcement is route-level: valid + active + project-matched is necessary, but the route's
+  required scope must also be present unless the token holds `*`.
 - The service-layer decoupling means MCP tool implementations are thin REST callers — they carry
   no business logic and cannot exceed the token's authority, satisfying ADR-024's thin-facade
   invariant.
@@ -3149,7 +3149,7 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 ### ADR-053: Workbench file-tree: git-tracked-only, member-gated reads
 
 **Date:** 2026-06-05
-**Status:** Accepted
+**Status:** Accepted. The file **render** path below (the `…/files/content` HTTP route and its `413`/`415` responses) is superseded by [ADR-066](#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror): blobs now render via the `?file=` RSC path as `file-too-large`/`file-binary` page states (no HTTP `413`/`415`). The git-tracked tree-read model, `readBlob` size/binary caps, and the `readRepoFiles` gate stand.
 **Context:** M22 adds a read-only file browser over a run's worktree and a project's repo. A raw `fs.readdir` / `readFile` of an arbitrary worktree/repo path is a secret-disclosure surface: it would expose `.git/`, gitignored secrets (`.env*`), `node_modules`, and untracked agent output, and is one path-traversal bug away from reading outside the tree. The board's `readBoard` action is `viewer`; source code is more sensitive than board metadata.
 
 **Decision:** The browser reads ONLY git-tracked content via git plumbing, behind a dedicated permission:
@@ -3262,8 +3262,8 @@ reserved "route/answer pending HITL" as part of the external surface, but the M1
 [ADR-047](#adr-047-thin-mcp-facade-as-a-standalone-rest-client-package)) shipped task/run/readiness/gate
 tools and **deferred HITL-over-MCP to here**. Exposing HITL to a token actor without first extracting
 the logic would fork the two-phase commit; exposing it without an actor-kind gate would let a machine
-token satisfy a human escalation; exposing it under ADR-046's audit-only scope labels would let any
-project token answer regardless of its issued scope. Two of these were raised as CRITICAL findings in
+token satisfy a human escalation; exposing it without enforced scope labels would let any broad project
+token answer regardless of its issued capability. Two of these were raised as CRITICAL findings in
 adversarial review (D7, D8).
 
 **Decision:** Extract one shared service and expose it externally behind two new routes and two MCP
@@ -3299,13 +3299,11 @@ tools, gated by actor-kind and an opt-in scope check:
   `kind ∈ {permission, form}`. This makes ADR-024's "escalate-to-human is a Flow gate, never the external
   actor's" *executable*: a machine token can never satisfy a human gate, even holding `hitl:respond`.
   Supersedes the prior Open Question on MCP answering `human_review` (→ no).
-- **D8 — opt-in scope enforcement on the two HITL routes only.** `handleExt` gains an opt-in
-  `requireScope: true`; when set, the route's `scopeLabel` MUST be in `actor.scopes` or `"*"` else
-  **403**. **Only the two new HITL routes opt in.** Every other `/api/v1/ext/*` route keeps ADR-046's
-  binary enforcement (scope label audit-only) **unchanged** — D8 does **not** reopen ADR-046's global
-  binary model; it carves a single, opt-in exception for the most sensitive surface and records that
-  boundary precisely. The carve is a no-op for today's `["*"]`-issued tokens and future-proofs the
-  moment granular issuance lands. **403 responses MUST NOT leak which scopes a token holds.**
+- **D8 — scoped external credentials.** `handleExt` enforces each route's `scopeLabel` by default:
+  `actor.scopes` MUST contain that scope or `"*"`, else **403**. The two HITL routes use
+  `hitl:read` / `hitl:respond`; task/run/readiness/gate routes use their own labels. Routes may pass
+  `requireScope: false` only for an explicitly documented compatibility carve. **403 responses MUST
+  NOT leak which scopes a token holds.**
 - The external actor can **answer** a pending request but can **never create or skip a gate** — gate
   placement stays the Flow's (ADR-024). The real-time human boundary is D7; the credential boundary is
   D8; they compose.
@@ -3320,8 +3318,8 @@ rides additive migration `0026_m17_actor_token_uniqueness.sql`.
 - A token holding `hitl:respond` can clear machine-appropriate `permission`/`form` HITL via MCP/REST
   through the same audited path as the UI, but provably cannot answer a `human`/`human_review` request
   (D7) — HITL-over-MCP stays useful without weakening the human escalation contract.
-- The `requireScope` opt-in closes the "scope labels are audit-only" gap for the HITL surface while
-  leaving every other ext route byte-identical — the change is locally auditable and reversible.
+- Default `handleExt` scope enforcement closes the old non-enforced-scope gap across the external
+  surface while preserving `*` as the broad compatibility path.
 - `ensureApiTokenActor` plus the partial unique index give token responses real assignment attribution
   without colliding with the existing `(project_id, user_id)` user-actor uniqueness.
 - 403 (insufficient scope) and 403 (wrong actor kind) become live external statuses for the first time;
@@ -4149,7 +4147,7 @@ No new `runs.status` values are introduced.
   publish" semantics without manual pin updates.
 - The unified resolved-set replaces the implicit "read M10 pointer at runner start"
   pattern that was vulnerable to TOCTOU races on `enabled_revision_id`.
-- Migration `0032+` adds `version_binding` (DDL in SDD §3.1).
+- Migration `0033+` adds `version_binding` (DDL in SDD §3.1).
 
 **Alternatives Considered:**
 - **Two separate snapshots (M10 pointer + M14 caps) retained as-is:** rejected — they
@@ -4240,6 +4238,115 @@ degrade). No parallel materialization path.
 - **Block launch on absent ADDITIONAL MCPs:** rejected — additional MCPs are
   best-effort augmentation; a missing optional capability should degrade gracefully, not
   refuse the run.
+### ADR-066: Editor and diff rendering stack (Shiki, git-diff-view, CodeMirror)
+
+**Date:** 2026-06-08
+**Status:** Accepted
+**Context:** Three code-content surfaces render with no syntax highlighting.
+(1) The M22 workbench (ADR-053) shows git-tracked repo files in a plain `<pre>`
+(`file-viewer.tsx`) — no highlighting, no line numbers, read-only. (2) The same
+workbench renders the base→branch diff as raw `git diff` text in a `<pre>`
+(`raw-diff.tsx`) — no side-by-side, no line numbers, no per-file `+`/`−` counts.
+(3) The M25 authored-Flow catalog (ADR-061) edits `flow.yaml` and typed package
+files (`skill`/`rule`/`agent_definition`/`schema`/…) in plain `<textarea>`s — no
+highlighting, no inline validation. We need: highlighted multi-format file
+viewing (first priority), a real diff (side-by-side + inline, line numbers,
+per-file `+`/`−` counts, collapsible hunks), and smart editing for authored Flow
+artifacts (highlighting + inline validation + context autocomplete). Stack
+constraints: Next 16 App Router (RSC + SSR), React 19, Tailwind 4 + HeroUI v3,
+`.light`/`.dark` class on `<html>`, MIT-only deps, a self-hosted (offline-capable)
+host, i18n EN/RU.
+
+**Decision:** Adopt a best-of-breed **hybrid**, not a single all-in-one editor.
+Monaco is rejected for the current surfaces (see Alternatives).
+
+- **Repo file viewing (read-only, first priority) — Shiki, server-rendered.** A
+  React Server Component highlights the blob with `shiki` and ships HTML (**0 KB
+  client**, no worker, no `ssr:false`). Dual-theme output emits CSS variables
+  switched by the existing `.light`/`.dark` class on `<html>` — no theme
+  parameter to the server, no re-render on toggle, no FOUC. The selected file
+  moves into the URL (`?file=`, deep-linkable) per the data-management URL-state
+  convention; the server component reads the blob via the existing
+  `readBlob`/`readRepoFiles` path (git-tracked-only; the size/binary caps are
+  preserved but surface as `file-too-large`/`file-binary` page states on the
+  `?file=` RSC render, not the retired `…/files/content` route's HTTP `413`/`415`).
+  The interactive file tree stays a client component.
+- **Diff — `@git-diff-view/react`.** Split (side-by-side) + unified (inline),
+  line numbers, collapsible hunks. Per-file additions/deletions are **computed
+  server-side** in `GET /api/runs/[id]/diff` (the library's
+  `additionLength`/`deletionLength` are not populated via the public init path —
+  spike-confirmed), and the response gains `additions`/`deletions` per file.
+  Highlighting is the shared Shiki, run **server-side**: the `DiffFile` + bundle
+  are built on the server and hydrated on the client, so **no Shiki ships to the
+  client**; the library's default lowlight/highlight.js highlighter is
+  overridden. The component is comment-ready (`extendData` / `renderExtendLine` /
+  `DiffViewWithMultiSelect`), so the future Human-Gate code-review/rework feature
+  builds on the same diff without re-doing it. Spike-verified: v0.1.5, React 19
+  peer, MIT.
+- **Authored-Flow editing — CodeMirror 6** (`@uiw/react-codemirror`, dynamic
+  `ssr:false`) replaces the `<textarea>`s. Per-kind language (yaml / json /
+  markdown+frontmatter / shell). "Smart" editing = inline validation (a
+  **client-side** `@codemirror/lint` source — `validateAuthoredFlowPackageBody`
+  is `server-only`, so the lint reuses its client-safe primitives `parseYaml`
+  (precise YAML line markers) + `flowYamlV1Schema` (file-level schema issues);
+  graph/digest validation stays server-side on save) + context autocomplete
+  (step types `cli|agent|guard|human`, runner names, known frontmatter/tool keys).
+- **Single Shiki major — `shiki@4`.** The read-view and the diff share `shiki@4`
+  (it dropped legacy Node support — smaller and more stable), run server-side
+  only. The diff plugs Shiki in through a thin custom `DiffHighlighter` adapter
+  (`getAST` → Shiki `codeToHast`), avoiding `@git-diff-view/shiki` (which pins a
+  stale `shiki@3`). Shiki never ships to the client.
+
+The workbench **read-only boundary** (ADR-053/064) and the M25 **authored-draft**
+lifecycle (ADR-061) are unchanged: repo files stay view-only (no write route —
+confirmed scope), and authored editing keeps its `manageCatalog` gate, optimistic
+lock, and validation gates. Only presentation and the `/diff` response shape
+change.
+
+**Consequences:**
+- Repo viewing adds ~0 KB to the client (server-rendered); the diff tab adds the
+  `@git-diff-view/react` runtime (~30–60 KB) + a serialized syntax bundle (data,
+  not a highlighter); CodeMirror loads only on the authored-editing route via
+  `ssr:false`.
+- One highlighting system (Shiki) is shared by read-view and diff; CodeMirror is
+  the only editor, used only where a cursor is needed.
+- New MIT deps: `shiki`, `@git-diff-view/react`, `@uiw/react-codemirror` +
+  `@codemirror/*`. `@git-diff-view/react` is `0.x` → pin the exact version.
+- `GET /api/runs/[id]/diff` gains per-file `additions`/`deletions` and a
+  structured `truncated` flag (set when the diff exceeds the 4 MiB
+  `EXEC_MAX_BUFFER` bound, so the diff readers degrade to a bounded prefix
+  instead of throwing); `web.openapi.yaml` updates with the code. The review
+  panel blocks promotion behind an explicit acknowledgement when `truncated`.
+- New syntax-token surface in `globals.css` (Shiki dual-theme CSS vars + a forest
+  CodeMirror theme mirroring them); the forest palette previously had no
+  keyword/string/comment tokens.
+- The diff substrate is comment-ready, lowering the cost of the separate
+  Human-Gate code-review/rework feature (its own ADR, TBD).
+- Domain contracts (`workbench.md`, `capability-catalog.md`) carry a `(Designed)`
+  pointer to this ADR now and are rewritten to the shipped contract per slice.
+
+**Alternatives Considered:**
+- **Monaco everywhere:** rejected for current surfaces — 2–5 MB on the client on
+  every surface incl. the read-first viewer, client-only (loses RSC/SSR), default
+  worker load from the jsDelivr CDN (bad for a self-hosted/offline host;
+  self-hosting workers is extra Turbopack config), and its TS IntelliSense is
+  overkill for YAML/JSON/Markdown. Reserved for Phase 2 (true in-browser TS
+  IntelliSense, e.g. test-run UI / live agent editing).
+- **CodeMirror everywhere** (read + edit + `@codemirror/merge`): rejected as the
+  default — loses Shiki's 0-KB server-rendered read view; `@codemirror/merge` is a
+  merge view, a weaker git-patch renderer than git-diff-view (per-file `+`/`−` +
+  collapsible multi-file).
+- **`@git-diff-view/shiki`:** avoided — it pins a stale `shiki@3`; instead a thin
+  custom `DiffHighlighter` adapter wraps the shared `shiki@4`, and highlighting
+  runs server-side (the bundle is passed to the client), so Shiki never ships to
+  the browser.
+- **`codemirror-json-schema` for YAML/JSON schema:** rejected — pins a stale
+  `shiki@^1` transitive; reuse the existing `yaml` + `zod` validator via
+  `@codemirror/lint`.
+- **react-diff-view / diff2html / react-diff-viewer-continued:** rejected —
+  refractor/Prism/highlight.js/Emotion fragment the highlighting + theme story
+  away from Shiki; the git-diff-view spike cleared every diff requirement plus
+  first-class inline comments.
 
 ---
 

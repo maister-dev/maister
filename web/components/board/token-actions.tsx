@@ -6,10 +6,14 @@ import type { ReactElement, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
+import { TOKEN_SCOPE_VALUES, type TokenScope } from "@/types/token-scopes";
+
 const BTN_NEUTRAL =
   "rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2 disabled:opacity-50";
 const BTN_PRIMARY =
   "rounded-lg border border-amber bg-amber px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-50";
+
+type TokenKind = "project" | "user";
 
 function useAction(): {
   busy: boolean;
@@ -213,6 +217,103 @@ function Field({
   );
 }
 
+function KindField({
+  label,
+  labels,
+  value,
+  onChange,
+}: {
+  label: string;
+  labels: TokenLabels;
+  value: TokenKind;
+  onChange: (v: TokenKind) => void;
+}): ReactElement {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
+        {label}
+      </span>
+      <select
+        className="rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink outline-none focus:border-amber"
+        value={value}
+        onChange={(e) => onChange(e.target.value as TokenKind)}
+      >
+        <option value="project">{labels.kindProject}</option>
+        <option value="user">{labels.kindUser}</option>
+      </select>
+    </label>
+  );
+}
+
+function scopeText(labels: TokenLabels, scope: TokenScope): string {
+  switch (scope) {
+    case "*":
+      return labels.scopeAll;
+    case "tasks:create":
+      return labels.scopeTasksCreate;
+    case "tasks:read":
+      return labels.scopeTasksRead;
+    case "tasks:update":
+      return labels.scopeTasksUpdate;
+    case "runs:launch":
+      return labels.scopeRunsLaunch;
+    case "runs:read":
+      return labels.scopeRunsRead;
+    case "readiness:read":
+      return labels.scopeReadinessRead;
+    case "gates:report":
+      return labels.scopeGatesReport;
+    case "hitl:read":
+      return labels.scopeHitlRead;
+    case "hitl:respond":
+      return labels.scopeHitlRespond;
+  }
+}
+
+function toggleScope(scopes: TokenScope[], scope: TokenScope): TokenScope[] {
+  if (scope === "*") return ["*"];
+
+  const current = scopes.filter((s) => s !== "*");
+  const next = current.includes(scope)
+    ? current.filter((s) => s !== scope)
+    : [...current, scope];
+
+  return next.length > 0 ? next : ["*"];
+}
+
+function ScopeField({
+  labels,
+  value,
+  onChange,
+}: {
+  labels: TokenLabels;
+  value: TokenScope[];
+  onChange: (v: TokenScope[]) => void;
+}): ReactElement {
+  return (
+    <fieldset className="flex flex-col gap-2">
+      <legend className="mb-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
+        {labels.scopesLabel}
+      </legend>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {TOKEN_SCOPE_VALUES.map((scope) => (
+          <label
+            key={scope}
+            className="flex min-h-9 items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[11px] text-ink-2"
+          >
+            <input
+              checked={value.includes(scope)}
+              type="checkbox"
+              onChange={() => onChange(toggleScope(value, scope))}
+            />
+            <span>{scopeText(labels, scope)}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 function ErrorRow({ error }: { error: string | null }): ReactElement | null {
   if (!error) return null;
 
@@ -281,12 +382,16 @@ export function CreateTokenModal({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<TokenKind>("project");
+  const [scopes, setScopes] = useState<TokenScope[]>(["*"]);
   const [expiresAt, setExpiresAt] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const { busy, error, setError, run } = useAction();
 
   function reset(): void {
     setName("");
+    setKind("project");
+    setScopes(["*"]);
     setExpiresAt("");
     setSecret(null);
     setError(null);
@@ -306,6 +411,8 @@ export function CreateTokenModal({
       method: "POST",
       body: JSON.stringify({
         name: name.trim(),
+        kind,
+        scopes,
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       }),
     });
@@ -363,6 +470,13 @@ export function CreateTokenModal({
                 value={name}
                 onChange={setName}
               />
+              <KindField
+                label={labels.kindLabel}
+                labels={labels}
+                value={kind}
+                onChange={setKind}
+              />
+              <ScopeField labels={labels} value={scopes} onChange={setScopes} />
               <Field
                 label={labels.expiresLabel}
                 type="datetime-local"

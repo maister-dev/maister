@@ -8,7 +8,23 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
-import { RawDiff } from "@/components/runs/raw-diff";
+import {
+  DiffView,
+  type PreparedFile,
+  type RunDiffFile,
+} from "@/components/workbench/diff-view";
+
+// The prepared diff DTO the page builds server-side (`prepareDiff`): a per-file
+// summary (path/status + `+`/`−` counts) and the syntax bundles the client diff
+// hydrates. Repo-relative paths only — no server handles (FINDING C).
+export type ReviewPanelDiff = {
+  files: RunDiffFile[];
+  perFile: PreparedFile[];
+  // The diff was cut at the 4 MiB buffer bound: `files`/`perFile` are a partial
+  // prefix. Promotion is blocked behind an explicit acknowledgement so a run is
+  // never promoted on a diff the reviewer could not see in full.
+  truncated: boolean;
+};
 
 type PromotionMode = "local_merge" | "pull_request";
 
@@ -27,6 +43,8 @@ export type ReviewPanelLabels = {
   prLink: string;
   targetDrift: string;
   promoteAnyway: string;
+  diffTruncated: string;
+  promoteTruncated: string;
 };
 
 export interface ReviewPanelProps {
@@ -38,7 +56,7 @@ export interface ReviewPanelProps {
   promotionMode: PromotionMode;
   reviewedTargetCommit: string | null;
   readiness: ReadinessDTO | null;
-  diff: string;
+  diff: ReviewPanelDiff;
   labels: ReviewPanelLabels;
   prUrl?: string | null;
   prNumber?: number | null;
@@ -83,11 +101,13 @@ export function ReviewPanel({
   canPromote = true,
 }: ReviewPanelProps): ReactElement {
   const t = useTranslations("run");
+  const tWorkbench = useTranslations("workbench");
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
+  const [truncationAck, setTruncationAck] = useState(false);
   const [conflictState, setConflictState] =
     useState<ReviewPanelConflict | null>(conflict ?? null);
 
@@ -218,8 +238,23 @@ export function ReviewPanel({
         </div>
       ) : null}
 
-      {/* raw diff */}
-      <RawDiff diff={diff} />
+      {/* ADR-066 diff (server-built Shiki bundle, split/inline) */}
+      <div className="mb-4">
+        <DiffView
+          files={diff.files}
+          labels={{
+            empty: tWorkbench("diff.empty"),
+            added: tWorkbench("diff.added"),
+            removed: tWorkbench("diff.removed"),
+            viewMode: tWorkbench("diff.viewMode"),
+            split: tWorkbench("diff.split"),
+            unified: tWorkbench("diff.unified"),
+            truncated: tWorkbench("diff.truncated"),
+          }}
+          perFile={diff.perFile}
+          truncated={diff.truncated}
+        />
+      </div>
 
       {prUrl ? (
         <p className="mb-4 font-mono text-[11px]">
@@ -275,7 +310,25 @@ export function ReviewPanel({
         >
           {t("relaunchToPromote")}
         </p>
-      ) : !canPromote ? null : (
+      ) : !canPromote ? null : diff.truncated && !truncationAck ? (
+        <div
+          className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
+          data-testid="review-diff-truncated"
+          role="alert"
+        >
+          <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
+            {labels.diffTruncated}
+          </p>
+          <button
+            className="inline-flex items-center justify-center rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white transition-all hover:bg-amber-2"
+            data-testid="review-promote-truncated"
+            type="button"
+            onClick={() => setTruncationAck(true)}
+          >
+            {labels.promoteTruncated}
+          </button>
+        </div>
+      ) : (
         <div className="flex flex-col gap-3">
           <label className="flex flex-col gap-1">
             <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">

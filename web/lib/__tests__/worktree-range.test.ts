@@ -171,11 +171,12 @@ describe("worktree range ops", () => {
         branch: "feature",
       });
 
-      expect(out).toContain("diff --git");
-      expect(out).toContain("a.txt");
-      expect(out).toContain("b.txt");
-      expect(out).toContain("+alpha");
-      expect(out).toContain("+bravo");
+      expect(out.truncated).toBe(false);
+      expect(out.text).toContain("diff --git");
+      expect(out.text).toContain("a.txt");
+      expect(out.text).toContain("b.txt");
+      expect(out.text).toContain("+alpha");
+      expect(out.text).toContain("+bravo");
     });
 
     it("rejects a baseRef containing '..'", async () => {
@@ -188,7 +189,7 @@ describe("worktree range ops", () => {
       ).rejects.toBeInstanceOf(MaisterError);
     });
 
-    it("truncates an oversized diff with a marker instead of throwing", async () => {
+    it("truncates an oversized diff with a structured flag instead of throwing", async () => {
       const bigRepo = await mkdtemp(join(tmpdir(), "worktree-range-big-"));
 
       try {
@@ -215,7 +216,11 @@ describe("worktree range ops", () => {
           branch: "huge",
         });
 
-        expect(out).toMatch(/truncated/i);
+        expect(out.truncated).toBe(true);
+        // The partial diff carries a bounded prefix of real content and NO
+        // in-band marker — the structured flag is the only truncation signal.
+        expect(out.text).toContain("diff --git");
+        expect(out.text).not.toMatch(/maister: diff truncated/);
       } finally {
         await rm(bigRepo, { recursive: true, force: true });
       }

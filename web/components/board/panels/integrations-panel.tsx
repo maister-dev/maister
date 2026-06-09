@@ -34,6 +34,10 @@ export interface TokenLabels {
   nameLabel: string;
   namePlaceholder: string;
   expiresLabel: string;
+  kindLabel: string;
+  kindProject: string;
+  kindUser: string;
+  scopesLabel: string;
   cancel: string;
   confirm: string;
   secretTitle: string;
@@ -43,6 +47,8 @@ export interface TokenLabels {
   revoke: string;
   revokeConfirm: string;
   colName: string;
+  colKind: string;
+  colScopes: string;
   colPrefix: string;
   colStatus: string;
   colCreated: string;
@@ -51,6 +57,16 @@ export interface TokenLabels {
   statusActive: string;
   statusRevoked: string;
   statusExpired: string;
+  scopeAll: string;
+  scopeTasksCreate: string;
+  scopeTasksRead: string;
+  scopeTasksUpdate: string;
+  scopeRunsLaunch: string;
+  scopeRunsRead: string;
+  scopeReadinessRead: string;
+  scopeGatesReport: string;
+  scopeHitlRead: string;
+  scopeHitlRespond: string;
   errorGeneric: string;
 }
 
@@ -71,6 +87,43 @@ function formatDate(value: Date | null): string {
   if (!value) return "—";
 
   return value.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+function tokenKindLabel(labels: TokenLabels, token: TokenListItem): string {
+  return token.kind === "user" ? labels.kindUser : labels.kindProject;
+}
+
+function scopeLabel(labels: TokenLabels, scope: string): string {
+  switch (scope) {
+    case "*":
+      return labels.scopeAll;
+    case "tasks:create":
+      return labels.scopeTasksCreate;
+    case "tasks:read":
+      return labels.scopeTasksRead;
+    case "tasks:update":
+      return labels.scopeTasksUpdate;
+    case "runs:launch":
+      return labels.scopeRunsLaunch;
+    case "runs:read":
+      return labels.scopeRunsRead;
+    case "readiness:read":
+      return labels.scopeReadinessRead;
+    case "gates:report":
+      return labels.scopeGatesReport;
+    case "hitl:read":
+      return labels.scopeHitlRead;
+    case "hitl:respond":
+      return labels.scopeHitlRespond;
+    default:
+      return scope;
+  }
+}
+
+function scopesLabel(labels: TokenLabels, scopes: string[]): string {
+  if (scopes.includes("*")) return labels.scopeAll;
+
+  return scopes.map((scope) => scopeLabel(labels, scope)).join(", ");
 }
 
 export interface TokensTableProps {
@@ -118,10 +171,12 @@ export function TokensTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-          <table className="w-full min-w-[680px] border-collapse">
+          <table className="w-full min-w-[920px] border-collapse">
             <thead>
               <tr className="border-b border-line text-left font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
                 <th className="px-4 py-3">{labels.colName}</th>
+                <th className="px-4 py-3">{labels.colKind}</th>
+                <th className="px-4 py-3">{labels.colScopes}</th>
                 <th className="px-4 py-3">{labels.colPrefix}</th>
                 <th className="px-4 py-3">{labels.colStatus}</th>
                 <th className="px-4 py-3">{labels.colCreated}</th>
@@ -141,6 +196,19 @@ export function TokensTable({
                   >
                     <td className="px-4 py-3 font-semibold text-ink">
                       {token.name}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-semibold text-ink-2">
+                        {tokenKindLabel(labels, token)}
+                      </span>
+                      {token.kind === "user" && token.ownerLabel ? (
+                        <span className="mt-1 block max-w-[180px] truncate text-[10px] text-mute">
+                          {token.ownerLabel}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="max-w-[260px] px-4 py-3 text-mute">
+                      {scopesLabel(labels, token.scopes)}
                     </td>
                     <td className="px-4 py-3 text-mute">{token.prefix}</td>
                     <td className="px-4 py-3">
@@ -214,6 +282,10 @@ export async function IntegrationsPanel({
     nameLabel: t("nameLabel"),
     namePlaceholder: t("namePlaceholder"),
     expiresLabel: t("expiresLabel"),
+    kindLabel: t("kindLabel"),
+    kindProject: t("kindProject"),
+    kindUser: t("kindUser"),
+    scopesLabel: t("scopesLabel"),
     cancel: t("cancel"),
     confirm: t("confirm"),
     secretTitle: t("secretTitle"),
@@ -223,6 +295,8 @@ export async function IntegrationsPanel({
     revoke: t("revoke"),
     revokeConfirm: t("revokeConfirm"),
     colName: t("colName"),
+    colKind: t("colKind"),
+    colScopes: t("colScopes"),
     colPrefix: t("colPrefix"),
     colStatus: t("colStatus"),
     colCreated: t("colCreated"),
@@ -231,6 +305,16 @@ export async function IntegrationsPanel({
     statusActive: t("statusActive"),
     statusRevoked: t("statusRevoked"),
     statusExpired: t("statusExpired"),
+    scopeAll: t("scopeAll"),
+    scopeTasksCreate: t("scopeTasksCreate"),
+    scopeTasksRead: t("scopeTasksRead"),
+    scopeTasksUpdate: t("scopeTasksUpdate"),
+    scopeRunsLaunch: t("scopeRunsLaunch"),
+    scopeRunsRead: t("scopeRunsRead"),
+    scopeReadinessRead: t("scopeReadinessRead"),
+    scopeGatesReport: t("scopeGatesReport"),
+    scopeHitlRead: t("scopeHitlRead"),
+    scopeHitlRespond: t("scopeHitlRespond"),
     errorGeneric: t("errorGeneric"),
   };
 

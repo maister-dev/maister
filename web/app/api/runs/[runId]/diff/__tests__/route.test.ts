@@ -84,7 +84,10 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 vi.mock("@/lib/worktree", () => ({
-  diffRunWorkspace: vi.fn(async () => "diff --git a/file.txt b/file.txt\n"),
+  diffRunWorkspace: vi.fn(async () => ({
+    text: "diff --git a/file.txt b/file.txt\n",
+    truncated: false,
+  })),
   diffNameStatus: vi.fn(async () => [{ path: "file.txt", status: "M" }]),
   resolveBaseRef: vi.fn(async () => "resolvedbase0000000000000000000000000000"),
 }));
@@ -179,9 +182,10 @@ async function invokeGet(runId: string) {
 beforeEach(() => {
   dbState.tables = { runs: [], scratch_runs: [], workspaces: [], projects: [] };
   vi.mocked(diffRunWorkspace).mockClear();
-  vi.mocked(diffRunWorkspace).mockResolvedValue(
-    "diff --git a/file.txt b/file.txt\n",
-  );
+  vi.mocked(diffRunWorkspace).mockResolvedValue({
+    text: "diff --git a/file.txt b/file.txt\n",
+    truncated: false,
+  });
   vi.mocked(diffNameStatus).mockClear();
   vi.mocked(diffNameStatus).mockResolvedValue([
     { path: "file.txt", status: "M" },
@@ -249,7 +253,10 @@ describe("GET /api/runs/[runId]/diff — scratch (unchanged)", () => {
   it("does not include upload artifact storage paths in scratch diff responses", async () => {
     const runId = seedScratchRun();
 
-    vi.mocked(diffRunWorkspace).mockResolvedValueOnce("");
+    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+      text: "",
+      truncated: false,
+    });
 
     const res = await invokeGet(runId);
     const body = (await res.json()) as { diff?: string };
@@ -294,7 +301,14 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
       sourceBranch?: string;
       targetBranch?: string;
       diff?: string;
-      files?: { path: string; status: string }[];
+      truncated?: boolean;
+      files?: {
+        path: string;
+        status: string;
+        additions: number;
+        deletions: number;
+      }[];
+      perFile?: { path: string; fileLang: string; bundle: unknown }[];
     };
 
     expect(res.status).toBe(200);
@@ -303,7 +317,44 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
     expect(body.sourceBranch).toBe("maister/feature-x");
     expect(body.targetBranch).toBe("release");
     expect(body.diff).toContain("diff --git");
-    expect(body.files).toEqual([{ path: "file.txt", status: "M" }]);
+    // A diff that fit the buffer is NOT flagged truncated.
+    expect(body.truncated).toBe(false);
+    // ADR-066 T2.4: files[] gains additive per-file +/- counts (no hunks in the
+    // mocked diff → 0/0); the per-file prepared payload rides alongside.
+    expect(body.files).toEqual([
+      { path: "file.txt", status: "M", additions: 0, deletions: 0 },
+    ]);
+    expect(Array.isArray(body.perFile)).toBe(true);
+    // FINDING C: the response is a client DTO — no server-only handle leaks.
+    const serialized = JSON.stringify(body);
+
+    for (const key of [
+      "worktree",
+      "worktreePath",
+      "repoPath",
+      "acpSessionId",
+      "acp_session_id",
+    ]) {
+      expect(serialized).not.toContain(`"${key}"`);
+    }
+  });
+
+  it("propagates truncated:true when diffRunWorkspace cuts an oversized diff", async () => {
+    const runId = seedFlowRun();
+
+    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+      text: "diff --git a/file.txt b/file.txt\n+partial\n",
+      truncated: true,
+    });
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as { truncated?: boolean; diff?: string };
+
+    expect(res.status).toBe(200);
+    // The structured flag rides the response so the workbench/review surface can
+    // block on it instead of treating the partial prefix as the whole change.
+    expect(body.truncated).toBe(true);
+    expect(body.diff).toContain("diff --git");
   });
 
   it("computes the flow diff over workspace.worktreePath, not parentRepoPath", async () => {

@@ -10,9 +10,9 @@ info:
     **Security model.** Every call is authenticated by the `projectToken`
     bearer scheme. The token is 256-bit random (`mai_` + base64url(32 bytes)),
     stored as sha256 at rest, looked up by prefix, and compared with
-    `timingSafeEqual`. Token failure kinds all map to 401. Cross-project
-    resource access hides existence (404). v1 grants the full project API —
-    `scopes` are stored as labels for forward-compatibility only.
+    `timingSafeEqual`. Token failure kinds map to 401. Cross-project resource
+    access hides existence (404). Every route enforces its scope label unless
+    the token holds `*`.
 
     **Audit.** Every call writes a `token_audit_log` row. The gate-report
     endpoint writes the success audit row inside the same database transaction
@@ -46,10 +46,9 @@ tags:
     description: External gate report submission via token auth.
   - name: hitl
     description: |
-      Human-in-the-loop list + respond via token auth (M17). Unlike all other
-      ext routes, the two HITL routes additionally enforce the matching token
-      scope (`hitl:read` / `hitl:respond`) or `*` (D8) and refuse a token actor
-      answering a `human`-kind request (D7).
+      Human-in-the-loop list + respond via token auth (M17). The routes enforce
+      `hitl:read` / `hitl:respond` or `*` and refuse a token actor answering a
+      `human`-kind request (D7).
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -95,6 +94,8 @@ paths:
                     format: uuid
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -135,6 +136,8 @@ paths:
                     items: { $ref: "#/components/schemas/TaskDTO" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -173,6 +176,8 @@ paths:
               schema: { $ref: "#/components/schemas/TaskDTO" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -216,6 +221,8 @@ paths:
               schema: { $ref: "#/components/schemas/TaskDTO" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -266,6 +273,8 @@ paths:
                     description: Present iff `status == "Pending"`.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -308,6 +317,8 @@ paths:
               schema: { $ref: "#/components/schemas/RunDTO" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -342,6 +353,8 @@ paths:
               schema: { $ref: "#/components/schemas/ReadinessDTO" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -362,8 +375,8 @@ paths:
         and the success audit row is all written in one database transaction
         (rollback-safe).
 
-        **Failure path** (bad/expired/revoked token → 401; cross-project →
-        404; non-external or unknown gate → 404; terminal run
+        **Failure path** (bad/expired/revoked token → 401; missing scope →
+        403; cross-project → 404; non-external or unknown gate → 404; terminal run
         (`Done`/`Abandoned`/`Crashed`/`Failed`) → 409; body invalid → 422):
         only a failure audit row is written after response, and no gate or
         artifact state is mutated.
@@ -404,6 +417,8 @@ paths:
               schema: { $ref: "#/components/schemas/ExtGateReportResponse" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -421,10 +436,10 @@ paths:
         is re-validated against the token's project — mismatch → 404
         (existence-hide).
 
-        **Scope enforcement (D8).** Unlike other ext routes, this route gates on
-        the token scope: `hitl:read` must be present in the token's `scopes`, or
-        the token must hold `*`, else 403. The 403 body does NOT reveal which
-        scopes the token holds.
+        **Scope enforcement (D8).** This route gates on the token scope:
+        `hitl:read` must be present in the token's `scopes`, or the token must
+        hold `*`, else 403. The 403 body does NOT reveal which scopes the token
+        holds.
 
         **DTO policy.** Items NEVER include `acp_session_id`, absolute worktree
         paths, supervisor-internal handles, or any other internal locator.
@@ -582,18 +597,11 @@ components:
       description: |
         Project-scoped API token. Format: `mai_` + base64url(randomBytes(32)).
         Stored as sha256 hex at rest; never logged or streamed. Lookup is by
-        the 12-character prefix; verification uses `timingSafeEqual`. In v1 a
-        valid, active, non-expired, non-revoked token grants the full project
-        API (`scopes` stored as labels for forward-compat; enforcement is
-        binary). Token failures (invalid, expired, revoked, wrong-project) all
-        map to 401 or 404 per the existence-hide policy.
-
-        **HITL carve-out (M17, D8 / ADR-046 UNCHANGED).** The two HITL routes
-        (`GET …/runs/{runId}/hitl`, `POST …/runs/{runId}/hitl/{hitlRequestId}/respond`)
-        ADDITIONALLY require the matching scope (`hitl:read` / `hitl:respond`) or
-        `*` — a token lacking it gets 403. ALL OTHER `/api/v1/ext/*` routes keep
-        the binary model (scope label audit-only, not gated) per ADR-046, which
-        is NOT reopened. A 403 body never reveals which scopes the token holds.
+        the 12-character prefix; verification uses `timingSafeEqual`. A valid,
+        active, non-expired, non-revoked token must hold the route's required
+        scope or `*`. Missing scope returns 403 without revealing held scopes.
+        Token failures (invalid, expired, revoked, wrong-project) map to 401
+        or 404 per the existence-hide policy.
 
   responses:
     TokenUnauthorized:
@@ -627,11 +635,11 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
     HitlForbidden:
       description: |
-        (M17) HITL access refused (`UNAUTHORIZED`). One of two distinct cases:
+        Access refused (`UNAUTHORIZED`). Common cases:
 
-          - **Missing scope (D8)** — the token lacks the route's required scope
-            (`hitl:read` for list, `hitl:respond` for respond) and does not hold
-            `*`. The body NEVER reveals which scopes the token holds.
+          - **Missing scope** — the token lacks the route's required scope and
+            does not hold `*`. The body NEVER reveals which scopes the token
+            holds.
           - **Actor-kind gate (D7, respond only)** — a token actor attempted to
             answer a `human`-kind request (including a graph `human_review`).
             A `human`-kind request requires a human actor; token actors may
@@ -667,6 +675,7 @@ components:
         - stage
         - flowId
         - attemptNumber
+        - createdByUserId
         - createdAt
       properties:
         id:
@@ -700,6 +709,11 @@ components:
           type: integer
           minimum: 0
           description: Number of runs launched against this task (0 = never launched).
+        createdByUserId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Human owner attributed to a user-owned token; null for project tokens and legacy rows.
         createdAt:
           type: string
           format: date-time

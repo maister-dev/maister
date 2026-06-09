@@ -99,12 +99,13 @@ erDiagram
 - `actor_identities` is attribution, not authentication. M13 writes only
   `kind = "user"` from Auth.js-backed API/UI actions. API-token and internal
   actors are schema-supported for future ingress and read-only historical data.
-- **(M17 — Implemented, migration `0025`.)** A partial UNIQUE on
-  `(project_id, token_id) WHERE kind = 'api_token'` gives exactly one api-token
-  actor per `(project, token)`, backing the `ensureApiTokenActor` upsert that
-  M17's HITL-over-MCP path uses for attribution. The existing
-  `(project_id, user_id)` UNIQUE is unchanged; user/system rows carry
-  `token_id IS NULL` and the partial predicate leaves them unaffected.
+- **(M17 — Implemented, migration `0026`; expanded by migration `0031`.)**
+  A partial UNIQUE on `(project_id, token_id) WHERE kind = 'api_token'` gives
+  exactly one api-token actor per `(project, token)`, backing the
+  `ensureApiTokenActor` upsert that M17's HITL-over-MCP path uses for
+  attribution. The `(project_id, user_id)` uniqueness is partial to
+  `kind = 'user'`, so user-owned API-token actors can keep owner `user_id`
+  attribution without colliding with the owner human actor.
 - One `(project_id, role_ref)` row represents a Flow role. Removing the role
   from `maister.yaml` sets `archived_at`; re-adding the same ref reactivates the
   row.
@@ -121,8 +122,8 @@ erDiagram
 | -------------------- | --------------------------------------- | ------------------------------- | ----------------------------- |
 | `project_flow_roles` | `project_flow_roles_project_key_uq`     | `(project_id, role_ref)` UNIQUE | One role ref per project.     |
 | `project_flow_roles` | `project_flow_roles_project_idx`        | `(project_id)`                  | Project registry lookup.      |
-| `actor_identities`   | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE  | One user actor per project.   |
-| `actor_identities`   | `actor_identities_project_token_uq`     | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind='api_token'` | **(M17 — Implemented, `0025`)** One api-token actor per (project, token). |
+| `actor_identities`   | `actor_identities_project_user_uq`      | `(project_id, user_id)` UNIQUE, PARTIAL `WHERE kind='user'` | One human actor per project/user. |
+| `actor_identities`   | `actor_identities_project_token_uq`     | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind='api_token'` | **(M17 — Implemented, `0026`)** One api-token actor per (project, token). |
 | `actor_identities`   | `actor_identities_project_idx`          | `(project_id)`                  | Project actor lookup.         |
 | `assignments`        | `assignments_hitl_request_uq`           | `(hitl_request_id)` UNIQUE      | One assignment per HITL wait. |
 | `assignments`        | `assignments_project_status_idx`        | `(project_id, status)`          | Project work queue.           |

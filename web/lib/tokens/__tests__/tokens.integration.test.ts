@@ -64,6 +64,7 @@ describe("lib/tokens — integration (testcontainers)", () => {
 
     await db.insert(schema.users).values({
       id: userId,
+      name: "Test Owner",
       email: "test@example.com",
       role: "member",
       accountStatus: "active",
@@ -98,6 +99,43 @@ describe("lib/tokens — integration (testcontainers)", () => {
         projectId,
         actorLabel: `token:Test API Token`,
         scopes: ["*"],
+      });
+    });
+
+    it("issues a user-owned token with explicit scopes and verifies owner metadata", async () => {
+      const issued = await issueToken(
+        {
+          projectId,
+          name: "Personal webhook",
+          createdByUserId: userId,
+          tokenKind: "user",
+          ownerUserId: userId,
+          scopes: ["tasks:create"],
+        },
+        db,
+      );
+
+      const tokenRows = await db
+        .select()
+        .from(schema.projectTokens)
+        .where(eq(schema.projectTokens.id, issued.tokenId))
+        .limit(1);
+
+      expect(tokenRows[0]).toMatchObject({
+        token_kind: "user",
+        owner_user_id: userId,
+        scopes: ["tasks:create"],
+      });
+
+      const actor: TokenActor = await verifyToken(issued.secret, db);
+
+      expect(actor).toMatchObject({
+        tokenId: issued.tokenId,
+        projectId,
+        tokenKind: "user",
+        ownerUserId: userId,
+        actorLabel: "token:Personal webhook",
+        scopes: ["tasks:create"],
       });
     });
   });
@@ -372,6 +410,10 @@ describe("lib/tokens — integration (testcontainers)", () => {
       items.forEach((item: TokenListItem) => {
         expect(item).toHaveProperty("id");
         expect(item).toHaveProperty("name");
+        expect(item).toHaveProperty("kind");
+        expect(item).toHaveProperty("ownerUserId");
+        expect(item).toHaveProperty("ownerLabel");
+        expect(item).toHaveProperty("scopes");
         expect(item).toHaveProperty("prefix");
         expect(item).toHaveProperty("createdAt");
         // NEVER contains hash or secret
@@ -379,6 +421,30 @@ describe("lib/tokens — integration (testcontainers)", () => {
         expect(item).not.toHaveProperty("secret");
         expect((item as any).token_hash).toBeUndefined();
         expect((item as any).secret).toBeUndefined();
+      });
+    });
+
+    it("returns owner label for user-owned tokens", async () => {
+      const issued = await issueToken(
+        {
+          projectId,
+          name: "Owned List Token",
+          createdByUserId: userId,
+          tokenKind: "user",
+          ownerUserId: userId,
+          scopes: ["tasks:create"],
+        },
+        db,
+      );
+
+      const items = await listTokens(projectId, db);
+      const listed = items.find((item) => item.id === issued.tokenId);
+
+      expect(listed).toMatchObject({
+        kind: "user",
+        ownerUserId: userId,
+        ownerLabel: "Test Owner",
+        scopes: ["tasks:create"],
       });
     });
 

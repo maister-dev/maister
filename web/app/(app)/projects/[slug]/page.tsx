@@ -20,6 +20,7 @@ import { McpPanel } from "@/components/board/panels/mcp-panel";
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
@@ -54,7 +55,13 @@ function parseTab(raw: string | string[] | undefined): ProjectTab {
 
 interface PageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{ tab?: string | string[]; file?: string | string[] }>;
+}
+
+function parseFile(raw: string | string[] | undefined): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  return value && value.length > 0 ? value : null;
 }
 
 export default async function ProjectBoardPage({
@@ -62,8 +69,9 @@ export default async function ProjectBoardPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { slug } = await params;
-  const { tab: rawTab } = await searchParams;
+  const { tab: rawTab, file: rawFile } = await searchParams;
   const tab = parseTab(rawTab);
+  const file = parseFile(rawFile);
 
   const user = await getSessionUser();
 
@@ -96,8 +104,8 @@ export default async function ProjectBoardPage({
     empty: tWorkbench("files.empty"),
     tooLarge: tWorkbench("files.tooLarge"),
     binary: tWorkbench("files.binary"),
+    notFound: tWorkbench("files.notFound"),
     loadError: tWorkbench("files.loadError"),
-    loading: tWorkbench("files.loading"),
     forbidden: tWorkbench("files.forbidden"),
     treeLabel: tWorkbench("files.treeLabel"),
   };
@@ -255,7 +263,11 @@ export default async function ProjectBoardPage({
       {tab === "repo" ? (
         <RepoFilesPanel
           canReadRepoFiles={canReadRepoFiles}
+          file={file}
           labels={filesLabels}
+          mainBranch={project.mainBranch}
+          projectId={project.id}
+          repoPath={project.repoPath}
           slug={slug}
         />
       ) : null}
@@ -339,6 +351,14 @@ function ProjectActiveWorkspaces({
                   {workspace.time}
                 </span>
               </Link>
+              {workspace.lifecycleActions.length > 0 ? (
+                <WorkbenchLifecycleActions
+                  actions={workspace.lifecycleActions}
+                  className="px-3 pb-2.5"
+                  runId={workspace.runId}
+                  runKind={workspace.runKind}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

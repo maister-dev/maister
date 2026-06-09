@@ -545,6 +545,29 @@ describe("hardDeleteAdminUser (integration)", () => {
     expect(still).toHaveLength(1);
   });
 
+  it("refuses with PRECONDITION when the user owns a personal token", async () => {
+    const id = await seedPendingUnused();
+    const projectId = await seedProject();
+
+    await db.insert(schema.projectTokens).values({
+      id: randomUUID(),
+      project_id: projectId,
+      name: "Pending personal token",
+      token_kind: "user",
+      owner_user_id: id,
+      prefix: "mai_pending",
+      token_hash: "sha256-placeholder",
+      scopes: ["tasks:create"],
+    });
+
+    await expect(
+      usersApi.hardDeleteAdminUser({
+        adminUserId: "usr_bootstrap_admin",
+        targetUserId: id,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
   it("refuses with PRECONDITION when the account is not pending", async () => {
     const { id } = await usersApi.createAdminUser({
       adminUserId: "usr_bootstrap_admin",

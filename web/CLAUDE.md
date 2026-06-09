@@ -256,7 +256,7 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   message; if checkpointed, supervisor respawns + resumes via `session/resume`)
 - `POST /api/runs/[id]/activity` (extend `keepalive_until` by 30 min while
   user is actively on the run page)
-- `GET /api/runs/[id]/diff` (`git diff` raw → `<pre>`, no syntax highlighting)
+- `GET /api/runs/[id]/diff` (raw diff + per-file `+`/`−` summary; rendered split/inline via `@git-diff-view/react`, ADR-066)
 - `POST /api/runs/[id]/merge` (`git merge --no-ff`; conflict → abort, run
   stays `Review`)
 - `POST /api/runs/[id]/abandon` (supervisor `DELETE /sessions/:id` if alive;
@@ -427,7 +427,7 @@ keeps long human reviews from being penalized for thinking time.
 
 ### Styling
 
-- Tailwind 4 utility classes. Use HeroUI `Button`, `Card`, `Modal`, `Input`, `Navbar` etc. instead of hand-rolling.
+- Tailwind 4 utility classes. Use HeroUI `Button`, `Card`, `Modal`, `Input`, `Navbar` etc. instead of hand-rolling. Exception: `components/workbench/lifecycle-actions.tsx` owns a custom accessible lifecycle dialog matched to the compact workbench surface; preserve that convention unless the whole surface is redesigned.
 - For variant-based class composition use `tailwind-variants` (`tv(...)`), mirroring `components/primitives.ts`.
 - Dark variant is declared in `styles/globals.css` as `@custom-variant dark (&:is(.dark *))`. Use `dark:` prefix as usual.
 - Class merging: `clsx` is fine for ad-hoc combos (already in the layout); for variant APIs use `tailwind-variants`.

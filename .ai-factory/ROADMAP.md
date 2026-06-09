@@ -450,10 +450,10 @@
   - Deferred explicitly: OAuth apps, user impersonation, full RBAC, generic
     outbound webhooks, provider-specific GitHub/GitLab/Jenkins apps, external
     board sync, and public-internet webhook hardening beyond token/HMAC.
-  - Architecture note (see ADR-024): v1 tokens grant the full project API
-    (granular scopes deferred); every token action is audited; HITL carries
-    `confidence` + `criticality` and the escalate-to-human decision is a Flow
-    gate, never the external actor's.
+  - Architecture note (see ADR-024/ADR-046): tokens are project-bound and
+    route-scoped; `*` remains the full-project compatibility scope; every token
+    action is audited; HITL carries `confidence` + `criticality` and the
+    escalate-to-human decision is a Flow gate, never the external actor's.
 
 - [x] **M17. HITL hybrid surface** — in-card form on task card (delivered via artifact + ACP notification), "Needs you (N)" badge on portfolio home, dedicated Inbox block listing pending HITL requests across all projects. `human` step type renders with review / send-back-with-comments flow through M11a's typed decisions, M11b's manual takeover, M12's evidence graph, M13's assignment states, M14's capability profile display, and M15's readiness summary.
 

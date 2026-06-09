@@ -7,7 +7,12 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { createTask } from "@/lib/services/tasks";
 import { listTaskDTOs } from "@/lib/services/tasks";
-import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
+import {
+  handleExt,
+  httpStatusForExtCode,
+  recordRequiredTokenAudit,
+} from "@/lib/tokens/ext-handler";
+import { actorUserIdForToken } from "@/lib/tokens/verify";
 
 const ENDPOINT_TASKS = "POST /api/v1/ext/projects/[slug]/tasks";
 const ENDPOINT_TASKS_GET = "GET /api/v1/ext/projects/[slug]/tasks";
@@ -21,6 +26,9 @@ const postBodySchema = z
   .strict();
 
 type RouteParams = { params: Promise<{ slug: string }> };
+type TransactionalDb = {
+  transaction<T>(scope: (tx: unknown) => Promise<T>): Promise<T>;
+};
 
 export async function POST(
   req: NextRequest,
@@ -36,6 +44,7 @@ export async function POST(
       scopeLabel: "tasks:create",
       endpoint: ENDPOINT_TASKS,
       method: "POST",
+      successAuditInWork: true,
       db,
     },
     async (ctx) => {
@@ -55,14 +64,37 @@ export async function POST(
       }
 
       try {
-        const { taskId } = await createTask(
-          {
-            title: body.title,
-            prompt: body.prompt,
-            flowId: body.flowId,
+        const { taskId } = await (db as TransactionalDb).transaction(
+          async (tx) => {
+            const created = await createTask(
+              {
+                title: body.title,
+                prompt: body.prompt,
+                flowId: body.flowId,
+              },
+              {
+                projectId: ctx.projectId,
+                actorUserId: actorUserIdForToken(ctx.actor),
+              },
+              tx,
+            );
+
+            await recordRequiredTokenAudit(
+              {
+                tokenId: ctx.actor.tokenId,
+                projectId: ctx.actor.projectId,
+                actorLabel: ctx.actor.actorLabel,
+                scopeUsed: "tasks:create",
+                endpoint: ENDPOINT_TASKS,
+                method: "POST",
+                result: "ok",
+                statusCode: 201,
+              },
+              tx,
+            );
+
+            return created;
           },
-          { projectId: ctx.projectId, actorUserId: null },
-          db,
         );
 
         return NextResponse.json({ taskId }, { status: 201 });

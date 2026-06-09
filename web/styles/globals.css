@@ -382,3 +382,63 @@ input:-webkit-autofill:active {
     animation: none;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Shiki dual-theme syntax (ADR-066) — server-rendered read view.
+   `highlightToHtml` emits dual-theme markup (`defaultColor:false`): each
+   token carries inline `--shiki-light` / `--shiki-dark` CSS vars. We pick the
+   active foreground by the existing `.light` / `.dark` class on <html>, so the
+   theme toggle recolors without re-highlighting. The code-block background
+   stays a forest token (the wrapper's `bg-paper`), not Shiki's github bg.
+   ═══════════════════════════════════════════════════════════════ */
+.light .shiki,
+.light .shiki span {
+  color: var(--shiki-light);
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark);
+}
+
+/* git-diff-view (ADR-066): the diff's syntax bundle is built server-side with
+   the SAME dual-theme Shiki, but its tokens render under
+   `.diff-line-syntax-raw` / `.diff-line-content-syntax` (NOT `.shiki`), so the
+   read-view rule above does not reach them. Scope the recolor to the diff-view
+   container; the inline `--shiki-light`/`--shiki-dark` vars survive verbatim
+   onto each token (`core/parse/template.ts` + `DiffContent.getStyleObjectFromString`),
+   so the toggle recolors without re-highlighting. */
+.light [data-testid="diff-view"] span[style*="--shiki-light"] {
+  color: var(--shiki-light);
+}
+.dark [data-testid="diff-view"] span[style*="--shiki-dark"] {
+  color: var(--shiki-dark);
+}
+
+.shiki {
+  margin: 0;
+  padding: 12px 14px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+/* Line-number gutter via CSS counters — scoped to the CodeView container
+   (`data-line-numbers`) so it never bleeds into other Shiki output. Shiki wraps
+   each source line in `.line`; the counter renders as a non-selectable prefix. */
+[data-line-numbers] {
+  counter-reset: shiki-line;
+}
+[data-line-numbers] .line {
+  counter-increment: shiki-line;
+}
+[data-line-numbers] .line::before {
+  content: counter(shiki-line);
+  display: inline-block;
+  width: 2.5rem;
+  margin-right: 1rem;
+  color: var(--mute-2);
+  text-align: right;
+  user-select: none;
+}

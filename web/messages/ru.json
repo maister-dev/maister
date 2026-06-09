@@ -141,6 +141,13 @@
       "notReady": "Не готово",
       "ready": "Готово"
     },
+    "editor": {
+      "flowYamlAria": "Редактор flow.yaml",
+      "yamlError": "Синтаксическая ошибка YAML",
+      "jsonError": "Синтаксическая ошибка JSON",
+      "schemaError": "Ошибка схемы манифеста",
+      "validating": "Проверка"
+    },
     "packageFileKind": {
       "asset": "Файл",
       "agent_definition": "Профиль агента",
@@ -637,6 +644,8 @@
     "targetDrift": "Целевая ветка ушла вперёд с момента ревью. Пересмотрите обновлённый дифф или промоутьте всё равно.",
     "promoteAnyway": "Промоутить всё равно",
     "relaunchToPromote": "Этот ран создан до таргетинга веток и не имеет метаданных промоута. Перезапустите задачу, чтобы промоутить.",
+    "diffTruncated": "Этот дифф слишком большой для полного показа (более 4 МиБ) и был обрезан. Просмотрите изменение целиком в pull request или через `git diff` перед промоутом.",
+    "promoteTruncated": "Промоутить всё равно (дифф обрезан)",
     "conflictTitle": "Конфликт слияния — разрешите вручную",
     "conflictRepo": "Родительский репозиторий",
     "conflictTarget": "Целевая ветка",
@@ -826,6 +835,7 @@
       "tooLarge": "Файл слишком большой для отображения",
       "binary": "Бинарный файл — не показан",
       "loadError": "Не удалось загрузить файл",
+      "notFound": "Файл не найден",
       "loading": "Загрузка…",
       "forbidden": "У вас нет доступа к файлам репозитория",
       "treeLabel": "Дерево файлов репозитория"
@@ -834,7 +844,13 @@
       "title": "Диф",
       "empty": "В этом запуске нет изменений.",
       "error": "Не удалось загрузить диф.",
-      "changedFiles": "Изменённые файлы"
+      "changedFiles": "Изменённые файлы",
+      "viewMode": "Режим просмотра",
+      "split": "Раздельно",
+      "unified": "Единый",
+      "added": "Строк добавлено",
+      "removed": "Строк удалено",
+      "truncated": "Дифф обрезан — превышен лимит просмотра 4 МиБ; показана часть диффа."
     },
     "tab": {
       "files": "Файлы",
@@ -1097,6 +1113,10 @@
     "nameLabel": "Название",
     "namePlaceholder": "ci-pipeline",
     "expiresLabel": "Срок действия (необязательно)",
+    "kindLabel": "Тип",
+    "kindProject": "Токен проекта",
+    "kindUser": "Токен пользователя",
+    "scopesLabel": "Права",
     "cancel": "Отмена",
     "confirm": "Создать",
     "secretTitle": "Скопируйте токен сейчас",
@@ -1106,6 +1126,8 @@
     "revoke": "Отозвать",
     "revokeConfirm": "Отозвать этот токен?",
     "colName": "Название",
+    "colKind": "Тип",
+    "colScopes": "Права",
     "colPrefix": "Префикс",
     "colStatus": "Статус",
     "colCreated": "Создан",
@@ -1114,6 +1136,16 @@
     "statusActive": "Активен",
     "statusRevoked": "Отозван",
     "statusExpired": "Истёк",
+    "scopeAll": "Полный API проекта",
+    "scopeTasksCreate": "Создание задач",
+    "scopeTasksRead": "Чтение задач",
+    "scopeTasksUpdate": "Обновление задач",
+    "scopeRunsLaunch": "Запуск прогонов",
+    "scopeRunsRead": "Чтение прогонов",
+    "scopeReadinessRead": "Чтение готовности",
+    "scopeGatesReport": "Отчёты по гейтам",
+    "scopeHitlRead": "Чтение HITL",
+    "scopeHitlRespond": "Ответы HITL",
     "errorGeneric": "Не удалось выполнить действие. Повторите."
   },
   "gc": {
@@ -1124,6 +1156,49 @@
     },
     "archived": "Архивировано",
     "pruned": "Удалено"
+  },
+  "workbenchLifecycle": {
+    "action": {
+      "stop": "Остановить",
+      "archive": "Архив",
+      "drop": "Удалить",
+      "snapshotCommit": "Коммит",
+      "exportBranch": "Экспорт"
+    },
+    "defaultCommitMessage": "maister: export {runId}",
+    "busy": "{action}…",
+    "errorWithCode": "Действие не выполнено: {code}",
+    "dialog": {
+      "cancel": "Отмена",
+      "confirm": "Подтвердить",
+      "commit": "Коммит",
+      "push": "Push",
+      "forcePush": "Force push",
+      "handoff": "Создать ветку",
+      "copy": "Копировать",
+      "clean": "Worktree чистый.",
+      "dirty": "Сначала закоммитьте изменения, затем push ветки прогона.",
+      "commitMessage": "Сообщение коммита",
+      "remote": "Remote",
+      "runBranch": "Ветка прогона: {branch}",
+      "handoffBranch": "Опциональная ветка передачи",
+      "handoffHelp": "Создает и пушит отдельную ветку на текущем HEAD worktree.",
+      "invalidRemote": "Remote может содержать буквы, цифры, _, ., / или - и не может начинаться с -.",
+      "invalidBranch": "Ветка может содержать буквы, цифры, _, ., / или - и не может содержать .., @{, завершающий / или .lock.",
+      "snapshotDone": "Snapshot-коммит {commit}",
+      "title": {
+        "stop": "Остановить прогон",
+        "archive": "Архивировать workbench",
+        "drop": "Удалить workbench",
+        "snapshotCommit": "Snapshot-коммит",
+        "exportBranch": "Экспорт ветки"
+      },
+      "body": {
+        "stop": "Остановить прогон и оставить worktree для ревью.",
+        "archive": "Сохранить восстанавливаемую работу в архивную ссылку и оставить worktree на диске.",
+        "drop": "Сначала сохранить восстанавливаемую работу, затем удалить только MAIster-owned worktree."
+      }
+    }
   },
   "projectMembers": {
     "tab": "Участники",

@@ -11,6 +11,7 @@
 //
 // Asserted, deterministic, supervisor-independent outcomes (in sequence):
 //   1. session-auth token create → one-time secret captured (UI tab also loads);
+//      scoped user token creation → metadata renders in the Integrations table;
 //   2. Bearer task-create → 201 {taskId};
 //   3. Bearer run-launch against the launchable Backlog task → 202 {runId,...};
 //   4. Bearer readiness on the seeded run → external gate pending, NOT ready;
@@ -60,6 +61,14 @@ type M16Fixture = {
   gateId: string;
 };
 
+type TokenCreateBody = {
+  id: string;
+  token: string;
+  kind: "project" | "user";
+  ownerLabel: string | null;
+  scopes: string[];
+};
+
 function loadM16Fixture(): M16Fixture {
   const all = JSON.parse(
     readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
@@ -100,12 +109,69 @@ test("external-operations API: token → task → launch → readiness gate repo
 
   expect(tokenRes.status()).toBe(201);
 
-  const tokenBody = (await tokenRes.json()) as { token: string };
+  const tokenBody = (await tokenRes.json()) as TokenCreateBody;
 
   expect(typeof tokenBody.token).toBe("string");
   expect(tokenBody.token.length).toBeGreaterThan(0);
 
   const auth = { authorization: `Bearer ${tokenBody.token}` };
+
+  // (1c) Create a user-owned token with only tasks:create. Its owner/scope
+  // metadata must be visible in the Integrations table, and the scope must be
+  // enforced by the external API.
+  const userTokenRes = await request.post(
+    `/api/projects/${fx.projectSlug}/tokens`,
+    {
+      data: {
+        name: "e2e-personal-webhook",
+        kind: "user",
+        scopes: ["tasks:create"],
+      },
+    },
+  );
+
+  expect(userTokenRes.status()).toBe(201);
+
+  const userTokenBody = (await userTokenRes.json()) as TokenCreateBody;
+
+  expect(userTokenBody).toMatchObject({
+    kind: "user",
+    ownerLabel: "E2E Admin",
+    scopes: ["tasks:create"],
+  });
+
+  await page.goto(`/projects/${fx.projectSlug}?tab=integrations`);
+  const userTokenRow = page
+    .getByRole("row")
+    .filter({ hasText: "e2e-personal-webhook" });
+
+  await expect(userTokenRow).toBeVisible();
+  await expect(userTokenRow).toContainText("User token");
+  await expect(userTokenRow).toContainText("E2E Admin");
+  await expect(userTokenRow).toContainText("Create tasks");
+
+  const userAuth = { authorization: `Bearer ${userTokenBody.token}` };
+
+  const scopedTaskRes = await request.post(
+    `/api/v1/ext/projects/${fx.projectSlug}/tasks`,
+    {
+      headers: userAuth,
+      data: {
+        title: "External user token task",
+        prompt: "Created by a user-owned webhook token.",
+        flowId: fx.flowId,
+      },
+    },
+  );
+
+  expect(scopedTaskRes.status()).toBe(201);
+
+  const deniedRead = await request.get(
+    `/api/v1/ext/projects/${fx.projectSlug}/tasks`,
+    { headers: userAuth },
+  );
+
+  expect(deniedRead.status()).toBe(403);
 
   // (2) Token-auth task create against the launchable flow.
   const taskRes = await request.post(

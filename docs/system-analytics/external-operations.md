@@ -1,17 +1,19 @@
 # External operations domain (M16)
 
-> **Status: Implemented (M16), as of 2026-06-02.** Project API tokens, token audit log, the `/api/v1/ext`
-> external REST surface, the `external_check` gate report loop, and the thin MCP
-> facade. Locked decisions: [ADR-040](../decisions.md#adr-040),
+> **Status: Implemented (M16), expanded by migration `0031_token_actor_scope_support.sql`.**
+> Project API tokens, user-owned tokens, route-scope enforcement, token audit log,
+> the `/api/v1/ext` external REST surface, the `external_check` gate report loop,
+> and the thin MCP facade. Locked decisions: [ADR-040](../decisions.md#adr-040),
 > [ADR-041](../decisions.md#adr-041), [ADR-042](../decisions.md#adr-042).
 
 ## Purpose
 
 This domain covers how external callers — CI/CD pipelines, automation scripts, and
 AI tool-calling agents via the MCP facade — authenticate to MAIster and interact
-with the project API. A `project_tokens` row carries a sha256-hashed secret that
-grants the token's bearer the full project API under `/api/v1/ext`. Every token
-call is recorded in `token_audit_log`. The `external_check` gate kind closes the
+with the project API. A `project_tokens` row carries a sha256-hashed secret,
+token kind (`project` or `user`), optional human owner, and route scopes for
+`/api/v1/ext`. Every token call is recorded in `token_audit_log`. The
+`external_check` gate kind closes the
 CI feedback loop: an external runner posts a pass/fail report to the gate-report
 endpoint, which atomically flips the gate, records a `test_report` artifact, and
 writes an audit entry; `assertEvidenceReady` then enforces the result at the
@@ -23,13 +25,19 @@ Domain boundary: token lifecycle management (issue/verify/revoke), the
 `token_audit_log` write path, the `/api/v1/ext` versioned external surface,
 the `external_check` gate-report→artifact→review-refusal loop, and the MCP
 transport-scoped auth model. Out of scope: session-auth routes, promotion
-(M18), readiness DSL calibration (M15), HITL `confidence`/`criticality` (M17).
+(M18), readiness DSL calibration (M15), HITL `confidence`/`criticality` (M17),
+and platform-wide tokens. Platform tokens remain a design question until a
+platform-authenticated external surface exists.
 
 ## Domain entities
 
 - **`project_tokens`** — one row per issued token. Stores `prefix` (first 12
   chars of the token string, indexed) + `token_hash` (sha256 hex), never the
-  plaintext. See [`../db/integrations-domain.md`](../db/integrations-domain.md).
+  plaintext. `token_kind='project'` represents a project automation identity.
+  `token_kind='user'` records `owner_user_id` so actions can be attributed to
+  the human who owns a personal agent or webhook token. `scopes` authorizes the
+  matching `/api/v1/ext` route label; `*` remains the broad project API wildcard.
+  See [`../db/integrations-domain.md`](../db/integrations-domain.md).
   (Implemented)
 - **`token_audit_log`** — append-only audit record per `/api/v1/ext` call.
   Captures actor label, scope label, endpoint, method, result, and HTTP status
@@ -120,12 +128,12 @@ sequenceDiagram
     participant DB as Postgres
     actor CI as CI or MCP caller
 
-    Admin->>WEB: POST /api/projects/slug/tokens name+expiresAt
+    Admin->>WEB: POST /api/projects/slug/tokens name+kind+scopes+expiresAt
     WEB->>WEB: requireProjectAction editSettings
     WEB->>WEB: token = mai_ + base64url(randomBytes(32))
     WEB->>WEB: prefix = first 12 chars and token_hash = sha256_hex(token)
-    WEB->>DB: INSERT project_tokens — prefix + token_hash + name + scopes
-    WEB-->>Admin: 201 — id name prefix token-plaintext createdAt
+    WEB->>DB: INSERT project_tokens — prefix + token_hash + kind + owner + scopes
+    WEB-->>Admin: 201 — id name kind scopes prefix token-plaintext createdAt
 
     CI->>WEB: ANY /api/v1/ext/... Bearer mai_...
     WEB->>WEB: prefix = presented chars 0 to 11
@@ -137,6 +145,7 @@ sequenceDiagram
         WEB-->>CI: 401
     else token valid
         WEB->>WEB: validate resource project_id == token.project_id
+        WEB->>WEB: assert token.scopes contains required route scope or *
         WEB->>DB: business logic handler runs
         WEB->>DB: INSERT token_audit_log result=ok scope_used=...
         WEB->>DB: UPDATE project_tokens SET last_used_at = now()
@@ -230,6 +239,15 @@ bearer extraction occurs.
   against the `prefix`-indexed row; timing-safe comparison is mandatory. (Implemented)
 - A token whose `project_id` does not match the addressed resource's project MUST
   return 404 to existence-hide the resource, not 401. (Implemented)
+- Every `/api/v1/ext` route MUST require the matching route scope (`tasks:create`,
+  `tasks:read`, `tasks:update`, `runs:launch`, `runs:read`, `readiness:read`,
+  `gates:report`, `hitl:read`, or `hitl:respond`) unless the token holds `*`.
+  Scope failures return 403 `UNAUTHORIZED`, write a failure `token_audit_log`
+  row, and MUST NOT reveal the token's held scopes. (Implemented)
+- User-owned tokens MUST store `token_kind='user'` and `owner_user_id`. External
+  task creation and run launch through such a token MUST set the resulting
+  `tasks.created_by_user_id` / `runs.created_by_user_id` to the owner. Project
+  tokens keep those user-attribution fields null. (Implemented)
 - Every `/api/v1/ext` call presenting an **identified** token MUST write exactly
   one `token_audit_log` row — on success and on identified-token failures
   (expired / revoked / wrong-project / validation). An **unidentifiable** token
@@ -257,9 +275,8 @@ bearer extraction occurs.
   token and MUST return 401 if no bearer is present. (Implemented)
 - Session-auth routes MUST NOT accept project tokens; `/api/v1/ext` routes MUST
   NOT accept session cookies. The two auth surfaces are mutually exclusive. (Implemented)
-- Token `scopes` are stored as labels for forward-compatibility; v1 enforcement
-  is binary — a valid, active, project-matched token grants the full project API
-  with no per-scope check. (Implemented)
+- Token `scopes` are enforced on every `/api/v1/ext` route. The `*` wildcard is
+  the compatibility path for full-project automation. (Implemented)
 - `token_audit_log` rows MUST cascade-delete with their `project_tokens` row;
   project deletion MUST cascade to both `project_tokens` and `token_audit_log`.
   (Implemented)
@@ -290,6 +307,9 @@ bearer extraction occurs.
   `token_audit_log` row.
 - **MCP stdio transport** → reads `MAISTER_PROJECT_TOKEN` from env; ignores any
   inbound bearer header; local-only use.
+- **User token owner deleted** → `project_tokens.owner_user_id` and derived
+  attribution joins become `NULL`; token rows and audit rows remain for
+  historical integrity.
 
 ## Linked artifacts
 
@@ -311,7 +331,8 @@ bearer extraction occurs.
 - Configuration: [`../configuration.md`](../configuration.md)
   (`gates[].external` schema, `MAISTER_API_BASE_URL`, `MAISTER_PROJECT_TOKEN`).
 - Source files (Implemented): `web/lib/db/schema.ts` + migration
-  `0018_m16_api_tokens.sql`, `web/lib/tokens/` (`issue.ts`, `verify.ts`,
+  `0020_m16_api_tokens.sql` + `0031_token_actor_scope_support.sql`,
+  `web/lib/tokens/` (`issue.ts`, `verify.ts`,
   `secret.ts`, `audit.ts`, `revoke.ts`, `list.ts`, `ext-handler.ts` —
   `TokenAuthError`, `httpStatusForTokenAuth`, `verifyToken`, constant-time
   hash compare), `web/app/api/v1/ext/`, `web/app/api/projects/[slug]/tokens/`,

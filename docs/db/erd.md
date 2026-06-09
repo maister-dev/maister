@@ -7,13 +7,15 @@ execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 status, scratch-run persistence, the selectable capability catalog, the
 **M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
 and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
-assignment tables, and the **M14 (Implemented, migration `0019`)**
+assignment tables, the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
-column, and the **M16 (Implemented, migration `0018_m16_api_tokens.sql`)**
-integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`, and the
-**M27 (Designed, migration `0032+`)** schema deltas: `FLOWS.version_binding`,
-`FLOW_REVISIONS.exec_trust`, `AUTHORED_CAPABILITIES.source_flow_ref_id`,
-`RUNS.resolved_capability_set`, and the new `PLATFORM_MCP_SERVERS` table. For partial views by
+column, the **M16 (Implemented, migration `0020_m16_api_tokens.sql`)**
+integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`, the **M27 workbench
+(Implemented, migration `0032`)** lifecycle claim fields on `WORKSPACES`, and
+the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
+`FLOWS.version_binding`, `FLOW_REVISIONS.exec_trust`,
+`AUTHORED_CAPABILITIES.source_flow_ref_id`, `RUNS.resolved_capability_set`, and
+the new `PLATFORM_MCP_SERVERS` table. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
@@ -462,6 +464,10 @@ erDiagram
         timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
         text promotion_owner_user_id FK "M18 0021 users.id, nullable"
         text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
+        text lifecycle_operation_state "M27 0032 none|claiming|failed (NOT NULL DEFAULT none)"
+        timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp"
+        text lifecycle_operation_attempt_id "M27 0032 per-attempt CAS token"
+        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch"
     }
 
     STEP_RUNS {
@@ -680,9 +686,11 @@ erDiagram
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
         text name "NOT NULL"
+        text token_kind "NOT NULL default project — project|user"
+        text owner_user_id FK "NULL -> users(id) ON DELETE SET NULL"
         text prefix "NOT NULL, INDEX — first 12 chars of the token string"
         text token_hash "NOT NULL — sha256_hex(fullToken); never plaintext"
-        jsonb scopes "NOT NULL default [*]"
+        jsonb scopes "NOT NULL default [*] — enforced route scopes"
         text created_by FK "NULL -> users(id) ON DELETE SET NULL"
         timestamp created_at "NOT NULL default now()"
         timestamp last_used_at "nullable"
@@ -715,8 +723,9 @@ M12 (Implemented, migration `0015`) `artifact_instances` /
 migration `0019`)** `capability_imports` table and
 `node_attempts.materialization_plan` column (see
 [`capabilities-domain.md`](capabilities-domain.md)), and the **M16 (migration
-`0018_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
-above). Remaining roadmap-additive persistence (e.g. artifact edges and
+`0020_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
+above), expanded by `0031_token_actor_scope_support.sql` for user-owned tokens
+and enforced scopes. Remaining roadmap-additive persistence (e.g. artifact edges and
 external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
@@ -735,8 +744,8 @@ external-operation events) is not drawn until its migrations exist. See
 | `capability_imports` | `capability_imports_project_ref_revision_uq` | `(project_id, capability_ref_id, resolved_revision)` UNIQUE | **(M14 Implemented)** One row per (project, import id, resolved git SHA). |
 | `project_flow_roles` | `project_flow_roles_project_key_uq` | `(project_id, role_ref)` UNIQUE | One Flow role ref per project. |
 | `project_flow_roles` | `project_flow_roles_project_idx` | `(project_id)` | Project Flow role lookup. |
-| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE | One user actor per project. |
-| `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind=api_token` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
+| `actor_identities` | `actor_identities_project_user_uq` | `(project_id, user_id)` UNIQUE, PARTIAL `WHERE kind='user'` | One human actor per project/user. |
+| `actor_identities` | `actor_identities_project_token_uq` | `(project_id, token_id)` UNIQUE, PARTIAL `WHERE kind='api_token'` | **(M17 Implemented, migration `0026`)** One api-token actor per project token. |
 | `actor_identities` | `actor_identities_project_idx` | `(project_id)` | Project actor lookup. |
 | `flow_graph_layouts` | — | — | **(Removed — migration `0030`, ADR-064.)** Authored positions moved to the `flow.yaml` `presentation` section. |
 | `tasks` | `tasks_project_status_idx` | `(project_id, status)` | Board queries. |
@@ -778,6 +787,7 @@ external-operation events) is not drawn until its migrations exist. See
 | `workspaces` | implicit | `worktree_path` UNIQUE | Globally unique worktree path. |
 | `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification. |
 | `project_tokens` | `project_tokens_project_idx` | `(project_id)` | **(M16)** List tokens for a project. |
+| `project_tokens` | `project_tokens_owner_idx` | `(owner_user_id)` | User-owned token audit joins. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
 | `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
 

@@ -56,6 +56,10 @@ const labels: TokenLabels = {
   nameLabel: "Name",
   namePlaceholder: "ci-pipeline",
   expiresLabel: "Expires",
+  kindLabel: "Kind",
+  kindProject: "Project token",
+  kindUser: "User token",
+  scopesLabel: "Scopes",
   cancel: "Cancel",
   confirm: "Create",
   secretTitle: "Copy your token now",
@@ -65,6 +69,8 @@ const labels: TokenLabels = {
   revoke: "Revoke",
   revokeConfirm: "Revoke this token?",
   colName: "Name",
+  colKind: "Kind",
+  colScopes: "Scopes",
   colPrefix: "Prefix",
   colStatus: "Status",
   colCreated: "Created",
@@ -73,6 +79,16 @@ const labels: TokenLabels = {
   statusActive: "Active",
   statusRevoked: "Revoked",
   statusExpired: "Expired",
+  scopeAll: "Full project API",
+  scopeTasksCreate: "Create tasks",
+  scopeTasksRead: "Read tasks",
+  scopeTasksUpdate: "Update tasks",
+  scopeRunsLaunch: "Launch runs",
+  scopeRunsRead: "Read runs",
+  scopeReadinessRead: "Read readiness",
+  scopeGatesReport: "Report gates",
+  scopeHitlRead: "Read HITL",
+  scopeHitlRespond: "Respond to HITL",
   errorGeneric: "Something went wrong",
 };
 
@@ -82,6 +98,10 @@ const DAY = 24 * 60 * 60 * 1000;
 const activeToken: TokenListItem = {
   id: "tok-active",
   name: "ci-pipeline",
+  kind: "project",
+  ownerUserId: null,
+  ownerLabel: null,
+  scopes: ["*"],
   prefix: "mai_AAAA",
   createdAt: new Date(NOW - 10 * DAY),
   lastUsedAt: new Date(NOW - 1 * DAY),
@@ -92,6 +112,10 @@ const activeToken: TokenListItem = {
 const revokedToken: TokenListItem = {
   id: "tok-revoked",
   name: "old-deploy-key",
+  kind: "user",
+  ownerUserId: "user-owner",
+  ownerLabel: "Owner User",
+  scopes: ["tasks:create"],
   prefix: "mai_BBBB",
   createdAt: new Date(NOW - 30 * DAY),
   lastUsedAt: null,
@@ -103,6 +127,10 @@ const revokedToken: TokenListItem = {
 const expiredToken: TokenListItem = {
   id: "tok-expired",
   name: "temp-scanner",
+  kind: "project",
+  ownerUserId: null,
+  ownerLabel: null,
+  scopes: ["runs:launch", "gates:report"],
   prefix: "mai_CCCC",
   createdAt: new Date(NOW - 90 * DAY),
   lastUsedAt: null,
@@ -159,6 +187,16 @@ describe("TokensTable — renders data for an admin (M16)", () => {
     expect(html).toContain(labels.statusActive);
     expect(html).toContain(labels.statusRevoked);
     expect(html).toContain(labels.statusExpired);
+  });
+
+  it("renders kind, owner, and scope labels", () => {
+    expect(html).toContain(labels.kindProject);
+    expect(html).toContain(labels.kindUser);
+    expect(html).toContain("Owner User");
+    expect(html).toContain(labels.scopeAll);
+    expect(html).toContain(labels.scopeTasksCreate);
+    expect(html).toContain(labels.scopeRunsLaunch);
+    expect(html).toContain(labels.scopeGatesReport);
   });
 
   it("renders the create affordance label and a revoke affordance for an admin", () => {

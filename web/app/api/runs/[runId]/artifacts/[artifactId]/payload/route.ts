@@ -15,7 +15,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { runtimeRoot } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
-import { diffRange, logRange } from "@/lib/worktree";
+import { DIFF_TRUNCATED_MARKER, diffRange, logRange } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { artifactInstances, gateResults, hitlRequests } =
@@ -233,11 +233,16 @@ export async function GET(
         // F3: render against the STORED immutable headRef SHA, not the live
         // branch, so an old artifact never picks up commits made after it was
         // recorded. (A SHA satisfies diffRange's branch validation.)
-        const diff = await diffRange({
+        const range = await diffRange({
           worktreePath: detail.worktreePath,
           baseRef: locator.baseCommit,
           branch: locator.headRef,
         });
+        // Re-append the in-band marker on truncation so the text/plain payload
+        // still flags the cut (no structured channel on a raw byte response).
+        const diff = range.truncated
+          ? range.text + DIFF_TRUNCATED_MARKER
+          : range.text;
 
         return new NextResponse(diff, { headers: TEXT_HEADERS });
       }

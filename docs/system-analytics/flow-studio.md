@@ -31,7 +31,7 @@ bridge; per-run workbench visualization remains in
   Persisted in the capabilities schema — see
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
 - **`source_flow_ref_id` link** — NEW column `authored_capabilities.source_flow_ref_id
-  text NULL` (DDL migration `0032+`). When an operator edits an already-installed
+  text NULL` (DDL migration `0033+`). When an operator edits an already-installed
   flow the link records its `flow_ref_id` so publish→bridge targets the same
   `flows` lineage. A net-new authored flow mints a fresh `flow_ref_id`.
 - **Bridged `flows` / `flow_revisions` rows** — the existing executable-package
@@ -48,13 +48,13 @@ bridge; per-run workbench visualization remains in
   project-scoped published index first. The column + toggle (T-B1) persist
   intent now.
 - **`flow_revisions.exec_trust`** — NEW second trust axis per-revision (`untrusted
-  | trusted`, DDL `0032+`). Gates `runRevisionSetup` (setup.sh) and MCP-stdio
+  | trusted`, DDL `0033+`). Gates `runRevisionSetup` (setup.sh) and MCP-stdio
   `command` spawn. Independent of `flows.trustStatus`; a logic-trusted flow is
   never exec-trusted automatically.
-- **`runs.resolved_capability_set`** — NEW column `jsonb NULL` (DDL `0032+`).
+- **`runs.resolved_capability_set`** — NEW column `jsonb NULL` (DDL `0033+`).
   Shape: `{ flowRevisionId, flowOrigin, capabilities[], mcps[] }`. Frozen at
   launch, read by the runner. See [`../db/runs-domain.md`](../db/runs-domain.md).
-- **Platform MCP server** — NEW table `platform_mcp_servers` (DDL `0032+`), mirroring
+- **Platform MCP server** — NEW table `platform_mcp_servers` (DDL `0033+`), mirroring
   `platform_acp_runners`. Carries transport (`stdio|sse|http`), secrets as
   `env:NAME` references, and its own `trust_status` / `readiness_status`.
 - **MCP capability record** — existing `capability_records` (kind=`mcp`,

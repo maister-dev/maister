@@ -14,7 +14,7 @@ relationship to runs ([ADR-018](../decisions.md#adr-018-task--run-cardinality-is
 - **Assignment** — claimable human work item attached to the latest run,
   planned for role-owned waits such as permission, form, review, manual
   takeover, and conflict resolution.
-- **External operation** — planned token-authenticated API or MCP action that
+- **External operation** — implemented token-authenticated API or MCP action that
   can create/read/update tasks, launch runs, or report evidence without using
   the web UI.
 - **Attempt number** — monotonic counter per task, starting at 1. Current code
@@ -90,14 +90,14 @@ sequenceDiagram
     participant W as Web tier
     participant DB as Postgres
 
-    EXT->>W: POST /api/projects/[slug]/tasks<br/>Authorization: Bearer token
-    W->>DB: SELECT api_token WHERE prefix/hash/project/scope valid
+    EXT->>W: POST /api/v1/ext/projects/[slug]/tasks<br/>Authorization: Bearer token
+    W->>DB: SELECT project_tokens WHERE prefix/hash/project/scope valid
     alt invalid, expired, revoked, wrong project, or missing scope
-        W-->>EXT: 401/403 PRECONDITION
+        W-->>EXT: 401/403/404
     end
     W->>W: Validate title, prompt, flow, optional executor
-    W->>DB: INSERT tasks (status=Backlog, actor=token)
-    W->>DB: INSERT audit/event record
+    W->>DB: INSERT tasks (status=Backlog, created_by_user_id=owner when user token)
+    W->>DB: INSERT token_audit_log row
     W-->>EXT: 201 { id, status, ... }
 ```
 
@@ -201,8 +201,10 @@ flowchart TD
   returns to `Backlog` and Launch button re-appears.
 - `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
 - Title and prompt are non-empty at creation.
-- **(M16 — Implemented)** External task creation uses the same validation as the UI
-  and records the API token or MCP actor as the creator/audit subject.
+- **(M16 + token actor-scope support — Implemented)** External task creation
+  uses the same validation as the UI and records the API token in
+  `token_audit_log`. User-owned tokens also set `tasks.created_by_user_id` to
+  the token owner; project tokens leave it null.
 - **(M16 — Implemented)** The thin MCP facade can create/list/get/update tasks only
   through the same domain path as the API; it cannot bypass token scopes,
   assignment rules, or run launch preconditions.

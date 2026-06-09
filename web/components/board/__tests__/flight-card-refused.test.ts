@@ -55,6 +55,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     // T15 (M15): unified readiness state — "ready" so the badge stays hidden,
     // keeping this suite focused on the refused indicator.
     readiness: "ready",
+    // M27 (main, merged): workbench lifecycle actions — none for this suite.
+    lifecycleActions: [],
     ...over,
   } as FlightCardData;
 }

@@ -57,7 +57,7 @@ malware scan / sandboxing / org policy. ADR-051 `flow_graph_layouts` is DEAD.
 - **Platform MCP server** — NEW table `platform_mcp_servers` (admin-managed, mirrors `platform_acp_runners`).
 - **MCP capability record** — existing `capability_records` (kind=`mcp`, source∈{platform,project,flow-package}); extended `material` transport shape.
 
-### 3.1 Schema deltas (DDL — migration `0032+`; hand-authored SQL + `_journal.json` idx; NEVER `db:generate`)
+### 3.1 Schema deltas (DDL — migration `0033+`; hand-authored SQL + `_journal.json` idx; NEVER `db:generate`)
 
 ```sql
 -- flows.version_binding (B1)

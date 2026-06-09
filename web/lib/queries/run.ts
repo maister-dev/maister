@@ -19,6 +19,7 @@ import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { cache } from "react";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -30,6 +31,10 @@ import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
+import {
+  lifecycleActionsForWorkspace,
+  type WorkbenchLifecycleAction,
+} from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
@@ -113,6 +118,7 @@ export interface RunDetail {
   effectiveRemovalAt: Date | null;
   archived: boolean;
   pruned: boolean;
+  lifecycleActions: WorkbenchLifecycleAction[];
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -140,7 +146,12 @@ export function isRunRecoverable(input: {
   );
 }
 
-export async function getRunDetail(runId: string): Promise<RunDetail | null> {
+// Wrapped in React `cache()` so the run-detail layout + the `?file=` page child
+// (which both need this row) dedupe to a single query per request — the page
+// re-renders on `?file=` soft-navs, the layout does not.
+export const getRunDetail = cache(async function getRunDetail(
+  runId: string,
+): Promise<RunDetail | null> {
   const client = db();
   const rows = await client
     .select({
@@ -156,6 +167,7 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
       projectSlug: projects.slug,
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
+      workspaceId: workspaces.id,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
@@ -283,6 +295,14 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
     effectiveRemovalAt: ttl.effectiveRemovalAt,
     archived: ttl.archived,
     pruned: ttl.pruned,
+    lifecycleActions: lifecycleActionsForWorkspace({
+      runKind: row.runKind,
+      runStatus: row.status,
+      dialogStatus: null,
+      hasWorkspace: Boolean(row.workspaceId),
+      removedAt: row.removedAt,
+      archivedBranch: row.archivedBranch,
+    }),
     pendingHitl: pending
       ? {
           hitlRequestId: pending.id,
@@ -306,7 +326,7 @@ export async function getRunDetail(runId: string): Promise<RunDetail | null> {
         }
       : null,
   };
-}
+});
 
 // --- M11b: run-detail timeline read model (ADR-030) -----------------------
 

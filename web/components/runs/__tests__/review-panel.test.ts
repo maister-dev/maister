@@ -1,8 +1,8 @@
+import type { ReadinessDTO } from "@/lib/queries/readiness";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { ReadinessDTO } from "@/lib/queries/readiness";
 
 // ---------------------------------------------------------------------------
 // CONTRACT under test — `components/runs/review-panel.tsx` (M18 T4.2).
@@ -12,8 +12,9 @@ import type { ReadinessDTO } from "@/lib/queries/readiness";
 // PRESENTATIONAL — render is driven entirely by props (no fetch on mount) so
 // renderToStaticMarkup is deterministic. It shows the base→run→target spine
 // (named branches + base commit), the readiness summary (from a ReadinessDTO
-// prop), the raw diff in a <pre>, a promotion-mode selector
-// (local_merge|pull_request), and a "Promote to <targetBranch>" action that
+// prop), the ADR-066 diff-view (git-diff-view, NOT a raw <pre>), a
+// promotion-mode selector (local_merge|pull_request), and a "Promote to
+// <targetBranch>" action that
 // POSTs /api/runs/{runId}/promote with {mode, targetBranch, reviewedTargetCommit,
 // allowTargetDrift?}. On a PRECONDITION "target advanced" response it shows a
 // drift warning + an explicit "Promote anyway" (allowTargetDrift:true). On
@@ -41,6 +42,12 @@ vi.mock("next-intl", () => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  // The ADR-066 <DiffView> (rendered by the panel) reads `?diffview=` and
+  // builds the split↔unified toggle href from the pathname; supply a real
+  // URLSearchParams + a pathname so the diff-view container renders under
+  // static markup.
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/runs/run-1",
 }));
 
 import { ReviewPanel } from "@/components/runs/review-panel";
@@ -71,9 +78,17 @@ const LABELS = {
   prLink: "run.prLink",
   targetDrift: "run.targetDrift",
   promoteAnyway: "run.promoteAnyway",
+  diffTruncated: "run.diffTruncated",
+  promoteTruncated: "run.promoteTruncated",
 };
 
 type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
+
+// ADR-066 (T2.6): the `diff` prop changes from a raw `string` to the prepared
+// CLIENT DTO ({ files, perFile }) that the diff-view hydrates. A minimal empty
+// DTO is enough for the STRUCTURE assertion (the container renders); the diff
+// content itself is exercised in the workbench e2e, not here.
+const EMPTY_DIFF_DTO = { files: [], perFile: [], truncated: false };
 
 function render(over: Partial<ReviewPanelProps> = {}): string {
   const base: ReviewPanelProps = {
@@ -85,13 +100,11 @@ function render(over: Partial<ReviewPanelProps> = {}): string {
     promotionMode: "local_merge",
     reviewedTargetCommit: "deadbeefcafe0123",
     readiness: READY,
-    diff: "diff --git a/file.txt b/file.txt\n+run change\n",
+    diff: EMPTY_DIFF_DTO,
     labels: LABELS,
-  } as ReviewPanelProps;
+  } as unknown as ReviewPanelProps;
 
-  return renderToStaticMarkup(
-    createElement(ReviewPanel, { ...base, ...over }),
-  );
+  return renderToStaticMarkup(createElement(ReviewPanel, { ...base, ...over }));
 }
 
 describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => {
@@ -119,15 +132,14 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     expect(html).toContain("impl-diff");
   });
 
-  it("renders the raw diff text inside a <pre>", () => {
+  it("renders the ADR-066 diff-view container (not a raw <pre>)", () => {
     const html = render();
 
-    expect(html).toContain("<pre");
-    expect(html).toContain("+run change");
-    // The diff lives inside the <pre>, not elsewhere.
-    const pre = html.slice(html.indexOf("<pre"));
-
-    expect(pre).toContain("+run change");
+    // The panel now mounts the diff-view wrapper (git-diff-view, fed the server
+    // bundle) instead of the old raw-diff <pre>. We assert the STRUCTURE — the
+    // wrapper's stable container testid — NOT Shiki/git-diff-view internals,
+    // which do not render meaningfully under renderToStaticMarkup.
+    expect(html).toContain('data-testid="diff-view"');
   });
 
   it("names the exact target in the Promote button label", () => {
@@ -180,6 +192,28 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     // the exact failing command — the manual-resolution affordance.
     expect(html).toContain("/repos/myapp");
     expect(html).toContain("git merge --no-ff maister/feature-x");
+  });
+
+  it("blocks Promote behind an explicit ack when the diff is truncated (regression)", () => {
+    const html = render({
+      diff: { files: [], perFile: [], truncated: true },
+    } as Partial<ReviewPanelProps>);
+
+    // A truncated diff renders a blocking alert + an explicit "Promote anyway
+    // (truncated)" override INSTEAD of the normal Promote action — the user
+    // cannot promote on a partial diff without consciously acknowledging it.
+    expect(html).toContain('data-testid="review-diff-truncated"');
+    expect(html).toContain("run.diffTruncated");
+    expect(html).toContain("run.promoteTruncated");
+    expect(html).not.toContain("run.promoteTo");
+  });
+
+  it("does not gate Promote when the diff is whole (truncated:false)", () => {
+    const html = render();
+
+    // The normal Promote action is present and the truncation gate is absent.
+    expect(html).not.toContain('data-testid="review-diff-truncated"');
+    expect(html).toContain("run.promoteTo");
   });
 
   it("legacyNeedsRelaunch renders the relaunch state and NOT the promote action; never a null branch", () => {

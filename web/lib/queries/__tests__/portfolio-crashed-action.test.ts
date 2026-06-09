@@ -6,7 +6,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { scratchActionForWorkspace } from "@/lib/queries/portfolio";
+import {
+  lifecycleActionsForWorkspace,
+  scratchActionForWorkspace,
+} from "@/lib/queries/portfolio";
 
 describe("portfolio recover/discard action — Crashed flow runs (M19)", () => {
   it("Crashed flow + acpSessionId → 'recover'", () => {
@@ -40,6 +43,60 @@ describe("portfolio recover/discard action — Crashed flow runs (M19)", () => {
         acpSessionId: "acp-session-123",
       }),
     ).toBe("none");
+  });
+});
+
+describe("portfolio lifecycle actions — shared workbench matrix", () => {
+  it("Running flow workspace exposes stop only", () => {
+    expect(
+      lifecycleActionsForWorkspace({
+        runKind: "flow",
+        runStatus: "Running",
+        dialogStatus: null,
+        hasWorkspace: true,
+        removedAt: null,
+        archivedBranch: null,
+      }),
+    ).toEqual(["stop"]);
+  });
+
+  it("Review flow workspace exposes archive, drop, and export", () => {
+    expect(
+      lifecycleActionsForWorkspace({
+        runKind: "flow",
+        runStatus: "Review",
+        dialogStatus: null,
+        hasWorkspace: true,
+        removedAt: null,
+        archivedBranch: null,
+      }),
+    ).toEqual(["archive", "drop", "exportBranch"]);
+  });
+
+  it("removed workspace exposes no lifecycle actions", () => {
+    expect(
+      lifecycleActionsForWorkspace({
+        runKind: "flow",
+        runStatus: "Done",
+        dialogStatus: null,
+        hasWorkspace: true,
+        removedAt: new Date("2026-06-09T08:00:00.000Z"),
+        archivedBranch: "maister/archive/run-1",
+      }),
+    ).toEqual([]);
+  });
+
+  it("missing workspace exposes no lifecycle actions", () => {
+    expect(
+      lifecycleActionsForWorkspace({
+        runKind: "flow",
+        runStatus: "Review",
+        dialogStatus: null,
+        hasWorkspace: false,
+        removedAt: null,
+        archivedBranch: null,
+      }),
+    ).toEqual([]);
   });
 });
 

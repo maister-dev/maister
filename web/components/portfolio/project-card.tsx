@@ -6,6 +6,7 @@ import Link from "next/link";
 import clsx from "clsx";
 
 import { READINESS_BADGE } from "@/components/readiness-badge";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 export interface ProjectCardProps {
   project: PortfolioProject;
@@ -274,6 +275,14 @@ export async function ProjectCard({
                     {ws.time}
                   </span>
                 </Link>
+                {ws.lifecycleActions.length > 0 ? (
+                  <WorkbenchLifecycleActions
+                    actions={ws.lifecycleActions}
+                    className="px-2.5 pb-2"
+                    runId={ws.runId}
+                    runKind={ws.runKind}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>

@@ -202,33 +202,40 @@ deliberate integration directive for merge time.
    `065 → (gap) → 067…070`. Per docs/CLAUDE.md R4 this assigns final numbers to
    *unmerged* proposals, not renumbering a mainline ADR.
 
-2. **Migration number collision — RESOLVED.** `main` owns
-   `0031_token_actor_scope_support` (idx 31). This branch's migrations were
-   renamed **0031–0035 → 0032–0036** (files + `_journal.json` `tag`+`idx`).
-   The branch journal has an intentional **idx-31 gap** reserved for main's
-   migration — safe because drizzle's `readMigrationFiles` ignores `idx`
-   entirely (iterates `entries` by array order, resolves `${tag}.sql`, orders
-   by `when`). On merge, main's `0031` slots into the gap → idx 0–36
-   contiguous. No test asserts M27 idx values (`migrations.m17.test.ts` only
-   checks idx 25/26).
+2. **Migration number collision — RESOLVED (merged).** main's tip holds
+   `0031_token_actor_scope_support` (idx 31) **and**
+   `0032_m27_workbench_lifecycle_claims` (idx 32). This branch's migrations were
+   renamed **0031–0035 → 0033–0037** (files + `_journal.json` `tag`+`idx`, with
+   `when` bumped past main's so journal order stays monotonic). main's 0031/0032
+   + branch's 0033–0037 → idx 0–37 contiguous. `migration-journal-integrity.test.ts`
+   guards the tag↔file bijection + unique idx/tag. drizzle's `readMigrationFiles`
+   orders by array position + `when`, ignoring `idx`.
 
-3. **Dual authored-flow editor — DIRECTIVE (resolve at merge).** Both sides
-   rewrote `web/app/(app)/flows/[projectSlug]/[capId]/page.tsx`: this branch
-   mounts the **React Flow graph editor** + `flow-editor-tabs.tsx`; main adds a
-   **CodeMirror** YAML editor. **Target end-state: keep BOTH** — the branch's
-   `flow-editor-tabs` stays the frame; main's CodeMirror **replaces the plain
-   `<textarea>` (`flow-yaml-textarea`) in the YAML tab** (gaining highlight /
-   lint / autocomplete). Do NOT drop either editor. The shared `flowYaml`
-   state already bridges the graph tab and the YAML tab, so CodeMirror only
-   needs to bind to that same state.
+3. **Dual authored-flow editor — RESOLVED (partial; FOLLOW-UP needed).** Both
+   sides rewrote `web/app/(app)/flows/[projectSlug]/[capId]/page.tsx`: this
+   branch mounts the **React Flow graph editor** + `flow-editor-tabs.tsx`; main
+   added a **CodeMirror** `CodeEditor` (`@/components/flows/code-editor`). The
+   merge took the **branch's page** (graph editor + textarea YAML tab); main's
+   `code-editor.tsx` is **retained in the tree** but not yet wired.
+   **FOLLOW-UP (needs runtime verification):** swap the YAML-tab `<textarea>`
+   (`flow-yaml-textarea`) inside `flow-editor-tabs.tsx` for `CodeEditor` bound
+   to the shared `flowYaml` state, and update the `m27-flow-editor` e2e selector.
 
-4. **~21 co-modified files** will textually conflict (collisions #1/#2 above are
-   pre-defused, leaving trivial reconciliations): `web/lib/db/schema.ts`,
-   `_journal.json`, `docs/api/web.openapi.yaml`, `docs/decisions.md`,
-   `web/messages/{en,ru}.json`, `web/lib/services/runs.ts`,
-   `web/lib/queries/run.ts`, the three `(app)` pages,
-   `web/e2e/_seed/seed-e2e.ts`, `web/playwright.config.ts`. Resolve by union
-   (both sides' additions are independent).
+4. **Run-detail route re-architecture — RESOLVED.** main split the route into a
+   new `layout.tsx` (run-detail chrome) + a `RunFilePane` `page.tsx` (the
+   `?file=` Shiki pane). The merge took **both of main's files** and grafted the
+   branch's **resolved-capability-set panel** (+ `getRunResolvedCapabilitySet`,
+   labels) into `layout.tsx` next to `CapabilityProfilePanel`. main deleted
+   `web/components/runs/raw-diff.tsx`; it was **restored** (the branch's
+   `flow-draft-diff` still imports it). Both pages need a **runtime check**.
+
+5. **Parallel M27 e2e fixtures — RESOLVED.** main + branch both defined
+   `M27_SLUG`/`M27_MANIFEST`/`const m27`/`byKey.m27` for different fixtures. The
+   branch's editor fixture was renamed `M27_EDITOR_*`/`m27Editor`/`byKey.m27Editor`
+   (+ `m27-flow-editor.spec.ts` updated); main's `seedM27Fixture` kept `m27`.
+
+Gates after merge: `tsc` 0, `validate:docs` (Mermaid + ADR anchors), unit tests
+green. **Not yet verified: runtime behavior of the two re-architected pages.**
 
 ---
 

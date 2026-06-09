@@ -7,7 +7,11 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { respondToHitl } from "@/lib/services/hitl";
-import { httpStatusForExtCode, handleExt } from "@/lib/tokens/ext-handler";
+import {
+  handleExt,
+  httpStatusForExtCode,
+  recordRequiredTokenAudit,
+} from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
@@ -36,6 +40,7 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       requireScope: true,
+      successAuditInWork: true,
       db,
     },
     async (ctx) => {
@@ -89,8 +94,25 @@ export async function POST(
             tokenId: ctx.actor.tokenId,
             projectId: ctx.projectId,
             label: ctx.actor.actorLabel,
+            ownerUserId: ctx.actor.ownerUserId,
           },
-          { db },
+          {
+            db,
+            recordSuccessAudit: (tx, statusCode) =>
+              recordRequiredTokenAudit(
+                {
+                  tokenId: ctx.actor.tokenId,
+                  projectId: ctx.actor.projectId,
+                  actorLabel: ctx.actor.actorLabel,
+                  scopeUsed: SCOPE,
+                  endpoint: ENDPOINT,
+                  method: "POST",
+                  result: "ok",
+                  statusCode,
+                },
+                tx,
+              ),
+          },
         );
       } catch (err) {
         if (isMaisterError(err)) {

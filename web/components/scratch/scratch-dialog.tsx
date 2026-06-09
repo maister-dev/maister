@@ -1,5 +1,6 @@
 "use client";
 
+import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { ReactElement } from "react";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,6 +15,11 @@ import {
   parseQuickReplies,
   parseScratchMessageContent,
 } from "@/lib/scratch-runs/transcript";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
+import {
+  deriveWorkbenchLifecycleActions,
+  type WorkbenchRunStatus,
+} from "@/lib/workbench-lifecycle/policy";
 
 type ScratchDialogStatus =
   | "Starting"
@@ -59,7 +65,7 @@ type HitlOption = {
 type ScratchDetail = {
   run: {
     id: string;
-    status: string;
+    status: WorkbenchRunStatus;
     currentStepId: string | null;
     startedAt: string;
     endedAt: string | null;
@@ -158,6 +164,21 @@ function canCompose(status: ScratchDialogStatus): boolean {
   return canSend(status) || canRecover(status);
 }
 
+function lifecycleActionsForScratchDetail(
+  detail: ScratchDetail,
+): WorkbenchLifecycleActionId[] {
+  return deriveWorkbenchLifecycleActions({
+    runKind: "scratch",
+    runStatus: detail.run.status,
+    scratchDialogStatus: detail.scratch.dialogStatus,
+    hasWorkspace: detail.workspace !== null,
+    workspaceRemoved: detail.workspace?.removedAt !== null,
+    workspaceArchived: false,
+  })
+    .filter((action) => action.enabled)
+    .map((action) => action.id);
+}
+
 function attachmentSummary(attachment: ScratchAttachment): string {
   if (attachment.kind === "uploaded_file") {
     const hash = attachment.sha256 ? attachment.sha256.slice(0, 10) : "";
@@ -251,6 +272,7 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
   const globalAttachments =
     detail?.attachments.filter((attachment) => !attachment.messageId) ?? [];
   const status = detail?.scratch.dialogStatus ?? "Starting";
+  const lifecycleActions = detail ? lifecycleActionsForScratchDetail(detail) : [];
   const canSubmitMessage = !!content.trim() && canCompose(status);
   const latestUsage = useMemo(() => {
     let usage: { used: number; size: number } | null = null;
@@ -785,44 +807,37 @@ export function ScratchDialog({ runId }: { runId: string }): ReactElement {
           <div className="mb-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-mute">
             {t("actions")}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber"
-              type="button"
-              onClick={() =>
-                void postAction("stop", `/api/scratch-runs/${runId}/stop`)
-              }
-            >
-              {t("stop")}
-            </button>
-            <button
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber"
-              type="button"
-              onClick={() =>
-                void postAction("discard", `/api/scratch-runs/${runId}/discard`)
-              }
-            >
-              {t("discard")}
-            </button>
-            <button
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber"
-              type="button"
-              onClick={() => void loadDiff()}
-            >
-              {t("diff")}
-            </button>
-            <button
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber"
-              type="button"
-              onClick={() =>
-                void postAction("promote", `/api/runs/${runId}/promote`, {
-                  mode: "local_merge",
-                  targetBranch: detail.scratch.baseBranch,
-                })
-              }
-            >
-              {t("promote")}
-            </button>
+          <div className="flex flex-col gap-2">
+            {lifecycleActions.length > 0 ? (
+              <WorkbenchLifecycleActions
+                actions={lifecycleActions}
+                className="rounded-lg border border-line bg-paper p-2"
+                runId={runId}
+                runKind="scratch"
+                variant="detail"
+              />
+            ) : null}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber"
+                type="button"
+                onClick={() => void loadDiff()}
+              >
+                {t("diff")}
+              </button>
+              <button
+                className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber"
+                type="button"
+                onClick={() =>
+                  void postAction("promote", `/api/runs/${runId}/promote`, {
+                    mode: "local_merge",
+                    targetBranch: detail.scratch.baseBranch,
+                  })
+                }
+              >
+                {t("promote")}
+              </button>
+            </div>
           </div>
           {pendingAction && pendingAction !== "send" ? (
             <p className="mt-2 font-mono text-[10.5px] text-mute">

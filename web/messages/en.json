@@ -141,6 +141,13 @@
       "notReady": "Not ready",
       "ready": "Ready"
     },
+    "editor": {
+      "flowYamlAria": "flow.yaml editor",
+      "yamlError": "YAML syntax error",
+      "jsonError": "JSON syntax error",
+      "schemaError": "Manifest schema error",
+      "validating": "Validating"
+    },
     "packageFileKind": {
       "asset": "Asset",
       "agent_definition": "Agent definition",
@@ -637,6 +644,8 @@
     "targetDrift": "The target branch advanced since this review. Re-review the updated diff, or promote anyway.",
     "promoteAnyway": "Promote anyway",
     "relaunchToPromote": "This run predates branch targeting and has no promotion metadata. Relaunch the task to promote it.",
+    "diffTruncated": "This diff is too large to show in full (over 4 MiB) and was truncated. Review the complete change in the pull request or via `git diff` before promoting.",
+    "promoteTruncated": "Promote anyway (diff truncated)",
     "conflictTitle": "Merge conflict — resolve manually",
     "conflictRepo": "Parent repo",
     "conflictTarget": "Target branch",
@@ -826,6 +835,7 @@
       "tooLarge": "File is too large to display",
       "binary": "Binary file — not shown",
       "loadError": "Could not load file",
+      "notFound": "File not found",
       "loading": "Loading…",
       "forbidden": "You do not have access to repository files",
       "treeLabel": "Repository file tree"
@@ -834,7 +844,13 @@
       "title": "Diff",
       "empty": "No changes in this run.",
       "error": "Could not load the diff.",
-      "changedFiles": "Changed files"
+      "changedFiles": "Changed files",
+      "viewMode": "View mode",
+      "split": "Split",
+      "unified": "Unified",
+      "added": "Lines added",
+      "removed": "Lines removed",
+      "truncated": "Diff truncated — over the 4 MiB view limit; showing a partial diff."
     },
     "tab": {
       "files": "Files",
@@ -1097,6 +1113,10 @@
     "nameLabel": "Name",
     "namePlaceholder": "ci-pipeline",
     "expiresLabel": "Expires (optional)",
+    "kindLabel": "Kind",
+    "kindProject": "Project token",
+    "kindUser": "User token",
+    "scopesLabel": "Scopes",
     "cancel": "Cancel",
     "confirm": "Create",
     "secretTitle": "Copy your token now",
@@ -1106,6 +1126,8 @@
     "revoke": "Revoke",
     "revokeConfirm": "Revoke this token?",
     "colName": "Name",
+    "colKind": "Kind",
+    "colScopes": "Scopes",
     "colPrefix": "Prefix",
     "colStatus": "Status",
     "colCreated": "Created",
@@ -1114,6 +1136,16 @@
     "statusActive": "Active",
     "statusRevoked": "Revoked",
     "statusExpired": "Expired",
+    "scopeAll": "Full project API",
+    "scopeTasksCreate": "Create tasks",
+    "scopeTasksRead": "Read tasks",
+    "scopeTasksUpdate": "Update tasks",
+    "scopeRunsLaunch": "Launch runs",
+    "scopeRunsRead": "Read runs",
+    "scopeReadinessRead": "Read readiness",
+    "scopeGatesReport": "Report gates",
+    "scopeHitlRead": "Read HITL",
+    "scopeHitlRespond": "Respond to HITL",
     "errorGeneric": "Action failed. Try again."
   },
   "gc": {
@@ -1124,6 +1156,49 @@
     },
     "archived": "Archived",
     "pruned": "Pruned"
+  },
+  "workbenchLifecycle": {
+    "action": {
+      "stop": "Stop",
+      "archive": "Archive",
+      "drop": "Drop",
+      "snapshotCommit": "Commit",
+      "exportBranch": "Export"
+    },
+    "defaultCommitMessage": "maister: export {runId}",
+    "busy": "{action}…",
+    "errorWithCode": "Action failed: {code}",
+    "dialog": {
+      "cancel": "Cancel",
+      "confirm": "Confirm",
+      "commit": "Commit",
+      "push": "Push",
+      "forcePush": "Force push",
+      "handoff": "Create branch",
+      "copy": "Copy",
+      "clean": "Worktree is clean.",
+      "dirty": "Commit dirty work before pushing this run branch.",
+      "commitMessage": "Commit message",
+      "remote": "Remote",
+      "runBranch": "Run branch: {branch}",
+      "handoffBranch": "Optional handoff branch",
+      "handoffHelp": "Creates and pushes a separate branch at the current worktree HEAD.",
+      "invalidRemote": "Remote names can use letters, numbers, _, ., /, or - and cannot start with -.",
+      "invalidBranch": "Branch names can use letters, numbers, _, ., /, or - and cannot contain .., @{, a trailing slash, or .lock.",
+      "snapshotDone": "Snapshot commit {commit}",
+      "title": {
+        "stop": "Stop run",
+        "archive": "Archive workbench",
+        "drop": "Drop workbench",
+        "snapshotCommit": "Snapshot commit",
+        "exportBranch": "Export branch"
+      },
+      "body": {
+        "stop": "Stop the run and keep its worktree for review.",
+        "archive": "Preserve recoverable work into an archive ref and keep the worktree on disk.",
+        "drop": "Preserve recoverable work, then remove only the MAIster-owned worktree."
+      }
+    }
   },
   "projectMembers": {
     "tab": "Members",

@@ -26,6 +26,7 @@ const {
   projects,
   runs,
   scratchRuns,
+  tasks,
   users,
   workspaces,
 } = schema;
@@ -539,6 +540,8 @@ export async function hardDeleteAdminUser(
       { table: nodeAttempts, column: nodeAttempts.ownerUserId },
       { table: actorIdentities, column: actorIdentities.userId },
       { table: projectTokens, column: projectTokens.created_by },
+      { table: projectTokens, column: projectTokens.owner_user_id },
+      { table: tasks, column: tasks.createdByUserId },
       { table: workspaces, column: workspaces.promotionOwnerUserId },
     ];
 

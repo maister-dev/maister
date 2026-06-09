@@ -1,16 +1,15 @@
 "use client";
 
 import type { ReactElement } from "react";
-import type { FileViewerLabels } from "@/components/workbench/file-viewer";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-import { FileViewer } from "@/components/workbench/file-viewer";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 export type FileTreeEntry = { name: string; type: "file" | "dir" };
 
-export interface FileTreeLabels extends FileViewerLabels {
+export interface FileTreeLabels {
   empty: string;
+  loadError: string;
   treeLabel?: string;
 }
 
@@ -174,12 +173,16 @@ export default function FileTree({
   filesApiBase,
   labels,
 }: FileTreeProps): ReactElement {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const selectedPath = searchParams.get("file");
+
   const [rootEntries, setRootEntries] = useState<FileTreeEntry[] | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [childrenByDir, setChildrenByDir] = useState<
     Record<string, FileTreeEntry[] | undefined>
   >({});
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [rootError, setRootError] = useState(false);
   const inFlightDirs = useRef<Set<string>>(new Set());
 
@@ -205,8 +208,17 @@ export default function FileTree({
 
   const onActivateEntry = useCallback(
     (entry: FileTreeEntry, fullPath: string) => {
+      // Selecting a file is a URL navigation (`?wb=files&file=<path>`): the
+      // server child re-reads the blob and renders <CodeView>. Dir expansion
+      // stays client-side lazy state (NOT in the URL) so it survives the
+      // `?file=` soft-nav — the tree keeps stable React identity in the
+      // persistent layout.
       if (entry.type === "file") {
-        setSelectedPath(fullPath);
+        const params = new URLSearchParams(searchParams);
+
+        params.set("wb", "files");
+        params.set("file", fullPath);
+        router.push(`${pathname}?${params.toString()}`, { scroll: false });
 
         return;
       }
@@ -233,48 +245,41 @@ export default function FileTree({
           });
       }
     },
-    [filesApiBase, expandedDirs, childrenByDir],
+    [filesApiBase, expandedDirs, childrenByDir, router, pathname, searchParams],
   );
 
   const isEmpty = rootEntries !== null && rootEntries.length === 0;
 
   return (
     <div
-      className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,300px)_1fr]"
+      className="overflow-auto rounded-[10px] border border-line bg-paper p-1.5"
       data-testid="file-tree"
     >
-      <div className="overflow-auto rounded-[10px] border border-line bg-paper p-1.5">
-        {rootError ? (
-          <p
-            className="p-4 text-center font-mono text-[11px] text-rust"
-            data-testid="file-tree-error"
-            role="alert"
-          >
-            {labels.loadError}
-          </p>
-        ) : isEmpty ? (
-          <p
-            className="p-4 text-center font-mono text-[11px] text-mute"
-            data-testid="file-tree-empty"
-          >
-            {labels.empty}
-          </p>
-        ) : (
-          <FileTreeList
-            childrenByDir={childrenByDir}
-            entries={rootEntries ?? []}
-            expandedDirs={expandedDirs}
-            selectedPath={selectedPath}
-            treeLabel={labels.treeLabel}
-            onActivateEntry={onActivateEntry}
-          />
-        )}
-      </div>
-      <FileViewer
-        filesApiBase={filesApiBase}
-        labels={labels}
-        path={selectedPath}
-      />
+      {rootError ? (
+        <p
+          className="p-4 text-center font-mono text-[11px] text-rust"
+          data-testid="file-tree-error"
+          role="alert"
+        >
+          {labels.loadError}
+        </p>
+      ) : isEmpty ? (
+        <p
+          className="p-4 text-center font-mono text-[11px] text-mute"
+          data-testid="file-tree-empty"
+        >
+          {labels.empty}
+        </p>
+      ) : (
+        <FileTreeList
+          childrenByDir={childrenByDir}
+          entries={rootEntries ?? []}
+          expandedDirs={expandedDirs}
+          selectedPath={selectedPath}
+          treeLabel={labels.treeLabel}
+          onActivateEntry={onActivateEntry}
+        />
+      )}
     </div>
   );
 }
