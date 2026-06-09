@@ -11,7 +11,7 @@ assignment tables, and the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
 column, and the **M16 (Implemented, migration `0018_m16_api_tokens.sql`)**
 integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`, and the
-**M27 (Designed, migration `0031+`)** schema deltas: `FLOWS.version_binding`,
+**M27 (Designed, migration `0032+`)** schema deltas: `FLOWS.version_binding`,
 `FLOW_REVISIONS.exec_trust`, `AUTHORED_CAPABILITIES.source_flow_ref_id`,
 `RUNS.resolved_capability_set`, and the new `PLATFORM_MCP_SERVERS` table. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),

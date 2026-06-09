@@ -31,7 +31,7 @@ bridge; per-run workbench visualization remains in
   Persisted in the capabilities schema — see
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md).
 - **`source_flow_ref_id` link** — NEW column `authored_capabilities.source_flow_ref_id
-  text NULL` (DDL migration `0031+`). When an operator edits an already-installed
+  text NULL` (DDL migration `0032+`). When an operator edits an already-installed
   flow the link records its `flow_ref_id` so publish→bridge targets the same
   `flows` lineage. A net-new authored flow mints a fresh `flow_ref_id`.
 - **Bridged `flows` / `flow_revisions` rows** — the existing executable-package
@@ -39,18 +39,22 @@ bridge; per-run workbench visualization remains in
   Bridge sets `flows.trustStatus=trusted_by_policy` and
   `flow_revisions.exec_trust=untrusted` on publish.
 - **`version_binding`** — NEW column `flows.version_binding text NOT NULL DEFAULT
-  'latest'` with CHECK `pinned|latest`. `pinned` resolves
-  `flows.enabled_revision_id`; `latest` resolves the newest PUBLISHED
-  `flow_revisions` for the `flow_ref_id` (authored-wins tie-break; never a
-  draft).
+  'latest'` with CHECK `pinned|latest`. **(Stage-1)** `resolveEffectiveFlowRevision`
+  resolves `flows.enabled_revision_id` for BOTH bindings; authored "latest"
+  auto-follows because publish→bridge (T-B2) repoints `enabled_revision_id` to
+  the newest published revision. **(Phase 2 — deferred)** `latest` resolves the
+  newest PUBLISHED `flow_revisions` for the `flow_ref_id` (authored-wins
+  tie-break; never a draft) — the global `flow_revisions` pool needs a
+  project-scoped published index first. The column + toggle (T-B1) persist
+  intent now.
 - **`flow_revisions.exec_trust`** — NEW second trust axis per-revision (`untrusted
-  | trusted`, DDL `0031+`). Gates `runRevisionSetup` (setup.sh) and MCP-stdio
+  | trusted`, DDL `0032+`). Gates `runRevisionSetup` (setup.sh) and MCP-stdio
   `command` spawn. Independent of `flows.trustStatus`; a logic-trusted flow is
   never exec-trusted automatically.
-- **`runs.resolved_capability_set`** — NEW column `jsonb NULL` (DDL `0031+`).
+- **`runs.resolved_capability_set`** — NEW column `jsonb NULL` (DDL `0032+`).
   Shape: `{ flowRevisionId, flowOrigin, capabilities[], mcps[] }`. Frozen at
   launch, read by the runner. See [`../db/runs-domain.md`](../db/runs-domain.md).
-- **Platform MCP server** — NEW table `platform_mcp_servers` (DDL `0031+`), mirroring
+- **Platform MCP server** — NEW table `platform_mcp_servers` (DDL `0032+`), mirroring
   `platform_acp_runners`. Carries transport (`stdio|sse|http`), secrets as
   `env:NAME` references, and its own `trust_status` / `readiness_status`.
 - **MCP capability record** — existing `capability_records` (kind=`mcp`,
@@ -150,7 +154,7 @@ testable):
 4. Publishing an authored `flow` MUST bridge it into a `flows` row + `flow_revisions` row via `installAuthoredFlowPackageBridge`, `trustStatus=trusted_by_policy`, `exec_trust=untrusted`.
 5. `setup.sh` MUST NOT run on publish/bridge; it runs ONLY after an explicit `exec_trust` flip, via `runRevisionSetup` (physically separate, sentinel once-only).
 6. An MCP stdio `command` MUST NOT be spawned for a revision whose `exec_trust≠trusted`.
-7. Launch with `version_binding=latest` MUST resolve the newest PUBLISHED revision, NEVER a draft; authored-wins on tie.
+7. Launch resolves the effective revision via `resolveEffectiveFlowRevision`. **(Stage-1)** BOTH `pinned` and `latest` resolve `flows.enabled_revision_id` (never a draft); authored "latest" auto-follow is realized by publish→bridge repointing the pointer (T-B2). **(Phase 2 — deferred)** `latest` → newest PUBLISHED revision, authored-wins on tie.
 8. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
 9. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
 10. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
@@ -178,10 +182,10 @@ follows the same usage-guard and dup-id rules as ADR-065.
 
 - **SDD (FROZEN SSOT):** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
 - **ADRs (Accepted):**
-  ADR-066 (flow editor write path — authored drafts + hard-gate),
-  ADR-067 (authored→executable bridge + two-axis trust gate),
-  ADR-068 (version_binding + resolve-at-launch + resolved-set snapshot),
-  ADR-069 (MCP + capability management model) —
+  ADR-067 (flow editor write path — authored drafts + hard-gate),
+  ADR-068 (authored→executable bridge + two-axis trust gate),
+  ADR-069 (version_binding + resolve-at-launch + resolved-set snapshot),
+  ADR-070 (MCP + capability management model) —
   all accepted in [`../decisions.md`](../decisions.md).
 - **ADR-065 (Implemented):** [`../decisions.md#adr-065`](../decisions.md#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) — admin CRUD pattern mirrored for `platform_mcp_servers`.
 - **ADR-064 (Implemented):** authored layout in `flow.yaml` `presentation` section — consumed by the editor, described in [`workbench.md`](workbench.md).

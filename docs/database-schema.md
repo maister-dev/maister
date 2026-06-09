@@ -261,7 +261,7 @@ sidecar usage-reference service guards disable/delete actions.
 
 ## `platform_mcp_servers` (Designed, M27)
 
-**(M27 — Designed, migration `0031+`.)** Platform-admin-managed MCP server
+**(M27 — Designed, migration `0032+`.)** Platform-admin-managed MCP server
 catalog. Mirrors `platform_acp_runners` in admin CRUD surface and usage-guard
 semantics. Secrets are stored **only** as `env:NAME` references — values are
 never stored and are resolved supervisor-side.
@@ -376,7 +376,7 @@ project and preserves audit labels if the linked user is later removed.
                                  //   Failed (default Installed)
   trustStatus,                   // M10 enum: untrusted | trusted |
                                  //   trusted_by_policy (default untrusted)
-  versionBinding,                // (M27 — Designed, migration 0031+)
+  versionBinding,                // (M27 — Designed, migration 0032+)
                                  //   'pinned' | 'latest' (DEFAULT 'latest').
                                  //   pinned → resolves flows.enabled_revision_id;
                                  //   latest → newest PUBLISHED flow_revisions row
@@ -429,7 +429,7 @@ project-scoped.
   setupStatus,                   // not_required | pending | done | failed
   packageStatus,                 // GLOBAL lifecycle: Discovered | Installing |
                                  //   Installed | Failed | Removed
-  execTrust,                     // (M27 — Designed, migration 0031+)
+  execTrust,                     // (M27 — Designed, migration 0032+)
                                  //   'untrusted' | 'trusted' (DEFAULT 'untrusted').
                                  //   Second independent trust axis — EXECUTABLE.
                                  //   Gates runRevisionSetup (setup.sh) AND MCP
@@ -542,7 +542,7 @@ authored_capabilities {
   originType?, originRefId?,
   currentDraftRevisionId?,
   currentPublishedRevisionId?,
-  sourceFlowRefId?,              // (M27 — Designed, migration 0031+)
+  sourceFlowRefId?,              // (M27 — Designed, migration 0032+)
                                  //   nullable text. Links an authored flow-kind
                                  //   draft (created by editing an installed flow)
                                  //   to its originating flows.flow_ref_id. When
@@ -635,7 +635,7 @@ queries.
   resumeTargetStepId?,           // M19 (text, migration 0016) node id retained
                                  //   at crash time for Recover; current_step_id
                                  //   is nulled on crash; see below
-  resolvedCapabilitySet?,        // (M27 — Designed, migration 0031+)
+  resolvedCapabilitySet?,        // (M27 — Designed, migration 0032+)
                                  //   jsonb NULL. Frozen at launch by launchRun;
                                  //   the runner reads this snapshot, never the
                                  //   live catalog. An edit or publish during a run

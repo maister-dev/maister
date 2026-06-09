@@ -225,7 +225,7 @@ M19 workspace GC (ADR-035/036) as a backstop when the in-flow cleanup seams miss
 
 ## `authored_capabilities.source_flow_ref_id` (Designed, M27)
 
-NEW nullable column `source_flow_ref_id text NULL` on `authored_capabilities` (migration `0031+`).
+NEW nullable column `source_flow_ref_id text NULL` on `authored_capabilities` (migration `0032+`).
 Links an authored `flow`-kind draft that was created by editing an *installed* flow back to its
 originating `flows.flow_ref_id`. When set, `publish-local → bridge` targets the SAME `flows`
 lineage rather than minting a fresh `flow_ref_id`. Net-new authored flows leave this column NULL.

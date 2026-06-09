@@ -8,6 +8,15 @@
 > Conventions inherited: `MaisterError` taxonomy (no plain Error), atomic writes
 > to `.maister/`, EN+RU parity, HeroUI v3 + React Flow (no new deps), strict TS,
 > verbose+configurable logging, no engine bump, no new `runs.status`.
+>
+> **Amendment log:**
+> - 2026-06-09 — §4.3 / §7.1.7 / §9: `version_binding=latest` newest-published
+>   resolution is **deferred to Phase 2**. Stage-1 `resolveEffectiveFlowRevision`
+>   resolves `flows.enabled_revision_id` for BOTH bindings (authored flows
+>   auto-follow "latest" via publish→bridge repointing the pointer, T-B2). The
+>   column + toggle (T-B1) persist intent. Reconciles the spec with the shipped
+>   code; the global `flow_revisions` pool needs a project-scoped published index
+>   before launch-time newest-published selection is safe.
 
 ---
 
@@ -48,7 +57,7 @@ malware scan / sandboxing / org policy. ADR-051 `flow_graph_layouts` is DEAD.
 - **Platform MCP server** — NEW table `platform_mcp_servers` (admin-managed, mirrors `platform_acp_runners`).
 - **MCP capability record** — existing `capability_records` (kind=`mcp`, source∈{platform,project,flow-package}); extended `material` transport shape.
 
-### 3.1 Schema deltas (DDL — migration `0031+`; hand-authored SQL + `_journal.json` idx; NEVER `db:generate`)
+### 3.1 Schema deltas (DDL — migration `0032+`; hand-authored SQL + `_journal.json` idx; NEVER `db:generate`)
 
 ```sql
 -- flows.version_binding (B1)
@@ -115,7 +124,8 @@ edit on canvas → serialize manifest → validateGraphManifest+compileManifest
 
 ### 4.3 version_binding
 - `pinned` → resolve `flows.enabled_revision_id` (M10 pointer).
-- `latest` → newest **PUBLISHED** `flow_revisions` for the `flow_ref_id`, **never a draft**; **authored-wins** tie-break when authored & git revisions are both newest.
+- `latest` **(Stage-1)** → ALSO resolves `flows.enabled_revision_id`. Authored flows already auto-follow "latest" because publish→bridge (T-B2) repoints `enabled_revision_id` to the newest published revision on every publish, so the enabled pointer IS the latest authored revision.
+- `latest` **(Phase 2 — deferred)** → newest **PUBLISHED** `flow_revisions` for the `flow_ref_id`, **never a draft**; **authored-wins** tie-break when authored & git revisions are both newest. Deferred because `flow_revisions` are GLOBAL (shared across projects by `flow_ref_id`); a naive "newest in pool" query mis-resolves across projects, so it needs a project-scoped published-revision index first.
 
 ## 5. HTTP routes (Identifiers labeled; bodies; status codes)
 
@@ -168,7 +178,7 @@ Winner per `(kind, capability_ref_id)`: **project > platform > flow-package** (l
 4. Publishing an authored `flow` MUST bridge it into a `flows` row + `flow_revisions` row via `installAuthoredFlowPackageBridge`, `trustStatus=trusted_by_policy`, `exec_trust=untrusted`.
 5. `setup.sh` MUST NOT run on publish/bridge; it runs ONLY after an explicit `exec_trust` flip, via `runRevisionSetup` (physically separate, sentinel once-only).
 6. An MCP stdio `command` MUST NOT be spawned for a revision whose `exec_trust≠trusted`.
-7. Launch with `version_binding=latest` MUST resolve the newest PUBLISHED revision, NEVER a draft; authored-wins on tie.
+7. Launch resolves the effective revision via `resolveEffectiveFlowRevision`. **(Stage-1)** BOTH `pinned` and `latest` resolve `flows.enabled_revision_id` (never a draft — the enabled pointer is always a published revision); authored "latest" auto-follow is realized by publish→bridge repointing `enabled_revision_id` (T-B2). **(Phase 2 — deferred)** `latest` MUST resolve the newest PUBLISHED revision for the `flow_ref_id`, NEVER a draft, authored-wins on tie (blocked on a project-scoped published-revision index over the global `flow_revisions` pool).
 8. Launch MUST snapshot the resolved set into `runs.resolved_capability_set`; the runner MUST read the snapshot, never the live catalog; an edit/publish during a run MUST NOT mutate that run.
 9. The editor MUST be read-write only for users with `manageCatalog`; the run-scoped view stays read-only (`readBoard`).
 10. No engine bump; no new `runs.status`; presentation stays additive/runner-ignored.
@@ -209,7 +219,7 @@ Winner per `(kind, capability_ref_id)`: **project > platform > flow-package** (l
 | 7.1.4 | publish → flows+flow_revisions, trusted_by_policy/untrusted | int · `authored-bridge.integration.test.ts` |
 | 7.1.5 | setup.sh not on publish; runs after flip | int · `exec-trust.integration.test.ts` |
 | 7.1.6 | MCP stdio not spawned until exec_trust | int · `exec-trust.integration.test.ts` |
-| 7.1.7 | latest→newest-published-never-draft; authored-wins | unit · `resolve-effective-revision.test.ts` |
+| 7.1.7 | (Stage-1) pinned & latest → enabled pointer (never a draft); authored auto-follow via bridge. Phase-2 newest-published deferred | unit · `resolve-effective-revision.test.ts` |
 | 7.1.8 | resolved-set snapshot + in-flight immutability | int · `resolved-set-snapshot.integration.test.ts` |
 | 7.1.9 | editor RBAC manageCatalog; view stays readBoard | int · `flow-editor-rbac.integration.test.ts` |
 | 7.2.2 | precedence project>platform>package, no dup | unit · `resolver-precedence.test.ts` |
