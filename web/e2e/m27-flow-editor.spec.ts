@@ -55,14 +55,18 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
 
   expect(afterReopen).toContain("cli_1");
 
-  // Invalid edit: a manifest with an unknown node type fails the save-time
-  // hard-gate (validateGraphManifest/compileManifest → CONFIG, never persisted).
+  // Invalid edit: a PARSEABLE manifest that fails the save-time graph hard-gate
+  // (a graph flow must declare compat.engine_min) → CONFIG, never persisted.
+  // (An unparseable manifest is a different path — stored raw — so we use a
+  // schema-valid manifest with an invalid graph instead.)
   const badYaml = [
     "schemaVersion: 1",
-    "name: Broken",
+    "name: Broken Draft",
     "nodes:",
-    "  - id: broke",
-    "    type: not_a_real_type",
+    "  - id: plan",
+    "    type: ai_coding",
+    "    action:",
+    "      prompt: x",
     "",
   ].join("\n");
 
@@ -70,7 +74,7 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   await page.getByRole("button", { name: "Save draft" }).click();
   await page.waitForLoadState("networkidle");
 
-  // Draft unchanged on reopen: still the valid cli_1 draft, not the bad node.
+  // Draft unchanged on reopen: still the valid cli_1 draft, not the rejected one.
   await page.goto(url);
   await page.getByTestId("flow-tab-yaml").click();
   const afterInvalid = await page
@@ -78,5 +82,5 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
     .inputValue();
 
   expect(afterInvalid).toContain("cli_1");
-  expect(afterInvalid).not.toContain("not_a_real_type");
+  expect(afterInvalid).not.toContain("Broken Draft");
 });

@@ -3514,21 +3514,33 @@ const M27_SLUG = "e2e-m27-editor";
 const M27_MANIFEST = {
   schemaVersion: 1,
   name: "M27 Editor Flow",
+  compat: { engine_min: "1.3.0" },
   nodes: [
-    { id: "plan", type: "ai_coding", action: { prompt: "Plan the work" } },
-    { id: "review", type: "human" },
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "Plan the work" },
+      transitions: { done: "review" },
+    },
+    { id: "review", type: "human", transitions: { approve: "done" } },
   ],
 };
 
 const M27_FLOW_YAML = `schemaVersion: 1
 name: M27 Editor Flow
+compat:
+  engine_min: "1.3.0"
 nodes:
   - id: plan
     type: ai_coding
     action:
       prompt: Plan the work
+    transitions:
+      done: review
   - id: review
     type: human
+    transitions:
+      approve: done
 `;
 
 async function seedM27FlowEditorFixture(
