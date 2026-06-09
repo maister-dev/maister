@@ -63,7 +63,7 @@
     "hash": "Хеш",
     "source": "Источник",
     "version": "Версия",
-    "trust": "Доверие",
+    "trustLabel": "Доверие",
     "packageStatusLabel": "Пакет",
     "setupStatusLabel": "Настройка",
     "newTitle": "Новый авторский Flow",

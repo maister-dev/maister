@@ -243,7 +243,7 @@ export default async function FlowsPage({
                       </b>
                     </div>
                     <div>
-                      {t("trust")}:{" "}
+                      {t("trustLabel")}:{" "}
                       <b className="font-semibold text-ink-2">
                         {t(`trust.${flow.trustStatus}`)}
                       </b>

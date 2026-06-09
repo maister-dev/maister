@@ -63,7 +63,7 @@
     "hash": "Hash",
     "source": "Source",
     "version": "Version",
-    "trust": "Trust",
+    "trustLabel": "Trust",
     "packageStatusLabel": "Package",
     "setupStatusLabel": "Setup",
     "newTitle": "New authored Flow",
