@@ -3503,6 +3503,104 @@ async function seedM23Fixture(
   };
 }
 
+// --- M27 fixture: authored flow capability for the flow-graph editor ---------
+// ONE project with a DRAFT authored `flow` capability whose manifest compiles
+// (plan ai_coding -> review human), so the editor page renders the canvas +
+// diff tabs. The e2e adds a node via the toolbar, saves through the existing
+// updateAuthoredFlowAction form, and asserts persistence + the invalid-edit
+// hard-gate refusal.
+const M27_SLUG = "e2e-m27-editor";
+
+const M27_MANIFEST = {
+  schemaVersion: 1,
+  name: "M27 Editor Flow",
+  nodes: [
+    { id: "plan", type: "ai_coding", action: { prompt: "Plan the work" } },
+    { id: "review", type: "human" },
+  ],
+};
+
+const M27_FLOW_YAML = `schemaVersion: 1
+name: M27 Editor Flow
+nodes:
+  - id: plan
+    type: ai_coding
+    action:
+      prompt: Plan the work
+  - id: review
+    type: human
+`;
+
+async function seedM27FlowEditorFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<{ projectId: string; projectSlug: string; capId: string }> {
+  const ids = {
+    project: randomUUID(),
+    member: randomUUID(),
+    cap: randomUUID(),
+    revision: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M27_SLUG]);
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      ids.project,
+      M27_SLUG,
+      "M27 Flow Editor (e2e)",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, adminId],
+  );
+
+  const body = {
+    flowYaml: M27_FLOW_YAML,
+    manifest: M27_MANIFEST,
+    packageMetadata: { slug: M27_SLUG, name: "M27 Editor Flow" },
+    files: [],
+    validation: {
+      status: "valid",
+      issueCount: 0,
+      issues: [],
+      manifestDigest: null,
+      contentHash: null,
+    },
+  };
+
+  await pool.query(
+    `INSERT INTO authored_capabilities
+       (id, project_id, kind, slug, title, lifecycle, draft_version,
+        current_draft_revision_id)
+     VALUES ($1, $2, 'flow', $3, $4, 'DRAFT', 1, $5)`,
+    [ids.cap, ids.project, M27_SLUG, "M27 Editor Flow", ids.revision],
+  );
+  await pool.query(
+    `INSERT INTO authored_capability_revisions
+       (id, capability_id, project_id, kind, revision_number, lifecycle,
+        draft_version, title, body, manifest, schema_version, content_hash)
+     VALUES ($1, $2, $3, 'flow', 1, 'DRAFT', 1, $4, $5::jsonb, $6::jsonb, 1, $7)`,
+    [
+      ids.revision,
+      ids.cap,
+      ids.project,
+      "M27 Editor Flow",
+      JSON.stringify(body),
+      JSON.stringify(M27_MANIFEST),
+      "m27-e2e-seed",
+    ],
+  );
+
+  return { projectId: ids.project, projectSlug: M27_SLUG, capId: ids.cap };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -3531,6 +3629,7 @@ async function main(): Promise<void> {
         M16_SLUG,
         M18_SLUG,
         M22_SLUG,
+        M27_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -3672,6 +3771,7 @@ async function main(): Promise<void> {
     const m18 = await seedM18Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
     const m23 = await seedM23Fixture(pool, admin.id);
+    const m27 = await seedM27FlowEditorFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -3715,6 +3815,7 @@ async function main(): Promise<void> {
         m18,
         m22,
         m23,
+        m27,
       },
     };
     const outDir = path.resolve("e2e/.auth");
