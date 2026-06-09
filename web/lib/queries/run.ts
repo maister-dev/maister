@@ -12,6 +12,7 @@ import type {
   MaterializationPlan,
   NodeAttempt,
   NodeAttemptType,
+  ResolvedCapabilitySet,
 } from "@/lib/db/schema";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
@@ -642,6 +643,20 @@ function trustKey(refId: string, sha: string): string {
 // The capability-profile view for the run-detail panel: every ai_coding/judge
 // node_attempt that carries a recorded materialization_plan, in attempt order,
 // with each resolved revision's project-scoped trust verdict attached. Returns
+// M27/T-B6: the run's launch-frozen resolved capability set (read-only). The
+// set is snapshotted at launch (services/runs.ts) and never mutates for the
+// life of the run; null for runs launched before the column existed.
+export async function getRunResolvedCapabilitySet(
+  runId: string,
+): Promise<ResolvedCapabilitySet | null> {
+  const rows = await db()
+    .select({ resolved: runs.resolvedCapabilitySet })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return rows[0]?.resolved ?? null;
+}
+
 // null when the run has no such node (no capability materialization happened).
 export async function getRunCapabilityProfiles(
   runId: string,

@@ -736,6 +736,18 @@
       "PRECONDITION": "Запрос больше недоступен. Обновите страницу.",
       "UNAUTHORIZED": "У вас нет прав отвечать на этот запрос.",
       "ACCOUNT_INACTIVE": "Ваша учётная запись неактивна."
+    },
+    "resolvedSet": {
+      "title": "Итоговый набор возможностей",
+      "flowRevision": "Ревизия флоу",
+      "flowOrigin": "Источник",
+      "capabilities": "Возможности",
+      "mcps": "MCP-серверы",
+      "empty": "Нет",
+      "origin": {
+        "authored": "Авторский",
+        "git": "Git"
+      }
     }
   },
   "evidence": {

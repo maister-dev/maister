@@ -736,6 +736,18 @@
       "PRECONDITION": "This request is no longer available. Reload the page.",
       "UNAUTHORIZED": "You do not have permission to answer this request.",
       "ACCOUNT_INACTIVE": "Your account is inactive."
+    },
+    "resolvedSet": {
+      "title": "Resolved capability set",
+      "flowRevision": "Flow revision",
+      "flowOrigin": "Origin",
+      "capabilities": "Capabilities",
+      "mcps": "MCP servers",
+      "empty": "None",
+      "origin": {
+        "authored": "Authored",
+        "git": "Git"
+      }
     }
   },
   "evidence": {

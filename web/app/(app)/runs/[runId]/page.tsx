@@ -53,10 +53,15 @@ import { loadRunManifest } from "@/lib/queries/run-manifest";
 import {
   getRunCapabilityProfiles,
   getRunDetail,
+  getRunResolvedCapabilitySet,
   getRunSettings,
   getRunTimeline,
 } from "@/lib/queries/run";
 import { diffRange, resolveBaseCommit, resolveBaseRef } from "@/lib/worktree";
+import {
+  ResolvedCapabilitySetPanel,
+  type ResolvedCapabilitySetLabels,
+} from "@/components/runs/resolved-capability-set-panel";
 
 type RouteParams = {
   params: Promise<{ runId: string }>;
@@ -203,9 +208,23 @@ export default async function RunDetailPage({
   const canAct = role === "owner" || role === "admin" || role === "member";
   const t = await getTranslations("run");
 
+  const resolvedSetLabels: ResolvedCapabilitySetLabels = {
+    title: t("resolvedSet.title"),
+    flowRevision: t("resolvedSet.flowRevision"),
+    flowOrigin: t("resolvedSet.flowOrigin"),
+    capabilities: t("resolvedSet.capabilities"),
+    mcps: t("resolvedSet.mcps"),
+    empty: t("resolvedSet.empty"),
+    origin: {
+      authored: t("resolvedSet.origin.authored"),
+      git: t("resolvedSet.origin.git"),
+    },
+  };
+
   const timeline = await getRunTimeline(runId);
   const settings = await getRunSettings(runId);
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
+  const resolvedSet = await getRunResolvedCapabilitySet(runId);
   const evidence = await buildEvidenceGraph(runId);
   const readiness = await getRunReadiness(runId, detail.projectId);
   const tEvidence = await getTranslations("evidence");
@@ -686,6 +705,13 @@ export default async function RunDetailPage({
         <CapabilityProfilePanel
           labels={capabilityLabels}
           nodes={capabilityNodes}
+        />
+      ) : null}
+
+      {resolvedSet ? (
+        <ResolvedCapabilitySetPanel
+          labels={resolvedSetLabels}
+          resolved={resolvedSet}
         />
       ) : null}
 
