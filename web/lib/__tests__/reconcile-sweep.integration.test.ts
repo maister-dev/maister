@@ -415,6 +415,41 @@ describe("runReconcileSweep (integration)", () => {
     expect(summary.crashed).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
+  it("does NOT crash a Running agent whose acp_session_id is null mid-prompt when a live (runId, stepId) session exists", async () => {
+    // Inverse of the previous case: acp_session_id is persisted only AFTER a
+    // node's prompt returns, so a long in-flight agent node has a null run-row
+    // acp_session_id and the acp-keyed match misses. The supervisor DOES have a
+    // live (runId, stepId) session → the node is alive → SKIP, not crash (and
+    // not reattach, which would double-drive an actively-running node).
+    const inflight = await seedRun({
+      status: "Running",
+      currentStepId: "implement",
+      acpSessionId: null,
+      resumeStartedAt: null,
+    });
+
+    await seedWorkspace(inflight, "/worktrees/inflight");
+    await seedNodeAttempt(inflight, {
+      startedAt: new Date(Date.now() - 600_000), // past the 90s grace
+    });
+
+    // Live session for (runId, "implement") whose acpSessionId does NOT match
+    // the run row (which is null).
+    const { opts, scheduleResumedSessionDrive, runFlow } = makeOpts({
+      worktreePaths: ["/worktrees/inflight"],
+      liveSessions: [
+        liveRecord(inflight, "acp-inflight-unmatched", "implement"),
+      ],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(inflight)).status).toBe("Running"); // NOT crashed
+    expect(summary.crashed).toBe(0);
+    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled(); // skip, not reattach
+    expect(runFlow).not.toHaveBeenCalled();
+  }, 60_000);
+
   it("reattaches a Running run with a live session (no crash); drives with the live sessionId", async () => {
     const attached = await seedRun({
       status: "Running",

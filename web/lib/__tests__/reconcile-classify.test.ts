@@ -122,6 +122,49 @@ describe("classifyRunReconcile — step 3: live session → reattach", () => {
   });
 });
 
+describe("classifyRunReconcile — step 3.5: live (runId,stepId) session, acp unmatched → skip", () => {
+  // The crash bug: a long in-flight ai_coding node has acp_session_id = null on
+  // the run row (it is persisted only AFTER the prompt returns), so the
+  // acp-keyed `liveSession` is false. The supervisor DOES have a live session
+  // for (runId, stepId). Past the grace window the OLD code crashed it
+  // ("agent-session-gone"); the node is genuinely running, so it must skip.
+  it("agent past grace + acp-unmatched but live run/step session → skip / live-session-by-step", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          currentNodeKind: "ai_coding",
+          liveSession: false,
+          liveRunStepSession: true,
+          resumeStartedAt: ago(GRACE + 1000),
+          latestAttemptStartedAt: ago(GRACE + 1000),
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "live-session-by-step" });
+  });
+
+  it("acp-matched live session (reattach) wins over liveRunStepSession", () => {
+    expect(
+      classifyRunReconcile(input({ liveSession: true, liveRunStepSession: true })),
+    ).toEqual({ action: "reattach", reason: "live-session" });
+  });
+
+  it("worktree-gone wins over liveRunStepSession", () => {
+    expect(
+      classifyRunReconcile(
+        input({ worktreeExists: false, liveRunStepSession: true }),
+      ),
+    ).toEqual({ action: "crash", reason: "worktree-gone" });
+  });
+
+  it("a live run/step session skips regardless of node kind (still alive)", () => {
+    expect(
+      classifyRunReconcile(
+        input({ currentNodeKind: "cli", liveRunStepSession: true }),
+      ),
+    ).toEqual({ action: "skip", reason: "live-session-by-step" });
+  });
+});
+
 describe("classifyRunReconcile — step 4a: cli node, no live session → crash", () => {
   it("Running + no live session + cli node → crash / cli-not-retry-safe", () => {
     expect(classifyRunReconcile(input({ currentNodeKind: "cli" }))).toEqual({
