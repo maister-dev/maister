@@ -121,14 +121,33 @@ Status: **Implemented** — `web/lib/instance-config.ts` +
 - **Non-admin opens `/settings`** → forbidden branch; roots and host-tool
   status are not resolved or rendered.
 
+## Platform MCP server admin (Designed, M27)
+
+The `/settings` page hosts a **platform MCP server admin panel**, mirroring the
+ACP runner admin panel ([acp-runners.md](acp-runners.md), ADR-065). An admin
+can create, edit, enable/disable, and delete platform-scoped MCP server entries
+from the same settings page that shows host roots and host-tool status.
+
+The CRUD surface is backed by `platform_mcp_servers` and the route set at
+`/api/admin/mcp-servers`. Delete is usage-guarded: a server referenced by any
+active run or capability record cannot be removed until all references are
+resolved, returning `MaisterError("CONFLICT")` (409). Secret values are accepted
+only as `env:NAME` references — never stored or echoed as values. Full domain
+detail, state machine, and expectations are in
+[mcp-management.md](mcp-management.md).
+
 ## Linked artifacts
 
 - ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
-  (Implemented, M18 — gh/glab + Gitea-API token become required-for-PR).
+  (Implemented, M18 — gh/glab + Gitea-API token become required-for-PR),
+  [ADR-065](../decisions.md#adr-065) (admin CRUD surface pattern; MCP panel mirrors ACP runner panel),
+  [ADR-070](../decisions.md#adr-070) (platform MCP admin CRUD, Designed M27).
 - Config reference: [`../configuration.md`](../configuration.md) §Environment
   variables.
 - Related domains: [`projects.md`](projects.md),
-  [`git-integration.md`](git-integration.md) (provider PR dispatch).
+  [`git-integration.md`](git-integration.md) (provider PR dispatch),
+  [`acp-runners.md`](acp-runners.md) (admin CRUD precedent),
+  [`mcp-management.md`](mcp-management.md) (full MCP domain).
 - Source: `web/lib/instance-config.ts`,
   `web/app/(app)/settings/page.tsx`.

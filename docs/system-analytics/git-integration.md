@@ -28,6 +28,12 @@ PR creation** for `pull_request` promotion (**Implemented (M18)**) — see
 - **Branch push (`pushBranch`)** — **Implemented (M18)**. Pushes the run branch
   to the configured remote via the host git credential helper (no MAIster
   secret). Used by `pull_request` promotion before PR creation.
+- **Workbench lifecycle git helpers (`listRemotes`, `headCommit`,
+  `localBranchExists`, `remoteBranchExists`, `createBranchAtHead`)** —
+  **Implemented (M27)**. Used by workbench snapshot/handoff/export actions.
+  They validate remote and branch names before invoking git, keep the current
+  MAIster worktree on its server-owned run branch, and never create or update a
+  provider PR.
 - **`PrAdapter` (provider PR dispatch)** — **Implemented (M18)**. One interface,
   three implementations selected by the project's provider tag:
   `github`→`GhCliAdapter` (`gh` CLI), `gitlab`→`GlabCliAdapter` (`glab` CLI),
@@ -148,6 +154,39 @@ Status: **Implemented (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
 > Gitea-API compatibility was confirmed: `gitverse` rides the shared
 > `GiteaApiAdapter`; only the token var (`GITVERSE_TOKEN`) and `apiBase` differ.
 
+### Workbench snapshot and handoff git operations (Implemented, M27)
+
+Workbench lifecycle actions reuse the same host-credential model but do not
+mean promotion. `snapshot-commit` writes one commit on the run branch;
+`handoff-branch` creates a new branch at the workbench HEAD, checks local and
+remote collisions, pushes that branch, and returns checkout commands.
+
+```mermaid
+sequenceDiagram
+    actor U as Operator
+    participant UI as MAIster UI
+    participant LC as workbench lifecycle service
+    participant GIT as git (host)
+
+    U->>UI: Commit dirty work
+    UI->>LC: POST /api/runs/{runId}/snapshot-commit
+    LC->>GIT: statusPorcelain
+    LC->>GIT: git add -A && git commit --no-verify
+    LC->>GIT: rev-parse HEAD
+    LC-->>UI: commit SHA
+
+    U->>UI: Create handoff branch
+    UI->>LC: POST /api/runs/{runId}/handoff-branch
+    LC->>GIT: remote + branch collision checks
+    LC->>GIT: git branch handoff HEAD
+    LC->>GIT: git push remote handoff
+    LC-->>UI: pushed ref + checkout commands
+```
+
+Status: **Implemented (M27)** — `web/lib/workbench-lifecycle/service.ts` +
+`web/lib/worktree.ts`. Branch/remote/path inputs are validated by typed helper
+schemas, and secret-bearing remote output is redacted before errors surface.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential
@@ -193,6 +232,12 @@ Status: **Implemented (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
   configured remote → `PRECONDITION`; the run stays `Review`.
 - **(Implemented, M18) push rejected / PR-API 5xx** → transient →
   `EXECUTOR_UNAVAILABLE` (HTTP 503); the promotion is idempotently retryable.
+- **(Implemented, M27) workbench handoff remote missing or branch collision** →
+  `PRECONDITION`/`CONFLICT` (HTTP 409); the workbench remains in its current
+  state and no provider PR is created.
+- **(Implemented, M27) handoff remote check or push transiently fails** →
+  `EXECUTOR_UNAVAILABLE` (HTTP 503); the lifecycle claim is left retryable and
+  the operator can re-run the action.
 
 ## Linked artifacts
 
@@ -203,6 +248,10 @@ Status: **Implemented (M18)** — `web/lib/worktree.ts` (`pushBranch`) +
   [`../deployment.md`](../deployment.md).
 - Related domains: [`projects.md`](projects.md),
   [`instance-config.md`](instance-config.md) (gh/glab + Gitea-API token status),
-  [`workspaces.md`](workspaces.md) (promotion service that drives push + PR).
+  [`workspaces.md`](workspaces.md) (promotion service that drives push + PR),
+  [`workbench-lifecycle.md`](workbench-lifecycle.md) (snapshot, export, and
+  handoff operations).
 - Source: `web/lib/repo-source.ts`; **(Implemented, M18)** `web/lib/worktree.ts`
-  (`pushBranch`), `web/lib/runs/pr-adapter.ts`.
+  (`pushBranch`), `web/lib/runs/pr-adapter.ts`; **(Implemented, M27)**
+  `web/lib/worktree.ts` (`listRemotes`, `headCommit`, branch collision helpers,
+  `createBranchAtHead`).

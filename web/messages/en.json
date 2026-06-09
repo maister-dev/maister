@@ -517,6 +517,25 @@
     "editRunnerTitle": "Edit runner",
     "editAction": "Edit",
     "deleteRunner": "Delete",
+    "mcpServersTitle": "MCP servers",
+    "addMcp": "Add MCP server",
+    "mcpEmpty": "No MCP servers configured.",
+    "createMcpTitle": "Create MCP server",
+    "editMcpTitle": "Edit MCP server",
+    "deleteMcp": "Delete",
+    "deleteMcpConfirm": "Delete this MCP server? This cannot be undone.",
+    "colTransport": "Transport",
+    "colTarget": "Command / URL",
+    "colAgents": "Agents",
+    "fieldMcpId": "Server id",
+    "fieldTransport": "Transport",
+    "fieldCommand": "Command",
+    "fieldArgs": "Args (space-separated)",
+    "fieldEnvKeys": "Env keys (env:NAME)",
+    "fieldUrl": "URL",
+    "fieldHeaderKeys": "Header keys (env:NAME)",
+    "fieldSupportedAgents": "Supported agents",
+    "secretRefHint": "Secret references only (env:NAME) — values resolve server-side.",
     "fromPreset": "Start from preset",
     "sidecarNone": "none",
     "colId": "ID",
@@ -728,6 +747,18 @@
       "PRECONDITION": "This request is no longer available. Reload the page.",
       "UNAUTHORIZED": "You do not have permission to answer this request.",
       "ACCOUNT_INACTIVE": "Your account is inactive."
+    },
+    "resolvedSet": {
+      "title": "Resolved capability set",
+      "flowRevision": "Flow revision",
+      "flowOrigin": "Origin",
+      "capabilities": "Capabilities",
+      "mcps": "MCP servers",
+      "empty": "None",
+      "origin": {
+        "authored": "Authored",
+        "git": "Git"
+      }
     }
   },
   "evidence": {
@@ -1043,6 +1074,39 @@
     "errorGeneric": "Action failed. Try again.",
     "adminOnly": "Package management requires the admin project role."
   },
+  "mcpPanel": {
+    "title": "Project MCP servers",
+    "count": "{count} servers",
+    "add": "Add MCP",
+    "adminOnly": "Managing project MCP servers requires the admin project role.",
+    "empty": "No project MCP servers configured yet.",
+    "colId": "ID",
+    "colTransport": "Transport",
+    "colTarget": "Target",
+    "colAgents": "Agents",
+    "colEnabled": "Enabled",
+    "colActions": "Actions",
+    "edit": "Edit",
+    "createTitle": "Add project MCP server",
+    "editTitle": "Edit project MCP server",
+    "close": "Close",
+    "fieldId": "Server ID",
+    "fieldTransport": "Transport",
+    "fieldCommand": "Command",
+    "fieldArgs": "Arguments",
+    "fieldEnvKeys": "Environment key references",
+    "secretRefHint": "Secrets are env:NAME references only — never raw values.",
+    "fieldUrl": "URL",
+    "fieldHeaderKeys": "Header key references",
+    "fieldSupportedAgents": "Supported agents",
+    "fieldEnabled": "Enabled",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "saveFailed": "Save failed",
+    "delete": "Delete",
+    "deleteConfirm": "Confirm delete"
+  },
   "tokens": {
     "title": "API tokens",
     "empty": "No API tokens for this project yet.",
@@ -1096,6 +1160,49 @@
     "archived": "Archived",
     "pruned": "Pruned"
   },
+  "workbenchLifecycle": {
+    "action": {
+      "stop": "Stop",
+      "archive": "Archive",
+      "drop": "Drop",
+      "snapshotCommit": "Commit",
+      "exportBranch": "Export"
+    },
+    "defaultCommitMessage": "maister: export {runId}",
+    "busy": "{action}…",
+    "errorWithCode": "Action failed: {code}",
+    "dialog": {
+      "cancel": "Cancel",
+      "confirm": "Confirm",
+      "commit": "Commit",
+      "push": "Push",
+      "forcePush": "Force push",
+      "handoff": "Create branch",
+      "copy": "Copy",
+      "clean": "Worktree is clean.",
+      "dirty": "Commit dirty work before pushing this run branch.",
+      "commitMessage": "Commit message",
+      "remote": "Remote",
+      "runBranch": "Run branch: {branch}",
+      "handoffBranch": "Optional handoff branch",
+      "handoffHelp": "Creates and pushes a separate branch at the current worktree HEAD.",
+      "invalidRemote": "Remote names can use letters, numbers, _, ., /, or - and cannot start with -.",
+      "invalidBranch": "Branch names can use letters, numbers, _, ., /, or - and cannot contain .., @{, a trailing slash, or .lock.",
+      "snapshotDone": "Snapshot commit {commit}",
+      "title": {
+        "stop": "Stop run",
+        "archive": "Archive workbench",
+        "drop": "Drop workbench",
+        "snapshotCommit": "Snapshot commit",
+        "exportBranch": "Export branch"
+      },
+      "body": {
+        "stop": "Stop the run and keep its worktree for review.",
+        "archive": "Preserve recoverable work into an archive ref and keep the worktree on disk.",
+        "drop": "Preserve recoverable work, then remove only the MAIster-owned worktree."
+      }
+    }
+  },
   "projectMembers": {
     "tab": "Members",
     "title": "Team members",
@@ -1120,5 +1227,103 @@
     "alreadyMember": "This user is already a member.",
     "staleConflict": "This member was changed by someone else. Refresh and try again.",
     "lastError": "Something went wrong. Try again."
+  },
+  "flowEditor": {
+    "toolbar": {
+      "addNode": "Add node",
+      "removeNode": "Remove node",
+      "addGate": "Add gate",
+      "selectNodeHint": "Select a node to add a gate",
+      "nodeType": {
+        "ai_coding": "AI coding",
+        "cli": "CLI",
+        "check": "Check",
+        "judge": "Judge",
+        "human": "Human"
+      },
+      "gateKind": {
+        "command_check": "Command check",
+        "skill_check": "Skill check",
+        "ai_judgment": "AI judgment",
+        "artifact_required": "Artifact required",
+        "external_check": "External check",
+        "human_review": "Human review"
+      }
+    },
+    "nodeForm": {
+      "empty": "Select a node to edit",
+      "action": "Action",
+      "settings": "Settings",
+      "gates": "Gates",
+      "transitions": "Transitions",
+      "rework": "Rework",
+      "output": "Structured output",
+      "prompt": "Prompt",
+      "command": "Command",
+      "model": "Model",
+      "thinkingEffort": "Thinking effort",
+      "permissionMode": "Permission mode",
+      "workspaceAccess": "Workspace access",
+      "skills": "Skills (comma-separated)",
+      "restrictions": "Restrictions (comma-separated)",
+      "mcps": "Additional MCPs (comma-separated)",
+      "enforcement": {
+        "title": "Enforcement",
+        "mcps": "MCPs",
+        "tools": "Tools",
+        "skills": "Skills",
+        "restrictions": "Restrictions",
+        "permissionMode": "Permission mode",
+        "workspaceAccess": "Workspace access"
+      },
+      "timeoutMs": "Timeout (ms)",
+      "environmentPolicy": "Environment policy",
+      "failureClass": "Failure class",
+      "decisions": "Decisions (comma-separated)",
+      "criticality": "Criticality",
+      "roles": "Roles (comma-separated)",
+      "assignees": "Assignees (comma-separated)",
+      "allowTakeover": "Allow takeover",
+      "outputSchema": "Result schema path",
+      "outputRequired": "Required",
+      "reworkAllowedTargets": "Allowed targets (comma-separated)",
+      "reworkWorkspacePolicies": "Workspace policies (comma-separated)",
+      "reworkMaxLoops": "Max loops",
+      "reworkCommentsVar": "Comments variable",
+      "transitionOutcome": "Outcome",
+      "transitionTarget": "Target",
+      "addTransition": "Add transition",
+      "removeTransition": "Remove",
+      "noTransitions": "No transitions",
+      "noGates": "No gates"
+    },
+    "gate": {
+      "mode": "Mode",
+      "modeBlocking": "Blocking",
+      "modeAdvisory": "Advisory",
+      "command": "Command",
+      "prompt": "Prompt",
+      "skill": "Skill",
+      "confidenceMin": "Min confidence",
+      "externalDescription": "External description",
+      "staleOnNewCommit": "Stale on new commit",
+      "remove": "Remove gate"
+    },
+    "diff": {
+      "empty": "No changes since the last published revision"
+    },
+    "validation": {
+      "valid": "No validation issues",
+      "title": "Validation issues"
+    },
+    "page": {
+      "graphTab": "Graph",
+      "yamlTab": "Raw YAML",
+      "diffTab": "Diff",
+      "save": "Save draft",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "saveError": "Save failed"
+    }
   }
 }

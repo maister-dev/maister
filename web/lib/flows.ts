@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { FlowRevisionExecTrust } from "@/lib/db/schema";
 import type { TrustStatus } from "@/lib/flows/trust";
 
 import { execFile } from "node:child_process";
@@ -77,6 +78,11 @@ export type InstallFlowPluginArgs = {
   // loader rejects node settings refs absent from it (M14 carve-b). Omitted by
   // generic callers (enable/upgrade) that have no project context → no check.
   capabilityRefIds?: CapabilityRefIdsInput;
+  // Override the exec_trust value written to flow_revisions. When absent,
+  // exec_trust is derived from trustStatus: trusted_by_policy → 'trusted',
+  // untrusted → 'untrusted'. Authored-bridge callers set this to 'untrusted'
+  // to suppress setup.sh execution regardless of logic-trust (§4.2, §6.4).
+  execTrustOverride?: FlowRevisionExecTrust;
   // FIXME(any): dual drizzle-orm peer-dep variants. Caller may pass
   // either a node-postgres or better-sqlite3 drizzle client.
   db?: any;
@@ -896,13 +902,26 @@ async function installFlowPluginImpl(
   });
 
   const trustStatus = trustStatusOverride ?? resolveTrust(source);
-  // Trusted-by-policy sources auto-enable to preserve the one-shot register UX;
-  // untrusted sources install but stay Installed until explicit trust + enable.
-  // Setup.sh runs HERE (trust already established by policy) before enabling,
-  // never during installRevision — untrusted sources never reach this branch.
+
+  // Two-axis trust gate (§4.2, §6.4):
+  //   execTrust = 'trusted'   → setup.sh runs at install (git/policy path).
+  //   execTrust = 'untrusted' → setup.sh deferred until explicit flip.
+  // authored-bridge passes execTrustOverride='untrusted' to suppress setup.sh
+  // even when logic-trust is trusted_by_policy.
+  const execTrust: FlowRevisionExecTrust =
+    args.execTrustOverride ??
+    (trustStatus === "untrusted" ? "untrusted" : "trusted");
+
+  await db
+    .update(flowRevisions)
+    .set({ execTrust })
+    .where(eq(flowRevisions.id, rev.revisionId));
+
+  // git/policy installs (execTrust=trusted) run setup.sh now; authored-bridge
+  // installs (execTrust=untrusted) skip setup and auto-enable without it.
   let enablementState: "Enabled" | "Installed" = "Installed";
 
-  if (trustStatus === "trusted_by_policy") {
+  if (execTrust === "trusted") {
     const setupStatus =
       rev.setupStatus === "pending"
         ? await runRevisionSetup({
@@ -921,6 +940,12 @@ async function installFlowPluginImpl(
     } else {
       enablementState = "Enabled";
     }
+  } else {
+    // exec-untrusted authored install: auto-enable (without setup.sh) only when
+    // logic-trust is trusted_by_policy. If trustStatus is 'untrusted', the flow
+    // stays Installed until trust is explicitly confirmed (same as the git path).
+    enablementState =
+      trustStatus === "trusted_by_policy" ? "Enabled" : "Installed";
   }
 
   // The project symlink tracks the enabled revision's cache directory.
@@ -998,6 +1023,7 @@ export async function installFlowPlugin(
 
 export async function installAuthoredFlowPackageBridge(
   args: InstallFlowPluginArgs,
+  trustStatusOverride?: TrustStatus,
 ): Promise<InstallResult> {
   validateBoundary(args);
   const source = resolvePath(args.source);
@@ -1032,9 +1058,13 @@ export async function installAuthoredFlowPackageBridge(
       flowId: args.flowId,
       source,
       version: args.version,
+      trustStatusOverride,
     },
     "install authored Flow package bridge start",
   );
 
-  return installFlowPluginImpl({ ...args, source }, "untrusted");
+  return installFlowPluginImpl(
+    { ...args, source, execTrustOverride: "untrusted" },
+    trustStatusOverride ?? "untrusted",
+  );
 }

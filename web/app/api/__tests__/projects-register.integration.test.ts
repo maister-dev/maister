@@ -85,7 +85,6 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 vi.mock("@/lib/config", () => ({
-  loadPlatformMcpCapabilities: vi.fn(async () => []),
   loadProjectConfig: vi.fn(async () => currentConfig),
   buildCapabilityRefIds: vi.fn(() => ({
     mcp: new Set<string>(),

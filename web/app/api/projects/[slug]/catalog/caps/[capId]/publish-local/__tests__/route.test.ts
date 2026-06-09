@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const publishAuthoredCapabilityLocalMock = vi.hoisted(() => vi.fn());
 const authorizeCatalogRouteProjectMock = vi.hoisted(() => vi.fn());
+const bridgePublishedAuthoredFlowMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/catalog/authored-service", () => ({
   publishAuthoredCapabilityLocal: publishAuthoredCapabilityLocalMock,
@@ -10,14 +11,22 @@ vi.mock("@/lib/catalog/authored-service", () => ({
 vi.mock("@/lib/catalog/route-auth", () => ({
   authorizeCatalogRouteProject: authorizeCatalogRouteProjectMock,
 }));
+vi.mock("@/lib/flows/authored-bridge", () => ({
+  bridgePublishedAuthoredFlow: bridgePublishedAuthoredFlowMock,
+}));
 
 describe("/api/projects/[slug]/catalog/caps/[capId]/publish-local", () => {
   beforeEach(() => {
     vi.resetModules();
     publishAuthoredCapabilityLocalMock.mockReset();
     authorizeCatalogRouteProjectMock.mockReset();
+    bridgePublishedAuthoredFlowMock.mockReset();
     authorizeCatalogRouteProjectMock.mockResolvedValue({
       projectId: "project-demo",
+    });
+    bridgePublishedAuthoredFlowMock.mockResolvedValue({
+      flowRowId: "flow-row-1",
+      revisionId: "bridge-rev-1",
     });
   });
 

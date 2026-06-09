@@ -225,6 +225,48 @@
       "when": 1780931982269,
       "tag": "0031_token_actor_scope_support",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781003330102,
+      "tag": "0032_m27_workbench_lifecycle_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1781003330103,
+      "tag": "0033_m27_authored_source_flow_ref",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1781003330104,
+      "tag": "0034_m27_flows_version_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1781003330105,
+      "tag": "0035_m27_flow_revisions_exec_trust",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1781003330106,
+      "tag": "0036_m27_platform_mcp_servers",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1781003330107,
+      "tag": "0037_m27_runs_resolved_capability_set",
+      "breakpoints": true
     }
   ]
 }

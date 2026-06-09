@@ -65,6 +65,7 @@ erDiagram
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
+        jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
         timestamp started_at
         timestamp ended_at
     }
@@ -92,6 +93,10 @@ erDiagram
         timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
         text promotion_owner_user_id FK "M18 0021 users.id, nullable"
         text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
+        text lifecycle_operation_state "M27 0032 none|claiming|failed (NOT NULL DEFAULT none)"
+        timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp"
+        text lifecycle_operation_attempt_id "M27 0032 per-attempt CAS token"
+        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch"
     }
 
     STEP_RUNS {
@@ -338,6 +343,7 @@ only for explicit HITL or permission waits.
 - `RUNS.created_by_user_id` is nullable for legacy rows and records launched-by
   display/audit ownership for new Flow and scratch launches. Scratch v1
   authorization remains project-role based.
+- `RUNS.resolved_capability_set` **(Designed, M27)**: frozen at launch by `launchRun`; the runner reads this snapshot, never the live catalog. Shape: `{ flowRevisionId, flowOrigin, capabilities: {refId,kind,sha}[], mcps: {refId,sha,scope}[] }`. An edit or publish during a run must NOT mutate this field.
 - `SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES` — append-only dialog ledger with
   monotonic sequence per run.
 - `SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES` — exactly one launch-time

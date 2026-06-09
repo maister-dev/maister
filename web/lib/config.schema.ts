@@ -86,9 +86,16 @@ const capabilityCommonSchema = z.object({
 
 export const mcpCapabilitySchema = capabilityCommonSchema.extend({
   kind: z.literal("mcp").default("mcp"),
+  // M27/T-C4: transport. Absent ⇒ `stdio` (back-compat) — readers default via
+  // `?? "stdio"`. `stdio` uses command/args/env; `sse`/`http` use url/headers.
+  // Header/env values are NEVER stored — only the NAME keys reach
+  // `capability_records.material`; values resolve supervisor-side.
+  transport: z.enum(["stdio", "sse", "http"]).optional(),
   command: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  url: z.string().url().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   enforceability: capabilityEnforceabilitySchema.default("enforced"),
 });
@@ -515,6 +522,39 @@ export const flowRunnerProfileSchema = z
   })
   .strict();
 
+// M27/T-C6 (§3.2): a node's MCP selection is either a bare `string[]`
+// (back-compat — treated as `additional`) or a `{ required?, additional? }`
+// split. REQUIRED MCPs gate launch (T-C8); ADDITIONAL are best-effort. Both
+// branches are validated against the project registry by the hard-gate.
+const nodeMcpsSchema = z.union([
+  z.array(z.string().min(1)),
+  z
+    .object({
+      required: z.array(z.string().min(1)).optional(),
+      additional: z.array(z.string().min(1)).optional(),
+    })
+    .strict(),
+]);
+
+export type NodeMcpsConfig = z.infer<typeof nodeMcpsSchema>;
+
+export function normalizeNodeMcps(mcps: NodeMcpsConfig | undefined): {
+  required: string[];
+  additional: string[];
+} {
+  if (mcps === undefined) return { required: [], additional: [] };
+  if (Array.isArray(mcps)) return { required: [], additional: [...mcps] };
+
+  return { required: mcps.required ?? [], additional: mcps.additional ?? [] };
+}
+
+// Deduped union of required + additional — the full selected set for a node.
+export function allNodeMcpRefs(mcps: NodeMcpsConfig | undefined): string[] {
+  const { required, additional } = normalizeNodeMcps(mcps);
+
+  return [...new Set([...required, ...additional])];
+}
+
 export const aiCodingSettingsSchema = z
   .object({
     runner_type: z.literal("acp").default("acp"),
@@ -522,7 +562,7 @@ export const aiCodingSettingsSchema = z
     executors: z.never().optional(),
     model: z.string().min(1).optional(),
     thinkingEffort: thinkingEffortSchema.optional(),
-    mcps: z.array(z.string().min(1)).optional(),
+    mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
     skills: z.array(z.string().min(1)).optional(),
     settingsProfile: z.string().min(1).optional(),
@@ -537,7 +577,7 @@ export const aiCodingSettingsSchema = z
 
 export const judgeSettingsSchema = z
   .object({
-    mcps: z.array(z.string().min(1)).optional(),
+    mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
     skills: z.array(z.string().min(1)).optional(),
     restrictions: z.array(z.string().min(1)).optional(),
@@ -737,6 +777,10 @@ export const flowYamlV1Schema = z
     gates: z.array(z.string().min(1)).optional(),
     artifacts: z.array(z.string().min(1)).optional(),
     external_ops: z.array(z.string().min(1)).optional(),
+    // M27/T-C6 (ADR-070): package-level REQUIRED MCP declaration — capability
+    // ref ids the flow package needs. The hard-gate rejects unknown refs
+    // (CONFIG); launch refuses a required MCP that cannot materialize (T-C8).
+    mcps: z.array(z.string().min(1)).optional(),
     // M15: flow-level calibration default, folded into each ai_judgment/skill_check
     // gate's effective calibration at compile time.
     verdict_calibration: z

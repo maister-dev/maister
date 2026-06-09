@@ -173,6 +173,37 @@ async function repointSymlink(
 
 // Switch a project's enabled revision to `revisionId` and refresh the
 // denormalized flows cache from the revision's manifest.
+/**
+ * M27/T-B4: resolve the effective flow revision to launch, honoring
+ * `flows.version_binding` (ADR-069).
+ *
+ * Stage-1 semantics: BOTH `pinned` and `latest` resolve the M10 per-project
+ * `enabled_revision_id`. This is correct AND safe:
+ * - Authored flows already auto-follow "latest" because the publish→bridge path
+ *   (T-B2) updates `flows.enabled_revision_id` to the newest published revision
+ *   on every publish — so the enabled pointer IS the latest authored revision.
+ * - `flow_revisions` are GLOBAL (content-addressed by `flow_ref_id`, shared
+ *   across projects per M10). A launch-time "newest in the pool" query would
+ *   mis-resolve to another project's same-`flow_ref_id` revision, so we trust
+ *   the per-project enablement pointer rather than the global pool.
+ * - Git multi-revision auto-follow (the `UpdateAvailable` upgrade case) stays
+ *   M10-upgrade territory, out of M27 scope.
+ *
+ * `version_binding` is persisted + toggleable (T-B1) for the future git
+ * auto-follow stage; the per-revision launch guards still gate the resolved
+ * revision at the call site.
+ */
+export async function resolveEffectiveFlowRevision(
+  _db: Db,
+  flow: {
+    flowRefId: string;
+    enabledRevisionId: string | null;
+    versionBinding: string;
+  },
+): Promise<string | null> {
+  return flow.enabledRevisionId;
+}
+
 export async function enableRevision(args: {
   projectId: string;
   flowRefId: string;
@@ -243,6 +274,13 @@ export async function enableRevision(args: {
         updatedAt: new Date(),
       })
       .where(eq(flows.id, flow.id));
+
+    // Enabling a revision confirms trust — flip exec_trust so any subsequent
+    // setup.sh run (e.g. from the trust-executable endpoint) is permitted.
+    await tx
+      .update(flowRevisions)
+      .set({ execTrust: "trusted" })
+      .where(eq(flowRevisions.id, rev.id));
   });
 
   await repointSymlink(db, args.projectId, args.flowRefId, rev.installedPath);

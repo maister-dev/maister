@@ -6,16 +6,156 @@ import type {
   CapabilityProfileEntry,
   ResolvedCapabilityProfile,
 } from "@/lib/capabilities/types";
+import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 
 import { createHash } from "node:crypto";
 
 import { and, eq, isNull } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 const { capabilityRecords } = schemaModule as unknown as Record<string, any>;
+
+const log = pino({
+  name: "capability-resolver",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+// M27/T-C7 (§6.1): uniform local-first precedence for EVERY capability kind.
+// Lower number wins. A project record shadows a platform record of the same
+// (kind, refId), which shadows a flow-package record — no merge, no duplicate.
+const SOURCE_PRECEDENCE: Record<string, number> = {
+  project: 0,
+  platform: 1,
+  "flow-package": 2,
+};
+
+function sourceRank(source: string): number {
+  return SOURCE_PRECEDENCE[source] ?? Number.MAX_SAFE_INTEGER;
+}
+
+// M27/T-C8 (§7.1.8): freeze the launch-time resolved capability set. Picks the
+// local-first winner per (kind, refId) — same precedence as selectedRecords —
+// then splits into capabilities (non-mcp) + mcps. Written onto
+// runs.resolved_capability_set so an edit/publish mid-run cannot mutate the run.
+export function buildResolvedCapabilitySet(args: {
+  records: ReadonlyArray<{
+    capabilityRefId: string;
+    kind: string;
+    source: string;
+    revision: string | null;
+  }>;
+  flowRevisionId: string;
+  flowOrigin: "authored" | "git";
+}): ResolvedCapabilitySet {
+  const winnerByKey = new Map<string, (typeof args.records)[number]>();
+
+  for (const record of args.records) {
+    const key = `${record.kind}::${record.capabilityRefId}`;
+    const existing = winnerByKey.get(key);
+
+    if (!existing || sourceRank(record.source) < sourceRank(existing.source)) {
+      winnerByKey.set(key, record);
+    }
+  }
+
+  const winners = [...winnerByKey.values()];
+
+  return {
+    flowRevisionId: args.flowRevisionId,
+    flowOrigin: args.flowOrigin,
+    capabilities: winners
+      .filter((r) => r.kind !== "mcp")
+      .map((r) => ({
+        refId: r.capabilityRefId,
+        kind: r.kind,
+        sha: r.revision,
+        scope: r.source,
+      })),
+    mcps: winners
+      .filter((r) => r.kind === "mcp")
+      .map((r) => ({
+        refId: r.capabilityRefId,
+        sha: r.revision,
+        scope: r.source,
+      })),
+  };
+}
+
+// M27/T-B5 (≡ C8b(1), ADR-069): constrain the runner's capability universe to
+// the launch-frozen resolved set. Keeps only live records whose
+// (kind, refId, scope) matches a frozen winner, so a record added/republished
+// at any scope mid-run cannot enter (or override) what this run materializes —
+// in-flight immutability. A null snapshot (legacy / pre-C8a run) falls back to
+// the live catalog unchanged. Material is read from the (still-present) live
+// row; set membership + winning scope are what the snapshot freezes.
+export function pinCatalogToSnapshot<
+  T extends { kind: string; capabilityRefId: string; source: string },
+>(
+  liveCatalog: readonly T[],
+  snapshot: ResolvedCapabilitySet | null | undefined,
+): T[] {
+  if (!snapshot) return liveCatalog as T[];
+
+  const frozen = new Set<string>();
+
+  for (const c of snapshot.capabilities) {
+    frozen.add(`${c.kind}::${c.refId}::${c.scope}`);
+  }
+  for (const m of snapshot.mcps) {
+    frozen.add(`mcp::${m.refId}::${m.scope}`);
+  }
+
+  return liveCatalog.filter((r) =>
+    frozen.has(`${r.kind}::${r.capabilityRefId}::${r.source}`),
+  );
+}
+
+// M27/T-C8b (mcp-management.md §6.2): a REQUIRED mcp whose local-first WINNER
+// record does not support the executor agent cannot materialize → the launch
+// gate refuses with EXECUTOR_UNAVAILABLE. The winner is picked by the same
+// precedence as resolution (project > platform > flow-package), so a shadowed
+// lower-precedence record that WOULD support the agent does not rescue it. An
+// unresolved required ref is owned by the unknown-ref gate (CONFIG); skipped
+// here. Returns the first offending ref, or null when all required mcps resolve
+// to an agent-supporting winner.
+export function firstAgentUnsupportedRequiredMcp(
+  requiredMcpRefs: readonly string[],
+  mcpRecords: ReadonlyArray<{
+    capabilityRefId: string;
+    source: string;
+    agents: CapabilityCatalogRecord["agents"];
+  }>,
+  agent: CapabilityAgent,
+): string | null {
+  if (requiredMcpRefs.length === 0) return null;
+
+  const winner = new Map<
+    string,
+    { rank: number; agents: CapabilityCatalogRecord["agents"] }
+  >();
+
+  for (const r of mcpRecords) {
+    const rank = sourceRank(r.source);
+    const prev = winner.get(r.capabilityRefId);
+
+    if (!prev || rank < prev.rank) {
+      winner.set(r.capabilityRefId, { rank, agents: r.agents });
+    }
+  }
+
+  for (const ref of new Set(requiredMcpRefs)) {
+    const w = winner.get(ref);
+
+    if (!w) continue;
+    if (!supportsAgent(w.agents, agent)) return ref;
+  }
+
+  return null;
+}
 
 export type ResolveCapabilityProfileArgs = {
   projectId: string;
@@ -145,21 +285,25 @@ function selectedRecords(
     byRef.set(record.capabilityRefId, records);
   }
 
-  return ids.flatMap((id) => {
+  return ids.map((id) => {
     const records = byRef.get(id);
 
-    if (!records) {
+    if (!records || records.length === 0) {
       throw new MaisterError(
         "CONFIG",
         `Unknown or unavailable ${kind} capability id "${id}"`,
       );
     }
 
+    // Local-first winner (§6.1): exactly ONE record per (kind, refId) by
+    // source precedence project > platform > flow-package. Same id at a lower
+    // precedence is shadowed (NOT merged, NOT duplicated). Tie-break on the
+    // unique row id for determinism.
     return [...records].sort((a, b) => {
-      const sourceOrder = a.source.localeCompare(b.source);
+      const bySource = sourceRank(a.source) - sourceRank(b.source);
 
-      return sourceOrder === 0 ? a.id.localeCompare(b.id) : sourceOrder;
-    });
+      return bySource !== 0 ? bySource : a.id.localeCompare(b.id);
+    })[0];
   });
 }
 
@@ -189,6 +333,18 @@ export function resolveCapabilityProfile(
     ...selectedRecords(catalog, "agent_definition", selectedAgentDefinitionIds),
     ...selectedRecords(catalog, "restriction", selectedRestrictionIds),
   ];
+
+  log.debug(
+    {
+      projectId: args.projectId,
+      executorAgent: args.executorAgent,
+      winners: selected.map(
+        (r) => `${r.kind}/${r.capabilityRefId}@${r.source}`,
+      ),
+    },
+    "[capabilities.resolver] local-first winners selected",
+  );
+
   const enforced: CapabilityProfileEntry[] = [];
   const instructed: CapabilityProfileEntry[] = [];
   const supported: CapabilityProfileEntry[] = [];

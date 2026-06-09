@@ -12,11 +12,17 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// M27/T-C4: transport-tagged. `stdio` carries command/args/envKeys; `sse`/`http`
+// carry url/headerKeys. Header/env values are resolved supervisor-side from the
+// NAME keys — never carried here.
 export type AgentMcpServer = {
   name: string;
-  command: string;
-  args: string[];
-  envKeys: string[];
+  transport: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  envKeys?: string[];
+  url?: string;
+  headerKeys?: string[];
 };
 
 export type AgentSettingsLocal = {
@@ -54,30 +60,55 @@ function envKeysOf(material: CapabilityMaterial): string[] {
   return Array.isArray(material.envKeys) ? (material.envKeys as string[]) : [];
 }
 
+function headerKeysOf(material: CapabilityMaterial): string[] {
+  return Array.isArray(material.headerKeys)
+    ? (material.headerKeys as string[])
+    : [];
+}
+
+function mcpServerFromMaterial(
+  name: string,
+  material: CapabilityMaterial,
+): AgentMcpServer {
+  const transport =
+    material.transport === "sse" || material.transport === "http"
+      ? material.transport
+      : "stdio";
+
+  if (transport === "sse" || transport === "http") {
+    return {
+      name,
+      transport,
+      url: typeof material.url === "string" ? material.url : "",
+      headerKeys: headerKeysOf(material),
+    };
+  }
+
+  return {
+    name,
+    transport: "stdio",
+    command: typeof material.command === "string" ? material.command : "",
+    args: Array.isArray(material.args) ? (material.args as string[]) : [],
+    envKeys: envKeysOf(material),
+  };
+}
+
 export function mapProfileToAgentArtifacts(
   args: MapProfileToAgentArtifactsArgs,
 ): AgentMaterialization {
-  if (args.agent === "codex") {
-    log.debug(
-      {
-        agent: args.agent,
-        mcpCount: 0,
-        skillCount: 0,
-        toolCount: 0,
-        hasPermissionMode: false,
-      },
-      "[capabilities.agentMap] mapped profile",
-    );
-
-    return { settingsLocal: null, mcpServers: [], skills: [] };
-  }
-
   const supported: CapabilityProfileEntry[] = args.profile.supported;
+  // M27/T-C4: MCP servers materialize for BOTH agents — codex-acp consumes MCP
+  // via the ACP session/new mcpServers param, same wire as claude. Only the
+  // Claude-adapter-specific surfaces are gated to claude: `.claude/settings.
+  // local.json` (permissions) and on-disk skill files. Codex skills are invoked
+  // via `$`-syntax (a separate materialization path, not this MCP scope).
+  const isClaude = args.agent === "claude";
 
-  const allow = args.tools?.length ? [...args.tools] : undefined;
-  const defaultMode = args.permissionMode
-    ? PERMISSION_MODE_TO_DEFAULT_MODE[args.permissionMode]
-    : undefined;
+  const allow = isClaude && args.tools?.length ? [...args.tools] : undefined;
+  const defaultMode =
+    isClaude && args.permissionMode
+      ? PERMISSION_MODE_TO_DEFAULT_MODE[args.permissionMode]
+      : undefined;
   const permissions: AgentSettingsLocal["permissions"] = {};
 
   if (allow !== undefined) permissions.allow = allow;
@@ -91,15 +122,10 @@ export function mapProfileToAgentArtifacts(
 
   for (const entry of supported) {
     if (entry.kind === "mcp") {
-      const material = entry.material;
-
-      mcpServers.push({
-        name: entry.capabilityRefId,
-        command: typeof material.command === "string" ? material.command : "",
-        args: Array.isArray(material.args) ? (material.args as string[]) : [],
-        envKeys: envKeysOf(material),
-      });
-    } else if (entry.kind === "skill") {
+      mcpServers.push(
+        mcpServerFromMaterial(entry.capabilityRefId, entry.material),
+      );
+    } else if (entry.kind === "skill" && isClaude) {
       skills.push({ refId: entry.capabilityRefId, material: entry.material });
     }
   }
@@ -116,4 +142,19 @@ export function mapProfileToAgentArtifacts(
   );
 
   return { settingsLocal, mcpServers, skills };
+}
+
+// M27/T-C8b (mcp-management.md §6.2): an MCP `stdio` server spawns a LOCAL
+// command, so it is withheld until the owning flow revision is exec-trusted
+// (the T-B3 `flow_revisions.exec_trust` axis) — "trust → execute, never
+// execute-then-trust". `sse`/`http` connect to a remote URL (no local exec) and
+// are never gated. The runner applies this to the materialized set BEFORE the
+// servers reach the agent's createSession (the only spawn surface).
+export function gateStdioMcpsByExecTrust(
+  mcpServers: readonly AgentMcpServer[],
+  execTrust: "untrusted" | "trusted",
+): AgentMcpServer[] {
+  if (execTrust === "trusted") return [...mcpServers];
+
+  return mcpServers.filter((s) => s.transport !== "stdio");
 }

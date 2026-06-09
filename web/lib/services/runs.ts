@@ -11,6 +11,7 @@ import pino from "pino";
 import {
   capabilityRefIdSetsFromRecords,
   firstUnknownCapabilityRef,
+  firstUnknownPackageMcpRef,
   type CapabilityRefRecord,
 } from "@/lib/config";
 import {
@@ -37,7 +38,13 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
+import {
+  buildResolvedCapabilitySet,
+  firstAgentUnsupportedRequiredMcp,
+} from "@/lib/capabilities/resolver";
+import { normalizeNodeMcps } from "@/lib/config.schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
 import { tryStartRun } from "@/lib/scheduler";
@@ -289,10 +296,18 @@ export async function launchRun(
     );
   }
 
+  // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-069).
+  // `pinned` = the enabled pointer (unchanged behavior); `latest` = the newest
+  // Installed revision for this flow_ref_id (a just-published authored revision
+  // floats in via the bridge). The per-revision guards below still gate the
+  // RESOLVED revision (packageStatus/setupStatus/engine/schema).
+  const effectiveRevisionId =
+    (await resolveEffectiveFlowRevision(_db, flow)) ?? flow.enabledRevisionId;
+
   const revisionRows = await _db
     .select()
     .from(flowRevisions)
-    .where(eq(flowRevisions.id, flow.enabledRevisionId));
+    .where(eq(flowRevisions.id, effectiveRevisionId));
   const revision = revisionRows[0];
 
   if (!revision) {
@@ -471,6 +486,9 @@ export async function launchRun(
     const capabilityRefIds = capabilityRefIdSetsFromRecords(capRecordRows);
 
     let configuredNodes = 0;
+    // M27/T-C8b: REQUIRED mcp refs (node settings.mcps.required ∪ package-level)
+    // gathered for the agent-support refusal after the loop.
+    const requiredMcpRefs = new Set<string>();
 
     for (const node of compiled.nodes.values()) {
       if (node.nodeType !== "ai_coding" && node.nodeType !== "judge") {
@@ -479,6 +497,10 @@ export async function launchRun(
       configuredNodes += 1;
 
       const settings = capabilityBearingSettings(node.nodeType, node.settings);
+
+      for (const ref of normalizeNodeMcps(settings?.mcps).required) {
+        requiredMcpRefs.add(ref);
+      }
 
       // M14 carve-b: reject node settings.mcps/skills/restrictions/
       // settingsProfile refs absent from the project capability registry.
@@ -499,6 +521,60 @@ export async function launchRun(
         { id: node.id, nodeType: node.nodeType, settings },
         capabilityAgent,
       );
+    }
+
+    // M27/T-C6 (C6-top, ADR-070): reject package-level required MCP refs
+    // (manifest top-level `mcps`) absent from the project registry — after the
+    // per-node M14 cap-ref check, before any side-effect. The
+    // known-but-unmaterializable required-MCP refusal is T-C8.
+    const unknownPackageMcp = firstUnknownPackageMcpRef(
+      (revision.manifest as FlowYamlV1).mcps,
+      capabilityRefIds.mcp,
+    );
+
+    if (unknownPackageMcp !== null) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow "${flow.flowRefId}" declares unknown required mcp capability ref "${unknownPackageMcp}" not registered for project ${project.slug}`,
+      );
+    }
+
+    for (const ref of (revision.manifest as FlowYamlV1).mcps ?? []) {
+      requiredMcpRefs.add(ref);
+    }
+
+    // M27/T-C8b (mcp-management §6.2, bullet 6): a REQUIRED mcp whose resolved
+    // winner record does not support the executor agent cannot materialize →
+    // refuse launch (EXECUTOR_UNAVAILABLE → 503), before any side-effect.
+    // ADDITIONAL mcps degrade gracefully at materialization (non-fatal).
+    if (requiredMcpRefs.size > 0) {
+      const mcpAgentRows = await _db
+        .select({
+          capabilityRefId: capabilityRecords.capabilityRefId,
+          source: capabilityRecords.source,
+          agents: capabilityRecords.agents,
+        })
+        .from(capabilityRecords)
+        .where(
+          and(
+            eq(capabilityRecords.projectId, project.id),
+            eq(capabilityRecords.kind, "mcp"),
+            isNull(capabilityRecords.disabledAt),
+          ),
+        );
+
+      const unsupportedMcp = firstAgentUnsupportedRequiredMcp(
+        [...requiredMcpRefs],
+        mcpAgentRows,
+        capabilityAgent,
+      );
+
+      if (unsupportedMcp !== null) {
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          `required mcp "${unsupportedMcp}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug}`,
+        );
+      }
     }
 
     log.info(
@@ -585,6 +661,45 @@ export async function launchRun(
     startPoint: baseCommit,
   });
 
+  // M27/T-C8 (§7.1.8): freeze the resolved capability set onto the run so an
+  // edit/publish mid-run cannot mutate it. flowOrigin: authored installs use a
+  // local filesystem source (the bridge temp dir); git installs use a remote ref.
+  const snapshotRecords = (await _db
+    .select({
+      capabilityRefId: capabilityRecords.capabilityRefId,
+      kind: capabilityRecords.kind,
+      source: capabilityRecords.source,
+      revision: capabilityRecords.revision,
+    })
+    .from(capabilityRecords)
+    .where(
+      and(
+        eq(capabilityRecords.projectId, project.id),
+        isNull(capabilityRecords.disabledAt),
+      ),
+    )) as Array<{
+    capabilityRefId: string;
+    kind: string;
+    source: string;
+    revision: string | null;
+  }>;
+  const resolvedCapabilitySet = buildResolvedCapabilitySet({
+    records: snapshotRecords,
+    flowRevisionId: revision.id,
+    flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+  });
+
+  log.debug(
+    {
+      runId,
+      flowRevisionId: revision.id,
+      flowOrigin: resolvedCapabilitySet.flowOrigin,
+      capabilityCount: resolvedCapabilitySet.capabilities.length,
+      mcpCount: resolvedCapabilitySet.mcps.length,
+    },
+    "[service.runs] resolved capability set snapshot built",
+  );
+
   try {
     // Deliver AIF capability bundles into the fresh worktree's .claude/ and
     // write the per-run .ai-factory/config.yaml git-ownership override. Gated
@@ -632,6 +747,7 @@ export async function launchRun(
         runnerResolutionTier: runnerResolution.runnerResolutionTier,
         capabilityAgent,
         runnerSnapshot: runnerResolution.runnerSnapshot,
+        resolvedCapabilitySet,
         createdByUserId: ctx.actorUserId,
         status: "Pending",
         // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is

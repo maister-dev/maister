@@ -2,7 +2,16 @@ import type { FlightCard as FlightCardData } from "@/lib/queries/board";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next-intl", () => ({
+  useTranslations: (namespace: string) => (key: string) =>
+    `${namespace}.${key}`,
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 import {
   FlightCard,
@@ -46,6 +55,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     owner: null,
     refused: false,
     crashAction: null,
+    lifecycleActions: [],
     readiness: "ready",
     readyToPromote: false,
     prNumber: null,
@@ -117,6 +127,22 @@ describe("FlightCard — humanworking takeover surface (M11b)", () => {
     expect(html).not.toContain("Return");
     // The needs step body still renders.
     expect(html).toContain("implement step");
+  });
+});
+
+describe("FlightCard — workbench lifecycle actions", () => {
+  it("renders shared lifecycle controls for a Review workbench", () => {
+    const html = render(
+      baseCard({
+        status: "running",
+        stepLabel: "review",
+        lifecycleActions: ["archive", "drop", "exportBranch"],
+      }),
+    );
+
+    expect(html).toContain("workbenchLifecycle.action.archive");
+    expect(html).toContain("workbenchLifecycle.action.drop");
+    expect(html).toContain("workbenchLifecycle.action.exportBranch");
   });
 });
 

@@ -87,14 +87,36 @@ export const AdapterLaunchSchema = z
   })
   .strict();
 
+// M27/T-C4: transport-tagged. stdio uses command/args/envKeys; sse/http use
+// url/headerKeys. Header/env VALUES are resolved supervisor-side from the NAME
+// keys (process.env) — never sent over the wire.
 export const McpServerInputSchema = z
   .object({
     name: z.string().min(1).max(128),
-    command: z.string().min(1).max(1024),
-    args: z.array(launchArgSchema).max(64),
-    envKeys: z.array(z.string().min(1).max(256)).max(64),
+    transport: z.enum(["stdio", "sse", "http"]).default("stdio"),
+    command: z.string().min(1).max(1024).optional(),
+    args: z.array(launchArgSchema).max(64).optional(),
+    envKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
+    url: z.string().url().max(2048).optional(),
+    headerKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((s, ctx) => {
+    if (s.transport === "stdio" && !s.command) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "stdio MCP server requires a command",
+        path: ["command"],
+      });
+    }
+    if ((s.transport === "sse" || s.transport === "http") && !s.url) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${s.transport} MCP server requires a url`,
+        path: ["url"],
+      });
+    }
+  });
 
 export const StartSessionRequestSchema = z
   .object({

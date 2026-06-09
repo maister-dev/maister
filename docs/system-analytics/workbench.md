@@ -31,7 +31,9 @@ graph *editor* is Wave-3), never mutates run state, and never reads
 untracked/working-copy files.
 The execution model it visualizes is [`flow-graph.md`](flow-graph.md); the run
 state machine is [`runs.md`](runs.md); the worktree it reads is
-[`workspaces.md`](workspaces.md).
+[`workspaces.md`](workspaces.md). Lifecycle actions that stop, archive, drop,
+or export the visible workbench live in
+[`workbench-lifecycle.md`](workbench-lifecycle.md).
 
 ## Domain entities
 
@@ -91,7 +93,11 @@ state to transition:
    ignored (no phantom node); a node with no entry keeps its dagre seed.
 
 Editing the authored layout (drag-to-arrange) is a flow-editor concern on the
-source `flow.yaml` (roadmap §E1, Wave 3), not a workbench write.
+source `flow.yaml`, not a workbench write. **(Designed, M27)** ADR-064 is now
+read+write: the M27 flow-graph editor authors the `presentation` section (node
+`{id, x, y, width, height, color}`) as part of canvas edits serialized on save.
+The workbench read path (rendering the authored layout) is unchanged. See
+[`flow-studio.md`](flow-studio.md).
 
 ## Process flows
 

@@ -427,7 +427,7 @@ keeps long human reviews from being penalized for thinking time.
 
 ### Styling
 
-- Tailwind 4 utility classes. Use HeroUI `Button`, `Card`, `Modal`, `Input`, `Navbar` etc. instead of hand-rolling.
+- Tailwind 4 utility classes. Use HeroUI `Button`, `Card`, `Modal`, `Input`, `Navbar` etc. instead of hand-rolling. Exception: `components/workbench/lifecycle-actions.tsx` owns a custom accessible lifecycle dialog matched to the compact workbench surface; preserve that convention unless the whole surface is redesigned.
 - For variant-based class composition use `tailwind-variants` (`tv(...)`), mirroring `components/primitives.ts`.
 - Dark variant is declared in `styles/globals.css` as `@custom-variant dark (&:is(.dark *))`. Use `dark:` prefix as usual.
 - Class merging: `clsx` is fine for ad-hoc combos (already in the layout); for variant APIs use `tailwind-variants`.

@@ -29,6 +29,10 @@ import {
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
 import {
+  ResolvedCapabilitySetPanel,
+  type ResolvedCapabilitySetLabels,
+} from "@/components/runs/resolved-capability-set-panel";
+import {
   ReviewPanel,
   type ReviewPanelDiff,
   type ReviewPanelLabels,
@@ -36,6 +40,7 @@ import {
 import FileTree, {
   type FileTreeLabels,
 } from "@/components/workbench/file-tree";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import RunDiff, { type RunDiffLabels } from "@/components/workbench/run-diff";
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
@@ -53,6 +58,7 @@ import { getRunReadiness } from "@/lib/queries/readiness";
 import {
   getRunCapabilityProfiles,
   getRunDetail,
+  getRunResolvedCapabilitySet,
   getRunSettings,
   getRunTimeline,
 } from "@/lib/queries/run";
@@ -208,6 +214,7 @@ export default async function RunDetailLayout({
   const timeline = await getRunTimeline(runId);
   const settings = await getRunSettings(runId);
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
+  const resolvedSet = await getRunResolvedCapabilitySet(runId);
   const evidence = await buildEvidenceGraph(runId);
   const readiness = await getRunReadiness(runId, detail.projectId);
   const tEvidence = await getTranslations("evidence");
@@ -361,6 +368,19 @@ export default async function RunDetailLayout({
     classLabel: (c) => c,
   };
 
+  const resolvedSetLabels: ResolvedCapabilitySetLabels = {
+    title: t("resolvedSet.title"),
+    flowRevision: t("resolvedSet.flowRevision"),
+    flowOrigin: t("resolvedSet.flowOrigin"),
+    capabilities: t("resolvedSet.capabilities"),
+    mcps: t("resolvedSet.mcps"),
+    empty: t("resolvedSet.empty"),
+    origin: {
+      authored: t("resolvedSet.origin.authored"),
+      git: t("resolvedSet.origin.git"),
+    },
+  };
+
   const capabilityNodes: CapabilityProfileNodeView[] =
     capabilityProfiles?.nodes.map((n) => ({
       nodeId: n.nodeId,
@@ -480,6 +500,15 @@ export default async function RunDetailLayout({
             </span>
           ) : null}
         </div>
+        {detail.lifecycleActions.length > 0 ? (
+          <WorkbenchLifecycleActions
+            actions={detail.lifecycleActions}
+            className="mt-4"
+            runId={detail.runId}
+            runKind={detail.runKind}
+            variant="detail"
+          />
+        ) : null}
       </header>
 
       {readiness ? (
@@ -707,6 +736,13 @@ export default async function RunDetailLayout({
         <CapabilityProfilePanel
           labels={capabilityLabels}
           nodes={capabilityNodes}
+        />
+      ) : null}
+
+      {resolvedSet ? (
+        <ResolvedCapabilitySetPanel
+          labels={resolvedSetLabels}
+          resolved={resolvedSet}
         />
       ) : null}
 

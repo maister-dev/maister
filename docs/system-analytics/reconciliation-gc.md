@@ -263,6 +263,11 @@ flowchart TD
   untracked changes are snapshot-committed and pointed at archive branch
   `maister/archive/<runId>`; removal MUST be gated on preserve success and a
   preserve failure MUST skip the row (never force-remove unpreserved state).
+- Operator archive/drop actions (M27) reuse the same preserve-before-remove
+  invariant immediately from the workbench lifecycle UI. Background GC remains
+  schedule-driven; user-initiated drop is claim-serialized through
+  `workspaces.lifecycle_operation_*` and still refuses removal when preservation
+  fails.
 - GC MUST NOT merge into main/target; preservation is archive-branch
   (+ optional push when `MAISTER_GC_ARCHIVE_PUSH=true`, default `false`)
   only.
@@ -307,7 +312,7 @@ flowchart TD
   [ADR-036 Flow-revision GC](../decisions.md#adr-036).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
   (`/api/runs/{runId}/recover`, `/api/runs/{runId}/discard`,
-  `/api/cron/gc`).
+  `/api/runs/{runId}/archive`, `/api/runs/{runId}/drop`, `/api/cron/gc`).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   [`../db/erd.md`](../db/erd.md) (`workspaces.scheduled_removal_at`,
   `archived_branch`, `archived_at`, `runs.resume_started_at` — migration
@@ -321,6 +326,7 @@ flowchart TD
   (`CHECKPOINT`, `CONFLICT`, `PRECONDITION`, `EXECUTOR_UNAVAILABLE` —
   reused, no new code).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
+  [`workbench-lifecycle.md`](workbench-lifecycle.md),
   [`flow-packages.md`](flow-packages.md), [`flow-graph.md`](flow-graph.md).
 - Source (Designed, M19): `web/lib/reconcile.ts`, `web/lib/runs/recover.ts`,
   `web/lib/gc/preserve.ts`, `web/lib/gc/workspace-gc.ts`,

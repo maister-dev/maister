@@ -15,8 +15,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { validateGraphManifest } from "@/lib/config";
+import { flowYamlV1Schema } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
+import { compileManifest } from "@/lib/flows/graph/compile";
 
 export type { AuthoredCapabilityKind };
 
@@ -183,6 +186,7 @@ export async function createAuthoredCapability(args: {
         lifecycle,
         draft_version,
         current_draft_revision_id,
+        source_flow_ref_id,
         created_at,
         updated_at
       )
@@ -195,6 +199,7 @@ export async function createAuthoredCapability(args: {
         'DRAFT',
         ${draftVersion},
         ${revisionId},
+        ${args.input.sourceFlowRefId ?? null},
         now(),
         now()
       )
@@ -276,6 +281,36 @@ export async function createAuthoredCapability(args: {
   }
 }
 
+/**
+ * M27/T-A5: flow-draft validation hard-gate. Validates a flow manifest object
+ * with the same structural + graph-semantic checks the launch path uses
+ * (`flowYamlV1Schema` → `validateGraphManifest` → `compileManifest`), all pure
+ * (no file I/O — `validateGraphManifest` uses its path arg only for messages).
+ * Throws `MaisterError("CONFIG")` on any failure so an invalid manifest is
+ * refused and never persisted. Capability/role ref resolution is deferred to
+ * launch (project registry), so no ref sets are passed here.
+ */
+function assertAuthoredFlowManifestValid(manifest: unknown): void {
+  const result = flowYamlV1Schema.safeParse(manifest);
+
+  if (!result.success) {
+    throw new MaisterError(
+      "CONFIG",
+      `invalid flow manifest: ${result.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
+  }
+
+  const parsed = result.data;
+
+  if (parsed.nodes) {
+    validateGraphManifest(parsed, parsed.nodes, "<authored flow draft>");
+  }
+
+  compileManifest(parsed);
+}
+
 export async function updateAuthoredDraft(args: {
   projectSlug: string;
   capId: string;
@@ -323,6 +358,12 @@ export async function updateAuthoredDraft(args: {
       manifest,
       schemaVersion,
     });
+
+    // M27/T-A5: flow-draft validation HARD-GATE — runs BEFORE the CAS write, so
+    // an invalid flow manifest is refused (CONFIG) and the row is never mutated.
+    if (cap.kind === "flow" && manifest !== null) {
+      assertAuthoredFlowManifestValid(manifest);
+    }
 
     const updatedCapability = await tx.execute(sql`
       UPDATE authored_capabilities

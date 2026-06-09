@@ -91,7 +91,7 @@ export const repoRelPathSchema = z
   .refine((p) => !p.startsWith("-"), "no leading dash")
   .refine((p) => !p.split("/").includes(".."), "no .. segment");
 
-const remoteNameSchema = z
+export const remoteNameSchema = z
   .string()
   .min(1)
   .max(255)
@@ -460,12 +460,49 @@ export type PushBranchArgs = {
   projectRepoPath: string;
   remote: string;
   branch: string;
+  force?: boolean;
 };
 
+export type PushRejectedReason = "non_fast_forward";
+
+export class GitPushRejectedError extends MaisterError {
+  readonly pushRejected: PushRejectedReason;
+  readonly canForce: boolean;
+  readonly retryHint: string;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & {
+      pushRejected?: PushRejectedReason;
+      canForce?: boolean;
+      retryHint?: string;
+    },
+  ) {
+    super("CONFLICT", message, options);
+    this.name = "GitPushRejectedError";
+    this.pushRejected = options?.pushRejected ?? "non_fast_forward";
+    this.canForce = options?.canForce ?? true;
+    this.retryHint =
+      options?.retryHint ??
+      "Remote branch has newer commits. Review the remote branch or retry with force-with-lease.";
+    Object.setPrototypeOf(this, GitPushRejectedError.prototype);
+  }
+}
+
+function isNonFastForwardPush(stderrText: string): boolean {
+  const lower = stderrText.toLowerCase();
+
+  return (
+    lower.includes("non-fast-forward") ||
+    lower.includes("fetch first") ||
+    lower.includes("stale info") ||
+    (lower.includes("[rejected]") && lower.includes("failed to push"))
+  );
+}
+
 // Push a run branch to its remote using the host git credential helper (no
-// token in argv). A push failure is transient by classification — the PR
-// promotion caller maps it to EXECUTOR_UNAVAILABLE (retryable), distinct from a
-// config PRECONDITION.
+// token in argv). A non-fast-forward rejection is an operator conflict; other
+// failures remain transient by classification.
 export async function pushBranch(args: PushBranchArgs): Promise<void> {
   const repo = validate(
     absolutePathSchema,
@@ -474,19 +511,25 @@ export async function pushBranch(args: PushBranchArgs): Promise<void> {
   );
   const remote = validate(remoteNameSchema, args.remote, "remote");
   const branch = validate(branchNameSchema, args.branch, "branch");
+  const force = args.force === true;
 
-  log.info({ projectRepoPath: repo, remote, branch }, "pushBranch");
+  log.info({ projectRepoPath: repo, remote, branch, force }, "pushBranch");
 
   try {
-    const { stdout, stderr } = await execFileAsync(
-      "git",
-      ["-C", repo, "push", "--end-of-options", remote, branch],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-        env: NETWORK_GIT_ENV,
-      },
-    );
+    const pushArgs = [
+      "-C",
+      repo,
+      "push",
+      ...(force ? ["--force-with-lease"] : []),
+      "--end-of-options",
+      remote,
+      branch,
+    ];
+    const { stdout, stderr } = await execFileAsync("git", pushArgs, {
+      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      maxBuffer: EXEC_MAX_BUFFER,
+      env: NETWORK_GIT_ENV,
+    });
 
     log.debug({ stdout, stderr }, "pushBranch done");
   } catch (err) {
@@ -494,10 +537,220 @@ export async function pushBranch(args: PushBranchArgs): Promise<void> {
     // `https://user:token@host/…` creds (validateUrl accepts cred-bearing
     // remotes). redactUrl scrubs them before the message reaches the client/log.
     const stderrText = errorText(err) || asError(err).message;
+    const redacted = redactUrl(stderrText);
+
+    if (!force && isNonFastForwardPush(stderrText)) {
+      throw new GitPushRejectedError(
+        `git push ${remote} ${branch} rejected: ${redacted}`,
+        { cause: asError(err) },
+      );
+    }
 
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `git push ${remote} ${branch} failed: ${redactUrl(stderrText)}`,
+      `git push ${remote} ${branch} failed: ${redacted}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type ListRemotesArgs = {
+  projectRepoPath: string;
+};
+
+export async function listRemotes(args: ListRemotesArgs): Promise<string[]> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+
+  log.debug({ projectRepoPath: repo }, "listRemotes");
+
+  try {
+    const { stdout } = await runGit(repo, ["remote"]);
+
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((remote) => validate(remoteNameSchema, remote, "remote"));
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git remote failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type HeadCommitArgs = {
+  worktreePath: string;
+};
+
+export async function headCommit(args: HeadCommitArgs): Promise<string> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+
+  log.debug({ worktreePath: wt }, "headCommit");
+
+  try {
+    const { stdout } = await runGit(wt, ["rev-parse", "HEAD"]);
+
+    return validate(gitCommitSchema, stdout.trim(), "commit");
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git rev-parse HEAD failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+function isGitMissingRef(err: unknown): boolean {
+  const e = err as NodeJS.ErrnoException & { code?: number };
+
+  return e.code === 1 || e.code === 2;
+}
+
+export type LocalBranchExistsArgs = {
+  projectRepoPath: string;
+  branch: string;
+};
+
+export async function localBranchExists(
+  args: LocalBranchExistsArgs,
+): Promise<boolean> {
+  return (await localBranchHead(args)) !== null;
+}
+
+export type LocalBranchHeadArgs = {
+  projectRepoPath: string;
+  branch: string;
+};
+
+export async function localBranchHead(
+  args: LocalBranchHeadArgs,
+): Promise<string | null> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  log.debug({ projectRepoPath: repo, branch }, "localBranchHead");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branch}^{commit}`,
+    ]);
+
+    return validate(gitCommitSchema, stdout.trim(), "commit");
+  } catch (err) {
+    if (isGitMissingRef(err)) return null;
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git rev-parse ${branch} failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type RemoteBranchExistsArgs = {
+  projectRepoPath: string;
+  remote: string;
+  branch: string;
+};
+
+export async function remoteBranchExists(
+  args: RemoteBranchExistsArgs,
+): Promise<boolean> {
+  return (await remoteBranchHead(args)) !== null;
+}
+
+export type RemoteBranchHeadArgs = {
+  projectRepoPath: string;
+  remote: string;
+  branch: string;
+};
+
+export async function remoteBranchHead(
+  args: RemoteBranchHeadArgs,
+): Promise<string | null> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const remote = validate(remoteNameSchema, args.remote, "remote");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  log.debug({ projectRepoPath: repo, remote, branch }, "remoteBranchHead");
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", repo, "ls-remote", "--exit-code", "--heads", remote, branch],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env: NETWORK_GIT_ENV,
+      },
+    );
+    const [commit] = stdout.trim().split(/\s+/, 1);
+
+    return validate(gitCommitSchema, commit, "commit");
+  } catch (err) {
+    if (isGitMissingRef(err)) return null;
+
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `git ls-remote ${remote} ${branch} failed: ${redactUrl(errorText(err) || asError(err).message)}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type CreateBranchAtHeadArgs = {
+  worktreePath: string;
+  branch: string;
+};
+
+export async function createBranchAtHead(
+  args: CreateBranchAtHeadArgs,
+): Promise<void> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  log.info({ worktreePath: wt, branch }, "createBranchAtHead");
+
+  try {
+    const { stdout, stderr } = await runGit(wt, [
+      "branch",
+      "--",
+      branch,
+      "HEAD",
+    ]);
+
+    log.debug({ stdout, stderr }, "createBranchAtHead done");
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (stderrText.includes("already exists")) {
+      throw new MaisterError(
+        "CONFLICT",
+        `local branch already exists: ${branch}`,
+        { cause: asError(err) },
+      );
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git branch ${branch} failed: ${stderrText || asError(err).message}`,
       { cause: asError(err) },
     );
   }
@@ -945,6 +1198,38 @@ export async function statusPorcelain(
       { cause: asError(err) },
     );
   }
+}
+
+export type SnapshotDirtyWorktreeArgs = {
+  worktreePath: string;
+  commitMessage: string;
+};
+
+const commitMessageSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((message) => !message.includes("\0"), "commit message has no NUL");
+
+export async function snapshotDirtyWorktree(
+  args: SnapshotDirtyWorktreeArgs,
+): Promise<boolean> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const commitMessage = validate(
+    commitMessageSchema,
+    args.commitMessage,
+    "commitMessage",
+  );
+  const porcelain = await statusPorcelain({ worktreePath: wt });
+
+  if (porcelain.trim() === "") {
+    return false;
+  }
+
+  await runGit(wt, ["add", "-A"]);
+  await runGit(wt, ["commit", "--no-verify", "-m", commitMessage]);
+
+  return true;
 }
 
 export type ResolveBaseRefArgs = {

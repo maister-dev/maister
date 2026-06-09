@@ -46,6 +46,7 @@ stateDiagram-v2
     HumanWorking --> Abandoned: abandon
 
     Running --> Review: agent exits 0
+    Running --> Review: operator stop<br/>(M27 lifecycle)
     Running --> Crashed: heartbeat dead<br/>no checkpoint
     Running --> Failed: agent exits non-zero<br/>(no recovery path)
 
@@ -84,6 +85,16 @@ pointer back to the rework target, opens attempt N+1, and continues — all with
    **not** block promotion. The promote sequence's "verify required gates" step
    is the **M15/M18** readiness policy, not M11a — see the note on the happy-path
    diagram below and [`flow-graph.md`](flow-graph.md).
+
+### M27 operator stop to `Review` (Implemented)
+
+The workbench lifecycle surface can intentionally stop a live Flow run and park
+it in `Review` without deleting the worktree. This broadens `Review`: it can
+mean "agent completed" or "operator stopped and wants to inspect, preserve, or
+handoff partial work". Promotion still re-gates readiness at promote time, so a
+stopped run is not treated as completed merely because it is reviewable. Full
+stop, archive, drop, snapshot, export, and handoff semantics live in
+[`workbench-lifecycle.md`](workbench-lifecycle.md).
 
 ### M11b manual-takeover status `HumanWorking` (Implemented)
 
@@ -538,6 +549,7 @@ matching rows.
 - API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml).
 - Related: [`hitl.md`](hitl.md), [`workspaces.md`](workspaces.md),
-  [`tasks.md`](tasks.md), [`flow-graph.md`](flow-graph.md) (M11a rework loop).
+  [`tasks.md`](tasks.md), [`flow-graph.md`](flow-graph.md) (M11a rework loop),
+  [`workbench-lifecycle.md`](workbench-lifecycle.md).
 - Source: `web/lib/db/schema.ts` (runs table),
   `supervisor/src/heartbeat.ts`, `supervisor/src/spawn.ts`.

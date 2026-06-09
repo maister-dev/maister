@@ -465,6 +465,14 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md),
   [`workbench.md`](workbench.md) (M22 — the read-only graph **view** + live
   node-status coloring that renders this topology).
+- **(Designed, M27)** The read-only M22 graph view now has an **editor write
+  path**: canvas edits serialize the manifest, run `validateGraphManifest` +
+  `compileManifest` as a hard-gate (invalid manifest → `CONFIG`, not persisted),
+  then PATCH the draft via the M25 `draft_version` CAS. Publishing the authored
+  flow bridges it into `flows` + `flow_revisions` via
+  `installAuthoredFlowPackageBridge`. See
+  [`workbench.md`](workbench.md) §M27 and
+  [`../system-analytics/flow-studio.md`](flow-studio.md) + ADR-067.
 - Source (Implemented): `web/lib/config.schema.ts` (node/gate schema),
   `web/lib/config.ts` (`loadFlowManifest`),
   `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`,

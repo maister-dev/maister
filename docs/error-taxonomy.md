@@ -145,6 +145,49 @@ defined as a string union in `web/lib/errors.ts`.
 >   are `readBlob` markers the server component branches on, not thrown domain
 >   errors.
 
+> **M27 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+> closed union). Workbench lifecycle actions reuse existing codes at the
+> stop/archive/drop/export/snapshot/handoff routes:
+>
+> - **`CONFIG` → HTTP 400** — strict route-body validation failure, including
+>   spoofed body fields such as project id, worktree path, current branch, or
+>   session handles. The service only sees validated user intent fields.
+> - **`PRECONDITION` → HTTP 409** — live state refused for archive/drop/export/
+>   snapshot/handoff; clean worktree refused for snapshot commit; dirty worktree
+>   refused for handoff; dirty export without explicit snapshot consent; missing
+>   selected remote; unsafe worktree path outside `MAISTER_WORKTREES_ROOT`.
+> - **`CONFLICT` → HTTP 409** — preserve failure, different-head local/remote
+>   branch collision, stale drop run-status CAS, local git conflict, lifecycle
+>   operation claim race on
+>   `workspaces.lifecycle_operation_*`, or export push rejected as
+>   non-fast-forward. The non-fast-forward payload includes
+>   `pushRejected=non_fast_forward`, `canForce=true`, and a retry hint; a user
+>   retry with force uses `git push --force-with-lease`.
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — transient supervisor stop failure,
+>   transient export push failure, handoff remote-existence check failure, or
+>   handoff push failure. Retry leaves the run/workspace in the current state;
+>   transient handoff push failures keep the lifecycle claim retryable and reuse
+>   same-head local/remote handoff refs idempotently.
+
+> **M27 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). M27 reuses four existing codes at new call sites (all Designed, M27):
+>
+> **`CONFIG` new call sites (M27, Designed):**
+> - **Invalid manifest on draft save / publish** — `validateGraphManifest` + `compileManifest` hard-gate in the flow editor draft PATCH and publish-local routes; invalid manifest → `CONFIG` (422), draft row unchanged.
+> - **Unknown MCP/skill ref in manifest** — resolved by the M14 carve-b validation extended to flow-package `mcps?` top-level declarations; unknown ref → `CONFIG` (422).
+> - **Required MCP unresolved at launch** — `launchRun` after the M14 unknown-cap-ref check; a REQUIRED MCP that cannot resolve+materialize → `CONFIG` (409).
+> - **version-binding bad enum** — `PATCH /api/projects/{slug}/flows/{flowId}/version-binding` with a value outside `{pinned, latest}` → `CONFIG` (422).
+> - **Bridge of invalid package** — `installAuthoredFlowPackageBridge` on an invalid authored package → `CONFIG` (422).
+>
+> **`CONFLICT` new call sites (M27, Designed):**
+> - **Stale `expectedDraftVersion`** on the flow editor draft PATCH → `CONFLICT` (409), row unchanged.
+> - **Platform MCP delete while referenced** — `DELETE /api/admin/mcp-servers/{id}` when usage references exist → `CONFLICT` (409) (mirrors the `assertCanDisable` runner-CRUD guard).
+>
+> **`PRECONDITION` new call site (M27, Designed):**
+> - **Platform MCP delete of unknown id** — `DELETE` or `PATCH` against an unknown `mcp-servers/{id}` → `PRECONDITION` (409) (mirrors the runner-CRUD unknown-id guard).
+>
+> **`EXECUTOR_UNAVAILABLE` new call site (M27, Designed):**
+> - **Required MCP agent-unsupported (strict)** — a REQUIRED MCP cannot materialize because the resolved agent does not support it → `EXECUTOR_UNAVAILABLE` (503). Non-REQUIRED (additional) MCP absence is non-fatal.
+
 > **The platform-user + project-member admin surface (ADR-062) reuses existing codes and adds none** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call sites for `CONFIG` (invalid body/Zod — HTTP 422), `CONFLICT` (duplicate email, duplicate member, raced CAS — HTTP 409), `PRECONDITION` (hard-delete of referenced/non-pending user, add nonexistent user, self-delete — HTTP 409), and `UNAUTHORIZED` (role gate — HTTP 403) are noted in the relevant rows above.
 
 ## Construction

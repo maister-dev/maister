@@ -517,6 +517,25 @@
     "editRunnerTitle": "Редактировать раннер",
     "editAction": "Изменить",
     "deleteRunner": "Удалить",
+    "mcpServersTitle": "MCP-серверы",
+    "addMcp": "Добавить MCP-сервер",
+    "mcpEmpty": "MCP-серверы не настроены.",
+    "createMcpTitle": "Создать MCP-сервер",
+    "editMcpTitle": "Изменить MCP-сервер",
+    "deleteMcp": "Удалить",
+    "deleteMcpConfirm": "Удалить этот MCP-сервер? Действие необратимо.",
+    "colTransport": "Транспорт",
+    "colTarget": "Команда / URL",
+    "colAgents": "Агенты",
+    "fieldMcpId": "ID сервера",
+    "fieldTransport": "Транспорт",
+    "fieldCommand": "Команда",
+    "fieldArgs": "Аргументы (через пробел)",
+    "fieldEnvKeys": "Ключи env (env:ИМЯ)",
+    "fieldUrl": "URL",
+    "fieldHeaderKeys": "Ключи заголовков (env:ИМЯ)",
+    "fieldSupportedAgents": "Поддерживаемые агенты",
+    "secretRefHint": "Только ссылки на секреты (env:ИМЯ) — значения резолвятся на сервере.",
     "fromPreset": "Из пресета",
     "sidecarNone": "нет",
     "colId": "ID",
@@ -728,6 +747,18 @@
       "PRECONDITION": "Запрос больше недоступен. Обновите страницу.",
       "UNAUTHORIZED": "У вас нет прав отвечать на этот запрос.",
       "ACCOUNT_INACTIVE": "Ваша учётная запись неактивна."
+    },
+    "resolvedSet": {
+      "title": "Итоговый набор возможностей",
+      "flowRevision": "Ревизия флоу",
+      "flowOrigin": "Источник",
+      "capabilities": "Возможности",
+      "mcps": "MCP-серверы",
+      "empty": "Нет",
+      "origin": {
+        "authored": "Авторский",
+        "git": "Git"
+      }
     }
   },
   "evidence": {
@@ -1043,6 +1074,39 @@
     "errorGeneric": "Не удалось выполнить действие. Повторите.",
     "adminOnly": "Управление пакетами требует роли admin в проекте."
   },
+  "mcpPanel": {
+    "title": "MCP-серверы проекта",
+    "count": "Серверов: {count}",
+    "add": "Добавить MCP",
+    "adminOnly": "Управление MCP-серверами проекта требует роли admin в проекте.",
+    "empty": "MCP-серверы проекта ещё не настроены.",
+    "colId": "ID",
+    "colTransport": "Транспорт",
+    "colTarget": "Цель",
+    "colAgents": "Агенты",
+    "colEnabled": "Включён",
+    "colActions": "Действия",
+    "edit": "Изменить",
+    "createTitle": "Добавить MCP-сервер проекта",
+    "editTitle": "Изменить MCP-сервер проекта",
+    "close": "Закрыть",
+    "fieldId": "ID сервера",
+    "fieldTransport": "Транспорт",
+    "fieldCommand": "Команда",
+    "fieldArgs": "Аргументы",
+    "fieldEnvKeys": "Ссылки на ключи окружения",
+    "secretRefHint": "Секреты — только ссылки env:NAME, никаких значений.",
+    "fieldUrl": "URL",
+    "fieldHeaderKeys": "Ссылки на ключи заголовков",
+    "fieldSupportedAgents": "Поддерживаемые агенты",
+    "fieldEnabled": "Включён",
+    "cancel": "Отмена",
+    "save": "Сохранить",
+    "saving": "Сохранение…",
+    "saveFailed": "Не удалось сохранить",
+    "delete": "Удалить",
+    "deleteConfirm": "Подтвердите удаление"
+  },
   "tokens": {
     "title": "API-токены",
     "empty": "В проекте пока нет API-токенов.",
@@ -1096,6 +1160,49 @@
     "archived": "Архивировано",
     "pruned": "Удалено"
   },
+  "workbenchLifecycle": {
+    "action": {
+      "stop": "Остановить",
+      "archive": "Архив",
+      "drop": "Удалить",
+      "snapshotCommit": "Коммит",
+      "exportBranch": "Экспорт"
+    },
+    "defaultCommitMessage": "maister: export {runId}",
+    "busy": "{action}…",
+    "errorWithCode": "Действие не выполнено: {code}",
+    "dialog": {
+      "cancel": "Отмена",
+      "confirm": "Подтвердить",
+      "commit": "Коммит",
+      "push": "Push",
+      "forcePush": "Force push",
+      "handoff": "Создать ветку",
+      "copy": "Копировать",
+      "clean": "Worktree чистый.",
+      "dirty": "Сначала закоммитьте изменения, затем push ветки прогона.",
+      "commitMessage": "Сообщение коммита",
+      "remote": "Remote",
+      "runBranch": "Ветка прогона: {branch}",
+      "handoffBranch": "Опциональная ветка передачи",
+      "handoffHelp": "Создает и пушит отдельную ветку на текущем HEAD worktree.",
+      "invalidRemote": "Remote может содержать буквы, цифры, _, ., / или - и не может начинаться с -.",
+      "invalidBranch": "Ветка может содержать буквы, цифры, _, ., / или - и не может содержать .., @{, завершающий / или .lock.",
+      "snapshotDone": "Snapshot-коммит {commit}",
+      "title": {
+        "stop": "Остановить прогон",
+        "archive": "Архивировать workbench",
+        "drop": "Удалить workbench",
+        "snapshotCommit": "Snapshot-коммит",
+        "exportBranch": "Экспорт ветки"
+      },
+      "body": {
+        "stop": "Остановить прогон и оставить worktree для ревью.",
+        "archive": "Сохранить восстанавливаемую работу в архивную ссылку и оставить worktree на диске.",
+        "drop": "Сначала сохранить восстанавливаемую работу, затем удалить только MAIster-owned worktree."
+      }
+    }
+  },
   "projectMembers": {
     "tab": "Участники",
     "title": "Участники команды",
@@ -1120,5 +1227,103 @@
     "alreadyMember": "Этот пользователь уже является участником.",
     "staleConflict": "Этого участника изменил кто-то другой. Обновите страницу и повторите.",
     "lastError": "Что-то пошло не так. Попробуйте ещё раз."
+  },
+  "flowEditor": {
+    "toolbar": {
+      "addNode": "Добавить узел",
+      "removeNode": "Удалить узел",
+      "addGate": "Добавить гейт",
+      "selectNodeHint": "Выберите узел, чтобы добавить гейт",
+      "nodeType": {
+        "ai_coding": "AI-кодинг",
+        "cli": "CLI",
+        "check": "Проверка",
+        "judge": "Судья",
+        "human": "Человек"
+      },
+      "gateKind": {
+        "command_check": "Проверка команды",
+        "skill_check": "Проверка навыка",
+        "ai_judgment": "AI-суждение",
+        "artifact_required": "Требуется артефакт",
+        "external_check": "Внешняя проверка",
+        "human_review": "Ревью человеком"
+      }
+    },
+    "nodeForm": {
+      "empty": "Выберите узел для редактирования",
+      "action": "Действие",
+      "settings": "Настройки",
+      "gates": "Гейты",
+      "transitions": "Переходы",
+      "rework": "Доработка",
+      "output": "Структурированный вывод",
+      "prompt": "Промпт",
+      "command": "Команда",
+      "model": "Модель",
+      "thinkingEffort": "Уровень рассуждений",
+      "permissionMode": "Режим разрешений",
+      "workspaceAccess": "Доступ к рабочей области",
+      "skills": "Навыки (через запятую)",
+      "restrictions": "Ограничения (через запятую)",
+      "mcps": "Дополнительные MCP (через запятую)",
+      "enforcement": {
+        "title": "Принуждение",
+        "mcps": "MCP",
+        "tools": "Инструменты",
+        "skills": "Навыки",
+        "restrictions": "Ограничения",
+        "permissionMode": "Режим разрешений",
+        "workspaceAccess": "Доступ к рабочей области"
+      },
+      "timeoutMs": "Таймаут (мс)",
+      "environmentPolicy": "Политика окружения",
+      "failureClass": "Класс ошибки",
+      "decisions": "Решения (через запятую)",
+      "criticality": "Критичность",
+      "roles": "Роли (через запятую)",
+      "assignees": "Исполнители (через запятую)",
+      "allowTakeover": "Разрешить перехват",
+      "outputSchema": "Путь к схеме результата",
+      "outputRequired": "Обязательно",
+      "reworkAllowedTargets": "Допустимые цели (через запятую)",
+      "reworkWorkspacePolicies": "Политики рабочей области (через запятую)",
+      "reworkMaxLoops": "Макс. циклов",
+      "reworkCommentsVar": "Переменная комментариев",
+      "transitionOutcome": "Исход",
+      "transitionTarget": "Цель",
+      "addTransition": "Добавить переход",
+      "removeTransition": "Удалить",
+      "noTransitions": "Нет переходов",
+      "noGates": "Нет гейтов"
+    },
+    "gate": {
+      "mode": "Режим",
+      "modeBlocking": "Блокирующий",
+      "modeAdvisory": "Рекомендательный",
+      "command": "Команда",
+      "prompt": "Промпт",
+      "skill": "Навык",
+      "confidenceMin": "Мин. уверенность",
+      "externalDescription": "Описание внешней проверки",
+      "staleOnNewCommit": "Сбрасывать при новом коммите",
+      "remove": "Удалить гейт"
+    },
+    "diff": {
+      "empty": "Нет изменений с последней опубликованной ревизии"
+    },
+    "validation": {
+      "valid": "Нет проблем валидации",
+      "title": "Проблемы валидации"
+    },
+    "page": {
+      "graphTab": "Граф",
+      "yamlTab": "Сырой YAML",
+      "diffTab": "Дифф",
+      "save": "Сохранить черновик",
+      "saving": "Сохранение…",
+      "saved": "Сохранено",
+      "saveError": "Ошибка сохранения"
+    }
   }
 }

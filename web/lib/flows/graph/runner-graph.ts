@@ -49,6 +49,7 @@ import {
 import { recordDefaultArtifacts } from "./default-artifacts";
 import { assertEvidenceReady } from "./evidence-readiness";
 
+import { gateStdioMcpsByExecTrust } from "@/lib/capabilities/agent-map";
 import {
   mergeRunnerAdapterLaunch,
   runnerSupervisorInput,
@@ -65,6 +66,7 @@ import {
 } from "@/lib/flows/enforcement";
 import {
   loadSelectableCapabilities,
+  pinCatalogToSnapshot,
   resolveCapabilityProfile,
 } from "@/lib/capabilities/resolver";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
@@ -76,6 +78,7 @@ import {
 } from "@/lib/assignments/service";
 import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
+  allNodeMcpRefs,
   workspacePolicySchema,
   type WorkspacePolicy,
 } from "@/lib/config.schema";
@@ -616,7 +619,7 @@ async function materializeNodeCapabilities(
 
   const agent = loaded.executor.agent;
   const declares = !!(
-    settings.mcps?.length ||
+    allNodeMcpRefs(settings.mcps).length ||
     settings.skills?.length ||
     settings.restrictions?.length ||
     settings.tools?.[agent]?.length ||
@@ -628,7 +631,10 @@ async function materializeNodeCapabilities(
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
     executorAgent: agent,
-    selectedMcpIds: settings.mcps,
+    // Undefined → resolver selects the default MCP set; a present value
+    // (required ∪ additional, T-C6) → that explicit set.
+    selectedMcpIds:
+      settings.mcps === undefined ? undefined : allNodeMcpRefs(settings.mcps),
     selectedSkillIds: settings.skills,
     selectedRestrictionIds: settings.restrictions,
     planMode: "off",
@@ -670,6 +676,20 @@ async function materializeNodeCapabilities(
     cleanup: { status: "pending" },
   };
 
+  // M27/T-C8b: stdio MCP servers spawn a local command — withhold them unless
+  // the pinned flow revision is exec-trusted (T-B3). sse/http are remote (no
+  // local exec) and always pass. This is the only spawn surface (mcpServers
+  // reach the agent via createSession).
+  const mcpServers = gateStdioMcpsByExecTrust(m.mcpServers, loaded.execTrust);
+  const withheldStdio = m.mcpServers.length - mcpServers.length;
+
+  if (withheldStdio > 0) {
+    logger.warn(
+      { nodeId: node.id, execTrust: loaded.execTrust, withheldStdio },
+      "[runner.graph] stdio MCP servers withheld — flow revision not exec-trusted",
+    );
+  }
+
   logger.info(
     {
       nodeId: node.id,
@@ -682,7 +702,7 @@ async function materializeNodeCapabilities(
   return {
     capabilityProfilePath: m.profilePath,
     adapterLaunch: m.adapterLaunch,
-    mcpServers: m.mcpServers,
+    mcpServers,
     plan,
   };
 }
@@ -932,10 +952,16 @@ export async function runGraph(
     lastSeenMonotonicId: 0,
   };
 
-  // M14 T4.1: the selectable-capability catalog is loaded ONCE per run and
-  // reused for every node's resolve. T4.4 will persist an immutable snapshot;
-  // a single per-run load is correct and forward-compatible until then.
-  const catalog = await loadSelectableCapabilities(loaded.run.projectId, db);
+  // M14 T4.1 / M27 T-B5 (ADR-069): load the live selectable catalog ONCE, then
+  // PIN it to the launch-frozen `runs.resolved_capability_set` snapshot so a
+  // mid-run edit/publish (a new same-id record at any scope, or a wholly new
+  // capability) cannot change what THIS run materializes — in-flight
+  // immutability. A run launched before the snapshot existed
+  // (resolvedCapabilitySet null) keeps the prior live-catalog behavior.
+  const catalog = pinCatalogToSnapshot(
+    await loadSelectableCapabilities(loaded.run.projectId, db),
+    loaded.run.resolvedCapabilitySet,
+  );
 
   // On a rework jump, the reviewer's comments are injected into the rework
   // target's next-attempt context under the node's `commentsVar`; consumed by

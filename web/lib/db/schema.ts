@@ -234,6 +234,56 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     .defaultNow(),
 });
 
+// Platform-scoped MCP capability catalog (M27/T-C2, ADR-067). Admin CRUD mirrors
+// platform_acp_runners (ADR-065). Secrets are NEVER stored: env_keys/header_keys
+// are `env:NAME` references resolved supervisor-side, never plaintext values.
+export const platformMcpServers = pgTable(
+  "platform_mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    transport: text("transport", { enum: ["stdio", "sse", "http"] })
+      .notNull()
+      .default("stdio"),
+    command: text("command"),
+    args: jsonb("args").$type<string[]>().notNull().default([]),
+    envKeys: jsonb("env_keys").$type<string[]>().notNull().default([]),
+    url: text("url"),
+    headerKeys: jsonb("header_keys").$type<string[]>().notNull().default([]),
+    supportedAgents: jsonb("supported_agents")
+      .$type<("claude" | "codex")[]>()
+      .notNull()
+      .default(["claude", "codex"]),
+    trustStatus: text("trust_status", {
+      enum: ["untrusted", "trusted", "trusted_by_policy"],
+    })
+      .notNull()
+      .default("untrusted"),
+    readinessStatus: text("readiness_status", {
+      enum: ["Unknown", "Ready", "NotReady"],
+    })
+      .notNull()
+      .default("Unknown"),
+    readinessReasons: jsonb("readiness_reasons")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxTransportEnabled: index("platform_mcp_servers_transport_enabled_idx").on(
+      t.transport,
+      t.enabled,
+    ),
+  }),
+);
+export type PlatformMcpServer = typeof platformMcpServers.$inferSelect;
+
 // Immutable, globally content-addressed Flow package revision (M10, ADR-021).
 // One row per (flow_ref_id, resolved_revision); the system cache
 // ~/.maister/flows/<id>@<sha>/ is shared across projects, so revisions are not
@@ -268,6 +318,11 @@ export const flowRevisions = pgTable(
     })
       .notNull()
       .default("Installing"),
+    // Two-axis trust (§4.2): exec_trust gates setup.sh and MCP stdio spawn.
+    // Default 'untrusted'; flipped to 'trusted' via POST trust-executable (T-B3).
+    execTrust: text("exec_trust", { enum: ["untrusted", "trusted"] })
+      .notNull()
+      .default("untrusted"),
     installedAt: timestamp("installed_at", {
       withTimezone: true,
       mode: "date",
@@ -322,6 +377,9 @@ export const flows = pgTable(
     })
       .notNull()
       .default("untrusted"),
+    versionBinding: text("version_binding", { enum: ["pinned", "latest"] })
+      .notNull()
+      .default("latest"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -676,6 +734,7 @@ export const authoredCapabilities = pgTable(
     draftVersion: integer("draft_version").notNull().default(1),
     currentDraftRevisionId: text("current_draft_revision_id"),
     currentPublishedRevisionId: text("current_published_revision_id"),
+    sourceFlowRefId: text("source_flow_ref_id"),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -851,6 +910,25 @@ export const flowRunnerRemaps = pgTable(
 
 export type RunKind = "flow" | "scratch";
 
+// M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
+// the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
+// whether the resolved flow revision came from the authored bridge or git.
+export type ResolvedCapabilitySet = {
+  flowRevisionId: string;
+  flowOrigin: "authored" | "git";
+  // `scope` is the winning record's source (project | platform | flow-package);
+  // the runner pins its materialization universe to (kind, refId, scope) so a
+  // mid-run record added at another scope cannot override the frozen winner
+  // (M27/T-B5 in-flight immutability).
+  capabilities: Array<{
+    refId: string;
+    kind: string;
+    sha: string | null;
+    scope: string;
+  }>;
+  mcps: Array<{ refId: string; sha: string | null; scope: string }>;
+};
+
 export const runs = pgTable(
   "runs",
   {
@@ -936,6 +1014,11 @@ export const runs = pgTable(
     // crashed (current_step_id is nulled for a clean terminal read). Recover
     // re-dispatches THIS node; null → no resumable target → discard-only.
     resumeTargetStepId: text("resume_target_step_id"),
+    // M27/T-C8: capability set resolved + frozen at launch (read by the runner
+    // for in-flight immutability). Nullable for pre-migration / legacy runs.
+    resolvedCapabilitySet: jsonb(
+      "resolved_capability_set",
+    ).$type<ResolvedCapabilitySet>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -991,6 +1074,15 @@ export const workspaces = pgTable("workspaces", {
     { onDelete: "set null" },
   ),
   promotionAttemptId: text("promotion_attempt_id"),
+  lifecycleOperationState: text("lifecycle_operation_state")
+    .notNull()
+    .default("none"),
+  lifecycleOperationClaimedAt: timestamp("lifecycle_operation_claimed_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
+  lifecycleOperationName: text("lifecycle_operation_name"),
 });
 
 export type ScratchDialogStatus =
@@ -1821,6 +1913,7 @@ export type FlowEnablementState = Flow["enablementState"];
 export type FlowTrustStatus = Flow["trustStatus"];
 export type FlowPackageStatus = FlowRevision["packageStatus"];
 export type FlowSetupStatus = FlowRevision["setupStatus"];
+export type FlowRevisionExecTrust = FlowRevision["execTrust"];
 export type ProjectFlowRole = typeof projectFlowRoles.$inferSelect;
 export type ActorIdentity = typeof actorIdentities.$inferSelect;
 export type ActorIdentityKind = ActorIdentity["kind"];

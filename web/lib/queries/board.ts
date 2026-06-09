@@ -12,6 +12,10 @@ import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { extractOptions } from "@/lib/queries/hitl";
+import {
+  lifecycleActionsForWorkspace,
+  type WorkbenchLifecycleAction,
+} from "@/lib/queries/portfolio";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
@@ -81,6 +85,7 @@ export interface FlightCard {
   // `discard`); null on every non-Crashed card. The raw session id is NEVER
   // surfaced to the client.
   crashAction: CrashAction | null;
+  lifecycleActions: WorkbenchLifecycleAction[];
   // T15 (M15): unified readiness summary badge, replacing the three separate
   // booleans (evidenceStale, mergeBlocked, externalGatePending). Computed over
   // the same bulk-fetched gate_results + artifact_instances + node_attempts rows
@@ -238,7 +243,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       endedAt: runs.endedAt,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
+      workspaceId: workspaces.id,
       branch: workspaces.branch,
+      archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
       prNumber: workspaces.prNumber,
     })
@@ -480,6 +487,14 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         runKind: "flow",
         runStatus: run.status,
         acpSessionId: run.acpSessionId,
+      }),
+      lifecycleActions: lifecycleActionsForWorkspace({
+        runKind: "flow",
+        runStatus: run.status,
+        dialogStatus: null,
+        hasWorkspace: Boolean(run.workspaceId),
+        removedAt: run.removedAt,
+        archivedBranch: run.archivedBranch,
       }),
       // Done cards always read "ready" — terminal, no actionable readiness badge.
       readiness:

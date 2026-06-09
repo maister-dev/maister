@@ -12,6 +12,7 @@ import type {
   MaterializationPlan,
   NodeAttempt,
   NodeAttemptType,
+  ResolvedCapabilitySet,
 } from "@/lib/db/schema";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
@@ -30,6 +31,10 @@ import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
+import {
+  lifecycleActionsForWorkspace,
+  type WorkbenchLifecycleAction,
+} from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
@@ -113,6 +118,7 @@ export interface RunDetail {
   effectiveRemovalAt: Date | null;
   archived: boolean;
   pruned: boolean;
+  lifecycleActions: WorkbenchLifecycleAction[];
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -161,6 +167,7 @@ export const getRunDetail = cache(async function getRunDetail(
       projectSlug: projects.slug,
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
+      workspaceId: workspaces.id,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
@@ -288,6 +295,14 @@ export const getRunDetail = cache(async function getRunDetail(
     effectiveRemovalAt: ttl.effectiveRemovalAt,
     archived: ttl.archived,
     pruned: ttl.pruned,
+    lifecycleActions: lifecycleActionsForWorkspace({
+      runKind: row.runKind,
+      runStatus: row.status,
+      dialogStatus: null,
+      hasWorkspace: Boolean(row.workspaceId),
+      removedAt: row.removedAt,
+      archivedBranch: row.archivedBranch,
+    }),
     pendingHitl: pending
       ? {
           hitlRequestId: pending.id,
@@ -648,6 +663,20 @@ function trustKey(refId: string, sha: string): string {
 // The capability-profile view for the run-detail panel: every ai_coding/judge
 // node_attempt that carries a recorded materialization_plan, in attempt order,
 // with each resolved revision's project-scoped trust verdict attached. Returns
+// M27/T-B6: the run's launch-frozen resolved capability set (read-only). The
+// set is snapshotted at launch (services/runs.ts) and never mutates for the
+// life of the run; null for runs launched before the column existed.
+export async function getRunResolvedCapabilitySet(
+  runId: string,
+): Promise<ResolvedCapabilitySet | null> {
+  const rows = await db()
+    .select({ resolved: runs.resolvedCapabilitySet })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return rows[0]?.resolved ?? null;
+}
+
 // null when the run has no such node (no capability materialization happened).
 export async function getRunCapabilityProfiles(
   runId: string,
