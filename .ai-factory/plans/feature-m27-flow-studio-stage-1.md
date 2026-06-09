@@ -188,6 +188,76 @@ No new `runs.status` is planned. **If** implementation proves one unavoidable, f
 
 ## Tasks
 
+> ## ⏩ RESUME HAND-OFF — READ FIRST (updated 2026-06-09, after Phase A + B6)
+>
+> **State.** Phase 0 + Phase A (T-A1..A10) COMPLETE; B1-B4 + B6 done; C1-C4 done +
+> partials (C6-node, C7-precedence, C8a). **Remaining unchecked: B5, B7, C5, C6, C7,
+> C8, C9, D1, D2.** Branch `claude/charming-bouman-e7bc9c`. Last gate: typecheck 0,
+> unit 2443/2443, integration 775/775 (2 PRE-EXISTING teardown-flake errors on the
+> untouched `acp-runners/route.concurrency` test — the 57P01 pool-teardown flake, NOT
+> a regression), m27-flow-editor e2e green, en/ru parity (now auto-tested in
+> `lib/__tests__/i18n-parity.test.ts`).
+>
+> **PARTIAL tasks — do ONLY the remaining sub-scope (the checkbox is unchecked but
+> part is DONE — do NOT redo):**
+> - **T-C6**: node-level `settings.mcps {required?,additional?}` split DONE (c452f296).
+>   REMAINING ("C6-top") = a flow.yaml MANIFEST top-level package `mcps?: string[]`
+>   required-MCP declaration + SET/CLEAR symmetry; surface it to the launch cap-ref
+>   check (`services/runs.ts` ~474 loop). `flowYamlV1Schema` (config.schema.ts:709) has
+>   NO top-level mcps yet.
+> - **T-C7**: precedence winner-picking DONE (e07a8349, `resolver.ts` selectedRecords
+>   project>platform>flow-package). REMAINING ("setup-resolve") = `lib/mcp/setup-resolve.ts`
+>   (ABSENT) + `POST /api/projects/[slug]/mcp/resolve` (present→reuse-by-id,
+>   absent→propose). Depends on C6-top.
+> - **T-C8**: C8a (`runs.resolved_capability_set` column + `buildResolvedCapabilitySet`
+>   + launch-write `services/runs.ts:610`) DONE (af28113d). REMAINING ("C8b") = (1)
+>   runner READS the snapshot (= B5, SAME work); (2) required-MCP launch refusal in
+>   `services/runs.ts` after the M14 cap-ref check (~runs.ts:495): KNOWN-but-
+>   unmaterializable required MCP → `CONFIG`/`EXECUTOR_UNAVAILABLE`; additional → drop;
+>   (3) MCP stdio `command` spawn gated on `flow_revisions.exec_trust` (the T-B3 axis)
+>   before first spawn.
+> - **T-B5 ≡ C8b(1)** (ONE shared piece, INTRICATE — do with care/fresh context):
+>   today `runner-graph.ts:476` `resolveCapabilityProfile` + `:489`
+>   `materializeCapabilityProfile` resolve from the LIVE catalog per node-attempt.
+>   Re-architect to read `runs.resolved_capability_set` (frozen at launch) → enforces
+>   in-flight immutability. New `resolved-set-snapshot.integration.test.ts` (snapshot
+>   frozen at launch + publish a new authored revision mid-run → run unaffected). The
+>   runner does NOT read the snapshot yet.
+>
+> **GOTCHAS this session earned (don't re-discover):**
+> 1. **Client editor RSC boundary**: never import server-only `@/lib/errors` from the
+>    canvas client chain — use client-safe `@/lib/errors-core` (MaisterError class).
+>    `config.schema.ts` is NOT server-only (a comment mentions it — false grep hit).
+>    Unit tests pass through server-only violations; only `next build`/e2e catch them.
+> 2. **Graph-flow save needs `compat.engine_min >= 1.1.0`** (`GRAPH_MIN_ENGINE_VERSION`,
+>    engine-version.ts:22) or `validateGraphManifest` (config.ts:584 via
+>    `assertAuthoredFlowManifestValid` authored-service.ts:308) throws CONFIG at save.
+>    Page-load `buildAuthoredFlowGraph` (compileManifest) is LENIENT (no compat check).
+> 3. **Save hard-gate only runs on PARSEABLE manifests** — unparseable/unknown-type YAML
+>    is stored RAW (manifest null, status invalid), NOT gate-rejected. To test the gate
+>    use a parseable-but-graph-invalid manifest.
+> 4. **Worktree cwd trap**: agent Bash cwd resets; `cd .../mAIster/web` = WRONG (main
+>    checkout, old commit). Always full `.claude/worktrees/charming-bouman-e7bc9c/web`.
+> 5. **eslint**: NEVER `pnpm lint` (no-path → reformats ~60 files). Scoped
+>    `pnpm exec eslint --fix <files>` + check. typecheck = `pnpm typecheck`.
+> 6. **e2e loop**: `lsof -ti:3100 | xargs kill` first, then `pnpm test:e2e e2e/<spec>`
+>    (docker pg `maister_e2e`). Pre-validate seed standalone:
+>    `DB_URL=postgres://maister:maister@localhost:5432/maister_e2e pnpm exec tsx
+>    lib/db/migrate.ts && … e2e/_seed/seed-e2e.ts`. Editor e2e fixture = `byKey.m27`
+>    (project `e2e-m27-editor`); `seedM27FlowEditorFixture` is the template for new caps.
+>
+> **C5 pointer** (independent, good for a fresh subagent): mirror admin MCP (T-C2,
+> `app/api/admin/mcp-servers/**` + `lib/mcp/mcp-form.ts` + `lib/mcp/usage.ts` +
+> `components/settings/mcp-servers-panel.tsx` + modal) BUT project-scoped CRUD over
+> `capability_records` (source='project', kind='mcp') — see `lib/mcp/projection.ts`
+> (material shape) + `lib/capabilities/resolver.ts`. RBAC via
+> `authorizeCatalogRouteProject(slug)` (catalog caps routes pattern). Secrets env:NAME
+> only. Integration tests (CRUD + project scoping).
+>
+> **Workflow (user-confirmed):** commit-green constraint LIFTED (WIP commits OK, squash
+> before merge); subagents OK with clean narrow context (no-git + scoped verify + tell
+> them to ignore coordinator-edited files in `pnpm typecheck`); TDD per task.
+
 ### Phase 0 — Analytics + ADR HARD GATE (no code until COMPLETE + INTERNALLY CONSISTENT)
 
 - [x] **T0.1 — SDD spec freeze.** Author `.ai-factory/specs/feature-m27-flow-studio-stage-1.md`: domain model, state machines (authored draft→published→resolved-at-launch→snapshotted; exec-trust untrusted→trusted), every process flow, the **spec-to-test matrix** (each acceptance criterion → named test), and the allow-lists/precedence written exactly as code will gate (MCP precedence `project→platform→flow-package`; required-vs-additional refusal set). Single source of truth.
