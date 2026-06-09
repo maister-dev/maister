@@ -445,7 +445,7 @@ erDiagram
         text id PK
         text run_id FK
         text node_id "node id in compiled FlowGraph"
-        text node_type "ai_coding|cli|check|judge|human"
+        text node_type "ai_coding|cli|check|judge|human|form"
         integer attempt "auto-increment per (run,node)"
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision

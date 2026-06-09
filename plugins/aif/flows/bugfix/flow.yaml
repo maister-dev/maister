@@ -25,7 +25,13 @@ nodes:
   - id: fix
     type: ai_coding
     action:
-      prompt: "/aif-fix {{ task.prompt }}"
+      # `fix` is both the entry node and the review rework target. On entry
+      # review_comments is empty (runner-seeded); on a rework jump it carries the
+      # reviewer's feedback so the re-fix addresses exactly what was rejected.
+      prompt: |
+        /aif-fix {{ task.prompt }}
+
+        {{ review_comments }}
     output:
       produces:
         - id: impl-diff

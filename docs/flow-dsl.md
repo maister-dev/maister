@@ -196,7 +196,7 @@ Lifecycle sections:
 
 **Top-level `retry_safe?` (boolean, default `false`).** A per-node opt-in
 (also accepted on linear `steps[]`) that gates operator crash-recovery
-re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`guard`/`human`).
+re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`guard`/`human`/`form`).
 A `Crashed` run whose recover target is session-less is redispatch-recoverable
 only when its config declares `retry_safe: true` — re-running a session-less
 node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
@@ -207,10 +207,21 @@ and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc
 **Node `settings` — Implemented (M11c subset).** The `settings` block is parsed
 into a typed, per-node-type discriminated shape and validated at compile time
 (the M11a opaque passthrough and the `SETTINGS_NOT_ENFORCED_WARN` no longer
-exist). It is **OPTIONAL on every node type** — a settings-less node validates
-and runs unchanged, and absence of `settings` NEVER triggers a refusal. **M11c
+exist). It is **OPTIONAL on every node type except `form`** — a settings-less
+node validates and runs unchanged, and absence of `settings` NEVER triggers a
+refusal. The sole exception is the `form` (intake) node, whose `settings` is
+**required** because its `settings.form_schema` (the JSON form doc it collects
+against) is mandatory. **M11c
 performs no materialization**: it neither resolves capability references nor
 writes any per-session settings file (those are M14, below).
+
+**`form` (intake) node — Implemented (T4).** A `form` node is the one node type
+with **no `action`**: it collects values against its required
+`settings.form_schema` (a JSON form doc), pauses the run as a `kind:"form"` HITL
+(`runFormCollect`), and on response finishes via `transitions.success` with the
+submitted object exposed as the node's output vars (`node_attempts.vars`, read
+downstream as `{{ steps.<id>.vars.<field> }}`). Unlike a `human` review node it
+carries no decision. See [`system-analytics/hitl.md`](system-analytics/hitl.md).
 
 Node-specific settings are intentionally first-class product configuration:
 AI-coding nodes constrain ACP runner targets, agent definitions, MCP servers, tools,

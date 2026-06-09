@@ -18,7 +18,8 @@ artifact protocol used when the worker is checkpointed.
   - `permission` — binary approve/deny via ACP
     `session/request_permission`.
   - `form` — structured form, schema declared in the Flow's
-    `human` step `form_schema`.
+    `human` step `form_schema` (linear) or a graph `form` node's
+    `settings.form_schema` (intake — `runFormCollect`).
   - `human` — Flow step `type: human` with an `on_reject` clause
     declared in `flow.yaml`. Current behaviour: the row is persisted
     as `kind="human"` and the response is captured under the same
@@ -53,7 +54,7 @@ enum | array`.
 | Kind | Trigger | Form? | Loop on reject? | Wire |
 | ---- | ------- | ----- | --------------- | ---- |
 | `permission` | Agent emits `session/request_permission` mid-step | No (binary) | No | Live ACP request/response |
-| `form` | Agent writes `needs-input.json` mid-step | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
+| `form` | Agent writes `needs-input.json` mid-step, OR a graph `form` (intake) node is reached (`runFormCollect` writes it) | Yes (`form_schema`) | No | Artifact + ACP message OR resume |
 | `human` | Flow step `type: human` (linear) or `human_review` node finish (graph) | Yes (`form_schema`) | Linear: **Implemented — M17** (`on_reject.goto_step` atomic repark, bounded by `maxLoops=5`). Graph (M11a): **declared decisions** drive the rework loop | Artifact only |
 
 The decision tree:
@@ -61,10 +62,12 @@ The decision tree:
 ```mermaid
 flowchart TD
     Step{Flow step type?} -- agent --> AgentRun[agent runs]
+    Step -- form node --> FormNode[form intake node<br/>runFormCollect]
     Step -- human --> HumanStep[human step]
     AgentRun --> Ask{Agent needs input?}
     Ask -- binary tool/file permission --> Perm[kind=permission<br/>via session/request_permission]
     Ask -- structured data --> Form[kind=form<br/>write needs-input.json]
+    FormNode --> Form
     HumanStep --> Review[kind=human<br/>write needs-input.json with on_reject]
 ```
 
@@ -132,6 +135,19 @@ sequenceDiagram
     R->>FS: read input-{stepId}.json
     Note over R: If checkpoint/resume lands, runner-owned resume<br/>uses acp_session_id instead of route-owned status flips.
 ```
+
+### Graph `form` (intake) node — UI + output vars (Implemented — T4)
+
+A graph `form` node's collection is rendered by `HitlDecisionControls`
+(`web/components/board/hitl-decision-controls.tsx`): each `form_schema` field
+shows its `options[]` as buttons **and** a free-text input (pick or type),
+falling back to a raw-JSON textarea when the schema declares no `fields[]`. The
+server re-validates the submitted object against the stored `form_schema`
+(`assertHitlResponse` → 422 `NEEDS_INPUT` on a missing required field) before
+persisting `input-{stepId}.json`; on resume `runFormCollect` returns that object
+as the node's output vars (`node_attempts.vars`), read downstream as
+`{{ steps.<id>.vars.<field> }}`. Unlike a `human` review, a `form` node carries
+no decision — it finishes on `transitions.success`.
 
 ### Human-review response with executed on_reject loop (Implemented — M17)
 

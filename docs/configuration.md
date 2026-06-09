@@ -515,6 +515,15 @@ The manifest each Flow plugin ships in its git repo.
 ```yaml
 schemaVersion: 1
 name: Bugfix
+metadata:                               # optional: routing hints + provenance, additive + runner-ignored
+  title: "AIF — Bugfix"                 #   (stored verbatim in flow_revisions.manifest)
+  summary: "Fast bug loop: fix → checks → review → commit."
+  labels: [bug, hotfix]                 # machine routing hints
+  route_when: "a reported bug/error to fix"   # NL hint for an LLM router
+  links:                                # each (strict): { kind?, title, url }
+    - { kind: docs, title: "Dev Workflow", url: "https://github.com/lee-to/ai-factory" }
+  sources:                              # each (strict): { component, origin }
+    - { component: "skills/aif-*, agents/*", origin: "github.com/lee-to/ai-factory@2.x" }
 runner_type: acp                        # optional, defaults to acp today
 runner: claude-code                     # optional platform ACP target
 setup: ./setup.sh                       # optional one-time install hook

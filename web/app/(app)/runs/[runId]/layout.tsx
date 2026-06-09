@@ -43,6 +43,7 @@ import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { isHumanReviewGate } from "@/lib/flows/review-gate";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
@@ -590,6 +591,17 @@ export default async function RunDetailLayout({
                   status={detail.pendingHitl.assignmentStatus}
                 />
               </div>
+              {flowGraphData && isHumanReviewGate(detail.pendingHitl) ? (
+                <div
+                  className="mb-4 max-h-[480px] overflow-auto rounded-[10px] border border-amber-line bg-paper"
+                  data-testid="hitl-gate-diff"
+                >
+                  <RunDiff
+                    labels={flowGraphData.diffLabels}
+                    runId={detail.runId}
+                  />
+                </div>
+              ) : null}
               <RunHitlResponse
                 canAct={canAct}
                 criticality={detail.pendingHitl.criticality}

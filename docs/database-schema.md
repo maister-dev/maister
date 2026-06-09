@@ -870,7 +870,7 @@ One immutable row per node execution; `attempt` auto-increments per
 {
   id, runId,
   nodeId,                                   // node id in the compiled FlowGraph
-  nodeType: 'ai_coding' | 'cli' | 'check' | 'judge' | 'human',
+  nodeType: 'ai_coding' | 'cli' | 'check' | 'judge' | 'human' | 'form',
   attempt,                                  // auto-increment per (runId, nodeId)
   status: 'Pending' | 'Running' | 'Succeeded'
         | 'Failed' | 'NeedsInput' | 'Reworked' | 'Stale',

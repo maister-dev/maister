@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   copyBundleArtifactsToWorktree,
+  ensureWorktreeGitignore,
   writeAiFactoryConfigOverride,
 } from "@/lib/capabilities/materialize-bundle";
 
@@ -73,6 +74,50 @@ describe("copyBundleArtifactsToWorktree", () => {
     ).toBe("BUNDLE-FOO");
   });
 
+  it("skips a repo-local skill dir WHOLE — never merges bundle files into it", async () => {
+    // Bundle ships a richer aif-x (SKILL.md + references/extra.md)...
+    await mkdir(path.join(bundle, "skills", "aif-x", "references"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(bundle, "skills", "aif-x", "SKILL.md"),
+      "BUNDLE-X",
+    );
+    await writeFile(
+      path.join(bundle, "skills", "aif-x", "references", "extra.md"),
+      "BUNDLE-REF",
+    );
+
+    // ...but the worktree carries a PARTIAL repo-local aif-x (SKILL.md only).
+    await mkdir(path.join(worktree, ".claude", "skills", "aif-x"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(worktree, ".claude", "skills", "aif-x", "SKILL.md"),
+      "REPO-X",
+    );
+
+    await copyBundleArtifactsToWorktree({
+      installedPath: bundle,
+      worktreePath: worktree,
+    });
+
+    // Repo SKILL.md wins AND the bundle's references/ is NOT merged in (no
+    // Frankenstein skill = repo SKILL.md + bundle references).
+    expect(
+      await readFile(
+        path.join(worktree, ".claude", "skills", "aif-x", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("REPO-X");
+    await expect(
+      readFile(
+        path.join(worktree, ".claude", "skills", "aif-x", "references", "extra.md"),
+        "utf8",
+      ),
+    ).rejects.toThrow();
+  });
+
   it("is a no-op when the bundle has no skills/agents dirs", async () => {
     const copied = await copyBundleArtifactsToWorktree({
       installedPath: bundle,
@@ -128,5 +173,39 @@ describe("writeAiFactoryConfigOverride", () => {
 
     expect(cfg.git.create_branches).toBe(false);
     expect(cfg.git.base_branch).toBe("develop");
+  });
+});
+
+describe("ensureWorktreeGitignore", () => {
+  let worktree: string;
+
+  beforeEach(async () => {
+    worktree = await mkdtemp(path.join(tmpdir(), "aif-wt-"));
+  });
+
+  afterEach(async () => {
+    await rm(worktree, { recursive: true, force: true });
+  });
+
+  it("creates .gitignore with the materialized patterns when absent", async () => {
+    await ensureWorktreeGitignore(worktree);
+
+    const gi = await readFile(path.join(worktree, ".gitignore"), "utf8");
+
+    expect(gi).toContain("/.ai-factory/config.yaml");
+    expect(gi).toContain("/.gitignore");
+  });
+
+  it("appends missing patterns, preserves existing entries, and is idempotent", async () => {
+    await writeFile(path.join(worktree, ".gitignore"), "node_modules\n");
+
+    await ensureWorktreeGitignore(worktree);
+    await ensureWorktreeGitignore(worktree);
+
+    const gi = await readFile(path.join(worktree, ".gitignore"), "utf8");
+
+    expect(gi).toContain("node_modules");
+    expect(gi).toContain("/.ai-factory/config.yaml");
+    expect(gi.match(/\/\.ai-factory\/config\.yaml/g)).toHaveLength(1);
   });
 });

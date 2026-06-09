@@ -23,6 +23,7 @@ import {
 } from "@/lib/acp-runners/resolve";
 import {
   copyBundleArtifactsToWorktree,
+  ensureWorktreeGitignore,
   writeAiFactoryConfigOverride,
 } from "@/lib/capabilities/materialize-bundle";
 import { getDb } from "@/lib/db/client";
@@ -607,6 +608,7 @@ export async function launchRun(
         });
       }
       await writeAiFactoryConfigOverride({ worktreePath, baseBranch: base });
+      await ensureWorktreeGitignore(worktreePath);
       log.info(
         {
           runId,

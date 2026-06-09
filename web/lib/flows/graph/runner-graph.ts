@@ -565,6 +565,30 @@ export function downstreamOf(
   return [...visited];
 }
 
+// Every `commentsVar` declared anywhere in the graph (on a node's `rework` or
+// `finish.human`), seeded to "". A rework jump injects the reviewer's actual
+// comments under this key (pendingInjectedVars), but a node that references
+// `{{ <commentsVar> }}` can ALSO run on its initial (non-rework) visit — e.g. a
+// flow whose entry node is also a rework target (aif-bugfix `fix`) — or after a
+// rework with no comments. Strict templating throws on a missing top-level var,
+// so without this seed such a prompt would crash the run. The seed makes a
+// declared commentsVar always renderable (empty outside a rework); the
+// per-rework injection overlays the real comments on the attempt it targets.
+export function collectDeclaredCommentsVars(
+  nodes: Iterable<CompiledNode>,
+): Record<string, string> {
+  const seeded: Record<string, string> = {};
+
+  for (const node of nodes) {
+    const commentsVar =
+      node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
+
+    if (commentsVar) seeded[commentsVar] = "";
+  }
+
+  return seeded;
+}
+
 // M14 T4.1: resolve + materialize a capability profile for a capability-declaring
 // ai_coding/judge node. Returns undefined (no materialization, current behavior)
 // when the node declares no capability-bearing settings. Writes NO secrets — mcp
@@ -918,6 +942,11 @@ export async function runGraph(
   // the immediately-following node, then cleared.
   let pendingInjectedVars: Record<string, unknown> | undefined;
 
+  // Seeded once per run so any `{{ <commentsVar> }}` reference is renderable on
+  // a node's initial (non-rework) visit too; pendingInjectedVars overlays the
+  // real comments on the rework attempt it targets.
+  const declaredCommentsVars = collectDeclaredCommentsVars(graph.nodes.values());
+
   let needsInput = false;
   let checkpointed = false;
   let failed = false;
@@ -1063,7 +1092,7 @@ export async function runGraph(
         stepRuns: [],
         nodeAttempts: attempts,
         projectSlug: loaded.projectSlug,
-        extraVars: pendingInjectedVars,
+        extraVars: { ...declaredCommentsVars, ...(pendingInjectedVars ?? {}) },
         artifacts: currentArtifacts,
       });
 

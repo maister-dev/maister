@@ -5,6 +5,46 @@
 - **Owner:** Albert Kanishchev
 - **Scope decision:** build everything in one pass before dogfooding (no phasing).
 
+## Implementation deltas (as-built, 2026-06-09)
+
+The sections below are the original design. These are the points where the
+shipped code intentionally diverges or resolves an open choice — recorded here so
+the design doc stays honest (code wins):
+
+- **`review` takeover target:** §9 shows `takeover→commit`; shipped `aif-dev`
+  routes **`takeover → checks`** so a human's local edits are re-validated
+  (`/aif-verify` + `/aif-review`) before commit. Intentional improvement.
+- **Prompt templating:** flows use flat vars — `{{ review_comments }}` (matching
+  `commentsVar: review_comments`) and `{{ steps.intake.vars.<field> }}` — NOT the
+  `{{review.comments}}` / `{{intake.*}}` forms sketched in §9.
+- **Materialization site:** delivered as a standalone
+  `web/lib/capabilities/materialize-bundle.ts` (`copyBundleArtifactsToWorktree`
+  fs-copies the bundle's `skills/` + `agents/` with repo-local precedence), wired
+  into `launchRun` — NOT the `agent-map.ts` / `materialize.ts` touch points named
+  in §8.2.
+- **Commit gate (§8.4):** an inline `command_check` (clean tree via
+  `git status --porcelain --untracked-files=no` + a Conventional Commits subject)
+  on all five flows' `commit` node, run after `/aif-commit` commits. (A
+  `commit-gate.sh` helper was briefly shipped + wired but removed — it duplicated
+  the inline check and would have littered the run worktree; the gate stays inline
+  so nothing is materialized for it.) The per-run `.ai-factory/config.yaml`
+  override is git-ignored per-worktree (`ensureWorktreeGitignore`) so it is never
+  staged or promoted.
+- **No `rules/` (§4 layout):** the package ships skills + agents only; a package
+  may legitimately omit `rules/` — the `rules/*.md` entry in the §4 tree is
+  illustrative, not required.
+- **`flow_roles` (consumer caveat):** every human/form node uses `role: maintainer`
+  and the package declares no role. A consuming `maister.yaml` that declares a
+  non-empty `flow_roles[]` MUST include a `maintainer` entry or all five flows
+  fail role-ref validation at install. The admin-operated dogfood declares no
+  `flow_roles[]`, so it is unaffected.
+- **Packaging model (§4 / F3):** the 6-entry `flows[]` + `capability_imports[]`
+  wiring below is the dogfood path. A single-import `flow_packages[]` model is
+  deferred to a Package-management milestone — see [`.ai-factory/PLAN.md`](../../.ai-factory/PLAN.md).
+  When it lands, F3's "5 flows = 5 sources" premise is superseded for the package case.
+
+---
+
 ## Provenance (what this package vendors and from where)
 
 - Framework: **AI Factory `2.x`** — <https://github.com/lee-to/ai-factory/tree/2.x> (skills, subagents, rules; Apache-2.0 adapters consumed via ACP).

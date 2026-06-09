@@ -29,7 +29,7 @@ valid by compiling to single-action nodes, so this domain governs **all** runs.
 ## Domain entities
 
 - **Node** — a typed unit of work in a graph manifest (`nodes[]`):
-  `ai_coding | cli | check | judge | human`. Carries `input.requires?`,
+  `ai_coding | cli | check | judge | human | form`. Carries `input.requires?`,
   `output.produces?` (typed artifact decls, **M12**), a type-specific `action`,
   `pre_finish.gates?`, `finish` (auto or `human`), `transitions`, and `rework?`.
 - **FlowGraph** — the normalized in-memory graph produced by `compileManifest`:
@@ -129,7 +129,9 @@ to the `step_runs` row only when no `node_attempts` exist (legacy runs).
 ```mermaid
 flowchart TD
     Entry([entry / resume node]) --> Append[appendNodeAttempt<br/>attempt = nextAttemptFor]
-    Append --> Act[run action<br/>cli / agent / check / judge / human]
+    Append --> Act[run action<br/>cli / agent / check / judge / human / form]
+    Act -- form node, first visit --> FormHitl[emit form HITL<br/>run NeedsInput]
+    FormHitl -- operator submits values --> Validate
     Act --> Validate{output.result declared?<br/>M26 — Designed}
     Validate -- no --> Gates[run pre_finish.gates in order]
     Validate -- yes, valid --> FoldVars[fold validated payload into vars]

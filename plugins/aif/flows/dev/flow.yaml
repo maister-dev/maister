@@ -2,7 +2,7 @@ schemaVersion: 1
 name: aif-dev
 metadata:
   title: "AIF — Develop"
-  summary: "Spec-driven delivery: intake → plan → improve → review → implement → checks → review → fix → commit."
+  summary: "Spec-driven delivery: intake → plan → improve → plan_review → implement → checks → code_review → review → commit; review rework → fix."
   labels: [feature, enhancement, refactor]
   route_when: "A feature/enhancement/refactor with a clear spec."
   links:
@@ -149,7 +149,9 @@ nodes:
     transitions:
       approve: commit
       rework: fix
-      takeover: commit
+      # Takeover returns at `checks` (NOT `commit`) so the human's local edits
+      # are re-validated through /aif-verify + /aif-review before commit.
+      takeover: checks
     rework:
       allowedTargets: [fix]
       workspacePolicies: [keep]
@@ -160,7 +162,7 @@ nodes:
     type: ai_coding
     action:
       prompt: |
-        /aif-fix {{ steps.review.vars.review_comments }}
+        /aif-fix {{ review_comments }}
 
         Non-interactive run — do NOT ask the user clarifying questions; proceed autonomously (tool-use permission prompts are handled by the platform).
     transitions:

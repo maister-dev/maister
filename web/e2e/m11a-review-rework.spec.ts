@@ -50,7 +50,7 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
   // two declared decision buttons (and nothing outside the allow-list).
   await page.goto(`/runs/${fx.runId}`);
 
-  const comments = page.locator("#review-comments");
+  const comments = page.locator("#hitl-review-comments");
 
   await expect(comments).toBeVisible();
   await expect(
@@ -63,6 +63,12 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
   });
 
   await expect(rework).toBeVisible();
+
+  // The review gate co-locates the run diff with the decision controls (option
+  // 2 — embedded diff), so the reviewer inspects the changes without leaving the
+  // gate. The panel renders for any `human` review gate; its inner diff content
+  // depends on worktree state (this fixture has none), so assert the panel only.
+  await expect(page.locator('[data-testid="hitl-gate-diff"]')).toBeVisible();
 
   // (3) Clicking "Request rework" posts the decision + comments to the respond
   // route. Intercept that POST and assert the server validated + accepted it

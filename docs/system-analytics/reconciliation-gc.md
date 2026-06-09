@@ -149,7 +149,7 @@ crash time; `current_step_id` is nulled on crash), falling back to
 | ------------------- | -------------- | ----------------- | ---- | ------------ |
 | `ai_coding` (agent) | present | ignored | `resume-agent` — ACP `session/resume <acpSessionId>` | yes (200 resumed / 202 queued) |
 | `ai_coding` (agent) | null | ignored | `discard-only` | no (409) |
-| session-less (`cli`/`check`/`judge`/`guard`/`human`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
+| session-less (`cli`/`check`/`judge`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
 | session-less | irrelevant | `false` (default) | `discard-only` | no (409) |
 | unresolvable target node | — | — | `discard-only` | no (409) |
 
@@ -236,6 +236,10 @@ flowchart TD
   whose current node is a read-only gate eval (`check`/`judge`) MUST be
   re-dispatched; a `cli` node MUST be crashed (reason `cli-not-retry-safe`) and
   NEVER auto-re-dispatched.
+- A `Running` agent run with NO `acpSessionId` match but a LIVE supervisor
+  session for its `(runId, currentStepId)` MUST be SKIPPED (reason
+  `live-session-by-step`), never crashed: the node's prompt is in-flight and
+  `acp_session_id` is persisted only after it returns.
 - A supervisor `listSessions` failure MUST skip the whole reconcile tick;
   the sweep NEVER crashes a run on transient supervisor unavailability.
 - Reconcile candidate sets MUST stay disjoint from `runResumeRecoverySweep`
@@ -336,7 +340,8 @@ to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`),
 | status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
 | `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
 | `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
-| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/null — read-only) in a **graph (`nodes[]`) flow** | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
+| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the run row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
+| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) in a **graph (`nodes[]`) flow** | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
 | `Running` | worktree present, no live session, current node is a gate/`human` orphan in a **linear (`steps[]`) flow** | **CRASH** (`crashRunningRun`, reason `linear-gate-orphan`) | a flat `steps[]` run cannot resume mid-flow via `runFlow` (bare re-entry restarts at step 0 and re-runs prior side-effects); crashing retains the node in `resume_target_step_id` so operator Recover resumes from it (ADR-056 window-(c)) |
 | `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |

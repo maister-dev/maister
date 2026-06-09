@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   compileManifest: vi.fn(),
   copyBundleArtifactsToWorktree: vi.fn(),
   writeAiFactoryConfigOverride: vi.fn(),
+  ensureWorktreeGitignore: vi.fn(),
 }));
 
 // `from()` is both awaitable (selects with no `.where()`, e.g.
@@ -142,6 +143,7 @@ vi.mock("@/lib/flows/graph/compile", () => ({
 vi.mock("@/lib/capabilities/materialize-bundle", () => ({
   copyBundleArtifactsToWorktree: mocks.copyBundleArtifactsToWorktree,
   writeAiFactoryConfigOverride: mocks.writeAiFactoryConfigOverride,
+  ensureWorktreeGitignore: mocks.ensureWorktreeGitignore,
 }));
 
 type LaunchRunFn = typeof import("@/lib/services/runs").launchRun;
@@ -258,6 +260,7 @@ beforeEach(async () => {
     agents: true,
   });
   mocks.writeAiFactoryConfigOverride.mockResolvedValue(undefined);
+  mocks.ensureWorktreeGitignore.mockResolvedValue(undefined);
 
   seedSelects();
 
