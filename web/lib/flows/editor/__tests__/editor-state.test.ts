@@ -302,7 +302,9 @@ describe("setNodeAction", () => {
     expect(snapshot(BASE_MANIFEST)).toBe(before);
 
     const plan = result.nodes?.find((n) => n.id === "plan");
-    const action = plan?.action as Record<string, unknown> | undefined;
+    const action = (
+      plan as unknown as { action?: Record<string, unknown> } | undefined
+    )?.action;
 
     expect(action?.["prompt"]).toBe("new prompt");
   });
