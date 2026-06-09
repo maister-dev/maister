@@ -48,7 +48,10 @@ let cliFlowId: string;
 let aifFlowId: string;
 let originalHome: string | undefined;
 
-const PLUGIN_AIF_PATH = resolve(__dirname, "../../../../plugins/aif");
+// Local test fixture (see _fixtures/aif-flow/flow.yaml) — the runner test is
+// decoupled from the real plugins/aif, which is restructured into a multi-flow
+// bundle and ultimately moves to its own repo.
+const AIF_FIXTURE_PATH = resolve(__dirname, "_fixtures/aif-flow");
 
 const CLI_FLOW_YAML = `schemaVersion: 1
 name: cli-only
@@ -119,7 +122,7 @@ beforeAll(async () => {
   await setupCliFlowPlugin();
 
   const aifInstall = await installFlowPlugin({
-    source: PLUGIN_AIF_PATH,
+    source: AIF_FIXTURE_PATH,
     version: "local-dev",
     projectId,
     projectSlug: "demo-app",
@@ -298,7 +301,7 @@ describe("installFlowPlugin — local source path", () => {
       .where(eq(flows.flowRefId, "aif"));
 
     expect(rows.length).toBe(1);
-    expect(rows[0].source).toBe(PLUGIN_AIF_PATH);
+    expect(rows[0].source).toBe(AIF_FIXTURE_PATH);
     // M10 (ADR-021): local sources are content-addressed by manifest digest,
     // not the version label, so the cache dir is aif@<12-hex-digest-prefix>.
     expect(rows[0].installedPath).toMatch(/\/aif@[0-9a-f]{12}$/);
