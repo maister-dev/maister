@@ -47,7 +47,10 @@ nodes:
   - id: improve
     type: ai_coding
     action:
-      prompt: "/aif-improve"
+      prompt: |
+        /aif-improve
+
+        Non-interactive run — do NOT ask the user clarifying questions; apply your best-judgment improvements directly.
     transitions:
       success: plan_review
 
@@ -70,7 +73,10 @@ nodes:
   - id: implement
     type: ai_coding
     action:
-      prompt: "/aif-implement"
+      prompt: |
+        /aif-implement
+
+        Non-interactive run — do NOT ask the user clarifying questions; proceed autonomously (tool-use permission prompts are handled by the platform).
     output:
       produces:
         - id: impl-diff
@@ -83,7 +89,10 @@ nodes:
   - id: checks
     type: ai_coding
     action:
-      prompt: "/aif-verify"
+      prompt: |
+        /aif-verify
+
+        Non-interactive run — do NOT ask the user clarifying questions; proceed autonomously.
     input:
       requires:
         - artifact: impl-diff
@@ -98,7 +107,10 @@ nodes:
   - id: code_review
     type: ai_coding
     action:
-      prompt: "/aif-review"
+      prompt: |
+        /aif-review
+
+        Non-interactive run — do NOT ask the user clarifying questions; proceed autonomously.
     input:
       requires:
         - artifact: impl-diff
@@ -147,14 +159,20 @@ nodes:
   - id: fix
     type: ai_coding
     action:
-      prompt: "/aif-fix {{ steps.review.vars.review_comments }}"
+      prompt: |
+        /aif-fix {{ steps.review.vars.review_comments }}
+
+        Non-interactive run — do NOT ask the user clarifying questions; proceed autonomously (tool-use permission prompts are handled by the platform).
     transitions:
       success: checks
 
   - id: commit
     type: ai_coding
     action:
-      prompt: "/aif-commit"
+      prompt: |
+        /aif-commit
+
+        Non-interactive run — do NOT ask the user clarifying questions (e.g. do not prompt to push); commit only.
     pre_finish:
       gates:
         - id: commit-gate

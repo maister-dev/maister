@@ -13,7 +13,7 @@
       "label": "Logging",
       "type": "string",
       "required": true,
-      "options": ["verbose", "normal", "none"]
+      "options": ["verbose", "standard", "minimal"]
     },
     {
       "name": "docs",
