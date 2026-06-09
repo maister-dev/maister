@@ -147,7 +147,7 @@ export async function GET(
       await requireProjectAction(run.projectId, "readScratchRun");
 
       const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
-      const diff = await diffRunWorkspace({
+      const { text: diff, truncated } = await diffRunWorkspace({
         projectRepoPath: workspace.parentRepoPath,
         baseCommit: scratch.baseCommit,
         branch: workspace.branch,
@@ -159,6 +159,7 @@ export async function GET(
         sourceBranch: workspace.branch,
         targetBranch,
         diff,
+        truncated,
       });
     }
 
@@ -173,7 +174,7 @@ export async function GET(
         branch: workspace.branch,
         mainBranch: project.mainBranch,
       }));
-    const diff = await diffRunWorkspace({
+    const { text: diff, truncated } = await diffRunWorkspace({
       projectRepoPath: workspace.worktreePath,
       baseCommit: base,
       branch: workspace.branch,
@@ -183,7 +184,7 @@ export async function GET(
       baseRef: base,
       branch: workspace.branch,
     });
-    const prepared = await prepareDiff(diff);
+    const prepared = await prepareDiff(diff, truncated);
     const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
     const files = nameStatus.map((entry) => {
       const counts = countsByPath.get(entry.path);
@@ -203,6 +204,7 @@ export async function GET(
       targetBranch:
         workspace.targetBranch ?? workspace.baseBranch ?? project.mainBranch,
       diff,
+      truncated: prepared.truncated,
       files,
       perFile: prepared.perFile,
     });

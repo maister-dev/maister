@@ -1050,7 +1050,7 @@ secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
 
 ## `project_tokens`
 
-**(M16 — Implemented, migration `0018_m16_api_tokens.sql`; expanded by
+**(M16 — Implemented, migration `0020_m16_api_tokens.sql`; expanded by
 `0031_token_actor_scope_support.sql`.)** Project-scoped API tokens and
 user-owned project tokens that grant external callers (CI, scripts, personal
 agents, webhook channels, the MCP facade) access to the `/api/v1/ext` surface.
@@ -1097,7 +1097,7 @@ on `(project_id)`, `project_tokens_owner_idx` on `(owner_user_id)`. Cascade:
 
 ## `token_audit_log`
 
-**(M16 — Implemented, migration `0018_m16_api_tokens.sql`.)** Append-only audit
+**(M16 — Implemented, migration `0020_m16_api_tokens.sql`.)** Append-only audit
 record for every `/api/v1/ext` call made with an **identified** token — every
 success plus identified-token failures (expired / revoked / wrong-project /
 validation). `token_id` is `NOT NULL`: a request whose token cannot be

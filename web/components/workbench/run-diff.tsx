@@ -24,6 +24,7 @@ export interface RunDiffLabels {
   viewMode: string;
   split: string;
   unified: string;
+  truncated: string;
 }
 
 export interface RunDiffProps {
@@ -34,7 +35,12 @@ export interface RunDiffProps {
 type DiffState =
   | { kind: "loading" }
   | { kind: "error" }
-  | { kind: "ready"; files: RunDiffFile[]; perFile: PreparedFile[] };
+  | {
+      kind: "ready";
+      files: RunDiffFile[];
+      perFile: PreparedFile[];
+      truncated: boolean;
+    };
 
 export default function RunDiff({ runId, labels }: RunDiffProps): ReactElement {
   const [state, setState] = useState<DiffState>({ kind: "loading" });
@@ -54,6 +60,7 @@ export default function RunDiff({ runId, labels }: RunDiffProps): ReactElement {
         const body = (await res.json()) as {
           files?: RunDiffFile[];
           perFile?: PreparedFile[];
+          truncated?: boolean;
         };
 
         if (!cancelled) {
@@ -61,6 +68,7 @@ export default function RunDiff({ runId, labels }: RunDiffProps): ReactElement {
             kind: "ready",
             files: body.files ?? [],
             perFile: body.perFile ?? [],
+            truncated: body.truncated ?? false,
           });
         }
       } catch {
@@ -112,8 +120,10 @@ export default function RunDiff({ runId, labels }: RunDiffProps): ReactElement {
           viewMode: labels.viewMode,
           split: labels.split,
           unified: labels.unified,
+          truncated: labels.truncated,
         }}
         perFile={state.perFile}
+        truncated={state.truncated}
       />
     </div>
   );

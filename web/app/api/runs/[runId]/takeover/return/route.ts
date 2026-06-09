@@ -29,6 +29,7 @@ import { runFlow } from "@/lib/flows/runner";
 import { loadProjectMainBranch } from "@/lib/runs/takeover-context";
 import { markReturnedToRunning } from "@/lib/runs/state-transitions";
 import {
+  DIFF_TRUNCATED_MARKER,
   diffRange,
   logRange,
   resolveBaseRef,
@@ -218,7 +219,12 @@ export async function POST(
     const mainBranch = await loadProjectMainBranch(run.projectId, db);
     const baseRef = await resolveBaseRef({ worktreePath, branch, mainBranch });
     const returnedCommits = await logRange({ worktreePath, baseRef, branch });
-    const returnedDiff = await diffRange({ worktreePath, baseRef, branch });
+    const returnedRange = await diffRange({ worktreePath, baseRef, branch });
+    // An oversized returned diff keeps its in-band marker so the stored evidence
+    // text still flags the cut (this surface has no structured channel).
+    const returnedDiff = returnedRange.truncated
+      ? returnedRange.text + DIFF_TRUNCATED_MARKER
+      : returnedRange.text;
 
     // F3: store the immutable head SHA in the git artifact locators so their
     // payloads render the returned range, not the live branch tip. Branch-name

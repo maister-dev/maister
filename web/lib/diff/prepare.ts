@@ -27,6 +27,10 @@ export type PreparedFile = {
 export type DiffPrepResult = {
   files: DiffFileSummary[];
   perFile: PreparedFile[];
+  // The producing diff reader cut the output at EXEC_MAX_BUFFER: `files`/`perFile`
+  // cover only the bytes that fit. A review/promotion surface MUST block on this
+  // rather than treat the prefix as the full change.
+  truncated: boolean;
 };
 
 type ParsedSection = {
@@ -131,11 +135,14 @@ function buildBundle(
   return file._getFullBundle();
 }
 
-export async function prepareDiff(rawDiff: string): Promise<DiffPrepResult> {
+export async function prepareDiff(
+  rawDiff: string,
+  truncated = false,
+): Promise<DiffPrepResult> {
   const sections = splitSections(rawDiff).map(parseSection);
 
   if (sections.length === 0) {
-    return { files: [], perFile: [] };
+    return { files: [], perFile: [], truncated };
   }
 
   const langByPath = new Map<string, string>();
@@ -176,5 +183,7 @@ export async function prepareDiff(rawDiff: string): Promise<DiffPrepResult> {
   // Server→Client boundary (the review panel takes the DTO as a prop). The
   // bundle is already JSON-representable (it ships JSON via the /diff route),
   // so this roundtrip is lossless and doubles as the FINDING-C plain projection.
-  return JSON.parse(JSON.stringify({ files, perFile })) as DiffPrepResult;
+  return JSON.parse(
+    JSON.stringify({ files, perFile, truncated }),
+  ) as DiffPrepResult;
 }

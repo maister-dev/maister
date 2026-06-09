@@ -331,7 +331,7 @@ bearer extraction occurs.
 - Configuration: [`../configuration.md`](../configuration.md)
   (`gates[].external` schema, `MAISTER_API_BASE_URL`, `MAISTER_PROJECT_TOKEN`).
 - Source files (Implemented): `web/lib/db/schema.ts` + migration
-  `0018_m16_api_tokens.sql` + `0031_token_actor_scope_support.sql`,
+  `0020_m16_api_tokens.sql` + `0031_token_actor_scope_support.sql`,
   `web/lib/tokens/` (`issue.ts`, `verify.ts`,
   `secret.ts`, `audit.ts`, `revoke.ts`, `list.ts`, `ext-handler.ts` —
   `TokenAuthError`, `httpStatusForTokenAuth`, `verifyToken`, constant-time

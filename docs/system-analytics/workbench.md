@@ -135,8 +135,11 @@ The `…/files` tree expand and the file **open + render** path are both
 Implemented (M22 + ADR-066): selecting a file is a `?file=` soft-navigation that
 the server component validates (`repoRelPathSchema`), authorizes
 (`readRepoFiles`), and reads via `readBlob`, then renders with server-side Shiki
-— the standalone `…/files/content` route was retired. The 413/415/404 caps and
-the read-only boundary are unchanged.
+— the standalone `…/files/content` route was retired. The size / binary /
+not-found caps and the read-only boundary are unchanged, but an oversized or
+binary blob now renders a **page state** (`file-too-large` / `file-binary`) on
+the `?file=` RSC path rather than the retired route's HTTP `413` / `415`; a
+not-in-tree path is still a `404`.
 
 ```mermaid
 flowchart TD
@@ -151,8 +154,8 @@ flowchart TD
     Render --> OpenF["open file: ?file= soft-nav (RSC server-reads blob via readBlob)"]
     OpenF --> Blob["git cat-file -s then blob, cap MAISTER_WORKBENCH_MAX_FILE_BYTES"]
     Blob -- text --> Pre["server-rendered Shiki dual-theme HTML + line numbers (Implemented, ADR-066)"]
-    Blob -- too-large --> F413["413 marker"]
-    Blob -- binary --> F415["415 marker"]
+    Blob -- too-large --> FBig["file-too-large page state (RSC)"]
+    Blob -- binary --> FBin["file-binary page state (RSC)"]
 ```
 
 ### Flow-run diff render (Track C)
@@ -206,14 +209,22 @@ flowchart LR
   `.light`/`.dark` class (Implemented, ADR-066).
 - An untrusted `?path=` MUST pass `repoRelPathSchema` (no `..`, not absolute, no
   leading `/` or `-`, no NUL); a violation is `400` (`CONFIG`), never a disclosed path.
-- A blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` returns `413` and a binary blob
-  returns `415` — never the raw bytes.
+- A blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` renders the `file-too-large`
+  page state and a binary blob the `file-binary` page state on the `?file=` RSC
+  path — never the raw bytes, and never an HTTP `413`/`415` (that `…/files/content`
+  route was retired, ADR-066).
 - The workbench diff is run-scoped (`base..branch` only) and gated `readBoard`
   (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
   `runs.status` value and reuses the M18 diff response shape plus a `files` summary.
   Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
   per-file `additions`/`deletions` computed server-side (Implemented, ADR-066); the
   scratch diff stays a raw `pre`.
+- An oversized diff (over the `EXEC_MAX_BUFFER` 4 MiB bound) degrades to a bounded
+  prefix carrying `truncated: true` on the `…/diff` response and the review-panel
+  diff DTO — the diff readers (`diffRange`, `diffRunWorkspace`) NEVER throw on
+  size. The review panel MUST block promotion behind an explicit acknowledgement
+  when `truncated`, and both the workbench and review diff MUST render a
+  truncation banner (Implemented, ADR-066).
 
 ## Edge cases
 
@@ -223,7 +234,8 @@ flowchart LR
 - **File path traversal / absolute / leading `-` / NUL** (`repoRelPathSchema` reject) → `400` (`CONFIG`).
 - **`.git/config`, a gitignored `.env`, or an untracked file path** → `404` (not in
   the tracked tree; never disclosed).
-- **Blob over the size cap** → `413`; **binary blob** → `415`.
+- **Blob over the size cap** → `file-too-large` page state; **binary blob** →
+  `file-binary` page state (RSC `?file=` render; no HTTP `413`/`415` — ADR-066).
 - **Cross-project `slug`/`runId`** (caller is not a member of the resource's
   project) → `403` (`UNAUTHORIZED`) via `requireProjectAction` against the
   server-derived project (the app-wide convention); a genuinely unknown
@@ -233,6 +245,9 @@ flowchart LR
 - **Legacy run with null `workspaces.base_commit`** → diff base falls back to
   `resolveBaseRef(...)`; a run with no derivable base → `PRECONDITION` (409, the
   existing diff guard). No new `MaisterError` code.
+- **Oversized diff** (over `EXEC_MAX_BUFFER`, 4 MiB) → bounded prefix +
+  `truncated: true` on `…/diff`; the review panel blocks promotion until the
+  reviewer acknowledges (ADR-066). NOT a `409`/throw, NOT a silent partial render.
 
 ## Linked artifacts
 
@@ -244,8 +259,9 @@ flowchart LR
   [ADR-053 file-tree](../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
   [ADR-066 editor/diff rendering](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (file view + diff Implemented; authored editor Designed).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`…/graph`,
-  `…/graph-status`, `…/files[/content]`,
-  `/api/projects/{slug}/files[/content]`, the flow-run `…/diff` case).
+  `…/graph-status`, the `…/files?path=` and `/api/projects/{slug}/files?path=`
+  tree routes, and the flow-run `…/diff` case; git-tracked blob reads are the
+  `?file=` RSC render path, not an HTTP route).
 - Config: [`../configuration.md`](../configuration.md) §Environment variables
   (`MAISTER_WORKBENCH_MAX_FILE_BYTES`).
 - Errors: [`../error-taxonomy.md`](../error-taxonomy.md) (`CONFIG` / `PRECONDITION`

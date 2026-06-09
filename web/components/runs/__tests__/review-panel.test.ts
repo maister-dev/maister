@@ -78,6 +78,8 @@ const LABELS = {
   prLink: "run.prLink",
   targetDrift: "run.targetDrift",
   promoteAnyway: "run.promoteAnyway",
+  diffTruncated: "run.diffTruncated",
+  promoteTruncated: "run.promoteTruncated",
 };
 
 type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
@@ -86,7 +88,7 @@ type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
 // CLIENT DTO ({ files, perFile }) that the diff-view hydrates. A minimal empty
 // DTO is enough for the STRUCTURE assertion (the container renders); the diff
 // content itself is exercised in the workbench e2e, not here.
-const EMPTY_DIFF_DTO = { files: [], perFile: [] };
+const EMPTY_DIFF_DTO = { files: [], perFile: [], truncated: false };
 
 function render(over: Partial<ReviewPanelProps> = {}): string {
   const base: ReviewPanelProps = {
@@ -190,6 +192,28 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     // the exact failing command — the manual-resolution affordance.
     expect(html).toContain("/repos/myapp");
     expect(html).toContain("git merge --no-ff maister/feature-x");
+  });
+
+  it("blocks Promote behind an explicit ack when the diff is truncated (regression)", () => {
+    const html = render({
+      diff: { files: [], perFile: [], truncated: true },
+    } as Partial<ReviewPanelProps>);
+
+    // A truncated diff renders a blocking alert + an explicit "Promote anyway
+    // (truncated)" override INSTEAD of the normal Promote action — the user
+    // cannot promote on a partial diff without consciously acknowledging it.
+    expect(html).toContain('data-testid="review-diff-truncated"');
+    expect(html).toContain("run.diffTruncated");
+    expect(html).toContain("run.promoteTruncated");
+    expect(html).not.toContain("run.promoteTo");
+  });
+
+  it("does not gate Promote when the diff is whole (truncated:false)", () => {
+    const html = render();
+
+    // The normal Promote action is present and the truncation gate is absent.
+    expect(html).not.toContain('data-testid="review-diff-truncated"');
+    expect(html).toContain("run.promoteTo");
   });
 
   it("legacyNeedsRelaunch renders the relaunch state and NOT the promote action; never a null branch", () => {

@@ -39,6 +39,7 @@ export interface DiffViewLabels {
   viewMode: string;
   split: string;
   unified: string;
+  truncated: string;
 }
 
 export interface RunDiffFile {
@@ -125,6 +126,10 @@ export interface DiffViewProps {
   labels: DiffViewLabels;
   // Optional explicit override; otherwise resolved from `?diffview=`.
   mode?: DiffViewMode;
+  // The producing diff was cut at the 4 MiB buffer bound: `files`/`perFile` are
+  // a partial prefix. Surfaces a blocking banner so a partial diff is never read
+  // as the whole change.
+  truncated?: boolean;
 }
 
 function parseDiffView(raw: string | null): DiffViewMode {
@@ -148,6 +153,7 @@ export function DiffView({
   perFile,
   labels,
   mode,
+  truncated = false,
 }: DiffViewProps): ReactElement {
   const { resolvedTheme } = useTheme();
   const router = useRouter();
@@ -188,69 +194,80 @@ export function DiffView({
     resolvedTheme === "light" ? "light" : "dark";
 
   return (
-    <div
-      className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,280px)_1fr]"
-      data-diff-mode={viewMode}
-      data-testid="diff-view"
-    >
-      <div className="overflow-auto rounded-[10px] border border-line bg-paper p-1.5">
-        <ChangedFilesList
-          files={files}
-          labels={{
-            empty: labels.empty,
-            added: labels.added,
-            removed: labels.removed,
-          }}
-          selectedPath={activePath}
-          onSelect={setSelected}
-        />
-      </div>
-      <div className="min-w-0 overflow-auto rounded-[10px] border border-line bg-paper">
-        <div
-          aria-label={labels.viewMode}
-          className="flex justify-end gap-1 border-b border-line p-1.5"
-          role="group"
+    <div className="flex flex-col gap-2" data-testid="diff-view-wrap">
+      {truncated ? (
+        <p
+          className="rounded-[10px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] leading-[1.5] text-amber"
+          data-testid="diff-truncated-banner"
+          role="alert"
         >
-          <button
-            aria-pressed={viewMode === "split"}
-            className="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold"
-            data-testid="diff-view-mode-split"
-            type="button"
-            onClick={() => setViewMode("split")}
-          >
-            {labels.split}
-          </button>
-          <button
-            aria-pressed={viewMode === "unified"}
-            className="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold"
-            data-testid="diff-view-mode-unified"
-            type="button"
-            onClick={() => setViewMode("unified")}
-          >
-            {labels.unified}
-          </button>
-        </div>
-        {diffFile ? (
-          // `key={diffTheme}` remounts git-diff-view on theme toggle so the
-          // wrapper's `data-theme` chrome re-applies. The remount re-hydrates
-          // from the full bundle (no re-highlight); the syntax tokens recolor
-          // instantly via the `--shiki-*` CSS vars regardless.
-          <GitDiffView
-            key={diffTheme}
-            diffFile={diffFile}
-            diffViewHighlight={true}
-            diffViewMode={diffViewMode}
-            diffViewTheme={diffTheme}
-            diffViewWrap={false}
+          {labels.truncated}
+        </p>
+      ) : null}
+      <div
+        className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,280px)_1fr]"
+        data-diff-mode={viewMode}
+        data-testid="diff-view"
+      >
+        <div className="overflow-auto rounded-[10px] border border-line bg-paper p-1.5">
+          <ChangedFilesList
+            files={files}
+            labels={{
+              empty: labels.empty,
+              added: labels.added,
+              removed: labels.removed,
+            }}
+            selectedPath={activePath}
+            onSelect={setSelected}
           />
-        ) : (
-          <p
-            className="p-4 text-center font-mono text-[11px] text-mute"
-            data-testid="diff-view-empty"
+        </div>
+        <div className="min-w-0 overflow-auto rounded-[10px] border border-line bg-paper">
+          <div
+            aria-label={labels.viewMode}
+            className="flex justify-end gap-1 border-b border-line p-1.5"
+            role="group"
           >
-            {labels.empty}
-          </p>
-        )}
+            <button
+              aria-pressed={viewMode === "split"}
+              className="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold"
+              data-testid="diff-view-mode-split"
+              type="button"
+              onClick={() => setViewMode("split")}
+            >
+              {labels.split}
+            </button>
+            <button
+              aria-pressed={viewMode === "unified"}
+              className="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold"
+              data-testid="diff-view-mode-unified"
+              type="button"
+              onClick={() => setViewMode("unified")}
+            >
+              {labels.unified}
+            </button>
+          </div>
+          {diffFile ? (
+            // `key={diffTheme}` remounts git-diff-view on theme toggle so the
+            // wrapper's `data-theme` chrome re-applies. The remount re-hydrates
+            // from the full bundle (no re-highlight); the syntax tokens recolor
+            // instantly via the `--shiki-*` CSS vars regardless.
+            <GitDiffView
+              key={diffTheme}
+              diffFile={diffFile}
+              diffViewHighlight={true}
+              diffViewMode={diffViewMode}
+              diffViewTheme={diffTheme}
+              diffViewWrap={false}
+            />
+          ) : (
+            <p
+              className="p-4 text-center font-mono text-[11px] text-mute"
+              data-testid="diff-view-empty"
+            >
+              {labels.empty}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

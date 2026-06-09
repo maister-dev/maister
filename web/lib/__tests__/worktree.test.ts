@@ -103,7 +103,8 @@ describe("worktree git helpers", () => {
       branch: "scratch/diff",
     });
 
-    expect(diff).toContain("+scratch");
+    expect(diff.truncated).toBe(false);
+    expect(diff.text).toContain("+scratch");
   });
 
   it("aborts merge and reports conflict when local promotion cannot merge", async () => {

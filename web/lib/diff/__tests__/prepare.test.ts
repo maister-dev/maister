@@ -8,10 +8,14 @@
 // project glob (`lib/**/__tests__/**/*.test.ts`).
 //
 // Frozen interface (architect-fixed — ADR-066, plan T2.3):
-//   export async function prepareDiff(rawDiff: string): Promise<DiffPrepResult>
-//   DiffPrepResult  = { files: DiffFileSummary[]; perFile: PreparedFile[] }
+//   export async function prepareDiff(rawDiff: string, truncated?: boolean): Promise<DiffPrepResult>
+//   DiffPrepResult  = { files: DiffFileSummary[]; perFile: PreparedFile[]; truncated: boolean }
 //   DiffFileSummary = { path: string; status: string; additions: number; deletions: number }
 //   PreparedFile    = { path: string; fileLang: string; bundle: unknown }
+//
+// `truncated` (default false) is threaded straight onto the DTO — the producing
+// diff reader sets it when the diff was cut at EXEC_MAX_BUFFER. It never alters
+// parsing; a review surface blocks on it so a partial diff is not promoted.
 //
 // The output is an explicit CLIENT DTO (FINDING C / `#response-leak` rule):
 //   - repo-relative `path` only (strip `a/`, `b/`)
@@ -158,6 +162,30 @@ describe("prepareDiff — binary + empty inputs do not throw", () => {
 
     expect(result.files).toEqual([]);
     expect(result.perFile).toEqual([]);
+    expect(result.truncated).toBe(false);
+  });
+});
+
+describe("prepareDiff — truncation flag (regression: silent partial diff)", () => {
+  it("defaults truncated to false and threads an explicit true", async () => {
+    const whole = await prepareDiff(TWO_FILE_DIFF);
+
+    expect(whole.truncated).toBe(false);
+
+    const cut = await prepareDiff(TWO_FILE_DIFF, true);
+
+    // The flag never alters parsing — the surviving sections still project.
+    expect(cut.truncated).toBe(true);
+    expect(cut.files).toHaveLength(2);
+    expect(cut.perFile).toHaveLength(2);
+  });
+
+  it("carries truncated even when the surviving prefix has no parseable section", async () => {
+    const empty = await prepareDiff("", true);
+
+    expect(empty.files).toEqual([]);
+    expect(empty.perFile).toEqual([]);
+    expect(empty.truncated).toBe(true);
   });
 });
 

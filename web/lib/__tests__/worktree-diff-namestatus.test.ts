@@ -227,10 +227,11 @@ describe("diffNameStatus / diffRunWorkspace — base not an ancestor of branch (
       branch: "feature",
     });
 
-    expect(diff).toContain("shared.txt");
-    expect(diff).toContain("feature.txt");
+    expect(diff.truncated).toBe(false);
+    expect(diff.text).toContain("shared.txt");
+    expect(diff.text).toContain("feature.txt");
     // The literal base(v1) -> branch(v0) delta for shared.txt.
-    expect(diff).toContain("-v1");
-    expect(diff).toContain("+v0");
+    expect(diff.text).toContain("-v1");
+    expect(diff.text).toContain("+v0");
   });
 });

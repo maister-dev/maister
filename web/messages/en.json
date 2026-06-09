@@ -625,6 +625,8 @@
     "targetDrift": "The target branch advanced since this review. Re-review the updated diff, or promote anyway.",
     "promoteAnyway": "Promote anyway",
     "relaunchToPromote": "This run predates branch targeting and has no promotion metadata. Relaunch the task to promote it.",
+    "diffTruncated": "This diff is too large to show in full (over 4 MiB) and was truncated. Review the complete change in the pull request or via `git diff` before promoting.",
+    "promoteTruncated": "Promote anyway (diff truncated)",
     "conflictTitle": "Merge conflict — resolve manually",
     "conflictRepo": "Parent repo",
     "conflictTarget": "Target branch",
@@ -816,7 +818,8 @@
       "split": "Split",
       "unified": "Unified",
       "added": "Lines added",
-      "removed": "Lines removed"
+      "removed": "Lines removed",
+      "truncated": "Diff truncated — over the 4 MiB view limit; showing a partial diff."
     },
     "tab": {
       "files": "Files",

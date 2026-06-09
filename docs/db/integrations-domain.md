@@ -7,7 +7,7 @@ and [`../database-schema.md`](../database-schema.md) for the column-level
 narrative.
 
 > **Status: Implemented (M16), as of 2026-06-02; expanded by
-> `0031_token_actor_scope_support.sql`.** Migration `0018_m16_api_tokens.sql`
+> `0031_token_actor_scope_support.sql`.** Migration `0020_m16_api_tokens.sql`
 > (additive, forward-only) adds both tables. ADRs:
 > [ADR-046](../decisions.md#adr-041) (token model),
 > [ADR-047](../decisions.md#adr-042) (MCP facade).
@@ -85,4 +85,4 @@ survive user removal for audit integrity.
 - Narrative: [`../database-schema.md`](../database-schema.md)
   (`project_tokens`, `token_audit_log` sections).
 - Source (Implemented): `web/lib/db/schema.ts` (migrations
-  `0018_m16_api_tokens.sql`, `0031_token_actor_scope_support.sql`).
+  `0020_m16_api_tokens.sql`, `0031_token_actor_scope_support.sql`).

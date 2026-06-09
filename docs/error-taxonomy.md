@@ -121,10 +121,10 @@ defined as a string union in `web/lib/errors.ts`.
 
 > **M22 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
 > closed union; ADR-064/052/053). The workbench reuses one existing code (`CONFIG`)
-> at new call sites (all Implemented, M22), plus HTTP-only 404/413/415 statuses that
-> are NOT `MaisterError`s:
+> at new call sites (all Implemented, M22), plus a bare HTTP 404 status and RSC
+> blob page states that are NOT `MaisterError`s:
 >
-> - **`CONFIG` → HTTP 400** new call sites: every `…/files[/content]` route (run +
+> - **`CONFIG` → HTTP 400** new call sites: every `…/files?path=` tree route (run +
 >   project) when `?path=` fails `repoRelPathSchema` (`..` segment, absolute,
 >   leading `/` or `-`, NUL). Thrown by `web/lib/worktree.ts` (`repoRelPathSchema`).
 >   Names the offending path. (The flow-graph layout `PUT` was removed with the
@@ -137,10 +137,13 @@ defined as a string union in `web/lib/errors.ts`.
 >   canonical mapping is **409**, code-only). Access denied (non-member or
 >   below-`member` role) is **403** via `requireProjectAction`, the app-wide
 >   convention — NOT 404.
-> - **HTTP-only, no `MaisterError`:** a tracked blob over
->   `MAISTER_WORKBENCH_MAX_FILE_BYTES` returns **413** (`{kind:"too-large",size}`);
->   a binary blob returns **415** (`{kind:"binary"}`). These are content-negotiation
->   markers from `readBlob`, not thrown domain errors.
+> - **RSC blob page states, no HTTP status / no `MaisterError`:** on the `?file=`
+>   render path a tracked blob over `MAISTER_WORKBENCH_MAX_FILE_BYTES` renders the
+>   `file-too-large` page state (`readBlob` → `{kind:"too-large",size}`) and a
+>   binary blob the `file-binary` page state (`{kind:"binary"}`). The retired
+>   `…/files/content` route's HTTP **413**/**415** no longer exist (ADR-066); these
+>   are `readBlob` markers the server component branches on, not thrown domain
+>   errors.
 
 > **The platform-user + project-member admin surface (ADR-062) reuses existing codes and adds none** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call sites for `CONFIG` (invalid body/Zod — HTTP 422), `CONFLICT` (duplicate email, duplicate member, raced CAS — HTTP 409), `PRECONDITION` (hard-delete of referenced/non-pending user, add nonexistent user, self-delete — HTTP 409), and `UNAUTHORIZED` (role gate — HTTP 403) are noted in the relevant rows above.
 

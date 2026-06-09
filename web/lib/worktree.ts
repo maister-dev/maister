@@ -98,7 +98,7 @@ const remoteNameSchema = z
   .regex(/^[A-Za-z0-9_./-]+$/, "remote must match /^[A-Za-z0-9_./-]+$/")
   .refine((r) => !r.startsWith("-"), "remote must not start with '-'");
 
-const DIFF_TRUNCATED_MARKER =
+export const DIFF_TRUNCATED_MARKER =
   "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n";
 
 function validate<T>(
@@ -352,7 +352,7 @@ export type DiffRunWorkspaceArgs = {
 
 export async function diffRunWorkspace(
   args: DiffRunWorkspaceArgs,
-): Promise<string> {
+): Promise<DiffResult> {
   const repo = validate(
     absolutePathSchema,
     args.projectRepoPath,
@@ -360,20 +360,36 @@ export async function diffRunWorkspace(
   );
   const baseCommit = validate(gitCommitSchema, args.baseCommit, "baseCommit");
   const branch = validate(branchNameSchema, args.branch, "branch");
+  const diffArgs = ["diff", "--no-ext-diff", `${baseCommit}..${branch}`];
 
   try {
     // 2-dot: the literal stored-base -> branch tree delta. A 3-dot range diffs
     // from merge-base(base, branch), which under-reports the branch when its
     // history is rewritten off its stored base (rebase/reset). Matches the
     // documented contract (workbench.md) and the M18 review-panel `diffRange`.
-    const { stdout } = await runGit(repo, [
-      "diff",
-      "--no-ext-diff",
-      `${baseCommit}..${branch}`,
-    ]);
+    const { stdout } = await runGit(repo, diffArgs);
 
-    return stdout;
+    return { text: stdout, truncated: false };
   } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+
+    // An oversized diff degrades to a bounded prefix with a structured
+    // `truncated` flag instead of throwing, so the workbench/review surface can
+    // block on it rather than 500 (parity with `diffRange`).
+    if (
+      e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+      /maxBuffer length exceeded/i.test(e.message ?? "")
+    ) {
+      log.info(
+        { projectRepoPath: repo, maxBuffer: EXEC_MAX_BUFFER },
+        "[FIX] diffRunWorkspace truncated — diff exceeded EXEC_MAX_BUFFER",
+      );
+
+      const text = await streamGitDiffTruncated(repo, diffArgs);
+
+      return { text, truncated: true };
+    }
+
     throw new MaisterError(
       "CONFLICT",
       `git diff failed: ${errorText(err) || asError(err).message}`,
@@ -731,24 +747,26 @@ export type DiffRangeArgs = {
   branch: string;
 };
 
-export async function diffRange(args: DiffRangeArgs): Promise<string> {
+// A diff plus whether it was cut at EXEC_MAX_BUFFER. `truncated` is the
+// structured signal a partial diff carries instead of an in-band marker, so a
+// promotion/review surface can block on it rather than silently render a prefix.
+export type DiffResult = { text: string; truncated: boolean };
+
+export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
+  const diffArgs = ["diff", "--no-color", "--end-of-options", `${base}..${br}`];
 
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffRange");
 
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", wt, "diff", "--no-color", "--end-of-options", `${base}..${br}`],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
+    const { stdout } = await execFileAsync("git", ["-C", wt, ...diffArgs], {
+      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      maxBuffer: EXEC_MAX_BUFFER,
+    });
 
-    return stdout;
+    return { text: stdout, truncated: false };
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stderr?: string };
 
@@ -758,10 +776,12 @@ export async function diffRange(args: DiffRangeArgs): Promise<string> {
     ) {
       log.info(
         { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER },
-        "diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
+        "[FIX] diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
       );
 
-      return await diffRangeTruncated(wt, base, br);
+      const text = await streamGitDiffTruncated(wt, diffArgs);
+
+      return { text, truncated: true };
     }
 
     throw new MaisterError(
@@ -772,17 +792,18 @@ export async function diffRange(args: DiffRangeArgs): Promise<string> {
   }
 }
 
-async function diffRangeTruncated(
-  wt: string,
-  base: string,
-  br: string,
+// Stream `git -C <repo> <diffArgs>` and stop at EXEC_MAX_BUFFER bytes, returning
+// the partial diff WITHOUT a marker (the caller's `truncated` flag carries that
+// signal). The diff readers' maxBuffer fallback, so an oversized diff degrades
+// to a bounded prefix instead of throwing.
+async function streamGitDiffTruncated(
+  repo: string,
+  diffArgs: readonly string[],
 ): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
-    const child = spawn(
-      "git",
-      ["-C", wt, "diff", "--no-color", "--end-of-options", `${base}..${br}`],
-      { signal: AbortSignal.timeout(GIT_TIMEOUT_MS) },
-    );
+    const child = spawn("git", ["-C", repo, ...diffArgs], {
+      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+    });
 
     let bytes = 0;
     let text = "";
@@ -798,7 +819,7 @@ async function diffRangeTruncated(
         text += decoder.decode();
         done = true;
         child.kill("SIGKILL");
-        resolve(text + DIFF_TRUNCATED_MARKER);
+        resolve(text);
 
         return;
       }
@@ -816,11 +837,9 @@ async function diffRangeTruncated(
       if (done) return;
       done = true;
       reject(
-        new MaisterError(
-          "CONFLICT",
-          `git diff ${base}..${br} failed: ${err.message}`,
-          { cause: asError(err) },
-        ),
+        new MaisterError("CONFLICT", `git diff failed: ${err.message}`, {
+          cause: asError(err),
+        }),
       );
     });
   });

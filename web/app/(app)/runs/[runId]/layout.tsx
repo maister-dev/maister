@@ -67,7 +67,11 @@ type RunDetailForReview = Awaited<ReturnType<typeof getRunDetail>> & object;
 // Resolve the ReviewPanel props for a flow run at `Review`. Legacy-row safe
 // (§3.6): null branch metadata is filled from project defaults / merge-base;
 // when no safe diff base can be derived the panel renders the relaunch state.
-const EMPTY_DIFF: ReviewPanelDiff = { files: [], perFile: [] };
+const EMPTY_DIFF: ReviewPanelDiff = {
+  files: [],
+  perFile: [],
+  truncated: false,
+};
 
 async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   baseBranch: string | null;
@@ -114,12 +118,12 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
     }
   }
 
-  const rawDiff = await diffRange({
+  const { text: rawDiff, truncated } = await diffRange({
     worktreePath: detail.worktreePath,
     baseRef: diffBaseRef,
     branch: detail.branch,
   });
-  const diff = await prepareDiff(rawDiff);
+  const diff = await prepareDiff(rawDiff, truncated);
 
   // The live target HEAD this surface is reviewed against — carried into the
   // promote payload as the optimistic-concurrency drift token (§3.7). Drift is
@@ -313,6 +317,7 @@ export default async function RunDetailLayout({
           viewMode: tWorkbench("diff.viewMode"),
           split: tWorkbench("diff.split"),
           unified: tWorkbench("diff.unified"),
+          truncated: tWorkbench("diff.truncated"),
         },
       };
     }
@@ -418,6 +423,8 @@ export default async function RunDetailLayout({
     prLink: t("prLink"),
     targetDrift: t("targetDrift"),
     promoteAnyway: t("promoteAnyway"),
+    diffTruncated: t("diffTruncated"),
+    promoteTruncated: t("promoteTruncated"),
   };
 
   const timelineLabels: TimelineLabels = {

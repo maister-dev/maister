@@ -48,6 +48,11 @@ export function CodeEditor({
   readOnly = false,
   ariaLabel,
 }: CodeEditorProps): ReactElement {
+  // `value` SEEDS the buffer once (the editor is uncontrolled thereafter); the
+  // buffer is the source of truth, propagated up via onChange. A parent that
+  // swaps `value` to a DIFFERENT document MUST remount this component (e.g. a
+  // per-file React `key`) — package-files-editor's index-keyed rows do exactly
+  // that. A changed `value` prop on a mounted instance is otherwise ignored.
   const [buffer, setBuffer] = useState(value);
 
   const handleChange = (next: string): void => {

@@ -5034,13 +5034,23 @@ components:
           enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]
     RunDiffResponse:
       type: object
-      required: [runId, baseCommit, sourceBranch, targetBranch, diff]
+      required: [runId, baseCommit, sourceBranch, targetBranch, diff, truncated]
       properties:
         runId: { type: string, format: uuid }
         baseCommit: { type: string }
         sourceBranch: { type: string }
         targetBranch: { type: string }
         diff: { type: string }
+        truncated:
+          type: boolean
+          description: |
+            (Implemented, ADR-066) True when the diff exceeded the server's
+            `EXEC_MAX_BUFFER` (4 MiB) read bound, so `diff`/`files`/`perFile`
+            cover only the bounded prefix instead of the full change. The
+            workbench and review diff render a truncation banner; the review
+            panel additionally blocks promotion behind an explicit
+            acknowledgement so a run is never promoted on a partial diff.
+            `false` for any diff that fit the bound.
         files:
           type: array
           description: |

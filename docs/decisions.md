@@ -3144,7 +3144,7 @@ summary. Adapter/sidecar diagnostics and runner/sidecar configuration use separa
 ### ADR-053: Workbench file-tree: git-tracked-only, member-gated reads
 
 **Date:** 2026-06-05
-**Status:** Accepted
+**Status:** Accepted. The file **render** path below (the `…/files/content` HTTP route and its `413`/`415` responses) is superseded by [ADR-066](#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror): blobs now render via the `?file=` RSC path as `file-too-large`/`file-binary` page states (no HTTP `413`/`415`). The git-tracked tree-read model, `readBlob` size/binary caps, and the `readRepoFiles` gate stand.
 **Context:** M22 adds a read-only file browser over a run's worktree and a project's repo. A raw `fs.readdir` / `readFile` of an arbitrary worktree/repo path is a secret-disclosure surface: it would expose `.git/`, gitignored secrets (`.env*`), `node_modules`, and untracked agent output, and is one path-traversal bug away from reading outside the tree. The board's `readBoard` action is `viewer`; source code is more sensitive than board metadata.
 
 **Decision:** The browser reads ONLY git-tracked content via git plumbing, behind a dedicated permission:
@@ -4024,8 +4024,10 @@ Monaco is rejected for the current surfaces (see Alternatives).
   parameter to the server, no re-render on toggle, no FOUC. The selected file
   moves into the URL (`?file=`, deep-linkable) per the data-management URL-state
   convention; the server component reads the blob via the existing
-  `readBlob`/`readRepoFiles` path (git-tracked-only, 413/415 caps preserved). The
-  interactive file tree stays a client component.
+  `readBlob`/`readRepoFiles` path (git-tracked-only; the size/binary caps are
+  preserved but surface as `file-too-large`/`file-binary` page states on the
+  `?file=` RSC render, not the retired `…/files/content` route's HTTP `413`/`415`).
+  The interactive file tree stays a client component.
 - **Diff — `@git-diff-view/react`.** Split (side-by-side) + unified (inline),
   line numbers, collapsible hunks. Per-file additions/deletions are **computed
   server-side** in `GET /api/runs/[id]/diff` (the library's
@@ -4067,8 +4069,11 @@ change.
   the only editor, used only where a cursor is needed.
 - New MIT deps: `shiki`, `@git-diff-view/react`, `@uiw/react-codemirror` +
   `@codemirror/*`. `@git-diff-view/react` is `0.x` → pin the exact version.
-- `GET /api/runs/[id]/diff` gains per-file `additions`/`deletions`;
-  `web.openapi.yaml` updates with the code.
+- `GET /api/runs/[id]/diff` gains per-file `additions`/`deletions` and a
+  structured `truncated` flag (set when the diff exceeds the 4 MiB
+  `EXEC_MAX_BUFFER` bound, so the diff readers degrade to a bounded prefix
+  instead of throwing); `web.openapi.yaml` updates with the code. The review
+  panel blocks promotion behind an explicit acknowledgement when `truncated`.
 - New syntax-token surface in `globals.css` (Shiki dual-theme CSS vars + a forest
   CodeMirror theme mirroring them); the forest palette previously had no
   keyword/string/comment tokens.

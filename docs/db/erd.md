@@ -9,7 +9,7 @@ status, scratch-run persistence, the selectable capability catalog, the
 and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
 assignment tables, and the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
-column, and the **M16 (Implemented, migration `0018_m16_api_tokens.sql`)**
+column, and the **M16 (Implemented, migration `0020_m16_api_tokens.sql`)**
 integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
@@ -677,7 +677,7 @@ M12 (Implemented, migration `0015`) `artifact_instances` /
 migration `0019`)** `capability_imports` table and
 `node_attempts.materialization_plan` column (see
 [`capabilities-domain.md`](capabilities-domain.md)), and the **M16 (migration
-`0018_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
+`0020_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
 above), expanded by `0031_token_actor_scope_support.sql` for user-owned tokens
 and enforced scopes. Remaining roadmap-additive persistence (e.g. artifact edges and
 external-operation events) is not drawn until its migrations exist. See

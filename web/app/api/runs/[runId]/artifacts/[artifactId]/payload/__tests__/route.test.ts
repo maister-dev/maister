@@ -118,7 +118,11 @@ vi.mock("@/lib/queries/run", () => ({
 }));
 
 vi.mock("@/lib/worktree", () => ({
-  diffRange: vi.fn(async () => "diff --git a/x b/x\n+added\n"),
+  DIFF_TRUNCATED_MARKER: "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n",
+  diffRange: vi.fn(async () => ({
+    text: "diff --git a/x b/x\n+added\n",
+    truncated: false,
+  })),
   logRange: vi.fn(async () => "abc1234 commit one\n"),
 }));
 
@@ -206,7 +210,10 @@ beforeEach(() => {
 
   vi.mocked(getRunDetail).mockClear();
   vi.mocked(diffRange).mockClear();
-  vi.mocked(diffRange).mockResolvedValue("diff --git a/x b/x\n+added\n");
+  vi.mocked(diffRange).mockResolvedValue({
+    text: "diff --git a/x b/x\n+added\n",
+    truncated: false,
+  });
   vi.mocked(logRange).mockClear();
   vi.mocked(logRange).mockResolvedValue("abc1234 commit one\n");
 });

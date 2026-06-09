@@ -62,9 +62,10 @@ export function gcAgeDays(): number {
   return parsed;
 }
 
-// M22 Phase 4a (T4.1): max blob size the workbench file-content route will
-// return; over-cap blobs surface as 413 instead of being read into memory. Env
-// override, sane default, floor at 1. Mirrors gcAgeDays.
+// M22 Phase 4a (T4.1): max blob size the workbench file viewer will read;
+// over-cap blobs surface as the `file-too-large` RSC page state (ADR-066)
+// instead of being read into memory. Env override, sane default, floor at 1.
+// Mirrors gcAgeDays.
 export function workbenchMaxFileBytes(): number {
   const raw = process.env.MAISTER_WORKBENCH_MAX_FILE_BYTES;
 
