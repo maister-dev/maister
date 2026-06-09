@@ -252,7 +252,7 @@ The resolved profile is agent-aware: the same abstract tool id (e.g.
 cells `instructed → enforced` as spike-verified materialization lands (the
 contract only ever tightens, never loosens — see ADR-042).
 
-**M27 (Designed) — node `settings.mcps` required vs additional distinction.**
+**M27 (Implemented) — node `settings.mcps` required vs additional distinction.**
 `settings.mcps` is extended to discriminate REQUIRED from ADDITIONAL MCP refs.
 A bare `string[]` remains back-compat (treated as `additional`). The explicit form:
 
@@ -273,7 +273,7 @@ sessions the resolved MCP profile is shared across nodes via the existing
 [`configuration.md`](configuration.md) §MCP capability template and
 [`system-analytics/flow-studio.md`](system-analytics/flow-studio.md).
 
-**M27 (Designed) — flow-package top-level `mcps?` declaration.**
+**M27 (Implemented) — flow-package top-level `mcps?` declaration.**
 A `flow.yaml` may declare `mcps?` at the top level to list the capability ref-ids
 the flow package requires as MCP capabilities. This is validated by the
 `validateGraphManifest` hard-gate: an unknown ref (not present in any

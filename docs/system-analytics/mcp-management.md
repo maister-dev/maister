@@ -1,9 +1,9 @@
 # MCP capability management domain
 
-> **Status: Designed (M27 Stage 1).** All entities, routes, and state
-> machines below are **(Designed)** — contracted in the
+> **Status: Implemented (M27 Stage 1).** The entities, routes, and state
+> machines below have shipped — contracted in the
 > [M27 Stage-1 SDD](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
-> but not yet coded. Locked decision: [ADR-069](../decisions.md#adr-069).
+> and now coded. Locked decision: [ADR-069](../decisions.md#adr-069).
 > Extends the M14 materialization surface documented in
 > [capabilities.md](capabilities.md) and the M25 authored catalog documented in
 > [capability-catalog.md](capability-catalog.md).
@@ -22,7 +22,7 @@ reputation / malware scanning / sandboxing / org policy (Phase 2).
 
 ## Domain entities
 
-- **`platform_mcp_servers`** (Designed) — admin-managed, host-wide MCP catalog.
+- **`platform_mcp_servers`** (Implemented) — admin-managed, host-wide MCP catalog.
   One row per server: `{ id, transport ∈ {stdio,sse,http}, command (stdio),
   args, env_keys (names only), url (sse|http), header_keys (names only),
   supported_agents, trust_status ∈ {untrusted,trusted,trusted_by_policy},
@@ -51,7 +51,7 @@ reputation / malware scanning / sandboxing / org policy (Phase 2).
 
 ## State machines
 
-### MCP record lifecycle (Designed)
+### MCP record lifecycle (Implemented)
 
 The state of a `capability_records` row of `kind=mcp`, from declaration to
 active use within a session.
@@ -72,7 +72,7 @@ stateDiagram-v2
     end note
 ```
 
-### Setup-time resolve flow (Designed)
+### Setup-time resolve flow (Implemented)
 
 When a run is launched, the setup-time resolver checks whether a required MCP
 ref is already configured; if absent, it proposes configuration before
@@ -93,7 +93,7 @@ flowchart TD
 
 ## Process flows
 
-### Setup-time resolve-by-id (Designed)
+### Setup-time resolve-by-id (Implemented)
 
 Resolution precedence — **project wins over platform wins over flow-package** —
 is documented canonically in [capabilities.md](capabilities.md); this flow
@@ -117,7 +117,7 @@ flowchart TD
     I --> M([proceed to worktree creation])
 ```
 
-### Per-session materialization (Designed)
+### Per-session materialization (Implemented)
 
 This flow reuses the M14 materialize → agent-map → supervisor wire path
 ([capabilities.md](capabilities.md) §Process flows). The M27 extension adds
@@ -145,7 +145,7 @@ sequenceDiagram
 
 ## Expectations
 
-The following normative bullets are copied verbatim from SDD §7.2 (Designed):
+The following normative bullets are copied verbatim from SDD §7.2 (Implemented):
 
 1. MCP secret values MUST be stored/accepted ONLY as `env:NAME`; values MUST be resolved supervisor-side and MUST NEVER appear in any HTTP response, DB column, or `session/update` payload.
 2. Capability id-collision MUST resolve project > platform > flow-package, picking exactly ONE winner per `(kind, refId)`, no duplicate materialization.
@@ -181,4 +181,4 @@ The following normative bullets are copied verbatim from SDD §7.2 (Designed):
 - **Instance config / settings page:** [instance-config.md](instance-config.md) §Platform MCP server admin — the `/settings` page hosts the platform-scoped MCP admin panel.
 - **OpenAPI:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml) — `GET/POST /api/admin/mcp-servers`, `PATCH/DELETE /api/admin/mcp-servers/{id}`, `GET/POST /api/projects/{slug}/mcp`, `PATCH/DELETE /api/projects/{slug}/mcp/{mcpId}`, `POST /api/projects/{slug}/mcp/resolve`.
 - **ERD:** [`../db/capabilities-domain.md`](../db/capabilities-domain.md) — `capability_records` + `capability_imports` + new `platform_mcp_servers`.
-- **Source (Designed):** `web/lib/capabilities/resolver.ts`, `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/agent-map.ts`, `supervisor/src/acp-client.ts`, `web/app/api/admin/mcp-servers/route.ts`, `web/app/api/admin/mcp-servers/[id]/route.ts`, `web/app/api/projects/[slug]/mcp/route.ts`, `web/app/api/projects/[slug]/mcp/[mcpId]/route.ts`, `web/app/api/projects/[slug]/mcp/resolve/route.ts`, `web/components/settings/mcp-servers-panel.tsx`, `web/components/settings/mcp-server-modal.tsx`.
+- **Source (Implemented):** `web/lib/capabilities/resolver.ts`, `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/agent-map.ts`, `supervisor/src/acp-client.ts`, `web/app/api/admin/mcp-servers/route.ts`, `web/app/api/admin/mcp-servers/[id]/route.ts`, `web/app/api/projects/[slug]/mcp/route.ts`, `web/app/api/projects/[slug]/mcp/[mcpId]/route.ts`, `web/app/api/projects/[slug]/mcp/resolve/route.ts`, `web/components/settings/mcp-servers-panel.tsx`, `web/components/settings/mcp-server-modal.tsx`.

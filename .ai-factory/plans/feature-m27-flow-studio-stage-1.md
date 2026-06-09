@@ -329,8 +329,8 @@ No new `runs.status` is planned. **If** implementation proves one unavoidable, f
 
 ### Phase D — Completion checkpoint (Docs: yes — mandatory)
 
-- [ ] **T-D1 — Docs completion checkpoint via `/aif-docs`.** Reconcile every shipped surface against its spec file (the contract-surfaces table); flip `(Designed)` → `(Implemented)` in the analytics docs; `pnpm validate:docs:all` green; both OpenAPI specs lint-clean.
-- [ ] **T-D2 — `/aif-verify` spec-to-test matrix re-derivation.** Re-derive the matrix from the diff; confirm runnability (every promised test glob-matched + executed), per-phase green history, EN+RU parity, no new `runs.status`, trust-before-execute regressions present.
+- [x] **T-D1 — Docs completion checkpoint via `/aif-docs`.** Reconcile every shipped surface against its spec file (the contract-surfaces table); flip `(Designed)` → `(Implemented)` in the analytics docs; `pnpm validate:docs:all` green; both OpenAPI specs lint-clean.
+- [x] **T-D2 — `/aif-verify` spec-to-test matrix re-derivation.** Re-derive the matrix from the diff; confirm runnability (every promised test glob-matched + executed), per-phase green history, EN+RU parity, no new `runs.status`, trust-before-execute regressions present.
 
 ---
 

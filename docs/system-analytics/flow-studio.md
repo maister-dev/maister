@@ -1,8 +1,9 @@
 # Flow Studio domain
 
-> **Status: Designed (M27 Phase-0 spec freeze).** Every piece described here is
-> **(Designed)** — no implementation has landed yet. The docs phase flips each
-> piece to **(Implemented)** as the owning code task ships.
+> **Status: Implemented (M27 Stage 1).** The editor write path, the
+> authored→executable bridge with the two-axis trust gate, `version_binding`
+> resolve-at-launch, the resolved-capability-set snapshot (in-flight
+> immutability), and the MCP management surfaces described here have shipped.
 > Source of truth: [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md).
 
 ## Purpose
@@ -176,11 +177,12 @@ follows the same usage-guard and dup-id rules as ADR-065.
 ## Linked artifacts
 
 - **SDD (FROZEN SSOT):** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
-- **ADRs (Designed):**
-  ADR-066 (Flow Studio authored-flow bridge + exec_trust axis),
-  ADR-067 (version_binding + resolveEffectiveFlowRevision),
-  ADR-068 (resolved_capability_set snapshot + in-flight immutability) —
-  all pending in [`../decisions.md`](../decisions.md).
+- **ADRs (Accepted):**
+  ADR-066 (flow editor write path — authored drafts + hard-gate),
+  ADR-067 (authored→executable bridge + two-axis trust gate),
+  ADR-068 (version_binding + resolve-at-launch + resolved-set snapshot),
+  ADR-069 (MCP + capability management model) —
+  all accepted in [`../decisions.md`](../decisions.md).
 - **ADR-065 (Implemented):** [`../decisions.md#adr-065`](../decisions.md#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) — admin CRUD pattern mirrored for `platform_mcp_servers`.
 - **ADR-064 (Implemented):** authored layout in `flow.yaml` `presentation` section — consumed by the editor, described in [`workbench.md`](workbench.md).
 - **ADR-061 (Implemented):** [`../decisions.md#adr-061`](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle) — local authored capability catalog lifecycle (reused M25 draft/CAS).
@@ -188,13 +190,13 @@ follows the same usage-guard and dup-id rules as ADR-065.
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md),
   [`../db/projects-domain.md`](../db/projects-domain.md),
   [`../db/runs-domain.md`](../db/runs-domain.md).
-- **Web tier source (Designed):**
-  `web/lib/flows.ts` (`installAuthoredFlowPackageBridge`, `runRevisionSetup`, `resolveEffectiveFlowRevision`),
+- **Web tier source (Implemented):**
+  `web/lib/flows.ts` (`installAuthoredFlowPackageBridge`, `runRevisionSetup`), `web/lib/flows/lifecycle.ts` (`resolveEffectiveFlowRevision`),
   `web/lib/catalog/authored-service.ts` (`updateAuthoredDraft`, CAS logic),
   `web/lib/capabilities/resolver.ts` (winner-picking precedence),
   `web/lib/capabilities/materialize.ts` (MCP materialization, reused M14),
   `web/lib/services/runs.ts` (`launchRun` insertion points).
-- **OpenAPI routes (Designed):**
+- **OpenAPI routes (Implemented):**
   `PATCH /api/projects/{slug}/catalog/caps/{capId}/draft`,
   `POST /api/projects/{slug}/catalog/caps/{capId}/publish-local`,
   `PATCH /api/projects/{slug}/flows/{flowId}/version-binding`,
