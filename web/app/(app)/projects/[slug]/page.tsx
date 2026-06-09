@@ -19,6 +19,7 @@ import { IntegrationsPanel } from "@/components/board/panels/integrations-panel"
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
@@ -342,6 +343,14 @@ function ProjectActiveWorkspaces({
                   {workspace.time}
                 </span>
               </Link>
+              {workspace.lifecycleActions.length > 0 ? (
+                <WorkbenchLifecycleActions
+                  actions={workspace.lifecycleActions}
+                  className="px-3 pb-2.5"
+                  runId={workspace.runId}
+                  runKind={workspace.runKind}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

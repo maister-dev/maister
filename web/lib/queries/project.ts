@@ -12,6 +12,7 @@ import {
   ACTIVE_RUN_STATUSES,
   type AgentRole,
   type PortfolioWorkspace,
+  lifecycleActionsForWorkspace,
   relativeTime,
   runStatusToWorkspace,
   scratchActionForWorkspace,
@@ -178,7 +179,10 @@ export async function getProjectPageData(
           acpSessionId: runs.acpSessionId,
           capabilityAgent: runs.capabilityAgent,
           runnerSnapshot: runs.runnerSnapshot,
+          workspaceId: workspaces.id,
           branch: workspaces.branch,
+          archivedBranch: workspaces.archivedBranch,
+          removedAt: workspaces.removedAt,
           startedAt: runs.startedAt,
           scratchDialogStatus: scratchRuns.dialogStatus,
         })
@@ -281,6 +285,14 @@ export async function getProjectPageData(
       runStatus: row.status,
       dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
       acpSessionId: row.acpSessionId,
+    }),
+    lifecycleActions: lifecycleActionsForWorkspace({
+      runKind: row.runKind as RunKind,
+      runStatus: row.status,
+      dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+      hasWorkspace: Boolean(row.workspaceId),
+      removedAt: row.removedAt,
+      archivedBranch: row.archivedBranch,
     }),
     // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
     readiness: readinessByRun.get(row.runId) ?? "ready",

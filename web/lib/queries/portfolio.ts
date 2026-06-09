@@ -30,6 +30,11 @@ import { mapRowsToHitlItems } from "@/lib/queries/hitl";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import {
+  deriveWorkbenchLifecycleActions,
+  type WorkbenchLifecycleActionId,
+  type WorkbenchRunStatus,
+} from "@/lib/workbench-lifecycle/policy";
 
 const {
   actorIdentities,
@@ -77,6 +82,7 @@ export type PortfolioStatus = "running" | "idle";
 export type AgentRole = "claude" | "codex" | "dev";
 export type WorkspaceStatus = "running" | "needs" | "queued" | "done";
 export type ScratchWorkspaceAction = "open" | "recover" | "discard" | "none";
+export type WorkbenchLifecycleAction = WorkbenchLifecycleActionId;
 
 export interface PortfolioMember {
   initials: string;
@@ -95,6 +101,7 @@ export interface PortfolioWorkspace {
   href: string;
   scratchDialogStatus?: ScratchDialogStatus | null;
   scratchAction?: ScratchWorkspaceAction;
+  lifecycleActions: WorkbenchLifecycleAction[];
   // T16 (M15, ADR-048): unified readiness summary for the active workspace,
   // replacing the M16 externalGatePending boolean. Computed per active run over
   // the same bulk-fetched gate_results + artifact_instances + node_attempts via
@@ -215,6 +222,26 @@ export function scratchActionForWorkspace(input: {
   return "open";
 }
 
+export function lifecycleActionsForWorkspace(input: {
+  runKind: RunKind;
+  runStatus: string;
+  dialogStatus: ScratchDialogStatus | null;
+  hasWorkspace: boolean;
+  removedAt: Date | null;
+  archivedBranch: string | null;
+}): WorkbenchLifecycleAction[] {
+  return deriveWorkbenchLifecycleActions({
+    runKind: input.runKind,
+    runStatus: input.runStatus as WorkbenchRunStatus,
+    scratchDialogStatus: input.dialogStatus,
+    hasWorkspace: input.hasWorkspace,
+    workspaceRemoved: input.removedAt !== null,
+    workspaceArchived: input.archivedBranch !== null,
+  })
+    .filter((action) => action.enabled)
+    .map((action) => action.id);
+}
+
 const ACCENTS: readonly (1 | 2 | 3 | 4)[] = [1, 3, 2, 4];
 
 export async function getPortfolio(
@@ -300,7 +327,10 @@ export async function getPortfolio(
         acpSessionId: runs.acpSessionId,
         capabilityAgent: runs.capabilityAgent,
         runnerSnapshot: runs.runnerSnapshot,
+        workspaceId: workspaces.id,
         branch: workspaces.branch,
+        archivedBranch: workspaces.archivedBranch,
+        removedAt: workspaces.removedAt,
         startedAt: runs.startedAt,
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
@@ -472,6 +502,14 @@ export async function getPortfolio(
         dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
         acpSessionId: row.acpSessionId,
       }),
+      lifecycleActions: lifecycleActionsForWorkspace({
+        runKind: row.runKind as RunKind,
+        runStatus: row.status,
+        dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+        hasWorkspace: Boolean(row.workspaceId),
+        removedAt: row.removedAt,
+        archivedBranch: row.archivedBranch,
+      }),
       // ACTIVE_RUN_STATUSES excludes Done/Abandoned, so every workspace here is
       // non-terminal; a run with no gates/artifacts rolls up to "ready".
       readiness: readinessByRun.get(row.runId) ?? "ready",
@@ -615,6 +653,7 @@ export interface RailWorkspaceRow {
   effectiveRemovalAt: Date | null;
   archived: boolean;
   pruned: boolean;
+  lifecycleActions: WorkbenchLifecycleAction[];
 }
 
 export interface RailWorkspaceGroup {
@@ -708,6 +747,7 @@ export async function getRailWorkspaceGroups(
 
   const base = client
     .select({
+      workspaceId: workspaces.id,
       branch: workspaces.branch,
       projectId: projects.id,
       slug: projects.slug,
@@ -819,6 +859,14 @@ export async function getRailWorkspaceGroups(
       effectiveRemovalAt: ttl.effectiveRemovalAt,
       archived: ttl.archived,
       pruned: ttl.pruned,
+      lifecycleActions: lifecycleActionsForWorkspace({
+        runKind: row.runKind as RunKind,
+        runStatus: row.status,
+        dialogStatus: row.scratchDialogStatus as ScratchDialogStatus | null,
+        hasWorkspace: Boolean(row.workspaceId),
+        removedAt: row.removedAt,
+        archivedBranch: row.archivedBranch,
+      }),
     };
     const group =
       groups.get(row.projectId) ??

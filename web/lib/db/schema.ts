@@ -991,6 +991,15 @@ export const workspaces = pgTable("workspaces", {
     { onDelete: "set null" },
   ),
   promotionAttemptId: text("promotion_attempt_id"),
+  lifecycleOperationState: text("lifecycle_operation_state")
+    .notNull()
+    .default("none"),
+  lifecycleOperationClaimedAt: timestamp("lifecycle_operation_claimed_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  lifecycleOperationAttemptId: text("lifecycle_operation_attempt_id"),
+  lifecycleOperationName: text("lifecycle_operation_name"),
 });
 
 export type ScratchDialogStatus =

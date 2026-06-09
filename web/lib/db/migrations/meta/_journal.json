@@ -225,6 +225,13 @@
       "when": 1780931982269,
       "tag": "0031_token_actor_scope_support",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781003330102,
+      "tag": "0032_m27_workbench_lifecycle_claims",
+      "breakpoints": true
     }
   ]
 }

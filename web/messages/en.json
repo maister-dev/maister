@@ -1093,6 +1093,49 @@
     "archived": "Archived",
     "pruned": "Pruned"
   },
+  "workbenchLifecycle": {
+    "action": {
+      "stop": "Stop",
+      "archive": "Archive",
+      "drop": "Drop",
+      "snapshotCommit": "Commit",
+      "exportBranch": "Export"
+    },
+    "defaultCommitMessage": "maister: export {runId}",
+    "busy": "{action}…",
+    "errorWithCode": "Action failed: {code}",
+    "dialog": {
+      "cancel": "Cancel",
+      "confirm": "Confirm",
+      "commit": "Commit",
+      "push": "Push",
+      "forcePush": "Force push",
+      "handoff": "Create branch",
+      "copy": "Copy",
+      "clean": "Worktree is clean.",
+      "dirty": "Commit dirty work before pushing this run branch.",
+      "commitMessage": "Commit message",
+      "remote": "Remote",
+      "runBranch": "Run branch: {branch}",
+      "handoffBranch": "Optional handoff branch",
+      "handoffHelp": "Creates and pushes a separate branch at the current worktree HEAD.",
+      "invalidRemote": "Remote names can use letters, numbers, _, ., /, or - and cannot start with -.",
+      "invalidBranch": "Branch names can use letters, numbers, _, ., /, or - and cannot contain .., @{, a trailing slash, or .lock.",
+      "snapshotDone": "Snapshot commit {commit}",
+      "title": {
+        "stop": "Stop run",
+        "archive": "Archive workbench",
+        "drop": "Drop workbench",
+        "snapshotCommit": "Snapshot commit",
+        "exportBranch": "Export branch"
+      },
+      "body": {
+        "stop": "Stop the run and keep its worktree for review.",
+        "archive": "Preserve recoverable work into an archive ref and keep the worktree on disk.",
+        "drop": "Preserve recoverable work, then remove only the MAIster-owned worktree."
+      }
+    }
+  },
   "projectMembers": {
     "tab": "Members",
     "title": "Team members",

@@ -30,6 +30,10 @@ import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
+import {
+  lifecycleActionsForWorkspace,
+  type WorkbenchLifecycleAction,
+} from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
@@ -113,6 +117,7 @@ export interface RunDetail {
   effectiveRemovalAt: Date | null;
   archived: boolean;
   pruned: boolean;
+  lifecycleActions: WorkbenchLifecycleAction[];
 }
 
 // Pure recoverability predicate (no db/clock) so it is fully unit-testable.
@@ -161,6 +166,7 @@ export const getRunDetail = cache(async function getRunDetail(
       projectSlug: projects.slug,
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
+      workspaceId: workspaces.id,
       branch: workspaces.branch,
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
@@ -288,6 +294,14 @@ export const getRunDetail = cache(async function getRunDetail(
     effectiveRemovalAt: ttl.effectiveRemovalAt,
     archived: ttl.archived,
     pruned: ttl.pruned,
+    lifecycleActions: lifecycleActionsForWorkspace({
+      runKind: row.runKind,
+      runStatus: row.status,
+      dialogStatus: null,
+      hasWorkspace: Boolean(row.workspaceId),
+      removedAt: row.removedAt,
+      archivedBranch: row.archivedBranch,
+    }),
     pendingHitl: pending
       ? {
           hitlRequestId: pending.id,

@@ -7,10 +7,12 @@ execution-ledger tables `NODE_ATTEMPTS` and `GATE_RESULTS` (migration `0010`),
 status, scratch-run persistence, the selectable capability catalog, the
 **M12 (Implemented, migration `0015`)** typed-evidence tables `ARTIFACT_INSTANCES`
 and `ARTIFACT_PROJECTION_CURSORS`, **M13 (Implemented, migration `0018`)**
-assignment tables, and the **M14 (Implemented, migration `0019`)**
+assignment tables, the **M14 (Implemented, migration `0019`)**
 `CAPABILITY_IMPORTS` table and `NODE_ATTEMPTS.materialization_plan` jsonb
-column, and the **M16 (Implemented, migration `0020_m16_api_tokens.sql`)**
-integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`. For partial views by
+column, the **M16 (Implemented, migration `0020_m16_api_tokens.sql`)**
+integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`, and the **M27
+(Implemented, migration `0032`)** workbench lifecycle claim fields on
+`WORKSPACES`. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
@@ -422,6 +424,10 @@ erDiagram
         timestamp promotion_claimed_at "M18 0021 durable-claim timestamp"
         text promotion_owner_user_id FK "M18 0021 users.id, nullable"
         text promotion_attempt_id "M18 0021 per-attempt CAS-identity token"
+        text lifecycle_operation_state "M27 0032 none|claiming|failed (NOT NULL DEFAULT none)"
+        timestamp lifecycle_operation_claimed_at "M27 0032 durable lifecycle claim timestamp"
+        text lifecycle_operation_attempt_id "M27 0032 per-attempt CAS token"
+        text lifecycle_operation_name "M27 0032 archive|drop|exportBranch|snapshotCommit|handoffBranch"
     }
 
     STEP_RUNS {

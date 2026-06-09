@@ -36,6 +36,7 @@ import {
 import FileTree, {
   type FileTreeLabels,
 } from "@/components/workbench/file-tree";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import RunDiff, { type RunDiffLabels } from "@/components/workbench/run-diff";
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
@@ -478,6 +479,15 @@ export default async function RunDetailLayout({
             </span>
           ) : null}
         </div>
+        {detail.lifecycleActions.length > 0 ? (
+          <WorkbenchLifecycleActions
+            actions={detail.lifecycleActions}
+            className="mt-4"
+            runId={detail.runId}
+            runKind={detail.runKind}
+            variant="detail"
+          />
+        ) : null}
       </header>
 
       {readiness ? (

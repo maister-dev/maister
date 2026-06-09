@@ -17,7 +17,7 @@ const MAISTER_CRON_TOKEN =
   process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|portfolio-board|task-launch-gating|project-registration|admin-users|project-members|scratch-launch|platform-acp-runners|flows-authoring)\.spec\.ts$/;
+  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|portfolio-board|task-launch-gating|project-registration|admin-users|project-members|scratch-launch|platform-acp-runners|flows-authoring)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -58,6 +58,7 @@ export default defineConfig({
       DB_URL: E2E_DB_URL,
       AUTH_SECRET,
       MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime"),
+      MAISTER_WORKTREES_ROOT: path.resolve("e2e/.runtime/worktrees"),
       // Points at the e2e stub supervisor (global-setup), which answers ONLY
       // `GET /health` ready and implements NOTHING else. It is NOT a real
       // supervisor: no `/sessions`, no agent spawn. The m11a rework decision and

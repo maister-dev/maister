@@ -1093,6 +1093,49 @@
     "archived": "Архивировано",
     "pruned": "Удалено"
   },
+  "workbenchLifecycle": {
+    "action": {
+      "stop": "Остановить",
+      "archive": "Архив",
+      "drop": "Удалить",
+      "snapshotCommit": "Коммит",
+      "exportBranch": "Экспорт"
+    },
+    "defaultCommitMessage": "maister: export {runId}",
+    "busy": "{action}…",
+    "errorWithCode": "Действие не выполнено: {code}",
+    "dialog": {
+      "cancel": "Отмена",
+      "confirm": "Подтвердить",
+      "commit": "Коммит",
+      "push": "Push",
+      "forcePush": "Force push",
+      "handoff": "Создать ветку",
+      "copy": "Копировать",
+      "clean": "Worktree чистый.",
+      "dirty": "Сначала закоммитьте изменения, затем push ветки прогона.",
+      "commitMessage": "Сообщение коммита",
+      "remote": "Remote",
+      "runBranch": "Ветка прогона: {branch}",
+      "handoffBranch": "Опциональная ветка передачи",
+      "handoffHelp": "Создает и пушит отдельную ветку на текущем HEAD worktree.",
+      "invalidRemote": "Remote может содержать буквы, цифры, _, ., / или - и не может начинаться с -.",
+      "invalidBranch": "Ветка может содержать буквы, цифры, _, ., / или - и не может содержать .., @{, завершающий / или .lock.",
+      "snapshotDone": "Snapshot-коммит {commit}",
+      "title": {
+        "stop": "Остановить прогон",
+        "archive": "Архивировать workbench",
+        "drop": "Удалить workbench",
+        "snapshotCommit": "Snapshot-коммит",
+        "exportBranch": "Экспорт ветки"
+      },
+      "body": {
+        "stop": "Остановить прогон и оставить worktree для ревью.",
+        "archive": "Сохранить восстанавливаемую работу в архивную ссылку и оставить worktree на диске.",
+        "drop": "Сначала сохранить восстанавливаемую работу, затем удалить только MAIster-owned worktree."
+      }
+    }
+  },
   "projectMembers": {
     "tab": "Участники",
     "title": "Участники команды",

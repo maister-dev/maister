@@ -40,9 +40,13 @@ info:
       `discard`.
       These routes start and operate manual coding-agent dialog workspaces
       outside the task board while reusing the supervisor and run event stream.
-    - Diff and promotion for run workspaces (Implemented) —
-      `GET /api/runs/{runId}/diff` and `POST /api/runs/{runId}/promote`.
-      Scratch runs use these routes from Review state.
+    - Diff, promotion, and lifecycle for run workspaces (Implemented) —
+      `GET /api/runs/{runId}/diff`, `POST /api/runs/{runId}/promote`,
+      `POST /api/runs/{runId}/stop`, `archive`, `drop`, and
+      `export-branch`, plus `handoff-metadata`, `snapshot-commit`, and
+      `handoff-branch` for local continuation. Scratch runs use the shared
+      archive/export/drop service from Review state and the scratch-specific
+      stop route while live.
     - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
@@ -2846,6 +2850,400 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/stop:
+    post:
+      tags: [runs]
+      summary: Implemented — stop a live flow workbench to Review
+      description: |
+        Stops a live flow run without deleting its worktree. The route resolves
+        the live supervisor session from server-side `runs.acp_session_id` via
+        `listSessions()`, calls `deleteSession(sessionId)` when found, clears
+        live ACP/current-step handles, closes active assignments, and sets
+        `runs.status = Review`.
+
+        Requires project membership at `member` or above
+        (`requireProjectAction("recoverRun")`). Body is empty; project id,
+        workspace, and session handles are server-derived.
+      operationId: stopRunWorkbench
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Run is parked in Review.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runId, runStatus, supervisorStopped]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  runStatus: { type: string, enum: [Review] }
+                  supervisorStopped: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Run is not in a stoppable live state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor delete/list failed transiently.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/archive:
+    post:
+      tags: [runs]
+      summary: Implemented — preserve a stopped or terminal workbench
+      description: |
+        Calls `preserveWorktree` for a non-live workbench and records
+        `workspaces.archived_branch` / `archived_at` when an archive ref is
+        created. The worktree remains on disk. Live write states are refused.
+      operationId: archiveRunWorkbench
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Preserve completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runId, archived, archivedBranch, snapshotted]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  archived: { type: boolean }
+                  archivedBranch: { type: string, nullable: true }
+                  snapshotted: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Live state, missing/removed workspace, or preserve failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/drop:
+    post:
+      tags: [runs]
+      summary: Implemented — preserve then remove an owned worktree
+      description: |
+        Calls `preserveWorktree`, then removes the worktree through
+        `removeOwnedWorktree({ allowedRoot: worktreesRoot(), force: true })`,
+        then records `removed_at` only if the run status still matches the
+        pre-removal status read by the service. Non-`Done` runs become
+        `Abandoned`; `Done` stays `Done`. Scratch metadata is moved to
+        `Abandoned` when applicable.
+      operationId: dropRunWorkbench
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Worktree was removed after preservation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [ok, runId, runStatus, workspaceRemoved, archivedBranch]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  runStatus:
+                    type: string
+                    enum: [Done, Abandoned]
+                  workspaceRemoved: { type: boolean, enum: [true] }
+                  archivedBranch: { type: string, nullable: true }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Live state, missing/removed workspace, preserve failure, stale run-status CAS, or unsafe removal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/export-branch:
+    post:
+      tags: [runs]
+      summary: Implemented — push a workbench branch for local handoff
+      description: |
+        Pushes the server-owned run branch to the selected remote. Dirty
+        worktrees require `snapshotDirty=true` and a non-empty `commitMessage`;
+        otherwise the route returns `409 PRECONDITION` and does not push. The
+        selected remote must already exist and is checked before lifecycle claim.
+        A non-fast-forward push returns `409 CONFLICT` with
+        `pushRejected=non_fast_forward` and `canForce=true`; retrying with
+        `force=true` uses `git push --force-with-lease`. Successful responses
+        include the pushed ref and two non-chained checkout commands.
+      operationId: exportRunWorkbenchBranch
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                remote:
+                  type: string
+                  default: origin
+                snapshotDirty:
+                  type: boolean
+                  default: false
+                commitMessage:
+                  type: string
+                  nullable: true
+                force:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Branch pushed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [
+                    ok,
+                    runId,
+                    branch,
+                    remote,
+                    pushedRef,
+                    snapshotCreated,
+                    checkoutCommands,
+                  ]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  branch: { type: string }
+                  remote: { type: string }
+                  pushedRef: { type: string }
+                  snapshotCreated: { type: boolean }
+                  checkoutCommands:
+                    type: array
+                    items: { type: string }
+        "400":
+          description: Invalid body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Live state, missing/removed workspace, missing remote, dirty worktree without snapshot consent, lifecycle claim race, or non-fast-forward push conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Git push failed or credentials/remote unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/handoff-metadata:
+    get:
+      tags: [runs]
+      summary: Implemented — inspect workbench handoff readiness
+      description: |
+        Returns dirty/clean state, validated git remotes, the server-owned run
+        branch, a suggested handoff branch, and non-chained checkout command
+        previews. This route is read-only. It derives project, workspace path,
+        branch, and parent repo path from DB state; the body is ignored because
+        GET has no request body.
+      operationId: getRunWorkbenchHandoffMetadata
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Handoff metadata resolved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ok
+                  - runId
+                  - branch
+                  - dirty
+                  - remotes
+                  - defaultRemote
+                  - suggestedHandoffBranch
+                  - checkoutCommands
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  branch: { type: string }
+                  dirty: { type: boolean }
+                  remotes:
+                    type: array
+                    items: { type: string }
+                  defaultRemote: { type: string, nullable: true }
+                  suggestedHandoffBranch: { type: string }
+                  checkoutCommands:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Missing/removed workspace, live state, or git metadata read conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/snapshot-commit:
+    post:
+      tags: [runs]
+      summary: Implemented — commit dirty workbench changes
+      description: |
+        Creates one snapshot commit on the server-owned run branch with
+        `git add -A` and `git commit --no-verify`. The route refuses clean
+        worktrees, live write states, and removed workspaces. It does not push,
+        archive, drop, promote, or create a branch. Body-controlled fields are
+        limited to the commit message; project, branch, paths, and session
+        handles are DB-derived. Unknown body fields are rejected.
+      operationId: snapshotRunWorkbenchCommit
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [commitMessage]
+              properties:
+                commitMessage:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+      responses:
+        "200":
+          description: Snapshot commit created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runId, branch, commit, snapshotCreated]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  branch: { type: string }
+                  commit: { type: string }
+                  snapshotCreated: { type: boolean, enum: [true] }
+        "400":
+          description: Invalid body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Clean worktree, live state, missing/removed workspace, lifecycle claim race, or git commit conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/handoff-branch:
+    post:
+      tags: [runs]
+      summary: Implemented — create and push a continuation branch
+      description: |
+        Creates a handoff branch at the workbench HEAD without switching the
+        server-owned run worktree, pushes that handoff branch to a selected
+        existing remote, and returns copyable checkout commands. Existing local
+        or remote refs are reused only when they already point at the same
+        workbench HEAD, so retries after lost push acknowledgements are
+        idempotent. The route refuses dirty worktrees; operators must
+        snapshot-commit first. Body-controlled fields are limited to `remote`
+        and `handoffBranch`.
+        Project, workspace path, current run branch, and HEAD commit are
+        server-derived. Unknown body fields are rejected.
+      operationId: createRunWorkbenchHandoffBranch
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [remote, handoffBranch]
+              properties:
+                remote:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                handoffBranch:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+      responses:
+        "200":
+          description: Handoff branch is ready locally/remotely.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ok
+                  - runId
+                  - branch
+                  - handoffBranch
+                  - remote
+                  - pushedRef
+                  - headCommit
+                  - checkoutCommands
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  branch: { type: string }
+                  handoffBranch: { type: string }
+                  remote: { type: string }
+                  pushedRef: { type: string }
+                  headCommit: { type: string }
+                  checkoutCommands:
+                    type: array
+                    items: { type: string }
+        "400":
+          description: Invalid body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Dirty worktree, missing/removed workspace, lifecycle claim race, missing remote, different-head branch collision, or local git conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Remote branch existence check or push failed transiently.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/tokens:
     post:
       tags: [projects]
@@ -5415,6 +5813,11 @@ components:
             - PASSWORD_CHANGE_REQUIRED
             - ACCOUNT_INACTIVE
         message: { type: string }
+        retryHint: { type: string }
+        pushRejected:
+          type: string
+          enum: [non_fast_forward]
+        canForce: { type: boolean }
 
     ArtifactInstance:
       type: object

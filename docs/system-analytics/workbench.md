@@ -31,7 +31,9 @@ graph *editor* is Wave-3), never mutates run state, and never reads
 untracked/working-copy files.
 The execution model it visualizes is [`flow-graph.md`](flow-graph.md); the run
 state machine is [`runs.md`](runs.md); the worktree it reads is
-[`workspaces.md`](workspaces.md).
+[`workspaces.md`](workspaces.md). Lifecycle actions that stop, archive, drop,
+or export the visible workbench live in
+[`workbench-lifecycle.md`](workbench-lifecycle.md).
 
 ## Domain entities
 

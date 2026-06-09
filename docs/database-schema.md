@@ -671,6 +671,14 @@ until all callers move to the typed index.
                                  //   nullable
   promotionAttemptId?            // M18 (text, migration 0021) per-attempt
                                  //   CAS-identity token (opaque), nullable
+  lifecycleOperationState,       // M27 (text NOT NULL DEFAULT 'none', migration
+                                 //   0032) none | claiming | failed
+  lifecycleOperationClaimedAt?,   // M27 (timestamptz, migration 0032)
+  lifecycleOperationAttemptId?,   // M27 (text, migration 0032) per-attempt
+                                 //   CAS-identity token, nullable
+  lifecycleOperationName?         // M27 (text, migration 0032)
+                                 //   archive | drop | exportBranch |
+                                 //   snapshotCommit | handoffBranch
 }
 ```
 
@@ -694,6 +702,16 @@ a CAS over `promotionState` keyed by `promotionAttemptId`, committed before any
 git/PR side-effect; the finalize transaction writes only when the stored
 `promotionAttemptId` still matches the attempt's minted token, so a superseded
 (stale-reclaimed) attempt can never double-finalize.
+
+**(M27 — Implemented, migration `0032`, additive.)** The
+`lifecycleOperation*` columns serialize workbench archive, drop, export,
+snapshot commit, and handoff-branch side effects. `lifecycleOperationState`
+defaults to `none`; `claiming` is used while one HTTP request owns the git or
+filesystem mutation, and `failed` is reclaimable. `lifecycleOperationAttemptId`
+is a server-minted CAS token and `lifecycleOperationName` records the owning
+action for operator/debug visibility. Completed operations release the claim
+back to `none`, so lifecycle handoff/export state is not confused with
+promotion completion.
 
 **(M19 — Designed, migration `0015`, additive.)** Three nullable GC columns
 drive the worktree TTL lifecycle. `scheduledRemovalAt` (`timestamptz`) is the
