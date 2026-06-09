@@ -84,11 +84,26 @@ const labels: NodeSideFormProps["labels"] = {
   thinkingEffort: "Thinking effort",
   permissionMode: "Permission mode",
   workspaceAccess: "Workspace access",
+  skills: "Skills",
+  restrictions: "Restrictions",
+  mcps: "Additional MCPs",
+  enforcement: {
+    title: "Enforcement",
+    mcps: "MCPs",
+    tools: "Tools",
+    skills: "Skills",
+    restrictions: "Restrictions",
+    permissionMode: "Permission mode",
+    workspaceAccess: "Workspace access",
+  },
   timeoutMs: "Timeout (ms)",
   environmentPolicy: "Environment policy",
   failureClass: "Failure class",
   decisions: "Decisions",
   criticality: "Criticality",
+  roles: "Roles",
+  assignees: "Assignees",
+  allowTakeover: "Allow takeover",
   outputSchema: "Result schema",
   outputRequired: "Required",
   reworkAllowedTargets: "Allowed targets",
@@ -148,6 +163,10 @@ describe("NodeSideForm — ai_coding", () => {
     expect(html).toContain('data-testid="node-thinking-effort"');
     expect(html).toContain('data-testid="node-permission-mode"');
     expect(html).toContain('data-testid="node-workspace-access"');
+    expect(html).toContain('data-testid="node-skills"');
+    expect(html).toContain('data-testid="node-restrictions"');
+    expect(html).toContain('data-testid="node-mcps"');
+    expect(html).toContain('data-testid="node-enforcement-mcps"');
     expect(html).toContain('data-testid="node-output-schema"');
     expect(html).toContain('data-testid="node-rework-max-loops"');
     expect(html).toContain('data-testid="node-rework-workspace-policies"');
@@ -190,6 +209,9 @@ describe("NodeSideForm — human", () => {
 
     expect(html).toContain('data-testid="node-decisions"');
     expect(html).toContain('data-testid="node-criticality"');
+    expect(html).toContain('data-testid="node-roles"');
+    expect(html).toContain('data-testid="node-assignees"');
+    expect(html).toContain('data-testid="node-allow-takeover"');
     expect(html).not.toContain('data-testid="node-action-prompt"');
     expect(html).not.toContain('data-testid="node-action-command"');
   });

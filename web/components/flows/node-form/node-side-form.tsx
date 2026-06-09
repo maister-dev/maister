@@ -25,11 +25,26 @@ export type NodeSideFormLabels = {
   thinkingEffort: string;
   permissionMode: string;
   workspaceAccess: string;
+  skills: string;
+  restrictions: string;
+  mcps: string;
+  enforcement: {
+    title: string;
+    mcps: string;
+    tools: string;
+    skills: string;
+    restrictions: string;
+    permissionMode: string;
+    workspaceAccess: string;
+  };
   timeoutMs: string;
   environmentPolicy: string;
   failureClass: string;
   decisions: string;
   criticality: string;
+  roles: string;
+  assignees: string;
+  allowTakeover: string;
   outputSchema: string;
   outputRequired: string;
   reworkAllowedTargets: string;
@@ -164,6 +179,15 @@ export function NodeSideForm({
   const emit = (next: Rec): void => onChange(next as unknown as NodeDef);
   const setSetting = (key: string, value: unknown): void =>
     emit({ ...n, settings: { ...settings, [key]: value } });
+  const setEnforcement = (cls: string, value: string): void => {
+    const next: Record<string, unknown> = {
+      ...(settings.enforcement as Record<string, unknown> | undefined),
+    };
+
+    if (value === "") delete next[cls];
+    else next[cls] = value;
+    setSetting("enforcement", Object.keys(next).length ? next : undefined);
+  };
   const setAction = (key: string, value: unknown): void =>
     emit({ ...n, action: { ...action, [key]: value } });
   const setRework = (patch: Rec): void =>
@@ -277,6 +301,67 @@ export function NodeSideForm({
               value={str(settings.permissionMode)}
               onChange={(v) => setSetting("permissionMode", v || undefined)}
             />
+            <TextField
+              label={labels.skills}
+              testid="node-skills"
+              value={joinList(settings.skills)}
+              onChange={(v) =>
+                setSetting(
+                  "skills",
+                  parseList(v).length ? parseList(v) : undefined,
+                )
+              }
+            />
+            <TextField
+              label={labels.restrictions}
+              testid="node-restrictions"
+              value={joinList(settings.restrictions)}
+              onChange={(v) =>
+                setSetting(
+                  "restrictions",
+                  parseList(v).length ? parseList(v) : undefined,
+                )
+              }
+            />
+            <TextField
+              label={labels.mcps}
+              testid="node-mcps"
+              value={joinList(settings.mcps)}
+              onChange={(v) =>
+                setSetting(
+                  "mcps",
+                  parseList(v).length ? parseList(v) : undefined,
+                )
+              }
+            />
+            <div className="grid gap-2">
+              <h4 className={SECTION_CLS}>{labels.enforcement.title}</h4>
+              {(
+                [
+                  "mcps",
+                  "tools",
+                  "skills",
+                  "restrictions",
+                  "permissionMode",
+                  "workspaceAccess",
+                ] as const
+              ).map((cls) => (
+                <SelectField
+                  key={cls}
+                  label={labels.enforcement[cls]}
+                  options={["strict", "instruct", "off"]}
+                  testid={`node-enforcement-${cls}`}
+                  value={str(
+                    (
+                      settings.enforcement as
+                        | Record<string, unknown>
+                        | undefined
+                    )?.[cls],
+                  )}
+                  onChange={(v) => setEnforcement(cls, v)}
+                />
+              ))}
+            </div>
           </>
         ) : null}
         {type === "ai_coding" ? (
@@ -335,6 +420,37 @@ export function NodeSideForm({
               value={str(settings.criticality)}
               onChange={(v) => setSetting("criticality", v || undefined)}
             />
+            <TextField
+              label={labels.roles}
+              testid="node-roles"
+              value={joinList(settings.roles)}
+              onChange={(v) =>
+                setSetting(
+                  "roles",
+                  parseList(v).length ? parseList(v) : undefined,
+                )
+              }
+            />
+            <TextField
+              label={labels.assignees}
+              testid="node-assignees"
+              value={joinList(settings.assignees)}
+              onChange={(v) =>
+                setSetting(
+                  "assignees",
+                  parseList(v).length ? parseList(v) : undefined,
+                )
+              }
+            />
+            <label className="flex items-center gap-2">
+              <input
+                checked={Boolean(settings.allowTakeover)}
+                data-testid="node-allow-takeover"
+                type="checkbox"
+                onChange={(e) => setSetting("allowTakeover", e.target.checked)}
+              />
+              <span className={LABEL_CLS}>{labels.allowTakeover}</span>
+            </label>
           </>
         ) : null}
       </section>
