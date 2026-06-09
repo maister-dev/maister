@@ -302,7 +302,12 @@ describe("GET /api/runs/[runId]/diff — flow run (M22)", () => {
       targetBranch?: string;
       diff?: string;
       truncated?: boolean;
-      files?: { path: string; status: string; additions: number; deletions: number }[];
+      files?: {
+        path: string;
+        status: string;
+        additions: number;
+        deletions: number;
+      }[];
       perFile?: { path: string; fileLang: string; bundle: unknown }[];
     };
 

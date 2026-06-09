@@ -48,7 +48,10 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { runReconcileSweep } from "@/lib/reconcile";
 
@@ -138,7 +141,9 @@ beforeAll(async () => {
     maisterYamlPath: `${projectRepoPath}/maister.yaml`,
   });
 
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
 
   await db.insert(flows).values({
     id: flowId,

@@ -28,7 +28,10 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { createGateResult, markGateStale } from "@/lib/flows/graph/gate-store";
 import {
   appendNodeAttempt,
@@ -73,7 +76,9 @@ beforeAll(async () => {
     repoPath: "/repos/recov-app",
     maisterYamlPath: "/repos/recov-app/maister.yaml",
   });
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(flows).values({
     id: flowId,
     projectId,

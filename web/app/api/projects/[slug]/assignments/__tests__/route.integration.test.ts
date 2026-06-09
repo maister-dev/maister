@@ -24,7 +24,10 @@ import {
   ensureUserActor,
 } from "@/lib/assignments/service";
 import * as schemaModule from "@/lib/db/schema";
-import { testPlatformRunnerRow, testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -90,7 +93,9 @@ async function seedProject(slug: string): Promise<{
     repoPath: `/tmp/${slug}`,
     maisterYamlPath: `/tmp/${slug}/maister.yaml`,
   });
-  await db.insert(schema.platformAcpRunners).values(testPlatformRunnerRow(executorId, "claude"));
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,

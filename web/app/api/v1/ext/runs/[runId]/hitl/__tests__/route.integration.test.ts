@@ -345,7 +345,9 @@ function makePostRequest(
 beforeEach(async () => {
   auditMockState.failSuccessScopes.clear();
   supervisorMocks.checkSupervisorHealth.mockReset();
-  supervisorMocks.checkSupervisorHealth.mockResolvedValue({ kind: "available" });
+  supervisorMocks.checkSupervisorHealth.mockResolvedValue({
+    kind: "available",
+  });
   supervisorMocks.createSession.mockReset();
   supervisorMocks.createSession.mockResolvedValue({
     sessionId: `resume-session-${randomUUID()}`,
@@ -707,7 +709,9 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
 
     expect(runRows[0].status).toBe("NeedsInputIdle");
     expect(supervisorMocks.createSession).not.toHaveBeenCalled();
-    expect(resumeDriverMocks.scheduleResumedSessionDrive).not.toHaveBeenCalled();
+    expect(
+      resumeDriverMocks.scheduleResumedSessionDrive,
+    ).not.toHaveBeenCalled();
 
     const auditRows = await db
       .select()

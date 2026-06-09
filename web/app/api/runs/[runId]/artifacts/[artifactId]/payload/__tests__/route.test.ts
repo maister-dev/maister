@@ -118,7 +118,8 @@ vi.mock("@/lib/queries/run", () => ({
 }));
 
 vi.mock("@/lib/worktree", () => ({
-  DIFF_TRUNCATED_MARKER: "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n",
+  DIFF_TRUNCATED_MARKER:
+    "\n\n[maister: diff truncated — exceeded EXEC_MAX_BUFFER bound]\n",
   diffRange: vi.fn(async () => ({
     text: "diff --git a/x b/x\n+added\n",
     truncated: false,

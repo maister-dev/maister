@@ -145,7 +145,10 @@ describe("GET /api/runs/launch-options runner remaps", () => {
         adapter: "claude",
         capabilityAgent: "claude",
         model: "claude-sonnet-4-6",
-        provider: { kind: "anthropic_compatible", authToken: "env:SECRET_TOKEN" },
+        provider: {
+          kind: "anthropic_compatible",
+          authToken: "env:SECRET_TOKEN",
+        },
         permissionPolicy: "default",
         sidecarId: null,
         readinessStatus: "Ready",

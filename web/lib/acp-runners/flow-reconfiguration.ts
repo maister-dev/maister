@@ -5,10 +5,10 @@ import type {
   FlowRunnerProfile,
   FlowYamlV1,
 } from "@/lib/config.schema";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
 
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
 import * as schema from "@/lib/db/schema";
