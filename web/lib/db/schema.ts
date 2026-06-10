@@ -563,7 +563,8 @@ export type SchedulerJobKind =
   | "system_sweep"
   | "command"
   | "agent_tick"
-  | "flow_run";
+  | "flow_run"
+  | "run_schedule";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -579,7 +580,13 @@ export const schedulerJobs = pgTable(
       onDelete: "cascade",
     }),
     jobKind: text("job_kind", {
-      enum: ["system_sweep", "command", "agent_tick", "flow_run"],
+      enum: [
+        "system_sweep",
+        "command",
+        "agent_tick",
+        "flow_run",
+        "run_schedule",
+      ],
     }).notNull(),
     target: jsonb("target")
       .$type<Record<string, unknown>>()
@@ -629,7 +636,13 @@ export const schedulerJobRuns = pgTable(
       .notNull()
       .references(() => schedulerJobs.id, { onDelete: "cascade" }),
     jobKind: text("job_kind", {
-      enum: ["system_sweep", "command", "agent_tick", "flow_run"],
+      enum: [
+        "system_sweep",
+        "command",
+        "agent_tick",
+        "flow_run",
+        "run_schedule",
+      ],
     }).notNull(),
     status: text("status", {
       enum: ["Claimed", "Running", "Succeeded", "Failed", "Skipped"],

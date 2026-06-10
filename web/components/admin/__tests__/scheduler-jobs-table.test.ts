@@ -62,4 +62,15 @@ describe("SchedulerJobsTable", () => {
 
     expect(markup).toContain("noResults");
   });
+
+  it("offers run_schedule in the kind filter", () => {
+    const markup = renderToStaticMarkup(
+      createElement(SchedulerJobsTable, {
+        filters: { jobKind: "all", state: "all" },
+        jobs: [],
+      }),
+    );
+
+    expect(markup).toContain("kind.run_schedule");
+  });
 });

@@ -90,4 +90,15 @@ describe("/api/admin/scheduler-jobs", () => {
     expect(response.status).toBe(422);
     expect(createSchedulerJobMock).not.toHaveBeenCalled();
   });
+
+  it("rejects creating a run_schedule job — the dispatcher is system-seeded", async () => {
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      postRequest({ jobKind: "run_schedule", cadenceIntervalSeconds: 60 }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(createSchedulerJobMock).not.toHaveBeenCalled();
+  });
 });

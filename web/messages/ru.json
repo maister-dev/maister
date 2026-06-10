@@ -942,7 +942,8 @@
       "system_sweep": "system_sweep",
       "command": "command",
       "agent_tick": "agent_tick",
-      "flow_run": "flow_run"
+      "flow_run": "flow_run",
+      "run_schedule": "run_schedule"
     },
     "state": {
       "active": "активна",

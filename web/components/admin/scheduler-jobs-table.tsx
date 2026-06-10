@@ -41,6 +41,7 @@ const JOB_KINDS: SchedulerJobKind[] = [
   "command",
   "agent_tick",
   "flow_run",
+  "run_schedule",
 ];
 
 const inputClass =

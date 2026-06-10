@@ -47,6 +47,10 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
+import {
+  classifyTaskLaunchability,
+  getLatestFlowRun,
+} from "@/lib/runs/launchability";
 import { tryStartRun } from "@/lib/scheduler";
 import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import {
@@ -232,12 +236,22 @@ export async function launchRun(
   if (!task) {
     throw new MaisterError("PRECONDITION", `task not found: ${input.taskId}`);
   }
-  if (task.status !== "Backlog") {
+  // tasks.status is a one-way latch (nothing writes Backlog back after
+  // launch), so the latest flow run — not the task row — decides
+  // relaunchability (board retry rule, attempt N+1).
+  const latestFlowRun = await getLatestFlowRun(input.taskId, _db);
+  const launchability = classifyTaskLaunchability(task, latestFlowRun);
+
+  if (launchability !== "launchable") {
     throw new MaisterError(
       "PRECONDITION",
-      `task is not in Backlog (got ${task.status})`,
+      `task is not launchable (classification: ${launchability})`,
     );
   }
+  log.debug(
+    { taskId: input.taskId, classification: launchability },
+    "launch gate",
+  );
 
   const projectRows = await _db
     .select()

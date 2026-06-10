@@ -45,6 +45,7 @@ describe("schedulerBudgetForKind", () => {
       "command",
       "agent_tick",
       "flow_run",
+      "run_schedule",
     ] satisfies SchedulerJobKind[];
 
     expect(kinds.map((kind) => [kind, schedulerBudgetForKind(kind)])).toEqual([
@@ -52,6 +53,7 @@ describe("schedulerBudgetForKind", () => {
       ["command", "command"],
       ["agent_tick", "agent"],
       ["flow_run", "flow"],
+      ["run_schedule", "run_schedule"],
     ]);
   });
 });

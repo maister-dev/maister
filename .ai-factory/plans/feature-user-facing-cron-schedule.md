@@ -582,7 +582,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
 
 ### Phase 2 — Engine & dispatch service
 
-- [ ] **T2.1 — Launchability classifier + `launchRun` relaunch gate fix (DG)** (depends: T1.2)
+- [x] **T2.1 — Launchability classifier + `launchRun` relaunch gate fix (DG)** (depends: T1.2)
   - Deliverable: `web/lib/runs/launchability.ts` exporting
     `classifyTaskLaunchability` + `getLatestFlowRun(taskId)` per DG, with the
     TS exhaustiveness assertion over `RunStatus`. `launchRun`
@@ -598,7 +598,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
   - Verify: typecheck + unit + integration green (existing launch suites must
     stay green — assertion-migration check).
 
-- [ ] **T2.2 — Schedule service: CRUD + queries** (depends: T1.1, T1.2)
+- [x] **T2.2 — Schedule service: CRUD + queries** (depends: T1.1, T1.2)
   - Deliverable: `web/lib/run-schedules/service.ts` —
     `createSchedule`/`updateSchedule`/`deleteSchedule` implementing §3
     semantics (validation via cron wrapper; task-project comparison; reject
@@ -614,7 +614,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
     `{scheduleId, projectId, action, actorUserId}`.
   - Verify: typecheck + unit + integration green.
 
-- [ ] **T2.3 — Dispatcher core + trigger-now** (depends: T2.1, T2.2)
+- [x] **T2.3 — Dispatcher core + trigger-now** (depends: T2.1, T2.2)
   - Deliverable: `web/lib/run-schedules/dispatch.ts` —
     `dispatchDueSchedules({now, launch = launchRun, limit = 10})` (the
     injectable `launch` is the testability seam) implementing §2.3 pipeline +
@@ -651,7 +651,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
     `launch_failed` + on batch-limit truncation. Never log tokens/prompts.
   - Verify: typecheck + unit + integration green.
 
-- [ ] **T2.4 — `run_schedule` job kind fan-out + seed** (depends: T2.3)
+- [x] **T2.4 — `run_schedule` job kind fan-out + seed** (depends: T2.3)
   - Deliverable: every item in the §4 job-kind checklist — schema enums (both
     tables' arrays), budget key (limit 1, constant), `runClaimedJob` case
     calling `dispatchDueSchedules` AND passing its returned summary
@@ -674,14 +674,14 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
 
 ### Phase 3 — API routes
 
-- [ ] **T3.1 — `manageSchedules` action** (depends: T2.2)
+- [x] **T3.1 — `manageSchedules` action** (depends: T2.2)
   - Deliverable: `PROJECT_ACTION_MIN.manageSchedules = "member"` in
     `web/lib/authz.ts`.
   - Tests: extend authz unit tests (member allowed, viewer refused, global
     admin bypass).
   - Verify: typecheck + unit green.
 
-- [ ] **T3.2 — Routes: collection, item, trigger** (depends: T2.3, T3.1)
+- [x] **T3.2 — Routes: collection, item, trigger** (depends: T2.3, T3.1)
   - Deliverable: `web/app/api/projects/[slug]/schedules/route.ts` (GET list —
     `readBoard`; POST create — `manageSchedules`),
     `…/[scheduleId]/route.ts` (PATCH aggregate, DELETE),
