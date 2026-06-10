@@ -486,17 +486,9 @@ async function runOneGate(
           );
         }
 
-        await markGatePassed(
-          id,
-          {
-            verdict: "pass",
-            reasons: [
-              `all ${requiredIds.length} required artifact(s) present and current`,
-            ],
-          },
-          ctx.db,
-        );
-
+        // Back-ref BEFORE the terminal transition (same crash-window rule as
+        // runMutationAssertionGate): a death here leaves the gate `running`
+        // for re-execution instead of a terminal row missing the back-ref.
         if (outputRef) {
           const { gateResults } = schemaModule as unknown as Record<
             string,
@@ -507,7 +499,23 @@ async function runOneGate(
             .update(gateResults)
             .set({ outputArtifactRef: outputRef })
             .where(eq(gateResults.id, id));
+
+          log.debug(
+            { gateId: gate.id, gateResultId: id, outputArtifactRef: outputRef },
+            "gate output back-ref recorded",
+          );
         }
+
+        await markGatePassed(
+          id,
+          {
+            verdict: "pass",
+            reasons: [
+              `all ${requiredIds.length} required artifact(s) present and current`,
+            ],
+          },
+          ctx.db,
+        );
 
         return "passed";
       }
@@ -699,6 +707,24 @@ async function runMutationAssertionGate(
     ctx.db,
   );
 
+  // Back-ref BEFORE the terminal transition, same crash-window shape as the
+  // report itself: a death here leaves the gate `running` and re-execution
+  // re-sets it; written after the transition, a crash in between would leave
+  // a terminal gate permanently missing the back-ref.
+  if (declaredOutputId !== undefined) {
+    const { gateResults } = schemaModule as unknown as Record<string, any>;
+
+    await ctx.db
+      .update(gateResults)
+      .set({ outputArtifactRef: declaredOutputId })
+      .where(eq(gateResults.id, gateResultId));
+
+    log.debug(
+      { gateId: gate.id, gateResultId, outputArtifactRef: declaredOutputId },
+      "mutation gate output back-ref recorded",
+    );
+  }
+
   log.info(
     {
       runId: loaded.run.id,
@@ -742,15 +768,6 @@ async function runMutationAssertionGate(
       },
       ctx.db,
     );
-  }
-
-  if (declaredOutputId !== undefined) {
-    const { gateResults } = schemaModule as unknown as Record<string, any>;
-
-    await ctx.db
-      .update(gateResults)
-      .set({ outputArtifactRef: declaredOutputId })
-      .where(eq(gateResults.id, gateResultId));
   }
 
   return pass ? "passed" : "failed";

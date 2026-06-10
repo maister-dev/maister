@@ -670,6 +670,10 @@ describe("M29: must_touch assertions (blocking artifact_required)", () => {
     );
 
     expect(gate?.status).toBe("failed");
+    // Regression (back-ref reorder): a FAILING mutation gate with a declared
+    // output still carries the back-ref — it is written before the terminal
+    // transition, on the fail path too.
+    expect(gate?.outputArtifactRef).toBe("verify-report");
     const verdict = gate?.verdict as {
       reasons?: string[];
       payload?: { assertionFailed?: boolean };
