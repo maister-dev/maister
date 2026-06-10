@@ -613,7 +613,7 @@ erDiagram
     }
 
     REVIEW_COMMENTS {
-        text id PK "randomUUID (ADR-072, migration 0038)"
+        text id PK "randomUUID (ADR-072, migration 0039)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
         text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE"
         text node_id "NOT NULL - review node id"

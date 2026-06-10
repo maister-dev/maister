@@ -322,7 +322,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` is deliberately NOT creatable here — the singleton `run_schedule.dispatcher` is seeded by the tick (M28, ADR-072); the kind is rejected at the schema.
+      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` is deliberately NOT creatable here — the singleton `run_schedule.dispatcher` is seeded by the tick (M28, ADR-071); the kind is rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -6099,7 +6099,7 @@ components:
       description: |
         (M28) Dispatch decision recorded on the schedule row.
         `dispatching` is the durable in-flight intent marker written before
-        `launchRun` (two-phase fire pipeline, ADR-072).
+        `launchRun` (two-phase fire pipeline, ADR-071).
     ScheduleDTO:
       type: object
       required:

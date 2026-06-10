@@ -700,6 +700,9 @@ async function recordComposedCommentsEvidence(
         // Reserved `adr071:` namespace — declared-output ids are
         // `run:<nodeAttemptId>:<artifactDefId>`, so a def literally named
         // `rework-comments` can never collide with this runner-internal row.
+        // Frozen as `adr071` despite the ADR-072 renumber: it is an opaque
+        // artifact-id segment, never parsed back to a number, so churning it
+        // would only orphan rows already written under the old id.
         id: `run:${args.nodeAttemptId}:adr071:rework-comments`,
         runId: args.runId,
         nodeAttemptId: args.nodeAttemptId,

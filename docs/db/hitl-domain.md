@@ -33,7 +33,7 @@ erDiagram
     }
 
     REVIEW_COMMENTS {
-        text id PK "randomUUID (ADR-072, migration 0038)"
+        text id PK "randomUUID (ADR-072, migration 0039)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
         text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE - gate visit of authoring"
         text node_id "NOT NULL - review node id"
@@ -73,7 +73,7 @@ erDiagram
 >   `GateVerdict.confidence` on `gate_results.verdict` (machine confidence). The two
 >   are never conflated.
 
-> **(ADR-072 — Implemented, migration `0039`s` stores
+> **(ADR-072 — Implemented, migration `0039`.)** `review_comments` stores
 > line-anchored, 1-level-threaded review comments drafted at an open review
 > gate. A **root** row (`parent_id IS NULL`) carries the anchor —
 > `(file_path, side ∈ old|new, line)` + the exact server-extracted
@@ -165,6 +165,6 @@ The row is never deleted (cascades from `runs` and `projects` only).
   (Implemented — ADR-072).
 - Config: [`../configuration.md`](../configuration.md) §`form_schema versioning`.
 - Source: `web/lib/db/schema.ts` (`hitl_requests` table; `review_comments`
-  table — migration `0038`),
+  table — migration `0039`),
   `web/lib/config.schema.ts` (`formSchemaSchema`),
   `web/lib/config.ts` (`validateFormSchemaVersion`).

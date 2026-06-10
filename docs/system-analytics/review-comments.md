@@ -2,7 +2,7 @@
 
 > **Status: Implemented (ADR-072), as of 2026-06-10.** This file was frozen
 > as the Phase-0 contract before implementation; the table (migration
-> `0038`), routes, runner-side compose + evidence, validate guard, and diff
+> `0039`), routes, runner-side compose + evidence, validate guard, and diff
 > UI all shipped, and the tags below were reconciled as-built. The locked
 > decision is
 > [ADR-072](../decisions.md#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard).
