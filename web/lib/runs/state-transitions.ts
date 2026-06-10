@@ -8,6 +8,7 @@ import { nextKeepaliveAt } from "./keepalive-config";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { gcAgeDays } from "@/lib/instance-config";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
@@ -199,18 +200,33 @@ export async function failResumedRun(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Failed", endedAt: new Date() })
-    .where(
-      and(
-        eq(runs.id, runId),
-        inArray(runs.status, ["NeedsInputIdle", "NeedsInput"]),
-      ),
-    )
-    .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+  const failed: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({ status: "Failed", endedAt: new Date() })
+      .where(
+        and(
+          eq(runs.id, runId),
+          inArray(runs.status, ["NeedsInputIdle", "NeedsInput"]),
+        ),
+      )
+      .returning({ id: runs.id, projectId: runs.projectId });
+
+    if (rows.length === 0) return false;
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.failed",
+      projectId: rows[0].projectId,
+      runId,
+      data: { errorCode: reason ?? null },
+    });
+
+    return true;
+  });
+
+  if (!failed) {
     log.warn(
       { runId, to: "Failed", reason },
       "failResumedRun: status-guard mismatch",
@@ -410,7 +426,7 @@ export async function markAbandoned(
           inArray(runs.status, [...ABANDONABLE_STATUSES]),
         ),
       )
-      .returning({ id: runs.id });
+      .returning({ id: runs.id, projectId: runs.projectId });
 
     if (rows.length === 0) return false;
 
@@ -430,6 +446,14 @@ export async function markAbandoned(
       { runId, at: scheduledRemovalAt },
       "[scheduler] scheduled_removal_at stamped",
     );
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.abandoned",
+      projectId: rows[0].projectId,
+      runId,
+      data: { source: "user" },
+    });
 
     return true;
   });
@@ -458,13 +482,28 @@ export async function crashResumedRun(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Crashed", endedAt: new Date() })
-    .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-    .returning({ id: runs.id });
 
-  if (rows.length === 0) {
+  const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({ status: "Crashed", endedAt: new Date() })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+      .returning({ id: runs.id, projectId: runs.projectId });
+
+    if (rows.length === 0) return false;
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.crashed",
+      projectId: rows[0].projectId,
+      runId,
+      data: { errorCode: reason ?? null },
+    });
+
+    return true;
+  });
+
+  if (!crashed) {
     log.warn(
       { runId, from: "NeedsInput", to: "Crashed", reason },
       "crashResumedRun: status-guard mismatch",
@@ -506,25 +545,39 @@ export async function crashRunningRun(
 
   log.debug({ runId, reason }, "[state-transitions.crashRunningRun] entry");
 
-  // M19 crash-recover (ADR-034): retain the crashed node id in
-  // resume_target_step_id BEFORE nulling current_step_id, so Recover can resolve
-  // the node kind (agent → --resume; session-less + retry_safe → re-dispatch).
-  // current_step_id is still nulled for the clean-terminal reconcile read. The
-  // SET right-hand sides evaluate against the pre-update row, so
-  // resume_target_step_id captures the OLD current_step_id in one statement.
-  const rows = await db
-    .update(runs)
-    .set({
-      status: "Crashed",
-      endedAt: new Date(),
-      resumeTargetStepId: sql`${runs.currentStepId}`,
-      currentStepId: null,
-      resumeStartedAt: null,
-    })
-    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-    .returning({ id: runs.id });
+  const crashed: boolean = await db.transaction(async (tx: Db) => {
+    // M19 crash-recover (ADR-034): retain the crashed node id in
+    // resume_target_step_id BEFORE nulling current_step_id, so Recover can resolve
+    // the node kind (agent → --resume; session-less + retry_safe → re-dispatch).
+    // current_step_id is still nulled for the clean-terminal reconcile read. The
+    // SET right-hand sides evaluate against the pre-update row, so
+    // resume_target_step_id captures the OLD current_step_id in one statement.
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "Crashed",
+        endedAt: new Date(),
+        resumeTargetStepId: sql`${runs.currentStepId}`,
+        currentStepId: null,
+        resumeStartedAt: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+      .returning({ id: runs.id, projectId: runs.projectId });
 
-  if (rows.length === 0) {
+    if (rows.length === 0) return false;
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.crashed",
+      projectId: rows[0].projectId,
+      runId,
+      data: { errorCode: reason ?? null },
+    });
+
+    return true;
+  });
+
+  if (!crashed) {
     log.warn(
       { runId, from: "Running", to: "Crashed", reason },
       "crashRunningRun: status-guard mismatch",

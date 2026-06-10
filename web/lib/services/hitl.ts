@@ -25,6 +25,7 @@ import {
 } from "@/lib/flows/hitl-validate";
 import { runFlow } from "@/lib/flows/runner";
 import { cancelPermission, deliverPermission } from "@/lib/supervisor-client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { assignments, hitlRequests, projects, runs, scratchRuns } =
@@ -585,7 +586,7 @@ async function handlePermissionResponse(
     // Marker + scratch dialog flip + assignment completion + audit are one atomic
     // unit so the durable success state cannot commit without its token audit.
     await db.transaction(async (tx: any) => {
-      await tx
+      const stamped = await tx
         .update(hitlRequests)
         .set({ respondedAt: new Date() })
         .where(
@@ -593,10 +594,22 @@ async function handlePermissionResponse(
             eq(hitlRequests.id, hitlRequestId),
             isNull(hitlRequests.respondedAt),
           ),
-        );
+        )
+        .returning({ id: hitlRequests.id });
+
       await markScratchPermissionDelivered(tx, runRow, runId);
       await completeResponseAssignment(tx, assignmentClaim, { optionId });
       await args.recordSuccessAudit?.(tx, 200);
+
+      if (stamped.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.responded",
+          projectId: runRow.projectId,
+          runId,
+          data: { hitlRequestId, kind: hitlRow.kind, via: "user" },
+        });
+      }
     });
 
     log.info(
@@ -641,17 +654,29 @@ async function handlePermissionResponse(
         if (claim.kind === "noop-idempotent") {
           return { transition: "in-flight-resume" } as const;
         }
-        await tx
+        const terminalRows = await tx
           .update(runs)
           .set({
             status: runRow.runKind === "scratch" ? "Crashed" : "Failed",
             endedAt: new Date(),
           })
-          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")));
+          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+          .returning({ projectId: runs.projectId });
+
         await tx
           .update(hitlRequests)
           .set({ respondedAt: new Date() })
           .where(eq(hitlRequests.id, hitlRequestId));
+
+        if (terminalRows.length > 0) {
+          await emitWebhookEvent({
+            db: tx,
+            type: runRow.runKind === "scratch" ? "run.crashed" : "run.failed",
+            projectId: terminalRows[0].projectId,
+            runId,
+            data: { errorCode: "HITL_TIMEOUT" },
+          });
+        }
 
         return { transition: "terminal" } as const;
       });
@@ -1067,7 +1092,7 @@ async function handleFormHumanResponse(
   // isResume detection); flipping status here would defeat the
   // resume gate and restart the flow at step 0.
   await db.transaction(async (tx: any) => {
-    await tx
+    const stamped = await tx
       .update(hitlRequests)
       .set({ respondedAt: new Date() })
       .where(
@@ -1075,11 +1100,23 @@ async function handleFormHumanResponse(
           eq(hitlRequests.id, hitlRequestId),
           isNull(hitlRequests.respondedAt),
         ),
-      );
+      )
+      .returning({ id: hitlRequests.id });
+
     await completeResponseAssignment(tx, assignmentClaim, {
       response: claim.storedResponse as Record<string, unknown>,
     });
     await args.recordSuccessAudit?.(tx, 200);
+
+    if (stamped.length > 0) {
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.responded",
+        projectId: runRow.projectId,
+        runId,
+        data: { hitlRequestId, kind: hitlRow.kind, via: "user" },
+      });
+    }
   });
 
   scheduleResume(runId);

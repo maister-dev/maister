@@ -15,6 +15,7 @@ import {
   runs as runsTable,
   stepRuns as stepRunsTable,
   tasks as tasksTable,
+  webhookEvents as webhookEventsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { runFlow } from "@/lib/flows/runner";
@@ -31,6 +32,7 @@ type TableRows = {
   assignment_events: Record<string, unknown>[];
   actor_identities: Record<string, unknown>[];
   artifact_instances: Record<string, unknown>[];
+  webhook_events: Record<string, unknown>[];
 };
 
 type CapturedUpdate = {
@@ -50,6 +52,7 @@ function tableNameOf(table: unknown): keyof TableRows {
   if (table === assignmentEventsTable) return "assignment_events";
   if (table === actorIdentitiesTable) return "actor_identities";
   if (table === artifactInstancesTable) return "artifact_instances";
+  if (table === webhookEventsTable) return "webhook_events";
   throw new Error("unknown table object passed to fakeDb");
 }
 
@@ -71,6 +74,7 @@ function makeFakeDb(initial: Partial<TableRows>): {
     assignment_events: initial.assignment_events ?? [],
     actor_identities: initial.actor_identities ?? [],
     artifact_instances: initial.artifact_instances ?? [],
+    webhook_events: initial.webhook_events ?? [],
   };
   const updates: CapturedUpdate[] = [];
   const inserts: Array<{
@@ -283,6 +287,7 @@ function baseFixture(): TableRows {
     assignment_events: [],
     actor_identities: [],
     artifact_instances: [],
+    webhook_events: [],
   };
 }
 

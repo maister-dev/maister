@@ -15,9 +15,10 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches step-runs.ts idiom).
-const { gateResults } = schemaModule as unknown as Record<string, any>;
+const { gateResults, runs } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-gate-results",
@@ -28,6 +29,21 @@ const log = pino({
 type Db = any;
 
 export type GateMode = "blocking" | "advisory";
+
+// gate.decided fires only when a gate row REACHES a terminal decision. stale /
+// skipped are non-terminal landings and emit nothing.
+const TERMINAL_GATE_STATUSES = new Set(["passed", "failed", "overridden"]);
+
+// gate_results rows carry runId but no projectId — resolve it via one PK lookup
+// on the SAME handle that wrote the gate row so the emit rides the same tx.
+async function projectIdForRun(db: Db, runId: string): Promise<string> {
+  const rows = await db
+    .select({ projectId: runs.projectId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return rows[0].projectId;
+}
 
 // Create a gate_results row. Defaults to `running` (the live execution path,
 // Phase 4.1); deferred kinds create directly at `skipped`/`pending` (Phase 4.5).
@@ -61,6 +77,22 @@ export async function createGateResult(args: {
     endedAt: status === "running" || status === "pending" ? null : new Date(),
   });
 
+  if (TERMINAL_GATE_STATUSES.has(status)) {
+    await emitWebhookEvent({
+      db,
+      type: "gate.decided",
+      projectId: await projectIdForRun(db, args.runId),
+      runId: args.runId,
+      data: {
+        gateId: args.gateId,
+        kind: args.kind,
+        mode: args.mode,
+        status,
+        nodeAttemptId: args.nodeAttemptId,
+      },
+    });
+  }
+
   log.info(
     {
       gateResultId: id,
@@ -84,10 +116,35 @@ async function transition(
 ): Promise<void> {
   const d = db ?? getDb();
 
-  await d
+  const rows = await d
     .update(gateResults)
     .set({ status, endedAt: new Date(), ...extra })
-    .where(eq(gateResults.id, id));
+    .where(eq(gateResults.id, id))
+    .returning({
+      runId: gateResults.runId,
+      gateId: gateResults.gateId,
+      kind: gateResults.kind,
+      mode: gateResults.mode,
+      nodeAttemptId: gateResults.nodeAttemptId,
+    });
+
+  if (rows.length > 0 && TERMINAL_GATE_STATUSES.has(status)) {
+    const row = rows[0];
+
+    await emitWebhookEvent({
+      db: d,
+      type: "gate.decided",
+      projectId: await projectIdForRun(d, row.runId),
+      runId: row.runId,
+      data: {
+        gateId: row.gateId,
+        kind: row.kind,
+        mode: row.mode,
+        status,
+        nodeAttemptId: row.nodeAttemptId,
+      },
+    });
+  }
 
   log.info({ gateResultId: id, status }, "gate-result transition");
 }
@@ -281,6 +338,23 @@ export async function reportExternalGate(
         `reportExternalGate: live external_check gate for run ${args.runId} gate ${args.gateId} changed concurrently before report`,
       );
     }
+
+    // The in-place flip is terminal (passed|failed) and won the CAS — emit
+    // gate.decided here (the supersede branch above emits via createGateResult,
+    // and its re-stale is non-terminal → no emit, so no double-emit).
+    await emitWebhookEvent({
+      db: d,
+      type: "gate.decided",
+      projectId: await projectIdForRun(d, args.runId),
+      runId: args.runId,
+      data: {
+        gateId: args.gateId,
+        kind: "external_check",
+        mode: live.mode,
+        status: args.status,
+        nodeAttemptId: live.nodeAttemptId,
+      },
+    });
 
     gateResultId = live.id;
   }

@@ -19,7 +19,11 @@ vi.mock("@/lib/db/client", () => ({
         return Promise.resolve();
       },
     }),
-    select: () => ({ from: () => ({ where: async () => [] }) }),
+    // T7: runHumanStep now resolves projectId via a runs PK lookup for the
+    // hitl.requested emit — return a projectId-bearing row so the emit rides it.
+    select: () => ({
+      from: () => ({ where: async () => [{ projectId: "proj-1" }] }),
+    }),
   }),
 }));
 

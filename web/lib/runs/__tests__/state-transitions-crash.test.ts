@@ -41,7 +41,7 @@ function mockDb(returningRows: Array<{ id: string }>): {
 } {
   const captured: Captured = { setArg: null, whereArg: undefined };
 
-  const db = {
+  const db: Record<string, unknown> = {
     update() {
       return {
         set(arg: Record<string, unknown>) {
@@ -61,6 +61,11 @@ function mockDb(returningRows: Array<{ id: string }>): {
         },
       };
     },
+    insert() {
+      return { values: async () => undefined };
+    },
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+      fn(db),
   };
 
   return { db, captured };

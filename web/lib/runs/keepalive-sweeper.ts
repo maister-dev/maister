@@ -20,6 +20,7 @@ import {
   listSessions,
   type SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { flowRevisions, flows, hitlRequests, nodeAttempts, runs } =
@@ -507,7 +508,7 @@ async function runTimeLimitPass(db: Db): Promise<number> {
             eq(runs.currentStepId, row.currentStepId),
           ),
         )
-        .returning({ id: runs.id });
+        .returning({ id: runs.id, projectId: runs.projectId });
 
       if (upd.length === 0) return false;
 
@@ -516,6 +517,14 @@ async function runTimeLimitPass(db: Db): Promise<number> {
         db: tx,
         runId: row.id,
         reason: "node execution exceeded maxDurationMinutes",
+      });
+
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.failed",
+        projectId: upd[0].projectId,
+        runId: row.id,
+        data: { errorCode: "PRECONDITION" },
       });
 
       return true;

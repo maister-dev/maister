@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { renderStrict } from "./templating";
@@ -19,9 +20,10 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests } = schemaModule as unknown as Record<string, any>;
+const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner",
@@ -219,6 +221,20 @@ export async function runHumanStep(
       actionKind: "form",
       roleRefs: [],
       title: promptText,
+    });
+    // FIXME(any): DbLike.select returns unknown; the emit handle is any.
+    const txDb = tx as any;
+    const projectRows = await txDb
+      .select({ projectId: runs.projectId })
+      .from(runs)
+      .where(eq(runs.id, ctx.runId));
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.requested",
+      projectId: projectRows[0].projectId,
+      runId: ctx.runId,
+      data: { hitlRequestId, kind, nodeId: null },
     });
   };
 

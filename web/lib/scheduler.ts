@@ -6,6 +6,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -151,10 +152,21 @@ export async function tryStartRun(
     log.debug({ runId, liveCount, cap }, "tryStartRun cap-check");
 
     if (liveCount < cap) {
-      await tx
+      const startedRows: Array<{ projectId: string }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Pending")));
+        .where(and(eq(runs.id, runId), eq(runs.status, "Pending")))
+        .returning({ projectId: runs.projectId });
+
+      if (startedRows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.started",
+          projectId: startedRows[0].projectId,
+          runId,
+          data: { trigger: "direct" },
+        });
+      }
 
       log.info({ runId, liveCount, cap }, "tryStartRun → started");
 
@@ -282,14 +294,25 @@ export async function promoteNextPending(
     const isResume = target.acpSessionId != null;
     const now = new Date();
 
-    await tx
+    const promotedRows: Array<{ projectId: string }> = await tx
       .update(runs)
       .set(
         isResume
           ? { status: "Running", startedAt: now, resumeStartedAt: now }
           : { status: "Running", startedAt: now },
       )
-      .where(and(eq(runs.id, target.id), eq(runs.status, "Pending")));
+      .where(and(eq(runs.id, target.id), eq(runs.status, "Pending")))
+      .returning({ projectId: runs.projectId });
+
+    if (promotedRows.length === 0) return null;
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.started",
+      projectId: promotedRows[0].projectId,
+      runId: target.id,
+      data: { trigger: "queue_promote" },
+    });
 
     return { id: target.id, isResume };
   });

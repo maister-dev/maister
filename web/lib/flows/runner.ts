@@ -49,6 +49,7 @@ import {
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -352,10 +353,23 @@ export async function runFlow(
       },
       "stale resume pointer — currentStepId not in manifest; failing closed",
     );
-    await db
-      .update(runs)
-      .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
-      .where(eq(runs.id, runId));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
+        .where(eq(runs.id, runId))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.crashed",
+          projectId: rows[0].projectId,
+          runId,
+          data: { errorCode: "CONFIG" },
+        });
+      }
+    });
 
     throw new MaisterError(
       "CONFIG",
@@ -514,10 +528,26 @@ export async function runFlow(
 
       if (result.needsInput) {
         await markStepNeedsInput(stepRunId, db);
-        await db
+        const flipped = await db
           .update(runs)
           .set({ status: "NeedsInput", currentStepId: step.id })
-          .where(eq(runs.id, runId));
+          .where(eq(runs.id, runId))
+          .returning({ projectId: runs.projectId });
+
+        if (flipped.length > 0) {
+          // Only the human step yields needsInput on the linear path; its HITL
+          // kind (and thus the reason) mirrors runHumanStep's on_reject branch.
+          const reason: "human" | "form" =
+            step.type === "human" && step.on_reject ? "human" : "form";
+
+          await emitWebhookEvent({
+            db,
+            type: "run.needs_input",
+            projectId: flipped[0].projectId,
+            runId,
+            data: { reason, nodeId: null },
+          });
+        }
         if (result.acpSessionId && !loaded.run.acpSessionId) {
           await db
             .update(runs)
@@ -860,10 +890,23 @@ export async function runFlow(
     // this branch the terminal write would silently downgrade
     // Crashed → Failed and the runner-agent's CRASH propagation from
     // pass 2 would be erased here.
-    await db
-      .update(runs)
-      .set({ status: "Crashed", endedAt, currentStepId: null })
-      .where(eq(runs.id, runId));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Crashed", endedAt, currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.crashed",
+          projectId: rows[0].projectId,
+          runId,
+          data: { errorCode: runErrorCode },
+        });
+      }
+    });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -871,10 +914,23 @@ export async function runFlow(
     });
     log2.error({ runErrorCode }, "runFlow ended Crashed");
   } else if (failed) {
-    await db
-      .update(runs)
-      .set({ status: "Failed", endedAt, currentStepId: null })
-      .where(eq(runs.id, runId));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt, currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.failed",
+          projectId: rows[0].projectId,
+          runId,
+          data: { errorCode: runErrorCode },
+        });
+      }
+    });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -882,10 +938,23 @@ export async function runFlow(
     });
     log2.warn({ runErrorCode }, "runFlow ended Failed");
   } else {
-    await db
-      .update(runs)
-      .set({ status: "Review", endedAt, currentStepId: null })
-      .where(eq(runs.id, runId));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Review", endedAt, currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.review",
+          projectId: rows[0].projectId,
+          runId,
+          data: { source: "runner" },
+        });
+      }
+    });
     log2.info({}, "runFlow ended Review");
   }
 

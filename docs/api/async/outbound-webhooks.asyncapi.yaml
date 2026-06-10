@@ -436,7 +436,7 @@ components:
       properties:
         reason:
           type: string
-          enum: [permission, form, human_review]
+          enum: [permission, form, human]
         nodeId:
           type: string
           nullable: true
@@ -451,7 +451,7 @@ components:
         hitlRequestId: { type: string }
         kind:
           type: string
-          enum: [permission, form_collect, human_review]
+          enum: [permission, form, human]
         nodeId:
           type: string
           nullable: true
@@ -465,7 +465,7 @@ components:
         hitlRequestId: { type: string }
         kind:
           type: string
-          enum: [permission, form_collect, human_review]
+          enum: [permission, form, human]
         via:
           type: string
           enum: [user, auto]

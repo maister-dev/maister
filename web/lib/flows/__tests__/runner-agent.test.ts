@@ -8,6 +8,7 @@ import {
   assignments as assignmentsTable,
   hitlRequests as hitlRequestsTable,
   runs as runsTable,
+  webhookEvents as webhookEventsTable,
 } from "@/lib/db/schema";
 import {
   assertSessionProfileConsistent,
@@ -56,13 +57,15 @@ type FakeTableName =
   | "hitl_requests"
   | "runs"
   | "assignments"
-  | "assignment_events";
+  | "assignment_events"
+  | "webhook_events";
 
 function tableOf(table: unknown): FakeTableName {
   if (table === hitlRequestsTable) return "hitl_requests";
   if (table === runsTable) return "runs";
   if (table === assignmentsTable) return "assignments";
   if (table === assignmentEventsTable) return "assignment_events";
+  if (table === webhookEventsTable) return "webhook_events";
 
   throw new Error("unknown table");
 }

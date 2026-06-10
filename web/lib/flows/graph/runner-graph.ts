@@ -108,6 +108,7 @@ import {
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, hitlRequests, reviewComments } =
@@ -305,6 +306,13 @@ export async function runReviewHuman(
       roleRefs,
       title: prompt,
     });
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.requested",
+      projectId: loaded.run.projectId,
+      runId: loaded.run.id,
+      data: { hitlRequestId, kind: "human", nodeId: node.id },
+    });
   };
 
   try {
@@ -420,6 +428,13 @@ export async function runFormCollect(
       actionKind: "form",
       roleRefs,
       title: prompt,
+    });
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.requested",
+      projectId: loaded.run.projectId,
+      runId: loaded.run.id,
+      data: { hitlRequestId, kind: "form", nodeId: node.id },
     });
   };
 
@@ -1118,10 +1133,23 @@ export async function runGraph(
         { currentStepId: resumeNodeId, flowRevision: loaded.run.flowRevision },
         "stale resume pointer — node id not in compiled graph; failing closed",
       );
-      await db
-        .update(runs)
-        .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
-        .where(eq(runs.id, runId));
+      await db.transaction(async (tx: Db) => {
+        const rows = await tx
+          .update(runs)
+          .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
+          .where(eq(runs.id, runId))
+          .returning({ projectId: runs.projectId });
+
+        if (rows.length > 0) {
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.crashed",
+            projectId: rows[0].projectId,
+            runId,
+            data: { errorCode: "CONFIG" },
+          });
+        }
+      });
 
       throw new MaisterError(
         "CONFIG",
@@ -1475,10 +1503,24 @@ export async function runGraph(
 
       if (result.needsInput) {
         await markNodeNeedsInput(nodeAttemptId, db);
-        await db
+        const flipped = await db
           .update(runs)
           .set({ status: "NeedsInput", currentStepId: node.id })
-          .where(eq(runs.id, runId));
+          .where(eq(runs.id, runId))
+          .returning({ projectId: runs.projectId });
+
+        if (flipped.length > 0) {
+          await emitWebhookEvent({
+            db,
+            type: "run.needs_input",
+            projectId: flipped[0].projectId,
+            runId,
+            data: {
+              reason: node.nodeType as "human" | "form",
+              nodeId: node.id,
+            },
+          });
+        }
         if (result.acpSessionId && !loaded.run.acpSessionId) {
           await db
             .update(runs)
@@ -2128,10 +2170,23 @@ export async function runGraph(
   // that operator action wins instead of being clobbered back to Failed/Review
   // (#ledger-clobber / #split-brain).
   if (failed && runErrorCode === "CRASH") {
-    await db
-      .update(runs)
-      .set({ status: "Crashed", endedAt, currentStepId: null })
-      .where(and(eq(runs.id, runId), eq(runs.status, "Running")));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Crashed", endedAt, currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.crashed",
+          projectId: rows[0].projectId,
+          runId,
+          data: { errorCode: runErrorCode },
+        });
+      }
+    });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -2139,10 +2194,23 @@ export async function runGraph(
     });
     log2.error({ runErrorCode }, "runGraph ended Crashed");
   } else if (failed) {
-    await db
-      .update(runs)
-      .set({ status: "Failed", endedAt, currentStepId: null })
-      .where(and(eq(runs.id, runId), eq(runs.status, "Running")));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt, currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.failed",
+          projectId: rows[0].projectId,
+          runId,
+          data: { errorCode: runErrorCode },
+        });
+      }
+    });
     await systemCloseActiveAssignmentsForRun({
       db,
       runId,
@@ -2150,10 +2218,23 @@ export async function runGraph(
     });
     log2.warn({ runErrorCode }, "runGraph ended Failed");
   } else {
-    await db
-      .update(runs)
-      .set({ status: "Review", endedAt, currentStepId: null })
-      .where(and(eq(runs.id, runId), eq(runs.status, "Running")));
+    await db.transaction(async (tx: Db) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Review", endedAt, currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+
+      if (rows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.review",
+          projectId: rows[0].projectId,
+          runId,
+          data: { source: "runner" },
+        });
+      }
+    });
     log2.info({}, "runGraph ended Review");
   }
 

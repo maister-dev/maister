@@ -24,6 +24,7 @@ import {
   listSessions,
   type SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   branchNameSchema,
   createBranchAtHead,
@@ -1261,7 +1262,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           endedAt: args.removedAt,
         })
         .where(eq(runs.id, args.runId))
-        .returning({ id: runs.id });
+        .returning({ id: runs.id, projectId: runs.projectId });
 
       if (updatedRunRows.length === 0) {
         throw new MaisterError(
@@ -1288,6 +1289,24 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           );
         }
       }
+
+      if (args.nextRunStatus === "Abandoned") {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.abandoned",
+          projectId: updatedRunRows[0].projectId,
+          runId: args.runId,
+          data: { source: "workbench" },
+        });
+      } else if (args.nextRunStatus === "Review") {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.review",
+          projectId: updatedRunRows[0].projectId,
+          runId: args.runId,
+          data: { source: "workbench" },
+        });
+      }
     }
   });
 }
@@ -1307,7 +1326,7 @@ async function markRunStoppedAndCloseAssignments(args: {
         endedAt: args.endedAt,
       })
       .where(and(eq(runs.id, args.runId), inArray(runs.status, STOP_STATUSES)))
-      .returning({ id: runs.id });
+      .returning({ id: runs.id, projectId: runs.projectId });
 
     if (rows.length === 0) {
       throw new MaisterError(
@@ -1320,6 +1339,14 @@ async function markRunStoppedAndCloseAssignments(args: {
       db: tx,
       runId: args.runId,
       reason: args.reason,
+    });
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.review",
+      projectId: rows[0].projectId,
+      runId: args.runId,
+      data: { source: "workbench" },
     });
   });
 }

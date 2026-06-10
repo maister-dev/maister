@@ -26,6 +26,7 @@ import {
   type PromptResult,
   type SupervisorEvent,
 } from "@/lib/supervisor-client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const { hitlRequests, runs, scratchMessages, scratchRuns } =
   schemaModule as unknown as Record<string, any>;
@@ -146,17 +147,20 @@ async function applyDialogStatus(args: {
   db: DbClientLike;
   runId: string;
   dialogStatus: ScratchDialogStatus;
-}): Promise<void> {
+}): Promise<{ projectId: string } | null> {
   const now = new Date();
 
   await args.db
     .update(scratchRuns)
     .set({ dialogStatus: args.dialogStatus, updatedAt: now })
     .where(eq(scratchRuns.runId, args.runId));
-  await args.db
+  const runRows: Array<{ projectId: string }> = await args.db
     .update(runs)
     .set({ status: runStatusForDialogStatus(args.dialogStatus) })
-    .where(eq(runs.id, args.runId));
+    .where(eq(runs.id, args.runId))
+    .returning({ projectId: runs.projectId });
+
+  return runRows[0] ?? null;
 }
 
 function permissionPrompt(
@@ -200,11 +204,12 @@ async function persistPermissionRequest(args: {
         },
         prompt,
       });
-      await applyDialogStatus({
+      const applied = await applyDialogStatus({
         db: tx,
         runId: args.runId,
         dialogStatus: "NeedsInput",
       });
+
       await appendScratchMessageRow({
         db: tx,
         runId: args.runId,
@@ -212,6 +217,23 @@ async function persistPermissionRequest(args: {
         content: encodePermissionPayload(prompt),
         supervisorEventId: String(args.event.monotonicId),
       });
+
+      if (applied) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.requested",
+          projectId: applied.projectId,
+          runId: args.runId,
+          data: { hitlRequestId, kind: "permission", nodeId: null },
+        });
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.needs_input",
+          projectId: applied.projectId,
+          runId: args.runId,
+          data: { reason: "permission", nodeId: null },
+        });
+      }
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -466,10 +488,35 @@ function startScratchEventConsumer(args: {
             const projection = projectSupervisorEventToScratch(event);
 
             if (projection.dialogStatus) {
-              await applyDialogStatus({
-                db: args.db,
-                runId: args.runId,
-                dialogStatus: projection.dialogStatus,
+              const dialogStatus = projection.dialogStatus;
+
+              await args.db.transaction(async (tx: DbClientLike) => {
+                const applied = await applyDialogStatus({
+                  db: tx,
+                  runId: args.runId,
+                  dialogStatus,
+                });
+
+                // Live scratch terminal path (not reconcile/markScratchCrashed):
+                // emit on the CAS winner only. Done/Abandoned arrive via
+                // promote/drop and are wired there; here only Crashed/Review.
+                if (applied && dialogStatus === "Crashed") {
+                  await emitWebhookEvent({
+                    db: tx,
+                    type: "run.crashed",
+                    projectId: applied.projectId,
+                    runId: args.runId,
+                    data: { errorCode: "CRASH" },
+                  });
+                } else if (applied && dialogStatus === "Review") {
+                  await emitWebhookEvent({
+                    db: tx,
+                    type: "run.review",
+                    projectId: applied.projectId,
+                    runId: args.runId,
+                    data: { source: "runner" },
+                  });
+                }
               });
             }
           }

@@ -34,6 +34,7 @@ import {
   type SupervisorExecutorInput,
   type SupervisorRunnerInput,
 } from "@/lib/supervisor-client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
   name: "flow-runner",
@@ -173,20 +174,38 @@ async function tryAutoDeliverStoredIntent(
       ev.requestId,
       optionId,
     );
-    await pctx.db
-      .update(hitlRequests)
-      .set({
-        respondedAt: new Date(),
-        response: {
-          optionId,
-          _audit: {
-            originalRequestId: priorRequestId,
-            reissuedRequestId: ev.requestId,
-            deliveredViaResume: true,
+    await pctx.db.transaction(async (tx: DbClientLike) => {
+      const stamped = await tx
+        .update(hitlRequests)
+        .set({
+          respondedAt: new Date(),
+          response: {
+            optionId,
+            _audit: {
+              originalRequestId: priorRequestId,
+              reissuedRequestId: ev.requestId,
+              deliveredViaResume: true,
+            },
           },
-        },
-      })
-      .where(eq(hitlRequests.id, prior.id));
+        })
+        .where(eq(hitlRequests.id, prior.id))
+        .returning({ id: hitlRequests.id });
+
+      if (stamped.length > 0) {
+        const projectRows = await tx
+          .select({ projectId: runs.projectId })
+          .from(runs)
+          .where(eq(runs.id, pctx.runId));
+
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.responded",
+          projectId: projectRows[0].projectId,
+          runId: pctx.runId,
+          data: { hitlRequestId: prior.id, kind: prior.kind, via: "auto" },
+        });
+      }
+    });
     await completeHitlAssignmentFromCurrentActor({
       db: pctx.db,
       hitlRequestId: prior.id,
@@ -266,10 +285,36 @@ async function handlePermissionRequest(
         roleRefs: [],
         title: synthesizePermissionPrompt(ev.toolCall),
       });
-      await tx
+      const flipped = await tx
         .update(runs)
         .set({ status: "NeedsInput", currentStepId: pctx.stepId })
-        .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")));
+        .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")))
+        .returning({ projectId: runs.projectId });
+      const projectRows =
+        flipped.length > 0
+          ? flipped
+          : await tx
+              .select({ projectId: runs.projectId })
+              .from(runs)
+              .where(eq(runs.id, pctx.runId));
+
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.requested",
+        projectId: projectRows[0].projectId,
+        runId: pctx.runId,
+        data: { hitlRequestId, kind: "permission", nodeId: null },
+      });
+
+      if (flipped.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.needs_input",
+          projectId: flipped[0].projectId,
+          runId: pctx.runId,
+          data: { reason: "permission", nodeId: null },
+        });
+      }
     });
     log.info(
       {
@@ -316,10 +361,23 @@ async function handlePermissionRequest(
       );
     }
     try {
-      await pctx.db
-        .update(runs)
-        .set({ status: "Crashed", endedAt: new Date() })
-        .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")));
+      await pctx.db.transaction(async (tx: DbClientLike) => {
+        const rows = await tx
+          .update(runs)
+          .set({ status: "Crashed", endedAt: new Date() })
+          .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")))
+          .returning({ projectId: runs.projectId });
+
+        if (rows.length > 0) {
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.crashed",
+            projectId: rows[0].projectId,
+            runId: pctx.runId,
+            data: { errorCode: "CRASH" },
+          });
+        }
+      });
       await systemCloseActiveAssignmentsForRun({
         db: pctx.db,
         runId: pctx.runId,

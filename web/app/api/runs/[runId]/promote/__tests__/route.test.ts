@@ -25,6 +25,7 @@ type Tables = {
 type FakeDb = {
   select: () => ReturnType<typeof selectChain>;
   update: (table: unknown) => ReturnType<typeof updateChain>;
+  insert: () => { values: (row: unknown) => Promise<undefined> };
   execute: () => Promise<undefined>;
   transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
 };
@@ -70,6 +71,7 @@ const updateChain = (table: unknown) => ({
 const fakeDb: FakeDb = {
   select: selectChain,
   update: updateChain,
+  insert: () => ({ values: async () => undefined }),
   execute: async () => undefined,
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>): Promise<T> =>
     fn(fakeDb),

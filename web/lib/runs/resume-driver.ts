@@ -22,6 +22,7 @@ import {
   failResumedRun,
   rollbackResumedRun,
 } from "@/lib/runs/state-transitions";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { flows, hitlRequests, runs, stepRuns } =
@@ -115,23 +116,42 @@ async function findOpenStoredIntent(
 
 async function markIntentDelivered(
   db: Db,
+  runId: string,
   intent: StoredIntent,
   reissuedRequestId: string,
 ): Promise<void> {
-  await db
-    .update(hitlRequests)
-    .set({
-      respondedAt: new Date(),
-      response: {
-        optionId: intent.optionId,
-        _audit: {
-          originalRequestId: intent.originalRequestId,
-          reissuedRequestId,
-          deliveredViaResume: true,
+  await db.transaction(async (tx: Db) => {
+    const stamped = await tx
+      .update(hitlRequests)
+      .set({
+        respondedAt: new Date(),
+        response: {
+          optionId: intent.optionId,
+          _audit: {
+            originalRequestId: intent.originalRequestId,
+            reissuedRequestId,
+            deliveredViaResume: true,
+          },
         },
-      },
-    })
-    .where(eq(hitlRequests.id, intent.id));
+      })
+      .where(eq(hitlRequests.id, intent.id))
+      .returning({ id: hitlRequests.id });
+
+    if (stamped.length > 0) {
+      const projectRows = await tx
+        .select({ projectId: runs.projectId })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.responded",
+        projectId: projectRows[0].projectId,
+        runId,
+        data: { hitlRequestId: intent.id, kind: "permission", via: "auto" },
+      });
+    }
+  });
 }
 
 async function markIntentAbandoned(
@@ -261,11 +281,25 @@ async function completeResumedStepAndHandoff(
   if (!nextStep) {
     // Last step. Transition Review terminally — same final state
     // runFlow would have written if it had executed the last step.
-    const rows = await db
-      .update(runs)
-      .set({ status: "Review", endedAt: new Date(), currentStepId: null })
-      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-      .returning({ id: runs.id });
+    const rows = await db.transaction(async (tx: Db) => {
+      const updatedRows = await tx
+        .update(runs)
+        .set({ status: "Review", endedAt: new Date(), currentStepId: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+        .returning({ id: runs.id, projectId: runs.projectId });
+
+      if (updatedRows.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.review",
+          projectId: updatedRows[0].projectId,
+          runId,
+          data: { source: "runner" },
+        });
+      }
+
+      return updatedRows;
+    });
 
     log.info(
       { runId, resumedStepId },
@@ -494,7 +528,7 @@ export async function runResumedSession(
           ev.requestId,
           intent.optionId,
         );
-        await markIntentDelivered(db, intent, ev.requestId);
+        await markIntentDelivered(db, runId, intent, ev.requestId);
         permissionDelivered = true;
         log.info(
           {

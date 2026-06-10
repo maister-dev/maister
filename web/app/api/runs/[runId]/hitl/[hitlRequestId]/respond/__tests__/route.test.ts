@@ -15,6 +15,7 @@ import {
   projects as projectsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
+  webhookEvents as webhookEventsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
@@ -27,6 +28,7 @@ type Tables = {
   assignments: Row[];
   actor_identities: Row[];
   assignment_events: Row[];
+  webhook_events: Row[];
 };
 
 const dbState: {
@@ -41,6 +43,7 @@ const dbState: {
     assignments: [],
     actor_identities: [],
     assignment_events: [],
+    webhook_events: [],
   },
   updates: [],
 };
@@ -53,6 +56,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === assignmentsTable) return "assignments";
   if (t === actorIdentitiesTable) return "actor_identities";
   if (t === assignmentEventsTable) return "assignment_events";
+  if (t === webhookEventsTable) return "webhook_events";
   throw new Error("unknown table");
 }
 
@@ -210,6 +214,7 @@ beforeEach(async () => {
     assignments: [],
     actor_identities: [],
     assignment_events: [],
+    webhook_events: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();

@@ -194,7 +194,7 @@ cheap). (All Designed.)
 | Type | Trigger anchor |
 | ---- | -------------- |
 | `run.started` | `Pending → Running` (direct start and queue-promote) |
-| `run.needs_input` | `→ NeedsInput` (permission / form / human_review) |
+| `run.needs_input` | `→ NeedsInput` (permission / form / human) |
 | `hitl.requested` | `hitl_requests` INSERT |
 | `hitl.responded` | `hitl_requests.responded_at` write (incl. idle-resume + auto-deliver) |
 | `run.review` | `Running → Review` (runner and workbench paths) |
@@ -227,6 +227,14 @@ Each is additive later (one emit site + one row); none is a wire contract today.
   `gate_results` insert.
 - **`node_attempts` lifecycle** — internal ledger granularity below the curated
   taxonomy.
+- **TTL-driven `NeedsInputIdle → Abandoned`** (24h idle sweep,
+  `keepalive-sweeper`) — a system-timer abandon falls outside the
+  `run.abandoned` `source` enum (`user | workbench`); additive later via a
+  `source` enum extension.
+- **Direct recover `Crashed → Running`** (slot-free recover, `recover.ts`) —
+  not a `Pending → Running` start, so no `run.started`. A recover that instead
+  re-queues to `Pending` still emits `run.started { trigger: "queue_promote" }`
+  on its eventual `Pending → Running` leg.
 - **All `session.*` stream events** — raw `run.events.jsonl` session noise
   (ADR-022), explicitly NOT the curated taxonomy.
 
@@ -260,9 +268,9 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 | Type | `data` shape |
 | ---- | ------------ |
 | `run.started` | `{ trigger: "direct" \| "queue_promote" }` |
-| `run.needs_input` | `{ reason: "permission" \| "form" \| "human_review", nodeId: string \| null }` |
-| `hitl.requested` | `{ hitlRequestId: string, kind: "permission" \| "form_collect" \| "human_review", nodeId: string \| null }` |
-| `hitl.responded` | `{ hitlRequestId: string, kind: "permission" \| "form_collect" \| "human_review", via: "user" \| "auto" }` |
+| `run.needs_input` | `{ reason: "permission" \| "form" \| "human", nodeId: string \| null }` |
+| `hitl.requested` | `{ hitlRequestId: string, kind: "permission" \| "form" \| "human", nodeId: string \| null }` |
+| `hitl.responded` | `{ hitlRequestId: string, kind: "permission" \| "form" \| "human", via: "user" \| "auto" }` |
 | `run.review` | `{ source: "runner" \| "workbench" }` |
 | `run.promoted` | `{ mode: "local_merge" \| "pull_request", target: string, pullRequestUrl: string \| null }` |
 | `run.done` | `{}` |

@@ -70,6 +70,7 @@ import {
   runStatusForDialogStatus,
 } from "@/lib/scratch-runs/state";
 import { checkSupervisorHealth, createSession } from "@/lib/supervisor-client";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addWorktree,
   branchExists,
@@ -534,7 +535,7 @@ export async function markScratchCrashed(args: {
           ]),
         ),
       )
-      .returning({ id: runs.id });
+      .returning({ id: runs.id, projectId: runs.projectId });
 
     if (rows.length === 0) {
       log.warn(
@@ -549,6 +550,14 @@ export async function markScratchCrashed(args: {
       .update(scratchRuns)
       .set(scratchUpdate)
       .where(eq(scratchRuns.runId, args.runId));
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.crashed",
+      projectId: rows[0].projectId,
+      runId: args.runId,
+      data: { errorCode },
+    });
   });
 }
 

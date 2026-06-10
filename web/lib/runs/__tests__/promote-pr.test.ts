@@ -99,6 +99,7 @@ function updateChain(table: unknown) {
 const fakeDb: Record<string, unknown> = {
   select: selectChain,
   update: updateChain,
+  insert: () => ({ values: async () => undefined }),
   execute: async () => undefined,
   transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn(fakeDb),

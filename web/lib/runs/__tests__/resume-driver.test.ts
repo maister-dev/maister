@@ -191,9 +191,13 @@ const updateChain = () => ({
   }),
 });
 
-const fakeDb = {
+// T7: emitWebhookEvent rides the same tx — no-op insert + pass-through tx so
+// the hitl.responded capture in markIntentDelivered runs without a real DB.
+const fakeDb: Record<string, unknown> = {
   select: () => selectChainFactory(),
   update: () => updateChain(),
+  insert: () => ({ values: async () => undefined }),
+  transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(fakeDb),
 };
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));

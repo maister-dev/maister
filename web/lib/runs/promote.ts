@@ -25,6 +25,7 @@ import {
   pushBranch,
   resolveBaseCommit,
 } from "@/lib/worktree";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, scratchRuns, workspaces, projects } =
@@ -472,6 +473,25 @@ async function promoteFlowRun(
       reason: "run promoted to Done",
     });
 
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.promoted",
+      projectId: claim.run.projectId,
+      runId,
+      data: {
+        mode: "local_merge",
+        target: claim.resolvedTarget,
+        pullRequestUrl: null,
+      },
+    });
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.done",
+      projectId: claim.run.projectId,
+      runId,
+      data: {},
+    });
+
     log.info(
       {
         runId,
@@ -645,6 +665,25 @@ async function finalizePullRequest(args: {
       db: tx,
       runId,
       reason: "run promoted to Done",
+    });
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.promoted",
+      projectId: claim.run.projectId,
+      runId,
+      data: {
+        mode: "pull_request",
+        target: claim.resolvedTarget,
+        pullRequestUrl: pr.url,
+      },
+    });
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.done",
+      projectId: claim.run.projectId,
+      runId,
+      data: {},
     });
 
     log.info(
@@ -936,6 +975,25 @@ async function promoteScratchRun(
       db: tx,
       runId,
       reason: "run promoted to Done",
+    });
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.promoted",
+      projectId: claim.run.projectId,
+      runId,
+      data: {
+        mode: "local_merge",
+        target: claim.targetBranch,
+        pullRequestUrl: null,
+      },
+    });
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.done",
+      projectId: claim.run.projectId,
+      runId,
+      data: {},
     });
 
     return {
