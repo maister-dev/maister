@@ -1,5 +1,6 @@
 import type { MaisterError as RuntimeMaisterError } from "@/lib/errors";
 
+import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // M18 Phase 1 — RED. Pins the launch-time branch-targeting contract the
@@ -34,8 +35,18 @@ const mocks = vi.hoisted(() => ({
 type FromResult = PromiseLike<Record<string, unknown>[]> & {
   where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
 };
+// The M28/T2.1 latest-flow-run gate query (`runs` table) dispatches by TABLE
+// IDENTITY, not positionally — no prior runs here, so every task is a fresh
+// launchable Backlog task and the positional slots below are unchanged.
+type LatestRunChain = {
+  where: (predicate: unknown) => {
+    orderBy: (order: unknown) => {
+      limit: (n: number) => Promise<Record<string, unknown>[]>;
+    };
+  };
+};
 type SelectChain = {
-  from: (table: unknown) => FromResult;
+  from: (table: unknown) => FromResult | LatestRunChain;
 };
 type InsertCall = { table: unknown; values: Record<string, unknown> };
 
@@ -74,11 +85,21 @@ function nextSelectResult(): Record<string, unknown>[] {
 
 const fakeDb: FakeDb = {
   select: () => ({
-    from: (): FromResult => ({
-      then: (onFulfilled) =>
-        Promise.resolve(nextSelectResult()).then(onFulfilled),
-      where: async () => nextSelectResult(),
-    }),
+    from: (table: unknown): FromResult | LatestRunChain => {
+      if (getTableName(table as never) === "runs") {
+        return {
+          where: () => ({
+            orderBy: () => ({ limit: async () => [] }),
+          }),
+        };
+      }
+
+      return {
+        then: (onFulfilled) =>
+          Promise.resolve(nextSelectResult()).then(onFulfilled),
+        where: async () => nextSelectResult(),
+      };
+    },
   }),
   insert: (table: unknown) => ({
     values: async (values: unknown) => {

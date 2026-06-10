@@ -18,6 +18,7 @@ import { type NextRequest } from "next/server";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { closeDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
@@ -60,6 +61,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   process.env.DB_URL = originalDbUrl;
+  // The route under test built the app's CACHED pool against this container
+  // (getDb() via DB_URL above) — drain it before the container dies, or its
+  // idle connections surface pg 57P01 as vitest unhandled errors.
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });

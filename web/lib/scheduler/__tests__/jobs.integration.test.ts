@@ -8,7 +8,15 @@ import { eq, isNotNull } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schema from "@/lib/db/schema";
 import {
@@ -18,6 +26,9 @@ import {
   recordJobAttemptResult,
   type ClaimDueJobsInput,
 } from "@/lib/scheduler/jobs";
+import { runSchedulerTick } from "@/lib/scheduler/tick-service";
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 type SchedulerTestDb = NonNullable<ClaimDueJobsInput["db"]>;
 
@@ -235,7 +246,7 @@ describe("scheduler job SQL integration", () => {
     expect(jobs[0].consecutiveFailures).toBe(1);
   });
 
-  it("bootstraps the default system_sweep schedule", async () => {
+  it("bootstraps the default system_sweep and run_schedule dispatcher jobs idempotently", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
 
     await ensureDefaultSchedulerJobs({ now, db: schedulerDb });
@@ -246,12 +257,54 @@ describe("scheduler job SQL integration", () => {
       .from(schema.schedulerJobs)
       .where(isNotNull(schema.schedulerJobs.id));
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      id: "system_sweep.default",
-      jobKind: "system_sweep",
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === "system_sweep.default")).toMatchObject(
+      {
+        jobKind: "system_sweep",
+        cadenceIntervalSeconds: 60,
+        nextRunAt: now,
+      },
+    );
+    expect(
+      rows.find((row) => row.id === "run_schedule.dispatcher"),
+    ).toMatchObject({
+      jobKind: "run_schedule",
       cadenceIntervalSeconds: 60,
+      maxFailures: 3,
       nextRunAt: now,
+    });
+  });
+});
+
+describe("run_schedule dispatcher tick", () => {
+  it("runs the claimed dispatcher job and persists the dispatch summary", async () => {
+    const tick = await runSchedulerTick({ jobKind: "run_schedule" });
+
+    expect(tick.claimedCount).toBe(1);
+    expect(tick.succeededCount).toBe(1);
+    expect(tick.attempts[0]).toMatchObject({
+      jobId: "run_schedule.dispatcher",
+      jobKind: "run_schedule",
+      status: "Succeeded",
+    });
+
+    const attempts = await db
+      .select()
+      .from(schema.schedulerJobRuns)
+      .where(eq(schema.schedulerJobRuns.jobId, "run_schedule.dispatcher"));
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe("Succeeded");
+    expect(attempts[0].jobKind).toBe("run_schedule");
+    expect(attempts[0].summary.fired).toBeDefined();
+    expect(attempts[0].summary).toMatchObject({
+      fired: 0,
+      skippedBusy: 0,
+      skippedCap: 0,
+      skippedTerminal: 0,
+      catchupQueued: 0,
+      launchFailed: 0,
+      truncated: false,
     });
   });
 });

@@ -28,6 +28,13 @@ without turning recovery sweeps into live-path polling.
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
   Implemented, M24) — admin-only CRUD (create / list / update / enable-disable /
   delete) for scheduler jobs.
+- **Run-schedule dispatcher** (`run_schedule.dispatcher` job, `job_kind =
+  'run_schedule'`, Implemented, M28) — the ONE seeded job whose handler claims due
+  `run_schedules` rows and fires them through `launchRun`. Cron expressions and
+  overlap policy live in the `run_schedules` table, NOT in `scheduler_jobs` —
+  see [`run-schedules.md`](run-schedules.md). `createSchedulerJobSchema`
+  deliberately rejects this kind (the seeded singleton is the only instance;
+  disabling it on `/admin/scheduler` is the global kill switch).
 
 ## State machine
 
@@ -98,17 +105,21 @@ flowchart TD
 
 - The tick route MUST be stateless; all idempotence comes from DB claims and
   attempt leases.
-- `scheduler_jobs.cadence_interval_seconds` MUST be the only M24 cadence model.
+- `scheduler_jobs.cadence_interval_seconds` MUST be the only `scheduler_jobs`
+  cadence model — cron expressions live exclusively in `run_schedules`
+  (Implemented, M28; see [`run-schedules.md`](run-schedules.md)).
 - A due job MUST produce at most one unexpired `Claimed` or `Running` attempt.
 - Clock outage catch-up MUST run one attempt only and never backfill missed
   fixed-interval periods.
 - The tick service MUST idempotently seed `system_sweep.default` with a 60-second
   cadence so the recovery sweep is live after migration without hand-authored
-  SQL.
+  SQL; it MUST likewise seed `run_schedule.dispatcher` (60-second cadence,
+  `max_failures` 3; Implemented, M28).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` uses
   `MAISTER_MAX_CONCURRENT_AGENTS`; `flow_run` remains delegated to the existing
-  Flow run launch/concurrency path.
+  Flow run launch/concurrency path; `run_schedule` is a hardcoded budget of 1
+  (serial dispatcher, like `system_sweep`; Implemented, M28).
 - `agent_tick` without a launcher MUST record terminal `Skipped` with
   `PRECONDITION` and auto-disable after
   `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. This is an explicit M24 dispatch
@@ -142,6 +153,8 @@ flowchart TD
   [`../db/scheduler-domain.md`](../db/scheduler-domain.md), and
   [`../db/erd.md`](../db/erd.md).
 - ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets).
+- User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
+  [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,

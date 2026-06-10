@@ -17,6 +17,84 @@
     "openInbox": "Open inbox",
     "history": "history"
   },
+  "projectSchedules": {
+    "title": "Schedules",
+    "sub": "Cron-driven run launches for this project's tasks",
+    "create": "New schedule",
+    "empty": "No schedules yet",
+    "table": {
+      "name": "Name",
+      "task": "Task",
+      "cron": "Cron",
+      "timezone": "Timezone",
+      "overlap": "Overlap",
+      "state": "State",
+      "nextFire": "Next fire",
+      "lastOutcome": "Last outcome"
+    },
+    "enabledBadge": "Enabled",
+    "pausedBadge": "Paused",
+    "queuedCatchUp": "Catch-up queued",
+    "pause": "Pause",
+    "resume": "Resume",
+    "triggerNow": "Trigger now",
+    "edit": "Edit",
+    "overlap": {
+      "skip": "Skip",
+      "queue_one": "Queue one",
+      "start_anyway": "Start anyway"
+    },
+    "outcome": {
+      "launched": "Launched",
+      "queued_pending": "Queued (cap)",
+      "catchup_queued": "Catch-up queued",
+      "skipped_task_busy": "Skipped — task busy",
+      "skipped_cap": "Skipped — at capacity",
+      "skipped_target_terminal": "Skipped — task terminal",
+      "skipped_crashed": "Skipped — last run crashed",
+      "launch_failed": "Launch failed",
+      "dispatching": "Dispatching…"
+    },
+    "triggerOutcome": {
+      "launched": "Run launched",
+      "queued_pending": "Run queued behind the concurrency cap",
+      "catchup_queued": "Catch-up queued for when the task frees up",
+      "skipped_task_busy": "Skipped: task already has an active run",
+      "skipped_cap": "Skipped: concurrency cap reached",
+      "skipped_target_terminal": "Skipped: task is in a terminal state",
+      "skipped_crashed": "Skipped: latest run crashed",
+      "launch_failed": "Launch failed",
+      "dispatching": "Dispatching"
+    },
+    "modal": {
+      "createTitle": "New schedule",
+      "editTitle": "Edit schedule",
+      "nameLabel": "Name",
+      "taskLabel": "Task",
+      "taskPlaceholder": "Select a task…",
+      "cronLabel": "Cron expression",
+      "timezoneLabel": "Timezone",
+      "overlapLabel": "Overlap policy",
+      "overlapHint": {
+        "skip": "Skip the fire while the task already has an active run",
+        "queue_one": "Remember one missed fire and launch it when the task frees up",
+        "start_anyway": "Launch past the global concurrency cap (the run queues as Pending); a task with an active run is still skipped"
+      },
+      "runnerLabel": "Runner",
+      "runnerDefault": "Project default",
+      "enabledLabel": "Enabled",
+      "nameRequired": "Name is required",
+      "taskRequired": "Select a task",
+      "cronRequired": "Cron expression is required",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this schedule?",
+      "deleteConfirmYes": "Delete",
+      "deleteConfirmNo": "Keep"
+    }
+  },
   "nav": {
     "projects": "Projects",
     "inbox": "Inbox",
@@ -24,6 +102,7 @@
     "repo": "Repo",
     "agents": "Agents",
     "mcps": "MCPs",
+    "schedules": "Schedules",
     "packages": "Packages",
     "integrations": "Integrations",
     "settings": "Settings",
@@ -942,7 +1021,8 @@
       "system_sweep": "system_sweep",
       "command": "command",
       "agent_tick": "agent_tick",
-      "flow_run": "flow_run"
+      "flow_run": "flow_run",
+      "run_schedule": "run_schedule"
     },
     "state": {
       "active": "active",
@@ -1325,5 +1405,17 @@
       "saved": "Saved",
       "saveError": "Save failed"
     }
+  },
+  "apiErrors": {
+    "CONFIG": "Invalid input",
+    "PRECONDITION": "Precondition failed",
+    "CONFLICT": "Operation already in progress",
+    "UNAUTHENTICATED": "Sign-in required",
+    "UNAUTHORIZED": "Insufficient permissions",
+    "PASSWORD_CHANGE_REQUIRED": "Password change required",
+    "EXECUTOR_UNAVAILABLE": "Executor unavailable",
+    "CRASH": "Internal error",
+    "NOT_FOUND": "Not found",
+    "requestFailed": "Request failed: {status}"
   }
 }

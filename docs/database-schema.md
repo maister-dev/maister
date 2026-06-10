@@ -59,6 +59,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
 | `agent_schedules`             | **(M24 — Implemented, migration `0027`)** Narrow scheduler bridge for project-local agent refs. `agent_ref` is typed text in M24 and has no FK to authored catalog rows.                                                                                                                                                             | `projects.id`, `scheduler_jobs.id`                                         |
+| `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
 | `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
 | `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
 ## `users`
@@ -494,7 +495,8 @@ state machine.
 ```ts
 scheduler_jobs {
   id, projectId?,
-  jobKind: 'system_sweep' | 'command' | 'agent_tick' | 'flow_run',
+  jobKind: 'system_sweep' | 'command' | 'agent_tick' | 'flow_run'
+         | 'run_schedule',          // M28 (Designed) — singleton dispatcher
   target,                         // jsonb; validated per jobKind
   cadenceIntervalSeconds,          // fixed-interval only in M24
   nextRunAt, lastFiredAt?,
@@ -530,6 +532,41 @@ agent_schedules {
 `(job_kind, next_run_at)`. `scheduler_job_runs` is indexed on
 `(status, lease_expires_at)` so the tick can reap expired attempts before
 claiming new work.
+
+## Run schedule tables (Implemented, M28)
+
+See [`db/scheduler-domain.md`](db/scheduler-domain.md) for the ERD,
+[`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) for
+the fire pipeline, and
+[ADR-071](decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
+Cron expressions live ONLY here — `scheduler_jobs` stays fixed-interval.
+
+```ts
+run_schedules {
+  id, projectId, taskId,            // both CASCADE on delete
+  name,
+  cronExpr,                         // 5-field, croner-validated
+  timezone,                         // IANA, validated
+  overlapPolicy: 'skip' | 'queue_one' | 'start_anyway',
+  runnerId?,                        // platform_acp_runners FK, SET NULL
+  enabled,
+  nextFireAt,                       // precomputed by the cron wrapper
+  queueOnePending,                  // non-stacking catch-up flag
+  queuedFireAt?,
+  lastFiredAt?,
+  lastFireOutcome?: 'launched' | 'queued_pending' | 'catchup_queued'
+    | 'skipped_task_busy' | 'skipped_cap' | 'skipped_target_terminal'
+    | 'skipped_crashed' | 'launch_failed' | 'dispatching',
+  lastFireError?,                   // "CODE: message", bounded ≤500 chars
+  lastRunId?,                       // runs FK, SET NULL
+  createdByUserId?,                 // users FK, SET NULL
+  createdAt, updatedAt
+}
+```
+
+`run_schedules` is indexed on `(project_id)`, `(task_id)`,
+`(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
+(FK SET NULL + the read-time `lastRunStatus` join).
 
 ## Authored catalog tables (Implemented, M25)
 

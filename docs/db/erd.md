@@ -15,7 +15,8 @@ integrations tables `PROJECT_TOKENS` and `TOKEN_AUDIT_LOG`, the **M27 workbench
 the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
 `FLOWS.version_binding`, `FLOW_REVISIONS.exec_trust`,
 `AUTHORED_CAPABILITIES.source_flow_ref_id`, `RUNS.resolved_capability_set`, and
-the new `PLATFORM_MCP_SERVERS` table. For partial views by
+the new `PLATFORM_MCP_SERVERS` table, and the **M28 (Designed, migration
+`0038`)** `RUN_SCHEDULES` table for user-facing cron schedules. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
@@ -42,6 +43,7 @@ erDiagram
     PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
     PROJECTS ||--o{ SCHEDULER_JOBS : "optional scheduler scope (M24)"
     PROJECTS ||--o{ AGENT_SCHEDULES : "agent schedules (M24)"
+    PROJECTS ||--o{ RUN_SCHEDULES : "run schedules (M28)"
     PROJECTS ||--o{ PROJECT_FLOW_ROLES : "flow routing labels"
     PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
     PROJECTS ||--o{ TASKS : has
@@ -89,6 +91,10 @@ erDiagram
     AUTHORED_CAPABILITIES ||--o{ AUTHORED_CAPABILITY_REVISIONS : "revision history"
     SCHEDULER_JOBS ||--o{ SCHEDULER_JOB_RUNS : "attempt ledger"
     SCHEDULER_JOBS ||--o| AGENT_SCHEDULES : "agent tick bridge"
+    TASKS ||--o{ RUN_SCHEDULES : "target task (M28)"
+    RUNS ||--o{ RUN_SCHEDULES : "last run SET NULL (M28)"
+    PLATFORM_ACP_RUNNERS ||--o{ RUN_SCHEDULES : "runner override SET NULL (M28)"
+    USERS ||--o{ RUN_SCHEDULES : "created_by SET NULL (M28)"
 
     USERS {
         text id PK
@@ -360,7 +366,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK
-        text job_kind "system_sweep|command|agent_tick|flow_run"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule"
         jsonb target
         integer cadence_interval_seconds
         timestamp next_run_at
@@ -398,6 +404,28 @@ erDiagram
         text desired_state "running|stopped"
         jsonb event_match
         boolean enabled
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    RUN_SCHEDULES {
+        text id PK
+        text project_id FK "projects(id) CASCADE (M28)"
+        text task_id FK "tasks(id) CASCADE"
+        text name
+        text cron_expr "5-field, croner-validated"
+        text timezone "IANA, validated"
+        text overlap_policy "skip|queue_one|start_anyway"
+        text runner_id FK "platform_acp_runners(id) SET NULL"
+        boolean enabled
+        timestamp next_fire_at "precomputed by the cron wrapper"
+        boolean queue_one_pending "non-stacking catch-up flag"
+        timestamp queued_fire_at
+        timestamp last_fired_at
+        text last_fire_outcome "launched|queued_pending|catchup_queued|skipped_task_busy|skipped_cap|skipped_target_terminal|skipped_crashed|launch_failed|dispatching"
+        text last_fire_error "CODE: message, max 500 chars"
+        text last_run_id FK "runs(id) SET NULL"
+        text created_by_user_id FK "users(id) SET NULL"
         timestamp created_at
         timestamp updated_at
     }

@@ -589,3 +589,4 @@
 | M23. Observatory read-only metrics surface                                   | 2026-06-05 |
 | M24. Scheduler service (one clock, polymorphic jobs)                         | 2026-06-05 |
 | M25. Capability catalog groundwork                                           | 2026-06-05 |
+| M28. User-facing run schedules (cron)                                        | 2026-06-10 |

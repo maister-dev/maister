@@ -20,6 +20,7 @@ import { McpPanel } from "@/components/board/panels/mcp-panel";
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
+import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
@@ -29,6 +30,8 @@ import { getHitlInbox } from "@/lib/queries/hitl";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
+import { listProjectSchedules } from "@/lib/run-schedules/queries";
+import { listTaskDTOs } from "@/lib/services/tasks";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 import { listTokens } from "@/lib/tokens/list";
 
@@ -41,6 +44,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "packages",
   "integrations",
   "mcps",
+  "schedules",
   "members",
   "settings",
 ];
@@ -283,6 +287,18 @@ export default async function ProjectBoardPage({
           isAdmin={isAdmin}
           slug={slug}
           tokens={isAdmin ? await listTokens(project.id) : []}
+        />
+      ) : null}
+      {tab === "schedules" ? (
+        <SchedulesPanel
+          canManage={canAct}
+          schedules={await listProjectSchedules(project.id)}
+          slug={slug}
+          tasks={(await listTaskDTOs(project.id)).map((task) => ({
+            id: task.id,
+            title: task.title,
+            status: task.status,
+          }))}
         />
       ) : null}
       {tab === "members" ? (

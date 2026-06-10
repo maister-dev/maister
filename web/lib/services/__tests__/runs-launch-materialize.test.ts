@@ -40,8 +40,18 @@ const mocks = vi.hoisted(() => ({
 type FromResult = PromiseLike<Record<string, unknown>[]> & {
   where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
 };
+// The M28/T2.1 latest-flow-run gate query (`runs` table) also dispatches by
+// TABLE IDENTITY — no prior runs here, so every task stays a fresh launchable
+// Backlog task and the positional slots are unchanged.
+type LatestRunChain = {
+  where: (predicate: unknown) => {
+    orderBy: (order: unknown) => {
+      limit: (n: number) => Promise<Record<string, unknown>[]>;
+    };
+  };
+};
 type SelectChain = {
-  from: (table: unknown) => FromResult;
+  from: (table: unknown) => FromResult | LatestRunChain;
 };
 type InsertCall = { table: unknown; values: Record<string, unknown> };
 
@@ -95,12 +105,20 @@ function installedImports(): Record<string, unknown>[] {
 
 const fakeDb: FakeDb = {
   select: () => ({
-    from: (table: unknown): FromResult => {
+    from: (table: unknown): FromResult | LatestRunChain => {
       if (getTableName(table as never) === "capability_imports") {
         return {
           then: (onFulfilled) =>
             Promise.resolve(installedImports()).then(onFulfilled),
           where: async () => installedImports(),
+        };
+      }
+
+      if (getTableName(table as never) === "runs") {
+        return {
+          where: () => ({
+            orderBy: () => ({ limit: async () => [] }),
+          }),
         };
       }
 

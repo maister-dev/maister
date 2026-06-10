@@ -11,6 +11,7 @@ import {
   type ClaimedSchedulerJob,
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
+import { dispatchDueSchedules } from "@/lib/run-schedules/dispatch";
 import { runAgentTickJob } from "@/lib/scheduler/handlers/agent-tick";
 import { runCommandJob } from "@/lib/scheduler/handlers/command";
 import { runScheduledFlowJob } from "@/lib/scheduler/handlers/flow-run";
@@ -116,6 +117,18 @@ async function runClaimedJob(
         });
 
         return succeeded(job);
+      case "run_schedule": {
+        const dispatchSummary = await dispatchDueSchedules();
+
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: dispatchSummary,
+        });
+
+        return succeeded(job);
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

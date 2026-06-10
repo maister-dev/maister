@@ -15,3 +15,9 @@ describe("PROJECT_ACTION_MIN: manageMembers", () => {
     expect(PROJECT_ACTION_MIN.editSettings).toBe("admin");
   });
 });
+
+describe("PROJECT_ACTION_MIN: manageSchedules", () => {
+  it("requires the project member role for managing run schedules", () => {
+    expect(PROJECT_ACTION_MIN.manageSchedules).toBe("member");
+  });
+});

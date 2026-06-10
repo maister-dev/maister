@@ -50,6 +50,7 @@
     "bcryptjs": "3.0.3",
     "better-sqlite3": "^12.10.0",
     "clsx": "2.1.1",
+    "croner": "^10.0.1",
     "drizzle-orm": "^0.36.4",
     "intl-messageformat": "10.7.16",
     "mustache": "^4.2.0",

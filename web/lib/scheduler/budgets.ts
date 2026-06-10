@@ -1,12 +1,18 @@
 import "server-only";
 
-export type SchedulerBudgetKey = "system_sweep" | "command" | "agent" | "flow";
+export type SchedulerBudgetKey =
+  | "system_sweep"
+  | "command"
+  | "agent"
+  | "flow"
+  | "run_schedule";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
   command: number;
   agent: number;
   flow: number;
+  runSchedule: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -17,6 +23,7 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     command: positiveEnvInt("MAISTER_MAX_CONCURRENT_COMMANDS", 2),
     agent: positiveEnvInt("MAISTER_MAX_CONCURRENT_AGENTS", 1),
     flow: UNBOUNDED_FLOW_DISPATCH_BUDGET,
+    runSchedule: 1,
   };
 }
 

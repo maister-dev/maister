@@ -169,6 +169,26 @@ export default defineConfig([
           next: ["const", "let", "var"],
         },
       ],
+
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "croner",
+              message:
+                "Import cron helpers from @/lib/run-schedules/cron — croner is wrapped (ADR-071).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["lib/run-schedules/cron.ts"],
+
+    rules: {
+      "no-restricted-imports": "off",
     },
   },
 ]);

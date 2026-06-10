@@ -56,6 +56,22 @@ function capFromEnv(): number {
   return parsed;
 }
 
+export function maxConcurrentRunsCap(): number {
+  return capFromEnv();
+}
+
+// The one cap predicate: a run holds a scheduler slot while it is in any of
+// these statuses. Takes the caller's db/tx handle so tryStartRun /
+// promoteNextPending keep counting INSIDE their advisory-lock transactions.
+export async function countLiveRuns(dbOrTx: Db): Promise<number> {
+  const liveRows: Array<{ count: number }> = await dbOrTx
+    .select({ count: count() })
+    .from(runs)
+    .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
+
+  return Number(liveRows[0]?.count ?? 0);
+}
+
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
@@ -130,12 +146,7 @@ export async function tryStartRun(
   return db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
-    const liveRows: Array<{ count: number }> = await tx
-      .select({ count: count() })
-      .from(runs)
-      .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
-
-    const liveCount = Number(liveRows[0]?.count ?? 0);
+    const liveCount = await countLiveRuns(tx);
 
     log.debug({ runId, liveCount, cap }, "tryStartRun cap-check");
 
@@ -242,12 +253,7 @@ export async function promoteNextPending(
     // could have started between this terminal transition and the
     // promote call (e.g. another tryStartRun acquired the lock
     // ahead of us), and we must respect the cap globally.
-    const liveRows: Array<{ count: number }> = await tx
-      .select({ count: count() })
-      .from(runs)
-      .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
-
-    const liveCount = Number(liveRows[0]?.count ?? 0);
+    const liveCount = await countLiveRuns(tx);
 
     if (liveCount >= cap) {
       log.debug(

@@ -84,6 +84,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/workbench-lifecycle.md`](system-analytics/workbench-lifecycle.md) | Workbench lifecycle actions (M27): stop, archive, drop, snapshot commit, export, and handoff branch. |
 | [`system-analytics/project-membership.md`](system-analytics/project-membership.md) | Project membership management: roster, add/change-role/remove, manageMembers action, no last-owner guard (M-admin-surface). |
 | [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
+| [`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) | User-facing cron schedules: `run_schedules` table, the seeded `run_schedule.dispatcher` job on the M24 tick, overlap policy × cap matrix, trigger-now, launchability classifier (M28). |
 
 ### Cross-cutting reference
 

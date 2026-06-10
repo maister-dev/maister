@@ -90,6 +90,30 @@ describe("/api/cron/tick", () => {
     });
   });
 
+  it("supports filtering by the run_schedule jobKind", async () => {
+    runSchedulerTickMock.mockResolvedValue({
+      attemptedCount: 0,
+      claimedCount: 0,
+      succeededCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      attempts: [],
+    });
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      request(
+        "http://localhost/api/cron/tick?jobKind=run_schedule",
+        "test-token",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(runSchedulerTickMock).toHaveBeenCalledWith({
+      jobKind: "run_schedule",
+    });
+  });
+
   it("returns 422 for an unknown jobKind", async () => {
     const { GET } = await import("../route");
 

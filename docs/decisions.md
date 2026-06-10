@@ -95,6 +95,7 @@
 | [ADR-068](#adr-068-authoredexecutable-flow-bridge--two-axis-trust-gate-supersedes-adr-061-publish-boundary) | Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary) | Accepted | 2026-06-08 |
 | [ADR-069](#adr-069-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
 | [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
+| [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock) | User-facing run schedules on the M24 clock | Accepted | 2026-06-10 |
 
 ---
 
@@ -4238,6 +4239,190 @@ degrade). No parallel materialization path.
 - **Block launch on absent ADDITIONAL MCPs:** rejected — additional MCPs are
   best-effort augmentation; a missing optional capability should degrade gracefully, not
   refuse the run.
+
+---
+
+### ADR-071: User-facing run schedules on the M24 clock
+
+**Date:** 2026-06-10
+**Status:** Accepted
+**Context:** M24 shipped the unified scheduler clock
+([ADR-060](#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets)):
+one polymorphic tick, atomic `FOR UPDATE SKIP LOCKED` claim, per-kind budgets,
+attempt ledger. The owner-directed roadmap builds **user-facing cron
+schedules** on that substrate: a per-project, member-gated recurring schedule
+that launches a real Flow run for a task on a cron expression (IANA timezone)
+with an overlap policy. Three constraints shape the design: (1) the engine
+reschedules jobs **generically in the claim CTE SQL** as pure interval math
+(`floor(elapsed/interval)+1` — `web/lib/scheduler/jobs.ts`), so a cron-next
+instant cannot be computed inside the claim; (2) `agent_schedules` is the
+reserved bridge for the E4 agents-as-actors epic and has the wrong shape
+(`agent_ref NOT NULL`, no task/cron/overlap columns); (3) `tasks.status` is a
+one-way latch — `launchRun` requires `Backlog`, but no code path ever resets
+`InFlight` back, so the documented retry rule ("latest run Failed|Abandoned →
+task returns to Backlog") exists only as a board projection
+(`web/lib/board.ts`) and every relaunch — scheduled or manual — would refuse
+with `PRECONDITION` after the first failed attempt.
+
+**Decision:**
+
+**Storage: dedicated `run_schedules` table + ONE singleton dispatcher job.**
+Schedules are data rows in a new `run_schedules` table (cron expression,
+IANA timezone, overlap policy `skip | queue_one | start_anyway`, enabled flag,
+precomputed `next_fire_at`, queue-one catch-up flag, last-fire feedback
+columns). A single seeded engine job (`job_kind = 'run_schedule'`, id
+`run_schedule.dispatcher`, 60s cadence, budget 1, `max_failures` 3) is claimed
+by the normal M24 tick; its handler claims due schedule **rows** with the same
+`FOR UPDATE SKIP LOCKED` idiom and computes cron-next in TypeScript. The
+engine core (claim CTE, budgets SQL, lease/reap) stays byte-identical;
+`scheduler_jobs.cadence_interval_seconds` remains the only engine cadence
+model, so the ADR-060 invariant survives. The dispatcher is seeded by
+`ensureDefaultSchedulerJobs` (`ON CONFLICT DO NOTHING`, like
+`system_sweep.default`); `createSchedulerJobSchema` deliberately does NOT
+accept the new kind (admins cannot create duplicate dispatchers; disabling the
+seeded row on `/admin/scheduler` is the global kill switch). Fire precision is
+the dispatcher cadence (60s) — identical to the tick's own resolution. This is
+NOT a second scheduler: no new clock, no new timer, no polling of run state.
+
+**Cron library: `croner@^10`, wrapped.** Zero-dependency, MIT, native IANA
+timezone support via `Intl`, documented DST behavior, and a pure
+`nextRun(from)` API that computes occurrences without starting timers.
+`web/lib/run-schedules/cron.ts` is the ONLY module importing `croner`
+(enforced by `no-restricted-imports`); it validates **5-field** expressions
+only (seconds-field and `@nicknames` rejected so resolution can never
+undercut the 60s tick) and throws `MaisterError("CONFIG")` on invalid
+expression/timezone/never-matching schedules.
+
+**Target model: TASK relaunch (attempt N+1).** Each fire relaunches the
+schedule's existing task through `launchRun` — full preconditions, gates,
+HITL, promotion; one `runs` row + workspace + worktree per fire, exactly like
+a manual Launch. Cron fires pass `{actorUserId: null, authorize: noop}`
+(trusted-scheduler precedent from the `flow_run` handler); trigger-now passes
+the clicking user's id. A flow-target mode ("mint a task per fire") is
+deferred — additive later via a `target_kind` column defaulting to `'task'`.
+
+**`launchRun` gate fix: effective-Backlog classifier.** A shared
+`classifyTaskLaunchability(task, latestRun)` becomes the single source of
+truth for "can this task launch", encoding the board's documented retry rule:
+`task.status ∈ {Done, Abandoned}` → `target_terminal`; fresh `Backlog` →
+`launchable`; `InFlight` with no run → `busy` (anomalous remnant, refuse);
+latest run `Failed | Abandoned` → `launchable` (attempt N+1); latest run
+`Crashed` → `crashed` (owes recover/discard); latest run `Done` →
+`target_terminal`; any active latest run → `busy`. Both branches are explicit
+allow-lists with a TS exhaustiveness assertion over the `RunStatus` union so a
+future status fails compilation until classified. `launchRun` replaces its
+`status !== "Backlog"` throw with `classification !== 'launchable'` → same
+`MaisterError("PRECONDITION")`. This also un-breaks manual relaunch from the
+board's derived Backlog column — a deliberate behavior change beyond the
+schedule feature.
+
+**Overlap × cap: two orthogonal blocked-dimensions, decided per fire.** Inputs
+read inside the claim transaction: task launchability (any non-terminal run on
+the target task blocks, regardless of who launched it) and cap fullness (the
+EXISTING live-run predicate `status IN ('Running','NeedsInput','HumanWorking')`
+vs `MAISTER_MAX_CONCURRENT_RUNS`, extracted from `web/lib/scheduler.ts` as an
+exported helper — never re-implemented). Precedence: `target_terminal` and
+`crashed` skip under every policy (no `queue_one` flag — they need human
+action); task-busy → `skip`/`start_anyway` record `skipped_task_busy` (a
+second concurrent run per task is structurally impossible — `start_anyway`
+only overrides the CAP dimension), `queue_one` flags a non-stacking catch-up;
+cap-full on a launchable task → `skip` records `skipped_cap`, `queue_one`
+flags, `start_anyway` launches into the existing `Pending` queue
+(`queued_pending` + queue position). The `queue_one` flag is consumed inside
+the dispatcher tick by the same single claim query (`due OR
+queue_one_pending`); a successful due fire also clears it. Pause clears the
+flag; resume does not recreate it.
+
+**At-most-once fire (two-phase pipeline).** tx1 (short, row-locked, no side
+effects): claim + policy decision; non-launch outcomes commit their final
+outcome and advance `next_fire_at` atomically; launch outcomes durably record
+intent (`last_fire_outcome = 'dispatching'`, `last_fired_at = now`, advance
+`next_fire_at`) and commit. `launchRun` runs OUTSIDE the row lock. tx2 writes
+the final outcome (`launched | queued_pending | launch_failed`) + `last_run_id`,
+CAS-guarded by `WHERE last_fire_outcome = 'dispatching'` — a concurrent
+edit/delete/later-fire wins and the stale result is dropped with a WARN, never
+clobbered. Crash window W1 (after tx1, before `launchRun`): the fire is LOST
+BY DESIGN — at-most-once launch; a retry here is what double-fires runs; the
+next cron fire overwrites the stale `dispatching` outcome. Crash window W2
+(after `launchRun`, before tx2): the run exists and is fully owned by the
+normal run lifecycle; the schedule self-heals at the next fire. A
+`launch_failed` fire records the `MaisterError` code on the schedule row but
+the dispatcher job attempt itself records `Succeeded` — a refused fire is a
+schedule outcome, not an engine failure, so one schedule's dirty repo cannot
+auto-disable the shared dispatcher. The dispatcher claims at most 10 schedules
+per tick (lease protection); unclaimed due rows stay due.
+
+**Trigger-now: inline dispatch through the same claim+fire core.**
+`POST …/trigger` claims THE row by id (ignoring `next_fire_at`), refuses with
+`CONFLICT` while the row is lock-held or while `last_fire_outcome =
+'dispatching'` is fresher than the 300s scheduler attempt timeout (an older
+`dispatching` remnant — a W1 crash — is past the window and may be triggered),
+respects the overlap policy and the cap (no bypass), does NOT advance
+`next_fire_at` (manual fires are out-of-band), and is allowed on a paused
+schedule (explicit user intent). The response carries the outcome for the UI.
+
+**Last-run feedback: write at dispatch, JOIN at read.** `last_fire_outcome` /
+`last_fired_at` / `last_fire_error` are written synchronously by the
+dispatcher (it IS the transition actor). The launched run's terminal status is
+read by joining `runs` on `last_run_id` at query time (`lastRunStatus` in the
+DTO) — run rows are never GC-deleted, so the join never goes stale. No hooks
+on the ~10 scattered run terminal-write sites, no polling.
+
+**Surface.** Five member-gated routes under
+`/api/projects/{slug}/schedules` (list/create/patch/delete/trigger; view =
+`readBoard`, mutate = new `PROJECT_ACTION_MIN.manageSchedules = "member"`), a
+`schedules` tab on the project board page (query-param tab like `mcps`),
+EN+RU i18n, and the dispatcher row on `/admin/scheduler` (kill switch). No new
+env vars; the cap ([ADR-009](#adr-009-global-concurrency-cap--3)) is reused
+as-is.
+
+**Consequences:**
+- Schedules ride the proven M24 claim/ledger/budget machinery; the engine core
+  is untouched and `cadence_interval_seconds` stays the only engine cadence
+  model (ADR-060 invariant preserved).
+- Cron math lives in one TS module; the DB stores only the precomputed
+  `next_fire_at` instant, so the due-scan stays a pure index scan.
+- A second (row-level) claim layer exists inside the dispatcher handler —
+  covered by its own no-double-fire concurrency test, mirroring the engine's.
+- Fire precision is bounded by the tick cadence (60s) — acceptable: equal to
+  the resolution cron itself provides at 5 fields.
+- A process crash in window W1 loses that fire (at-most-once by design);
+  operators see the stale `dispatching` outcome until the next fire overwrites
+  it.
+- The launchability classifier changes `launchRun` behavior for ALL callers:
+  manual relaunch of a task whose latest run Failed/Abandoned now succeeds
+  (attempt N+1) instead of throwing `PRECONDITION` — the persisted-status gap
+  is fixed at the root rather than patched in the dispatcher.
+- `start_anyway` can place runs into the `Pending` queue above the cap —
+  bounded by the existing queue semantics, no cap bypass.
+
+**Alternatives Considered:**
+- **Extend `scheduler_jobs` with cron/tz/overlap columns (one engine job per
+  schedule):** rejected — the claim CTE advances `next_run_at` with SQL
+  interval math; cron-next cannot be computed there, so TS code would re-write
+  the instant post-claim, opening a crash window where a daily schedule
+  re-fires 60s later (double launch). Also invasive surgery on the
+  battle-tested claim SQL and a violation of the ADR-060 cadence invariant.
+- **Activate `agent_schedules`:** rejected — wrong shape (`agent_ref NOT
+  NULL`, no task/cron/overlap columns) and it is the reserved E4
+  agents-as-actors bridge; hijacking it blocks that epic.
+- **`cron-parser` + luxon:** rejected — equally capable parser but drags
+  `luxon` in as a runtime dependency; the repo deliberately has no date
+  library. `croner` is zero-dep with native `Intl` timezones.
+- **Denormalized `last_run_status` updated at run terminal transitions:**
+  rejected — there is no single terminal choke point (~10 scattered write
+  sites across runner/graph-runner/state-transitions/promote); instrumenting
+  all of them (and every future one) for a value a read-time JOIN gives for
+  free violates simplicity-first.
+- **Event-driven `queue_one` consumption (hook `promoteNextPending` / terminal
+  writes):** rejected — more coupling and new crash windows to win ≤60s of
+  latency over tick-driven consumption; `Pending` runs from `start_anyway`
+  already get strict event-driven priority via the existing engine.
+- **`next_run_at = past` for trigger-now:** rejected — waits up to one tick
+  (bad button UX) and conflates manual fires with the cron rhythm; inline
+  dispatch through the shared core respects policy/cap and reports the outcome
+  synchronously.
+
 ### ADR-066: Editor and diff rendering stack (Shiki, git-diff-view, CodeMirror)
 
 **Date:** 2026-06-08
