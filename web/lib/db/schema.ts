@@ -1085,6 +1085,90 @@ export const workspaces = pgTable("workspaces", {
   lifecycleOperationName: text("lifecycle_operation_name"),
 });
 
+export type RunScheduleOverlapPolicy = "skip" | "queue_one" | "start_anyway";
+export type RunScheduleFireOutcome =
+  | "launched"
+  | "queued_pending"
+  | "catchup_queued"
+  | "skipped_task_busy"
+  | "skipped_cap"
+  | "skipped_target_terminal"
+  | "skipped_crashed"
+  | "launch_failed"
+  | "dispatching";
+
+export const runSchedules = pgTable(
+  "run_schedules",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    cronExpr: text("cron_expr").notNull(),
+    timezone: text("timezone").notNull(),
+    overlapPolicy: text("overlap_policy", {
+      enum: ["skip", "queue_one", "start_anyway"],
+    })
+      .notNull()
+      .default("skip"),
+    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
+      onDelete: "set null",
+    }),
+    enabled: boolean("enabled").notNull().default(true),
+    nextFireAt: timestamp("next_fire_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    queueOnePending: boolean("queue_one_pending").notNull().default(false),
+    queuedFireAt: timestamp("queued_fire_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastFiredAt: timestamp("last_fired_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastFireOutcome: text("last_fire_outcome", {
+      enum: [
+        "launched",
+        "queued_pending",
+        "catchup_queued",
+        "skipped_task_busy",
+        "skipped_cap",
+        "skipped_target_terminal",
+        "skipped_crashed",
+        "launch_failed",
+        "dispatching",
+      ],
+    }),
+    lastFireError: text("last_fire_error"),
+    lastRunId: text("last_run_id").references(() => runs.id, {
+      onDelete: "set null",
+    }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProject: index("run_schedules_project_idx").on(t.projectId),
+    idxTask: index("run_schedules_task_idx").on(t.taskId),
+    idxDue: index("run_schedules_due_idx").on(t.enabled, t.nextFireAt),
+    idxLastRun: index("run_schedules_last_run_idx").on(t.lastRunId),
+  }),
+);
+
+export type RunSchedule = typeof runSchedules.$inferSelect;
+
 export type ScratchDialogStatus =
   | "Starting"
   | "WaitingForUser"

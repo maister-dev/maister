@@ -549,7 +549,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
 
 ### Phase 1 — Foundation: cron core + schema
 
-- [ ] **T1.1 — croner dep + cron wrapper** (depends: T0.1)
+- [x] **T1.1 — croner dep + cron wrapper** (depends: T0.1)
   - Deliverable: `croner@^10.0.1` added to `web/package.json` (+ lockfile via
     `pnpm install`). `web/lib/run-schedules/cron.ts` per DQ2
     (`validateCronExpression`, `validateTimezone`, `nextFireAt`; 5-field-only;
@@ -565,7 +565,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
   - Logging: none (pure module) — errors carry context in messages.
   - Verify: typecheck + unit green; `eslint .` clean.
 
-- [ ] **T1.2 — `run_schedules` schema + migration 0038** (depends: T0.2)
+- [x] **T1.2 — `run_schedules` schema + migration 0038** (depends: T0.2)
   - Deliverable: table per §2.1 in `web/lib/db/schema.ts` (text-enum unions
     for `overlap_policy` + outcome; `$inferSelect` types exported:
     `RunSchedule`, `RunScheduleOverlapPolicy`, `RunScheduleFireOutcome`).
