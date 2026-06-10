@@ -27,6 +27,7 @@ import { runCliStep } from "../runner-cli";
 import { cleanupSlashSession, asError } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import { runNodeGates } from "./gates-exec";
+import { validateNodeStructuredOutput } from "./node-output";
 import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
@@ -474,6 +475,9 @@ async function executeNodeAction(
     profileDigest?: string;
     // 1-based ledger attempt number of THIS visit (ADR-072 gateAttempt source).
     nodeAttemptNumber: number;
+    // M26 (ADR-063): this execution's attempt number — arms the per-attempt
+    // MAISTER_OUTPUT_FILE transport for cli/check nodes with output.result.
+    attempt: number;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -499,7 +503,9 @@ async function executeNodeAction(
     case "check":
       return runCliStep(
         { id: node.id, type: "cli", command: def.action.command },
-        common,
+        // M26 (ADR-063): arm the MAISTER_OUTPUT_FILE transport only when the
+        // node declares output.result — no transport provisioning otherwise.
+        def.output?.result ? { ...common, attempt: ctx.attempt } : common,
       );
     case "ai_coding":
     case "judge":
@@ -1397,6 +1403,7 @@ export async function runGraph(
           mcpServers: materialized?.mcpServers,
           profileDigest: materialized?.plan.profileDigest,
           nodeAttemptNumber,
+          attempt: nodeAttemptNumber,
           db,
         });
       } catch (err) {
@@ -1476,6 +1483,33 @@ export async function runGraph(
         failed = true;
         runErrorCode = code;
         log2.warn({ nodeId: node.id, errorCode: code }, "node failed");
+        break;
+      }
+
+      // M26 P1 (ADR-063): structured-output validate seam — post-action,
+      // pre-gates. A failure marks the attempt Failed (CONFIG) inside the
+      // seam and aborts the finish exactly like the action-failure path
+      // above; gates MUST NOT run after a seam failure. On success the seam
+      // mutates result.vars in place — markNodeSucceeded below persists it.
+      const structuredOutput = await validateNodeStructuredOutput({
+        node,
+        result,
+        attempt: nodeAttemptCount + 1,
+        nodeAttemptId,
+        runId,
+        projectSlug: loaded.projectSlug,
+        runtimeRoot,
+        flowInstallPath: loaded.flowInstallPath,
+        db,
+      });
+
+      if (!structuredOutput.ok) {
+        failed = true;
+        runErrorCode = "CONFIG";
+        log2.warn(
+          { nodeId: node.id, reason: structuredOutput.reason },
+          "structured output validation failed — node Failed",
+        );
         break;
       }
 

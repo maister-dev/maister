@@ -512,7 +512,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
 
 ### Phase B — P1 structured node output (before C; engine seam)
 
-- [ ] **TB.1 — Config reader + deployment wiring.** Implement `nodeOutputMaxBytes()`
+- [x] **TB.1 — Config reader + deployment wiring.** Implement `nodeOutputMaxBytes()`
   in `web/lib/instance-config.ts` (env `MAISTER_NODE_OUTPUT_MAX_BYTES`, default
   `262144`, NaN/≤0 → default + `log.warn` once, mirroring existing readers in that
   file). Add the row to `.env.example` (commented, with default). Compose files
@@ -521,7 +521,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   *Files:* `web/lib/instance-config.ts` + its test file, `.env.example`.
   *Logging:* WARN on invalid value (existing instance-config pattern).
   *Verify:* unit test: unset/garbage/valid env; `.env.example` row present.
-- [ ] **TB.2 — Extraction utils (pure).** New `web/lib/flows/graph/node-output.ts`:
+- [x] **TB.2 — Extraction utils (pure).** New `web/lib/flows/graph/node-output.ts`:
   `extractSentinelBlock(stdout, maxBytes)` — finds the LAST
   ` ```json maister:output ` fenced block (tolerant of trailing whitespace/CRLF;
   block must be properly fenced; pushed-past-cap or unterminated = absent),
@@ -536,7 +536,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   *Verify:* unit: multiple blocks (last wins), block inside prose, loose
   `{verdict:...}` JSON NOT matched (no ai_judgment collision), 256 KiB boundary ±1,
   truncated fence, empty block, CRLF, missing file, BOM.
-- [ ] **TB.3 — CLI transport injection.** `RunCliStepCtx` gains `attempt: number`;
+- [x] **TB.3 — CLI transport injection.** `RunCliStepCtx` gains `attempt: number`;
   `runCliStep` (`web/lib/flows/runner-cli.ts:92`) passes
   `env: {...process.env, MAISTER_OUTPUT_FILE: <runDir>/output-<nodeId>-<attempt>.json}`
   to `execFileAsync`; runner-graph call sites pass `currentAttempt` (in scope —
@@ -547,7 +547,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   *Logging:* DEBUG `{nodeId, attempt, outputFile}` "cli output transport armed".
   *Verify:* unit: env var present in spawn options with per-attempt filename;
   existing cli tests migrated (enumerate any asserting exec options).
-- [ ] **TB.4 — The seam: `validateNodeStructuredOutput`.** In `node-output.ts` export
+- [x] **TB.4 — The seam: `validateNodeStructuredOutput`.** In `node-output.ts` export
   `validateNodeStructuredOutput({node, result, nodeAttemptId, runId, projectSlug,
   runtimeRoot, flowInstallPath, db})`: no-op (`{vars:{}}`) when no `output.result`
   or node type `human|form`; pick transport by node type (D-B3); resolve schema via
@@ -572,7 +572,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   proceeds `vars:{}`; present-but-invalid (bad JSON / schema mismatch / oversize)
   fails CONFIG regardless of `required`; valid persists into `result.vars`; human
   node bypass; gates NOT executed after a seam failure.
-- [ ] **TB.5 — Round-trip integration + test migration.** Integration (testcontainers,
+- [x] **TB.5 — Round-trip integration + test migration.** Integration (testcontainers,
   existing `runner.integration` family): graph flow `ai_coding(output.result,
   sentinel in stdout)` → downstream `cli` node receives `{{ steps.<id>.vars.<f> }}`
   (assert rendered command), judge-node sentinel captured, cli-node file transport

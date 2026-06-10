@@ -185,6 +185,134 @@ describe("runCliStep", () => {
     expect(post.regexMatched).toBe(true);
   });
 
+  it("injects MAISTER_OUTPUT_FILE with the per-attempt filename when attempt is provided (M26)", async () => {
+    const result = await runCliStep(
+      {
+        id: "outstep",
+        type: "cli",
+        command: 'printf "of:%s" "$MAISTER_OUTPUT_FILE"',
+      },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "outstep",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 5_000,
+        attempt: 3,
+      },
+    );
+
+    const expected = join(
+      workDir,
+      ".maister",
+      "demo",
+      "runs",
+      "r1",
+      "output-outstep-3.json",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain(`of:${expected}`);
+  });
+
+  it("does not arm the transport when the step id is not a valid filename segment", async () => {
+    const result = await runCliStep(
+      {
+        id: "badid",
+        type: "cli",
+        command: 'echo "of:${MAISTER_OUTPUT_FILE:-unset}"',
+      },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "x/../../secrets/y",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 5_000,
+        attempt: 1,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("of:unset");
+  });
+
+  it("leaves the child env untouched when attempt is not provided (no transport provisioning)", async () => {
+    const result = await runCliStep(
+      {
+        id: "noout",
+        type: "cli",
+        command: 'echo "of:${MAISTER_OUTPUT_FILE:-unset}"',
+      },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "noout",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 5_000,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("of:unset");
+  });
+
+  it("keeps inheriting the parent env when the transport is armed", async () => {
+    const result = await runCliStep(
+      {
+        id: "envkeep",
+        type: "cli",
+        command: 'test -n "$PATH" && echo "path-ok"',
+      },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "envkeep",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 5_000,
+        attempt: 1,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("path-ok");
+  });
+
+  it("creates the run dir when armed so the command can write $MAISTER_OUTPUT_FILE", async () => {
+    const result = await runCliStep(
+      {
+        id: "writer",
+        type: "cli",
+        command: 'echo \'{"k":"v"}\' > "$MAISTER_OUTPUT_FILE"',
+      },
+      {
+        runtimeRoot: workDir,
+        projectSlug: "demo",
+        runId: "r1",
+        stepId: "writer",
+        worktreePath,
+        context: ctxBase(),
+        timeoutMs: 5_000,
+        attempt: 1,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    const written = await readFile(
+      join(workDir, ".maister", "demo", "runs", "r1", "output-writer-1.json"),
+      "utf8",
+    );
+
+    expect(JSON.parse(written)).toEqual({ k: "v" });
+  });
+
   it("post-guard time cap exceeded is recorded with capExceeded=true", async () => {
     await runCliStep(
       {

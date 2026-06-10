@@ -460,6 +460,17 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **(M26 — Designed) Node with no `output.result`** → the validate seam is a
   no-op; the attempt is byte-identical to pre-M26 (`vars: {}`), no transport is
   provisioned, and no `CONFIG` can arise from the seam.
+- **(M26 — Designed) Bare triple-backtick line inside the sentinel payload** →
+  a line consisting of ` ``` ` inside the block's JSON closes the fence early,
+  so the remainder parses as invalid JSON → attempt fails `CONFIG`. Known v1
+  limitation of the line-based fence grammar: keep payload string values free
+  of standalone ` ``` ` lines (e.g. escape newlines). Not silent corruption —
+  always a loud `CONFIG`.
+- **(M26 — Designed) Node id used in the cli transport path** → `node.id` is
+  embedded in the `MAISTER_OUTPUT_FILE` filename, so it must be a valid
+  filename segment (`[A-Za-z0-9._-]+`); an id carrying a path separator fails
+  the attempt with `MaisterError("CONFIG")` at the seam (escape-guard,
+  mirrors `resolveOutputResultSchema`) and the transport is never armed.
 - **(M29 — Designed) Mutation assertions with git unavailable at gate time** →
   blocking gate FAILS with reason `"git unavailable — cannot evaluate mutation
   assertions"`; advisory gate WARNs and records `evaluated: false` in the
