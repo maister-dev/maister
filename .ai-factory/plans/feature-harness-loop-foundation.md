@@ -702,7 +702,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   Contract-surfaces table above — every row touched. Surgical edits only (R9).
   *Files:* per the table. *Verify:* `pnpm validate:docs` green; grep finds no
   leftover "(M26 — Designed)" on P1 behaviors; no rationale duplicated outside ADRs.
-- [ ] **TD.2 — Full verification gate.** `pnpm --filter maister-web typecheck` (0);
+- [x] **TD.2 — Full verification gate.** `pnpm --filter maister-web typecheck` (0);
   full unit + integration + e2e (A spec + existing m23/m11a/etc.); check-only
   `eslint .` on web (no `--fix` repo-wide); EN/RU message parity check (key-set
   diff); `git diff main...HEAD --stat` final collision audit; confirm NO migration
@@ -756,7 +756,53 @@ per-ATTEMPT strict diff deltas (v1 uses the since-first-attempt node range, D-C3
 
 ## Progress
 
-(filled by /aif-implement)
+**Status: COMPLETE (2026-06-10, /aif-implement).** All 19 tasks done. Five
+commits on `feature/harness-loop-foundation`:
+
+1. `4dd41670` docs(harness): ADR-072 + ADR-073 + Designed specs (T0.1-T0.3)
+2. `dc286d69` feat(flows): P1 structured node output (TB.1-TB.5)
+3. `1ab372ce` feat(observatory): harness adequacy & coherence (TA.1-TA.5)
+4. `59f2f5fc` feat(gates): P3 mutation sensor (TC.1-TC.5)
+5. `7e0d2d3a` + the final-verification commit: docs flip Designed->Implemented (TD.1-TD.2)
+
+Execution model: coordinator + parallel implementor agents (A parallel with B,
+then C), TDD per task, QA re-runs by the coordinator, independent reviewer
+agents per phase. Review findings fixed before each commit: B - manifest
+nodeId filename-segment guard on the cli transport path + documented
+bare-backtick fence limitation; A - coverage-map `executions` recounted as
+node_attempts per (flow, node) (was per-gate sum) + 4-part effectiveness
+grouping key; C - `core.quotePath=false` on the diff read (non-ASCII
+false-negative) + `mustTouch.matched` capped at 500 with `matchedTruncated`
+flag. One reviewer finding rejected with evidence (catalog disable-path
+`material.paths` archival is the existing convention for ALL material
+fields; re-enable rewrites material wholesale).
+
+**Final gate (TD.2) results:**
+- typecheck: 0 errors. Full unit: 2762 passed. Full integration: 119 files /
+  842 passed (2 pre-existing pg-teardown noise errors in the
+  `acp-runners route.concurrency` test - proven identical on a stashed clean
+  baseline by the implementor; tracked follow-up exists).
+- e2e: 60 passed incl. the new harness-observatory coverage; **11 failures
+  are PRE-EXISTING on the branch base** - proven by running the full e2e
+  suite at base commit `0fc95697` (detached): identical 11-spec failure set
+  (flows-authoring x4, m17-hitl criticality, m15-readiness badge,
+  m27-workbench-lifecycle, platform-acp-runners, portfolio-board,
+  project-registration x2). Zero NEW failures from this branch. Tracked
+  follow-up: fix the pre-existing e2e set (spawned task chip).
+- check-only `eslint .`: 0 errors (26 pre-existing warnings, none introduced).
+- EN/RU catalogs: 1205 = 1205 keys, exact parity.
+- `git diff main...HEAD`: 61 files, +8067/-81; ZERO diffs in the forbidden
+  regions (runner-graph review region :167-325, `pendingInjectedVars`,
+  outcome region, `hitl-validate.ts`, `runner-agent.ts`, review UI).
+- No DB migrations. Both env rows present in `.env.example` +
+  `configuration.md` (host-env only per ADR-023, compose untouched).
+
+**Merge note:** promotion per policy - local `git merge --no-ff` of
+`feature/harness-loop-foundation` into `main` (or PR). At merge: RE-VERIFY
+ADR numbering against main (ADR-072/073 tentative; ADR-071 claimed by the
+sibling outbound-webhooks branch) and re-run `pnpm validate:docs`. Suggest
+adding the milestone via `/aif-roadmap` ("M29. Harness-loop foundation -
+adequacy metrics + P1 structured output + P3 mutation sensor: Implemented").
 
 ## Plan-review resolutions (user, 2026-06-10)
 
