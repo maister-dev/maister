@@ -132,7 +132,7 @@ flowchart TD
     Append --> Act[run action<br/>cli / agent / check / judge / human / form]
     Act -- form node, first visit --> FormHitl[emit form HITL<br/>run NeedsInput]
     FormHitl -- operator submits values --> Validate
-    Act --> Validate{output.result declared?<br/>M26 — Designed}
+    Act --> Validate{output.result declared?<br/>M26}
     Validate -- no --> Gates[run pre_finish.gates in order]
     Validate -- yes, valid --> FoldVars[fold validated payload into vars]
     Validate -- yes, invalid --> FailCfg[markNodeFailed CONFIG]
@@ -158,9 +158,9 @@ The `Validate` decision and its three branches are the **M26 post-action seam**
 (below). For nodes without `output.result` the seam is a no-op and traversal is
 unchanged.
 
-### Structured output validate seam (M26 — Designed)
+### Structured output validate seam (M26 — Implemented)
 
-> **Status (M26 — Designed.)** Opt-in schema-validated structured output, folded
+> **Status (M26 — Implemented, P1.)** Opt-in schema-validated structured output, folded
 > into the existing `node_attempts.vars`. Decision:
 > [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
 > frozen SSOT:
@@ -321,7 +321,7 @@ flowchart TD
     Mode -- advisory --> Cont[record verdict, continue]
 ```
 
-**(M29 — Designed) Mutation assertions on `artifact_required`.** The
+**(M29 — Implemented) Mutation assertions on `artifact_required`.** The
 `artifact_required` executor (Implemented since M12 — it checks every
 `inputArtifacts` def has a `validity='current'` instance) gains optional
 post-condition assertions: after the input-presence check, a gate declaring
@@ -387,7 +387,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   ends the run `Failed` with a clear error — never an unbounded cycle.
 - M11a `gate_results` **feed but do not gate promotion**; refusing a merge on an
   unsatisfied required gate is the M15/M18 readiness policy, not M11a.
-- **(M26 — Designed)** A node declaring `output.result` MUST have its payload
+- **(M26 — Implemented)** A node declaring `output.result` MUST have its payload
   acquired by execution mechanism (agent → last ` ```json maister:output ` block in
   the 1 MiB-capped `result.stdout`, a block past that cap treated as absent; cli →
   per-attempt `MAISTER_OUTPUT_FILE`), size-capped at
@@ -445,7 +445,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **Node `settings` block present** → preserved as opaque passthrough (never
   silently stripped), `SETTINGS_NOT_ENFORCED_WARN` fires once; enforcement is
   M11c.
-- **(M26 — Designed) Structured-output validation failures** at the post-action
+- **(M26 — Implemented) Structured-output validation failures** at the post-action
   seam, each → attempt `Failed` + `MaisterError("CONFIG")`, run unpromotable:
   missing fenced block (agent) or absent `MAISTER_OUTPUT_FILE` (cli) while
   `required: true`; a `maister:output` block pushed past the 1 MiB `result.stdout`
@@ -453,41 +453,41 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   against the resolved `formSchemaSchema`; payload oversize past
   `MAISTER_NODE_OUTPUT_MAX_BYTES`. The seam runs after `end_turn`, so no ACP
   deferred is open on this path.
-- **(M26 — Designed) Stale per-attempt cli output file** → a rework attempt N that
+- **(M26 — Implemented) Stale per-attempt cli output file** → a rework attempt N that
   does not re-write `output-<nodeId>-N.json` MUST NOT inherit attempt N-1's file;
   the per-attempt filename isolates it (absent-while-`required` → `CONFIG`,
   absent-while-optional → `vars: {}`).
-- **(M26 — Designed) Node with no `output.result`** → the validate seam is a
+- **(M26 — Implemented) Node with no `output.result`** → the validate seam is a
   no-op; the attempt is byte-identical to pre-M26 (`vars: {}`), no transport is
   provisioned, and no `CONFIG` can arise from the seam.
-- **(M26 — Designed) Bare triple-backtick line inside the sentinel payload** →
+- **(M26 — Implemented) Bare triple-backtick line inside the sentinel payload** →
   a line consisting of ` ``` ` inside the block's JSON closes the fence early,
   so the remainder parses as invalid JSON → attempt fails `CONFIG`. Known v1
   limitation of the line-based fence grammar: keep payload string values free
   of standalone ` ``` ` lines (e.g. escape newlines). Not silent corruption —
   always a loud `CONFIG`.
-- **(M26 — Designed) Node id used in the cli transport path** → `node.id` is
+- **(M26 — Implemented) Node id used in the cli transport path** → `node.id` is
   embedded in the `MAISTER_OUTPUT_FILE` filename, so it must be a valid
   filename segment (`[A-Za-z0-9._-]+`); an id carrying a path separator fails
   the attempt with `MaisterError("CONFIG")` at the seam (escape-guard,
   mirrors `resolveOutputResultSchema`) and the transport is never armed.
-- **(M29 — Designed) Mutation assertions with git unavailable at gate time** →
+- **(M29 — Implemented) Mutation assertions with git unavailable at gate time** →
   blocking gate FAILS with reason `"git unavailable — cannot evaluate mutation
   assertions"`; advisory gate WARNs and records `evaluated: false` in the
   `mutation_report`. A node-start head capture missing (legacy run) → the
   `must_touch` range falls back to the cumulative branch range with
   `basis: "cumulative-fallback"` recorded — never a hard error.
-- **(M26 — Designed) `array` field element shape is unconstrained** → an
+- **(M26 — Implemented) `array` field element shape is unconstrained** → an
   `{ type: "array" }` output field validates only `Array.isArray`; the grammar has
   no `items` slot, so element type is not checked and any array (incl. mixed/empty)
   passes. Phase-2 `items?` is the candidate. Not a `CONFIG` — an accepted
   loose-validation gap.
-- **(M26 — Designed) Bad `output.result.schema` path not caught at flow load** →
+- **(M26 — Implemented) Bad `output.result.schema` path not caught at flow load** →
   `resolveOutputResultSchema` resolves + parses + validates the schema `./path` at
   the runtime parse seam (Phase 2), NOT at manifest load
   (`validateGraphManifest`); a missing/non-JSON/malformed schema file surfaces as a
   run-time `CONFIG` at the post-action seam, not at flow install/load.
-- **(M26 — Designed) `enum` field declared with no `options`** → validation matches
+- **(M26 — Implemented) `enum` field declared with no `options`** → validation matches
   the value against an empty option list, so **every** value fails and the attempt
   fails `CONFIG` at the seam. A schema-authoring footgun (pre-existing in the
   `formSchemaSchema` grammar, now reachable via `output.result`); declare
@@ -500,9 +500,9 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
-  [ADR-063 Structured output + run-context (M26 — Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
-  [ADR-073 Mutation sensor on `artifact_required` (M29 — Designed)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
-- Spec (M26 — Designed):
+  [ADR-063 Structured output + run-context (M26 — P1 Implemented, P7 Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
+  [ADR-073 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
+- Spec (M26 — P1 Implemented, P7 Designed):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   narrative [`../database-schema.md`](../database-schema.md).

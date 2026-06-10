@@ -5,7 +5,7 @@
 > builds on the M11a `node_attempts` ledger, M12 artifact evidence index, M15
 > readiness verdict calibration, and HITL timing rows. Locked decision:
 > [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority).
-> The **harness adequacy & coherence** layer below is **(M29 — Designed)** —
+> The **harness adequacy & coherence** layer below is **(M29 — Implemented)** —
 > sensor firing-rate, never-fired flags, per-control effectiveness, and the
 > per-flow coverage map. Locked decision:
 > [ADR-072](../decisions.md#adr-072-harness-adequacy--coherence-metrics-read-only-observatory-extension).
@@ -43,19 +43,19 @@ Implemented surfaces are `web/lib/queries/observatory.ts`,
 - **Contributing evidence** — run ids, node attempts, gate results,
   HITL waits, and artifact-instance links that explain an aggregate row without
   exposing server-only handles or raw payloads.
-- **Sensor firing stats (M29 — Designed)** — per `(projectId, flowId, nodeId,
+- **Sensor firing stats (M29 — Implemented)** — per `(projectId, flowId, nodeId,
   gateId)` group and per gate `kind` rollup: terminal-status counts
   (`passed/failed/stale/skipped/overridden`), `executions`, and `fail_rate`
   per the ADR-072 formulas.
-- **Never-fired flag (M29 — Designed)** — a per-gate boolean raised when a
+- **Never-fired flag (M29 — Implemented)** — a per-gate boolean raised when a
   declared, sufficiently-executed gate has zero `failed + stale` results in the
   window; threshold `MAISTER_HARNESS_NEVER_FIRED_MIN` (default 10) is read at
   the query layer and passed into the pure rollup as a parameter.
-- **Control effectiveness (M29 — Designed)** — per-gate rework-follow rates +
+- **Control effectiveness (M29 — Implemented)** — per-gate rework-follow rates +
   lift, and per-capability (`runs.resolved_capability_set.capabilities[].refId`)
   with/without correction-rate comparison; runs with a null capability set are
   excluded.
-- **Coverage map (M29 — Designed)** — per flow (revisions used by scoped runs,
+- **Coverage map (M29 — Implemented)** — per flow (revisions used by scoped runs,
   joined via `runs.flow_revision_id`): per-node declared gate counts by `mode`,
   blocking count, guide-side presence (skills/rules/restrictions in node
   `settings`), and the "guides without sensors" imbalance flag.
@@ -183,7 +183,7 @@ flowchart TD
   project count, and extra weight for failed or stale blocking gates.
 - M17 `criticality` and `human_confidence` are optional future multipliers.
 
-### Harness adequacy & coherence rollup (M29 — Designed)
+### Harness adequacy & coherence rollup (M29 — Implemented)
 
 The harness layer answers "is the harness sensing anything, and do its controls
 matter" over the same scoped window. It extends the existing bulk read path
@@ -250,20 +250,20 @@ flowchart TD
   fields.
 - UI labels MUST say signals or patterns, not recommendations or automatic
   fixes.
-- **(M29 — Designed)** Harness rollups MUST be computed on-the-fly from the
+- **(M29 — Implemented)** Harness rollups MUST be computed on-the-fly from the
   bulk rows with exactly ONE additional bulk SELECT (`flow_revisions` by
   distinct scoped revision ids) — no caching, no read-model table, no per-run
   query loops, no schema change, no new HTTP route.
-- **(M29 — Designed)** The never-fired flag MUST raise only when the gate is
+- **(M29 — Implemented)** The never-fired flag MUST raise only when the gate is
   declared in ≥1 revision used by scoped runs AND
   `executions >= MAISTER_HARNESS_NEVER_FIRED_MIN` AND `failed + stale == 0`;
   the threshold MUST be passed into the pure rollup as a parameter, never read
   from env inside it.
-- **(M29 — Designed)** Capability effectiveness MUST exclude runs whose
+- **(M29 — Implemented)** Capability effectiveness MUST exclude runs whose
   `runs.resolved_capability_set` is null (never counted as "without"); coverage
   MUST exclude runs whose `runs.flow_revision_id` is null from the declared
   side while keeping their firing stats.
-- **(M29 — Designed)** Every harness rate MUST render with its denominator, and
+- **(M29 — Implemented)** Every harness rate MUST render with its denominator, and
   any group with `executions < 3` MUST render as "—" (insufficient data), never
   as `0%`.
 
@@ -280,14 +280,14 @@ flowchart TD
   redaction tests before it can appear in examples.
 - A performance need for new indexes is a migration task, not an implicit
   read-model change.
-- **(M29 — Designed)** A gate with zero executions in the window (declared but
+- **(M29 — Implemented)** A gate with zero executions in the window (declared but
   never run — e.g. its node never executed) is NOT never-fired-flagged: the
   flag requires the execution threshold; the coverage map still lists the gate
   as declared.
-- **(M29 — Designed)** Null `runs.resolved_capability_set` (pre-ADR-069
+- **(M29 — Implemented)** Null `runs.resolved_capability_set` (pre-ADR-069
   launches) thins capability-effectiveness denominators; such runs are dropped
   from both sides of the comparison and the honest-N denominator shows it.
-- **(M29 — Designed)** Revision drift — scoped runs spanning multiple revisions
+- **(M29 — Implemented)** Revision drift — scoped runs spanning multiple revisions
   of the same flow — makes the declared-gate set the UNION across used
   revisions; a gate present in only one revision still appears, with its firing
   stats from the runs that declared it. A manifest that fails to parse skips
@@ -296,9 +296,9 @@ flowchart TD
 ## Linked artifacts
 
 - ADR: [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority)
-- ADR (harness layer, M29 — Designed):
+- ADR (harness layer, M29):
   [ADR-072](../decisions.md#adr-072-harness-adequacy--coherence-metrics-read-only-observatory-extension)
-- Env knob (M29 — Designed): `MAISTER_HARNESS_NEVER_FIRED_MIN` —
+- Env knob (M29 — Implemented): `MAISTER_HARNESS_NEVER_FIRED_MIN` —
   [`../configuration.md`](../configuration.md) env table (host env only,
   ADR-023 — never compose files)
 - Run state: [`runs.md`](runs.md)

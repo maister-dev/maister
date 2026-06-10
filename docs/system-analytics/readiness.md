@@ -78,7 +78,7 @@ Per-status contribution of a single **blocking** gate on the live attempt:
 
 `artifact_required` `failed` is re-evaluated against current inputs (it blocks only when an
 `inputArtifactRefs` def is still non-current or `refs.length === 0`) — preserved from M12.
-**(M29 — Designed)** That re-evaluation gains an assertion-awareness exception: a `failed`
+**(M29 — Implemented)** That re-evaluation gains an assertion-awareness exception: a `failed`
 `artifact_required` gate whose `gate_results.verdict` carries `payload.assertionFailed: true`
 (a `must_touch`/`must_not_touch` mutation failure,
 [ADR-073](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates))
@@ -228,7 +228,7 @@ genuine flow-run merge enforcement deferred to M18.
   `getRunReadiness` per run (no N+1). (Implemented — M15)
 - M15 MUST NOT add a DB migration, a new `MaisterError` code, a new `runs.status` value, or
   bump `MAISTER_ENGINE_VERSION` (stays `1.2.0`).
-- **(M29 — Designed)** A `failed` blocking `artifact_required` gate whose verdict carries
+- **(M29 — Implemented)** A `failed` blocking `artifact_required` gate whose verdict carries
   `payload.assertionFailed: true` MUST contribute `failed` on every readiness surface
   regardless of input-artifact presence; legacy `failed` `artifact_required` gates without
   assertion verdicts keep the inputs-present → clear re-evaluation unchanged.
@@ -243,7 +243,7 @@ genuine flow-run merge enforcement deferred to M18.
   alike — even though `gate_results.status` is still `failed`. The recorded `failed` is never
   erased; the live artifact state overrides it on every surface, so no read-model diverges
   from the merge guard. It blocks (`failed`) only while some ref is still non-current or
-  `inputArtifactRefs` is empty. **(M29 — Designed)** Exception: when the failed gate's
+  `inputArtifactRefs` is empty. **(M29 — Implemented)** Exception: when the failed gate's
   verdict carries `payload.assertionFailed: true` (mutation assertion failure, ADR-073),
   the re-evaluation does NOT apply — the gate stays `failed` until a rework attempt
   re-runs it and passes.
@@ -270,7 +270,7 @@ genuine flow-run merge enforcement deferred to M18.
   (readiness + calibration), [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)
   (gate execution scope), [ADR-045](../decisions.md#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve)
   (external_check / merge carve),
-  [ADR-073 (assertion-aware re-eval, M29 — Designed)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
+  [ADR-073 (assertion-aware re-eval, M29)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
 - **Config:** calibration fields documented in [`../configuration.md`](../configuration.md)
   (`gateSchema.calibration`, `flowYamlV1Schema.verdict_calibration`).
 - **Source (enforcer + core):** `web/lib/flows/graph/evidence-readiness.ts`,

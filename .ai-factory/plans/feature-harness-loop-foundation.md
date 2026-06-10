@@ -692,7 +692,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
 
 ### Phase D — Docs flip + final gate
 
-- [ ] **TD.1 — Docs checkpoint (mandatory, via `/aif-docs` flow).** Flip status tags
+- [x] **TD.1 — Docs checkpoint (mandatory, via `/aif-docs` flow).** Flip status tags
   Designed→Implemented for: B's P1 parts (`flow-dsl.md` §M26 — P1 rows only,
   `flow-graph.md` §validate-seam + edge cases, `configuration.md:915` env row,
   ADR-063 status note; run-context/P7 sections explicitly STAY Designed), A's

@@ -43,9 +43,9 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 - **Artifact kind** — one of the closed catalog:
   `diff | log | test_report | lint_report | ai_judgment | human_note |
   commit_set | checkpoint | preview | generic_file`, plus
-  `mutation_report` **(M29 — Designed)**. The DB `kind` column is text with a
+  `mutation_report` **(M29 — Implemented)**. The DB `kind` column is text with a
   TS-level enum, so the addition needs no migration.
-- **Mutation report (M29 — Designed)** — the deterministic post-condition
+- **Mutation report (M29 — Implemented)** — the deterministic post-condition
   evidence of an `artifact_required` gate with `must_touch`/`must_not_touch`
   assertions
   ([ADR-073](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)).
@@ -333,7 +333,7 @@ All logs use the module-local pino logger per the existing pattern
 - ADRs: [ADR-037](../decisions.md#adr-037-typed-artifact-model),
   [ADR-038](../decisions.md#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022),
   [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer),
-  [ADR-073 (mutation sensor, M29 — Designed)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
+  [ADR-073 (mutation sensor, M29)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
   [ADR-022](../decisions.md) (projector, lands with M12),
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),

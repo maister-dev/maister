@@ -418,9 +418,9 @@ status:
 
 The block is meaningful only for `kind: external_check`. Placing it on any other gate kind is a manifest validation error (`CONFIG`).
 
-### `gates[].must_touch` / `gates[].must_not_touch` mutation assertions (M29 — Designed)
+### `gates[].must_touch` / `gates[].must_not_touch` mutation assertions (M29 — Implemented)
 
-> **Status (M29 — Designed).** Deterministic post-condition assertions over the
+> **Status (M29 — Implemented).** Deterministic post-condition assertions over the
 > run worktree's git diff, valid ONLY on `kind: artifact_required` gates.
 > Rationale, range semantics, and the `mutation_report` shape are normative in
 > [ADR-073](decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)
@@ -451,7 +451,7 @@ ALWAYS records a `mutation_report` artifact (pass AND fail; see
 unavailable at gate time a blocking gate FAILS (a sensor that cannot sense must
 not pass); an advisory gate records `evaluated: false`.
 
-**Restriction `paths` (capability config, M29 — Designed).** A `restriction`
+**Restriction `paths` (capability config, M29 — Implemented).** A `restriction`
 capability gains an optional machine-readable subset:
 
 ```yaml
@@ -564,9 +564,9 @@ benchmark datasets, rich preview sandboxing, cross-run artifact reuse, full
 payload-schema validation for every artifact kind, provider-specific CI apps,
 and CI ingestion beyond the generic external gate report contract.
 
-## M26: structured node output channel (`output.result`) (Designed)
+## M26: structured node output channel (`output.result`) (P1 Implemented)
 
-> **Status (M26 — Designed).** Opt-in schema-validated structured output for
+> **Status (M26 — P1 Implemented; the run-context file (P7) stays Designed).** Opt-in schema-validated structured output for
 > every graph node type, folded into the existing `node_attempts.vars` channel.
 > Decision: [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
 > frozen SSOT:

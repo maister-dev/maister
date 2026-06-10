@@ -3776,7 +3776,7 @@ No last-owner guard is implemented.
 ### ADR-063: Structured node output channel (P1) + run-context file (P7)
 
 **Date:** 2026-06-07
-**Status:** Accepted
+**Status:** Accepted — P1 Implemented (2026-06-10, `feature/harness-loop-foundation`); P7 run-context file stays Designed
 **Context:** Today only `human`/HITL nodes write a structured result into
 `node_attempts.vars`; `ai_coding`, `cli`, `check`, and `judge` nodes emit only
 free `stdout` text and files-on-disk (`vars` is always `{}` for them). The flow
