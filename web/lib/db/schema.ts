@@ -230,6 +230,7 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
   defaultRunnerId: text("default_runner_id")
     .notNull()
     .references(() => platformAcpRunners.id),
+  webhooksEnabled: boolean("webhooks_enabled").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),
@@ -2213,3 +2214,179 @@ export type ProjectToken = typeof projectTokens.$inferSelect;
 export type ProjectTokenInsert = typeof projectTokens.$inferInsert;
 export type TokenAuditLogRow = typeof tokenAuditLog.$inferSelect;
 export type TokenAuditLogInsert = typeof tokenAuditLog.$inferInsert;
+
+// Outbound webhooks (ADR-071). Transactional-outbox capture + singleton-drainer
+// fanout/delivery. Secrets are NEVER stored: signing_secret_ref and header values
+// are `env:NAME` references resolved server-side, never plaintext.
+export type WebhookEventType =
+  | "run.started"
+  | "run.needs_input"
+  | "hitl.requested"
+  | "hitl.responded"
+  | "run.review"
+  | "run.promoted"
+  | "run.done"
+  | "run.failed"
+  | "run.crashed"
+  | "run.abandoned"
+  | "gate.decided"
+  | "ping";
+export type WebhookErrorKind = "timeout" | "network" | "http" | "config";
+
+export const webhookSubscriptions = pgTable(
+  "webhook_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    method: text("method", { enum: ["POST", "PUT"] })
+      .notNull()
+      .default("POST"),
+    headers: jsonb("headers")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    eventTypes: jsonb("event_types").$type<string[]>().notNull(),
+    signingSecretRef: text("signing_secret_ref").notNull(),
+    secondarySigningSecretRef: text("secondary_signing_secret_ref"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProject: index("webhook_subscriptions_project_idx").on(t.projectId),
+  }),
+);
+export type WebhookSubscription = typeof webhookSubscriptions.$inferSelect;
+export type WebhookSubscriptionInsert =
+  typeof webhookSubscriptions.$inferInsert;
+
+// Transactional outbox: rows captured at emit; fanout_at IS NULL is the entire
+// fanout cursor. `payload` is the frozen envelope, built at fanout.
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    occurredAt: timestamp("occurred_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    fanoutAt: timestamp("fanout_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxPendingFanout: index("webhook_events_pending_fanout_idx")
+      .on(t.createdAt)
+      .where(sql`${t.fanoutAt} IS NULL`),
+  }),
+);
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type WebhookEventInsert = typeof webhookEvents.$inferInsert;
+
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => webhookEvents.id, { onDelete: "cascade" }),
+    subscriptionId: text("subscription_id")
+      .notNull()
+      .references(() => webhookSubscriptions.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["pending", "delivered", "dead"] })
+      .notNull()
+      .default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    lastHttpStatus: integer("last_http_status"),
+    lastErrorKind: text("last_error_kind", {
+      enum: ["timeout", "network", "http", "config"],
+    }),
+    lastErrorMessage: text("last_error_message"),
+    deliveredAt: timestamp("delivered_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqSubscriptionEvent: uniqueIndex("webhook_deliveries_sub_event_uq").on(
+      t.subscriptionId,
+      t.eventId,
+    ),
+    idxDue: index("webhook_deliveries_due_idx")
+      .on(t.nextAttemptAt)
+      .where(sql`${t.status} = 'pending'`),
+    idxSubscriptionLog: index("webhook_deliveries_subscription_log_idx").on(
+      t.subscriptionId,
+      t.createdAt.desc(),
+    ),
+  }),
+);
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type WebhookDeliveryInsert = typeof webhookDeliveries.$inferInsert;
+
+export const webhookDeliveryAttempts = pgTable(
+  "webhook_delivery_attempts",
+  {
+    id: text("id").primaryKey(),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => webhookDeliveries.id, { onDelete: "cascade" }),
+    attemptNo: integer("attempt_no").notNull(),
+    requestedAt: timestamp("requested_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    httpStatus: integer("http_status"),
+    errorKind: text("error_kind", {
+      enum: ["timeout", "network", "http", "config"],
+    }),
+    errorDetail: text("error_detail"),
+    responseSnippet: text("response_snippet"),
+  },
+  (t) => ({
+    uniqDeliveryAttempt: uniqueIndex(
+      "webhook_delivery_attempts_delivery_attempt_uq",
+    ).on(t.deliveryId, t.attemptNo),
+    idxDelivery: index("webhook_delivery_attempts_delivery_idx").on(
+      t.deliveryId,
+    ),
+  }),
+);
+export type WebhookDeliveryAttempt =
+  typeof webhookDeliveryAttempts.$inferSelect;
+export type WebhookDeliveryAttemptInsert =
+  typeof webhookDeliveryAttempts.$inferInsert;
