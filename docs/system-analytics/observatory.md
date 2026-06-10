@@ -8,7 +8,7 @@
 > The **harness adequacy & coherence** layer below is **(M29 — Implemented)** —
 > sensor firing-rate, never-fired flags, per-control effectiveness, and the
 > per-flow coverage map. Locked decision:
-> [ADR-072](../decisions.md#adr-072-harness-adequacy--coherence-metrics-read-only-observatory-extension).
+> [ADR-073](../decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).
 
 ## Purpose
 
@@ -46,7 +46,7 @@ Implemented surfaces are `web/lib/queries/observatory.ts`,
 - **Sensor firing stats (M29 — Implemented)** — per `(projectId, flowId, nodeId,
   gateId)` group and per gate `kind` rollup: terminal-status counts
   (`passed/failed/stale/skipped/overridden`), `executions`, and `fail_rate`
-  per the ADR-072 formulas.
+  per the ADR-073 formulas.
 - **Never-fired flag (M29 — Implemented)** — a per-gate boolean raised when a
   declared, sufficiently-executed gate has zero `failed + stale` results in the
   window; threshold `MAISTER_HARNESS_NEVER_FIRED_MIN` (default 10) is read at
@@ -190,7 +190,7 @@ matter" over the same scoped window. It extends the existing bulk read path
 with two run columns (`runs.resolved_capability_set`, `runs.flow_revision_id`)
 and exactly ONE new bulk SELECT (`flow_revisions` by the distinct revision ids
 of scoped runs, manifests parsed in TS). All formulas are normative in
-[ADR-072](../decisions.md#adr-072-harness-adequacy--coherence-metrics-read-only-observatory-extension)
+[ADR-073](../decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension)
 and are not restated here.
 
 ```mermaid
@@ -297,7 +297,7 @@ flowchart TD
 
 - ADR: [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority)
 - ADR (harness layer, M29):
-  [ADR-072](../decisions.md#adr-072-harness-adequacy--coherence-metrics-read-only-observatory-extension)
+  [ADR-073](../decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension)
 - Env knob (M29 — Implemented): `MAISTER_HARNESS_NEVER_FIRED_MIN` —
   [`../configuration.md`](../configuration.md) env table (host env only,
   ADR-023 — never compose files)

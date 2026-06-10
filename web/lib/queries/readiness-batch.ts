@@ -66,7 +66,7 @@ export async function computeReadinessByRun(
     mode: string;
     status: GateResultStatus;
     inputArtifactRefs: string[] | null;
-    // M29 (ADR-073): blockingGateContribution reads payload.assertionFailed so
+    // M29 (ADR-074): blockingGateContribution reads payload.assertionFailed so
     // board/portfolio badges match the merge guard for mutation failures.
     verdict: unknown;
     createdAt: Date;

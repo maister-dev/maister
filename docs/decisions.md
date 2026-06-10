@@ -4745,7 +4745,7 @@ change.
 
 ---
 
-### ADR-072: Harness adequacy & coherence metrics (read-only Observatory extension)
+### ADR-073: Harness adequacy & coherence metrics (read-only Observatory extension)
 
 **Date:** 2026-06-10
 **Status:** Accepted
@@ -4851,7 +4851,7 @@ as "—" (insufficient data), never as `0%`.
 
 ---
 
-### ADR-073: Artifact post-conditions — deterministic mutation sensor on `artifact_required` gates
+### ADR-074: Artifact post-conditions — deterministic mutation sensor on `artifact_required` gates
 
 **Date:** 2026-06-10
 **Status:** Accepted
@@ -4862,7 +4862,7 @@ contract implies (`must_touch`), and (2) a node that modifies paths an M14
 restriction forbids — M14 enforcement is `"instructed"` only (ADR-041 defers
 strict prevention), so violations currently go undetected. A deterministic
 post-condition sensor over `git diff --name-only` closes both gaps cheaply and
-feeds the Observatory adequacy layer (ADR-072) and the later self-correction
+feeds the Observatory adequacy layer (ADR-073) and the later self-correction
 loop. Detection beats attribution while prevention is blocked.
 
 **Decision:** Extend the `artifact_required` gate with two optional mutation
@@ -4956,7 +4956,7 @@ always emitting a `mutation_report` artifact when configured.
 **Consequences:**
 - Mutation defects become first-class, queryable evidence: every configured
   gate leaves a `mutation_report`, pass or fail, feeding the evidence graph and
-  the ADR-072 firing-rate metrics.
+  the ADR-073 firing-rate metrics.
 - M14 restrictions get their first teeth — detect-after instead of
   instruct-and-hope — without preempting ADR-041 strict enforcement; both read
   the same `restriction.paths` field.
@@ -4985,7 +4985,7 @@ always emitting a `mutation_report` artifact when configured.
   picomatch is the smallest battle-tested matcher (micromatch wraps it);
   hand-rolled glob semantics are a defect farm.
 - **Recording the report only on failure:** rejected — a pass with an empty
-  match set vs a pass with rich touches are different signals; ADR-072
+  match set vs a pass with rich touches are different signals; ADR-073
   effectiveness metrics need both sides.
 
 ---

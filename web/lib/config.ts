@@ -587,7 +587,7 @@ function declaresOutputResult(nodes: NodeDef[]): boolean {
 
 // Returns true when any gate declares M29 mutation features (must_touch /
 // must_not_touch assertions or a mutation_report output kind). Shares the
-// OUTPUT_ENGINE_MIN floor — D-C6/ADR-073: no version bump, broader trigger.
+// OUTPUT_ENGINE_MIN floor — D-C6/ADR-074: no version bump, broader trigger.
 function declaresMutationAssertions(nodes: NodeDef[]): boolean {
   for (const n of nodes) {
     for (const g of n.pre_finish?.gates ?? []) {
@@ -643,7 +643,7 @@ export function validateGraphManifest(
     );
   }
 
-  // Engine gate widened for M29 (ADR-073, D-C6 — NO version bump): mutation
+  // Engine gate widened for M29 (ADR-074, D-C6 — NO version bump): mutation
   // assertions / mutation_report gate outputs reuse the SAME 1.3.0 floor.
   // Manifests without them stay valid at any engine_min.
   if (

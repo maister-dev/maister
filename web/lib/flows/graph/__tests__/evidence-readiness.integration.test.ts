@@ -476,7 +476,7 @@ describe("T4.4: assertEvidenceReady (integration)", () => {
 });
 
 // ============================================================================
-// M29 (ADR-073, D-C7): assertion-failed mutation gates must not self-clear
+// M29 (ADR-074, D-C7): assertion-failed mutation gates must not self-clear
 // ============================================================================
 
 describe("M29: readiness assertion-awareness (integration)", () => {

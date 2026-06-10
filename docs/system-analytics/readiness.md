@@ -81,7 +81,7 @@ Per-status contribution of a single **blocking** gate on the live attempt:
 **(M29 — Implemented)** That re-evaluation gains an assertion-awareness exception: a `failed`
 `artifact_required` gate whose `gate_results.verdict` carries `payload.assertionFailed: true`
 (a `must_touch`/`must_not_touch` mutation failure,
-[ADR-073](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates))
+[ADR-074](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates))
 contributes `failed` even when every input artifact is current — inputs-present is no longer
 sufficient to clear it; only a rework attempt that re-runs the gate and passes clears it.
 A required artifact (`requiredFor` non-empty) contributes `blocked` when it has no
@@ -244,7 +244,7 @@ genuine flow-run merge enforcement deferred to M18.
   erased; the live artifact state overrides it on every surface, so no read-model diverges
   from the merge guard. It blocks (`failed`) only while some ref is still non-current or
   `inputArtifactRefs` is empty. **(M29 — Implemented)** Exception: when the failed gate's
-  verdict carries `payload.assertionFailed: true` (mutation assertion failure, ADR-073),
+  verdict carries `payload.assertionFailed: true` (mutation assertion failure, ADR-074),
   the re-evaluation does NOT apply — the gate stays `failed` until a rework attempt
   re-runs it and passes.
 - **Blocking `human_review` in a manifest** — rejected pre-run at `validateGraphManifest`
@@ -270,7 +270,7 @@ genuine flow-run merge enforcement deferred to M18.
   (readiness + calibration), [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)
   (gate execution scope), [ADR-045](../decisions.md#adr-045-external_check-enforcement-via-the-review-chokepoint-m16m15m18-carve)
   (external_check / merge carve),
-  [ADR-073 (assertion-aware re-eval, M29)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
+  [ADR-074 (assertion-aware re-eval, M29)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
 - **Config:** calibration fields documented in [`../configuration.md`](../configuration.md)
   (`gateSchema.calibration`, `flowYamlV1Schema.verdict_calibration`).
 - **Source (enforcer + core):** `web/lib/flows/graph/evidence-readiness.ts`,

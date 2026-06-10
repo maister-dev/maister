@@ -187,7 +187,7 @@ export function nodeOutputMaxBytes(): number {
   );
 }
 
-// M29 (ADR-072): minimum terminal gate executions before the observatory
+// M29 (ADR-073): minimum terminal gate executions before the observatory
 // never-fired heuristic may flag a gate. Host env only per ADR-023.
 export function harnessNeverFiredMin(): number {
   return positiveIntFromEnv(

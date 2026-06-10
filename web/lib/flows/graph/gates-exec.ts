@@ -50,7 +50,7 @@ export type GateRunContext = {
   worktreePath: string;
   sessionState: AcpSessionState;
   supervisorApi?: SupervisorApi;
-  // M29 (ADR-073, D-C2): the node's resolved restriction path sets for
+  // M29 (ADR-074, D-C2): the node's resolved restriction path sets for
   // must_not_touch; undefined when the node declares no restrictions.
   restrictionPaths?: RestrictionPathSet[];
   db: Db;
@@ -469,7 +469,7 @@ async function runOneGate(
       }
 
       if (allPresent) {
-        // M29 (ADR-073): mutation assertions evaluate AFTER the input-presence
+        // M29 (ADR-074): mutation assertions evaluate AFTER the input-presence
         // check; gates without assertions take the unchanged path below.
         if (
           gate.must_touch !== undefined ||
@@ -605,7 +605,7 @@ async function runOneGate(
   }
 }
 
-// M29 (ADR-073): evaluate must_touch/must_not_touch on an artifact_required
+// M29 (ADR-074): evaluate must_touch/must_not_touch on an artifact_required
 // gate whose input-presence check already passed. ALWAYS records the
 // mutation_report artifact (pass AND fail, evaluated or not) BEFORE the
 // terminal gate transition — a crash between leaves the gate `running`, so a

@@ -1,4 +1,4 @@
-// TC.2 (M29/ADR-073): pure path-set engine + git diff-range helpers + the
+// TC.2 (M29/ADR-074): pure path-set engine + git diff-range helpers + the
 // write-if-absent node-start head capture. Pure matrices run without git; the
 // git-backed cases build a real tmp repo (mirrors the existing
 // immutable-git-payload worktree-test pattern).

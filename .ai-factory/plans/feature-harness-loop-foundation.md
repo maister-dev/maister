@@ -377,7 +377,7 @@ implements P1+P3 of `docs/pv/improvement-roadmap.md`; treat as a new milestone e
 | Mutation gate fields under the existing 1.3.0 engine gate (no bump) | `docs/flow-dsl.md` engine-gate prose + ADR (D-C6) |
 | New env var `MAISTER_HARNESS_NEVER_FIRED_MIN` (A) | `docs/configuration.md` env table + `.env.example`; host-env only per ADR-023 — no compose |
 | Observatory metrics | `docs/system-analytics/observatory.md` + new ADR (D-A1..D-A4 formulas, mirrors ADR-051) |
-| New decisions | `docs/decisions.md`: ADR-072 (tentative) "Harness adequacy metrics" (A), ADR-073 (tentative) "Mutation sensor post-conditions" (C) — ADR-071 is claimed by the sibling outbound-webhooks branch; RE-VERIFY numbering against main at merge (patch lesson 2026-06-09-18.47). B needs NO new ADR (ADR-063 covers it) |
+| New decisions | `docs/decisions.md`: ADR-073 (tentative) "Harness adequacy metrics" (A), ADR-074 (tentative) "Mutation sensor post-conditions" (C) — ADR-071 is claimed by the sibling outbound-webhooks branch; RE-VERIFY numbering against main at merge (patch lesson 2026-06-09-18.47). B needs NO new ADR (ADR-063 covers it) |
 
 No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFIG`,
 `PRECONDITION`). New env vars: `MAISTER_NODE_OUTPUT_MAX_BYTES` and
@@ -397,7 +397,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
 ### Phase 0 — Docs-first specs (A & C; B is already specced)
 
 - [x] **T0.1 — ADR + observatory.md spec for harness adequacy (A).** Append ADR
-  ("Harness adequacy & coherence metrics", tentatively **ADR-072** — ADR-071 is
+  ("Harness adequacy & coherence metrics", tentatively **ADR-073** — ADR-071 is
   claimed by the sibling outbound-webhooks branch; re-verify the number against
   main at merge) to
   `docs/decisions.md`: D-A1 formulas (firing-rate, never-fired env threshold
@@ -411,7 +411,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   *Logging:* n/a (docs). *Verify:* `pnpm validate:docs` green; ADR follows R4
   template; no formula duplicated outside the ADR (R7).
 - [x] **T0.2 — ADR + docs spec for the mutation sensor (C).** Append ADR ("Artifact
-  post-conditions — mutation sensor", tentatively **ADR-073**, same merge-time
+  post-conditions — mutation sensor", tentatively **ADR-074**, same merge-time
   numbering re-verify as T0.1): D-C1..D-C7 (gate fields,
   `restriction.paths` contract + `unmatchable` semantics, node-scoped `must_touch`
   + cumulative `must_not_touch` ranges incl. node-start capture file and fallback
@@ -759,7 +759,7 @@ per-ATTEMPT strict diff deltas (v1 uses the since-first-attempt node range, D-C3
 **Status: COMPLETE (2026-06-10, /aif-implement).** All 19 tasks done. Five
 commits on `feature/harness-loop-foundation`:
 
-1. `4dd41670` docs(harness): ADR-072 + ADR-073 + Designed specs (T0.1-T0.3)
+1. `4dd41670` docs(harness): ADR-073 + ADR-074 + Designed specs (T0.1-T0.3)
 2. `dc286d69` feat(flows): P1 structured node output (TB.1-TB.5)
 3. `1ab372ce` feat(observatory): harness adequacy & coherence (TA.1-TA.5)
 4. `59f2f5fc` feat(gates): P3 mutation sensor (TC.1-TC.5)
@@ -799,7 +799,7 @@ fields; re-enable rewrites material wholesale).
 
 **Merge note:** promotion per policy - local `git merge --no-ff` of
 `feature/harness-loop-foundation` into `main` (or PR). At merge: RE-VERIFY
-ADR numbering against main (ADR-072/073 tentative; ADR-071 claimed by the
+ADR numbering against main (ADR-073/073 tentative; ADR-071 claimed by the
 sibling outbound-webhooks branch) and re-run `pnpm validate:docs`. Suggest
 adding the milestone via `/aif-roadmap` ("M29. Harness-loop foundation -
 adequacy metrics + P1 structured output + P3 mutation sensor: Implemented").

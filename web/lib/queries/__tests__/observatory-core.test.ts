@@ -312,7 +312,7 @@ function manifest(over: Partial<FlowManifestInput> = {}): FlowManifestInput {
   };
 }
 
-describe("harness adequacy rollups (ADR-072)", () => {
+describe("harness adequacy rollups (ADR-073)", () => {
   it("exports the honest-N display threshold", () => {
     expect(MIN_GROUP_EXECUTIONS).toBe(3);
   });

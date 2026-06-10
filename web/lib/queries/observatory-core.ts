@@ -71,7 +71,7 @@ export interface ArtifactContribution {
   runIds: string[];
 }
 
-// ADR-072 honest-N display threshold: groups with fewer terminal executions
+// ADR-073 honest-N display threshold: groups with fewer terminal executions
 // render "—", never 0%.
 export const MIN_GROUP_EXECUTIONS = 3;
 

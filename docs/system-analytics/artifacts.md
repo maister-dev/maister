@@ -48,7 +48,7 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
 - **Mutation report (M29 — Implemented)** — the deterministic post-condition
   evidence of an `artifact_required` gate with `must_touch`/`must_not_touch`
   assertions
-  ([ADR-073](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)).
+  ([ADR-074](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)).
   Recorded on EVERY evaluation (pass and fail): `producer: "gate"`,
   `kind: "mutation_report"`, locator `{ kind: "inline", text: <report JSON> }`,
   recorded BEFORE the terminal gate transition. First writer of
@@ -333,7 +333,7 @@ All logs use the module-local pino logger per the existing pattern
 - ADRs: [ADR-037](../decisions.md#adr-037-typed-artifact-model),
   [ADR-038](../decisions.md#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022),
   [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer),
-  [ADR-073 (mutation sensor, M29)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
+  [ADR-074 (mutation sensor, M29)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
   [ADR-022](../decisions.md) (projector, lands with M12),
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),

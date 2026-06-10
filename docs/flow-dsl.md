@@ -423,7 +423,7 @@ The block is meaningful only for `kind: external_check`. Placing it on any other
 > **Status (M29 — Implemented).** Deterministic post-condition assertions over the
 > run worktree's git diff, valid ONLY on `kind: artifact_required` gates.
 > Rationale, range semantics, and the `mutation_report` shape are normative in
-> [ADR-073](decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)
+> [ADR-074](decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)
 > — not restated here.
 
 ```yaml

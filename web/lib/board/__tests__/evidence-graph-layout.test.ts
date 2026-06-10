@@ -273,7 +273,7 @@ describe("stateLabel / kindLabel", () => {
   });
 });
 
-// M29 (ADR-073): the mutation_report artifact kind is the first artifact kind
+// M29 (ADR-074): the mutation_report artifact kind is the first artifact kind
 // with a catalog translation; every other kind passes through raw.
 describe("artifactKindLabel", () => {
   it("translates mutation_report and falls back to the raw token otherwise", () => {

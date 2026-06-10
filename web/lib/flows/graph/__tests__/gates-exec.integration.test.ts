@@ -442,7 +442,7 @@ describe("T4.2: artifact_required gate (M12 typed artifacts)", () => {
 });
 
 // ===========================================================================
-// M29 (ADR-073): mutation assertions on artifact_required gates
+// M29 (ADR-074): mutation assertions on artifact_required gates
 // ===========================================================================
 
 async function git(cwd: string, ...args: string[]): Promise<string> {

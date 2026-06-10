@@ -1098,7 +1098,7 @@ validity FSM.
   kind: 'diff' | 'log' | 'test_report' | 'lint_report'
       | 'ai_judgment' | 'human_note' | 'commit_set'
       | 'checkpoint' | 'preview' | 'generic_file'
-      | 'mutation_report',                   // M29 (ADR-073) — text column, no migration
+      | 'mutation_report',                   // M29 (ADR-074) — text column, no migration
   producer: 'runner' | 'projector' | 'takeover' | 'gate' | 'human',
   locator (jsonb),                          // discriminated union, server-written only:
                                             //   git-range{ baseCommit, headRef }

@@ -117,7 +117,7 @@ export const restrictionCapabilitySchema = capabilityCommonSchema.extend({
   kind: z.literal("restriction").default("restriction"),
   path: z.string().min(1).optional(),
   content: z.string().min(1).optional(),
-  // M29 (ADR-073): machine-readable subset the mutation sensor can check
+  // M29 (ADR-074): machine-readable subset the mutation sensor can check
   // (`diff ∩ paths`). Free-text-only restrictions (no paths) are reported
   // `unmatchable`, never failed on. Capability config — no engine floor.
   paths: z.array(z.string().min(1)).optional(),
@@ -280,7 +280,7 @@ export const flowCompatSchema = z.object({
 });
 
 // --- M12: typed artifact kinds (produces[]) — ADR-TBD --------------------
-// `mutation_report` added in M29 (ADR-073): the deterministic post-condition
+// `mutation_report` added in M29 (ADR-074): the deterministic post-condition
 // evidence of an artifact_required gate with mutation assertions.
 export const ARTIFACT_KINDS = [
   "diff",
@@ -356,7 +356,7 @@ export const gateSchema = z
     staleFrom: z.array(z.string().min(1)).optional(),
     external: gateExternalSchema.optional(),
     calibration: gateCalibrationSchema.optional(),
-    // M29 (ADR-073): deterministic mutation assertions, valid ONLY on
+    // M29 (ADR-074): deterministic mutation assertions, valid ONLY on
     // kind: artifact_required (superRefine below). `must_not_touch` v1 accepts
     // only the literal "restrictions" — it reads the node's resolved M14
     // restriction set, never an own path list.

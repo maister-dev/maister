@@ -85,7 +85,7 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
     case "rule":
       return { path: c.path ?? null, hasContent: !!c.content };
     case "restriction":
-      // M29 (ADR-073): `paths` is the machine-readable subset the mutation
+      // M29 (ADR-074): `paths` is the machine-readable subset the mutation
       // sensor checks — it must survive into capability_records.material.
       return {
         path: c.path ?? null,

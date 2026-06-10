@@ -500,7 +500,7 @@ describe("readiness-core: liveBlockingGates", () => {
 });
 
 // ==============================================================================
-// M29 (ADR-073, D-C7): assertion-aware artifact_required failed re-evaluation
+// M29 (ADR-074, D-C7): assertion-aware artifact_required failed re-evaluation
 // ==============================================================================
 
 describe("readiness-core: blockingGateContribution (M29 assertion-awareness)", () => {

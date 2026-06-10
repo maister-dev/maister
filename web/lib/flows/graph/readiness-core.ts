@@ -98,7 +98,7 @@ export function gateStatusContribution(
 }
 
 // True when a gate verdict carries the M29 mutation-assertion failure marker
-// (`payload.assertionFailed: true`, ADR-073). `verdict` is open jsonb — narrow
+// (`payload.assertionFailed: true`, ADR-074). `verdict` is open jsonb — narrow
 // structurally so callers can pass rows typed `any`/`unknown`.
 function hasAssertionFailedVerdict(verdict: unknown): boolean {
   if (verdict === null || typeof verdict !== "object") return false;
@@ -122,7 +122,7 @@ function hasAssertionFailedVerdict(verdict: unknown): boolean {
 // artifact_required gate can never read `ready` on the merge path while showing
 // `failed` on a badge. (M15, Task 21)
 //
-// M29 exception (ADR-073, D-C7): a failed gate whose verdict carries
+// M29 exception (ADR-074, D-C7): a failed gate whose verdict carries
 // `payload.assertionFailed: true` HAS its inputs present — inputs-present is
 // no longer sufficient to clear it. It stays `failed` until a rework attempt
 // re-runs the gate and passes (the latest-attempt filter then drops this row).

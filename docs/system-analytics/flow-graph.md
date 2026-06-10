@@ -334,7 +334,7 @@ transition), and stores `payload.assertionFailed: true` in the verdict on
 failure. Git unavailable → blocking fails with reason, advisory records
 `evaluated: false`. Gates without assertions are byte-identical to today. DSL:
 [`../flow-dsl.md`](../flow-dsl.md) §mutation assertions; semantics:
-[ADR-073](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates);
+[ADR-074](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates);
 readiness interaction: [`readiness.md`](readiness.md).
 
 ### `steps[]` → nodes compile (back-compat)
@@ -501,7 +501,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
   [ADR-063 Structured output + run-context (M26 — P1 Implemented, P7 Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
-  [ADR-073 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
+  [ADR-074 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
 - Spec (M26 — P1 Implemented, P7 Designed):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),

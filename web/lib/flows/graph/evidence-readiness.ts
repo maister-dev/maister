@@ -135,7 +135,7 @@ export async function assertEvidenceReady(
     mode: string;
     status: GateResultStatus;
     inputArtifactRefs: string[] | null;
-    // M29 (ADR-073): blockingGateContribution reads payload.assertionFailed —
+    // M29 (ADR-074): blockingGateContribution reads payload.assertionFailed —
     // an assertion-failed mutation gate must NOT self-clear on inputs-present.
     verdict: unknown;
     createdAt: Date;
