@@ -17,6 +17,85 @@
     "openInbox": "Открыть инбокс",
     "history": "история"
   },
+  "projectSchedules": {
+    "title": "Расписания",
+    "sub": "Запуск ранов по cron для задач этого проекта",
+    "create": "Новое расписание",
+    "empty": "Расписаний пока нет",
+    "table": {
+      "name": "Название",
+      "task": "Задача",
+      "cron": "Cron",
+      "timezone": "Часовой пояс",
+      "overlap": "Пересечения",
+      "state": "Состояние",
+      "nextFire": "Следующий запуск",
+      "lastOutcome": "Последний исход"
+    },
+    "enabledBadge": "Включено",
+    "pausedBadge": "Пауза",
+    "queuedCatchUp": "Догон в очереди",
+    "pause": "Пауза",
+    "resume": "Возобновить",
+    "triggerNow": "Запустить сейчас",
+    "edit": "Изменить",
+    "overlap": {
+      "skip": "Пропускать",
+      "queue_one": "Очередь (один)",
+      "start_anyway": "Запускать всё равно"
+    },
+    "outcome": {
+      "launched": "Запущено",
+      "queued_pending": "В очереди (лимит)",
+      "catchup_queued": "Догон в очереди",
+      "skipped_task_busy": "Пропущено — задача занята",
+      "skipped_cap": "Пропущено — лимит занят",
+      "skipped_target_terminal": "Пропущено — задача завершена",
+      "skipped_crashed": "Пропущено — последний запуск упал",
+      "launch_failed": "Запуск не удался",
+      "dispatching": "Диспетчеризация…"
+    },
+    "triggerOutcome": {
+      "launched": "Запуск создан",
+      "queued_pending": "Запуск в очереди за лимитом параллельности",
+      "catchup_queued": "Догон поставлен в очередь до освобождения задачи",
+      "skipped_task_busy": "Пропущено: у задачи уже есть активный запуск",
+      "skipped_cap": "Пропущено: достигнут лимит параллельности",
+      "skipped_target_terminal": "Пропущено: задача в терминальном статусе",
+      "skipped_crashed": "Пропущено: последний запуск упал",
+      "launch_failed": "Запуск не удался",
+      "dispatching": "Диспетчеризация"
+    },
+    "modal": {
+      "createTitle": "Новое расписание",
+      "editTitle": "Изменить расписание",
+      "nameLabel": "Название",
+      "taskLabel": "Задача",
+      "taskPlaceholder": "Выберите задачу…",
+      "cronLabel": "Cron-выражение",
+      "timezoneLabel": "Часовой пояс",
+      "overlapLabel": "Политика пересечений",
+      "overlapHint": {
+        "skip": "Пропускать срабатывание, пока у задачи есть активный запуск",
+        "queue_one": "Запомнить один пропущенный запуск и выполнить его, когда задача освободится",
+        "start_anyway": "Всегда создавать новый запуск, даже параллельно"
+      },
+      "runnerLabel": "Раннер",
+      "runnerDefault": "По умолчанию проекта",
+      "enabledLabel": "Включено",
+      "nameRequired": "Укажите название",
+      "taskRequired": "Выберите задачу",
+      "cronRequired": "Укажите cron-выражение",
+      "invalidInput": "Неверный ввод",
+      "save": "Сохранить",
+      "saving": "Сохранение…",
+      "cancel": "Отмена",
+      "delete": "Удалить",
+      "deleteConfirm": "Удалить это расписание?",
+      "deleteConfirmYes": "Удалить",
+      "deleteConfirmNo": "Оставить"
+    }
+  },
   "nav": {
     "projects": "Проекты",
     "inbox": "Инбокс",
@@ -24,6 +103,7 @@
     "repo": "Репозиторий",
     "agents": "Агенты",
     "mcps": "MCP",
+    "schedules": "Расписания",
     "packages": "Пакеты",
     "integrations": "Интеграции",
     "settings": "Настройки",

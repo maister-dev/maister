@@ -702,7 +702,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
 
 ### Phase 4 — UI + i18n
 
-- [ ] **T4.1 — Schedules tab + table panel** (depends: T3.2)
+- [x] **T4.1 — Schedules tab + table panel** (depends: T3.2)
   - Deliverable: `"schedules"` wired through `ProjectTab`/`TABS`/labels/hrefs
     (`web/components/board/project-tabs.tsx`) + `VALID_TABS` and a render
     branch in `app/(app)/projects/[slug]/page.tsx` following the mcps-branch
@@ -722,7 +722,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
   - Logging: none beyond fetch error surface (`role="alert"`).
   - Verify: typecheck + unit green; manual `pnpm dev` spot-check.
 
-- [ ] **T4.2 — Create/edit modal + row actions** (depends: T4.1)
+- [x] **T4.2 — Create/edit modal + row actions** (depends: T4.1)
   - Deliverable: `web/components/schedules/schedule-edit-modal.tsx` modeled on
     `scheduler-job-edit-modal.tsx` (create|edit single modal owning delete +
     confirm; focus trap, Escape, scroll lock, `aria-modal`, `role="alert"`
@@ -739,7 +739,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
   - Tests: modal render + payload-shape unit test per repo precedent.
   - Verify: typecheck + unit green.
 
-- [ ] **T4.3 — i18n EN+RU** (depends: T4.1, T4.2)
+- [x] **T4.3 — i18n EN+RU** (depends: T4.1, T4.2)
   - Deliverable: new `projectSchedules` namespace in `messages/en.json` +
     `messages/ru.json` (tab label, table headers, outcome/policy labels, modal
     fields, confirmations, toasts) + `adminScheduler` kind label addition
@@ -751,7 +751,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
 
 ### Phase 5 — Scenario hardening, e2e, as-built docs
 
-- [ ] **T5.1 — End-to-end engine integration scenarios** (depends: T2.4, T3.2)
+- [x] **T5.1 — End-to-end engine integration scenarios** (depends: T2.4, T3.2)
   - Deliverable: `web/lib/run-schedules/__tests__/tick.integration.test.ts`
     driving `runSchedulerTick()` (not the dispatcher directly): seeded due
     schedule fires through the claimed `run_schedule.dispatcher` job with the
