@@ -247,6 +247,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       logger,
       mcpServers: parsed.mcpServers,
       resumeSessionId: parsed.resumeSessionId,
+      runner: parsed.runner,
     });
 
     registry.attachAcp(sessionId, connection, acpSessionId);

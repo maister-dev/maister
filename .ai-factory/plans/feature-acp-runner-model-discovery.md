@@ -27,6 +27,11 @@
 >   (T1.2); in-memory TTL cache (T1.3); `POST /model-catalog/resolve` route (T1.4). Reviewer
 >   pass applied (router-without-sidecarId→409 `superRefine` + test). Gate: supervisor unit 141
 >   + integration 40 green, tsc + scoped eslint clean. Checkpoint #2.
+> - ✅ **Phase 2** — ACP active probe w/ deferred-release SIGTERM (T2.1, +mock-acp-models.mjs);
+>   provider-API + curated GLM sources (T2.2); CCR source (T2.3); passive harvest + runner
+>   threading in acp-client (T2.4); production source-registry wired in main.ts. Reviewer pass
+>   applied (robust `/vN$` models-URL heuristic; defensive probe-timeout rejection catch).
+>   Gate: supervisor unit 173 + integration 45 green, tsc + scoped eslint clean. Checkpoint #3.
 > - **Plan-vs-reality corrections found (branch == base `633f74c7`):** (a) the plan's
 >   "architecture.md has NO component table" note is **wrong** — the table exists at
 >   ~line 188; a row was added. (b) The T0B.3 advisory shape is **frozen** as a

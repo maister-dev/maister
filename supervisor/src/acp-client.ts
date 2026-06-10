@@ -14,6 +14,8 @@ import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import { modelCatalogCache } from "./model-catalog/cache";
+import { harvestSessionModels } from "./model-catalog/harvest";
 import {
   pendingPermissions as defaultPendingPermissions,
   type AcpPermissionOutcome,
@@ -24,6 +26,7 @@ import {
   SupervisorError,
   type McpServerInput,
   type PermissionOptionDescriptor,
+  type RunnerLaunch,
   type SessionEvent,
   type SessionRecord,
 } from "./types";
@@ -41,6 +44,10 @@ export type CreateAcpConnectionArgs = {
   // When set, resume the prior ACP session via the `session/resume` call
   // (restores context, no history replay) instead of creating a `session/new`.
   resumeSessionId?: string;
+  // The launched runner. Threaded for the ADR-073 passive harvest (the model
+  // state on the session/new + session/resume response is fed into the shared
+  // model-catalog cache) and reused by the model-application path (Phase 3).
+  runner?: RunnerLaunch;
 };
 
 export type CreateAcpConnectionResult = {
@@ -205,16 +212,23 @@ export async function createAcpConnection(
     };
 
     if (agentCaps.sessionCapabilities?.resume) {
-      await connection.resumeSession({
+      const resumeResp = await connection.resumeSession({
         sessionId: args.resumeSessionId,
         cwd: worktreePath,
         mcpServers: acpMcpServers as acp.McpServer[],
       });
+
       logger.info(
         { sessionId, acpSessionId: args.resumeSessionId },
         "acp resume-session",
       );
       record.acpSessionId = args.resumeSessionId;
+      harvestSessionModels(
+        args.runner,
+        resumeResp.models,
+        modelCatalogCache,
+        logger,
+      );
 
       return { connection, acpSessionId: args.resumeSessionId };
     }
@@ -239,6 +253,12 @@ export async function createAcpConnection(
   );
 
   record.acpSessionId = newSessionResp.sessionId;
+  harvestSessionModels(
+    args.runner,
+    newSessionResp.models,
+    modelCatalogCache,
+    logger,
+  );
 
   return { connection, acpSessionId: newSessionResp.sessionId };
 }

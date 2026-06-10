@@ -4,6 +4,7 @@ import pino from "pino";
 import { ccrManager } from "./ccr-manager";
 import { startHeartbeatWatcher } from "./heartbeat";
 import { registerRoutes } from "./http-api";
+import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
 import { pendingPermissions } from "./pending-permissions";
 import { SessionRegistry } from "./registry";
 
@@ -50,7 +51,14 @@ export async function start(): Promise<void> {
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: loggerConfig });
 
-  registerRoutes({ app, registry, logger, runtimeRoot, killGraceMs });
+  registerRoutes({
+    app,
+    registry,
+    logger,
+    runtimeRoot,
+    killGraceMs,
+    modelCatalog: { registry: createDefaultModelSourceRegistry(ccrManager) },
+  });
 
   const stopHeartbeat = startHeartbeatWatcher({
     registry,
