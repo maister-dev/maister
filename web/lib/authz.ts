@@ -53,6 +53,7 @@ export const PROJECT_ACTION_MIN = {
   recoverRun: "member",
   createTask: "member",
   answerHitl: "member",
+  manageSchedules: "member",
   editSettings: "admin",
   managePackages: "admin",
   manageCatalog: "admin",
