@@ -38,7 +38,10 @@ vi.mock("next-intl", () => ({
     `${namespace}.${key}`,
 }));
 
-import { HitlDecisionControls } from "@/components/board/hitl-decision-controls";
+import {
+  HitlDecisionControls,
+  reviewLoopInfo,
+} from "@/components/board/hitl-decision-controls";
 
 import type { HitlOption } from "@/lib/queries/hitl";
 
@@ -536,5 +539,247 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
       expect(disabledCount).toBe(0);
       expect(buttonCount).toBeGreaterThan(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR-071 Task 13 — review-gate panel: loop chip, exhaustion boundary,
+// approve soft-warn, unresolved/outdated count badges.
+//
+// All additions are OPTIONAL (props + labels): every pre-existing case above
+// renders without them and stays green. The boundary semantics mirror
+// `lib/flows/hitl-validate.ts` (frozen docs): total allowed gate visits =
+// maxLoops + 1; rework is disabled when gateAttempt > maxLoops; the chip is
+// "Rework loop N of M" with N = gateAttempt, M = maxLoops + 1. Approve is
+// NEVER blocked — open threads only soft-warn.
+// ---------------------------------------------------------------------------
+
+const PANEL_LABELS = {
+  ...LABELS,
+  reviewOpenCount: "$count unresolved",
+  reviewOutdatedCount: "$count outdated",
+  reviewLoopChip: "Rework loop $n of $m",
+  reviewApproveOpenWarn: "$count open threads stay unresolved on approve",
+  reviewReworkExhausted: "rework limit reached: all $m review visits used",
+};
+
+const REVIEW_SCHEMA_BASE = {
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
+};
+
+// The opening tag of the <button> whose text content contains `label`.
+function buttonTagFor(html: string, label: string): string {
+  const idx = html.indexOf(label);
+
+  expect(idx).toBeGreaterThan(-1);
+  const start = html.lastIndexOf("<button", idx);
+
+  expect(start).toBeGreaterThan(-1);
+
+  return html.slice(start, html.indexOf(">", start) + 1);
+}
+
+describe("HitlDecisionControls — review gate panel (ADR-071 Task 13)", () => {
+  describe("rework-loop chip", () => {
+    it("renders 'Rework loop N of M' with N = gateAttempt and M = maxLoops + 1", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE, maxLoops: 3, gateAttempt: 2 },
+        labels: PANEL_LABELS,
+      });
+
+      expect(html).toContain("Rework loop 2 of 4");
+    });
+
+    it("renders the boundary visit as N = M", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE, maxLoops: 2, gateAttempt: 3 },
+        labels: PANEL_LABELS,
+      });
+
+      expect(html).toContain("Rework loop 3 of 3");
+    });
+
+    it("renders no chip when the node declares no rework (maxLoops null)", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: {
+          ...REVIEW_SCHEMA_BASE,
+          maxLoops: null,
+          gateAttempt: 1,
+        },
+        labels: PANEL_LABELS,
+      });
+
+      expect(html).not.toContain("Rework loop");
+    });
+
+    it("renders no chip for a legacy schema without the loop fields", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+      });
+
+      expect(html).not.toContain("Rework loop");
+    });
+  });
+
+  describe("exhaustion boundary (gateAttempt > maxLoops)", () => {
+    it("disables the rework decision and the send-back button with a translated reason", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE, maxLoops: 1, gateAttempt: 2 },
+        labels: PANEL_LABELS,
+      });
+
+      expect(buttonTagFor(html, "run.decisionRework")).toContain("disabled");
+      expect(buttonTagFor(html, "run.sendBackWithComments")).toContain(
+        "disabled",
+      );
+      expect(html).toContain("rework limit reached: all 2 review visits used");
+    });
+
+    it("never disables approve at the boundary", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE, maxLoops: 1, gateAttempt: 2 },
+        labels: PANEL_LABELS,
+      });
+
+      expect(buttonTagFor(html, "run.decisionApprove")).not.toContain(
+        "disabled",
+      );
+    });
+
+    it("keeps rework enabled on the last allowed pass (gateAttempt = maxLoops)", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE, maxLoops: 2, gateAttempt: 2 },
+        labels: PANEL_LABELS,
+      });
+
+      expect(buttonTagFor(html, "run.decisionRework")).not.toContain(
+        "disabled",
+      );
+      expect(buttonTagFor(html, "run.sendBackWithComments")).not.toContain(
+        "disabled",
+      );
+      expect(html).not.toContain("rework limit reached");
+    });
+
+    it("applies no boundary for a legacy schema without the loop fields", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+      });
+
+      expect(buttonTagFor(html, "run.decisionRework")).not.toContain(
+        "disabled",
+      );
+    });
+  });
+
+  describe("approve soft-warn with open threads", () => {
+    it("renders the warn when open threads exist and keeps approve enabled", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+        reviewCounts: { openCount: 2, outdatedCount: 0 },
+      });
+
+      expect(html).toContain("2 open threads stay unresolved on approve");
+      expect(buttonTagFor(html, "run.decisionApprove")).not.toContain(
+        "disabled",
+      );
+    });
+
+    it("renders no warn when zero threads are open", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+        reviewCounts: { openCount: 0, outdatedCount: 0 },
+      });
+
+      expect(html).not.toContain("open threads stay unresolved");
+    });
+
+    it("renders no warn when counts are not provided (board/inbox consumers)", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+      });
+
+      expect(html).not.toContain("open threads stay unresolved");
+    });
+  });
+
+  describe("count badges", () => {
+    it("renders unresolved and outdated badges with their counts", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+        reviewCounts: { openCount: 3, outdatedCount: 2 },
+      });
+
+      expect(html).toContain("3 unresolved");
+      expect(html).toContain("2 outdated");
+    });
+
+    it("hides each badge when its count is zero", () => {
+      const html = render({
+        kind: "human",
+        reviewSchema: { ...REVIEW_SCHEMA_BASE },
+        labels: PANEL_LABELS,
+        reviewCounts: { openCount: 0, outdatedCount: 0 },
+      });
+
+      expect(html).not.toContain("unresolved");
+      expect(html).not.toContain("outdated");
+    });
+  });
+});
+
+describe("reviewLoopInfo — pure boundary helper (mirrors hitl-validate)", () => {
+  it("returns null for a null schema", () => {
+    expect(reviewLoopInfo(null)).toBeNull();
+  });
+
+  it("returns null when maxLoops is null (no rework declared)", () => {
+    expect(
+      reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, maxLoops: null, gateAttempt: 1 }),
+    ).toBeNull();
+  });
+
+  it("returns null for legacy schemas without the loop fields", () => {
+    expect(reviewLoopInfo({ ...REVIEW_SCHEMA_BASE })).toBeNull();
+    expect(reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, maxLoops: 2 })).toBeNull();
+    expect(
+      reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, gateAttempt: 1 }),
+    ).toBeNull();
+  });
+
+  it("is not exhausted below and at the last allowed pass", () => {
+    expect(
+      reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, maxLoops: 2, gateAttempt: 1 }),
+    ).toEqual({ gateAttempt: 1, totalVisits: 3, exhausted: false });
+    expect(
+      reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, maxLoops: 2, gateAttempt: 2 }),
+    ).toEqual({ gateAttempt: 2, totalVisits: 3, exhausted: false });
+  });
+
+  it("is exhausted strictly above maxLoops (gateAttempt > maxLoops)", () => {
+    expect(
+      reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, maxLoops: 2, gateAttempt: 3 }),
+    ).toEqual({ gateAttempt: 3, totalVisits: 3, exhausted: true });
   });
 });

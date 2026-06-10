@@ -2,8 +2,6 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { DiffPrepResult } from "@/lib/diff/prepare";
-import type { Placement } from "@/lib/review-comments/anchor";
-import type { ReviewComment } from "@/lib/review-comments/service";
 
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -12,24 +10,24 @@ import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { projects, runs, workspaces } from "@/lib/db/schema";
-import { prepareDiff } from "@/lib/diff/prepare";
+import { runs } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import {
-  computePlacement,
-  extractAnchorContent,
-} from "@/lib/review-comments/anchor";
+import { extractAnchorContent } from "@/lib/review-comments/anchor";
 import { httpStatusForCode, toCommentDto } from "@/lib/review-comments/dto";
+import {
+  computeRunDiff,
+  placementOf,
+} from "@/lib/review-comments/run-diff-source";
 import {
   createReply,
   createRoot,
   listThreads,
 } from "@/lib/review-comments/service";
-import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
 
 // ADR-071 review-comment routes (GET list+placement, POST root|reply). Thin
 // handlers: zod parse, authz (projectId always derived from the run row),
-// ONE diff computation per request, service call, MaisterError→HTTP map.
+// ONE diff computation per request (`run-diff-source.ts` — shared with the
+// run-detail layout's gate panel), service call, MaisterError→HTTP map.
 // The open-review-gate guard and thread integrity live in the service.
 
 const log = pino({
@@ -101,71 +99,6 @@ async function loadRun(
   const rows = await dbh.select().from(runs).where(eq(runs.id, runId));
 
   return rows[0] ?? null;
-}
-
-// The same diff source the review view renders (diffRunWorkspace +
-// prepareDiff over the committed base..branch range) — computed at most ONCE
-// per request.
-async function computeRunDiff(
-  dbh: NodePgDatabase,
-  run: RunRow,
-): Promise<DiffPrepResult> {
-  const [workspaceRows, projectRows] = await Promise.all([
-    dbh.select().from(workspaces).where(eq(workspaces.runId, run.id)),
-    dbh.select().from(projects).where(eq(projects.id, run.projectId)),
-  ]);
-  const workspace = workspaceRows[0];
-  const project = projectRows[0];
-
-  if (!workspace) {
-    throw new MaisterError("PRECONDITION", `workspace not found: ${run.id}`);
-  }
-  if (workspace.removedAt) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `workspace already removed for run: ${run.id}`,
-    );
-  }
-  if (!project) {
-    throw new MaisterError("PRECONDITION", `project not found: ${run.id}`);
-  }
-
-  const base =
-    workspace.baseCommit ??
-    (await resolveBaseRef({
-      worktreePath: workspace.worktreePath,
-      branch: workspace.branch,
-      mainBranch: project.mainBranch,
-    }));
-  const { text, truncated } = await diffRunWorkspace({
-    projectRepoPath: workspace.worktreePath,
-    baseCommit: base,
-    branch: workspace.branch,
-  });
-
-  return prepareDiff(text, truncated);
-}
-
-// Roots carry all anchor fields (DB CHECK); the null guard only keeps the
-// mapping total — a defective row degrades to "outdated", never a crash.
-function placementOf(
-  prepared: DiffPrepResult | null,
-  root: ReviewComment,
-): Placement {
-  if (!prepared) return "outdated";
-
-  const { filePath, side, line, lineContent } = root;
-
-  if (
-    filePath === null ||
-    side === null ||
-    line === null ||
-    lineContent === null
-  ) {
-    return "outdated";
-  }
-
-  return computePlacement(prepared, { filePath, side, line, lineContent });
 }
 
 export async function GET(

@@ -41,7 +41,10 @@ import FileTree, {
   type FileTreeLabels,
 } from "@/components/workbench/file-tree";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
-import RunDiff, { type RunDiffLabels } from "@/components/workbench/run-diff";
+import RunDiff, {
+  type RunDiffLabels,
+  type RunDiffReviewContext,
+} from "@/components/workbench/run-diff";
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
@@ -49,6 +52,11 @@ import { isMaisterError } from "@/lib/errors";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { isHumanReviewGate } from "@/lib/flows/review-gate";
+import {
+  getReviewGateThreadCounts,
+  type ReviewThreadCounts,
+} from "@/lib/review-comments/run-diff-source";
+import { PENDING_HITL_RUN_STATUS } from "@/lib/services/hitl";
 import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
@@ -403,6 +411,50 @@ export default async function RunDetailLayout({
     offersTakeover(detail.pendingHitl?.schema);
   const isHumanWorking = detail.status === "HumanWorking";
 
+  // ADR-071 Task 13: review-gate panel data — thread counts + the RunDiff
+  // review context. Computed ONLY when the pending gate is a human review
+  // gate (one threads query + at most one diff prep, per the D5 perf rule);
+  // every other run pays nothing.
+  const hasReviewGate =
+    flowGraphData !== null && isHumanReviewGate(detail.pendingHitl);
+  let reviewGateCounts: ReviewThreadCounts | null = null;
+  let gateDiffReview: RunDiffReviewContext | undefined;
+
+  if (hasReviewGate) {
+    reviewGateCounts = await getReviewGateThreadCounts(
+      detail.runId,
+      detail.projectId,
+    );
+
+    const tWorkbench = await getTranslations("workbench");
+
+    gateDiffReview = {
+      currentUserId: user.id,
+      // Composing requires answerHitl (member+, same predicate the routes
+      // enforce) AND an actually-open gate: HumanWorking parks the pending
+      // hitl row but closes the write window (service guard allow-list).
+      canComment: canAct && PENDING_HITL_RUN_STATUS.has(detail.status),
+      labels: {
+        composerPlaceholder: tWorkbench("diff.review.composerPlaceholder"),
+        composerSubmit: tWorkbench("diff.review.submit"),
+        composerCancel: tWorkbench("diff.review.cancel"),
+        reply: tWorkbench("diff.review.reply"),
+        edit: tWorkbench("diff.review.edit"),
+        delete: tWorkbench("diff.review.delete"),
+        resolve: tWorkbench("diff.review.resolve"),
+        unresolve: tWorkbench("diff.review.unresolve"),
+        resolved: tWorkbench("diff.review.resolved"),
+        iteration: tWorkbench("diff.review.iteration"),
+        expand: tWorkbench("diff.review.expand"),
+        collapse: tWorkbench("diff.review.collapse"),
+        outdatedTitle: tWorkbench("diff.review.outdatedTitle"),
+        sideOld: tWorkbench("diff.review.sideOld"),
+        sideNew: tWorkbench("diff.review.sideNew"),
+        error: tWorkbench("diff.review.error"),
+      },
+    };
+  }
+
   // M18 (T4.2): the base→run→target review surface for a flow run at `Review`.
   const showReview = detail.status === "Review" && detail.runKind === "flow";
   let reviewData: Awaited<ReturnType<typeof buildReviewPanelData>> | null =
@@ -620,13 +672,14 @@ export default async function RunDetailLayout({
                   status={detail.pendingHitl.assignmentStatus}
                 />
               </div>
-              {flowGraphData && isHumanReviewGate(detail.pendingHitl) ? (
+              {flowGraphData && hasReviewGate ? (
                 <div
                   className="mb-4 max-h-[480px] overflow-auto rounded-[10px] border border-amber-line bg-paper"
                   data-testid="hitl-gate-diff"
                 >
                   <RunDiff
                     labels={flowGraphData.diffLabels}
+                    review={gateDiffReview}
                     runId={detail.runId}
                   />
                 </div>
@@ -637,6 +690,7 @@ export default async function RunDetailLayout({
                 hitlRequestId={detail.pendingHitl.hitlRequestId}
                 kind={detail.pendingHitl.kind}
                 options={detail.pendingHitl.options}
+                reviewCounts={reviewGateCounts}
                 runId={detail.runId}
                 schema={detail.pendingHitl.schema}
               />

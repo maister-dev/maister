@@ -2,7 +2,10 @@
 
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { ReactElement } from "react";
-import type { ReviewSchema } from "@/components/board/hitl-decision-controls";
+import type {
+  ReviewSchema,
+  ReviewThreadCountsView,
+} from "@/components/board/hitl-decision-controls";
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -38,6 +41,10 @@ export interface RunHitlResponseProps {
   onRespond?: () => void;
   compact?: boolean;
   criticality?: "low" | "medium" | "high" | "critical" | null;
+  // ADR-071 Task 13: server-computed open/outdated review-thread counts for
+  // the run-detail gate panel; board/inbox consumers omit it (no badges, no
+  // approve soft-warn there).
+  reviewCounts?: ReviewThreadCountsView | null;
 }
 
 export function RunHitlResponse({
@@ -50,6 +57,7 @@ export function RunHitlResponse({
   onRespond,
   compact,
   criticality,
+  reviewCounts,
 }: RunHitlResponseProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
@@ -227,6 +235,11 @@ export function RunHitlResponse({
     reviewCommentsPlaceholder: t("reviewCommentsPlaceholder"),
     formInstructions: t("formInstructions"),
     formCustomPlaceholder: t("formCustomPlaceholder"),
+    reviewOpenCount: t("reviewOpenCount"),
+    reviewOutdatedCount: t("reviewOutdatedCount"),
+    reviewLoopChip: t("reviewLoopChip"),
+    reviewApproveOpenWarn: t("reviewApproveOpenWarn"),
+    reviewReworkExhausted: t("reviewReworkExhausted"),
   };
 
   return (
@@ -242,6 +255,7 @@ export function RunHitlResponse({
       kind={kind}
       labels={labels}
       options={options}
+      reviewCounts={reviewCounts}
       reviewSchema={reviewSchema}
       schema={schema}
       showConfidence={showConfidence}

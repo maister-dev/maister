@@ -1,18 +1,41 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { DiffViewProps as GitDiffViewProps } from "@git-diff-view/react";
 
 import {
   DiffFile,
   DiffModeEnum,
   DiffView as GitDiffView,
+  SplitSide,
 } from "@git-diff-view/react";
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { OutdatedThreadsSection } from "@/components/workbench/outdated-threads";
+import { ReviewCommentComposer } from "@/components/workbench/review-comment-composer";
+import {
+  ReviewThreadStack,
+  type ReviewCommentSide,
+  type ReviewCommentsLabels,
+  type ReviewThread,
+  type ReviewThreadActions,
+} from "@/components/workbench/review-thread-card";
 import { useTheme } from "@/lib/theme";
 
 import "@git-diff-view/react/styles/diff-view.css";
+
+// Re-exported so the review-mode owner (run-diff, next slice) and tests can
+// import the whole contract from one module.
+export type {
+  ReviewCommentDto,
+  ReviewCommentSide,
+  ReviewCommentStatus,
+  ReviewCommentsLabels,
+  ReviewThread,
+  ReviewThreadActions,
+  ReviewThreadPlacement,
+} from "@/components/workbench/review-thread-card";
 
 // TYPE-only mirror of the server prep DTO so this client component pulls no
 // server code (`@/lib/diff/prepare` is "server-only"). Kept structurally in sync
@@ -120,6 +143,66 @@ export function ChangedFilesList({
   );
 }
 
+// The anchor of a NEW root comment: the clicked diff line of the active file
+// (`side`: `old` = base, `new` = branch; `line` 1-based on that side).
+export type ReviewCommentAnchor = {
+  filePath: string;
+  side: ReviewCommentSide;
+  line: number;
+};
+
+// PR-grade review mode (ADR-071). Pure presentation + callbacks: the owner
+// (run-diff) fetches threads, performs the mutations, and refetches —
+// no data fetching happens inside the diff renderer.
+export interface DiffViewReview extends ReviewThreadActions {
+  threads: ReviewThread[];
+  currentUserId: string | null;
+  canComment: boolean;
+  busy?: boolean;
+  onCreateRoot: (
+    anchor: ReviewCommentAnchor,
+    body: string,
+  ) => void | Promise<void>;
+  labels: ReviewCommentsLabels;
+}
+
+export type ReviewExtendData = {
+  oldFile: Record<string, { data: ReviewThread[] }>;
+  newFile: Record<string, { data: ReviewThread[] }>;
+};
+
+// Inline threads of the ACTIVE file keyed the way the native git-diff-view
+// comment API expects: per diff side, by String(line) (ADR-071 D8). Outdated
+// placements and other files' threads never reach extendData.
+export function buildReviewExtendData(
+  threads: ReviewThread[],
+  activePath: string | null,
+): ReviewExtendData {
+  const oldFile: ReviewExtendData["oldFile"] = {};
+  const newFile: ReviewExtendData["newFile"] = {};
+
+  if (activePath !== null) {
+    for (const thread of threads) {
+      const { root } = thread;
+
+      if (thread.placement !== "inline") continue;
+      if (root.filePath !== activePath) continue;
+      if (root.side === null || root.line === null) continue;
+
+      const bucket = root.side === "old" ? oldFile : newFile;
+      const key = String(root.line);
+
+      (bucket[key] ??= { data: [] }).data.push(thread);
+    }
+  }
+
+  return { oldFile, newFile };
+}
+
+export function anchorSideOf(side: SplitSide): ReviewCommentSide {
+  return side === SplitSide.old ? "old" : "new";
+}
+
 export interface DiffViewProps {
   files: RunDiffFile[];
   perFile: PreparedFile[];
@@ -130,6 +213,11 @@ export interface DiffViewProps {
   // a partial prefix. Surfaces a blocking banner so a partial diff is never read
   // as the whole change.
   truncated?: boolean;
+  // Review mode (ADR-071): inline threads render on the diff via extendData,
+  // the add-widget composer opens on line click (canComment), and outdated
+  // threads list in a collapsible section below the diff. Absent → the
+  // renderer behaves exactly as before.
+  review?: DiffViewReview;
 }
 
 function parseDiffView(raw: string | null): DiffViewMode {
@@ -146,14 +234,16 @@ function parseDiffView(raw: string | null): DiffViewMode {
 // lowlight stub is never called (FINDING G — no highlighter ships to the
 // client). The tokens carry `--shiki-light`/`--shiki-dark` CSS vars and recolor
 // on the light/dark toggle via the diff-scoped rule in globals.css.
-// extendData / DiffViewWithMultiSelect stay reachable for the future code-review
-// comment surface; no comment UI is built here.
+// The optional `review` prop group (ADR-071) layers the native git-diff-view
+// comment API on top: extendData/renderExtendLine for inline threads,
+// diffViewAddWidget/renderWidgetLine for the composer.
 export function DiffView({
   files,
   perFile,
   labels,
   mode,
   truncated = false,
+  review,
 }: DiffViewProps): ReactElement {
   const { resolvedTheme } = useTheme();
   const router = useRouter();
@@ -192,6 +282,72 @@ export function DiffView({
     viewMode === "unified" ? DiffModeEnum.Unified : DiffModeEnum.Split;
   const diffTheme: "light" | "dark" =
     resolvedTheme === "light" ? "light" : "dark";
+
+  const reviewExtendData = useMemo(
+    () => (review ? buildReviewExtendData(review.threads, activePath) : null),
+    [review, activePath],
+  );
+
+  // Spread onto GitDiffView only in review mode so the review-off render
+  // stays byte-identical to the pre-review component.
+  const reviewDiffProps: Partial<
+    Pick<
+      GitDiffViewProps<ReviewThread[]>,
+      | "extendData"
+      | "renderExtendLine"
+      | "diffViewAddWidget"
+      | "onAddWidgetClick"
+      | "renderWidgetLine"
+    >
+  > =
+    review && reviewExtendData
+      ? {
+          extendData: reviewExtendData,
+          renderExtendLine: ({ data }) => (
+            <ReviewThreadStack
+              actions={review}
+              busy={review.busy}
+              canComment={review.canComment}
+              currentUserId={review.currentUserId}
+              labels={review.labels}
+              threads={data}
+            />
+          ),
+          ...(review.canComment && activePath !== null
+            ? {
+                diffViewAddWidget: true,
+                // The composer anchor arrives via renderWidgetLine args and
+                // the lib opens/closes the widget internally — the click
+                // notification needs no extra state here.
+                onAddWidgetClick: () => undefined,
+                renderWidgetLine: ({ side, lineNumber, onClose }) => (
+                  <div className="p-2" data-testid="review-widget">
+                    <ReviewCommentComposer
+                      busy={review.busy}
+                      labels={{
+                        placeholder: review.labels.composerPlaceholder,
+                        submit: review.labels.composerSubmit,
+                        cancel: review.labels.composerCancel,
+                      }}
+                      onCancel={onClose}
+                      onSubmit={async (body) => {
+                        await review.onCreateRoot(
+                          {
+                            filePath: activePath,
+                            side: anchorSideOf(side),
+                            line: lineNumber,
+                          },
+                          body,
+                        );
+                        onClose();
+                      }}
+                    />
+                  </div>
+                ),
+              }
+            : {}),
+        }
+      : {};
 
   return (
     <div className="flex flex-col gap-2" data-testid="diff-view-wrap">
@@ -251,13 +407,14 @@ export function DiffView({
             // wrapper's `data-theme` chrome re-applies. The remount re-hydrates
             // from the full bundle (no re-highlight); the syntax tokens recolor
             // instantly via the `--shiki-*` CSS vars regardless.
-            <GitDiffView
+            <GitDiffView<ReviewThread[]>
               key={diffTheme}
               diffFile={diffFile}
               diffViewHighlight={true}
               diffViewMode={diffViewMode}
               diffViewTheme={diffTheme}
               diffViewWrap={false}
+              {...reviewDiffProps}
             />
           ) : (
             <p
@@ -269,6 +426,16 @@ export function DiffView({
           )}
         </div>
       </div>
+      {review ? (
+        <OutdatedThreadsSection
+          actions={review}
+          busy={review.busy}
+          canComment={review.canComment}
+          currentUserId={review.currentUserId}
+          labels={review.labels}
+          threads={review.threads}
+        />
+      ) : null}
     </div>
   );
 }

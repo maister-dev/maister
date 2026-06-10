@@ -21,6 +21,14 @@ export interface HitlDecisionControlsLabels {
   reviewCommentsPlaceholder: string;
   formInstructions: string;
   formCustomPlaceholder: string;
+  // ADR-071 gate-panel additions — `$count`/`$n`/`$m` templates (house
+  // pattern, see flow-graph-view formatCount). Optional so pre-ADR-071
+  // consumers keep compiling without them.
+  reviewOpenCount?: string;
+  reviewOutdatedCount?: string;
+  reviewLoopChip?: string;
+  reviewApproveOpenWarn?: string;
+  reviewReworkExhausted?: string;
 }
 
 export interface ReviewSchema {
@@ -28,6 +36,46 @@ export interface ReviewSchema {
   transitions?: Record<string, string>;
   reworkTargets?: string[];
   workspacePolicies?: string[];
+  // ADR-071: server-stamped at gate creation (runner-graph). maxLoops = the
+  // node's rework bound (null when no rework declared); gateAttempt = the
+  // 1-based visit number of this gate. Absent on pre-ADR-071 rows.
+  maxLoops?: number | null;
+  gateAttempt?: number;
+}
+
+export interface ReviewLoopInfo {
+  gateAttempt: number;
+  // Total allowed gate visits = maxLoops + 1 (the initial visit is attempt 1).
+  totalVisits: number;
+  // Mirrors the hitl-validate exhaustion rule: rework is rejected (422) when
+  // gateAttempt > maxLoops — the UI disables it at the same boundary.
+  exhausted: boolean;
+}
+
+// Loop visibility (ADR-071 D5): both fields must be server-stamped numbers —
+// a legacy row (fields absent) or a no-rework node (maxLoops null) yields
+// null: no chip, no boundary. Exactly the validate-rule applicability check.
+export function reviewLoopInfo(
+  reviewSchema: ReviewSchema | null,
+): ReviewLoopInfo | null {
+  if (!reviewSchema) return null;
+
+  const { maxLoops, gateAttempt } = reviewSchema;
+
+  if (typeof maxLoops !== "number" || typeof gateAttempt !== "number") {
+    return null;
+  }
+
+  return {
+    gateAttempt,
+    totalVisits: maxLoops + 1,
+    exhausted: gateAttempt > maxLoops,
+  };
+}
+
+export interface ReviewThreadCountsView {
+  openCount: number;
+  outdatedCount: number;
 }
 
 // A single field view derived from a stored `form_schema` doc (config.schema
@@ -68,6 +116,9 @@ export interface HitlDecisionControlsProps {
   options: HitlOption[];
   schema: unknown;
   criticality?: "low" | "medium" | "high" | "critical" | null;
+  // ADR-071: server-computed open/outdated thread counts for the gate panel
+  // (run-detail layout only — board/inbox consumers omit it).
+  reviewCounts?: ReviewThreadCountsView | null;
   showConfidence: boolean;
   confidence: string;
   comments: string;
@@ -86,6 +137,18 @@ export interface HitlDecisionControlsProps {
   onOption: (optionId: string) => void;
   onSubmitJson: () => void;
   onSubmitForm: () => void;
+}
+
+// `$`-token label templates (house pattern — see flow-graph-view
+// formatCount): the catalog stores literal `$count`/`$n`/`$m` placeholders.
+function fillTemplate(
+  template: string,
+  tokens: Record<string, number>,
+): string {
+  return Object.entries(tokens).reduce(
+    (out, [token, value]) => out.replace(token, String(value)),
+    template,
+  );
 }
 
 const CRITICALITY_PILL: Record<"low" | "medium" | "high" | "critical", string> =
@@ -221,6 +284,7 @@ export function HitlDecisionControls({
   options,
   schema,
   criticality,
+  reviewCounts,
   showConfidence,
   confidence,
   comments,
@@ -258,6 +322,22 @@ export function HitlDecisionControls({
     );
   };
 
+  // ADR-071 D5 gate panel: loop chip + exhaustion boundary from the
+  // server-stamped schema fields; open/outdated badges + approve soft-warn
+  // from the server-computed counts. Approve is NEVER blocked.
+  const loopInfo = reviewLoopInfo(reviewSchema);
+  const reworkExhausted = loopInfo?.exhausted ?? false;
+  const openCount = reviewCounts?.openCount ?? 0;
+  const outdatedCount = reviewCounts?.outdatedCount ?? 0;
+  const exhaustedText =
+    loopInfo?.exhausted && labels.reviewReworkExhausted
+      ? fillTemplate(labels.reviewReworkExhausted, {
+          $m: loopInfo.totalVisits,
+        })
+      : null;
+  const reworkLocked = (d: string): boolean =>
+    reworkExhausted && isReworkDecision(d);
+
   return (
     <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>
       {criticality ? (
@@ -266,6 +346,39 @@ export function HitlDecisionControls({
 
       {reviewSchema ? (
         <>
+          {loopInfo !== null || openCount > 0 || outdatedCount > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {loopInfo && labels.reviewLoopChip ? (
+                <span
+                  className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-ink-2"
+                  data-testid="review-loop-chip"
+                >
+                  {fillTemplate(labels.reviewLoopChip, {
+                    $n: loopInfo.gateAttempt,
+                    $m: loopInfo.totalVisits,
+                  })}
+                </span>
+              ) : null}
+              {openCount > 0 && labels.reviewOpenCount ? (
+                <span
+                  className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-amber"
+                  data-testid="review-open-count"
+                >
+                  {fillTemplate(labels.reviewOpenCount, { $count: openCount })}
+                </span>
+              ) : null}
+              {outdatedCount > 0 && labels.reviewOutdatedCount ? (
+                <span
+                  className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-mute"
+                  data-testid="review-outdated-count"
+                >
+                  {fillTemplate(labels.reviewOutdatedCount, {
+                    $count: outdatedCount,
+                  })}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <label
             className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
             htmlFor="hitl-review-comments"
@@ -283,6 +396,16 @@ export function HitlDecisionControls({
             value={comments}
             onChange={(e) => onCommentsChange(e.target.value)}
           />
+          {openCount > 0 && labels.reviewApproveOpenWarn ? (
+            <p
+              className="font-mono text-[11px] leading-[1.5] text-amber"
+              data-testid="review-approve-open-warn"
+            >
+              {fillTemplate(labels.reviewApproveOpenWarn, {
+                $count: openCount,
+              })}
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {(reviewSchema.allowedDecisions ?? []).map((d) => (
               <button
@@ -292,9 +415,12 @@ export function HitlDecisionControls({
                   isReworkDecision(d)
                     ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
                     : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
-                  disabled && "opacity-60",
+                  (disabled || reworkLocked(d)) && "opacity-60",
                 )}
-                disabled={disabled}
+                disabled={disabled || reworkLocked(d)}
+                title={
+                  reworkLocked(d) ? (exhaustedText ?? undefined) : undefined
+                }
                 type="button"
                 onClick={() => onDecision(d)}
               >
@@ -304,15 +430,24 @@ export function HitlDecisionControls({
             <button
               className={clsx(
                 "rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2",
-                disabled && "opacity-60",
+                (disabled || reworkExhausted) && "opacity-60",
               )}
-              disabled={disabled}
+              disabled={disabled || reworkExhausted}
+              title={reworkExhausted ? (exhaustedText ?? undefined) : undefined}
               type="button"
               onClick={onSendBack}
             >
               {labels.sendBackWithComments}
             </button>
           </div>
+          {exhaustedText ? (
+            <p
+              className="font-mono text-[11px] leading-[1.5] text-mute"
+              data-testid="review-rework-exhausted"
+            >
+              {exhaustedText}
+            </p>
+          ) : null}
           {showConfidence ? (
             <ConfidenceInput
               confidence={confidence}

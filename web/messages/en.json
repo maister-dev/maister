@@ -814,6 +814,11 @@
       "critical": "critical"
     },
     "sendBackWithComments": "Send back with comments",
+    "reviewOpenCount": "$count unresolved",
+    "reviewOutdatedCount": "$count outdated",
+    "reviewLoopChip": "Rework loop $n of $m",
+    "reviewApproveOpenWarn": "$count open comment threads — approving leaves them unresolved.",
+    "reviewReworkExhausted": "Rework limit reached — all $m allowed review visits are used. Only non-rework decisions remain.",
     "error": {
       "generic": "Something went wrong. Try again.",
       "CRASH": "Something went wrong. Try again.",
@@ -932,7 +937,25 @@
       "unified": "Unified",
       "added": "Lines added",
       "removed": "Lines removed",
-      "truncated": "Diff truncated — over the 4 MiB view limit; showing a partial diff."
+      "truncated": "Diff truncated — over the 4 MiB view limit; showing a partial diff.",
+      "review": {
+        "composerPlaceholder": "Leave a comment…",
+        "submit": "Comment",
+        "cancel": "Cancel",
+        "reply": "Reply",
+        "edit": "Edit comment",
+        "delete": "Delete comment",
+        "resolve": "Resolve thread",
+        "unresolve": "Reopen thread",
+        "resolved": "Resolved",
+        "iteration": "Iteration $n",
+        "expand": "Expand thread",
+        "collapse": "Collapse thread",
+        "outdatedTitle": "Outdated comments",
+        "sideOld": "old",
+        "sideNew": "new",
+        "error": "Review action failed"
+      }
     },
     "tab": {
       "files": "Files",
