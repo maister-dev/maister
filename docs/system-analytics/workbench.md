@@ -170,7 +170,7 @@ Flow runs render through `@git-diff-view/react` (Implemented, ADR-066); the scra
 diff (`scratch-dialog`) stays a raw `pre` and is out of this slice's scope.
 At an open review gate the same diff surface additionally hosts line-anchored
 review-comment threads (composer, inline thread cards, collapsible Outdated
-list — Implemented, ADR-071); see
+list — Implemented, ADR-072); see
 [`review-comments.md`](review-comments.md).
 
 ```mermaid

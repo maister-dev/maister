@@ -1,4 +1,4 @@
-// ADR-071 review-mode wiring of the diff renderer:
+// ADR-072 review-mode wiring of the diff renderer:
 //   1. review-off renders BYTE-IDENTICAL markup to the pre-review component
 //      (pinned against a captured fixture render), both with an empty diff
 //      and with a fully RENDERED GitDiffView (real DiffFile bundle);
@@ -227,7 +227,7 @@ describe("DiffView — review-off pin with a RENDERED diff", () => {
   });
 });
 
-describe("DiffView — review mode on (ADR-071)", () => {
+describe("DiffView — review mode on (ADR-072)", () => {
   it("renders the collapsible Outdated section below the diff", () => {
     const html = render({
       review: makeReview({

@@ -233,7 +233,7 @@ export async function runReviewHuman(
     workspacePolicies: node.rework?.workspacePolicies ?? [],
     commentsVar:
       node.rework?.commentsVar ?? node.finishHuman?.commentsVar ?? null,
-    // ADR-071 loop fields: gateAttempt is the 1-based visit number of THIS
+    // ADR-072 loop fields: gateAttempt is the 1-based visit number of THIS
     // gate (the current visit's attempt row is appended before the action
     // runs, so the ledger count equals the visit number); maxLoops is the
     // node's rework bound — null when the node declares no rework.
@@ -472,7 +472,7 @@ async function executeNodeAction(
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
-    // 1-based ledger attempt number of THIS visit (ADR-071 gateAttempt source).
+    // 1-based ledger attempt number of THIS visit (ADR-072 gateAttempt source).
     nodeAttemptNumber: number;
     db: Db;
   },
@@ -612,7 +612,7 @@ export function collectDeclaredCommentsVars(
   return seeded;
 }
 
-// ADR-071: a review_comments row in the structural shape the composer reads,
+// ADR-072: a review_comments row in the structural shape the composer reads,
 // plus the thread-assembly fields. Replies reuse the root shape with null
 // anchor columns (DB CHECK).
 type ReviewCommentRow = ComposeRootComment & {
@@ -620,7 +620,7 @@ type ReviewCommentRow = ComposeRootComment & {
   status: "open" | "resolved";
 };
 
-// ADR-071: load the run's OPEN review-comment threads (open roots + their
+// ADR-072: load the run's OPEN review-comment threads (open roots + their
 // replies) for the rework compose. Queries the schema directly instead of
 // lib/review-comments/service.ts `listThreads`: that module imports
 // lib/services/hitl.ts (PENDING_HITL_RUN_STATUS), which imports
@@ -659,7 +659,7 @@ async function loadOpenReviewThreads(
     }));
 }
 
-// ADR-071 (D4) evidence snapshot: the composed rework payload as ONE
+// ADR-072 (D4) evidence snapshot: the composed rework payload as ONE
 // artifact_instances row (kind human_note, producer runner, locator inline
 // with additive {hitlRequestId, threadIds}), linked to the gate's
 // node_attempt. Distinct from recordDefaultArtifacts' human_note row (locator
@@ -1176,7 +1176,7 @@ export async function runGraph(
       // rework.maxLoops bounds STARTING a fresh visit of a rework-capable node
       // (initial visit + maxLoops reworks = maxLoops + 1 total). The bound must
       // not fire on a reuse re-entry — there the count includes the current
-      // visit, so a decision processed AT the final allowed visit (ADR-071:
+      // visit, so a decision processed AT the final allowed visit (ADR-072:
       // e.g. approve at gateAttempt = maxLoops + 1) would be killed by its own
       // row. A rework that slips past the validate rule still dies here when
       // traversal returns to append visit maxLoops + 2 (the CONFIG backstop).
@@ -1195,7 +1195,7 @@ export async function runGraph(
       // 1-based ledger attempt number of THIS visit. On the reuse branches the
       // current attempt row already exists (it is `lastForNode`), so its
       // `attempt` IS the visit number; on the append branch the fresh row's
-      // `attempt` is. ADR-071: the review-gate schema stamps this as
+      // `attempt` is. ADR-072: the review-gate schema stamps this as
       // `gateAttempt` and the compose evidence row records it as `attempt`.
       let nodeAttemptNumber: number;
 
@@ -1913,7 +1913,7 @@ export async function runGraph(
 
         // Inject the reviewer's comments into the rework target's next-attempt
         // context under the node's commentsVar (Phase 5.4). The reviewer submits
-        // them in `comments` (or the commentsVar key) of the response. ADR-071:
+        // them in `comments` (or the commentsVar key) of the response. ADR-072:
         // the run's OPEN review-comment threads compose into the payload here,
         // at consumption — the respond route's stored response and the input
         // artifact stay pristine user-submitted values. This block runs AFTER
@@ -1930,7 +1930,7 @@ export async function runGraph(
 
           // D3 zero-thread guarantee: with no open threads the raw summary
           // value passes through UNTOUCHED (byte-identical injection; nothing
-          // injected when none was submitted) — the pre-ADR-071 behavior.
+          // injected when none was submitted) — the pre-ADR-072 behavior.
           const composed =
             openThreads.length > 0
               ? composeReworkPayload(

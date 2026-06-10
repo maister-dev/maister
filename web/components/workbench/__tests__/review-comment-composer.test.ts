@@ -1,4 +1,4 @@
-// ADR-071 review-mode UI: render tests for the PRESENTATIONAL comment
+// ADR-072 review-mode UI: render tests for the PRESENTATIONAL comment
 // composer (textarea + submit/cancel). renderToStaticMarkup, no jsdom —
 // mirrors components/board/__tests__/hitl-decision-controls.test.ts.
 // Interactivity (typing, submit callbacks) is asserted structurally:
@@ -29,7 +29,7 @@ function render(over: Partial<ComposerProps> = {}): string {
   );
 }
 
-describe("ReviewCommentComposer — inline comment composer (ADR-071)", () => {
+describe("ReviewCommentComposer — inline comment composer (ADR-072)", () => {
   it("renders a textarea with the translated placeholder", () => {
     const html = render();
 

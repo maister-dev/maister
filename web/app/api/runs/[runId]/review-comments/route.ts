@@ -24,7 +24,7 @@ import {
   listThreads,
 } from "@/lib/review-comments/service";
 
-// ADR-071 review-comment routes (GET list+placement, POST root|reply). Thin
+// ADR-072 review-comment routes (GET list+placement, POST root|reply). Thin
 // handlers: zod parse, authz (projectId always derived from the run row),
 // ONE diff computation per request (`run-diff-source.ts` — shared with the
 // run-detail layout's gate panel), service call, MaisterError→HTTP map.

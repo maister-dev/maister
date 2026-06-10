@@ -1,4 +1,4 @@
-// Pure anchor extraction + placement matching for review comments (ADR-071,
+// Pure anchor extraction + placement matching for review comments (ADR-072,
 // docs/system-analytics/review-comments.md). Operates on the SAME prepared
 // diff the view renders (`prepareDiff` bundles hydrate the client `DiffFile`),
 // so an anchor always points at what the reviewer actually saw: the bundle's
@@ -64,7 +64,7 @@ export function extractAnchorContent(
   prepared: DiffPrepResult,
   position: AnchorPosition,
 ): AnchorExtraction {
-  // POST-time rule (ADR-071): anchors cannot be validated against a partial
+  // POST-time rule (ADR-072): anchors cannot be validated against a partial
   // diff — refuse even when the position survives in the truncated prefix.
   if (prepared.truncated) return { ok: false, reason: "diff_truncated" };
 

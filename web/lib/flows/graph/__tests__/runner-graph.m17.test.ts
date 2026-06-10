@@ -109,7 +109,7 @@ const makeLoaded = (runId = "run-1"): any => ({
 const baseCtx = {
   runtimeRoot: "/tmp/test-root",
   db: mockDb,
-  // ADR-071: the runner plumbs the gate's 1-based visit number at creation.
+  // ADR-072: the runner plumbs the gate's 1-based visit number at creation.
   gateAttempt: 1,
 };
 
@@ -174,7 +174,7 @@ describe("runReviewHuman (graph) — M17 criticality field", () => {
   });
 });
 
-describe("runReviewHuman (graph) — ADR-071 schema { maxLoops, gateAttempt }", () => {
+describe("runReviewHuman (graph) — ADR-072 schema { maxLoops, gateAttempt }", () => {
   beforeEach(() => {
     capturedInserts.length = 0;
     vi.clearAllMocks();

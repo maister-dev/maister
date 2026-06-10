@@ -19,7 +19,7 @@ import { PENDING_HITL_RUN_STATUS } from "@/lib/services/hitl";
 
 export { compareThreadReplies, compareThreadRoots } from "./order";
 
-// ADR-071 review-comment service: authz-free domain logic over the
+// ADR-072 review-comment service: authz-free domain logic over the
 // review_comments table. Routes own requireProjectAction + zod; this module
 // owns the open-gate guard, thread integrity, and author rules. Every write is
 // ONE DB transaction with no external side-effects, and runs.status is NEVER
@@ -59,7 +59,7 @@ type Db = NodePgDatabase;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ReviewGateRow = typeof hitlRequests.$inferSelect;
 
-// Open-review-gate guard (allow-list, ADR-071): run exists, runs.status ∈
+// Open-review-gate guard (allow-list, ADR-072): run exists, runs.status ∈
 // PENDING_HITL_RUN_STATUS, and a pending kind=human hitl row whose stored
 // schema declares review === true. Shared precondition for every write;
 // otherwise 409 PRECONDITION at the route. Never a `!terminal` complement.
@@ -109,7 +109,7 @@ async function requireOpenReviewGate(
 }
 
 // gateAttempt = 1-based visit number of the current gate (iteration tag).
-// Prefer the server-stamped schema.gateAttempt (runner-side, ADR-071); until
+// Prefer the server-stamped schema.gateAttempt (runner-side, ADR-072); until
 // the runner stamps it, derive from the node_attempts count for
 // (run_id, node_id) — the current visit's attempt row is appended BEFORE the
 // gate parks at NeedsInput, so the count IS the visit number. Floored at 1
@@ -146,7 +146,7 @@ async function resolveGateAttempt(
 }
 
 // Cross-run or unknown commentId is not-found semantics (bare 404 at the
-// route, per the ADR-071 identifiers table) — null, not a thrown error.
+// route, per the ADR-072 identifiers table) — null, not a thrown error.
 async function loadRunComment(
   tx: Tx,
   runId: string,

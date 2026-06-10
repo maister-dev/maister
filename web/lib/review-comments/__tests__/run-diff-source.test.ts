@@ -1,4 +1,4 @@
-// Task 13 (TDD, ADR-071 D5): server-side data source for the review-gate
+// Task 13 (TDD, ADR-072 D5): server-side data source for the review-gate
 // panel — `lib/review-comments/run-diff-source.ts`.
 //
 //   - `computeRunDiff` is EXTRACTED here from the collection route (the

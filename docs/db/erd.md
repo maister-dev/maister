@@ -69,8 +69,8 @@ erDiagram
     RUNS ||--o| ARTIFACT_PROJECTION_CURSORS : "projector cursor (M12)"
     ARTIFACT_INSTANCES ||--o| ARTIFACT_INSTANCES : "superseded_by (M12, SET NULL)"
     RUNS ||--o{ HITL_REQUESTS : raises
-    RUNS ||--o{ REVIEW_COMMENTS : "review threads (ADR-071)"
-    HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (ADR-071)"
+    RUNS ||--o{ REVIEW_COMMENTS : "review threads (ADR-072)"
+    HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (ADR-072)"
     USERS ||--o{ REVIEW_COMMENTS : "author / resolver (SET NULL)"
     REVIEW_COMMENTS ||--o{ REVIEW_COMMENTS : "replies (parent_id, cascade)"
     RUNS ||--o{ ASSIGNMENTS : "work queue (M13)"
@@ -600,7 +600,7 @@ erDiagram
         text run_id FK
         text step_id
         text kind "permission|form|human"
-        jsonb schema "form_schema (+ review allow-list for human_review; ADR-071: + maxLoops/gateAttempt)"
+        jsonb schema "form_schema (+ review allow-list for human_review; ADR-072: + maxLoops/gateAttempt)"
         text prompt
         jsonb response
         text decision "M11a review decision"
@@ -613,7 +613,7 @@ erDiagram
     }
 
     REVIEW_COMMENTS {
-        text id PK "randomUUID (ADR-071, migration 0038)"
+        text id PK "randomUUID (ADR-072, migration 0038)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
         text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE"
         text node_id "NOT NULL - review node id"
@@ -818,10 +818,10 @@ external-operation events) is not drawn until its migrations exist. See
 | `gate_results` | `gate_results_run_idx` | `(run_id)` | **(M11a)** Per-run gate lookups. |
 | `gate_results` | `gate_results_node_attempt_idx` | `(node_attempt_id)` | **(M11a)** Gates for a node attempt. |
 | `hitl_requests` | `hitl_requests_run_idx` | `(run_id)` | Pending HITL panel. |
-| `review_comments` | `review_comments_run_created_idx` | `(run_id, created_at)` | **(ADR-071)** Thread listing per run in stable order. |
-| `review_comments` | `review_comments_run_status_idx` | `(run_id, status)` | **(ADR-071)** Open-thread compose / unresolved counts. |
-| `review_comments` | `review_comments_hitl_request_idx` | `(hitl_request_id)` | **(ADR-071)** Comments per gate visit. |
-| `review_comments` | `review_comments_parent_idx` | `(parent_id)` | **(ADR-071)** Reply lookup per root. |
+| `review_comments` | `review_comments_run_created_idx` | `(run_id, created_at)` | **(ADR-072)** Thread listing per run in stable order. |
+| `review_comments` | `review_comments_run_status_idx` | `(run_id, status)` | **(ADR-072)** Open-thread compose / unresolved counts. |
+| `review_comments` | `review_comments_hitl_request_idx` | `(hitl_request_id)` | **(ADR-072)** Comments per gate visit. |
+| `review_comments` | `review_comments_parent_idx` | `(parent_id)` | **(ADR-072)** Reply lookup per root. |
 | `assignments` | `assignments_hitl_request_uq` | `(hitl_request_id)` UNIQUE | One assignment per linked HITL wait. |
 | `assignments` | `assignments_project_status_idx` | `(project_id, status)` | Project work queue. |
 | `assignments` | `assignments_run_status_idx` | `(run_id, status)` | Run-detail work queue. |

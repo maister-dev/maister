@@ -73,7 +73,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/workspaces.md`](system-analytics/workspaces.md) | Worktree lifecycle, promotion policy, reconciliation. |
 | [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md) | Crash reconciliation + workspace/revision GC (preserve-then-prune, TTL ramp, cron route) — M19. |
 | [`system-analytics/hitl.md`](system-analytics/hitl.md) | Human input loop (permission + form + human-review). |
-| [`system-analytics/review-comments.md`](system-analytics/review-comments.md) | Line-anchored review-comment threads on the gate diff: placement, rework compose into `commentsVar`, loop-exhaustion guard (ADR-071). |
+| [`system-analytics/review-comments.md`](system-analytics/review-comments.md) | Line-anchored review-comment threads on the gate diff: placement, rework compose into `commentsVar`, loop-exhaustion guard (ADR-072). |
 | [`system-analytics/manual-takeover.md`](system-analytics/manual-takeover.md) | Manual takeover (local worktree handoff): `HumanWorking`, claim/return, downstream staleness, run-detail timeline (M11b). |
 | [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md) | Node typed settings, declared `enforcement` intent, static `ENFORCEABILITY_BY_AGENT`, launch-time refusal boundary, time-limit watchdog, settings-visibility UI (M11c). |
 | [`system-analytics/artifacts.md`](system-analytics/artifacts.md) | Typed artifacts + evidence graph: artifact_instances index, validity FSM, runner-inline + projector write paths, review refusal (M12). |

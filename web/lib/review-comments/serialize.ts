@@ -1,6 +1,6 @@
 import { compareThreadReplies, compareThreadRoots } from "./order";
 
-// ADR-071 rework-payload composer. The serialization format is FROZEN in
+// ADR-072 rework-payload composer. The serialization format is FROZEN in
 // docs/system-analytics/review-comments.md — change the doc before changing
 // one byte here. Pure module: no DB, fs, or logger imports.
 //

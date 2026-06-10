@@ -1613,7 +1613,7 @@ export type ArtifactLocator =
   | {
       kind: "inline";
       text: string;
-      // ADR-071 (additive, OpenAPI ArtifactLocatorInline): set on the
+      // ADR-072 (additive, OpenAPI ArtifactLocatorInline): set on the
       // composed-rework-payload evidence row (kind human_note, producer
       // runner) — the authoring review-gate hitl_requests id and the open
       // root comment ids serialized into `text` at compose time.

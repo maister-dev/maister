@@ -100,7 +100,7 @@ const M11A_MANIFEST = {
   ],
 };
 
-// --- Review-comments fixture (ADR-071): review gate + anchored threads ------
+// --- Review-comments fixture (ADR-072): review gate + anchored threads ------
 // A NeedsInput run parked at the graph `review` human gate with a REAL parent
 // repo + worktree carrying ONE committed change (src/greeting.ts added on the
 // run branch), so GET /diff and the review-comment anchor lib operate on a real
@@ -110,7 +110,7 @@ const M11A_MANIFEST = {
 // from the same array), one of them carrying a reply; plus one OPEN root whose
 // stored line_content deliberately mismatches → placement "outdated". The
 // pending gate's schema carries {review, maxLoops, gateAttempt} so the loop
-// chip renders (ADR-071 D5); a PRIOR responded review hitl row (visit 1)
+// chip renders (ADR-072 D5); a PRIOR responded review hitl row (visit 1)
 // anchors the seeded threads' FK + gate_attempt=1. The review-comments e2e
 // spec adds a root + reply through the UI, resolves a thread, and submits the
 // rework decision.

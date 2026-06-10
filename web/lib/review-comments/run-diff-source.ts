@@ -19,7 +19,7 @@ import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
 import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
 
-// ADR-071: the server-recomputed run diff + placement summary shared by the
+// ADR-072: the server-recomputed run diff + placement summary shared by the
 // review-comment routes and the run-detail layout's gate panel (Task 13 —
 // `computeRunDiff`/`placementOf` extracted from the collection route once the
 // layout became the third consumer). Behavior-identical to the route-private
@@ -110,7 +110,7 @@ export interface ReviewThreadCounts {
   outdatedCount: number;
 }
 
-// Gate-panel counts (ADR-071 D5): open root threads, and the open subset whose
+// Gate-panel counts (ADR-072 D5): open root threads, and the open subset whose
 // placement against the CURRENT diff is "outdated". Resolved threads and
 // replies never count. A missing diff degrades every open root to outdated —
 // matching the GET route's read behavior.

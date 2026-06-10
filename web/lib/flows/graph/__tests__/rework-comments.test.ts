@@ -236,7 +236,7 @@ describe("AIF shipped flows — rework comment templating (C1/I1 runtime regress
   );
 
   it.each(REWORK_WIRINGS)(
-    "$flow: $targetNodeId prompt renders an ADR-071 composed-threads payload intact (anchors, quotes, replies)",
+    "$flow: $targetNodeId prompt renders an ADR-072 composed-threads payload intact (anchors, quotes, replies)",
     async (wiring) => {
       // The runner injects composeReworkPayload output on a rework jump;
       // the frozen markdown (### anchors, > quotes, ** bold) must survive the

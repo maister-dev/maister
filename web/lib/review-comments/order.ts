@@ -1,4 +1,4 @@
-// Frozen thread ordering (ADR-071, docs/system-analytics/review-comments.md):
+// Frozen thread ordering (ADR-072, docs/system-analytics/review-comments.md):
 // roots by (file_path asc lexicographic, line asc numeric, side old<new,
 // created_at asc, id asc); replies by (created_at asc, id asc). Pure module —
 // the single home for the contract, shared by the service layer and the

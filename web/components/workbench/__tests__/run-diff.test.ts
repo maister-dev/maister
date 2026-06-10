@@ -21,7 +21,7 @@
 // renderToStaticMarkup, no jsdom). `.test.ts` to match the unit glob
 // (`components/**/__tests__/**/*.test.ts`).
 //
-// ADR-071 (Task 12) extends this file with the review wiring of the
+// ADR-072 (Task 12) extends this file with the review wiring of the
 // container: an optional `review` server-context prop, a threads fetch
 // alongside the diff fetch, and the mutation→refetch→router.refresh loop.
 // renderToStaticMarkup cannot run effects, so the async wiring is tested
@@ -123,7 +123,7 @@ describe("ChangedFilesList — seeded changed-files rendering (M22 T5.4 → ADR-
 });
 
 // ---------------------------------------------------------------------------
-// ADR-071 review wiring (Task 12)
+// ADR-072 review wiring (Task 12)
 // ---------------------------------------------------------------------------
 
 type FetchLike = (
@@ -226,7 +226,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("RunDiff — optional review prop (ADR-071)", () => {
+describe("RunDiff — optional review prop (ADR-072)", () => {
   it("renders identical pre-data markup with and without the review prop", () => {
     const without = renderToStaticMarkup(
       createElement(RunDiff, { runId: "run-1", labels: RUN_DIFF_LABELS }),
@@ -304,7 +304,7 @@ describe("loadReviewThreads — threads-effect body", () => {
   });
 });
 
-describe("reviewMutationRequest — ADR-071 route family mapping", () => {
+describe("reviewMutationRequest — ADR-072 route family mapping", () => {
   it("maps createRoot to POST collection with the flattened anchor", () => {
     const { url, init } = reviewMutationRequest("run-1", {
       kind: "createRoot",
@@ -373,7 +373,7 @@ describe("reviewMutationRequest — ADR-071 route family mapping", () => {
   });
 });
 
-describe("executeReviewMutation — refetch + refresh on success, reject on failure (ADR-071 D8)", () => {
+describe("executeReviewMutation — refetch + refresh on success, reject on failure (ADR-072 D8)", () => {
   const MUTATION: ReviewMutation = {
     kind: "reply",
     parentId: "c-root",

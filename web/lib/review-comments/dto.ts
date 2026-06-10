@@ -2,7 +2,7 @@ import "server-only";
 
 import type { ReviewComment } from "./service";
 
-// ADR-071 shared wire helpers for the review-comment route family
+// ADR-072 shared wire helpers for the review-comment route family
 // (collection + item routes): the OpenAPI ReviewComment DTO projection and
 // the MaisterError-code → HTTP-status map. Kept here (not lib/errors.ts)
 // because the map is route-family policy: e.g. the catalog routes map

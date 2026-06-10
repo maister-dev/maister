@@ -543,7 +543,7 @@ describe("HitlDecisionControls — pure HITL response rendering (M17 P4)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// ADR-071 Task 13 — review-gate panel: loop chip, exhaustion boundary,
+// ADR-072 Task 13 — review-gate panel: loop chip, exhaustion boundary,
 // approve soft-warn, unresolved/outdated count badges.
 //
 // All additions are OPTIONAL (props + labels): every pre-existing case above
@@ -582,7 +582,7 @@ function buttonTagFor(html: string, label: string): string {
   return html.slice(start, html.indexOf(">", start) + 1);
 }
 
-describe("HitlDecisionControls — review gate panel (ADR-071 Task 13)", () => {
+describe("HitlDecisionControls — review gate panel (ADR-072 Task 13)", () => {
   describe("rework-loop chip", () => {
     it("renders 'Rework loop N of M' with N = gateAttempt and M = maxLoops + 1", () => {
       const html = render({

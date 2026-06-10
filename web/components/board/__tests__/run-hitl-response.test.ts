@@ -1,4 +1,4 @@
-// ADR-071 Task 13 — RunHitlResponse review-gate wiring: the client container
+// ADR-072 Task 13 — RunHitlResponse review-gate wiring: the client container
 // maps the run.* catalog keys for the new gate-panel labels and forwards the
 // server-computed thread counts (optional prop) plus the loop fields that ride
 // on the stored review schema into HitlDecisionControls.
@@ -60,7 +60,7 @@ function buttonTagFor(html: string, label: string): string {
   return html.slice(start, html.indexOf(">", start) + 1);
 }
 
-describe("RunHitlResponse — review gate panel wiring (ADR-071 Task 13)", () => {
+describe("RunHitlResponse — review gate panel wiring (ADR-072 Task 13)", () => {
   it("renders the loop chip from the schema's server-stamped loop fields", () => {
     const html = render({
       schema: { ...REVIEW_SCHEMA, maxLoops: 3, gateAttempt: 2 },

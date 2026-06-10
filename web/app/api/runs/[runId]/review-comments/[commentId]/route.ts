@@ -14,7 +14,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { httpStatusForCode, toCommentDto } from "@/lib/review-comments/dto";
 import { editBody, remove, setStatus } from "@/lib/review-comments/service";
 
-// ADR-071 review-comment item routes (PATCH edit|resolve, DELETE). Thin
+// ADR-072 review-comment item routes (PATCH edit|resolve, DELETE). Thin
 // handlers: zod parse, authz (projectId always derived from the run row),
 // service call, MaisterError→HTTP map. The open-review-gate guard, author
 // rules, and root-only resolve live in the service; its null return is

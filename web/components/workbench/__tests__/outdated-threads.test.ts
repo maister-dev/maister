@@ -1,4 +1,4 @@
-// ADR-071 review-mode UI: render tests for the PRESENTATIONAL collapsible
+// ADR-072 review-mode UI: render tests for the PRESENTATIONAL collapsible
 // "Outdated" thread list shown below the diff (file:line + quoted stale
 // line_content + the same thread card incl. resolve).
 // renderToStaticMarkup, no jsdom.
@@ -86,7 +86,7 @@ function render(over: Partial<SectionProps> = {}): string {
   );
 }
 
-describe("OutdatedThreadsSection — collapsible outdated list (ADR-071)", () => {
+describe("OutdatedThreadsSection — collapsible outdated list (ADR-072)", () => {
   it("renders a collapsible details block with the translated title and count", () => {
     const html = render();
 

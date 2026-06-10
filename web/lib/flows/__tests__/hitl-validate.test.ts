@@ -81,11 +81,11 @@ describe("validateReviewDecision", () => {
   });
 });
 
-// ADR-071: stored review-gate schemas carry server-state { maxLoops,
+// ADR-072: stored review-gate schemas carry server-state { maxLoops,
 // gateAttempt } (stamped by the runner at gate creation). A rework decision
 // at gateAttempt > maxLoops is refused at validate time — total allowed gate
 // visits = maxLoops + 1; the engine CONFIG throw stays as the backstop.
-describe("validateReviewDecision — ADR-071 loop exhaustion", () => {
+describe("validateReviewDecision — ADR-072 loop exhaustion", () => {
   const withLoop = (maxLoops: number | null, gateAttempt: number) => ({
     ...reviewSchema,
     maxLoops,

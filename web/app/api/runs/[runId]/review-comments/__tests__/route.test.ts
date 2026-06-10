@@ -17,7 +17,7 @@ import {
 } from "@/lib/review-comments/service";
 import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
 
-// Task 9 (TDD, ADR-071): GET + POST /api/runs/[runId]/review-comments.
+// Task 9 (TDD, ADR-072): GET + POST /api/runs/[runId]/review-comments.
 //   - GET: readBoard (viewer), NOT status-gated; one listThreads + at most one
 //     server-recomputed diff per request; placement computed per root via the
 //     REAL anchor lib over the REAL prepareDiff parse (the worktree diff source

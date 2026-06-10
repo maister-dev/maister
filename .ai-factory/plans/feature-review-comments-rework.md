@@ -19,7 +19,7 @@ Baseline: main @ 0fc95697 (post `feature/aif-flow-package` merge; "option 2" gat
 
 Shaped for `claude --agent implement-coordinator` dispatching `implement-worker`s in isolated worktrees, with review/security/rules sidecars after each slice.
 
-- **SDD:** Phase 0 freezes the contract (ADR-071 + `docs/system-analytics/review-comments.md` + ERD + OpenAPI) before any code. Every later task implements to that frozen contract.
+- **SDD:** Phase 0 freezes the contract (ADR-072 + `docs/system-analytics/review-comments.md` + ERD + OpenAPI) before any code. Every later task implements to that frozen contract.
 - **TDD inside each slice:** each implementation task is a self-contained slice: write failing tests → implement to green → self-verify. A red task and its green task are never split across workers.
 - **Test integrity (hard acceptance for EVERY phase):**
   - every promised test names its runner: unit = vitest project `unit` (globs `lib/**/*.test.ts`, `lib/**/__tests__/**/*.test.ts`, `app/**/__tests__/**/*.test.ts`, `components/**/__tests__/**/*.test.ts`), integration = project `integration` (`lib/**/*.integration.test.ts`, `app/**/*.integration.test.ts`), e2e = Playwright `web/e2e/*.spec.ts`. All new test paths in this plan already match existing globs — no runner-config change needed (verify with `pnpm vitest list` in Task 17).
@@ -42,7 +42,7 @@ Already shipped — do NOT rebuild:
 Out of scope (explicitly deferred):
 - Multi-reviewer/assignment changes; suggested-edits (commit-from-comment); GitHub PR comment sync; uncommitted-worktree diff; fuzzy/`git-blame` re-anchoring (v2 candidate); SSE multi-tab live comment sync; agent replying to threads.
 
-## Design decisions (frozen — ADR-071 in Task 1)
+## Design decisions (frozen — ADR-072 in Task 1)
 
 - **D1. Storage = new DB table `review_comments`** (not a `.maister/` artifact). Comments span multiple `hitl_requests` rows (gate visits) and rework iterations within one run; need open/resolved queryability at compose time, RBAC-gated writes, survival across worktree GC, and evidence-graph linkage (`artifact_instances` is DB-side). The `.maister/` artifact pattern remains the *delivery* channel: comments reach the agent only as the composed `commentsVar` payload. One table, 1-level threads: root (`parent_id NULL`, carries anchor + status) + replies (`parent_id = root.id`, no anchor). Columns: `id` (text PK, randomUUID), `run_id` FK→runs cascade, `hitl_request_id` FK→hitl_requests cascade (gate visit of authoring), `node_id`, `gate_attempt` int (iteration tag), `parent_id` self-FK cascade, `author_user_id` FK→users set-null + `author_label` text snapshot, `file_path`, `side` text enum `old|new`, `line` int, `line_content` text (server-extracted), `body` text, `status` text enum `open|resolved` default open, `resolved_by_user_id`, `resolved_at`, `created_at`, `updated_at`. CHECK: anchor fields non-null ⇔ root. Indexes: `(run_id, created_at)`, `(run_id, status)`, `(hitl_request_id)`, `(parent_id)`.
 - **D2. Anchoring = (file_path, side, line) + exact `line_content` snapshot; no SHA.** POST validates the anchor against the server-recomputed current diff (same `diffRunWorkspace` + `lib/diff/prepare.ts` source the view renders) and stores the server-extracted `line_content` — the client never supplies it. Cross-iteration validity = exact content match at the same position in the *current* diff, computed server-side in GET as `placement: "inline" | "outdated"`. No fuzzy re-anchoring in v1 (GitHub-style "outdated" semantics; deterministic; the agent always receives content snapshots, so staleness never corrupts the rework payload). Edge: diff `truncated` and file absent from parsed output → POST rejects `PRECONDITION` (mirrors the truncated-diff promotion ack).
@@ -80,7 +80,7 @@ Out of scope (explicitly deferred):
 | Surface | Spec file(s) |
 | --- | --- |
 | 4 new HTTP routes | `docs/api/web.openapi.yaml` (paths + `ReviewCommentThread`/`ReviewComment` schemas + `MaisterErrorBody` refs; status-tagged summaries) |
-| New table `review_comments` | Drizzle migration `0038_review_comments.sql` (next-free — main is at `0037_m27_*`; re-check `_journal.json` + in-flight branches before generating) + `docs/database-schema.md` + `docs/db/hitl-domain.md` ERD + `docs/db/erd.md` consolidated |
+| New table `review_comments` | Drizzle migration `0039_review_comments.sql` (next-free — main is at `0037_m27_*`; re-check `_journal.json` + in-flight branches before generating) + `docs/database-schema.md` + `docs/db/hitl-domain.md` ERD + `docs/db/erd.md` consolidated |
 | `hitl_requests.schema` gains `maxLoops`/`gateAttempt` (wire field becomes load-bearing for validate/UI) | `docs/api/web.openapi.yaml` schema description + `docs/system-analytics/hitl.md` |
 | `commentsVar` composed semantics (summary + serialized threads) | `docs/flow-dsl.md` commentsVar description + `docs/system-analytics/flow-graph.md` rework section + NEW `docs/system-analytics/review-comments.md` (R5 sections, R6 status tags) |
 | Rework-exhaustion validate rule | `docs/system-analytics/hitl.md` refusal table + `review-comments.md` |
@@ -108,8 +108,8 @@ Out of scope (explicitly deferred):
 - `web/e2e/m11a-review-rework.spec.ts`: gate-panel markup gains counts/loop chip — Task 15 verifies/adjusts selectors.
 
 ## Commit Plan
-- **Commit 1** (P0, Tasks 1–2): `docs(review-comments): freeze ADR-071 + review-comments contract (analytics, ERD, OpenAPI)`
-- **Commit 2** (P1, Tasks 3–4): `feat(review-comments): review_comments table + service layer (migration 0038)`
+- **Commit 1** (P0, Tasks 1–2): `docs(review-comments): freeze ADR-072 + review-comments contract (analytics, ERD, OpenAPI)`
+- **Commit 2** (P1, Tasks 3–4): `feat(review-comments): review_comments table + service layer (migration 0039)`
 - **Commit 3** (P2, Tasks 5–6): `feat(review-comments): anchor placement matching + rework payload serializer`
 - **Commit 4** (P3, Tasks 7–8): `feat(review-comments): runner-side compose into commentsVar + loop-exhaustion validate guard + evidence snapshot`
 - **Commit 5** (P4, Tasks 9–10): `feat(review-comments): review-comments API routes (GET/POST/PATCH/DELETE)`
@@ -120,12 +120,12 @@ Out of scope (explicitly deferred):
 (IDs match the tracked task list; each implementation task is a self-contained TDD slice with verbose logging per Settings.)
 
 ### Phase 0 — SDD spec-freeze (solo, before any code)
-- [x] Task 1: Author **ADR-071** (storage, anchoring, runner-side serialization, guards, identifiers, loop-boundary rule) → `docs/decisions.md`
+- [x] Task 1: Author **ADR-072** (storage, anchoring, runner-side serialization, guards, identifiers, loop-boundary rule) → `docs/decisions.md`
 - [x] Task 2: Freeze the domain contract: NEW `docs/system-analytics/review-comments.md` (R5: Purpose/Entities/State machine/Process flows/Expectations/Edge cases/Linked artifacts; R6 tags) + ERD updates (`database-schema.md`, `db/hitl-domain.md`, `db/erd.md`) + OpenAPI paths/schemas + `hitl.md`/`flow-graph.md`/`flow-dsl.md` cross-updates (depends on 1)
 <!-- Commit checkpoint: tasks 1-2 -->
 
 ### Phase 1 — DB + service layer (TDD slice)
-- [x] Task 3: Migration `0038_review_comments` (next-free — main is at `0037_m27_*`; re-check journal + in-flight branches) + `reviewComments` in `web/lib/db/schema.ts` (+ `$inferSelect` types, CHECK, indexes) + schema integration assertions (depends on 2)
+- [x] Task 3: Migration `0039_review_comments` (next-free — main is at `0037_m27_*`; re-check journal + in-flight branches) + `reviewComments` in `web/lib/db/schema.ts` (+ `$inferSelect` types, CHECK, indexes) + schema integration assertions (depends on 2)
 - [x] Task 4: `web/lib/review-comments/service.ts` — create/reply/edit/resolve/delete/list with open-gate allow-list guard, parent/run integrity, author rules; unit + `service.integration.test.ts` (testcontainers) (depends on 3)
 <!-- Commit checkpoint: tasks 3-4 -->
 
@@ -192,7 +192,7 @@ Out of scope (explicitly deferred):
 - **No new crash windows:** comment ops are single-transaction single-store; runner compose is a pure read before existing writes.
 - **e2e honesty:** stub supervisor can't run agents — the full agent-receives-prompt assertion lives in the runner integration test (Task 7); e2e covers the UI surface + respond 200.
 - Pre-existing teardown flakes in integration suite (2 known) are not introduced by this work — do not chase them here; do not add new reds.
-- **Sequential-number collisions** (patch 2026-06-09-18.47): migration indices and ADR numbers are globally sequential across branches. 0038 / ADR-071 are free as of 2026-06-10 (M27 merged, its worktree gone) — re-verify against `git show main:...` + any active worktrees at implementation and again before merge.
+- **Sequential-number collisions** (patch 2026-06-09-18.47): migration indices and ADR numbers are globally sequential across branches. 0038 / ADR-072 are free as of 2026-06-10 (M27 merged, its worktree gone) — re-verify against `git show main:...` + any active worktrees at implementation and again before merge.
 - **commentsVar wiring is a templating-convention contract** the schema validator cannot catch (patch 2026-06-09-19.23): rework-target prompts read the TOP-LEVEL `{{ <commentsVar> }}` only; the runtime render regression (`rework-comments.test.ts`) is the only guard — Tasks 7/18 must extend it, never bypass it.
 
 ## Resolved questions (user-confirmed 2026-06-10)

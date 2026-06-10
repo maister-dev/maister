@@ -468,7 +468,7 @@ describe("onDelete cascade", () => {
   });
 });
 
-describe("review_comments (ADR-071, migration 0038)", () => {
+describe("review_comments (ADR-072, migration 0039)", () => {
   async function seedReviewUser(): Promise<string> {
     const userId = newId();
 

@@ -1,6 +1,6 @@
 // Task 5 (TDD): contract tests for `web/lib/review-comments/anchor.ts` — pure
 // anchor extraction (POST-time) + placement matching (GET-time) over the
-// server-prepared diff (ADR-071, docs/system-analytics/review-comments.md).
+// server-prepared diff (ADR-072, docs/system-analytics/review-comments.md).
 //
 // Fixtures are realistic raw unified diffs pushed through the REAL production
 // parse path (`prepareDiff` -> @git-diff-view/core), never hand-mocked parsed

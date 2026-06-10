@@ -1,4 +1,4 @@
-// ADR-071 (PR-grade review comments → rework loop): line-anchored comment
+// ADR-072 (PR-grade review comments → rework loop): line-anchored comment
 // threads on the review-gate diff, end-to-end through the real UI + the
 // review-comments route family. The fixture (e2e/_seed/seed-e2e.ts,
 // `byKey.reviewComments`) parks a run in NeedsInput at the graph `review`
@@ -8,7 +8,7 @@
 //     (new-side lines 2 and 5; the first carries a reply);
 //   • one OPEN root whose stored line_content mismatches → "outdated";
 //   • a pending review HITL whose schema carries {maxLoops: 3, gateAttempt: 2}
-//     so the loop chip renders (ADR-071 D5).
+//     so the loop chip renders (ADR-072 D5).
 //
 // Asserted, deterministic, supervisor-independent outcomes:
 //   1. seeded state renders — loop chip + unresolved/outdated counts on the

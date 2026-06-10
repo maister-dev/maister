@@ -337,7 +337,7 @@ graph flow the legacy `human` step `on_reject.goto_step` is **superseded** by
 node `transitions` + `finish.human.decisions`; linear `steps[]` flows retain the
 documented (still-unexecuted) `on_reject.goto_step` behavior.
 
-**`rework.commentsVar` composed payload — (Implemented — ADR-071).** The value
+**`rework.commentsVar` composed payload — (Implemented — ADR-072).** The value
 injected as the top-level `{{ <commentsVar> }}` template var on the rework
 target's next attempt becomes a *composed* payload: the reviewer's free-text
 `comments` summary first, then the run's OPEN line-anchored review-comment

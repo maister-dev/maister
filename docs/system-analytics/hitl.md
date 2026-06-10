@@ -200,7 +200,7 @@ and no raw `goto_step` is accepted from the client. See
 [`flow-graph.md`](flow-graph.md) and
 [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 
-**(Implemented — ADR-071) review-gate loop fields + line-anchored comments.** For
+**(Implemented — ADR-072) review-gate loop fields + line-anchored comments.** For
 a review gate the stored `hitl_requests.schema` additionally carries the
 server-state fields `{ maxLoops, gateAttempt }` (`gateAttempt` = the 1-based
 visit number of the current gate, initial visit = 1; `maxLoops` from the
@@ -465,14 +465,14 @@ fields:
   bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
   `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
   breach) and terminate the run.
-- **(Implemented — ADR-071)** A graph review gate's stored schema MUST carry
+- **(Implemented — ADR-072)** A graph review gate's stored schema MUST carry
   server-state `{ maxLoops, gateAttempt }`; the respond route MUST reject a
   `rework` decision with 422 (`NEEDS_INPUT`) when `gateAttempt > maxLoops`
   (total gate visits = `maxLoops + 1`) BEFORE any artifact write or state
   mutation — the engine `CONFIG` throw remains the backstop only (it fires
   on a fresh-visit append, never on a resume-reuse re-entry). The
   rejection applies only when the stored schema carries both fields: a
-  no-rework node stamps `maxLoops` null and legacy pre-ADR-071 rows lack
+  no-rework node stamps `maxLoops` null and legacy pre-ADR-072 rows lack
   the fields entirely, so the rule is vacuous there.
 - **(Implemented — M17)** Full `on_reject.goto_step` rerouting in
   `runHumanStep`: on rejection the runner MUST write
@@ -592,7 +592,7 @@ fields:
   fresh-append check when traversal returns to append visit `maxLoops + 2`
   and `CONFIG`-fail the whole run (that throw remains the backstop; it
   never fires on the resume re-entry processing a decision at the final
-  allowed visit). (Implemented — ADR-071)
+  allowed visit). (Implemented — ADR-072)
 
 ## M8 — live vs idle HITL response paths
 
@@ -685,7 +685,7 @@ runner-agent enforcement is queued for a follow-up patch.
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
   [`flow-graph.md`](flow-graph.md) (M11a review decisions),
-  [`review-comments.md`](review-comments.md) (Implemented — ADR-071:
+  [`review-comments.md`](review-comments.md) (Implemented — ADR-072:
   line-anchored review threads, `{maxLoops, gateAttempt}` schema fields,
   loop-exhaustion refusal).
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),

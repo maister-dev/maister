@@ -37,7 +37,7 @@ type ReviewSchemaLike = {
   transitions?: Record<string, string>;
   reworkTargets?: string[];
   workspacePolicies?: string[];
-  // ADR-071: server-state loop fields stamped by the runner at gate creation.
+  // ADR-072: server-state loop fields stamped by the runner at gate creation.
   // maxLoops = the node's rework bound (null when no rework declared);
   // gateAttempt = the 1-based visit number of this gate.
   maxLoops?: number | null;
@@ -134,10 +134,10 @@ export function validateReviewDecision(
     return { ok: true, decision, confidence };
   }
 
-  // ADR-071 loop exhaustion: total allowed gate visits = maxLoops + 1, so a
+  // ADR-072 loop exhaustion: total allowed gate visits = maxLoops + 1, so a
   // rework at gateAttempt > maxLoops would start a visit beyond the bound.
   // Fires only when the stored schema carries BOTH server-stamped fields —
-  // pre-ADR-071 rows lack them and a no-rework node stamps maxLoops null, so
+  // pre-ADR-072 rows lack them and a no-rework node stamps maxLoops null, so
   // the rule stays off there (the engine CONFIG throw remains the backstop).
   // Non-rework decisions never reach this check.
   if (

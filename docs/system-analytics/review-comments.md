@@ -1,11 +1,11 @@
 # Review comments domain
 
-> **Status: Implemented (ADR-071), as of 2026-06-10.** This file was frozen
+> **Status: Implemented (ADR-072), as of 2026-06-10.** This file was frozen
 > as the Phase-0 contract before implementation; the table (migration
 > `0038`), routes, runner-side compose + evidence, validate guard, and diff
 > UI all shipped, and the tags below were reconciled as-built. The locked
 > decision is
-> [ADR-071](../decisions.md#adr-071-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard).
+> [ADR-072](../decisions.md#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard).
 
 ## Purpose
 
@@ -24,7 +24,7 @@ deferred).
 
 ## Domain entities
 
-- **Comment** — a `review_comments` row (migration `0038` — see
+- **Comment** — a `review_comments` row (migration `0039` — see
   [`../db/hitl-domain.md`](../db/hitl-domain.md) ERD). Columns: `id` (text PK,
   `randomUUID`), `run_id` (FK → `runs.id`, cascade), `hitl_request_id` (FK →
   `hitl_requests.id`, cascade — the gate visit of authoring), `node_id`,
@@ -284,7 +284,7 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   `CONFIG` throw remains the backstop (it fires only on a fresh-visit
   append, never on a resume-reuse re-entry) — the rule applies only when the
   stored schema carries BOTH fields: a no-rework node stamps `maxLoops`
-  null and pre-ADR-071 rows lack the fields entirely, so the rule stays off
+  null and pre-ADR-072 rows lack the fields entirely, so the rule stays off
   there.
 - `file_path` is opaque anchor data — it MUST NEVER be used as a filesystem
   path component; `author_user_id`/`author_label` come from the session
@@ -343,7 +343,7 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
 
 ## Linked artifacts
 
-- ADR: [ADR-071](../decisions.md#adr-071-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard)
+- ADR: [ADR-072](../decisions.md#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard)
   (storage, anchoring, compose, guard, identifiers, boundary rule);
   [ADR-066](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)
   (comment-ready diff substrate);
@@ -373,4 +373,4 @@ All bullets are **(Implemented)** — the as-built acceptance contract.
   `web/lib/flows/graph/runner-graph.ts` (gate schema + compose injection),
   `web/lib/flows/hitl-validate.ts` (exhaustion rule),
   `web/lib/flows/review-gate.ts` (gate predicate),
-  `web/lib/db/schema.ts` (`review_comments` table, migration `0038`).
+  `web/lib/db/schema.ts` (`review_comments` table, migration `0039`).

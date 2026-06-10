@@ -8,7 +8,7 @@ import { runs as runsTable } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { editBody, remove, setStatus } from "@/lib/review-comments/service";
 
-// Task 10 (TDD, ADR-071): PATCH + DELETE
+// Task 10 (TDD, ADR-072): PATCH + DELETE
 // /api/runs/[runId]/review-comments/[commentId].
 //   - PATCH: answerHitl (member). Strict shape-discriminated union — exactly
 //     one of {body} (author-only edit → service editBody) or

@@ -22,7 +22,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
 
-// ADR-071 runner-side review-comment compose (Task 7): open threads compose
+// ADR-072 runner-side review-comment compose (Task 7): open threads compose
 // into the rework commentsVar, the review-gate schema carries
 // { maxLoops, gateAttempt }, and the composed payload is recorded as a
 // human_note evidence artifact linked to the gate's node_attempt.
@@ -464,7 +464,7 @@ async function seedTwoThreads(
   return { rootA, rootB };
 }
 
-describe("runGraph — ADR-071 review-comment compose into commentsVar", () => {
+describe("runGraph — ADR-072 review-comment compose into commentsVar", () => {
   it("composes two open threads (file/line ordered, replies included) into the rework target's context", async () => {
     const seeded = await seedGraphRun(composeFlow);
 
@@ -611,7 +611,7 @@ describe("runGraph — ADR-071 review-comment compose into commentsVar", () => {
   }, 60_000);
 });
 
-describe("runGraph — ADR-071 review-gate schema { maxLoops, gateAttempt }", () => {
+describe("runGraph — ADR-072 review-gate schema { maxLoops, gateAttempt }", () => {
   it("stamps maxLoops from rework and the 1-based visit number across gate visits", async () => {
     const seeded = await seedGraphRun(loopFlow);
 
@@ -650,7 +650,7 @@ describe("runGraph — ADR-071 review-gate schema { maxLoops, gateAttempt }", ()
   });
 });
 
-describe("runGraph — ADR-071 loop-exhaustion engine boundary (total visits = maxLoops + 1)", () => {
+describe("runGraph — ADR-072 loop-exhaustion engine boundary (total visits = maxLoops + 1)", () => {
   it("approve at the final allowed visit (gateAttempt = maxLoops + 1) proceeds — NOT Failed", async () => {
     const seeded = await seedGraphRun(boundaryFlow);
 
@@ -714,7 +714,7 @@ describe("runGraph — ADR-071 loop-exhaustion engine boundary (total visits = m
   }, 60_000);
 });
 
-describe("runGraph — ADR-071 composed-payload evidence (human_note, locator inline)", () => {
+describe("runGraph — ADR-072 composed-payload evidence (human_note, locator inline)", () => {
   it("records exactly one inline human_note per compose, linked to the gate's node_attempt", async () => {
     const seeded = await seedGraphRun(composeFlow);
 

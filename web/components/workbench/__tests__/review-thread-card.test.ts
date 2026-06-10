@@ -1,4 +1,4 @@
-// ADR-071 review-mode UI: render tests for the PRESENTATIONAL thread card
+// ADR-072 review-mode UI: render tests for the PRESENTATIONAL thread card
 // (root + replies + icon-only RBAC actions + resolved collapse) and the
 // ReviewThreadStack used as the diff renderExtendLine body.
 // renderToStaticMarkup, no jsdom — mirrors
@@ -88,7 +88,7 @@ function render(over: Partial<CardProps> = {}): string {
   );
 }
 
-describe("ReviewThreadCard — open thread (ADR-071)", () => {
+describe("ReviewThreadCard — open thread (ADR-072)", () => {
   it("renders the root author label and body", () => {
     const html = render();
 
@@ -246,7 +246,7 @@ describe("ReviewThreadCard — open thread (ADR-071)", () => {
   });
 });
 
-describe("ReviewThreadCard — resolved thread (ADR-071)", () => {
+describe("ReviewThreadCard — resolved thread (ADR-072)", () => {
   const resolvedThread = thread({
     root: comment({ status: "resolved", resolvedByUserId: "user-b" }),
   });
@@ -281,7 +281,7 @@ describe("ReviewThreadCard — resolved thread (ADR-071)", () => {
   });
 });
 
-describe("ReviewThreadStack — renderExtendLine body (ADR-071)", () => {
+describe("ReviewThreadStack — renderExtendLine body (ADR-072)", () => {
   it("renders one card per thread", () => {
     const html = renderToStaticMarkup(
       createElement(ReviewThreadStack, {
