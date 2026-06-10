@@ -96,6 +96,7 @@
 | [ADR-069](#adr-069-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
 | [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 | [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock) | User-facing run schedules on the M24 clock | Accepted | 2026-06-10 |
+| [ADR-072](#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard) | PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard | Accepted | 2026-06-10 |
 
 ---
 
@@ -4422,6 +4423,209 @@ as-is.
   (bad button UX) and conflates manual fires with the cron rhythm; inline
   dispatch through the shared core respects policy/cap and reports the outcome
   synchronously.
+### ADR-072: PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard
+
+**Date:** 2026-06-10
+**Status:** Accepted
+**Context:** The M11a review gate offers one free-text `comments` box. That is
+too coarse to dogfood real PR-grade reviews (M20): a reviewer cannot anchor a
+remark to a diff line, track which remarks were addressed across rework
+iterations, or see how close the loop is to `rework.maxLoops` — today a rework
+submitted on the final allowed loop silently fails the whole run via the engine
+`CONFIG` throw. The diff substrate is already comment-ready (`@git-diff-view/react`,
+ADR-066), the rework engine (`rework.{allowedTargets,maxLoops,commentsVar}`,
+`node_attempts` ledger, `pendingInjectedVars` injection) is shipped, and the
+HITL respond route's two-phase commit + idempotency CAS are locked invariants
+that must not change.
+
+**Decision:**
+
+**Storage — one new DB table `review_comments`, 1-level threads.** Comments
+span multiple `hitl_requests` rows (gate visits) and rework iterations within
+one run; they need open/resolved queryability at compose time, RBAC-gated
+writes, survival across worktree GC, and evidence-graph linkage
+(`artifact_instances` is DB-side) — so they are DB rows, NOT a `.maister/`
+artifact. The `.maister/` artifact pattern remains the *delivery* channel:
+comments reach the agent only as the composed `commentsVar` payload. Threads
+are 1-level: a root (`parent_id IS NULL`, carries anchor + status) and replies
+(`parent_id = root.id`, no anchor). Columns: `id` (text PK, `randomUUID`),
+`run_id` (FK → `runs.id`, cascade), `hitl_request_id` (FK → `hitl_requests.id`,
+cascade — the gate visit of authoring), `node_id` (text), `gate_attempt` (int —
+iteration tag), `parent_id` (self-FK, cascade), `author_user_id` (FK →
+`users.id`, SET NULL) + `author_label` (text snapshot), `file_path` (text),
+`side` (text enum `old | new`), `line` (int), `line_content` (text,
+server-extracted), `body` (text), `status` (text enum `open | resolved`,
+default `open`), `resolved_by_user_id` (FK → `users.id`, SET NULL),
+`resolved_at`, `created_at`, `updated_at`. CHECK constraint: the anchor fields
+(`file_path`, `side`, `line`, `line_content`) are non-null **iff** the row is a
+root (`parent_id IS NULL`). Indexes: `(run_id, created_at)`,
+`(run_id, status)`, `(hitl_request_id)`, `(parent_id)`.
+
+**Anchoring — `(file_path, side, line)` + exact `line_content` snapshot, no
+SHA.** POST validates the anchor against the server-recomputed current diff
+(the same `diffRunWorkspace` + `lib/diff/prepare.ts` source the view renders)
+and stores the server-extracted `line_content` — the client never supplies it.
+Cross-iteration validity = exact content match at the same position in the
+*current* diff, computed server-side in GET as `placement: "inline" |
+"outdated"`. No fuzzy re-anchoring in v1 (GitHub-style "outdated" semantics —
+deterministic, and the agent always receives content snapshots, so staleness
+never corrupts the rework payload). Edges: diff `truncated`, or the anchored
+file absent from the parsed diff → POST rejects 409 `PRECONDITION` (mirrors
+the truncated-diff promotion acknowledgement).
+
+**Rework serialization — runner-side compose at consumption.** In the existing
+rework branch (`runner-graph.ts` `if (commentsVar)`), the runner loads OPEN
+root threads (+ replies) for the run, composes deterministic markdown — user
+summary first, then file/line-ordered anchored threads with quoted
+`line_content` and replies — and injects it as
+`pendingInjectedVars[commentsVar]`. **Zero open threads → composed value ≡ raw
+summary, byte-identical to today** — full backward compatibility with every
+existing flow and test. The respond route, its two-phase commit, and its
+idempotency CAS are UNTOUCHED; `hitl_requests.response` and
+`input-<stepId>.json` stay pristine user-submitted payloads. Resolved threads
+never serialize; open-but-outdated threads do (their content snapshot is
+quoted; compose does not recompute placement). No flow.yaml/DSL change —
+`{{ review_comments }}` keeps working as-is. The exact serialization shape is
+frozen in `docs/system-analytics/review-comments.md`.
+
+**Evidence.** At compose time the runner records the composed payload as an
+`artifact_instances` row (`kind: human_note`, `producer: runner`, locator
+`inline` with the composed text plus additive `{hitlRequestId, threadIds}`
+metadata), linked to the gate's `node_attempt`. Implementation first inspects
+`recordDefaultArtifacts`/the existing hitl-response capture to avoid
+duplication.
+
+**Loop visibility + exhaustion guard.** At gate creation (`runReviewHuman`)
+the stored review schema additionally carries `{ maxLoops, gateAttempt }` —
+server-state, both derivable from the `node_attempts` count the runner already
+loads (`gateAttempt` is the 1-based visit number of the current gate, initial
+visit = 1). Total allowed gate visits = `maxLoops + 1` (the engine's
+prior-count check runs BEFORE the attempt row is appended:
+`nodeAttemptCount > maxLoops` throws `CONFIG` → run `Failed`).
+`hitl-validate.validateReviewDecision` gains: a rework decision is rejected
+(`NEEDS_INPUT`, 422) when `gateAttempt ≥ maxLoops + 1` — equivalently,
+**reject rework when `gateAttempt > maxLoops`; total visits = `maxLoops + 1`**
+— preventing the today-possible foot-gun where a final-loop rework silently
+fails the whole run. The engine throw stays as the backstop. The UI shows
+"Rework loop N of M", disables rework at the boundary, and soft-warns (never
+blocks) approve while open threads exist. Both sides of the boundary are
+pinned by unit test before the validate rule lands.
+
+**Routes — a new family, NOT the respond route** (comments are drafted
+incrementally before the decision):
+
+- `GET /api/runs/{runId}/review-comments` — `readBoard` (viewer), not
+  status-gated (history stays visible like the diff). Returns threads with
+  computed `placement`.
+- `POST /api/runs/{runId}/review-comments` — `answerHitl` (member) +
+  open-review-gate guard. Body: root `{filePath, side, line, body}` | reply
+  `{parentId, body}`.
+- `PATCH /api/runs/{runId}/review-comments/{commentId}` — `answerHitl` + gate
+  guard. `{body}` (author-only edit) | `{status: open|resolved}` (root-only;
+  any `answerHitl` member).
+- `DELETE /api/runs/{runId}/review-comments/{commentId}` — `answerHitl` + gate
+  guard, author-only; a root delete cascades its replies.
+
+**Open-review-gate guard (allow-list):** `runs.status ∈
+PENDING_HITL_RUN_STATUS` (= `{NeedsInput, NeedsInputIdle}` — the existing
+constant, exported as part of this work; never a `!terminal` complement) AND a pending
+`hitl_requests` row (`respondedAt IS NULL`) with `kind = 'human'` AND
+`schema.review === true` exists; new comments FK that row. Otherwise 409
+`PRECONDITION`. Comment writes NEVER touch `runs.status` (the runner owns it).
+Every comment operation is a single DB transaction with no external
+side-effects, so the respond route's two-phase-commit rule is satisfied
+trivially (no artifact write, no supervisor call, no deferred created or
+released). **No new `MaisterError` codes**: reuse `PRECONDITION | CONFLICT |
+UNAUTHORIZED | NEEDS_INPUT` (+ zod-invalid body → 400 `CONFIG`). The closed
+taxonomy is preserved.
+
+**Identifiers (trust-boundary labels):**
+
+| Route | Identifier | Label | Handling |
+| --- | --- | --- | --- |
+| all four | `runId` | url-param | access-controlled via run row → project → `requireProjectAction` |
+| PATCH/DELETE | `commentId` | url-param | row loaded, `row.run_id === runId` compared (server-state) → 404 on mismatch |
+| POST (reply) | `parentId` | body-controlled | must resolve to a ROOT comment of the SAME run (server-state compare) → 409 `CONFLICT` otherwise |
+| POST (root) | `filePath`, `side`, `line` | body-controlled | validated against the server-computed diff (anchor must exist → else 409 `PRECONDITION`); `filePath` is opaque anchor DATA — **never used as a filesystem path component anywhere** |
+| POST/PATCH | `body` | body-controlled | content data; zod: non-empty, ≤ 10 000 chars |
+| all writes | author | auth-context | `author_user_id`/`author_label` from the session, never from the body |
+
+`projectId` is always derived from the run row (server-state). No body field
+names a cross-resource locator that has a server-state counterpart.
+
+**Service/authz split.** Route handlers own `requireProjectAction`
+(`projectId` server-derived from the run row, never the body);
+`lib/review-comments/service.ts` is authz-free logic taking `(db, actor)` —
+integration-testable against testcontainers without session stubs (follows the
+`lib/users.ts updateAdminUser` aggregating-endpoint pattern; hitl.ts's
+in-service authz exists only because two routes share it).
+
+**UI — native `@git-diff-view/react` comment API** (spike-confirmed in 0.1.5
+typings): `diffViewAddWidget` + `onAddWidgetClick(lineNumber, side)` +
+`renderWidgetLine` (composer) + `extendData {oldFile/newFile:
+Record<String(line), {data}>}` + `renderExtendLine` (thread display). No
+overlay hacks. `extendData` is per-active-file — threads filter by selected
+path. Outdated threads render in a collapsible "Outdated" list (file:line +
+quoted stale content), resolvable there. Thread-card actions (edit / delete /
+resolve / unresolve / reply) are icon-only buttons with translated
+`aria-label`s following the house inline-SVG pattern (no icon library
+dependency). Refetch-on-mutation + `router.refresh()` for gate-panel counts —
+**no polling, no fs.watch, no new SSE events** (multi-tab sync deferred; HITL
+state is DB-only today anyway).
+
+**i18n.** All new strings land in `web/messages/en.json` + `ru.json` (the
+parity test enforces); labels flow server→client as typed label bundles per
+the house pattern.
+
+**Explicitly NOT changed:** no new `runs.status`, no new `MaisterError` code,
+no new env var/port/sidecar/dependency, no engine version bump, no flow.yaml
+DSL grammar change; the diff stays committed-only `base..branch` and
+`readBoard`-gated.
+
+**Consequences:**
+- Reviewers leave line-anchored, threaded, resolvable comments on the review
+  gate diff; the rework agent receives them as deterministic markdown inside
+  the existing `{{ <commentsVar> }}` injection — no new delivery channel.
+- Zero-thread behaviour is byte-identical to today, so every existing flow and
+  test keeps passing without migration; the regression is pinned by test.
+- The respond route's two-phase commit and idempotency CAS stay untouched
+  (runner-side compose is what makes that possible); comment routes are
+  single-transaction, single-store — no new crash windows.
+- A final-loop rework is rejected at validate time (422) instead of silently
+  failing the run; the engine `CONFIG` throw remains the backstop.
+- Outdated anchors are detected (exact-match placement) but never re-anchored;
+  a moved line shows as "outdated" until a human resolves or re-creates the
+  thread — accepted v1 trade-off (fuzzy/`git-blame` re-anchoring is a v2
+  candidate).
+- GET recomputes placement per request (one DB query + one in-memory diff
+  parse, no N+1) — no placement cache to invalidate, at the cost of a diff
+  parse per read.
+- No live multi-tab sync: a second tab sees new comments on
+  refetch-after-mutation or reload only.
+
+**Alternatives Considered:**
+- **Store comments as `.maister/` run artifacts:** rejected — comments span
+  multiple gate visits and rework iterations, need open/resolved queryability
+  at compose time, RBAC-gated writes, GC survival, and evidence linkage; a
+  file per gate visit gives none of that.
+- **Carry comments inside the respond route's `response` payload:** rejected —
+  comments are drafted incrementally BEFORE the decision; the respond route's
+  two-phase commit + idempotency CAS are locked invariants and
+  `hitl_requests.response` must stay a pristine user-submitted payload.
+- **Compose the payload at respond time (web-side) into the input artifact:**
+  rejected — it would change the respond route's artifact contents and break
+  the "response/input artifacts are user payloads" invariant; runner-side
+  compose keeps the route untouched and the zero-thread path byte-identical.
+- **SHA-pinned or fuzzy (`git-blame`) re-anchoring:** rejected for v1 —
+  non-deterministic placement corrupts evidence; exact content match at the
+  same position gives GitHub-style "outdated" semantics deterministically.
+- **Two tables (`review_threads` + `review_comments`):** rejected — a 1-level
+  self-FK on one table expresses root+replies with a single CHECK constraint
+  and fewer joins.
+- **New SSE event / polling for live comment sync:** rejected — violates the
+  no-polling invariant for marginal v1 value; HITL state is DB-only today.
+
+---
 
 ### ADR-066: Editor and diff rendering stack (Shiki, git-diff-view, CodeMirror)
 

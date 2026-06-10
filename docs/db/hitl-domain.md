@@ -1,20 +1,26 @@
 # HITL domain ERD
 
-Single table — `hitl_requests` — plus the in-jsonb shape of the
+Two tables — `hitl_requests` plus the **(Designed — ADR-071)**
+`review_comments` thread store — and the in-jsonb shape of the
 `schema` (form schema) and `response` payload. See
-[`../system-analytics/hitl.md`](../system-analytics/hitl.md) for
-process flows.
+[`../system-analytics/hitl.md`](../system-analytics/hitl.md) and
+[`../system-analytics/review-comments.md`](../system-analytics/review-comments.md)
+for process flows.
 
 ```mermaid
 erDiagram
     RUNS ||--o{ HITL_REQUESTS : "raises during execution"
+    RUNS ||--o{ REVIEW_COMMENTS : "review threads (Designed, ADR-071)"
+    HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (Designed)"
+    USERS ||--o{ REVIEW_COMMENTS : "author / resolver (SET NULL)"
+    REVIEW_COMMENTS ||--o{ REVIEW_COMMENTS : "replies (parent_id, cascade)"
 
     HITL_REQUESTS {
         text id PK
         text run_id FK
         text step_id "Flow step / node that raised it"
         text kind "permission | form | human"
-        jsonb schema "form_schema or permission descriptor (+ review allow-list)"
+        jsonb schema "form_schema or permission descriptor (+ review allow-list; Designed: + maxLoops/gateAttempt)"
         text prompt "human-readable rationale"
         jsonb response "operator's answer (NULL while open)"
         text decision "M11a review decision (claimed from response.decision)"
@@ -24,6 +30,27 @@ erDiagram
         real human_confidence "M17 Implemented: responder self-report 0..1 (written at respond time, NULL while open)"
         timestamp responded_at "NULL while open"
         timestamp created_at
+    }
+
+    REVIEW_COMMENTS {
+        text id PK "randomUUID (Designed, ADR-071, migration 0038 planned)"
+        text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
+        text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE - gate visit of authoring"
+        text node_id "NOT NULL - review node id"
+        integer gate_attempt "NOT NULL - gate visit number (iteration tag)"
+        text parent_id FK "NULL = root; -> review_comments(id) ON DELETE CASCADE (1-level threads)"
+        text author_user_id FK "NULL -> users(id) ON DELETE SET NULL"
+        text author_label "snapshot - survives user deletion"
+        text file_path "anchor (root only - CHECK)"
+        text side "old | new (root only)"
+        integer line "1-based on that side (root only)"
+        text line_content "server-extracted snapshot (root only)"
+        text body "NOT NULL - non-empty, max 10000 chars"
+        text status "NOT NULL - open | resolved DEFAULT open (roots only)"
+        text resolved_by_user_id FK "NULL -> users(id) ON DELETE SET NULL"
+        timestamp resolved_at "set on resolve, cleared on re-open"
+        timestamp created_at
+        timestamp updated_at "set on edit/resolve/re-open"
     }
 ```
 
@@ -45,6 +72,23 @@ erDiagram
 >   This is the *human* responder's self-report — distinct from the M15 AI-judge
 >   `GateVerdict.confidence` on `gate_results.verdict` (machine confidence). The two
 >   are never conflated.
+
+> **(Designed — ADR-071, migration `0038` planned.)** `review_comments` stores
+> line-anchored, 1-level-threaded review comments drafted at an open review
+> gate. A **root** row (`parent_id IS NULL`) carries the anchor —
+> `(file_path, side ∈ old|new, line)` + the exact server-extracted
+> `line_content` snapshot — and the `open|resolved` status; a **reply**
+> (`parent_id = root.id`) carries neither (DB CHECK: anchor fields non-null ⇔
+> root). Rows FK the `hitl_requests` row of their authoring gate visit
+> (cascade) and tag `gate_attempt`, so threads survive across rework
+> iterations within one run; `author_user_id`/`resolved_by_user_id` are
+> SET-NULL user FKs with an `author_label` snapshot. Placement
+> (`inline | outdated`) is computed at read time against the current diff —
+> never stored. For the review-gate rows themselves, the stored `schema`
+> additionally carries server-state `{ maxLoops, gateAttempt }` so the
+> respond route can reject a rework decision past the loop boundary
+> (`gateAttempt > maxLoops`; total visits = `maxLoops + 1`). See
+> [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md).
 
 ## In-jsonb shape — `schema` column
 
@@ -96,6 +140,12 @@ Free-form `additionalProperties` are tolerated (forward-compat).
 - `hitl_requests_run_idx` on `(run_id)` — pending HITL panel queries.
 - No UNIQUE on `(run_id, step_id)` — one step can raise multiple HITL
   asks over a run's lifetime.
+- **(Designed — ADR-071)** `review_comments` CHECK: `(file_path, side, line,
+  line_content)` non-null **iff** `parent_id IS NULL` (anchored roots vs
+  anchor-less replies). Indexes: `review_comments_run_created_idx`
+  `(run_id, created_at)`, `review_comments_run_status_idx`
+  `(run_id, status)`, `review_comments_hitl_request_idx`
+  `(hitl_request_id)`, `review_comments_parent_idx` `(parent_id)`.
 
 ## Lifecycle
 
@@ -110,8 +160,11 @@ The row is never deleted (cascades from `runs` and `projects` only).
 
 ## Linked artifacts
 
-- Process flows: [`../system-analytics/hitl.md`](../system-analytics/hitl.md).
+- Process flows: [`../system-analytics/hitl.md`](../system-analytics/hitl.md),
+  [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md)
+  (Designed — ADR-071).
 - Config: [`../configuration.md`](../configuration.md) §`form_schema versioning`.
-- Source: `web/lib/db/schema.ts` (`hitl_requests` table),
+- Source: `web/lib/db/schema.ts` (`hitl_requests` table; `review_comments`
+  Designed — migration `0038` planned),
   `web/lib/config.schema.ts` (`formSchemaSchema`),
   `web/lib/config.ts` (`validateFormSchemaVersion`).

@@ -286,6 +286,22 @@ sequenceDiagram
     RG->>DB: follow transitions.approve -> run Review
 ```
 
+**(Designed — ADR-071) composed `commentsVar` payload.** The "commentsVar
+injected" step above becomes a runner-side compose at rework consumption: the
+runner loads the run's OPEN line-anchored review-comment threads
+(`review_comments` roots + replies), serializes them as deterministic
+markdown — the reviewer's `comments` summary first, then file/line-ordered
+threads with quoted `line_content` snapshots and replies — and injects that
+as `pendingInjectedVars[commentsVar]`. **Zero open threads ⇒ the injected
+value is byte-identical to the raw summary** (and nothing is injected when no
+summary was submitted) — existing flows see exactly the pre-ADR-071 behavior.
+Resolved threads never serialize; open-but-outdated threads serialize with
+their stored snapshot quoted. The composed payload is also recorded as a
+`human_note` evidence artifact on the gate's `node_attempt`. The respond
+route, its two-phase commit, and `hitl_requests.response` /
+`input-<stepId>.json` are untouched. Serialization format + guard rules:
+[`review-comments.md`](review-comments.md).
+
 ### Gate dispatch by kind
 
 ```mermaid
@@ -464,7 +480,10 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   decision).
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md),
   [`workbench.md`](workbench.md) (M22 — the read-only graph **view** + live
-  node-status coloring that renders this topology).
+  node-status coloring that renders this topology),
+  [`review-comments.md`](review-comments.md) (Designed — ADR-071: composed
+  `commentsVar` payload, review-gate `{maxLoops, gateAttempt}` schema fields,
+  loop-exhaustion validate rule).
 - **(Designed, M27)** The read-only M22 graph view now has an **editor write
   path**: canvas edits serialize the manifest, run `validateGraphManifest` +
   `compileManifest` as a hard-gate (invalid manifest → `CONFIG`, not persisted),

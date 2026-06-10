@@ -52,6 +52,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK.                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
 | `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
+| `review_comments`             | **(Designed — ADR-071, migration `0038` planned)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK). | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver) |
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
@@ -1334,6 +1335,60 @@ carry `schema.supervisorSessionId` so the web tier can route the
 deferred resolution to the right supervisor session without an extra
 round-trip.
 
+## `review_comments`
+
+**(Designed — ADR-071, migration `0038` planned.)** Line-anchored, 1-level
+threaded review comments drafted at an open review gate, feeding the
+review-driven rework loop. See
+[`system-analytics/review-comments.md`](system-analytics/review-comments.md).
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  runId,                          // FK -> runs.id (cascade)
+  hitlRequestId,                  // FK -> hitl_requests.id (cascade) —
+                                  //   the review-gate visit of authoring
+  nodeId,                         // review node id in the compiled graph
+  gateAttempt,                    // int — gate visit number (iteration tag)
+  parentId?,                      // self-FK -> review_comments.id (cascade);
+                                  //   NULL = root, set = reply (1 level only)
+  authorUserId?,                  // FK -> users.id (SET NULL)
+  authorLabel,                    // text snapshot — survives user deletion
+  filePath?,                      // anchor: repo-relative diff path (root only)
+  side?: 'old' | 'new',           // anchor: diff side (root only)
+  line?,                          // anchor: 1-based line on that side (root only)
+  lineContent?,                   // anchor: exact server-extracted line snapshot
+                                  //   (root only; client value never trusted)
+  body,                           // comment text; non-empty, <= 10 000 chars
+  status: 'open' | 'resolved',    // default 'open'; meaningful on roots only
+  resolvedByUserId?,              // FK -> users.id (SET NULL)
+  resolvedAt?,                    // set on resolve; cleared on re-open
+  createdAt,
+  updatedAt?                      // set on edit/resolve/re-open
+}
+```
+
+**CHECK constraint:** the four anchor columns (`file_path`, `side`, `line`,
+`line_content`) are non-null **iff** the row is a root (`parent_id IS NULL`).
+A reply never carries an anchor; a root always does.
+
+**Anchoring (ADR-071).** `(file_path, side, line)` plus the exact
+`line_content` snapshot extracted server-side from the recomputed committed
+`base..branch` diff at POST time — no SHA, no fuzzy re-anchoring.
+Cross-iteration validity is computed at read time as `placement:
+"inline" | "outdated"` (exact content match at the same position in the
+*current* diff); placement is never stored. `file_path` is opaque anchor
+data — never used as a filesystem path component.
+
+**Write guard.** Rows are inserted/mutated only at an open review gate:
+`runs.status ∈ PENDING_HITL_RUN_STATUS` (`{NeedsInput, NeedsInputIdle}`) AND
+a pending `hitl_requests` row (`responded_at IS NULL`, `kind='human'`,
+`schema.review === true`); new comments FK that row and tag its
+`gate_attempt`. Comment writes never touch `runs.status`. Open root threads
+(+ replies) are composed runner-side into the rework `commentsVar` payload at
+consumption; resolved threads never serialize; zero open threads keeps the
+injected value byte-identical to the raw review summary.
+
 ## `assignments`
 
 (M13, migration `0018`.)
@@ -1448,7 +1503,8 @@ users
   ├── accounts           (FK userId, cascade)
   ├── sessions           (FK userId, cascade)
   ├── project_members    (FK userId, cascade)
-  └── node_attempts.owner_user_id (FK userId, SET NULL)  ← M11b takeover owner
+  ├── node_attempts.owner_user_id (FK userId, SET NULL)  ← M11b takeover owner
+  └── review_comments.author_user_id / .resolved_by_user_id (FK userId, SET NULL)  ← Designed, ADR-071
 
 projects
   ├── project_members    (FK projectId, cascade)
@@ -1469,7 +1525,10 @@ projects
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
   │           ├── artifact_projection_cursors (FK runId, cascade)        ← M12
   │           ├── hitl_requests   (FK runId,        cascade)
-  │           │     └── assignments (FK hitlRequestId, cascade)          ← M13
+  │           │     ├── assignments (FK hitlRequestId, cascade)          ← M13
+  │           │     └── review_comments (FK hitlRequestId, cascade)      ← Designed, ADR-071
+  │           ├── review_comments (FK runId,        cascade)             ← Designed (also direct)
+  │           │     └── review_comments.parent_id (self-ref, cascade — root delete drops replies)
   │           ├── assignments     (FK runId,        cascade)             ← M13
   │           │     └── assignment_events (FK assignmentId, cascade)
   │           └── scratch_runs    (FK runId,        cascade)
@@ -1520,6 +1579,10 @@ Created via Drizzle:
 | `artifact_instances`  | `artifact_instances_run_kind_idx`       | `(runId, kind)`                   | **(M12)** Filter by kind                                           |
 | `artifact_instances`  | `artifact_instances_run_validity_idx`   | `(runId, validity)`               | **(M12)** Filter by validity                                       |
 | `hitl_requests`       | `hitl_requests_run_idx`                 | `(runId)`                         | Pending HITL panel                                                 |
+| `review_comments`     | `review_comments_run_created_idx`       | `(runId, createdAt)`              | **(Designed, ADR-071)** Thread listing per run in stable order     |
+| `review_comments`     | `review_comments_run_status_idx`        | `(runId, status)`                 | **(Designed, ADR-071)** Open-thread compose / unresolved counts    |
+| `review_comments`     | `review_comments_hitl_request_idx`      | `(hitlRequestId)`                 | **(Designed, ADR-071)** Comments per gate visit                    |
+| `review_comments`     | `review_comments_parent_idx`            | `(parentId)`                      | **(Designed, ADR-071)** Reply lookup per root                      |
 | `assignments`         | `assignments_project_status_idx`        | `(projectId, status)`             | Project work queue                                                 |
 | `assignments`         | `assignments_run_status_idx`            | `(runId, status)`                 | Run-detail work queue                                              |
 | `assignments`         | `assignments_current_actor_idx`         | `(assigneeActorId)`               | Actor-owned work lookup                                            |

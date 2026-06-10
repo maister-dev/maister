@@ -104,6 +104,8 @@ tags:
     description: M13 role-owned work queue and assignment ownership.
   - name: takeover
     description: Manual takeover — local worktree handoff (M11b, ADR-030).
+  - name: review-comments
+    description: Line-anchored review-comment threads on the review-gate diff (Designed, ADR-071).
   - name: flow-packages
     description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
   - name: reconciliation-gc
@@ -2203,6 +2205,23 @@ paths:
         reads them on resume to drive the rework loop. No new `MaisterError`
         code is introduced.
 
+        **(Designed — ADR-071) review-gate loop fields.** For a review gate
+        the stored `hitl_requests.schema` additionally carries the
+        server-state fields `maxLoops` (the node's `rework.maxLoops`; `null`
+        when the node declares no rework) and `gateAttempt` (the 1-based
+        visit number of the current gate — initial visit = 1). They surface
+        through the pending-HITL read model so the UI can render
+        "Rework loop N of M" and disable rework at the boundary. The
+        validation step rejects a `rework` decision with 422 (`NEEDS_INPUT`)
+        when `gateAttempt > maxLoops` (total allowed gate visits =
+        `maxLoops + 1`); the engine's `CONFIG` re-entry throw remains the
+        backstop. Line-anchored review comments are drafted through the
+        separate `/api/runs/{runId}/review-comments` routes BEFORE the
+        decision — never through this route; at rework consumption the
+        runner composes the open threads into the node's `commentsVar`
+        payload (zero open threads ⇒ byte-identical to the raw `comments`
+        summary).
+
         On every success path the body returns `runStatus: "NeedsInput"`
         — the runner (not this route) is the single owner of the
         `NeedsInput → Running` transition.
@@ -2338,7 +2357,11 @@ paths:
             also returned when a graph `human_review` `response.decision`
             (or its resolved target / `workspacePolicy`) is not in the
             allow-list stored in `hitl_requests.schema`; no artifact is
-            written and no state is mutated.
+            written and no state is mutated. **(Designed — ADR-071)** also
+            returned when a `rework` decision is submitted past the loop
+            boundary (`schema.gateAttempt > schema.maxLoops`; total visits =
+            `maxLoops + 1`) — rejected at validate time instead of letting
+            the engine `CONFIG`-fail the whole run.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2352,6 +2375,242 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/review-comments:
+    get:
+      tags: [review-comments]
+      summary: Designed (ADR-071) — list review-comment threads with placement
+      description: |
+        Requires project membership at `viewer` or above
+        (`requireProjectAction("readBoard")`); `projectId` is derived from the
+        run row, never the body. NOT status-gated — thread history stays
+        visible after the gate closes, like the diff.
+
+        Returns the run's review-comment threads (root + replies) with a
+        computed `placement` per thread: exactly one DB query for the run's
+        comments plus one in-memory parse of the server-recomputed committed
+        `base..branch` diff (no N+1). `placement = "inline"` iff the stored
+        `lineContent` exactly matches the current diff at the same
+        `(filePath, side, line)`; otherwise `"outdated"` (no fuzzy
+        re-anchoring; placement is never stored). Threads whose file fell past
+        a `truncated` diff bound render as `outdated`.
+      operationId: getRunReviewComments
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Review-comment threads with computed placement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewCommentThreadsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [review-comments]
+      summary: Designed (ADR-071) — create a root comment or a reply
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`); `projectId` is derived from
+        the run row. Guarded by the **open-review-gate allow-list**:
+        `runs.status ∈ PENDING_HITL_RUN_STATUS` (= `{NeedsInput,
+        NeedsInputIdle}`) AND a pending `hitl_requests` row
+        (`respondedAt IS NULL`) with `kind = "human"` and
+        `schema.review === true` must exist — otherwise 409 `PRECONDITION`.
+        The new comment references that row (`hitlRequestId`,
+        `gateAttempt`). The write NEVER touches `runs.status` and is a single
+        DB transaction with no artifact write and no supervisor call.
+
+        Body is a shape-discriminated union: a ROOT comment
+        (`{filePath, side, line, body}`) or a REPLY (`{parentId, body}`).
+        For a root, the anchor is validated against the server-recomputed
+        diff (the same `diffRunWorkspace` + `lib/diff/prepare.ts` source the
+        view renders) and `lineContent` is extracted server-side — the client
+        never supplies it. A `truncated` diff, a `filePath` absent from the
+        parsed diff, or a `line` absent on the named side → 409
+        `PRECONDITION`. For a reply, `parentId` must resolve to a ROOT
+        comment of the SAME run (server-state compare) → 409 `CONFLICT`
+        otherwise. `author_user_id`/`author_label` come from the session,
+        never the body. `filePath` is opaque anchor DATA — never used as a
+        filesystem path component.
+      operationId: postRunReviewComment
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostReviewCommentBody" }
+            examples:
+              root:
+                summary: Anchored root comment
+                value:
+                  filePath: "web/lib/flows/hitl-validate.ts"
+                  side: "new"
+                  line: 42
+                  body: "This guard misses the idle status."
+              reply:
+                summary: Reply to a root comment
+                value:
+                  parentId: "0b6cbb0e-6b9e-4d27-9a44-1f0d6a3e7f10"
+                  body: "Fixed in the next attempt."
+      responses:
+        "201":
+          description: Comment created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewCommentResponse" }
+        "400":
+          description: |
+            Malformed body (`CONFIG`) — zod validation failure: neither a
+            valid root nor a valid reply shape, empty `body`, or `body`
+            over 10 000 chars.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Either the review gate is not open (`PRECONDITION` — wrong
+            `runs.status` or no pending review-gate HITL row), the anchor
+            cannot be validated (`PRECONDITION` — diff `truncated`, file
+            absent from the parsed diff, or line absent on that side), or a
+            reply's `parentId` is not a root comment of this run
+            (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/review-comments/{commentId}:
+    patch:
+      tags: [review-comments]
+      summary: Designed (ADR-071) — edit body (author-only) or resolve/unresolve (root-only)
+      description: |
+        Requires `answerHitl` (member) + the same open-review-gate guard as
+        POST (409 `PRECONDITION` otherwise). The row is loaded and
+        `row.run_id === runId` is compared server-state — mismatch or unknown
+        `commentId` → 404. Body is a shape-discriminated union — exactly one
+        of:
+
+        - `{body}` — edit the comment text. **Author-only**
+          (`author_user_id` must equal the session user) → 403
+          `UNAUTHORIZED` otherwise. Sets `updated_at`.
+        - `{status: "open" | "resolved"}` — resolve or re-open a thread.
+          **Root-only** (a reply target → 409 `CONFLICT`); allowed for any
+          `answerHitl` member. Resolving sets
+          `resolved_by_user_id`/`resolved_at`; re-opening clears them.
+
+        Writes never touch `runs.status`; single DB transaction, no
+        side-effects.
+      operationId: patchRunReviewComment
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchReviewCommentBody" }
+            examples:
+              edit:
+                summary: Author edits the text
+                value: { body: "Clarified — see the updated diff line." }
+              resolve:
+                summary: Any member resolves the thread
+                value: { status: "resolved" }
+      responses:
+        "200":
+          description: Updated comment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewCommentResponse" }
+        "400":
+          description: |
+            Malformed body (`CONFIG`) — zod validation failure: neither
+            `{body}` nor `{status}` alone, empty `body`, `body` over
+            10 000 chars, or an unknown `status` value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            Caller is not a `member` or above (`UNAUTHORIZED`), the account
+            must change its password first (`PASSWORD_CHANGE_REQUIRED`), or a
+            `{body}` edit was attempted by a non-author (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The review gate is not open (`PRECONDITION`), or `{status}` was
+            targeted at a reply (`CONFLICT` — resolve is root-only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [review-comments]
+      summary: Designed (ADR-071) — delete a comment (author-only; root cascades replies)
+      description: |
+        Requires `answerHitl` (member) + the open-review-gate guard (409
+        `PRECONDITION` otherwise). **Author-only** → 403 `UNAUTHORIZED` for a
+        non-author. `row.run_id === runId` compared server-state — mismatch
+        or unknown `commentId` → 404. Deleting a root cascades its replies
+        (`parent_id` FK `ON DELETE CASCADE`). Single DB transaction; never
+        touches `runs.status`.
+      operationId: deleteRunReviewComment
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Comment deleted (replies cascaded for a root). No body.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            Caller is not a `member` or above, the account must change its
+            password first, or the caller is not the comment's author
+            (`UNAUTHORIZED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The review gate is not open (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/runs/{runId}/takeover/claim:
     post:
       tags: [takeover]
@@ -7039,6 +7298,176 @@ components:
             `rewind-to-node-checkpoint` / `fresh-attempt` are recorded but their
             execution is M11b.
           enum: [keep, rewind-to-node-checkpoint, fresh-attempt]
+    ReviewComment:
+      type: object
+      description: |
+        (Designed — ADR-071) One `review_comments` row as a wire DTO. A ROOT
+        comment (`parentId` null) carries the anchor
+        (`filePath`/`side`/`line`/`lineContent`) and the `open|resolved`
+        status; a REPLY carries no anchor (DB CHECK: anchor fields non-null ⇔
+        root). `lineContent` is the exact server-extracted diff-line snapshot
+        captured at creation — never client-supplied. `authorLabel` is a
+        snapshot that survives user deletion (`authorUserId` is a SET NULL
+        FK).
+      required:
+        - id
+        - runId
+        - hitlRequestId
+        - nodeId
+        - gateAttempt
+        - parentId
+        - authorUserId
+        - authorLabel
+        - body
+        - status
+        - createdAt
+      properties:
+        id: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        hitlRequestId:
+          type: string
+          format: uuid
+          description: The review-gate `hitl_requests` row (gate visit) of authoring.
+        nodeId: { type: string }
+        gateAttempt:
+          type: integer
+          minimum: 1
+          description: Gate visit number at authoring time (iteration tag).
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for a root; the root comment's id for a reply (1-level threads).
+        authorUserId: { type: string, nullable: true }
+        authorLabel: { type: string }
+        filePath:
+          type: string
+          nullable: true
+          description: Anchor (root only). Opaque anchor data — never a filesystem path component.
+        side:
+          type: string
+          enum: [old, new]
+          nullable: true
+          description: Anchor diff side (root only) — `old` = base, `new` = branch.
+        line:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Anchor 1-based line number on that side (root only).
+        lineContent:
+          type: string
+          nullable: true
+          description: Server-extracted line snapshot (root only).
+        body: { type: string }
+        status:
+          type: string
+          enum: [open, resolved]
+          description: Thread status; meaningful on roots only (default `open`).
+        resolvedByUserId: { type: string, nullable: true }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    ReviewCommentThread:
+      type: object
+      description: |
+        (Designed — ADR-071) A root comment with its replies and the computed
+        `placement` for the current diff.
+      required: [root, placement, replies]
+      properties:
+        root: { $ref: "#/components/schemas/ReviewComment" }
+        placement:
+          type: string
+          enum: [inline, outdated]
+          description: |
+            `inline` iff the stored `lineContent` exactly matches the current
+            server-recomputed diff at the same `(filePath, side, line)`;
+            `outdated` otherwise. Computed per GET request — never stored, no
+            fuzzy re-anchoring.
+        replies:
+          type: array
+          description: Replies in `createdAt` (then `id`) ascending order.
+          items: { $ref: "#/components/schemas/ReviewComment" }
+    ReviewCommentThreadsResponse:
+      type: object
+      required: [threads]
+      properties:
+        threads:
+          type: array
+          description: |
+            (Designed — ADR-071) All threads of the run (open and resolved),
+            roots ordered by `(filePath, line, side old<new, createdAt, id)`.
+          items: { $ref: "#/components/schemas/ReviewCommentThread" }
+    ReviewCommentResponse:
+      type: object
+      required: [comment]
+      properties:
+        comment: { $ref: "#/components/schemas/ReviewComment" }
+    PostReviewCommentBody:
+      description: |
+        (Designed — ADR-071) Shape-discriminated union: a ROOT comment
+        carries the anchor and no `parentId`; a REPLY carries `parentId` and
+        `body` only. A body matching both (or neither) shape is rejected 400.
+        `lineContent` is NEVER accepted from the client — the server
+        extracts it from the recomputed diff.
+      oneOf:
+        - $ref: "#/components/schemas/ReviewCommentRootBody"
+        - $ref: "#/components/schemas/ReviewCommentReplyBody"
+    ReviewCommentRootBody:
+      type: object
+      required: [filePath, side, line, body]
+      properties:
+        filePath:
+          type: string
+          minLength: 1
+          description: |
+            Anchor path as it appears in the diff. Opaque anchor DATA —
+            validated against the server-computed diff (absent file → 409
+            `PRECONDITION`); never used as a filesystem path component.
+        side:
+          type: string
+          enum: [old, new]
+        line:
+          type: integer
+          minimum: 1
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+    ReviewCommentReplyBody:
+      type: object
+      required: [parentId, body]
+      properties:
+        parentId:
+          type: string
+          format: uuid
+          description: |
+            Must resolve to a ROOT comment of the SAME run (server-state
+            compare) — otherwise 409 `CONFLICT`.
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+    PatchReviewCommentBody:
+      description: |
+        (Designed — ADR-071) Exactly one of `{body}` (author-only edit) or
+        `{status}` (root-only resolve/unresolve). A body carrying both (or
+        neither) is rejected 400.
+      oneOf:
+        - type: object
+          title: EditBody
+          required: [body]
+          properties:
+            body:
+              type: string
+              minLength: 1
+              maxLength: 10000
+        - type: object
+          title: SetStatus
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [open, resolved]
     MaisterErrorBody:
       type: object
       required: [code, message]
@@ -7205,6 +7634,19 @@ components:
       properties:
         kind: { type: string, enum: [inline] }
         text: { type: string }
+        hitlRequestId:
+          type: string
+          description: |
+            (Designed — ADR-071) Present on the composed-rework-payload
+            evidence row (`kind: human_note`, `producer: runner`): the
+            authoring review-gate `hitl_requests` id. `text` carries the
+            composed payload.
+        threadIds:
+          type: array
+          items: { type: string }
+          description: |
+            (Designed — ADR-071) Ids of the open root comments serialized
+            into `text` at compose time.
 
     ArtifactInstanceList:
       type: object

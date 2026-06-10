@@ -337,6 +337,19 @@ graph flow the legacy `human` step `on_reject.goto_step` is **superseded** by
 node `transitions` + `finish.human.decisions`; linear `steps[]` flows retain the
 documented (still-unexecuted) `on_reject.goto_step` behavior.
 
+**`rework.commentsVar` composed payload — (Designed — ADR-071).** The value
+injected as the top-level `{{ <commentsVar> }}` template var on the rework
+target's next attempt becomes a *composed* payload: the reviewer's free-text
+`comments` summary first, then the run's OPEN line-anchored review-comment
+threads serialized as deterministic markdown (file/line-ordered, each root's
+exact `line_content` snapshot quoted, replies included; resolved threads never
+serialize). **Backward-compatible by construction:** with zero open threads
+the injected value is byte-identical to the raw summary (and nothing is
+injected when no summary was submitted) — no flow.yaml grammar change, no
+engine version bump; `{{ review_comments }}` keeps working as-is. Format and
+guard rules:
+[`system-analytics/review-comments.md`](system-analytics/review-comments.md).
+
 **Manual takeover — M11b local-handoff subset (Implemented).** Manual takeover is
 a LOCAL worktree handoff ([ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)),
 NOT a `human_edit` node type. It is a run-state transition off the existing

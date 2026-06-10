@@ -200,6 +200,23 @@ and no raw `goto_step` is accepted from the client. See
 [`flow-graph.md`](flow-graph.md) and
 [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 
+**(Designed — ADR-071) review-gate loop fields + line-anchored comments.** For
+a review gate the stored `hitl_requests.schema` additionally carries the
+server-state fields `{ maxLoops, gateAttempt }` (`gateAttempt` = the 1-based
+visit number of the current gate, initial visit = 1; `maxLoops` from the
+node's `rework.maxLoops`, `null` when no rework is declared). The respond
+route's validation rejects a `rework` decision with 422 (`NEEDS_INPUT`) when
+`gateAttempt > maxLoops` — total allowed gate visits = `maxLoops + 1`; the
+engine's `CONFIG` re-entry throw stays as the backstop. Line-anchored review
+comments are drafted incrementally through the separate
+`/api/runs/{runId}/review-comments` route family BEFORE the decision — never
+through the respond route, whose two-phase commit, idempotency CAS, and
+pristine `response`/`input-<stepId>.json` payloads are UNTOUCHED. At rework
+consumption the runner composes the open comment threads into the node's
+`commentsVar` payload (zero open threads ⇒ byte-identical to the raw
+`comments` summary). Domain detail:
+[`review-comments.md`](review-comments.md).
+
 ### `takeover` decision → manual handoff (M11b — Implemented)
 
 The `human_review` node's `takeover` decision is **not** an artifact-write HITL
@@ -448,6 +465,14 @@ fields:
   bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
   `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
   breach) and terminate the run.
+- **(Designed — ADR-071)** A graph review gate's stored schema MUST carry
+  server-state `{ maxLoops, gateAttempt }`; the respond route MUST reject a
+  `rework` decision with 422 (`NEEDS_INPUT`) when `gateAttempt > maxLoops`
+  (total gate visits = `maxLoops + 1`) BEFORE any artifact write or state
+  mutation — the engine `CONFIG` throw remains the backstop only. The
+  rejection applies only when the review node declares rework (`maxLoops`
+  non-null); without `rework` there is no rework decision to reject, so the
+  rule is vacuous.
 - **(Implemented — M17)** Full `on_reject.goto_step` rerouting in
   `runHumanStep`: on rejection the runner MUST write
   `rework-comments-{gotoStepId}.json` (NEVER `input-{gotoStepId}.json`),
@@ -559,6 +584,12 @@ fields:
   validation fails → 422 (`NEEDS_INPUT`). (Implemented — M17)
 - **`on_reject.goto_step` re-entry guard exceeded** → `MaisterError("CONFIG")` →
   run `Failed`, task → `Backlog`. (Implemented — M17)
+- **Graph review `rework` decision at an exhausted loop**
+  (`schema.gateAttempt > schema.maxLoops`) → 422 (`NEEDS_INPUT`) at validate
+  time — no artifact write, no state mutation; the reviewer can still
+  approve. Without this rule a final-loop rework would reach the engine's
+  re-entry check and `CONFIG`-fail the whole run (that throw remains the
+  backstop). (Designed — ADR-071)
 
 ## M8 — live vs idle HITL response paths
 
@@ -650,7 +681,10 @@ runner-agent enforcement is queued for a follow-up patch.
 - API (external): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
-  [`flow-graph.md`](flow-graph.md) (M11a review decisions).
+  [`flow-graph.md`](flow-graph.md) (M11a review decisions),
+  [`review-comments.md`](review-comments.md) (Designed — ADR-071:
+  line-anchored review threads, `{maxLoops, gateAttempt}` schema fields,
+  loop-exhaustion refusal).
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),
   `web/lib/atomic.ts` (`atomicWriteJson`),
   `web/lib/db/schema.ts` (hitl_requests table).
