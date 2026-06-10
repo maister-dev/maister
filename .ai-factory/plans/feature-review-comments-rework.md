@@ -135,8 +135,8 @@ Out of scope (explicitly deferred):
 <!-- Commit checkpoint: tasks 5-6 -->
 
 ### Phase 3 — Engine integration (TDD slice)
-- [ ] Task 7: Runner: gate schema +`{maxLoops, gateAttempt}`; compose open threads into `pendingInjectedVars[commentsVar]` at rework consumption; record evidence `human_note` artifact; runner integration tests (compose with threads, zero-thread byte-identity regression, resolved-excluded, cross-iteration carry); migrate any broken graph-suite assertions (depends on 4, 6)
-- [ ] Task 8: `hitl-validate`: reject rework at `gateAttempt ≥ maxLoops + 1` (`NEEDS_INPUT` 422) after verifying the engine off-by-one with an integration test; unit tests both sides of boundary (depends on 7)
+- [x] Task 7: Runner: gate schema +`{maxLoops, gateAttempt}`; compose open threads into `pendingInjectedVars[commentsVar]` at rework consumption; record evidence `human_note` artifact; runner integration tests (compose with threads, zero-thread byte-identity regression, resolved-excluded, cross-iteration carry); migrate any broken graph-suite assertions (depends on 4, 6)
+- [x] Task 8: `hitl-validate`: reject rework at `gateAttempt ≥ maxLoops + 1` (`NEEDS_INPUT` 422) after verifying the engine off-by-one with an integration test; unit tests both sides of boundary (depends on 7) — **scope expanded during implementation**: the engine boundary check itself was fixed (resume-reuse iterations no longer fail legitimate decisions at visit maxLoops+1; empirically-proven pre-existing bug found by Task 7's review)
 <!-- Commit checkpoint: tasks 7-8 -->
 
 ### Phase 4 — API routes (TDD slice; may start after 4+5, ∥ P3)

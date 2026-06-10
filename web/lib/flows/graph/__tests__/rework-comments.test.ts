@@ -11,6 +11,7 @@ import { buildContext } from "@/lib/flows/context";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { collectDeclaredCommentsVars } from "@/lib/flows/graph/runner-graph";
 import { renderStrict } from "@/lib/flows/templating";
+import { composeReworkPayload } from "@/lib/review-comments/serialize";
 
 // Runtime guard for the rework-comment templating contract on the SHIPPED AIF
 // flows (the gap behind C1/I1: aif-flows.test.ts is static-load only and never
@@ -103,6 +104,46 @@ describe("AIF shipped flows — rework comment templating (C1/I1 runtime regress
 
       expect(prompt).toContain("review_comments");
       expect(prompt).not.toMatch(/steps\.\w+\.vars\./);
+    },
+  );
+
+  it.each(["dev", "bugfix"] as const)(
+    "%s: fix prompt renders an ADR-071 composed-threads payload intact (anchors, quotes, replies)",
+    async (flow) => {
+      // The runner injects composeReworkPayload output on a rework jump;
+      // the frozen markdown (### anchors, > quotes, ** bold) must survive the
+      // strict Mustache render of the REAL flow prompt unescaped.
+      const composed = composeReworkPayload("SUMMARY-NOTE", [
+        {
+          root: {
+            id: "c1",
+            filePath: "lib/auth.ts",
+            side: "new",
+            line: 7,
+            lineContent: "const token = req.headers.authorization;",
+            authorLabel: "Reviewer",
+            body: "VALIDATE-THE-HEADER",
+            createdAt: new Date("2026-06-10T10:00:00Z"),
+          },
+          replies: [
+            {
+              id: "c2",
+              authorLabel: "Author",
+              body: "WILL-DO",
+              createdAt: new Date("2026-06-10T10:05:00Z"),
+            },
+          ],
+        },
+      ]);
+      const out = await renderFixPrompt(flow, composed);
+
+      expect(out).toContain("SUMMARY-NOTE");
+      expect(out).toContain("### lib/auth.ts:7 (new)");
+      expect(out).toContain("> const token = req.headers.authorization;");
+      expect(out).toContain("**Reviewer:**");
+      expect(out).toContain("VALIDATE-THE-HEADER");
+      expect(out).toContain("**Reply — Author:**");
+      expect(out).toContain("WILL-DO");
     },
   );
 });

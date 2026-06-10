@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { access, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "../context";
@@ -44,6 +44,7 @@ import {
   failArtifact,
   getCurrentArtifact,
   getArtifactsForRun,
+  recordArtifact,
   recordCurrentArtifact,
 } from "./artifact-store";
 import { recordDefaultArtifacts } from "./default-artifacts";
@@ -83,6 +84,15 @@ import {
   type WorkspacePolicy,
 } from "@/lib/config.schema";
 import { projectRunEvents } from "@/lib/projector/artifact-projector";
+import {
+  compareThreadReplies,
+  compareThreadRoots,
+} from "@/lib/review-comments/order";
+import {
+  composeReworkPayload,
+  type ComposeRootComment,
+  type ComposeThread,
+} from "@/lib/review-comments/serialize";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   isMaisterError,
@@ -93,7 +103,8 @@ import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, hitlRequests } = schemaModule as unknown as Record<string, any>;
+const { runs, hitlRequests, reviewComments } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-runner-graph",
@@ -168,7 +179,7 @@ export async function runReviewHuman(
   node: CompiledNode,
   loaded: LoadedRun,
   prompt: string,
-  ctx: { runtimeRoot: string; db: Db },
+  ctx: { runtimeRoot: string; db: Db; gateAttempt: number },
 ): Promise<NodeResult> {
   const startedAt = Date.now();
   const dir = runDir(ctx.runtimeRoot, loaded.projectSlug, loaded.run.id);
@@ -222,6 +233,12 @@ export async function runReviewHuman(
     workspacePolicies: node.rework?.workspacePolicies ?? [],
     commentsVar:
       node.rework?.commentsVar ?? node.finishHuman?.commentsVar ?? null,
+    // ADR-071 loop fields: gateAttempt is the 1-based visit number of THIS
+    // gate (the current visit's attempt row is appended before the action
+    // runs, so the ledger count equals the visit number); maxLoops is the
+    // node's rework bound — null when the node declares no rework.
+    maxLoops: node.rework?.maxLoops ?? null,
+    gateAttempt: ctx.gateAttempt,
   };
 
   const needsInputPath = path.join(dir, "needs-input.json");
@@ -455,6 +472,8 @@ async function executeNodeAction(
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
+    // 1-based ledger attempt number of THIS visit (ADR-071 gateAttempt source).
+    nodeAttemptNumber: number;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -518,6 +537,7 @@ async function executeNodeAction(
       return runReviewHuman(node, loaded, `Review "${node.id}"`, {
         runtimeRoot: ctx.runtimeRoot,
         db: ctx.db,
+        gateAttempt: ctx.nodeAttemptNumber,
       });
     case "form":
       return runFormCollect(node, loaded, def.settings, {
@@ -590,6 +610,130 @@ export function collectDeclaredCommentsVars(
   }
 
   return seeded;
+}
+
+// ADR-071: a review_comments row in the structural shape the composer reads,
+// plus the thread-assembly fields. Replies reuse the root shape with null
+// anchor columns (DB CHECK).
+type ReviewCommentRow = ComposeRootComment & {
+  parentId: string | null;
+  status: "open" | "resolved";
+};
+
+// ADR-071: load the run's OPEN review-comment threads (open roots + their
+// replies) for the rework compose. Queries the schema directly instead of
+// lib/review-comments/service.ts `listThreads`: that module imports
+// lib/services/hitl.ts (PENDING_HITL_RUN_STATUS), which imports
+// lib/flows/runner.ts → this module — a cycle. The frozen ordering contract
+// still has ONE home: the comparators in lib/review-comments/order.ts are
+// shared with the service, and the composer re-sorts defensively.
+async function loadOpenReviewThreads(
+  runId: string,
+  db: Db,
+): Promise<ComposeThread[]> {
+  const rows = (await db
+    .select()
+    .from(reviewComments)
+    .where(eq(reviewComments.runId, runId))) as ReviewCommentRow[];
+
+  const repliesByRoot = new Map<string, ReviewCommentRow[]>();
+
+  for (const row of rows) {
+    if (row.parentId === null) continue;
+
+    const bucket = repliesByRoot.get(row.parentId);
+
+    if (bucket) {
+      bucket.push(row);
+    } else {
+      repliesByRoot.set(row.parentId, [row]);
+    }
+  }
+
+  return rows
+    .filter((row) => row.parentId === null && row.status === "open")
+    .sort(compareThreadRoots)
+    .map((root) => ({
+      root,
+      replies: (repliesByRoot.get(root.id) ?? []).sort(compareThreadReplies),
+    }));
+}
+
+// ADR-071 (D4) evidence snapshot: the composed rework payload as ONE
+// artifact_instances row (kind human_note, producer runner, locator inline
+// with additive {hitlRequestId, threadIds}), linked to the gate's
+// node_attempt. Distinct from recordDefaultArtifacts' human_note row (locator
+// hitl-response → the raw stored decision payload): this row freezes the
+// composed TEXT the rework attempt actually received. Best-effort like the
+// default-artifact writers — an evidence-write failure never fails the rework.
+async function recordComposedCommentsEvidence(
+  args: {
+    runId: string;
+    nodeId: string;
+    nodeAttemptId: string;
+    attempt: number;
+    composed: string;
+    threadIds: string[];
+  },
+  db: Db,
+  logger: pino.Logger,
+): Promise<void> {
+  try {
+    // The gate visit just consumed = the latest responded hitl row for this
+    // node (mirrors the recordDefaultArtifacts hitl-response lookup).
+    const hitlRows = (await db
+      .select({ id: hitlRequests.id })
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.runId, args.runId),
+          eq(hitlRequests.stepId, args.nodeId),
+          isNotNull(hitlRequests.response),
+        ),
+      )
+      .orderBy(desc(hitlRequests.createdAt))
+      .limit(1)) as Array<{ id: string }>;
+    const hitlRequestId = hitlRows[0]?.id;
+
+    await recordArtifact(
+      {
+        // Reserved `adr071:` namespace — declared-output ids are
+        // `run:<nodeAttemptId>:<artifactDefId>`, so a def literally named
+        // `rework-comments` can never collide with this runner-internal row.
+        id: `run:${args.nodeAttemptId}:adr071:rework-comments`,
+        runId: args.runId,
+        nodeAttemptId: args.nodeAttemptId,
+        nodeId: args.nodeId,
+        attempt: args.attempt,
+        kind: "human_note",
+        producer: "runner",
+        locator: {
+          kind: "inline",
+          text: args.composed,
+          ...(hitlRequestId !== undefined ? { hitlRequestId } : {}),
+          threadIds: args.threadIds,
+        },
+        validity: "current",
+      },
+      db,
+    );
+    logger.info(
+      {
+        runId: args.runId,
+        nodeId: args.nodeId,
+        nodeAttemptId: args.nodeAttemptId,
+        hitlRequestId,
+        threadCount: args.threadIds.length,
+        composedLength: args.composed.length,
+      },
+      "rework comments evidence recorded",
+    );
+  } catch (err) {
+    logger.warn(
+      { runId: args.runId, nodeId: args.nodeId, err: asError(err).message },
+      "rework comments evidence record failed (non-fatal)",
+    );
+  }
 }
 
 // M14 T4.1: resolve + materialize a capability profile for a capability-declaring
@@ -1011,26 +1155,49 @@ export async function runGraph(
         (a) => a.nodeId === node.id,
       ).length;
 
-      // rework.maxLoops bounds re-entries of a rework-capable node
-      // (initial visit + maxLoops reworks).
-      if (node.rework && nodeAttemptCount > node.rework.maxLoops) {
-        throw new MaisterError(
-          "CONFIG",
-          `node "${node.id}" exceeded rework.maxLoops (${node.rework.maxLoops}) for run ${runId}`,
-        );
-      }
-
       // Reuse an existing NeedsInput attempt when resuming this exact node;
       // otherwise append a fresh attempt (append-only ledger).
       const lastForNode = [...attempts]
         .reverse()
         .find((a) => a.nodeId === node.id);
 
-      let nodeAttemptId: string;
       const resumingThisNode =
         isResume &&
         node.id === resumeNodeId &&
         lastForNode?.status === "NeedsInput";
+
+      // A reuse iteration re-enters the CURRENT visit: its attempt row already
+      // exists (NeedsInput resume) or was appended by the takeover claim, so
+      // the ledger count already includes this visit.
+      const reusesCurrentAttempt =
+        (claimedTakeoverAttemptId !== null && node.id === resumeNodeId) ||
+        resumingThisNode;
+
+      // rework.maxLoops bounds STARTING a fresh visit of a rework-capable node
+      // (initial visit + maxLoops reworks = maxLoops + 1 total). The bound must
+      // not fire on a reuse re-entry — there the count includes the current
+      // visit, so a decision processed AT the final allowed visit (ADR-071:
+      // e.g. approve at gateAttempt = maxLoops + 1) would be killed by its own
+      // row. A rework that slips past the validate rule still dies here when
+      // traversal returns to append visit maxLoops + 2 (the CONFIG backstop).
+      if (
+        node.rework &&
+        !reusesCurrentAttempt &&
+        nodeAttemptCount > node.rework.maxLoops
+      ) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" exceeded rework.maxLoops (${node.rework.maxLoops}) for run ${runId}`,
+        );
+      }
+
+      let nodeAttemptId: string;
+      // 1-based ledger attempt number of THIS visit. On the reuse branches the
+      // current attempt row already exists (it is `lastForNode`), so its
+      // `attempt` IS the visit number; on the append branch the fresh row's
+      // `attempt` is. ADR-071: the review-gate schema stamps this as
+      // `gateAttempt` and the compose evidence row records it as `attempt`.
+      let nodeAttemptNumber: number;
 
       // M11b (ADR-030): the takeover-resume claim already appended the re-entry
       // node's fresh attempt inside the claim transaction (the observable CAS
@@ -1039,12 +1206,14 @@ export async function runGraph(
       if (claimedTakeoverAttemptId && node.id === resumeNodeId) {
         nodeAttemptId = claimedTakeoverAttemptId;
         claimedTakeoverAttemptId = null;
+        nodeAttemptNumber = lastForNode?.attempt ?? nodeAttemptCount;
         log2.info(
           { nodeAttemptId, nodeId: node.id },
           "resuming returned takeover — reusing claimed re-entry attempt",
         );
       } else if (resumingThisNode && lastForNode) {
         nodeAttemptId = lastForNode.id;
+        nodeAttemptNumber = lastForNode.attempt;
         log2.info(
           { nodeAttemptId, nodeId: node.id },
           "resuming existing node attempt from NeedsInput",
@@ -1058,6 +1227,7 @@ export async function runGraph(
         });
 
         nodeAttemptId = appended.id;
+        nodeAttemptNumber = appended.attempt;
       }
 
       await db
@@ -1223,6 +1393,7 @@ export async function runGraph(
           adapterLaunch: materialized?.adapterLaunch,
           mcpServers: materialized?.mcpServers,
           profileDigest: materialized?.plan.profileDigest,
+          nodeAttemptNumber,
           db,
         });
       } catch (err) {
@@ -1725,21 +1896,6 @@ export async function runGraph(
           db,
         );
 
-        // Inject the reviewer's comments into the rework target's next-attempt
-        // context under the node's commentsVar (Phase 5.4). The reviewer submits
-        // them in `comments` (or the commentsVar key) of the response.
-        const commentsVar =
-          node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
-
-        if (commentsVar) {
-          const vars = result.vars as Record<string, unknown>;
-          const comments = vars[commentsVar] ?? vars.comments;
-
-          if (comments !== undefined) {
-            pendingInjectedVars = { [commentsVar]: comments };
-          }
-        }
-
         // Flip downstream nodes/gates stale so they rerun on the next attempt
         // (Issue 2 fix / AC-3 staleness). `target` is the rework jump destination;
         // everything forward-reachable from it (excluding itself) goes stale.
@@ -1753,6 +1909,68 @@ export async function runGraph(
               "rework: downstream nodes staled",
             );
           }
+        }
+
+        // Inject the reviewer's comments into the rework target's next-attempt
+        // context under the node's commentsVar (Phase 5.4). The reviewer submits
+        // them in `comments` (or the commentsVar key) of the response. ADR-071:
+        // the run's OPEN review-comment threads compose into the payload here,
+        // at consumption — the respond route's stored response and the input
+        // artifact stay pristine user-submitted values. This block runs AFTER
+        // markDownstreamStale: this review node is itself downstream of the
+        // rework target, so recording the evidence row earlier would let the
+        // same rework's staling immediately flip it stale.
+        const commentsVar =
+          node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
+
+        if (commentsVar) {
+          const vars = result.vars as Record<string, unknown>;
+          const summary = vars[commentsVar] ?? vars.comments;
+          const openThreads = await loadOpenReviewThreads(runId, db);
+
+          // D3 zero-thread guarantee: with no open threads the raw summary
+          // value passes through UNTOUCHED (byte-identical injection; nothing
+          // injected when none was submitted) — the pre-ADR-071 behavior.
+          const composed =
+            openThreads.length > 0
+              ? composeReworkPayload(
+                  typeof summary === "string" ? summary : "",
+                  openThreads,
+                )
+              : typeof summary === "string"
+                ? summary
+                : undefined;
+          const injected = openThreads.length > 0 ? composed : summary;
+
+          if (injected !== undefined) {
+            pendingInjectedVars = { [commentsVar]: injected };
+          }
+
+          if (composed !== undefined) {
+            await recordComposedCommentsEvidence(
+              {
+                runId,
+                nodeId: node.id,
+                nodeAttemptId,
+                attempt: nodeAttemptNumber,
+                composed,
+                threadIds: openThreads.map((t) => t.root.id),
+              },
+              db,
+              log2,
+            );
+          }
+
+          log2.debug(
+            {
+              nodeId: node.id,
+              commentsVar,
+              openThreadCount: openThreads.length,
+              composedLength: composed?.length ?? null,
+              injected: injected !== undefined,
+            },
+            "rework comments composed",
+          );
         }
       } else {
         await markNodeSucceeded(

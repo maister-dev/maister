@@ -1610,7 +1610,16 @@ export type ArtifactLocator =
   | { kind: "file"; path: string }
   | { kind: "gate-verdict"; gateResultId: string }
   | { kind: "hitl-response"; hitlRequestId: string }
-  | { kind: "inline"; text: string };
+  | {
+      kind: "inline";
+      text: string;
+      // ADR-071 (additive, OpenAPI ArtifactLocatorInline): set on the
+      // composed-rework-payload evidence row (kind human_note, producer
+      // runner) — the authoring review-gate hitl_requests id and the open
+      // root comment ids serialized into `text` at compose time.
+      hitlRequestId?: string;
+      threadIds?: string[];
+    };
 
 // M12 (ADR-037): queryable evidence index. Payloads live on disk/git.
 // Two write paths: runner-inline (majority) and ADR-022 projector (event-stream).

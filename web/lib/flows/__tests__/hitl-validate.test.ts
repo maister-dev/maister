@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertReviewDecision,
   isReviewSchema,
   validateHitlResponse,
   validateReviewDecision,
@@ -77,6 +78,65 @@ describe("validateReviewDecision", () => {
 
   it("rejects a non-object response", () => {
     expect(validateReviewDecision("nope", reviewSchema).ok).toBe(false);
+  });
+});
+
+// ADR-071: stored review-gate schemas carry server-state { maxLoops,
+// gateAttempt } (stamped by the runner at gate creation). A rework decision
+// at gateAttempt > maxLoops is refused at validate time — total allowed gate
+// visits = maxLoops + 1; the engine CONFIG throw stays as the backstop.
+describe("validateReviewDecision — ADR-071 loop exhaustion", () => {
+  const withLoop = (maxLoops: number | null, gateAttempt: number) => ({
+    ...reviewSchema,
+    maxLoops,
+    gateAttempt,
+  });
+
+  it("allows rework at gateAttempt = maxLoops (the last allowed rework)", () => {
+    const r = validateReviewDecision({ decision: "rework" }, withLoop(2, 2));
+
+    expect(r).toMatchObject({
+      ok: true,
+      decision: "rework",
+      reworkTarget: "implement",
+    });
+  });
+
+  it("rejects rework at gateAttempt = maxLoops + 1 (loop exhausted)", () => {
+    const r = validateReviewDecision({ decision: "rework" }, withLoop(2, 3));
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("maxLoops");
+  });
+
+  it("assertReviewDecision surfaces exhaustion as NEEDS_INPUT (respond route maps it to 422)", () => {
+    let thrown: unknown;
+
+    try {
+      assertReviewDecision({ decision: "rework" }, withLoop(1, 2));
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect((thrown as { code?: string } | undefined)?.code).toBe("NEEDS_INPUT");
+  });
+
+  it("never blocks approve, even past the boundary", () => {
+    const r = validateReviewDecision({ decision: "approve" }, withLoop(1, 5));
+
+    expect(r).toEqual({ ok: true, decision: "approve" });
+  });
+
+  it("does not fire when maxLoops is null (node declares no rework)", () => {
+    const r = validateReviewDecision({ decision: "rework" }, withLoop(null, 7));
+
+    expect(r).toMatchObject({ ok: true, decision: "rework" });
+  });
+
+  it("does not fire on a legacy schema without the loop fields", () => {
+    const r = validateReviewDecision({ decision: "rework" }, reviewSchema);
+
+    expect(r).toMatchObject({ ok: true, decision: "rework" });
   });
 });
 

@@ -109,6 +109,8 @@ const makeLoaded = (runId = "run-1"): any => ({
 const baseCtx = {
   runtimeRoot: "/tmp/test-root",
   db: mockDb,
+  // ADR-071: the runner plumbs the gate's 1-based visit number at creation.
+  gateAttempt: 1,
 };
 
 describe("runReviewHuman (graph) — M17 criticality field", () => {
@@ -169,5 +171,52 @@ describe("runReviewHuman (graph) — M17 criticality field", () => {
       "approve",
       "rework",
     ]);
+  });
+});
+
+describe("runReviewHuman (graph) — ADR-071 schema { maxLoops, gateAttempt }", () => {
+  beforeEach(() => {
+    capturedInserts.length = 0;
+    vi.clearAllMocks();
+  });
+
+  it("stamps gateAttempt and a null maxLoops when the node declares no rework", async () => {
+    await runReviewHuman(makeHumanNode(), makeLoaded(), "Review 'review'", {
+      ...baseCtx,
+      gateAttempt: 1,
+    });
+
+    const inserted = capturedInserts.find((r) => r.kind === "human");
+    const schema = inserted?.schema as {
+      maxLoops?: number | null;
+      gateAttempt?: number;
+    };
+
+    expect(schema?.gateAttempt).toBe(1);
+    expect(schema?.maxLoops).toBeNull();
+  });
+
+  it("stamps maxLoops from node.rework and the plumbed visit number", async () => {
+    const node = makeHumanNode();
+
+    node.rework = {
+      allowedTargets: ["implement"],
+      workspacePolicies: ["keep"],
+      maxLoops: 3,
+    };
+
+    await runReviewHuman(node, makeLoaded(), "Review 'review'", {
+      ...baseCtx,
+      gateAttempt: 2,
+    });
+
+    const inserted = capturedInserts.find((r) => r.kind === "human");
+    const schema = inserted?.schema as {
+      maxLoops?: number | null;
+      gateAttempt?: number;
+    };
+
+    expect(schema?.gateAttempt).toBe(2);
+    expect(schema?.maxLoops).toBe(3);
   });
 });
