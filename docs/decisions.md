@@ -4745,6 +4745,246 @@ change.
 
 ---
 
+### ADR-072: Harness adequacy & coherence metrics (read-only Observatory extension)
+
+**Date:** 2026-06-10
+**Status:** Accepted
+**Context:** Observatory (ADR-059, M23) reports correction pressure, autonomy,
+and signal clusters, but says nothing about whether the **harness itself** is
+adequate: which declared gates (sensors) actually fire, which have never caught
+anything, which controls (gates, capability records) correlate with less
+downstream rework, and which flow nodes carry guidance (skills/rules/
+restrictions) with no sensor verifying compliance. This sensing layer is a
+prerequisite for the later automatic self-correction loop
+(`docs/pv/improvement-roadmap.md`); without it, harness changes are blind. The
+data already exists in `gate_results`, `node_attempts`,
+`runs.resolved_capability_set` (ADR-069), `runs.flow_revision_id`, and
+`flow_revisions.manifest` — no new collection is needed.
+
+**Decision:** Extend Observatory with four read-only metric families, computed
+on-the-fly per the ADR-059 model (pure rollups over bulk rows, explicit `now`
+and thresholds as parameters, no new tables, no new routes). Formulas are
+normative here and are NOT restated elsewhere (R7).
+
+1. **Sensor firing-rate.** Per `(projectId, flowId, nodeId, gateId)` group and
+   rolled up per gate `kind`:
+   `executions` = count of `gate_results` rows in scope with a **terminal**
+   status (`passed | failed | stale | skipped | overridden`); per-status counts
+   for each of those five statuses; `fail_rate = failed / executions`
+   (`stale` is surfaced as its own count, not folded into `fail_rate`).
+   Non-terminal rows (`pending | running`) are excluded from `executions`.
+2. **Never-fired flag.** A gate is flagged "never fired — verify gate quality or
+   a blind spot" when ALL hold over the window: (a) it is declared in at least
+   one flow revision actually used by a scoped run (joined via
+   `runs.flow_revision_id`); (b) `executions >= MAISTER_HARNESS_NEVER_FIRED_MIN`
+   (env, default `10`, read at the query layer via `instance-config` and passed
+   into the pure rollup as `minExecutions`); (c) `failed + stale == 0`.
+   A per-flow threshold override is deliberately NOT in v1: this is a
+   sensing-display heuristic, not flow behavior — putting it in the manifest
+   would add engine surface for no loop value. Revisit only if the flag proves
+   noisy in practice.
+3. **Per-control effectiveness.**
+   (a) *Per gate:* over node attempts whose gate `g` reached a terminal verdict,
+   `rework_followed(attempt)` = a later attempt exists for the same
+   `(run_id, node_id)` OR the attempt's `node_attempts.status = 'Reworked'`.
+   Report `P(rework_followed | g failed)` vs `P(rework_followed | g passed)`
+   and `lift = P(rework | failed) / P(rework | passed)`. Lift far above 1 means
+   the sensor's firings are consequential (corrections follow); lift near 1
+   means firing changes nothing — a noise candidate.
+   (b) *Per capability:* for each capability `refId` appearing in
+   `runs.resolved_capability_set.capabilities[]`, compute the existing
+   correction-rate (`rollupCorrectionMetrics`, ADR-059) over runs WITH the
+   capability vs runs WITHOUT it. Runs with a NULL `resolved_capability_set`
+   (pre-ADR-069 launches) are **excluded entirely** — never counted as
+   "without".
+4. **Coverage map.** Per flow, over the distinct `flow_revisions` referenced by
+   scoped runs (`runs.flow_revision_id`; null-revision legacy runs are excluded
+   from the declared/coverage side, their firing stats remain counted): per
+   node — declared gate count by `mode`, blocking-gate count, and guide-side
+   presence (node `settings` declare ≥1 skill, rule, or restriction). A node
+   with guides ≥ 1 AND blocking gates == 0 is flagged
+   **"guides without sensors"** (instructions exist, nothing verifies them).
+
+Query-layer contract: extend the existing `loadObservatoryRows` bulk loader to
+also select `runs.resolved_capability_set` + `runs.flow_revision_id`, and add
+exactly ONE new bulk SELECT — `flow_revisions WHERE id IN (distinct revision ids
+of scoped runs)` — with manifests parsed in TS for declared gates and node
+settings. No caching, no read-model table, no read cursor, no per-run query
+loops, no schema change, no new HTTP route (rendering lives on the two existing
+observatory pages, RBAC inherited).
+
+Honest-N display rule: every rate is displayed WITH its denominator (n runs /
+n executions); a group with `executions < 3` (`MIN_GROUP_EXECUTIONS`) renders
+as "—" (insufficient data), never as `0%`.
+
+**Consequences:**
+- Operators see, per flow and per project, which sensors fire, which are
+  plausibly dead weight, which correlate with corrective action, and where
+  flows instruct without verifying — the inputs a human (and later the loop)
+  needs to tune the harness.
+- One additional bulk SELECT per observatory page load plus in-TS manifest
+  parsing of the (few) distinct revisions in scope; acceptable at current
+  single-host scale, measured before any caching is considered.
+- Lift and with/without comparisons are correlational, not causal; the UI
+  labels them as signals (consistent with the M23 "signals, not
+  recommendations" rule).
+- Legacy runs (null `flow_revision_id` / null `resolved_capability_set`) thin
+  the denominators; honest-N rendering keeps that visible instead of implying
+  precision.
+- New env knob `MAISTER_HARNESS_NEVER_FIRED_MIN` (host env only, ADR-023
+  precedent — `.env.example` + `configuration.md`, never compose files).
+
+**Alternatives Considered:**
+- **Persisted harness read-model table (nightly rollup):** rejected — premature
+  caching; ADR-059's on-the-fly model is proven at current scale and a table
+  adds migration + staleness surface for no present need.
+- **Per-flow never-fired threshold in the flow manifest:** rejected for v1 —
+  display heuristic, not flow behavior; manifest surface would demand an engine
+  floor and import/remap handling for no loop value.
+- **New dedicated `/harness` route + API:** rejected — duplicates RBAC and
+  filter plumbing; the portfolio and project observatory pages already carry
+  the correct guards and filters.
+- **Counting `stale` into `fail_rate`:** rejected — staleness is rework-driven
+  invalidation, not a verdict; folding it in would overstate sensor firing.
+  `stale` still counts toward the never-fired test (a gate participating in
+  rework loops is not silent).
+
+---
+
+### ADR-073: Artifact post-conditions — deterministic mutation sensor on `artifact_required` gates
+
+**Date:** 2026-06-10
+**Status:** Accepted
+**Context:** The harness can verify that evidence EXISTS (`artifact_required`,
+M12) but not WHAT a node actually changed. Two recurring defect classes are
+invisible today: (1) a node that claims success without touching the files its
+contract implies (`must_touch`), and (2) a node that modifies paths an M14
+restriction forbids — M14 enforcement is `"instructed"` only (ADR-041 defers
+strict prevention), so violations currently go undetected. A deterministic
+post-condition sensor over `git diff --name-only` closes both gaps cheaply and
+feeds the Observatory adequacy layer (ADR-072) and the later self-correction
+loop. Detection beats attribution while prevention is blocked.
+
+**Decision:** Extend the `artifact_required` gate with two optional mutation
+assertions, evaluated by the existing gate executor against git diff path sets,
+always emitting a `mutation_report` artifact when configured.
+
+1. **Gate fields (DSL).** On `gateSchema`, valid ONLY when
+   `kind: artifact_required` (zod refine in `validateGraphManifest`, violation →
+   `CONFIG`):
+   - `must_touch?: string[]` — ≥1 glob; the gate FAILS when the node-scoped
+     diff range touches NONE of the globs.
+   - `must_not_touch?: "restrictions"` — v1 accepts only this literal: the
+     check reads the node's resolved M14 restriction set, never an own path
+     list (an explicit list would be new engine surface; future work).
+   Assertions evaluate under the gate's existing `mode`
+   (`blocking | advisory`) — no new default is invented.
+2. **Restriction `paths` contract.** `restrictionCapabilitySchema` gains an
+   optional `paths: string[]` — the machine-readable subset of a restriction.
+   The sensor checks `diff ∩ paths`; free-text-only restrictions (no `paths`)
+   are listed in the report as `unmatchable` (counted, never failed on). Single
+   source of truth: the same capability record feeds M14 instruction
+   materialization AND this sensor; ADR-041 strict enforcement can later read
+   the same field. The node's resolved restriction records are threaded into
+   `GateRunContext` (new optional `restrictionPaths`) from the node-start
+   materialization site.
+3. **Range semantics.**
+   - `must_touch` is **node-scoped**: range = `<HEAD at this node's FIRST
+     attempt start>..<HEAD at gate time>` — "did this node, across its
+     attempts, touch X since it first began". Capture: immediately after the
+     `node_attempts` row creation, write `node-start-<nodeId>.json` `{head}`
+     into the run dir via `atomicWriteJson`, **write-if-absent** — one file per
+     `(run, node)`; attempt 2+ and checkpoint/resume keep the original, so the
+     true start survives process death and rework loops (a no-op rework attempt
+     does not false-fail: attempt 1's commits are inside the range). Accepted
+     inaccuracy: changes by OTHER nodes executed between this node's rework
+     loops fall inside the range (tightly bounded; per-attempt strict deltas
+     are out of scope). File absent (legacy run, git unavailable at start) →
+     fall back to the cumulative range with `basis: "cumulative-fallback"` in
+     the report.
+   - `must_not_touch` is **cumulative** (a safety net): range = `<merge-base vs
+     main>..<HEAD>` via a shared `resolveDiffRange(workspace)` helper extracted
+     from the diff-artifact recording block (same `resolveBaseRef` /
+     `resolveRefSha`). A restricted-path violation anywhere on the branch flags
+     at every checking node.
+   - Git unavailable at gate time: blocking → gate FAILS with reason
+     `"git unavailable — cannot evaluate mutation assertions"`; advisory →
+     WARN + report records `evaluated: false`. A blocking sensor that cannot
+     sense must not pass.
+   - Touched paths = `git diff --name-only <base>..<head>`, matched with
+     `picomatch` (`dot: true`) against repo-relative POSIX paths.
+4. **`mutation_report` artifact.** ALWAYS recorded when assertions are
+   configured — on pass AND fail: `producer: "gate"`,
+   `kind: "mutation_report"` (new closed-catalog member; DB `kind` is a text
+   column with a TS-level enum — no migration), locator
+   `{ kind: "inline", text: JSON.stringify(report) }`. Report shape:
+   `{basis: "node" | "cumulative-fallback", nodeRange: {base, head},
+   cumulativeRange?: {base, head}, touched: string[] (node range, truncated at
+   500 with a truncated flag), mustTouch: {globs, matched: string[]},
+   restrictions: {checked: [{id, paths, violations: string[]}],
+   unmatchable: string[]}, violations: string[], evaluated: boolean}`.
+   The row writes `hash` (sha256 of the locator `text`) and `size_bytes` (its
+   byte length) — the first writer of those columns.
+   `artifact_def_id = gate.output.id` when declared (the declared kind must
+   then be `mutation_report`), else `null` with deterministic instance id
+   `run:<nodeAttemptId>:mutation:<gateId>`. The artifact is recorded BEFORE the
+   terminal gate transition (a crash between leaves the gate `running` →
+   re-executed on rework; same crash-window shape as the existing
+   gate/artifact sequence).
+5. **Engine gating — NO version bump.** `MAISTER_ENGINE_VERSION` stays
+   `1.3.0`; the fields are additive-optional. Drift protection widens the
+   EXISTING `validateGraphManifest` floor check: a manifest declaring
+   `must_touch`/`must_not_touch` OR `gate.output.kind === "mutation_report"`
+   also requires `compat.engine_min >= 1.3.0` (same constant, broader
+   trigger). Flows not using the features stay valid at any `engine_min`.
+   `restriction.paths` is capability config, not graph-manifest surface —
+   additive, no floor.
+6. **Readiness integration.** The mutation verdict is stored in
+   `gate_results.verdict` (`payload.assertionFailed: true` + reasons). The
+   `readiness-core.ts` `artifact_required` failed-gate re-evaluation MUST NOT
+   clear a failed gate whose verdict carries `assertionFailed` — inputs-present
+   is no longer sufficient (an assertion-failed gate HAS its inputs present and
+   would otherwise silently self-clear). Rework that re-runs the gate and
+   passes clears it naturally. Blocking/advisory, rollup, staleness, and
+   rework re-execution are inherited unchanged.
+
+**Consequences:**
+- Mutation defects become first-class, queryable evidence: every configured
+  gate leaves a `mutation_report`, pass or fail, feeding the evidence graph and
+  the ADR-072 firing-rate metrics.
+- M14 restrictions get their first teeth — detect-after instead of
+  instruct-and-hope — without preempting ADR-041 strict enforcement; both read
+  the same `restriction.paths` field.
+- The `must_touch` node range is deliberately approximate across interleaved
+  rework (other nodes' commits can fall inside it); accepted in v1 for
+  durability and simplicity.
+- New prod dependency `picomatch` (tiny, zero-dep, the de-facto glob standard);
+  pure JS — lockfile-only deployment change (web runs on host per ADR-023).
+- `artifact_instances.hash`/`size_bytes` gain their first writer; readers must
+  keep treating them as nullable (legacy rows).
+- Gates without assertions are byte-identical to today; no migration, no new
+  error code (`CONFIG`/`PRECONDITION` reused), no new HTTP surface.
+
+**Alternatives Considered:**
+- **Engine version bump to 1.4.0:** rejected — no installed base of older
+  engines exists; bumping is ceremony. Widening the existing 1.3.0 check gives
+  the same drift protection without a new floor.
+- **Explicit path lists on `must_not_touch`:** rejected for v1 — duplicates the
+  restriction catalog and would need its own engine floor; the restriction
+  record stays the single source of truth.
+- **Per-attempt strict diff deltas for `must_touch`:** rejected — requires
+  per-attempt head capture plus attribution of interleaved commits; the
+  since-first-attempt range is durable (write-if-absent file), survives resume,
+  and cannot false-fail a no-op rework attempt.
+- **Glob matching via minimatch/micromatch or hand-rolled matching:** rejected —
+  picomatch is the smallest battle-tested matcher (micromatch wraps it);
+  hand-rolled glob semantics are a defect farm.
+- **Recording the report only on failure:** rejected — a pass with an empty
+  match set vs a pass with rich touches are different signals; ADR-072
+  effectiveness metrics need both sides.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.
@@ -4803,3 +5043,8 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
   "Branch targeting at launch, shared promotion service, promote-time readiness re-gate" ADR to
   **ADR-058**; the M15 "Readiness enforcement over all blocking gate kinds + verdict calibration" ADR
   keeps **ADR-048**.
+- **Stale `artifact_required` branch in `flow-graph.md` "Gate dispatch by kind" diagram (filed
+  2026-06-10).** The diagram (and one Edge-cases bullet) still shows `artifact_required` as
+  `skipped + WARN + TODO(M12)`, but the executor shipped with M12 (`gates-exec.ts` checks
+  `inputArtifacts` currency). The M11a-era diagram branch should be redrawn to the implemented
+  dispatch when that file is next reworked.

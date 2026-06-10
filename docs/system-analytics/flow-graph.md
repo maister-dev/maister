@@ -321,6 +321,22 @@ flowchart TD
     Mode -- advisory --> Cont[record verdict, continue]
 ```
 
+**(M29 — Designed) Mutation assertions on `artifact_required`.** The
+`artifact_required` executor (Implemented since M12 — it checks every
+`inputArtifacts` def has a `validity='current'` instance) gains optional
+post-condition assertions: after the input-presence check, a gate declaring
+`must_touch`/`must_not_touch` evaluates git-diff path sets (node-scoped range
+for `must_touch` via a write-if-absent `node-start-<nodeId>.json` head capture
+at attempt creation; cumulative merge-base→HEAD range for `must_not_touch`
+against the node's resolved restriction `paths`), ALWAYS records a
+`mutation_report` artifact (pass and fail, before the terminal gate
+transition), and stores `payload.assertionFailed: true` in the verdict on
+failure. Git unavailable → blocking fails with reason, advisory records
+`evaluated: false`. Gates without assertions are byte-identical to today. DSL:
+[`../flow-dsl.md`](../flow-dsl.md) §mutation assertions; semantics:
+[ADR-073](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates);
+readiness interaction: [`readiness.md`](readiness.md).
+
 ### `steps[]` → nodes compile (back-compat)
 
 ```mermaid
@@ -444,6 +460,12 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **(M26 — Designed) Node with no `output.result`** → the validate seam is a
   no-op; the attempt is byte-identical to pre-M26 (`vars: {}`), no transport is
   provisioned, and no `CONFIG` can arise from the seam.
+- **(M29 — Designed) Mutation assertions with git unavailable at gate time** →
+  blocking gate FAILS with reason `"git unavailable — cannot evaluate mutation
+  assertions"`; advisory gate WARNs and records `evaluated: false` in the
+  `mutation_report`. A node-start head capture missing (legacy run) → the
+  `must_touch` range falls back to the cumulative branch range with
+  `basis: "cumulative-fallback"` recorded — never a hard error.
 - **(M26 — Designed) `array` field element shape is unconstrained** → an
   `{ type: "array" }` output field validates only `Array.isArray`; the grammar has
   no `items` slot, so element type is not checked and any array (incl. mixed/empty)
@@ -467,7 +489,8 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
-  [ADR-063 Structured output + run-context (M26 — Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).
+  [ADR-063 Structured output + run-context (M26 — Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
+  [ADR-073 Mutation sensor on `artifact_required` (M29 — Designed)](../decisions.md#adr-073-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
 - Spec (M26 — Designed):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
