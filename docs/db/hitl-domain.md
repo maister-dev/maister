@@ -1,7 +1,7 @@
 # HITL domain ERD
 
-Two tables — `hitl_requests` plus the **(Designed — ADR-071)**
-`review_comments` thread store — and the in-jsonb shape of the
+Two tables — `hitl_requests` plus the **(ADR-071 — Implemented, migration
+`0038`)** `review_comments` thread store — and the in-jsonb shape of the
 `schema` (form schema) and `response` payload. See
 [`../system-analytics/hitl.md`](../system-analytics/hitl.md) and
 [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md)
@@ -10,8 +10,8 @@ for process flows.
 ```mermaid
 erDiagram
     RUNS ||--o{ HITL_REQUESTS : "raises during execution"
-    RUNS ||--o{ REVIEW_COMMENTS : "review threads (Designed, ADR-071)"
-    HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (Designed)"
+    RUNS ||--o{ REVIEW_COMMENTS : "review threads (ADR-071)"
+    HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (ADR-071)"
     USERS ||--o{ REVIEW_COMMENTS : "author / resolver (SET NULL)"
     REVIEW_COMMENTS ||--o{ REVIEW_COMMENTS : "replies (parent_id, cascade)"
 
@@ -20,7 +20,7 @@ erDiagram
         text run_id FK
         text step_id "Flow step / node that raised it"
         text kind "permission | form | human"
-        jsonb schema "form_schema or permission descriptor (+ review allow-list; Designed: + maxLoops/gateAttempt)"
+        jsonb schema "form_schema or permission descriptor (+ review allow-list; ADR-071: + maxLoops/gateAttempt)"
         text prompt "human-readable rationale"
         jsonb response "operator's answer (NULL while open)"
         text decision "M11a review decision (claimed from response.decision)"
@@ -33,7 +33,7 @@ erDiagram
     }
 
     REVIEW_COMMENTS {
-        text id PK "randomUUID (Designed, ADR-071, migration 0038 planned)"
+        text id PK "randomUUID (ADR-071, migration 0038)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
         text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE - gate visit of authoring"
         text node_id "NOT NULL - review node id"
@@ -73,7 +73,7 @@ erDiagram
 >   `GateVerdict.confidence` on `gate_results.verdict` (machine confidence). The two
 >   are never conflated.
 
-> **(Designed — ADR-071, migration `0038` planned.)** `review_comments` stores
+> **(ADR-071 — Implemented, migration `0038`.)** `review_comments` stores
 > line-anchored, 1-level-threaded review comments drafted at an open review
 > gate. A **root** row (`parent_id IS NULL`) carries the anchor —
 > `(file_path, side ∈ old|new, line)` + the exact server-extracted
@@ -140,7 +140,7 @@ Free-form `additionalProperties` are tolerated (forward-compat).
 - `hitl_requests_run_idx` on `(run_id)` — pending HITL panel queries.
 - No UNIQUE on `(run_id, step_id)` — one step can raise multiple HITL
   asks over a run's lifetime.
-- **(Designed — ADR-071)** `review_comments` CHECK: `(file_path, side, line,
+- **(ADR-071)** `review_comments` CHECK: `(file_path, side, line,
   line_content)` non-null **iff** `parent_id IS NULL` (anchored roots vs
   anchor-less replies). Indexes: `review_comments_run_created_idx`
   `(run_id, created_at)`, `review_comments_run_status_idx`
@@ -162,9 +162,9 @@ The row is never deleted (cascades from `runs` and `projects` only).
 
 - Process flows: [`../system-analytics/hitl.md`](../system-analytics/hitl.md),
   [`../system-analytics/review-comments.md`](../system-analytics/review-comments.md)
-  (Designed — ADR-071).
+  (Implemented — ADR-071).
 - Config: [`../configuration.md`](../configuration.md) §`form_schema versioning`.
 - Source: `web/lib/db/schema.ts` (`hitl_requests` table; `review_comments`
-  Designed — migration `0038` planned),
+  table — migration `0038`),
   `web/lib/config.schema.ts` (`formSchemaSchema`),
   `web/lib/config.ts` (`validateFormSchemaVersion`).

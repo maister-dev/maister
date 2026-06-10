@@ -1,8 +1,10 @@
 # Review comments domain
 
-> **Status: Designed (Phase-0 contract freeze, ADR-071).** Nothing in this
-> file is implemented yet; a later as-built pass flips these tags to
-> **(Implemented)**. The locked decision is
+> **Status: Implemented (ADR-071), as of 2026-06-10.** This file was frozen
+> as the Phase-0 contract before implementation; the table (migration
+> `0038`), routes, runner-side compose + evidence, validate guard, and diff
+> UI all shipped, and the tags below were reconciled as-built. The locked
+> decision is
 > [ADR-071](../decisions.md#adr-071-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard).
 
 ## Purpose
@@ -22,7 +24,7 @@ deferred).
 
 ## Domain entities
 
-- **Comment** — a `review_comments` row (Designed — see
+- **Comment** — a `review_comments` row (migration `0038` — see
   [`../db/hitl-domain.md`](../db/hitl-domain.md) ERD). Columns: `id` (text PK,
   `randomUUID`), `run_id` (FK → `runs.id`, cascade), `hitl_request_id` (FK →
   `hitl_requests.id`, cascade — the gate visit of authoring), `node_id`,
@@ -70,7 +72,7 @@ deferred).
   additive `{hitlRequestId, threadIds}` metadata) linked to the gate's
   `node_attempt`. See [`artifacts.md`](artifacts.md).
 
-## State machine — comment status (Designed)
+## State machine — comment status (Implemented)
 
 Root comments only (replies carry no own status; they follow their root).
 Placement (`inline | outdated`) is a derived read-time value, not a state.
@@ -86,7 +88,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### Drafting comments at an open review gate (Designed)
+### Drafting comments at an open review gate (Implemented)
 
 Comments are drafted incrementally BEFORE the review decision — through the
 new route family, never through the respond route.
@@ -122,7 +124,7 @@ root-only and open to any `answerHitl` member. `GET` is `readBoard` (viewer)
 and NOT status-gated — history stays visible after the gate closes, like the
 diff.
 
-### Rework compose into `commentsVar` (Designed)
+### Rework compose into `commentsVar` (Implemented)
 
 The respond route stays UNTOUCHED (two-phase commit, idempotency CAS,
 pristine `response`/`input-<stepId>.json` payloads). The compose happens
@@ -187,7 +189,7 @@ its stored `line_content` snapshot quoted — the agent always receives the
 content the comment was anchored to, so staleness never corrupts the
 payload, and no `inline`/`outdated` marker appears in the output.
 
-### Re-review carry across iterations (Designed)
+### Re-review carry across iterations (Implemented)
 
 Threads belong to the RUN (not a single gate visit): rows FK the
 `hitl_requests` row of their authoring visit and carry `gate_attempt` as an
@@ -205,13 +207,20 @@ flowchart TD
     Outdated --> Act
 ```
 
-### Loop exhaustion (Designed)
+### Loop exhaustion (Implemented)
 
 Total allowed gate visits = `maxLoops + 1` (initial visit is `gateAttempt`
 1; the engine's prior-count check runs BEFORE the attempt row is appended,
 so `nodeAttemptCount > maxLoops` throws `CONFIG` → run `Failed`). The
 boundary rule: **reject rework when `gateAttempt > maxLoops`** (equivalently
-`gateAttempt ≥ maxLoops + 1`).
+`gateAttempt ≥ maxLoops + 1`). As-built, the engine check fires only when a
+FRESH visit would be appended — resume-reuse re-entries (the `NeedsInput`
+resume or takeover-claim re-entry that processes a decision AT the current
+visit, where the ledger count already includes that visit) are exempt via
+the `reusesCurrentAttempt` predicate, so a decision processed at the final
+allowed visit is never killed by its own attempt row; a rework that slips
+past the validate rule still dies when traversal returns to append visit
+`maxLoops + 2`.
 
 ```mermaid
 flowchart TD
@@ -219,7 +228,7 @@ flowchart TD
     V -- no --> OK[accepted -> rework target re-runs<br/>last allowed pass when gateAttempt = maxLoops]
     V -- yes --> R[422 NEEDS_INPUT at validate time<br/>no artifact write, no mutation]
     R --> UI[UI: rework disabled at the boundary<br/>chip shows Rework loop N of M]
-    OK --> E{engine re-entry check<br/>nodeAttemptCount > maxLoops?}
+    OK --> E{engine fresh-append check<br/>nodeAttemptCount > maxLoops?}
     E -- yes --> F[MaisterError CONFIG -> run Failed<br/>backstop only — validate rule fires first]
     E -- no --> Next[gate visit N+1]
 ```
@@ -228,7 +237,7 @@ Approve is soft-warned (never blocked) while open threads exist.
 
 ## Expectations
 
-All bullets are **(Designed)** — the pre-implementation acceptance contract.
+All bullets are **(Implemented)** — the as-built acceptance contract.
 
 - Every comment is a `review_comments` row; a root (`parent_id IS NULL`) MUST
   carry all four anchor fields (`file_path`, `side`, `line`, `line_content`)
@@ -249,10 +258,12 @@ All bullets are **(Designed)** — the pre-implementation acceptance contract.
   `lib/diff/prepare.ts` source the view renders) and store the
   server-extracted `line_content`; a `truncated` diff or a file absent from
   the parsed diff → 409 `PRECONDITION`.
-- GET is exactly one DB query for the run's comments plus one in-memory diff
-  parse — no N+1; `placement` is computed purely in memory as `inline` iff
-  the stored `line_content` exactly matches the current diff at the same
-  anchor, else `outdated`.
+- GET is exactly one DB query for the run's comments plus AT MOST one
+  in-memory diff parse — no N+1; zero threads short-circuit without
+  computing a diff, an unavailable diff source (removed/GC'd workspace)
+  degrades every placement to `outdated` (200, never a 500), and `placement`
+  is computed purely in memory as `inline` iff the stored `line_content`
+  exactly matches the current diff at the same anchor, else `outdated`.
 - RBAC: GET = `readBoard` (viewer); POST/PATCH/DELETE = `answerHitl`
   (member); `PATCH {body}` and DELETE are author-only (403 `UNAUTHORIZED`
   otherwise); `PATCH {status}` is root-only and open to any `answerHitl`
@@ -270,9 +281,11 @@ All bullets are **(Designed)** — the pre-implementation acceptance contract.
 - The stored review-gate schema carries server-state `{ maxLoops,
   gateAttempt }`; a rework decision MUST be rejected 422 (`NEEDS_INPUT`) when
   `gateAttempt > maxLoops` (total visits = `maxLoops + 1`); the engine
-  `CONFIG` throw remains the backstop — the rule applies only when the
-  review node declares rework (`maxLoops` non-null); without `rework` there
-  is no rework decision to reject.
+  `CONFIG` throw remains the backstop (it fires only on a fresh-visit
+  append, never on a resume-reuse re-entry) — the rule applies only when the
+  stored schema carries BOTH fields: a no-rework node stamps `maxLoops`
+  null and pre-ADR-071 rows lack the fields entirely, so the rule stays off
+  there.
 - `file_path` is opaque anchor data — it MUST NEVER be used as a filesystem
   path component; `author_user_id`/`author_label` come from the session
   auth-context, never from the body.
@@ -284,6 +297,9 @@ All bullets are **(Designed)** — the pre-implementation acceptance contract.
   against a partial diff (mirrors the truncated-diff promotion
   acknowledgement). GET still works: threads whose file fell past the bound
   render as `outdated`.
+- **Diff source unavailable at GET** (workspace removed/GC'd, terminal run)
+  → 200 with every thread's placement = `outdated` — the read never 500s;
+  a run with zero threads short-circuits without computing a diff at all.
 - **Anchored file absent from the parsed diff at POST** (or the line absent
   on the named side) → 409 [`PRECONDITION`](../error-taxonomy.md); nothing
   written.
@@ -292,10 +308,12 @@ All bullets are **(Designed)** — the pre-implementation acceptance contract.
   write; GET is unaffected (history visible).
 - **Rework at an exhausted loop** (`gateAttempt > maxLoops`) → 422
   [`NEEDS_INPUT`](../error-taxonomy.md) from the respond route's validate
-  step; the engine `MaisterError("CONFIG")` re-entry check is the backstop
-  if validation is bypassed. Only reachable when the node declares rework
-  (`maxLoops` non-null) — a no-rework review gate has no rework decision to
-  reject.
+  step; the engine `MaisterError("CONFIG")` fresh-append check is the
+  backstop if validation is bypassed — it fires when traversal returns to
+  append visit `maxLoops + 2`, never on the resume re-entry that processes
+  a decision at the final allowed visit. Only reachable when the node
+  declares rework (`maxLoops` non-null) — a no-rework review gate has no
+  rework decision to reject.
 - **Reply to a reply** → 409 [`CONFLICT`](../error-taxonomy.md) (1-level
   threads).
 - **Reply to a RESOLVED root** → allowed — a reply never re-opens the
@@ -344,9 +362,13 @@ All bullets are **(Designed)** — the pre-implementation acceptance contract.
   composed `commentsVar` semantics), [`../flow-dsl.md`](../flow-dsl.md)
   (`rework.commentsVar`), [`artifacts.md`](artifacts.md) (`human_note`
   evidence), [`workbench.md`](workbench.md) (diff view).
-- Source (Designed): `web/lib/review-comments/service.ts` (authz-free
+- Source (Implemented): `web/lib/review-comments/service.ts` (authz-free
   service), `web/lib/review-comments/anchor.ts` (extraction + placement),
   `web/lib/review-comments/serialize.ts` (compose),
+  `web/lib/review-comments/order.ts` (frozen thread ordering),
+  `web/lib/review-comments/dto.ts` (wire DTO projection + code→HTTP map),
+  `web/lib/review-comments/run-diff-source.ts` (shared diff recompute +
+  placement + gate-panel counts),
   `web/app/api/runs/[runId]/review-comments/**` (routes),
   `web/lib/flows/graph/runner-graph.ts` (gate schema + compose injection),
   `web/lib/flows/hitl-validate.ts` (exhaustion rule),

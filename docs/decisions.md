@@ -4592,7 +4592,13 @@ DSL grammar change; the diff stays committed-only `base..branch` and
   (runner-side compose is what makes that possible); comment routes are
   single-transaction, single-store — no new crash windows.
 - A final-loop rework is rejected at validate time (422) instead of silently
-  failing the run; the engine `CONFIG` throw remains the backstop.
+  failing the run; the engine `CONFIG` throw remains the backstop. As-built,
+  that engine check was additionally fixed to fire only when a FRESH visit
+  would be appended (the `reusesCurrentAttempt` exemption in
+  `runner-graph.ts`) — it previously also fired on resume-reuse re-entries,
+  killing ANY decision processed at the final allowed visit; a rework that
+  slips past the validate rule still dies at the visit `maxLoops + 2`
+  append.
 - Outdated anchors are detected (exact-match placement) but never re-anchored;
   a moved line shows as "outdated" until a human resolves or re-creates the
   thread — accepted v1 trade-off (fuzzy/`git-blame` re-anchoring is a v2

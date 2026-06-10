@@ -100,6 +100,82 @@ const M11A_MANIFEST = {
   ],
 };
 
+// --- Review-comments fixture (ADR-071): review gate + anchored threads ------
+// A NeedsInput run parked at the graph `review` human gate with a REAL parent
+// repo + worktree carrying ONE committed change (src/greeting.ts added on the
+// run branch), so GET /diff and the review-comment anchor lib operate on a real
+// committed base..branch diff. Seeded review_comments: two OPEN inline roots
+// whose line_content byte-matches the fixture diff (single source of truth:
+// RC_FILE_LINES — the worktree file AND the stored line_content are written
+// from the same array), one of them carrying a reply; plus one OPEN root whose
+// stored line_content deliberately mismatches → placement "outdated". The
+// pending gate's schema carries {review, maxLoops, gateAttempt} so the loop
+// chip renders (ADR-071 D5); a PRIOR responded review hitl row (visit 1)
+// anchors the seeded threads' FK + gate_attempt=1. The review-comments e2e
+// spec adds a root + reply through the UI, resolves a thread, and submits the
+// rework decision.
+
+const RC_SLUG = "e2e-review-comments";
+const RC_BRANCH = "maister/e2e-review-comments";
+const RC_FILE_PATH = "src/greeting.ts";
+const RC_FILE_LINES = [
+  "export function greet(name: string): string {",
+  "  return `Hello, ${name}!`;",
+  "}",
+  "",
+  'export const VERSION = "1.0.0";',
+];
+const RC_STALE_LINE_CONTENT = "} // stale snapshot from review visit 1";
+const RC_MAX_LOOPS = 3;
+const RC_GATE_ATTEMPT = 2;
+
+const RC_REVIEW_SCHEMA = {
+  review: true,
+  allowedDecisions: ["approve", "rework"],
+  transitions: { approve: "done", rework: "implement" },
+  reworkTargets: ["implement"],
+  workspacePolicies: ["keep"],
+  maxLoops: RC_MAX_LOOPS,
+  gateAttempt: RC_GATE_ATTEMPT,
+};
+
+const RC_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Review Comments (e2e)",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      prompt: "implement {{ task.prompt }}",
+    },
+    {
+      id: "review",
+      type: "human",
+      decisions: ["approve", "rework"],
+      transitions: { approve: "done", rework: "implement" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: RC_MAX_LOOPS,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+type ReviewCommentsFixtureRecord = FixtureRecord & {
+  filePath: string;
+  // Seeded threads (anchor line on the NEW side + body text the spec asserts).
+  inline: { line: number; body: string; reply: string };
+  second: { line: number; body: string };
+  outdated: { line: number; body: string; staleContent: string };
+  // A diff line with NO seeded thread — free for the spec's UI-added root.
+  composeLine: number;
+  maxLoops: number;
+  gateAttempt: number;
+};
+
 // --- M12 fixture: evidence-graph surface on a parked review run --------------
 // A NeedsInput run parked at the aif `review` node with a full M12 evidence
 // trail: node_attempts (plan/implement/checks/judge Succeeded → review
@@ -1446,6 +1522,282 @@ async function seedM11bFixture(
     projectSlug: M11B_SLUG,
     branch: M11B_BRANCH,
     worktreePath,
+  };
+}
+
+// Parent repo with a base commit (README) + the run branch worktree carrying
+// ONE committed change: src/greeting.ts written from RC_FILE_LINES — the same
+// array the seeded threads' line_content comes from, so inline placement
+// byte-matches by construction. Returns the base SHA for workspaces.base_commit.
+async function provisionReviewCommentsRepo(
+  repoPath: string,
+  worktreePath: string,
+  branch: string,
+): Promise<{ baseCommit: string }> {
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  await createGitRepo(repoPath);
+
+  const { stdout: baseSha } = await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "rev-parse",
+    "HEAD",
+  ]);
+  const baseCommit = baseSha.trim();
+
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    worktreePath,
+  ]);
+  mkdirSync(path.join(worktreePath, "src"), { recursive: true });
+  writeFileSync(
+    path.join(worktreePath, RC_FILE_PATH),
+    `${RC_FILE_LINES.join("\n")}\n`,
+    "utf8",
+  );
+  await execFileAsync("git", ["-C", worktreePath, "add", RC_FILE_PATH]);
+  await execFileAsync("git", [
+    "-C",
+    worktreePath,
+    "commit",
+    "-m",
+    "add greeting module",
+  ]);
+
+  return { baseCommit };
+}
+
+async function seedReviewCommentsFixture(
+  pool: Pool,
+  user: UserFixture,
+): Promise<ReviewCommentsFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    hitlPrior: randomUUID(),
+    hitl: randomUUID(),
+    member: randomUUID(),
+    implAttempt1: randomUUID(),
+    reviewAttempt1: randomUUID(),
+    implAttempt2: randomUUID(),
+    reviewAttempt2: randomUUID(),
+    threadInline: randomUUID(),
+    threadInlineReply: randomUUID(),
+    threadSecond: randomUUID(),
+    threadOutdated: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-review-comments`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [RC_SLUG]);
+
+  const { baseCommit } = await provisionReviewCommentsRepo(
+    repoPath,
+    worktreePath,
+    RC_BRANCH,
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      RC_SLUG,
+      "MAIster E2E Review Comments",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-review-comments@v0.0.1`,
+      JSON.stringify(RC_MANIFEST),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, ids.project, "E2E review comments", "do the thing", ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow, ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        base_branch, base_commit, target_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      RC_BRANCH,
+      worktreePath,
+      repoPath,
+      baseCommit,
+    ],
+  );
+
+  // Ledger: visit 1 (implement → review, responded rework) → visit 2
+  // (implement attempt 2 → review attempt 2 parked NeedsInput) — consistent
+  // with the pending schema's gateAttempt = 2.
+  const attempts: Array<[string, string, string, number, string]> = [
+    [ids.implAttempt1, "implement", "ai_coding", 1, "Succeeded"],
+    [ids.reviewAttempt1, "review", "human", 1, "Succeeded"],
+    [ids.implAttempt2, "implement", "ai_coding", 2, "Succeeded"],
+  ];
+
+  for (const [id, nodeId, nodeType, attempt, status] of attempts) {
+    await pool.query(
+      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now(), now())`,
+      [id, ids.run, nodeId, nodeType, attempt, status],
+    );
+  }
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'review', 'human', 2, 'NeedsInput', now())`,
+    [ids.reviewAttempt2, ids.run],
+  );
+
+  // Visit 1's CLOSED review gate (the seeded threads' authoring visit) + the
+  // CURRENT pending gate whose schema carries maxLoops/gateAttempt (D5).
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, response, decision, workspace_policy, rework_target, responded_at)
+     VALUES ($1, $2, 'review', 'human', $3, $4, $5, 'rework', 'keep', 'implement', now())`,
+    [
+      ids.hitlPrior,
+      ids.run,
+      JSON.stringify({ ...RC_REVIEW_SCHEMA, gateAttempt: 1 }),
+      "Review the implementation. Approve to ship, or request rework.",
+      JSON.stringify({
+        decision: "rework",
+        comments: "First pass: see the inline comments.",
+        workspacePolicy: "keep",
+      }),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'review', 'human', $3, $4)`,
+    [
+      ids.hitl,
+      ids.run,
+      JSON.stringify(RC_REVIEW_SCHEMA),
+      "Re-review the implementation. Approve to ship, or request rework.",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, user.id],
+  );
+
+  // Seeded threads (all authored on visit 1, FK'd to the responded gate):
+  //   • inline root at new:2 + a reply — line_content byte-matches the diff;
+  //   • inline root at new:5 — byte-matches (the spec resolves this one);
+  //   • root at new:3 whose stored content mismatches → placement "outdated".
+  const inline = {
+    line: 2,
+    body: "Use a template literal here.",
+    reply: "Agreed — will fix in the next pass.",
+  };
+  const second = { line: 5, body: "Version constant looks good." };
+  const outdated = {
+    line: 3,
+    body: "This brace placement is wrong.",
+    staleContent: RC_STALE_LINE_CONTENT,
+  };
+
+  const roots: Array<[string, number, string, string]> = [
+    [
+      ids.threadInline,
+      inline.line,
+      RC_FILE_LINES[inline.line - 1],
+      inline.body,
+    ],
+    [
+      ids.threadSecond,
+      second.line,
+      RC_FILE_LINES[second.line - 1],
+      second.body,
+    ],
+    [ids.threadOutdated, outdated.line, RC_STALE_LINE_CONTENT, outdated.body],
+  ];
+
+  for (const [id, line, lineContent, body] of roots) {
+    await pool.query(
+      `INSERT INTO review_comments
+         (id, run_id, hitl_request_id, node_id, gate_attempt, author_user_id,
+          author_label, file_path, side, line, line_content, body, status)
+       VALUES ($1, $2, $3, 'review', 1, $4, $5, $6, 'new', $7, $8, $9, 'open')`,
+      [
+        id,
+        ids.run,
+        ids.hitlPrior,
+        user.id,
+        user.name,
+        RC_FILE_PATH,
+        line,
+        lineContent,
+        body,
+      ],
+    );
+  }
+  await pool.query(
+    `INSERT INTO review_comments
+       (id, run_id, hitl_request_id, node_id, gate_attempt, parent_id,
+        author_user_id, author_label, body, status)
+     VALUES ($1, $2, $3, 'review', 1, $4, $5, $6, $7, 'open')`,
+    [
+      ids.threadInlineReply,
+      ids.run,
+      ids.hitlPrior,
+      ids.threadInline,
+      user.id,
+      user.name,
+      inline.reply,
+    ],
+  );
+
+  return {
+    runId: ids.run,
+    hitlRequestId: ids.hitl,
+    projectSlug: RC_SLUG,
+    branch: RC_BRANCH,
+    worktreePath,
+    filePath: RC_FILE_PATH,
+    inline,
+    second,
+    outdated,
+    composeLine: 1,
+    maxLoops: RC_MAX_LOOPS,
+    gateAttempt: RC_GATE_ATTEMPT,
   };
 }
 
@@ -4017,6 +4369,7 @@ async function main(): Promise<void> {
         M22_SLUG,
         M27_EDITOR_SLUG,
         FLOWS_AUTHORING_SLUG,
+        RC_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -4161,6 +4514,7 @@ async function main(): Promise<void> {
     const m23 = await seedM23Fixture(pool, admin.id);
     const m27Editor = await seedM27FlowEditorFixture(pool, admin.id);
     const flowsAuthoring = await seedFlowsAuthoringFixture(pool, admin.id);
+    const reviewComments = await seedReviewCommentsFixture(pool, admin);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -4207,6 +4561,7 @@ async function main(): Promise<void> {
         m23,
         m27Editor,
         flowsAuthoring,
+        reviewComments,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -4228,7 +4583,8 @@ async function main(): Promise<void> {
         `, m27 flow ${m27.flowRunId} scratch ${m27.scratchRunId} (${M27_SLUG})` +
         `, m22 run ${m22.runId} (${M22_SLUG})` +
         `, m23 project ${m23.projectSlug}` +
-        `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})`,
+        `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})` +
+        `, review-comments ${reviewComments.runId} (${RC_SLUG})`,
     );
   } finally {
     await pool.end();

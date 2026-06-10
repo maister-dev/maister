@@ -200,7 +200,7 @@ and no raw `goto_step` is accepted from the client. See
 [`flow-graph.md`](flow-graph.md) and
 [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 
-**(Designed — ADR-071) review-gate loop fields + line-anchored comments.** For
+**(Implemented — ADR-071) review-gate loop fields + line-anchored comments.** For
 a review gate the stored `hitl_requests.schema` additionally carries the
 server-state fields `{ maxLoops, gateAttempt }` (`gateAttempt` = the 1-based
 visit number of the current gate, initial visit = 1; `maxLoops` from the
@@ -465,14 +465,15 @@ fields:
   bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
   `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
   breach) and terminate the run.
-- **(Designed — ADR-071)** A graph review gate's stored schema MUST carry
+- **(Implemented — ADR-071)** A graph review gate's stored schema MUST carry
   server-state `{ maxLoops, gateAttempt }`; the respond route MUST reject a
   `rework` decision with 422 (`NEEDS_INPUT`) when `gateAttempt > maxLoops`
   (total gate visits = `maxLoops + 1`) BEFORE any artifact write or state
-  mutation — the engine `CONFIG` throw remains the backstop only. The
-  rejection applies only when the review node declares rework (`maxLoops`
-  non-null); without `rework` there is no rework decision to reject, so the
-  rule is vacuous.
+  mutation — the engine `CONFIG` throw remains the backstop only (it fires
+  on a fresh-visit append, never on a resume-reuse re-entry). The
+  rejection applies only when the stored schema carries both fields: a
+  no-rework node stamps `maxLoops` null and legacy pre-ADR-071 rows lack
+  the fields entirely, so the rule is vacuous there.
 - **(Implemented — M17)** Full `on_reject.goto_step` rerouting in
   `runHumanStep`: on rejection the runner MUST write
   `rework-comments-{gotoStepId}.json` (NEVER `input-{gotoStepId}.json`),
@@ -587,9 +588,11 @@ fields:
 - **Graph review `rework` decision at an exhausted loop**
   (`schema.gateAttempt > schema.maxLoops`) → 422 (`NEEDS_INPUT`) at validate
   time — no artifact write, no state mutation; the reviewer can still
-  approve. Without this rule a final-loop rework would reach the engine's
-  re-entry check and `CONFIG`-fail the whole run (that throw remains the
-  backstop). (Designed — ADR-071)
+  approve. Without this rule a final-loop rework would die at the engine's
+  fresh-append check when traversal returns to append visit `maxLoops + 2`
+  and `CONFIG`-fail the whole run (that throw remains the backstop; it
+  never fires on the resume re-entry processing a decision at the final
+  allowed visit). (Implemented — ADR-071)
 
 ## M8 — live vs idle HITL response paths
 
@@ -682,7 +685,7 @@ runner-agent enforcement is queued for a follow-up patch.
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
   [`flow-graph.md`](flow-graph.md) (M11a review decisions),
-  [`review-comments.md`](review-comments.md) (Designed — ADR-071:
+  [`review-comments.md`](review-comments.md) (Implemented — ADR-071:
   line-anchored review threads, `{maxLoops, gateAttempt}` schema fields,
   loop-exhaustion refusal).
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),

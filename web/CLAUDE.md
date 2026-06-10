@@ -257,6 +257,12 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
 - `POST /api/runs/[id]/activity` (extend `keepalive_until` by 30 min while
   user is actively on the run page)
 - `GET /api/runs/[id]/diff` (raw diff + per-file `+`/`−` summary; rendered split/inline via `@git-diff-view/react`, ADR-066)
+- `GET/POST /api/runs/[id]/review-comments` (ADR-071 — list line-anchored
+  review threads with computed `inline|outdated` placement; create a root
+  comment or reply at an open review gate)
+- `PATCH/DELETE /api/runs/[id]/review-comments/[commentId]` (ADR-071 —
+  author-only body edit or root-only resolve/unresolve; author-only delete,
+  root cascades replies)
 - `POST /api/runs/[id]/merge` (`git merge --no-ff`; conflict → abort, run
   stays `Review`)
 - `POST /api/runs/[id]/abandon` (supervisor `DELETE /sessions/:id` if alive;

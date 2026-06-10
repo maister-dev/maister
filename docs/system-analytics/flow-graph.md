@@ -286,7 +286,7 @@ sequenceDiagram
     RG->>DB: follow transitions.approve -> run Review
 ```
 
-**(Designed — ADR-071) composed `commentsVar` payload.** The "commentsVar
+**(Implemented — ADR-071) composed `commentsVar` payload.** The "commentsVar
 injected" step above becomes a runner-side compose at rework consumption: the
 runner loads the run's OPEN line-anchored review-comment threads
 (`review_comments` roots + replies), serializes them as deterministic
@@ -481,7 +481,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md),
   [`workbench.md`](workbench.md) (M22 — the read-only graph **view** + live
   node-status coloring that renders this topology),
-  [`review-comments.md`](review-comments.md) (Designed — ADR-071: composed
+  [`review-comments.md`](review-comments.md) (Implemented — ADR-071: composed
   `commentsVar` payload, review-gate `{maxLoops, gateAttempt}` schema fields,
   loop-exhaustion validate rule).
 - **(Designed, M27)** The read-only M22 graph view now has an **editor write

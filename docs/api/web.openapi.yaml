@@ -105,7 +105,7 @@ tags:
   - name: takeover
     description: Manual takeover — local worktree handoff (M11b, ADR-030).
   - name: review-comments
-    description: Line-anchored review-comment threads on the review-gate diff (Designed, ADR-071).
+    description: Line-anchored review-comment threads on the review-gate diff (Implemented, ADR-071).
   - name: flow-packages
     description: Flow package lifecycle — install, trust, enable, upgrade, rollback, remove.
   - name: reconciliation-gc
@@ -2205,7 +2205,7 @@ paths:
         reads them on resume to drive the rework loop. No new `MaisterError`
         code is introduced.
 
-        **(Designed — ADR-071) review-gate loop fields.** For a review gate
+        **(Implemented — ADR-071) review-gate loop fields.** For a review gate
         the stored `hitl_requests.schema` additionally carries the
         server-state fields `maxLoops` (the node's `rework.maxLoops`; `null`
         when the node declares no rework) and `gateAttempt` (the 1-based
@@ -2357,7 +2357,7 @@ paths:
             also returned when a graph `human_review` `response.decision`
             (or its resolved target / `workspacePolicy`) is not in the
             allow-list stored in `hitl_requests.schema`; no artifact is
-            written and no state is mutated. **(Designed — ADR-071)** also
+            written and no state is mutated. **(Implemented — ADR-071)** also
             returned when a `rework` decision is submitted past the loop
             boundary (`schema.gateAttempt > schema.maxLoops`; total visits =
             `maxLoops + 1`) — rejected at validate time instead of letting
@@ -2378,7 +2378,7 @@ paths:
   /api/runs/{runId}/review-comments:
     get:
       tags: [review-comments]
-      summary: Designed (ADR-071) — list review-comment threads with placement
+      summary: Implemented (ADR-071) — list review-comment threads with placement
       description: |
         Requires project membership at `viewer` or above
         (`requireProjectAction("readBoard")`); `projectId` is derived from the
@@ -2387,12 +2387,15 @@ paths:
 
         Returns the run's review-comment threads (root + replies) with a
         computed `placement` per thread: exactly one DB query for the run's
-        comments plus one in-memory parse of the server-recomputed committed
-        `base..branch` diff (no N+1). `placement = "inline"` iff the stored
-        `lineContent` exactly matches the current diff at the same
-        `(filePath, side, line)`; otherwise `"outdated"` (no fuzzy
+        comments plus AT MOST one in-memory parse of the server-recomputed
+        committed `base..branch` diff (no N+1; a run with zero threads
+        short-circuits without computing the diff). `placement = "inline"`
+        iff the stored `lineContent` exactly matches the current diff at the
+        same `(filePath, side, line)`; otherwise `"outdated"` (no fuzzy
         re-anchoring; placement is never stored). Threads whose file fell past
-        a `truncated` diff bound render as `outdated`.
+        a `truncated` diff bound render as `outdated`; an unavailable diff
+        source (removed/GC'd workspace) degrades every placement to
+        `outdated` — the read returns 200, never a 500.
       operationId: getRunReviewComments
       parameters:
         - name: runId
@@ -2413,7 +2416,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     post:
       tags: [review-comments]
-      summary: Designed (ADR-071) — create a root comment or a reply
+      summary: Implemented (ADR-071) — create a root comment or a reply
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`); `projectId` is derived from
@@ -2497,7 +2500,7 @@ paths:
   /api/runs/{runId}/review-comments/{commentId}:
     patch:
       tags: [review-comments]
-      summary: Designed (ADR-071) — edit body (author-only) or resolve/unresolve (root-only)
+      summary: Implemented (ADR-071) — edit body (author-only) or resolve/unresolve (root-only)
       description: |
         Requires `answerHitl` (member) + the same open-review-gate guard as
         POST (409 `PRECONDITION` otherwise). The row is loaded and
@@ -2572,7 +2575,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [review-comments]
-      summary: Designed (ADR-071) — delete a comment (author-only; root cascades replies)
+      summary: Implemented (ADR-071) — delete a comment (author-only; root cascades replies)
       description: |
         Requires `answerHitl` (member) + the open-review-gate guard (409
         `PRECONDITION` otherwise). **Author-only** → 403 `UNAUTHORIZED` for a
@@ -7301,7 +7304,7 @@ components:
     ReviewComment:
       type: object
       description: |
-        (Designed — ADR-071) One `review_comments` row as a wire DTO. A ROOT
+        (Implemented — ADR-071) One `review_comments` row as a wire DTO. A ROOT
         comment (`parentId` null) carries the anchor
         (`filePath`/`side`/`line`/`lineContent`) and the `open|resolved`
         status; a REPLY carries no anchor (DB CHECK: anchor fields non-null ⇔
@@ -7370,7 +7373,7 @@ components:
     ReviewCommentThread:
       type: object
       description: |
-        (Designed — ADR-071) A root comment with its replies and the computed
+        (Implemented — ADR-071) A root comment with its replies and the computed
         `placement` for the current diff.
       required: [root, placement, replies]
       properties:
@@ -7394,7 +7397,7 @@ components:
         threads:
           type: array
           description: |
-            (Designed — ADR-071) All threads of the run (open and resolved),
+            (Implemented — ADR-071) All threads of the run (open and resolved),
             roots ordered by `(filePath, line, side old<new, createdAt, id)`.
           items: { $ref: "#/components/schemas/ReviewCommentThread" }
     ReviewCommentResponse:
@@ -7404,7 +7407,7 @@ components:
         comment: { $ref: "#/components/schemas/ReviewComment" }
     PostReviewCommentBody:
       description: |
-        (Designed — ADR-071) Shape-discriminated union: a ROOT comment
+        (Implemented — ADR-071) Shape-discriminated union: a ROOT comment
         carries the anchor and no `parentId`; a REPLY carries `parentId` and
         `body` only. A body matching both (or neither) shape is rejected 400.
         `lineContent` is NEVER accepted from the client — the server
@@ -7449,7 +7452,7 @@ components:
           maxLength: 10000
     PatchReviewCommentBody:
       description: |
-        (Designed — ADR-071) Exactly one of `{body}` (author-only edit) or
+        (Implemented — ADR-071) Exactly one of `{body}` (author-only edit) or
         `{status}` (root-only resolve/unresolve). A body carrying both (or
         neither) is rejected 400.
       oneOf:
@@ -7637,7 +7640,7 @@ components:
         hitlRequestId:
           type: string
           description: |
-            (Designed — ADR-071) Present on the composed-rework-payload
+            (Implemented — ADR-071) Present on the composed-rework-payload
             evidence row (`kind: human_note`, `producer: runner`): the
             authoring review-gate `hitl_requests` id. `text` carries the
             composed payload.
@@ -7645,7 +7648,7 @@ components:
           type: array
           items: { type: string }
           description: |
-            (Designed — ADR-071) Ids of the open root comments serialized
+            (Implemented — ADR-071) Ids of the open root comments serialized
             into `text` at compose time.
 
     ArtifactInstanceList:
