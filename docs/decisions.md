@@ -96,7 +96,9 @@
 | [ADR-069](#adr-069-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
 | [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 | [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock) | User-facing run schedules on the M24 clock | Accepted | 2026-06-10 |
+| [ADR-072](#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard) | PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard | Accepted | 2026-06-10 |
 | [ADR-075](#adr-075-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) | ACP runner model discovery (resolver-on-supervisor) + configured-model application | Accepted | 2026-06-11 |
+| [ADR-077](#adr-077-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer) | Outbound webhooks: generic event-delivery primitive, transactional outbox + singleton drainer | Accepted | 2026-06-10 |
 
 ---
 
@@ -4987,6 +4989,139 @@ always emitting a `mutation_report` artifact when configured.
 - **Recording the report only on failure:** rejected — a pass with an empty
   match set vs a pass with rich touches are different signals; ADR-073
   effectiveness metrics need both sides.
+### ADR-077: Outbound webhooks: generic event-delivery primitive, transactional outbox + singleton drainer
+
+**Date:** 2026-06-10
+**Status:** Accepted
+**Context:** `PRODUCT_VIEW.md` "Deferred For Now" and the improvement roadmap
+(`docs/pv/improvement-roadmap.md:83,189-190`) deferred "generic outbound webhooks
+and provider-specific apps" in favour of inbound gate-unblock + agent-over-MCP.
+Three forces reopen that deferral as a single, narrow primitive: (1) the roadmap's
+own E5 / Wave-4 attention-routing, Telegram, and CI/board-sync bets all need the
+SAME thing — a reliable way to push a curated run lifecycle fact to an external
+endpoint; building a bespoke notifier per consumer would duplicate signing,
+retry, and audit machinery. (2) The curated lifecycle facts (run started / needs
+input / review / promoted / done / failed / crashed / abandoned, HITL
+requested/responded, gate decided) already exist as DB transitions scattered
+across `state-transitions.ts`, the runners, `promote.ts`, `services/hitl.ts`,
+`gate-store.ts`, and `workbench-lifecycle/service.ts` — but there is no fan-out
+seam. (3) The M24 scheduler (ADR-060) gives a sanctioned single background clock,
+so delivery can be tick-driven without a new watcher, honouring the ADR-§1 "no
+`fs.watch` / `chokidar` / polling for state transitions" rule. This ADR records
+the reopen and the architecture; it does NOT pull any consumer (agent-over-MCP,
+Telegram, CI) into scope — those become subscribers, not replacements.
+
+**Decision:** Build outbound webhooks as a generic, vendor-neutral event-delivery
+primitive on a **transactional-outbox** seam drained by a **singleton scheduler
+job**. Consumers (agent-over-MCP, Telegram / attention routing, CI triggers,
+board sync) subscribe to it later; none is built here.
+
+- **Capture seam = transactional outbox at the transition writepoints.** A tiny
+  `emitWebhookEvent(tx, …)` INSERT into a `webhook_events` outbox row runs inside
+  the SAME transaction as each taxonomy-mapped DB transition (where a transition
+  is a bare CAS UPDATE today, the UPDATE + INSERT are wrapped in one
+  `db.transaction`). Emit fires only on the CAS-winner path. The write-path
+  addition is one INSERT with no reads and no network, so it can only fail if the
+  surrounding transaction was already failing — delivery can never block or fail
+  a run. Fanout, subscription matching, signing, and HTTP I/O happen entirely OFF
+  the run path inside the M24 tick.
+- **Taxonomy = 12 curated types, never raw `session/update`.** `run.started`,
+  `run.needs_input`, `hitl.requested`, `hitl.responded`, `run.review`,
+  `run.promoted`, `run.done`, `run.failed`, `run.crashed`, `run.abandoned`,
+  `gate.decided`, and a synthetic unpersisted `ping`. The not-emitted set
+  (checkpoint/resume, `HumanWorking`, `Pending`, keepalive, non-terminal gate
+  states, `gate.opened`, `node_attempts`, all `session.*`) is additive later
+  (one type + one emit + one doc row). Both `run.done` and `run.promoted` are
+  kept (promotion success and run completion are distinct consumer facts).
+- **Envelope v1 frozen at fanout.** Emit sites store only the minimal record
+  (`type`, `projectId`, `runId`, `occurredAt`, per-type `data` — no joins on the
+  write path). The full envelope is built ONCE at fanout via a single batched
+  join (`runs ⋈ projects ⋈ workspaces ⋈ tasks` — `runs` has no `branch` column),
+  frozen into `webhook_events.payload` in the fanout transaction, and reused
+  byte-identically by every retry and replay; only `deliveryId`/`attempt` are
+  injected at send. `data` carries ids/statuses/titles ONLY — never secrets, env,
+  tokens, or raw agent output.
+- **Singleton drainer job, NOT one scheduler_job per delivery.** One recurring
+  `webhook_delivery.default` job (cadence 60s, budget `webhookDelivery: 1`,
+  seeded in `ensureDefaultSchedulerJobs`) whose handler does fanout + drain +
+  prune. Retry state lives on `webhook_deliveries.next_attempt_at`; the job's own
+  `consecutiveFailures` tracks only handler crashes. Per-delivery scheduler jobs
+  would flood the admin jobs catalog, fight `cadence_interval_seconds NOT NULL`
+  recurrence semantics, and trip the `max_failures=3` auto-disable against the
+  8-attempt curve.
+- **At-least-once, unordered; consumer dedupes via idempotency key.**
+  Per-subscription ordering is rejected (one delivery in a 24h backoff would dam
+  every later event for that endpoint — head-of-line blocking). Every crash
+  window converges to a duplicate send; `X-Maister-Idempotency-Key =
+  hex(sha256("<subscriptionId>:<eventId>"))` (stable across retries AND replays)
+  gives consumers exactly-once effect. `FOR UPDATE SKIP LOCKED` + a delivery
+  lease prevents concurrent double-send. Retry curve `1m, 5m, 15m, 1h, 4h, 12h,
+  24h` (`±20%` jitter, floor = 60s tick), max 8 attempts → terminal `dead`; HTTP
+  `410 Gone → dead` immediately, any 2xx → `delivered`, everything else (incl.
+  3xx, `redirect:"manual"`) → retry.
+- **Signing = HMAC-SHA256 (Stripe-style), `env:`-ref secrets.** Signature base
+  string `"${t}.${deliveryId}.${rawBody}"` (`t` = unix seconds at send), hex
+  digest in `X-Maister-Signature: t=<unix>,v1=<hex>`. Secrets are stored only as
+  `env:NAME` references, resolved server-side at send, never logged or echoed.
+  Rotation appends a second `v1=` from an optional `secondary_signing_secret_ref`.
+- **Usage-guarded DELETE.** A subscription DELETE is refused with 409 `CONFLICT`
+  while ANY delivery history exists (retire via `enabled=false`); hard delete
+  works only for never-delivered subscriptions — matching the
+  `platform_mcp_servers` / `platform_acp_runners` usage-guard precedent
+  (ADR-065/070) and the project's append-only-ledger DNA.
+- **SSRF v1 stance.** Scheme allow-list `http`/`https` only; private-address
+  blocking is deliberately NOT in v1 (self-hosted, operator-trusted endpoints;
+  M16 precedent that public-internet hardening beyond token/HMAC is deferred).
+- **No new error code.** Reuse `CONFIG` (bad `env:` ref / validation), `CONFLICT`
+  (replay state / dup / usage-guarded delete), `PRECONDITION`, `UNAUTHORIZED`;
+  `docs/error-taxonomy.md` is untouched. The attempt `error_kind`
+  (`timeout|network|http|config`) is a LOCAL enum, not a `MaisterError`.
+
+**Consequences:**
+- One reusable primitive serves every current and future notifier; the E5 /
+  Wave-4 agent-over-MCP, Telegram, CI, and board-sync bets become SUBSCRIBERS,
+  not bespoke integrations.
+- Capture is exactly-once (shares the transition's transaction — no jsonl replay
+  to dedupe); fanout is exactly-once (`fanout_at` set in the same tx as the
+  delivery inserts, with `UNIQUE (subscription_id, event_id)` as belt-and-braces);
+  delivery is at-least-once (crash windows + lease expiry).
+- Delivery latency ≈ one tick (60s cadence + external cron period) — accepted for
+  notification/CI semantics; a sub-tick in-process drain kick is a future additive
+  change (still no new clock).
+- Four new tables (`webhook_subscriptions`, `webhook_events`,
+  `webhook_deliveries`, `webhook_delivery_attempts`) + one column
+  (`platform_runtime_settings.webhooks_enabled`) land in migration `0040`. A new
+  `job_kind: webhook_delivery` joins the scheduler enums + budgets + dispatch.
+- The outbox grows on every transition; zero-delivery events (matched no
+  subscription) are pruned after 7 days, while any event referenced by a delivery
+  is kept forever for replay/audit.
+- New env knobs: `MAISTER_WEBHOOK_DELIVERY_BATCH`, `MAISTER_WEBHOOK_TIMEOUT_MS`,
+  `MAISTER_WEBHOOK_MAX_ATTEMPTS`.
+
+**Alternatives Considered:**
+- **Projector hook (advance `artifact-projector` to drive webhooks):** rejected —
+  the projector sees low-level `session.*` noise, not curated lifecycle
+  transitions, and is barred from run-status semantics (ADR-022/038); it is the
+  wrong event source and a layering violation.
+- **jsonl-cursor consumer drained by the tick:** rejected — `run.events.jsonl`
+  carries session events, not the curated taxonomy, and would require its own
+  replay-dedupe machinery the DB outbox makes unnecessary.
+- **Inline fanout at the transition (read subscriptions + N inserts in the hot
+  tx):** rejected — puts subscription reads and N delivery inserts into hot run
+  transactions for no latency win that matters (delivery is tick-paced anyway).
+- **One `scheduler_jobs` row per delivery:** rejected — floods the admin jobs
+  catalog, fights `cadence_interval_seconds NOT NULL` recurrence, and trips
+  `max_failures=3` auto-disable against the 8-attempt curve.
+- **Per-subscription ordered delivery:** rejected — serial per-endpoint delivery
+  makes one stuck delivery (24h backoff) dam every later event (head-of-line
+  blocking), fatal for notification semantics; unordered + idempotency key is
+  safe and live.
+- **Private-address SSRF blocking in v1:** deferred — endpoints are self-hosted
+  and operator-trusted (M16 precedent); adding allow/deny-list hardening is an
+  additive later change, not a v1 blocker.
+- **A new `MaisterError` code (e.g. `WEBHOOK`):** rejected — `CONFIG`/`CONFLICT`/
+  `PRECONDITION`/`UNAUTHORIZED` cover every failure; a new code would churn
+  `error-taxonomy.md` and the UI branch table for no behavioural gain.
 
 ---
 

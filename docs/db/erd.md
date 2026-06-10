@@ -16,15 +16,19 @@ the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
 `FLOWS.version_binding`, `FLOW_REVISIONS.exec_trust`,
 `AUTHORED_CAPABILITIES.source_flow_ref_id`, `RUNS.resolved_capability_set`, and
 the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
-`0038`)** `RUN_SCHEDULES` table for user-facing cron schedules, and the
+`0038`)** `RUN_SCHEDULES` table for user-facing cron schedules, the
 **ADR-072 (Implemented, migration `0039`)** `REVIEW_COMMENTS`
-review-thread table. For partial views by
+review-thread table, and the **(Designed, migration `0040`)**
+outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
+`WEBHOOK_DELIVERIES`, `WEBHOOK_DELIVERY_ATTEMPTS` plus the
+`PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-075). For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
 [`assignments-domain.md`](assignments-domain.md),
-[`capabilities-domain.md`](capabilities-domain.md), and
-[`integrations-domain.md`](integrations-domain.md).
+[`capabilities-domain.md`](capabilities-domain.md),
+[`integrations-domain.md`](integrations-domain.md), and
+[`webhooks.md`](webhooks.md).
 
 ```mermaid
 erDiagram
@@ -101,6 +105,13 @@ erDiagram
     RUNS ||--o{ RUN_SCHEDULES : "last run SET NULL (M28)"
     PLATFORM_ACP_RUNNERS ||--o{ RUN_SCHEDULES : "runner override SET NULL (M28)"
     USERS ||--o{ RUN_SCHEDULES : "created_by SET NULL (M28)"
+
+    PROJECTS ||--o{ WEBHOOK_SUBSCRIPTIONS : "project-scoped (nullable)"
+    PROJECTS ||--o{ WEBHOOK_EVENTS : "emitted per project"
+    RUNS ||--o{ WEBHOOK_EVENTS : "emitted per run"
+    WEBHOOK_EVENTS ||--o{ WEBHOOK_DELIVERIES : "fanned out to"
+    WEBHOOK_SUBSCRIPTIONS ||--o{ WEBHOOK_DELIVERIES : "delivered via (cascade)"
+    WEBHOOK_DELIVERIES ||--o{ WEBHOOK_DELIVERY_ATTEMPTS : "attempt audit (cascade)"
 
     USERS {
         text id PK
@@ -765,6 +776,62 @@ erDiagram
         integer status_code "NOT NULL"
         timestamp created_at "NOT NULL default now(), INDEX"
     }
+
+    WEBHOOK_SUBSCRIPTIONS {
+        text id PK "server crypto.randomUUID()"
+        text project_id FK "NULL -> projects(id); NULL = platform scope"
+        text name
+        text url "http/https only"
+        text method "POST|PUT DEFAULT POST"
+        jsonb headers "Record<string,string> DEFAULT {}"
+        jsonb event_types "string[] — taxonomy types or *"
+        text signing_secret_ref "NOT NULL; env:NAME"
+        text secondary_signing_secret_ref "NULL; env:NAME for rotation"
+        boolean enabled "NOT NULL DEFAULT true"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    WEBHOOK_EVENTS {
+        text id PK
+        text project_id FK "NOT NULL -> projects(id)"
+        text run_id FK "NOT NULL -> runs(id)"
+        text type "taxonomy event type"
+        jsonb data "per-type minimal facts"
+        jsonb payload "NULL until fanout; full frozen envelope"
+        timestamptz occurred_at
+        timestamptz fanout_at "NULL = awaiting fanout (fanout cursor)"
+        timestamptz created_at
+    }
+
+    WEBHOOK_DELIVERIES {
+        text id PK
+        text event_id FK "NOT NULL -> webhook_events(id)"
+        text subscription_id FK "NOT NULL -> webhook_subscriptions(id) ON DELETE CASCADE"
+        text status "pending|delivered|dead DEFAULT pending"
+        integer attempt_count "DEFAULT 0"
+        timestamptz next_attempt_at "NOT NULL"
+        timestamptz lease_expires_at "NULL"
+        text idempotency_key "NOT NULL; hex sha256(subscriptionId:eventId)"
+        integer last_http_status "NULL"
+        text last_error_kind "NULL; timeout|network|http|config"
+        text last_error_message "NULL; <= 1KB"
+        timestamptz delivered_at "NULL"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    WEBHOOK_DELIVERY_ATTEMPTS {
+        text id PK
+        text delivery_id FK "NOT NULL -> webhook_deliveries(id) ON DELETE CASCADE"
+        integer attempt_no "UNIQUE with delivery_id"
+        timestamptz requested_at
+        integer duration_ms
+        integer http_status "NULL"
+        text error_kind "NULL; timeout|network|http|config"
+        text error_detail "NULL; <= 1KB"
+        text response_snippet "NULL; <= 1KB"
+    }
 ```
 
 ## Planned roadmap extensions
@@ -849,5 +916,12 @@ external-operation events) is not drawn until its migrations exist. See
 | `project_tokens` | `project_tokens_owner_idx` | `(owner_user_id)` | User-owned token audit joins. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
 | `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
+| `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-075 Designed)** Project-scope subscription lookup (NULL = platform rows). |
+| `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-075 Designed)** Ordered fanout-pass claim scan. |
+| `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-075 Designed)** Ordered drain-pass claim scan. |
+| `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | **(ADR-075 Designed)** Deliveries-drawer log UI. |
+| `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-075 Designed)** Fanout dedupe invariant. |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-075 Designed)** Attempt history for a delivery. |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_no_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-075 Designed)** One row per attempt number per delivery. |
 
 Source: `web/lib/db/schema.ts`.

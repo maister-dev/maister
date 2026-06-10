@@ -406,7 +406,9 @@ event log table · test-run UI button · GitHub Actions CI/CD · project
 archival UI · cross-project task moves · GitHub issue / Linear / YouGile
 sync · custom ACP extensions · cost/time/regex guard enforcement · plugin
 sandboxing · HITL as separate swimlane cards · Cursor / opencode / Aider
-executors · outbound webhooks (deferred in favor of agent-over-MCP).
+executors. (Outbound webhooks are no longer deferred — the generic outbound
+event-delivery primitive is now being built; agent-over-MCP and notifiers are
+consumers of it, see ADR-075.)
 
 ## Conventions
 

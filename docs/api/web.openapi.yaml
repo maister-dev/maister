@@ -120,6 +120,12 @@ tags:
     description: M27 Flow Studio — graph editor, draft/publish, version-binding, exec-trust.
   - name: mcp-management
     description: M27 MCP capability management — platform-admin and project-scoped MCP servers.
+  - name: webhooks
+    description: >-
+      Outbound webhooks (ADR-077, Designed) — platform-admin and project-scoped
+      event-delivery subscriptions, delivery log, ping, replay, and the global
+      kill-switch. The wire contract for the delivered payload is in
+      `async/outbound-webhooks.asyncapi.yaml`.
 paths:
   /api/admin/acp-runners:
     get:
@@ -5726,6 +5732,615 @@ paths:
             concurrent tick/trigger or `last_fire_outcome = 'dispatching'`
             is fresher than the 300s attempt timeout. Project not
             found/archived is `PRECONDITION`.
+
+  # ── ADR-077 Outbound webhooks — platform-admin subscriptions ────────────────
+
+  /api/admin/webhooks:
+    get:
+      tags: [webhooks, admin]
+      summary: (ADR-077) List platform webhook subscriptions
+      description: |
+        (ADR-077 — Designed.) Admin-only (`requireGlobalRole("admin")`).
+        Returns every platform-scoped `webhook_subscriptions` row
+        (`project_id IS NULL`). Secret values are NEVER returned —
+        `signing_secret_ref`, `secondary_signing_secret_ref`, and any
+        `env:NAME` header values are echoed back as their reference strings
+        only; actual values resolve server-side at send time.
+      operationId: listAdminWebhooks
+      responses:
+        "200":
+          description: Platform webhook subscription catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subscriptions]
+                properties:
+                  subscriptions:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookSubscription" }
+              examples:
+                list:
+                  summary: One platform subscription
+                  value:
+                    subscriptions:
+                      - id: "wh_5f3a8a2b7e34"
+                        projectId: null
+                        name: ops-notifier
+                        url: "https://hooks.example.com/maister"
+                        method: POST
+                        headers: { "X-Team": "platform" }
+                        event_types: ["run.review", "run.failed"]
+                        signing_secret_ref: "env:WEBHOOK_SIGNING_SECRET"
+                        secondary_signing_secret_ref: null
+                        enabled: true
+                        createdAt: "2026-06-10T10:00:00Z"
+                        updatedAt: "2026-06-10T10:00:00Z"
+                        lastDelivery:
+                          status: delivered
+                          at: "2026-06-10T12:30:05Z"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Create a platform webhook subscription
+      description: |
+        (ADR-077 — Designed.) Admin-only. Creates a platform-scoped
+        `webhook_subscriptions` row (`project_id` stays NULL). Mirrors the
+        `POST /api/admin/mcp-servers` identifier discipline: the body carries
+        config values only — NO cross-resource ids.
+
+        **Secret constraint:** `signing_secret_ref` is REQUIRED and MUST be an
+        `env:NAME` reference (pattern `^env:[A-Za-z_][A-Za-z0-9_]*$`).
+        `secondary_signing_secret_ref` (rotation overlap) is optional and
+        follows the same pattern. `headers` values MAY be `env:NAME` references.
+        Plain secret values are NEVER accepted, stored, or echoed (`422 CONFIG`).
+        `url` MUST be `http`/`https`; `event_types` entries MUST be taxonomy
+        types or the single literal `"*"`.
+      operationId: postAdminWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookSubscriptionCreate" }
+            examples:
+              all-events:
+                summary: Subscribe to every event type
+                value:
+                  name: ops-notifier
+                  url: "https://hooks.example.com/maister"
+                  method: POST
+                  headers: { "X-Team": "platform" }
+                  event_types: ["*"]
+                  signing_secret_ref: "env:WEBHOOK_SIGNING_SECRET"
+                  enabled: true
+              filtered:
+                summary: Subscribe to a filtered set
+                value:
+                  name: review-pager
+                  url: "https://hooks.example.com/review"
+                  event_types: ["run.review", "run.failed", "run.crashed"]
+                  signing_secret_ref: "env:PAGER_SECRET"
+      responses:
+        "201":
+          description: Subscription created. Fetch via GET to read the stored row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: |
+            Invalid body — non-`http(s)` URL, unknown `event_types` entry,
+            missing `signing_secret_ref`, or a secret value not in `env:NAME`
+            form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/webhooks/{id}:
+    get:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Get a platform webhook subscription
+      description: |
+        (ADR-077 — Designed.) Admin-only. Returns one platform-scoped
+        subscription by id. A project-scoped row id (or an unknown id) is
+        `404` — platform admin sees only `project_id IS NULL` rows here.
+      operationId: getAdminWebhook
+      parameters:
+        - { $ref: "#/components/parameters/WebhookId" }
+      responses:
+        "200":
+          description: The subscription.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookSubscription" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Update a platform webhook subscription
+      description: |
+        (ADR-077 — Designed.) Admin-only. Mutates any of name, url, method,
+        headers, event_types, signing_secret_ref, secondary_signing_secret_ref,
+        or enabled. At least one field required. Secret values must remain
+        `env:NAME` references; `signing_secret_ref` may be re-pointed but not
+        cleared. Disabling (`enabled: false`) takes effect at the next fanout —
+        events in this window are skipped (not retroactively delivered); deliveries
+        already fanned out pause and resume on re-enable.
+      operationId: patchAdminWebhook
+      parameters:
+        - { $ref: "#/components/parameters/WebhookId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookSubscriptionUpdate" }
+            examples:
+              disable:
+                summary: Pause delivery
+                value: { enabled: false }
+              rotate-secret:
+                summary: Begin signing-secret rotation
+                value:
+                  signing_secret_ref: "env:WEBHOOK_SIGNING_SECRET_NEW"
+                  secondary_signing_secret_ref: "env:WEBHOOK_SIGNING_SECRET"
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Invalid body or secret value not in `env:NAME` form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Delete a platform webhook subscription
+      description: |
+        (ADR-077 — Designed.) Admin-only. Usage-guarded hard delete: refused
+        with `409 CONFLICT` while ANY delivery history (`webhook_deliveries`)
+        references the subscription — the per-subscription delivery/attempt
+        ledger is append-only audit and is never cascaded away. Retire a live
+        endpoint with `enabled: false` instead. Hard delete succeeds (`204`)
+        only for a subscription that has never produced a delivery.
+      operationId: deleteAdminWebhook
+      parameters:
+        - { $ref: "#/components/parameters/WebhookId" }
+      responses:
+        "204": { description: Subscription deleted (no delivery history existed). }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Subscription has delivery history and cannot be hard-deleted
+            (`CONFLICT`). Disable it instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/webhooks/{id}/deliveries:
+    get:
+      tags: [webhooks, admin]
+      summary: (ADR-077) List delivery log for a platform subscription
+      description: |
+        (ADR-077 — Designed.) Admin-only. Paged, newest-first delivery log for
+        the subscription, each delivery carrying its full `attempts[]` audit
+        trail. `response_snippet`, `lastErrorKind`, and HTTP status are surfaced
+        for DLQ inspection. Cursor paging via `cursor`/`limit`.
+      operationId: listAdminWebhookDeliveries
+      parameters:
+        - { $ref: "#/components/parameters/WebhookId" }
+        - { $ref: "#/components/parameters/DeliveryCursor" }
+        - { $ref: "#/components/parameters/DeliveryLimit" }
+      responses:
+        "200":
+          description: Delivery log page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookDeliveryPage" }
+              examples:
+                page:
+                  summary: One delivered, one dead
+                  value:
+                    deliveries:
+                      - id: "del_9a4a7b9d0d6b"
+                        eventId: "evt_8a4a7b9d"
+                        type: run.review
+                        status: delivered
+                        attemptCount: 1
+                        nextAttemptAt: null
+                        lastHttpStatus: 200
+                        lastErrorKind: null
+                        deliveredAt: "2026-06-10T12:30:05Z"
+                        createdAt: "2026-06-10T12:30:04Z"
+                        attempts:
+                          - attemptNo: 1
+                            requestedAt: "2026-06-10T12:30:05Z"
+                            durationMs: 142
+                            httpStatus: 200
+                            errorKind: null
+                            responseSnippet: ok
+                      - id: "del_1c2d3e4f5a6b"
+                        eventId: "evt_1c2d3e4f"
+                        type: run.failed
+                        status: dead
+                        attemptCount: 8
+                        nextAttemptAt: null
+                        lastHttpStatus: 500
+                        lastErrorKind: http
+                        deliveredAt: null
+                        createdAt: "2026-06-09T20:00:00Z"
+                        attempts:
+                          - attemptNo: 8
+                            requestedAt: "2026-06-11T13:30:00Z"
+                            durationMs: 88
+                            httpStatus: 500
+                            errorKind: http
+                            responseSnippet: "internal error"
+                    nextCursor: null
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/webhooks/{id}/ping:
+    post:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Send a synthetic ping to a platform subscription
+      description: |
+        (ADR-077 — Designed.) Admin-only. Builds a synthetic `ping` envelope
+        (fresh `id`/`deliveryId`, the real subscription), signs it, and POSTs it
+        synchronously with the standard delivery headers and a
+        `MAISTER_WEBHOOK_TIMEOUT_MS` timeout. The result is returned live and is
+        NOT persisted — a ping creates no `webhook_events`/`webhook_deliveries`
+        rows. Empty request body (no body-controlled ids).
+      operationId: pingAdminWebhook
+      parameters:
+        - { $ref: "#/components/parameters/WebhookId" }
+      responses:
+        "200":
+          description: Ping result (delivery outcome, never persisted).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PingResult" }
+              examples:
+                ok:
+                  summary: Endpoint accepted the ping
+                  value: { ok: true, httpStatus: 200, durationMs: 118 }
+                refused:
+                  summary: Endpoint returned an error status
+                  value: { ok: false, httpStatus: 500, durationMs: 95, errorKind: http }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/webhooks/{id}/deliveries/{deliveryId}/replay:
+    post:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Replay a platform webhook delivery
+      description: |
+        (ADR-077 — Designed.) Admin-only. Re-queues a finished delivery for
+        another send attempt: under one transaction the row is `SELECT … FOR
+        UPDATE`, allow-listed to `status ∈ {delivered, dead}`, then reset to
+        `status=pending, attempt_count=0, next_attempt_at=now()`. A `pending`
+        delivery is refused `409 CONFLICT` (already in flight). The stored event
+        payload and `X-Maister-Idempotency-Key` are unchanged, so a consumer
+        that already processed the event de-dupes the replay. The attempt audit
+        keeps appending (`attemptNo` continues from the running total). Empty
+        request body. The delivery MUST belong to `{id}` (server-state join;
+        mismatch → `404`).
+      operationId: replayAdminWebhookDelivery
+      parameters:
+        - { $ref: "#/components/parameters/WebhookId" }
+        - { $ref: "#/components/parameters/DeliveryId" }
+      responses:
+        "202":
+          description: Delivery re-queued; it will be re-sent on the next drain.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Delivery is currently `pending` and cannot be replayed (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/admin/webhook-settings:
+    get:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Read the global outbound-webhooks kill-switch
+      description: |
+        (ADR-077 — Designed.) Admin-only. Reads `platform_runtime_settings.webhooks_enabled`
+        on the singleton row. When `false`, the `webhook_delivery` scheduler job
+        no-ops (no fanout, no delivery) until re-enabled.
+      operationId: getAdminWebhookSettings
+      responses:
+        "200":
+          description: Current webhook kill-switch state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookSettings" }
+              examples:
+                enabled:
+                  value: { enabled: true }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [webhooks, admin]
+      summary: (ADR-077) Toggle the global outbound-webhooks kill-switch
+      description: |
+        (ADR-077 — Designed.) Admin-only. Sets `platform_runtime_settings.webhooks_enabled`
+        on the singleton row. Disabling pauses all fanout and delivery globally;
+        re-enabling resumes pending deliveries from where they paused.
+      operationId: patchAdminWebhookSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookSettings" }
+            examples:
+              disable:
+                value: { enabled: false }
+      responses:
+        "200":
+          description: Updated kill-switch state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookSettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Invalid body (missing/invalid `enabled`) (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  # ── ADR-077 Outbound webhooks — project-scoped subscriptions ────────────────
+
+  /api/projects/{slug}/webhooks:
+    get:
+      tags: [webhooks]
+      summary: (ADR-077) List project webhook subscriptions
+      description: |
+        (ADR-077 — Designed.) Requires project membership at `viewer` or above
+        (read). Returns `webhook_subscriptions` rows whose `project_id` matches
+        the project identified by `slug`. Platform-scoped rows (`project_id IS
+        NULL`) are NOT visible here. Secret values are NEVER returned.
+      operationId: listProjectWebhooks
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      responses:
+        "200":
+          description: Project webhook subscriptions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subscriptions]
+                properties:
+                  subscriptions:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookSubscription" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [webhooks]
+      summary: (ADR-077) Create a project webhook subscription
+      description: |
+        (ADR-077 — Designed.) Any project member writes — allow-list
+        `owner | admin | member`; `viewer` is read-only (`403`). `project_id` is
+        derived from the URL `slug` (server-state) — it is NEVER body-controlled.
+        Same secret/url/event-type validation as the platform create route.
+      operationId: postProjectWebhook
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookSubscriptionCreate" }
+            examples:
+              project-sub:
+                summary: Project-scoped subscription
+                value:
+                  name: ci-trigger
+                  url: "https://ci.example.com/maister-hook"
+                  method: POST
+                  event_types: ["run.promoted", "run.done"]
+                  signing_secret_ref: "env:CI_HOOK_SECRET"
+      responses:
+        "201":
+          description: Subscription created. Fetch via GET to read the stored row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: |
+            Invalid body — non-`http(s)` URL, unknown `event_types` entry,
+            missing `signing_secret_ref`, or a secret value not in `env:NAME`
+            form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/webhooks/{id}:
+    get:
+      tags: [webhooks]
+      summary: (ADR-077) Get a project webhook subscription
+      description: |
+        (ADR-077 — Designed.) Requires project membership at `viewer` or above.
+        The subscription MUST belong to the project identified by `slug`
+        (server-state join); a subscription from another project or a
+        platform-scoped row is `404`.
+      operationId: getProjectWebhook
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/WebhookId" }
+      responses:
+        "200":
+          description: The subscription.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookSubscription" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [webhooks]
+      summary: (ADR-077) Update a project webhook subscription
+      description: |
+        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        `viewer` `403`. Subscription must belong to `slug` (mismatch → `404`).
+        Same field/secret rules and disable semantics as the platform PATCH.
+      operationId: patchProjectWebhook
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/WebhookId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookSubscriptionUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Invalid body or secret value not in `env:NAME` form (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [webhooks]
+      summary: (ADR-077) Delete a project webhook subscription
+      description: |
+        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        `viewer` `403`. Subscription must belong to `slug` (mismatch → `404`).
+        Usage-guarded hard delete: refused `409 CONFLICT` while any delivery
+        history exists — disable it instead. `204` only when no delivery has
+        ever been produced.
+      operationId: deleteProjectWebhook
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/WebhookId" }
+      responses:
+        "204": { description: Subscription deleted (no delivery history existed). }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Subscription has delivery history and cannot be hard-deleted
+            (`CONFLICT`). Disable it instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/projects/{slug}/webhooks/{id}/deliveries:
+    get:
+      tags: [webhooks]
+      summary: (ADR-077) List delivery log for a project subscription
+      description: |
+        (ADR-077 — Designed.) Requires project membership at `viewer` or above.
+        Subscription must belong to `slug` (mismatch → `404`). Paged,
+        newest-first delivery log with per-delivery `attempts[]`.
+      operationId: listProjectWebhookDeliveries
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/WebhookId" }
+        - { $ref: "#/components/parameters/DeliveryCursor" }
+        - { $ref: "#/components/parameters/DeliveryLimit" }
+      responses:
+        "200":
+          description: Delivery log page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookDeliveryPage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{slug}/webhooks/{id}/ping:
+    post:
+      tags: [webhooks]
+      summary: (ADR-077) Send a synthetic ping to a project subscription
+      description: |
+        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        `viewer` `403`. Subscription must belong to `slug` (mismatch → `404`).
+        Builds, signs, and synchronously POSTs a synthetic `ping` envelope;
+        result returned live, never persisted. Empty request body.
+      operationId: pingProjectWebhook
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/WebhookId" }
+      responses:
+        "200":
+          description: Ping result (never persisted).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PingResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{slug}/webhooks/{id}/deliveries/{deliveryId}/replay:
+    post:
+      tags: [webhooks]
+      summary: (ADR-077) Replay a project webhook delivery
+      description: |
+        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        `viewer` `403`. Both the subscription (under `slug`) and the delivery
+        (under `{id}`) ownership are server-state joins — any mismatch is `404`.
+        Allow-listed to `status ∈ {delivered, dead}`; a `pending` delivery is
+        `409 CONFLICT`. Idempotency key is preserved; attempt audit continues.
+        Empty request body.
+      operationId: replayProjectWebhookDelivery
+      parameters:
+        - { $ref: "#/components/parameters/ProjectSlug" }
+        - { $ref: "#/components/parameters/WebhookId" }
+        - { $ref: "#/components/parameters/DeliveryId" }
+      responses:
+        "202":
+          description: Delivery re-queued; it will be re-sent on the next drain.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Delivery is currently `pending` and cannot be replayed (`CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5752,6 +6367,43 @@ components:
         existence-hide and missing-scope policies. Used only by
         `docs/api/external/operations.openapi.yaml` routes; session-auth routes
         do not accept tokens.
+  parameters:
+    ProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Kebab-case project slug (derived from `project.name`).
+      schema: { type: string }
+    WebhookId:
+      name: id
+      in: path
+      required: true
+      description: Webhook subscription id (`webhook_subscriptions.id`).
+      schema: { type: string }
+    DeliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      description: |
+        Delivery id (`webhook_deliveries.id`). MUST belong to the subscription
+        in the same path (server-state join; mismatch → 404).
+      schema: { type: string }
+    DeliveryCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque newest-first paging cursor returned as `nextCursor`.
+      schema: { type: string }
+    DeliveryLimit:
+      name: limit
+      in: query
+      required: false
+      description: Page size for the delivery log (default 50).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
   responses:
     Unauthenticated:
       description: No valid session (`UNAUTHENTICATED`).
@@ -8294,3 +8946,334 @@ components:
                     displayName: { type: string }
         resolvedAt: { type: string, format: date-time }
         ttlSeconds: { type: integer, minimum: 0 }
+
+    # ── ADR-077 Outbound webhooks ───────────────────────────────────────────────
+
+    WebhookEventType:
+      type: string
+      description: |
+        (ADR-077) The curated outbound event taxonomy (12 types). The full
+        per-type `data` shapes are in `async/outbound-webhooks.asyncapi.yaml`.
+      enum:
+        - run.started
+        - run.needs_input
+        - hitl.requested
+        - hitl.responded
+        - run.review
+        - run.promoted
+        - run.done
+        - run.failed
+        - run.crashed
+        - run.abandoned
+        - gate.decided
+        - ping
+
+    WebhookEventTypeSelector:
+      description: |
+        (ADR-077) An `event_types` entry: either a single taxonomy type or the
+        literal `"*"` (subscribe to all current and future types).
+      oneOf:
+        - $ref: "#/components/schemas/WebhookEventType"
+        - type: string
+          enum: ["*"]
+
+    WebhookLastDelivery:
+      type: object
+      nullable: true
+      description: |
+        (ADR-077) Summary of the subscription's most recent delivery, or `null`
+        when it has never produced one.
+      required: [status, at]
+      properties:
+        status:
+          type: string
+          enum: [pending, delivered, dead]
+        at:
+          type: string
+          format: date-time
+          description: Timestamp of the latest delivery's last state change.
+
+    WebhookSubscription:
+      type: object
+      description: |
+        (ADR-077) A `webhook_subscriptions` row. `projectId` is `null` for
+        platform-scoped subscriptions. Secret values are NEVER returned —
+        `signing_secret_ref`, `secondary_signing_secret_ref`, and any secret
+        `headers` values are echoed as their `env:NAME` reference strings only.
+      required:
+        - id
+        - projectId
+        - name
+        - url
+        - method
+        - headers
+        - event_types
+        - signing_secret_ref
+        - secondary_signing_secret_ref
+        - enabled
+        - createdAt
+        - updatedAt
+        - lastDelivery
+      properties:
+        id: { type: string }
+        projectId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Owning project id, or `null` for platform scope.
+        name: { type: string }
+        url:
+          type: string
+          format: uri
+          description: Delivery endpoint (`http`/`https` only).
+        method:
+          type: string
+          enum: [POST, PUT]
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Static request headers merged with the signature/identity headers.
+            Values MAY be `env:NAME` references (resolved server-side at send,
+            returned here as the raw reference). Reserved `X-Maister-*` and
+            signature headers cannot be overridden.
+        event_types:
+          type: array
+          items: { $ref: "#/components/schemas/WebhookEventTypeSelector" }
+          description: Subscribed types, or a single-element `["*"]` for all.
+        signing_secret_ref:
+          type: string
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          description: |
+            `env:NAME` reference to the HMAC-SHA256 signing secret. The value is
+            NEVER returned — only the reference string.
+        secondary_signing_secret_ref:
+          type: string
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          nullable: true
+          description: |
+            Optional second `env:NAME` reference used during signing-secret
+            rotation; when set, a second `v1=` signature entry is appended.
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastDelivery: { $ref: "#/components/schemas/WebhookLastDelivery" }
+
+    WebhookSubscriptionCreate:
+      type: object
+      description: |
+        (ADR-077) Create body for a webhook subscription. Config values only —
+        NO cross-resource ids (scope comes from the route, not the body). Secret
+        values are NEVER accepted; supply `env:NAME` references instead.
+      required: [name, url, event_types, signing_secret_ref]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: Delivery endpoint. MUST be `http` or `https` (`422 CONFIG` otherwise).
+        method:
+          type: string
+          enum: [POST, PUT]
+          default: POST
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+            description: |
+              Header value. A secret MUST be an `env:NAME` reference
+              (`^env:[A-Za-z_][A-Za-z0-9_]*$`); plain secret values are refused.
+          default: {}
+        event_types:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/WebhookEventTypeSelector" }
+          description: |
+            One or more taxonomy types, or the single literal `["*"]`. An
+            unknown type is refused `422 CONFIG`.
+        signing_secret_ref:
+          type: string
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          description: REQUIRED `env:NAME` reference to the HMAC signing secret.
+        secondary_signing_secret_ref:
+          type: string
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          nullable: true
+          description: Optional second `env:NAME` reference for rotation overlap.
+        enabled:
+          type: boolean
+          default: true
+
+    WebhookSubscriptionUpdate:
+      type: object
+      description: |
+        (ADR-077) Partial update for a webhook subscription. At least one field
+        required. `signing_secret_ref` may be re-pointed but not cleared. Secret
+        values are NEVER accepted (use `env:NAME` references).
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+        method:
+          type: string
+          enum: [POST, PUT]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        event_types:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/WebhookEventTypeSelector" }
+        signing_secret_ref:
+          type: string
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        secondary_signing_secret_ref:
+          type: string
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          nullable: true
+        enabled: { type: boolean }
+
+    WebhookDeliveryAttempt:
+      type: object
+      description: |
+        (ADR-077) One row of the per-delivery attempt audit
+        (`webhook_delivery_attempts`).
+      required: [attemptNo, requestedAt, durationMs]
+      properties:
+        attemptNo:
+          type: integer
+          minimum: 1
+          description: 1-based attempt ordinal; continues across replays.
+        requestedAt: { type: string, format: date-time }
+        durationMs:
+          type: integer
+          minimum: 0
+          description: Wall-clock duration of the HTTP attempt.
+        httpStatus:
+          type: integer
+          nullable: true
+          description: Response status, or `null` on timeout/network failure.
+        errorKind:
+          type: string
+          nullable: true
+          enum: [timeout, network, http, config, null]
+          description: Classified failure cause, or `null` on success.
+        responseSnippet:
+          type: string
+          nullable: true
+          description: First ≤1KB of the response body (truncated), or `null`.
+
+    WebhookDelivery:
+      type: object
+      description: |
+        (ADR-077) One `webhook_deliveries` row plus its `attempts[]` audit.
+        At-least-once: a consumer de-dupes on `X-Maister-Idempotency-Key`.
+      required:
+        - id
+        - eventId
+        - type
+        - status
+        - attemptCount
+        - nextAttemptAt
+        - lastHttpStatus
+        - lastErrorKind
+        - deliveredAt
+        - createdAt
+        - attempts
+      properties:
+        id: { type: string }
+        eventId:
+          type: string
+          description: The originating `webhook_events.id`.
+        type: { $ref: "#/components/schemas/WebhookEventType" }
+        status:
+          type: string
+          enum: [pending, delivered, dead]
+          description: |
+            `pending` (awaiting/retrying), `delivered` (2xx received), or `dead`
+            (410 Gone or attempts exhausted — terminal DLQ state, replayable).
+        attemptCount:
+          type: integer
+          minimum: 0
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Next scheduled send for a `pending` delivery; `null` once terminal.
+        lastHttpStatus:
+          type: integer
+          nullable: true
+        lastErrorKind:
+          type: string
+          nullable: true
+          enum: [timeout, network, http, config, null]
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt: { type: string, format: date-time }
+        attempts:
+          type: array
+          items: { $ref: "#/components/schemas/WebhookDeliveryAttempt" }
+
+    WebhookDeliveryPage:
+      type: object
+      description: (ADR-077) One newest-first page of the delivery log.
+      required: [deliveries, nextCursor]
+      properties:
+        deliveries:
+          type: array
+          items: { $ref: "#/components/schemas/WebhookDelivery" }
+        nextCursor:
+          type: string
+          nullable: true
+          description: Cursor for the next page, or `null` at the end.
+
+    WebhookSettings:
+      type: object
+      description: |
+        (ADR-077) The global outbound-webhooks kill-switch
+        (`platform_runtime_settings.webhooks_enabled`).
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            When `false`, the `webhook_delivery` scheduler job no-ops — no
+            fanout, no delivery — until re-enabled.
+
+    PingResult:
+      type: object
+      description: |
+        (ADR-077) Live result of a synthetic ping POST. Never persisted (no
+        `webhook_events`/`webhook_deliveries` rows are written).
+      required: [ok, durationMs]
+      properties:
+        ok:
+          type: boolean
+          description: True when the endpoint returned a 2xx status.
+        httpStatus:
+          type: integer
+          nullable: true
+          description: Response status, or `null` on timeout/network failure.
+        durationMs:
+          type: integer
+          minimum: 0
+        errorKind:
+          type: string
+          enum: [timeout, network, http, config]
+          description: Present only when `ok` is false; classified failure cause.

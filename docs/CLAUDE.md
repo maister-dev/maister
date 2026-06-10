@@ -43,6 +43,7 @@ truth). The fix is to update docs in the same PR.
 | [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml) | Supervisor HTTP API (REST). | OpenAPI 3.0.3 |
 | [`api/async/web-runs.asyncapi.yaml`](api/async/web-runs.asyncapi.yaml) | Browser-facing run SSE stream. | AsyncAPI 2.6.0 |
 | [`api/async/supervisor-sse.asyncapi.yaml`](api/async/supervisor-sse.asyncapi.yaml) | Supervisor SSE event stream. | AsyncAPI 2.6.0 |
+| [`api/async/outbound-webhooks.asyncapi.yaml`](api/async/outbound-webhooks.asyncapi.yaml) | Outbound webhook wire contract: envelope v1, headers, HMAC signature, per-type payloads (ADR-075). | AsyncAPI 2.6.0 |
 | [`api/external/acp.asyncapi.yaml`](api/external/acp.asyncapi.yaml) | Narrow ACP stdio contract used by the supervisor. | AsyncAPI 2.6.0 |
 
 ### Data layer (`db/`)
@@ -54,6 +55,7 @@ truth). The fix is to update docs in the same PR.
 | [`db/runs-domain.md`](db/runs-domain.md) | Tasks + Runs + Workspaces ERD. |
 | [`db/hitl-domain.md`](db/hitl-domain.md) | HITL Requests ERD + form-schema shape. |
 | [`db/artifacts-domain.md`](db/artifacts-domain.md) | Artifact instances + projection cursors ERD. |
+| [`db/webhooks.md`](db/webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts ERD, plus the `webhooks_enabled` settings column (ADR-075). |
 | [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
 
 ### System analysis (`system-analytics/`)
@@ -87,6 +89,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md) | Platform ACP runner catalog CRUD on `/settings`: create/edit/delete + default + enable/disable, usage-guarded hard delete, readiness recompute (ADR-065). |
 | [`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) | User-facing cron schedules: `run_schedules` table, the seeded `run_schedule.dispatcher` job on the M24 tick, overlap policy × cap matrix, trigger-now, launchability classifier (M28). |
 | [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md) | Model discovery + application: supervisor-side resolver (ACP probe / provider API / curated GLM / CCR sources), in-memory TTL cache, passive harvest, per-adapter model pinning + mismatch advisory (ADR-076). |
+| [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 12-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
 
 ### Cross-cutting reference
 

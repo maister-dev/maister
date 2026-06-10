@@ -931,6 +931,9 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_CCR_AUTH_TOKEN` | no | unset | Fallback for `ANTHROPIC_AUTH_TOKEN` when an executor has `router: ccr` and does not pin the token in `executor.env`. Missing token → `EXECUTOR_UNAVAILABLE` (503). |
 | `MAISTER_CCR_CONFIG_PATH` | no | `/app/.ccr/config.json` in Docker, `~/.claude-code-router/config.json` otherwise | Container-side path the supervisor reads for CCR host+port. In compose this aligns with the bind-mount target — leave unset unless changing the layout. |
 | `MAISTER_CCR_CONFIG_HOST_PATH` | no (Docker only) | `${HOME}/.claude-code-router` | Host directory bind-mounted at `/app/.ccr` (read-only) in the supervisor service. Point at a secret-mount directory for hardened deployments. |
+| `MAISTER_WEBHOOK_DELIVERY_BATCH` | no | `20` | **(Designed, ADR-075.)** Max deliveries (and outbox events) claimed per `webhook_delivery` scheduler drain tick. Bounds per-tick memory and HTTP concurrency. Web tier only. |
+| `MAISTER_WEBHOOK_TIMEOUT_MS` | no | `10000` | **(Designed, ADR-075.)** Per-attempt HTTP timeout in milliseconds for outbound webhook delivery. Applies to both the drain path and the synchronous test-ping route. Web tier only. |
+| `MAISTER_WEBHOOK_MAX_ATTEMPTS` | no | `8` | **(Designed, ADR-075.)** Terminal-dead threshold: a delivery whose `attempt_count` reaches this value is permanently set to `dead` status. The default covers the full retry curve (`1m, 5m, 15m, 1h, 4h, 12h, 24h` → initial + 7 retries = 8 total, ~41.5 h). Web tier only. |
 
 **M17 env-variable parity:** M17 adds no new environment variable. The table
 above is identical to `.env.example`; `compose*.yml`, bound ports, and the

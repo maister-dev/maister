@@ -80,7 +80,7 @@ pleasant enough to run the M20 dogfood, and every run emits structured signal.**
 | Track | Scope |
 |---|---|
 | **Multi-user / governance** | RBAC with real action-blocking, role-scoped inboxes, team boundaries |
-| **External surface** | Inbound gate-unblock webhooks + the existing `external_check` contract (generic outbound / provider-specific apps stay deferred) |
+| **External surface** | Inbound gate-unblock webhooks + the existing `external_check` contract. The generic **outbound** event-delivery primitive is now Designed/being built (ADR-075); E5's agent-over-MCP, Telegram, and CI/board-sync become CONSUMERS of it. Provider-specific apps stay deferred. |
 | **Orchestration (standalone)** | Agents-as-actors standalone/continuous stages (see sibling doc); guard wedge dilution |
 | **Narrow tools & hands** | Tool-count budgets, capability labels, sandbox profiles, warn-first policy on risky ops, on top of M14 caps (`PRODUCT_VIEW.md` §Phase 2.3) |
 | **Automation surface** | Reusable hooks/skills/snippets/recurring routines visible in Project Settings; standard automations; specialist checks off the main run context (`PRODUCT_VIEW.md` §Phase 2.4) |
@@ -190,8 +190,10 @@ PRODUCT_VIEW (cross-referenced, per docs R7 — not restated here).
 | 7. Flow & intake expansion | 3–4 | designer = E3 editor; templates/executors/intake/board-sync = Wave 4 |
 
 Scope reconciliations against `PRODUCT_VIEW.md` "Deferred For Now":
-- **Webhooks** — keep to inbound gate-unblock + the existing `external_check`
-  contract; **generic outbound webhooks and provider-specific apps stay deferred**.
+- **Webhooks** — inbound gate-unblock + the existing `external_check` contract,
+  plus the generic **outbound** event-delivery primitive now Designed/being built
+  (ADR-075); E5's agent-over-MCP and notifiers (Telegram, CI, board sync) become
+  CONSUMERS of it, not replacements. **Provider-specific apps stay deferred.**
 - **Benchmarking** — the A/B core is in scope (Wave 3); **benchmark dataset
   management and the judge-calibration lab stay deferred**.
 - Everything else in PRODUCT_VIEW "Deferred For Now" remains deferred and is not

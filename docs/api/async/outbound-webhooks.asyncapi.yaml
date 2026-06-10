@@ -1,0 +1,573 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster — outbound webhooks
+  version: "0.1.0"
+  description: |
+    Outbound HTTP webhook delivery (ADR-075, Designed). MAIster is the
+    **server** here: the `webhook_delivery` scheduler job POSTs a signed JSON
+    envelope to each subscribed consumer endpoint. The CRUD/admin surface for
+    subscriptions, the delivery log, ping, and replay lives in
+    `../web.openapi.yaml` (tag `webhooks`).
+
+    **One application acts as both publisher and subscriber here.** From the
+    consumer's point of view it *subscribes* to (receives) the POSTed events;
+    this AsyncAPI doc therefore models the channel from the **consumer's**
+    perspective, so the `subscribe` operation = "events the consumer receives".
+
+    **Curated taxonomy, not raw session noise.** Events are 12 curated
+    lifecycle facts mapped from MAIster DB transitions (run started, needs
+    input, HITL requested/responded, review, promoted, done, failed, crashed,
+    abandoned, gate decided, ping). Low-level ACP `session/*` stream events are
+    NEVER delivered here — see `../async/web-runs.asyncapi.yaml` for those.
+
+    **Envelope.** Every delivery body is one `WebhookEnvelope` (`apiVersion: 1`)
+    with a stable `id`, the `type`, `occurredAt`, the per-delivery `deliveryId`
+    and `attempt`, a `project` block, a `run` block, and a per-type `data`
+    block. The envelope `data` carries IDs, statuses, and titles ONLY — never
+    secrets, env values, tokens, or raw agent output. The full envelope is
+    frozen at fanout and reused byte-identically by every retry and replay; only
+    `deliveryId` and `attempt` are injected per send. The `ping` envelope is
+    synthetic (test only) and is never persisted.
+
+    ## Request headers (every delivery)
+
+    | Header | Value |
+    |---|---|
+    | `Content-Type` | `application/json` |
+    | `User-Agent` | `MAIster-Webhooks/1` |
+    | `X-Maister-Event` | the envelope `type` (e.g. `run.review`) |
+    | `X-Maister-Event-Id` | the envelope `id` |
+    | `X-Maister-Delivery-Id` | the per-send `deliveryId` |
+    | `X-Maister-Idempotency-Key` | hex `sha256("<subscriptionId>:<eventId>")` — stable across retries AND replays |
+    | `X-Maister-Signature` | `t=<unix>,v1=<hex>[,v1=<hex2>]` (see below) |
+
+    Plus any static `headers` configured on the subscription (secret values
+    resolved from `env:NAME` references server-side at send). Reserved
+    `X-Maister-*` and signature headers cannot be overridden.
+
+    ## Signature recipe (HMAC-SHA256)
+
+    1. Let `t` = the send timestamp in **unix seconds**.
+    2. Let `rawBody` = the exact UTF-8 JSON request body bytes (the frozen
+       envelope, as serialized — sign the bytes, not a re-serialization).
+    3. Signature base string = `` `${t}.${deliveryId}.${rawBody}` `` (literal
+       dots; binds time + delivery + exact payload bytes).
+    4. `sig = hex( HMAC_SHA256( key = <signing secret value>, msg = base ) )`
+       where the key is resolved from the subscription's `signing_secret_ref`
+       (`env:NAME` → `process.env.NAME`).
+    5. Header = `X-Maister-Signature: t=<t>,v1=<sig>`.
+
+    **Rotation.** When `secondary_signing_secret_ref` is set, a second
+    `v1=<sig2>` entry computed with the secondary key is appended:
+    `t=<t>,v1=<sigNew>,v1=<sigOld>`. The consumer recomputes over the same base
+    and accepts the delivery if ANY `v1=` entry matches (Stripe scheme). The
+    consumer SHOULD also reject a stale `t` (outside a small tolerance window) to
+    defeat replay attacks, and SHOULD compare in constant time.
+
+    ## Delivery semantics
+
+    - **At-least-once, unordered.** Consumers de-dupe on
+      `X-Maister-Idempotency-Key` (exactly-once effect) and may order on
+      `occurredAt` + `run.id`. A crash between send and audit converges to a
+      duplicate send, which the key absorbs.
+    - **Retry curve** (delay after failure #n): `1m, 5m, 15m, 1h, 4h, 12h, 24h`
+      → max 8 attempts total, then terminal `dead` (DLQ; replayable). Jitter
+      ±20%. Floor = the scheduler tick cadence (60s).
+    - **Outcome classification.** Any `2xx` → `delivered`. `410 Gone` → `dead`
+      immediately. Everything else (incl. `3xx` — cross-origin redirects are
+      NOT followed) → retry on the curve. A missing env secret retries as
+      `error_kind=config` (the operator can export the var); the reference's
+      value is never logged.
+    - **Disable = skip.** A disabled subscription (per-row or the global
+      `webhooks_enabled` kill-switch) is skipped at fanout; window events are
+      never delivered retroactively. Deliveries already fanned out pause and
+      resume on re-enable.
+    - **SSRF stance (v1).** Scheme allow-list `http`/`https` only;
+      private-address blocking is deliberately out of v1 (self-hosted,
+      operator-trusted endpoints).
+
+    See also:
+      - [`../web.openapi.yaml`](../web.openapi.yaml) — subscription CRUD, log, ping, replay (tag `webhooks`).
+      - [`../../system-analytics/outbound-webhooks.md`](../../system-analytics/outbound-webhooks.md) — domain process doc.
+      - [`../../decisions.md`](../../decisions.md) — ADR-075.
+  contact:
+    name: MAIster maintainers
+    url: https://github.com/your-org/mAIster
+  license:
+    name: MIT
+defaultContentType: application/json
+servers:
+  consumer:
+    url: https://hooks.example.com
+    protocol: https
+    description: |
+      The consumer-controlled HTTPS endpoint configured as the subscription
+      `url`. MAIster POSTs each envelope here. `http` is permitted for
+      self-hosted internal endpoints.
+channels:
+  webhook-delivery:
+    description: |
+      One HTTP POST per delivery to the subscription's configured `url`
+      (`method` is `POST` or `PUT`). The path is consumer-defined; the same
+      polymorphic envelope is sent for every event `type`.
+    bindings:
+      http:
+        type: request
+        method: POST
+    subscribe:
+      operationId: receiveWebhookEvent
+      summary: Receive a signed MAIster lifecycle event
+      description: |
+        MAIster POSTs the signed `WebhookEnvelope` to the consumer endpoint with
+        the header set and signature documented above. The consumer MUST verify
+        `X-Maister-Signature`, de-dupe on `X-Maister-Idempotency-Key`, and
+        return a `2xx` to acknowledge. Any non-`2xx` (or a timeout) is retried
+        on the backoff curve; `410 Gone` stops retries permanently.
+      message:
+        $ref: "#/components/messages/WebhookEvent"
+      bindings:
+        http:
+          type: request
+          method: POST
+components:
+  messages:
+    WebhookEvent:
+      name: webhook.event
+      title: MAIster outbound webhook event
+      summary: |
+        Polymorphic delivery envelope. The `type` field discriminates the
+        per-type `data` shape; `X-Maister-Event` mirrors `type`.
+      contentType: application/json
+      headers:
+        $ref: "#/components/schemas/DeliveryHeaders"
+      payload:
+        $ref: "#/components/schemas/WebhookEnvelope"
+      examples:
+        - name: run-review
+          summary: A run entered Review (runner-driven).
+          headers:
+            Content-Type: application/json
+            User-Agent: MAIster-Webhooks/1
+            X-Maister-Event: run.review
+            X-Maister-Event-Id: "evt_8a4a7b9d0d6b4b27"
+            X-Maister-Delivery-Id: "del_9a4a7b9d0d6b4b27"
+            X-Maister-Idempotency-Key: "3b1f0c4a9d2e7f5a6b8c0d1e2f3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c"
+            X-Maister-Signature: "t=1749556205,v1=9f8e7d6c5b4a39281706f5e4d3c2b1a0998877665544332211ffeeddccbbaa00"
+          payload:
+            apiVersion: 1
+            id: "evt_8a4a7b9d0d6b4b27"
+            type: run.review
+            occurredAt: "2026-06-10T12:30:04Z"
+            deliveryId: "del_9a4a7b9d0d6b4b27"
+            attempt: 1
+            project:
+              id: "11111111-1111-4111-8111-111111111111"
+              slug: my-app
+              name: My App
+            run:
+              id: "22222222-2222-4222-8222-222222222222"
+              taskId: "33333333-3333-4333-8333-333333333333"
+              flowId: bugfix
+              branch: maister/bugfix-1042
+              status: Review
+            data:
+              source: runner
+        - name: hitl-requested
+          summary: A run reached a human_review node and parked a HITL request.
+          headers:
+            Content-Type: application/json
+            User-Agent: MAIster-Webhooks/1
+            X-Maister-Event: hitl.requested
+            X-Maister-Event-Id: "evt_1c2d3e4f5a6b7c8d"
+            X-Maister-Delivery-Id: "del_1c2d3e4f5a6b7c8d"
+            X-Maister-Idempotency-Key: "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00"
+            X-Maister-Signature: "t=1749556260,v1=11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff"
+          payload:
+            apiVersion: 1
+            id: "evt_1c2d3e4f5a6b7c8d"
+            type: hitl.requested
+            occurredAt: "2026-06-10T12:31:00Z"
+            deliveryId: "del_1c2d3e4f5a6b7c8d"
+            attempt: 1
+            project:
+              id: "11111111-1111-4111-8111-111111111111"
+              slug: my-app
+              name: My App
+            run:
+              id: "22222222-2222-4222-8222-222222222222"
+              taskId: "33333333-3333-4333-8333-333333333333"
+              flowId: bugfix
+              branch: maister/bugfix-1042
+              status: NeedsInput
+            data:
+              hitlRequestId: "44444444-4444-4444-8444-444444444444"
+              kind: human_review
+              nodeId: review
+        - name: gate-decided
+          summary: A blocking command_check gate failed.
+          headers:
+            Content-Type: application/json
+            User-Agent: MAIster-Webhooks/1
+            X-Maister-Event: gate.decided
+            X-Maister-Event-Id: "evt_5a6b7c8d9e0f1a2b"
+            X-Maister-Delivery-Id: "del_5a6b7c8d9e0f1a2b"
+            X-Maister-Idempotency-Key: "ff00ee11dd22cc33bb44aa5599668877554433221100ffeeddccbbaa99887766"
+            X-Maister-Signature: "t=1749556320,v1=aabbccddeeff00112233445566778899aabbccddeeff001122334455667788990a"
+          payload:
+            apiVersion: 1
+            id: "evt_5a6b7c8d9e0f1a2b"
+            type: gate.decided
+            occurredAt: "2026-06-10T12:32:00Z"
+            deliveryId: "del_5a6b7c8d9e0f1a2b"
+            attempt: 1
+            project:
+              id: "11111111-1111-4111-8111-111111111111"
+              slug: my-app
+              name: My App
+            run:
+              id: "22222222-2222-4222-8222-222222222222"
+              taskId: "33333333-3333-4333-8333-333333333333"
+              flowId: bugfix
+              branch: maister/bugfix-1042
+              status: Running
+            data:
+              gateId: tests-pass
+              kind: command_check
+              mode: blocking
+              status: failed
+              nodeAttemptId: "55555555-5555-4555-8555-555555555555"
+        - name: ping
+          summary: Synthetic test ping (operator-initiated, never persisted).
+          headers:
+            Content-Type: application/json
+            User-Agent: MAIster-Webhooks/1
+            X-Maister-Event: ping
+            X-Maister-Event-Id: "evt_ping_0f1e2d3c4b5a"
+            X-Maister-Delivery-Id: "del_ping_0f1e2d3c4b5a"
+            X-Maister-Idempotency-Key: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+            X-Maister-Signature: "t=1749556400,v1=0a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00"
+          payload:
+            apiVersion: 1
+            id: "evt_ping_0f1e2d3c4b5a"
+            type: ping
+            occurredAt: "2026-06-10T12:33:20Z"
+            deliveryId: "del_ping_0f1e2d3c4b5a"
+            attempt: 1
+            project: null
+            run: null
+            data:
+              message: "MAIster webhook ping"
+  schemas:
+    DeliveryHeaders:
+      type: object
+      required:
+        - Content-Type
+        - User-Agent
+        - X-Maister-Event
+        - X-Maister-Event-Id
+        - X-Maister-Delivery-Id
+        - X-Maister-Idempotency-Key
+        - X-Maister-Signature
+      properties:
+        Content-Type:
+          type: string
+          const: application/json
+        User-Agent:
+          type: string
+          const: MAIster-Webhooks/1
+        X-Maister-Event:
+          type: string
+          description: The envelope `type` (mirrors `payload.type`).
+        X-Maister-Event-Id:
+          type: string
+          description: The stable envelope `id` (same across retries/replays).
+        X-Maister-Delivery-Id:
+          type: string
+          description: The per-send delivery id (changes per attempt-row context, echoed in the signature base).
+        X-Maister-Idempotency-Key:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: hex `sha256("<subscriptionId>:<eventId>")` — stable across retries and replays.
+        X-Maister-Signature:
+          type: string
+          pattern: "^t=[0-9]+,v1=[0-9a-f]+(,v1=[0-9a-f]+)?$"
+          description: |
+            `t=<unix>,v1=<hex>[,v1=<hex2>]`. `v1` is hex HMAC-SHA256 of
+            `"${t}.${deliveryId}.${rawBody}"`. A second `v1=` appears during
+            signing-secret rotation.
+
+    WebhookEventType:
+      type: string
+      description: The 12 curated outbound event types.
+      enum:
+        - run.started
+        - run.needs_input
+        - hitl.requested
+        - hitl.responded
+        - run.review
+        - run.promoted
+        - run.done
+        - run.failed
+        - run.crashed
+        - run.abandoned
+        - gate.decided
+        - ping
+
+    ProjectBlock:
+      type: object
+      description: Owning project. `null` only for the synthetic `ping` envelope.
+      required: [id, slug, name]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+
+    RunBlock:
+      type: object
+      description: |
+        Originating run. `null` only for the synthetic `ping` envelope. `branch`
+        is the run's workspace branch.
+      required: [id, taskId, flowId, branch, status]
+      properties:
+        id: { type: string, format: uuid }
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Owning task id; `null` for scratch runs with no board task.
+        flowId:
+          type: string
+          nullable: true
+          description: Flow id; `null` for scratch runs.
+        branch: { type: string }
+        status:
+          type: string
+          enum:
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - Review
+            - Done
+            - Failed
+            - Crashed
+            - Abandoned
+
+    WebhookEnvelope:
+      type: object
+      description: |
+        Envelope v1 — the full HTTP body of every delivery. Frozen at fanout and
+        reused byte-identically across retries/replays; only `deliveryId` and
+        `attempt` are injected per send. `data` carries IDs/statuses/titles
+        only — NEVER secrets, env values, tokens, or raw agent output.
+      required:
+        - apiVersion
+        - id
+        - type
+        - occurredAt
+        - deliveryId
+        - attempt
+        - project
+        - run
+        - data
+      properties:
+        apiVersion:
+          type: integer
+          const: 1
+        id:
+          type: string
+          description: Stable event id (`webhook_events.id`); same across retries/replays.
+        type:
+          $ref: "#/components/schemas/WebhookEventType"
+        occurredAt:
+          type: string
+          format: date-time
+          description: ISO-8601 UTC timestamp of the originating transition.
+        deliveryId:
+          type: string
+          description: Per-send delivery id (`webhook_deliveries.id`), also bound into the signature.
+        attempt:
+          type: integer
+          minimum: 1
+          description: 1-based attempt ordinal for this delivery.
+        project:
+          description: Owning project block, or `null` for the synthetic `ping` envelope.
+          oneOf:
+            - $ref: "#/components/schemas/ProjectBlock"
+            - type: "null"
+        run:
+          description: Originating run block, or `null` for the synthetic `ping` envelope.
+          oneOf:
+            - $ref: "#/components/schemas/RunBlock"
+            - type: "null"
+        data:
+          description: Per-type payload (discriminated by `type`).
+          oneOf:
+            - $ref: "#/components/schemas/DataRunStarted"
+            - $ref: "#/components/schemas/DataRunNeedsInput"
+            - $ref: "#/components/schemas/DataHitlRequested"
+            - $ref: "#/components/schemas/DataHitlResponded"
+            - $ref: "#/components/schemas/DataRunReview"
+            - $ref: "#/components/schemas/DataRunPromoted"
+            - $ref: "#/components/schemas/DataRunDone"
+            - $ref: "#/components/schemas/DataRunFailed"
+            - $ref: "#/components/schemas/DataRunCrashed"
+            - $ref: "#/components/schemas/DataRunAbandoned"
+            - $ref: "#/components/schemas/DataGateDecided"
+            - $ref: "#/components/schemas/DataPing"
+
+    DataRunStarted:
+      type: object
+      description: "`run.started` — Pending → Running."
+      required: [trigger]
+      additionalProperties: false
+      properties:
+        trigger:
+          type: string
+          enum: [direct, queue_promote]
+          description: "`direct` = launched immediately; `queue_promote` = promoted from the concurrency queue."
+
+    DataRunNeedsInput:
+      type: object
+      description: "`run.needs_input` — run entered NeedsInput."
+      required: [reason, nodeId]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          enum: [permission, form, human_review]
+        nodeId:
+          type: string
+          nullable: true
+          description: Graph node id that parked the input, or `null` for legacy linear steps.
+
+    DataHitlRequested:
+      type: object
+      description: "`hitl.requested` — a `hitl_requests` row was inserted."
+      required: [hitlRequestId, kind, nodeId]
+      additionalProperties: false
+      properties:
+        hitlRequestId: { type: string }
+        kind:
+          type: string
+          enum: [permission, form_collect, human_review]
+        nodeId:
+          type: string
+          nullable: true
+
+    DataHitlResponded:
+      type: object
+      description: "`hitl.responded` — a HITL request received its response."
+      required: [hitlRequestId, kind, via]
+      additionalProperties: false
+      properties:
+        hitlRequestId: { type: string }
+        kind:
+          type: string
+          enum: [permission, form_collect, human_review]
+        via:
+          type: string
+          enum: [user, auto]
+          description: "`user` = human response; `auto` = stored-intent auto-deliver on resume."
+
+    DataRunReview:
+      type: object
+      description: "`run.review` — Running → Review."
+      required: [source]
+      additionalProperties: false
+      properties:
+        source:
+          type: string
+          enum: [runner, workbench]
+          description: "`runner` = flow reached Review; `workbench` = a workbench-lifecycle action moved it to Review."
+
+    DataRunPromoted:
+      type: object
+      description: "`run.promoted` — promotion succeeded."
+      required: [mode, target, pullRequestUrl]
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [local_merge, pull_request]
+        target:
+          type: string
+          description: Target branch the run was promoted into.
+        pullRequestUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: PR/MR URL for `pull_request` mode; `null` for `local_merge`.
+
+    DataRunDone:
+      type: object
+      description: "`run.done` — run reached the terminal Done state. No extra fields."
+      additionalProperties: false
+
+    DataRunFailed:
+      type: object
+      description: "`run.failed` — run terminated Failed."
+      required: [errorCode]
+      additionalProperties: false
+      properties:
+        errorCode:
+          type: string
+          nullable: true
+          description: "`MaisterError.code` when known (e.g. `CONFIG`), else `null`."
+
+    DataRunCrashed:
+      type: object
+      description: "`run.crashed` — run terminated Crashed (reconcile/GC or runner crash)."
+      required: [errorCode]
+      additionalProperties: false
+      properties:
+        errorCode:
+          type: string
+          nullable: true
+
+    DataRunAbandoned:
+      type: object
+      description: "`run.abandoned` — run moved to Abandoned."
+      required: [source]
+      additionalProperties: false
+      properties:
+        source:
+          type: string
+          enum: [user, workbench]
+
+    DataGateDecided:
+      type: object
+      description: "`gate.decided` — a `gate_results` row reached a terminal verdict."
+      required: [gateId, kind, mode, status, nodeAttemptId]
+      additionalProperties: false
+      properties:
+        gateId: { type: string }
+        kind:
+          type: string
+          enum:
+            - command_check
+            - skill_check
+            - ai_judgment
+            - artifact_required
+            - external_check
+            - human_review
+        mode:
+          type: string
+          enum: [blocking, advisory]
+        status:
+          type: string
+          enum: [passed, failed, overridden]
+        nodeAttemptId:
+          type: string
+          nullable: true
+
+    DataPing:
+      type: object
+      description: "`ping` — synthetic test envelope from the ping route. Never persisted."
+      required: [message]
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+          description: Fixed human-readable marker string.

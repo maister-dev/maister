@@ -10,7 +10,7 @@ ultra-light dev only — never as a production target.
 ## Tables
 
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
-graph-runner, scratch-run, and HITL tables. Scratch-run persistence landed as
+graph-runner, scratch-run, HITL, and outbound-webhook tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
 `scratch_runs`, `scratch_messages`, `scratch_attachments`, and
 `scratch_capability_profiles`; the selectable capability catalog is
@@ -63,6 +63,10 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
 | `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
 | `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
+| `webhook_subscriptions`       | **(Designed, ADR-075, migration `0040`)** Operator-configured delivery endpoints. `project_id = NULL` = platform scope; non-null = project scope. Secrets stored as `env:NAME` refs only. Usage-guarded DELETE.                                                                                                                              | optional `projects.id`                                                     |
+| `webhook_events`              | **(Designed, ADR-075, migration `0040`)** Transactional outbox. One row per curated lifecycle event, written in the same transaction as the triggering state transition. `fanout_at IS NULL` is the fanout cursor.                                                                                                                           | `projects.id`, `runs.id`                                                   |
+| `webhook_deliveries`          | **(Designed, ADR-075, migration `0040`)** Per-subscription delivery state. UNIQUE `(subscription_id, event_id)`. Status `pending` to `delivered` or `dead`. Retry: up to 8 attempts over ~41.5 h.                                                                                                                                          | `webhook_events.id`, `webhook_subscriptions.id`                            |
+| `webhook_delivery_attempts`   | **(Designed, ADR-075, migration `0040`)** Append-only per-attempt audit. `attempt_no` continues from the running total across replay cycles. UNIQUE `(delivery_id, attempt_no)`.                                                                                                                                                            | `webhook_deliveries.id`                                                    |
 ## `users`
 
 (Introduced in M9 — migration `0004_petite_gamora.sql`.)
@@ -1460,6 +1464,156 @@ Events are append-only. Current M13 services write
 `created`/`claimed`/`released`/`taken_over`/`responded`/`returned`/`completed`/`cancelled`/`system_closed`
 events in the same DB transaction as the corresponding assignment state change.
 
+## Outbound webhook tables (Designed, ADR-075, migration `0040`)
+
+See [`db/webhooks.md`](db/webhooks.md) for the ERD and
+[`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md)
+for the delivery FSM and event taxonomy.
+
+### `webhook_subscriptions`
+
+**(Designed, ADR-075, migration `0040`.)** Operator-configured delivery
+endpoints. Platform-scope rows have `project_id = NULL`; project-scope rows
+have a non-null FK. Both shapes live in the single table because the column
+set is identical and authorization differs only by scope.
+
+```ts
+{
+  id,                              // server crypto.randomUUID() PK
+  projectId?,                      // nullable FK -> projects.id (cascade);
+                                   //   NULL = platform scope, non-null = project scope
+  name,                            // display label
+  url,                             // http/https only; validated at boundary
+  method: 'POST' | 'PUT',          // DEFAULT 'POST'
+  headers (jsonb),                 // Record<string,string> DEFAULT {};
+                                   //   values MAY be env:NAME refs — resolved
+                                   //   server-side at send, returned to clients
+                                   //   as the raw ref string
+  eventTypes (jsonb),              // string[]; validated against taxonomy enum;
+                                   //   literal "*" matches all types
+  signingSecretRef,                // NOT NULL; env:NAME — resolved at send,
+                                   //   never stored as a value
+  secondarySigningSecretRef?,      // NULL; env:NAME for rotation overlap
+                                   //   (second v1= entry per Stripe scheme)
+  enabled,                         // NOT NULL DEFAULT true; false = skip at fanout
+  createdAt, updatedAt
+}
+```
+
+Index `(project_id)` supports both platform-scope queries (`WHERE project_id IS NULL`)
+and project-scope queries (`WHERE project_id = ?`) via the same index.
+A subscription DELETE is usage-guarded: refused with 409 `CONFLICT` while any
+`webhook_deliveries` row references the subscription; `enabled = false` is the
+retirement path for subscriptions that have delivery history.
+
+### `webhook_events`
+
+**(Designed, ADR-075, migration `0040`.)** Transactional outbox. One row per
+curated lifecycle event emitted in the same DB transaction as the triggering
+run/HITL/gate state transition. The outbox INSERT is the only write-path
+addition — no joins, no network I/O on the run path.
+
+```ts
+{
+  id,                              // server crypto.randomUUID() PK
+  projectId,                       // NOT NULL, FK -> projects.id (cascade)
+  runId,                           // NOT NULL, FK -> runs.id (cascade)
+  type,                            // taxonomy type string (e.g. "run.started")
+  data (jsonb),                    // per-type minimal facts written at emit;
+                                   //   ids + statuses + titles only — never
+                                   //   secrets, env vars, tokens, or raw agent output
+  payload (jsonb)?,                // NULL at emit; full frozen envelope built
+                                   //   ONCE at fanout via a batched join
+                                   //   (projects + workspaces.branch + tasks);
+                                   //   reused byte-identically by every retry
+                                   //   and replay
+  occurredAt,                      // event time
+  fanoutAt?,                       // NULL = awaiting fanout; this column IS the
+                                   //   fanout cursor — no separate cursor table
+  createdAt
+}
+```
+
+Partial index `(created_at) WHERE fanout_at IS NULL` drives the fanout-pass
+claim scan. Retention: events with `fanout_at IS NOT NULL` and zero referencing
+`webhook_deliveries` rows are pruned after 7 days by the
+`webhook_delivery` scheduler job's tail pass. Events referenced by any delivery
+row are kept indefinitely for replay and audit.
+
+### `webhook_deliveries`
+
+**(Designed, ADR-075, migration `0040`.)** Per-subscription delivery state.
+One row per (subscription, event) pair, inserted during fanout. Status lifecycle:
+`pending → delivered | dead`; replay resets `pending` with counters cleared.
+
+```ts
+{
+  id,                              // server crypto.randomUUID() PK
+  eventId,                         // NOT NULL, FK -> webhook_events.id
+  subscriptionId,                  // NOT NULL, FK -> webhook_subscriptions.id
+                                   //   ON DELETE CASCADE
+  status: 'pending' | 'delivered' | 'dead',  // DEFAULT 'pending'
+  attemptCount,                    // DEFAULT 0; increments on each drain attempt
+  nextAttemptAt,                   // NOT NULL; set to now() at fanout, updated
+                                   //   after each failure using the retry schedule
+  leaseExpiresAt?,                 // NULL; set while a drain tick owns this row;
+                                   //   expired lease = reclaimable
+  idempotencyKey,                  // NOT NULL; hex sha256("<subscriptionId>:<eventId>");
+                                   //   stable across retries AND replay
+  lastHttpStatus?,                 // integer NULL; last HTTP response code
+  lastErrorKind?,                  // NULL; one of: timeout | network | http | config
+  lastErrorMessage?,               // NULL; truncated to <= 1 KB
+  deliveredAt?,                    // set on terminal 2xx
+  createdAt, updatedAt
+}
+```
+
+UNIQUE `(subscription_id, event_id)` is the fanout dedupe invariant; the
+fanout transaction inserts with `ON CONFLICT DO NOTHING`. Partial index
+`(next_attempt_at) WHERE status = 'pending'` drives the drain-pass claim.
+Index `(subscription_id, created_at DESC)` supports the Deliveries-drawer
+log UI. Cascade: `ON DELETE CASCADE` from `webhook_subscriptions.id`.
+
+Retry schedule (delay after failure #n): `1m, 5m, 15m, 1h, 4h, 12h, 24h` →
+8 attempts total, then terminal `dead`. HTTP 410 Gone → `dead` immediately.
+Any 2xx → `delivered`. `FOR UPDATE SKIP LOCKED` + `lease_expires_at` prevents
+concurrent double-send.
+
+### `webhook_delivery_attempts`
+
+**(Designed, ADR-075, migration `0040`.)** Append-only per-attempt audit.
+Mirrors the spirit of `scheduler_job_runs`. `attempt_no` continues from the
+running total across replay cycles — it is never reset.
+
+```ts
+{
+  id,                              // server crypto.randomUUID() PK
+  deliveryId,                      // NOT NULL, FK -> webhook_deliveries.id
+                                   //   ON DELETE CASCADE
+  attemptNo,                       // monotonic; UNIQUE (delivery_id, attempt_no)
+  requestedAt,                     // when the HTTP request was sent
+  durationMs,                      // end-to-end HTTP round-trip milliseconds
+  httpStatus?,                     // integer NULL; response code
+  errorKind?,                      // NULL; timeout | network | http | config
+  errorDetail?,                    // NULL; truncated to <= 1 KB
+  responseSnippet?                 // NULL; first <= 1 KB of response body
+}
+```
+
+UNIQUE `(delivery_id, attempt_no)` enforces the one-row-per-attempt invariant.
+Index `(delivery_id)` supports attempt-history joins. Cascade: `ON DELETE CASCADE`
+from `webhook_deliveries.id`.
+
+### `platform_runtime_settings.webhooks_enabled` (additive column)
+
+**(Designed, ADR-075, migration `0040`.)** A single boolean column
+`webhooks_enabled NOT NULL DEFAULT true` added to the existing
+`platform_runtime_settings` singleton row. When `false`, the
+`webhook_delivery` scheduler job handler no-ops with `skipped: "disabled"` in
+its summary — no fanout, no delivery attempts, and no pending deliveries are
+touched. Flipping back to `true` resumes drain on the next tick; pending
+deliveries catch up naturally.
+
 ## Planned roadmap persistence
 
 The roadmap introduces product objects that are not yet represented as first
@@ -1548,7 +1702,12 @@ projects
   ├── runs               (FK projectId, cascade)  ← also direct
   ├── assignments         (FK projectId, cascade)  ← also direct, M13
   ├── assignment_events   (FK projectId, cascade)  ← also direct, M13
-  └── workspaces         (FK projectId, cascade)  ← also direct
+  ├── workspaces         (FK projectId, cascade)  ← also direct
+  ├── webhook_subscriptions (FK project_id, cascade; NULL rows = platform scope)  ← ADR-075
+  │     └── webhook_deliveries  (FK subscription_id, cascade)
+  │           └── webhook_delivery_attempts  (FK delivery_id, cascade)
+  └── webhook_events     (FK project_id, cascade)  ← ADR-075 (also via runs.id)
+        └── webhook_deliveries  (FK event_id — no cascade; delivery survives event prune)
 ```
 
 `runs.flowId` also cascades — when a project deletion cascades to drop flows,
@@ -1623,6 +1782,11 @@ Created via Drizzle:
 | `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(M16)** Per-token audit trail |
 | `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16)** Chronological audit log per project |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
+| `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-075 Designed)** Project-scope subscription lookup (NULL = platform rows) |
+| `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-075 Designed)** Ordered fanout-pass claim scan |
+| `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-075 Designed)** Ordered drain-pass claim scan |
+| `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | **(ADR-075 Designed)** Deliveries-drawer log UI |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-075 Designed)** Attempt history for a delivery |
 
 Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,
