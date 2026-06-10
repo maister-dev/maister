@@ -79,7 +79,7 @@ flowchart TD
     Decide -- launch path --> Intent[write last_fire_outcome=dispatching<br/>last_fired_at=now, advance next_fire_at<br/>clear queue_one_pending]
     Intent --> Commit2[COMMIT tx1]
     Commit2 --> Launch[launchRun outside the row lock<br/>worktree + its own DB tx]
-    Launch --> Tx2[tx2: CAS final outcome WHERE<br/>last_fire_outcome=dispatching<br/>launched or queued_pending or launch_failed<br/>+ last_run_id + last_fire_error]
+    Launch --> Tx2[tx2: CAS final outcome WHERE<br/>last_fire_outcome=dispatching<br/>AND last_fired_at=staged stamp (fence)<br/>launched or queued_pending or launch_failed<br/>+ last_run_id + last_fire_error]
     Tx2 -- 0 rows updated --> Stale[WARN stale dispatch result dropped]
     Tx2 -- 1 row updated --> Done[summary into recordJobAttemptResult]
 ```
@@ -149,8 +149,10 @@ catch-up.
   missed slots collapses into exactly one fire (no backfill).
 - Launch intent (`last_fire_outcome = 'dispatching'`) MUST be durably
   committed before `launchRun`, and the final outcome write MUST be
-  CAS-guarded on `'dispatching'` — a stale result is dropped with a WARN,
-  never clobbers a concurrent edit/delete/later-fire.
+  CAS-guarded on `'dispatching'` AND the staged `last_fired_at` stamp (the
+  fencing token) — a stale or out-fenced result is dropped with a WARN,
+  never clobbers a concurrent edit/delete/later-fire or a newer reclaim's
+  marker.
 - Cap checks MUST reuse the exported `countLiveRuns` /
   `maxConcurrentRunsCap` helpers from `web/lib/scheduler.ts`;
   `start_anyway` rides the existing `Pending` queue and NEVER bypasses the
@@ -212,6 +214,13 @@ catch-up.
   create/edit: `MaisterError("CONFIG")` → 400.
 - **Cross-project `taskId`** on create: `MaisterError("PRECONDITION")` → 409;
   schedule lookups from another project's slug → 404.
+- **Terminal task (`Done` / `Abandoned`)** on create:
+  `MaisterError("PRECONDITION")` → 409 — such a schedule could only ever
+  record `skipped_target_terminal`; the modal's task picker hides terminal
+  tasks for the same reason.
+- **Redundant `enabled: true`** on an already-active schedule (e.g. bundled
+  with a rename): does NOT re-arm `next_fire_at` — only the Paused→Active
+  transition recomputes it, so a due fire is never silently pushed forward.
 - **`launchRun` refusal** (dirty repo, branch taken, supervisor down, …):
   recorded as `launch_failed` with `last_fire_error = "CODE: message"`
   (bounded ≤ 500 chars); the dispatcher does not throw.

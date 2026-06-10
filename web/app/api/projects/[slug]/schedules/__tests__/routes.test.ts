@@ -253,6 +253,11 @@ describe("DELETE /api/projects/[slug]/schedules/[scheduleId]", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+    // IDOR wiring: the service receives the server-derived project id,
+    // never anything caller-controlled.
+    expect(mocks.deleteSchedule).toHaveBeenCalledWith("project-1", "sched-1", {
+      actorUserId: "user-1",
+    });
   });
 
   it("returns 404 when nothing was deleted", async () => {
@@ -336,6 +341,12 @@ describe("POST /api/projects/[slug]/schedules/[scheduleId]/trigger", () => {
 
     expect(res.status).toBe(404);
     expect(mocks.dispatchScheduleNow).not.toHaveBeenCalled();
+    // IDOR wiring: the existence probe is scoped to the server-derived
+    // project id, so a foreign schedule UUID cannot be confirmed or fired.
+    expect(mocks.getScheduleForProject).toHaveBeenCalledWith(
+      "project-1",
+      "foreign",
+    );
   });
 
   it("requires manageSchedules (viewer → 403)", async () => {

@@ -86,7 +86,6 @@
       "nameRequired": "Name is required",
       "taskRequired": "Select a task",
       "cronRequired": "Cron expression is required",
-      "invalidInput": "Invalid input",
       "save": "Save",
       "saving": "Saving…",
       "cancel": "Cancel",
@@ -1406,5 +1405,17 @@
       "saved": "Saved",
       "saveError": "Save failed"
     }
+  },
+  "apiErrors": {
+    "CONFIG": "Invalid input",
+    "PRECONDITION": "Precondition failed",
+    "CONFLICT": "Operation already in progress",
+    "UNAUTHENTICATED": "Sign-in required",
+    "UNAUTHORIZED": "Insufficient permissions",
+    "PASSWORD_CHANGE_REQUIRED": "Password change required",
+    "EXECUTOR_UNAVAILABLE": "Executor unavailable",
+    "CRASH": "Internal error",
+    "NOT_FOUND": "Not found",
+    "requestFailed": "Request failed: {status}"
   }
 }

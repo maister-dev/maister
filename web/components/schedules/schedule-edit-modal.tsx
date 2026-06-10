@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { readApiError } from "@/lib/api-error";
+
 const inputClass =
   "min-h-[36px] rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber";
 
@@ -86,7 +88,14 @@ export function ScheduleEditModal({
   onSaved,
 }: ScheduleEditModalProps): ReactElement {
   const t = useTranslations("projectSchedules");
+  const tApiErrors = useTranslations("apiErrors");
   const isCreate = schedule === null;
+
+  // Terminal tasks can never fire (the launch gate refuses target_terminal,
+  // create refuses them with PRECONDITION) — keep them out of the picker.
+  const schedulableTasks = tasks.filter(
+    (task) => task.status !== "Done" && task.status !== "Abandoned",
+  );
 
   const [name, setName] = useState(schedule?.name ?? "");
   const [taskId, setTaskId] = useState(schedule?.taskId ?? "");
@@ -273,7 +282,7 @@ export function ScheduleEditModal({
       });
 
       if (!res.ok) {
-        setError(await errorLabel(res));
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }
@@ -285,19 +294,6 @@ export function ScheduleEditModal({
     } finally {
       setBusy(false);
     }
-  }
-
-  async function errorLabel(res: Response): Promise<string> {
-    const body = (await res.json().catch(() => null)) as {
-      code?: string;
-      message?: string;
-    } | null;
-
-    if (body?.code === "CONFIG") {
-      return body.message ?? t("modal.invalidInput");
-    }
-
-    return body?.message ?? body?.code ?? `Request failed: ${res.status}`;
   }
 
   async function remove(): Promise<void> {
@@ -315,7 +311,7 @@ export function ScheduleEditModal({
       );
 
       if (!res.ok) {
-        setError(await errorLabel(res));
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }
@@ -391,7 +387,7 @@ export function ScheduleEditModal({
                 onChange={(e) => setTaskId(e.target.value)}
               >
                 <option value="">{t("modal.taskPlaceholder")}</option>
-                {tasks.map((task) => (
+                {schedulableTasks.map((task) => (
                   <option key={task.id} value={task.id}>
                     {task.title} ({task.status})
                   </option>

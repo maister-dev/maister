@@ -12,6 +12,7 @@ import {
   type ScheduleTaskOption,
 } from "@/components/schedules/schedule-edit-modal";
 import { SchedulesTable } from "@/components/schedules/schedules-table";
+import { readApiError } from "@/lib/api-error";
 
 export type { ScheduleTaskOption };
 
@@ -36,6 +37,7 @@ export function SchedulesPanel({
   tasks,
 }: SchedulesPanelProps): ReactElement {
   const t = useTranslations("projectSchedules");
+  const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
   const [refreshing, startTransition] = useTransition();
   const [creating, setCreating] = useState(false);
@@ -47,15 +49,6 @@ export function SchedulesPanel({
   );
 
   const refresh = (): void => startTransition(() => router.refresh());
-
-  async function readError(res: Response): Promise<string> {
-    const body = (await res.json().catch(() => null)) as {
-      code?: string;
-      message?: string;
-    } | null;
-
-    return body?.message ?? body?.code ?? `Request failed: ${res.status}`;
-  }
 
   async function toggleEnabled(schedule: ScheduleDTO): Promise<void> {
     setMutating(true);
@@ -73,7 +66,7 @@ export function SchedulesPanel({
       );
 
       if (!res.ok) {
-        setError(await readError(res));
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }
@@ -98,7 +91,7 @@ export function SchedulesPanel({
       );
 
       if (!res.ok) {
-        setError(await readError(res));
+        setError(await readApiError(res, tApiErrors));
 
         return;
       }

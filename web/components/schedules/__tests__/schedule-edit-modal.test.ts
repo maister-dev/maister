@@ -79,6 +79,26 @@ describe("ScheduleEditModal", () => {
     expect(markup).not.toContain("modal.delete");
   });
 
+  it("hides terminal (Done/Abandoned) tasks from the create picker", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ScheduleEditModal, {
+        schedule: null,
+        slug: "proj",
+        tasks: [
+          { id: "task-1", title: "Fix flaky tests", status: "Backlog" },
+          { id: "task-2", title: "Shipped feature", status: "Done" },
+          { id: "task-3", title: "Dropped idea", status: "Abandoned" },
+        ],
+        onClose: () => {},
+        onSaved: () => {},
+      }),
+    );
+
+    expect(markup).toContain("Fix flaky tests (Backlog)");
+    expect(markup).not.toContain("Shipped feature");
+    expect(markup).not.toContain("Dropped idea");
+  });
+
   it("renders edit mode with the fixed task and delete affordance", () => {
     const markup = renderToStaticMarkup(
       createElement(ScheduleEditModal, {

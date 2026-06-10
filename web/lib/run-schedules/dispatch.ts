@@ -127,6 +127,8 @@ type LaunchIntent = {
   scheduleId: string;
   taskId: string;
   runnerId: string | null;
+  // The last_fired_at value tx1 stamped — the fencing token for tx2's CAS.
+  stagedAt: Date;
 };
 
 function rowsOf<T>(result: unknown): T[] {
@@ -320,12 +322,16 @@ async function decideAndStage(
 async function writeFinalOutcome(
   database: DbHandle,
   scheduleId: string,
+  stagedAt: Date,
   fields: {
     lastFireOutcome: "launched" | "queued_pending" | "launch_failed";
     lastRunId: string | null;
     lastFireError: string | null;
   },
 ): Promise<void> {
+  // last_fired_at is the fencing token: a reclaim past the attempt timeout
+  // re-stamps it, so a launch that outlived its lease misses the CAS instead
+  // of cross-attributing its result to the newer attempt's marker.
   const rows = await database
     .update(runSchedules)
     .set({ ...fields, updatedAt: new Date() })
@@ -333,6 +339,7 @@ async function writeFinalOutcome(
       and(
         eq(runSchedules.id, scheduleId),
         eq(runSchedules.lastFireOutcome, "dispatching"),
+        eq(runSchedules.lastFiredAt, stagedAt),
       ),
     )
     .returning({ id: runSchedules.id });
@@ -356,7 +363,7 @@ async function executeLaunch(
     const outcome: TriggerResult["outcome"] =
       result.status === "Pending" ? "queued_pending" : "launched";
 
-    await writeFinalOutcome(database, intent.scheduleId, {
+    await writeFinalOutcome(database, intent.scheduleId, intent.stagedAt, {
       lastFireOutcome:
         outcome === "queued_pending" ? "queued_pending" : "launched",
       lastRunId: result.runId,
@@ -377,7 +384,7 @@ async function executeLaunch(
       { scheduleId: intent.scheduleId, errorCode: code },
       "schedule launch failed",
     );
-    await writeFinalOutcome(database, intent.scheduleId, {
+    await writeFinalOutcome(database, intent.scheduleId, intent.stagedAt, {
       lastFireOutcome: "launch_failed",
       lastRunId: null,
       lastFireError: bounded,
@@ -436,6 +443,7 @@ export async function dispatchDueSchedules(
           scheduleId: row.id,
           taskId: row.taskId,
           runnerId: row.runnerId,
+          stagedAt: now,
         });
       } else {
         switch (staged.outcome) {
@@ -534,6 +542,7 @@ export async function dispatchScheduleNow(
         scheduleId: row.id,
         taskId: row.taskId,
         runnerId: row.runnerId,
+        stagedAt: now,
       };
     } else {
       finalOutcome = { outcome: staged.outcome };

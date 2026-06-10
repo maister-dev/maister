@@ -86,7 +86,6 @@
       "nameRequired": "Укажите название",
       "taskRequired": "Выберите задачу",
       "cronRequired": "Укажите cron-выражение",
-      "invalidInput": "Неверный ввод",
       "save": "Сохранить",
       "saving": "Сохранение…",
       "cancel": "Отмена",
@@ -1406,5 +1405,17 @@
       "saved": "Сохранено",
       "saveError": "Ошибка сохранения"
     }
+  },
+  "apiErrors": {
+    "CONFIG": "Некорректные данные",
+    "PRECONDITION": "Предусловие не выполнено",
+    "CONFLICT": "Операция уже выполняется",
+    "UNAUTHENTICATED": "Требуется вход",
+    "UNAUTHORIZED": "Недостаточно прав",
+    "PASSWORD_CHANGE_REQUIRED": "Требуется смена пароля",
+    "EXECUTOR_UNAVAILABLE": "Исполнитель недоступен",
+    "CRASH": "Внутренняя ошибка",
+    "NOT_FOUND": "Не найдено",
+    "requestFailed": "Ошибка запроса: {status}"
   }
 }

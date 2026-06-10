@@ -51,7 +51,7 @@ type SeedResult = {
 };
 
 async function seedBase(
-  opts: { taskStatus?: "Backlog" | "Abandoned" } = {},
+  opts: { taskStatus?: "Backlog" | "Done" | "Abandoned" } = {},
 ): Promise<SeedResult> {
   const projectId = randomUUID();
   const flowId = randomUUID();
@@ -168,10 +168,11 @@ describe("run-schedule service (integration)", () => {
     expect(fetched?.id).toBe(created.id);
   });
 
-  it("createSchedule rejects cross-project task, abandoned task, bad cron, bad timezone, unknown runner", async () => {
+  it("createSchedule rejects cross-project task, terminal (Done/Abandoned) task, bad cron, bad timezone, unknown runner", async () => {
     const seed = await seedBase();
     const foreign = await seedBase();
     const abandoned = await seedBase({ taskStatus: "Abandoned" });
+    const done = await seedBase({ taskStatus: "Done" });
 
     await expectCode(
       service.createSchedule({ ...baseInput(seed), taskId: foreign.taskId }),
@@ -181,6 +182,7 @@ describe("run-schedule service (integration)", () => {
       service.createSchedule(baseInput(abandoned)),
       "PRECONDITION",
     );
+    await expectCode(service.createSchedule(baseInput(done)), "PRECONDITION");
     await expectCode(
       service.createSchedule({ ...baseInput(seed), cronExpr: "not a cron" }),
       "CONFIG",
@@ -299,6 +301,29 @@ describe("run-schedule service (integration)", () => {
 
     expect(resumed?.enabled).toBe(true);
     expect(resumed?.nextFireAt.getTime()).toBeGreaterThan(before.getTime());
+  });
+
+  it("a redundant enabled:true on an already-active schedule does NOT re-arm next_fire_at", async () => {
+    const seed = await seedBase();
+    const created = await service.createSchedule(baseInput(seed));
+    const due = new Date(Date.now() - 60_000);
+
+    await db
+      .update(schema.runSchedules)
+      .set({ nextFireAt: due })
+      .where(eq(schema.runSchedules.id, created.id));
+
+    const updated = await service.updateSchedule(
+      seed.projectId,
+      created.id,
+      { name: "renamed", enabled: true },
+      { actorUserId: seed.userId },
+    );
+
+    expect(updated?.name).toBe("renamed");
+    expect(updated?.enabled).toBe(true);
+    // The due fire stays due — only the Paused→Active transition re-arms.
+    expect(updated?.nextFireAt.getTime()).toBe(due.getTime());
   });
 
   it("cron/timezone change recomputes next_fire_at; a name-only patch does not", async () => {

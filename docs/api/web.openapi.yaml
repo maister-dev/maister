@@ -5157,9 +5157,9 @@ paths:
         (`member` or above). The `projectId` is resolved from the URL `slug`
         (server-state). `taskId` is a body-controlled cross-resource id and is
         compared against server state: `task.projectId === project.id`,
-        otherwise `409 PRECONDITION`. A task with `status = 'Abandoned'` is
-        refused (`409 PRECONDITION`). `runnerId`, when given, must exist in
-        `platform_acp_runners` (`400 CONFIG`). `cronExpr` must be a 5-field
+        otherwise `409 PRECONDITION`. A task in a terminal status (`Done` or
+        `Abandoned`) is refused (`409 PRECONDITION`). `runnerId`, when given,
+        must exist in `platform_acp_runners` (`400 CONFIG`). `cronExpr` must be a 5-field
         cron expression and `timezone` a valid IANA name, validated through
         the croner wrapper (`400 CONFIG`). `next_fire_at` is precomputed from
         now in the schedule's timezone.
@@ -5207,7 +5207,7 @@ paths:
           description: |
             Precondition failed (`PRECONDITION`): project not found or
             archived, `taskId` not part of this project, or target task is
-            `Abandoned`.
+            terminal (`Done` / `Abandoned`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

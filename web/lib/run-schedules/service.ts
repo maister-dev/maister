@@ -65,10 +65,12 @@ export async function createSchedule(
       `Task not found in project: ${input.taskId}`,
     );
   }
-  if (task.status === "Abandoned") {
+  // Terminal tasks can never fire — the launch gate refuses target_terminal,
+  // so a schedule on one would only ever record skipped_target_terminal.
+  if (task.status === "Done" || task.status === "Abandoned") {
     throw new MaisterError(
       "PRECONDITION",
-      `Cannot schedule an abandoned task: ${input.taskId}`,
+      `Cannot schedule a terminal task (${task.status}): ${input.taskId}`,
     );
   }
 
@@ -171,10 +173,12 @@ export async function updateSchedule(
     if (patch.runnerId !== undefined) values.runnerId = patch.runnerId;
     if (patch.enabled !== undefined) values.enabled = patch.enabled;
 
+    // Re-arm only on the Paused→Active transition — a redundant enabled:true
+    // (e.g. bundled with a rename) must not push a due fire forward.
     const recompute =
       patch.cronExpr !== undefined ||
       patch.timezone !== undefined ||
-      patch.enabled === true;
+      (patch.enabled === true && !current.enabled);
 
     if (recompute) {
       values.nextFireAt = nextFireAt(

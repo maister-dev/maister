@@ -522,6 +522,59 @@ describe("dispatchDueSchedules", () => {
     expect(row.lastRunId).toBeNull();
   });
 
+  it("tx2 CAS fencing: a launch that outlived its lease cannot overwrite a newer reclaim's 'dispatching' marker", async () => {
+    const seed = await seedBase();
+    const id = await seedSchedule(seed);
+    const newerStamp = new Date(Date.now() + MIN);
+    const launch = vi.fn(async () => {
+      // Simulate the W1 reclaim: while this launch hangs past the attempt
+      // timeout, a newer dispatcher re-stamps the row and is now mid-launch.
+      await db
+        .update(schema.runSchedules)
+        .set({ lastFireOutcome: "dispatching", lastFiredAt: newerStamp })
+        .where(eq(schema.runSchedules.id, id));
+
+      return { runId: randomUUID(), status: "Running" };
+    });
+
+    await dispatch.dispatchDueSchedules({ launch });
+
+    const row = await scheduleRow(id);
+
+    // The hung launch's result is dropped — the newer attempt keeps its
+    // marker; without the last_fired_at fence the outcome ('dispatching')
+    // would have been clobbered with the old attempt's run id.
+    expect(row.lastFireOutcome).toBe("dispatching");
+    expect(row.lastFiredAt?.getTime()).toBe(newerStamp.getTime());
+    expect(row.lastRunId).toBeNull();
+  });
+
+  it("a schedule hard-deleted mid-launch is dropped quietly: the run launches, no outcome row remains", async () => {
+    const seed = await seedBase();
+    const id = await seedSchedule(seed);
+    const launch = vi.fn(async () => {
+      await db
+        .delete(schema.runSchedules)
+        .where(eq(schema.runSchedules.id, id));
+
+      return { runId: randomUUID(), status: "Running" };
+    });
+
+    const summary = await dispatch.dispatchDueSchedules({ launch });
+
+    // The launch counts as fired; the 0-row tx2 CAS is the documented
+    // "stale dispatch result dropped" path, not an error.
+    expect(summary.fired).toBe(1);
+    expect(summary.launchFailed).toBe(0);
+
+    const rows = await db
+      .select()
+      .from(schema.runSchedules)
+      .where(eq(schema.runSchedules.id, id));
+
+    expect(rows).toHaveLength(0);
+  });
+
   it("never claims schedules of archived projects", async () => {
     const seed = await seedBase({ archivedProject: true });
     const id = await seedSchedule(seed);

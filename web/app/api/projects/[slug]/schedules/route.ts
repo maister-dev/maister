@@ -1,22 +1,17 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { errorResponse, resolveProject } from "@/lib/api/project-route-helpers";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { MaisterError } from "@/lib/errors";
 import {
   getProjectScheduleDTO,
   listProjectSchedules,
 } from "@/lib/run-schedules/queries";
 import { createSchedule } from "@/lib/run-schedules/service";
-
-// FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/runs/route.ts).
-const { projects } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-project-schedules",
@@ -34,57 +29,6 @@ const postBodySchema = z
     enabled: z.boolean().optional(),
   })
   .strict();
-
-function httpStatusForCode(code: string): number {
-  switch (code) {
-    case "UNAUTHENTICATED":
-      return 401;
-    case "UNAUTHORIZED":
-    case "PASSWORD_CHANGE_REQUIRED":
-      return 403;
-    case "PRECONDITION":
-    case "CONFLICT":
-      return 409;
-    case "EXECUTOR_UNAVAILABLE":
-      return 503;
-    case "CONFIG":
-      return 400;
-    default:
-      return 500;
-  }
-}
-
-function errorResponse(err: unknown, slug: string): NextResponse {
-  if (isMaisterError(err)) {
-    return NextResponse.json(
-      { code: err.code, message: err.message },
-      { status: httpStatusForCode(err.code) },
-    );
-  }
-  const message = err instanceof Error ? err.message : String(err);
-
-  log.error({ slug, err: message }, "schedules route unhandled error");
-
-  return NextResponse.json(
-    { code: "CRASH", message: "internal error" },
-    { status: 500 },
-  );
-}
-
-async function resolveProject(slug: string): Promise<{ id: string }> {
-  const db = getDb() as unknown as { select: any };
-  const projectRows = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.slug, slug));
-  const project = projectRows[0];
-
-  if (!project || project.archivedAt) {
-    throw new MaisterError("PRECONDITION", `project not found: ${slug}`);
-  }
-
-  return project;
-}
 
 type RouteParams = { params: Promise<{ slug: string }> };
 
@@ -107,7 +51,7 @@ export async function GET(
 
     return NextResponse.json({ schedules });
   } catch (err) {
-    return errorResponse(err, slug);
+    return errorResponse(err, log, slug);
   }
 }
 
@@ -127,6 +71,7 @@ export async function POST(
         "CONFIG",
         `invalid POST body: ${(err as Error).message}`,
       ),
+      log,
       slug,
     );
   }
@@ -157,6 +102,6 @@ export async function POST(
 
     return NextResponse.json({ schedule }, { status: 201 });
   } catch (err) {
-    return errorResponse(err, slug);
+    return errorResponse(err, log, slug);
   }
 }
