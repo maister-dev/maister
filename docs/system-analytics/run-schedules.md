@@ -79,7 +79,7 @@ flowchart TD
     Decide -- launch path --> Intent[write last_fire_outcome=dispatching<br/>last_fired_at=now, advance next_fire_at<br/>clear queue_one_pending]
     Intent --> Commit2[COMMIT tx1]
     Commit2 --> Launch[launchRun outside the row lock<br/>worktree + its own DB tx]
-    Launch --> Tx2[tx2: CAS final outcome WHERE<br/>last_fire_outcome=dispatching<br/>AND last_fired_at=staged stamp (fence)<br/>launched or queued_pending or launch_failed<br/>+ last_run_id + last_fire_error]
+    Launch --> Tx2["tx2: CAS final outcome WHERE<br/>last_fire_outcome=dispatching<br/>AND last_fired_at=staged stamp (fence)<br/>launched or queued_pending or launch_failed<br/>+ last_run_id + last_fire_error"]
     Tx2 -- 0 rows updated --> Stale[WARN stale dispatch result dropped]
     Tx2 -- 1 row updated --> Done[summary into recordJobAttemptResult]
 ```
