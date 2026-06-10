@@ -130,8 +130,8 @@ Out of scope (explicitly deferred):
 <!-- Commit checkpoint: tasks 3-4 -->
 
 ### Phase 2 — Pure libs (parallel batch: 5 ∥ 6)
-- [ ] Task 5: `web/lib/review-comments/anchor.ts` — (path, side, line)→content extraction from the prepared-diff source + `placement` matching; unit tests incl. truncated-diff edge (depends on 2)
-- [ ] Task 6: `web/lib/review-comments/serialize.ts` — deterministic markdown compose (summary + file/line-ordered threads + replies + quoted content); **zero-threads ⇒ identity**; unit tests (depends on 2)
+- [x] Task 5: `web/lib/review-comments/anchor.ts` — (path, side, line)→content extraction from the prepared-diff source + `placement` matching; unit tests incl. truncated-diff edge (depends on 2)
+- [x] Task 6: `web/lib/review-comments/serialize.ts` — deterministic markdown compose (summary + file/line-ordered threads + replies + quoted content); **zero-threads ⇒ identity**; unit tests (depends on 2)
 <!-- Commit checkpoint: tasks 5-6 -->
 
 ### Phase 3 — Engine integration (TDD slice)

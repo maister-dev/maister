@@ -5,6 +5,8 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, count, desc, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
+import { compareThreadReplies, compareThreadRoots } from "./order";
+
 import {
   hitlRequests,
   nodeAttempts,
@@ -14,6 +16,8 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { isHumanReviewGate } from "@/lib/flows/review-gate";
 import { PENDING_HITL_RUN_STATUS } from "@/lib/services/hitl";
+
+export { compareThreadReplies, compareThreadRoots } from "./order";
 
 // ADR-071 review-comment service: authz-free domain logic over the
 // review_comments table. Routes own requireProjectAction + zod; this module
@@ -394,44 +398,6 @@ export async function remove(
 
     return row;
   });
-}
-
-type RootOrderKey = Pick<
-  ReviewComment,
-  "filePath" | "line" | "side" | "createdAt" | "id"
->;
-type ReplyOrderKey = Pick<ReviewComment, "createdAt" | "id">;
-
-// Frozen thread order (ADR-071): file_path asc (lexicographic), line asc,
-// side old<new, created_at asc, id asc. Anchor fields are non-null on roots
-// (DB CHECK); the fallbacks only keep the comparator total.
-export function compareThreadRoots(a: RootOrderKey, b: RootOrderKey): number {
-  const aPath = a.filePath ?? "";
-  const bPath = b.filePath ?? "";
-
-  if (aPath !== bPath) return aPath < bPath ? -1 : 1;
-
-  const lineDiff = (a.line ?? 0) - (b.line ?? 0);
-
-  if (lineDiff !== 0) return lineDiff;
-
-  const sideDiff = (a.side === "old" ? 0 : 1) - (b.side === "old" ? 0 : 1);
-
-  if (sideDiff !== 0) return sideDiff;
-
-  return compareThreadReplies(a, b);
-}
-
-export function compareThreadReplies(
-  a: ReplyOrderKey,
-  b: ReplyOrderKey,
-): number {
-  const timeDiff = a.createdAt.getTime() - b.createdAt.getTime();
-
-  if (timeDiff !== 0) return timeDiff;
-  if (a.id === b.id) return 0;
-
-  return a.id < b.id ? -1 : 1;
 }
 
 // Read path — NO gate guard (history stays visible like the diff, any run
