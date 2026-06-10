@@ -26,10 +26,10 @@ import {
   extractAnchorContent,
 } from "@/lib/review-comments/anchor";
 
-// Every fixture ends with "\n" like real `git diff` stdout: prepareDiff's
-// splitSections trims the raw text, so trailing-whitespace-significant lines
-// must never be the physical last line of the diff (they never are in git
-// output, which always terminates with a newline).
+// Every fixture ends with "\n" like real `git diff` stdout. prepareDiff's
+// splitSections strips only that final terminator (never a blanket trim), so
+// trailing-significant bytes survive even on the physical last data line —
+// pinned in lib/diff/__tests__/prepare.test.ts.
 const withFinalNewline = (lines: string[]): string => `${lines.join("\n")}\n`;
 
 // src/calc.ts hunk line map:

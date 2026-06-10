@@ -253,3 +253,60 @@ describe("prepareDiff — no server-only leak (FINDING C)", () => {
     }
   });
 });
+
+describe("prepareDiff — trailing-byte fidelity of the final data line", () => {
+  // Deliberate exception to the no-bundle-internals stance above: these pin
+  // PARSE-BYTE fidelity through the per-side line records — the exact surface
+  // review-comment anchoring (lib/review-comments/anchor.ts) matches
+  // byte-exactly. splitSections must strip ONLY the git stdout "\n"
+  // terminator, never trailing spaces or a CRLF line's "\r".
+  const lineText = async (
+    diff: string,
+    line: string,
+  ): Promise<string | undefined> => {
+    const result = await prepareDiff(diff);
+    const bundle = result.perFile[0]?.bundle as unknown as {
+      newFileDiffLines: Record<string, { text?: string }>;
+    };
+
+    return bundle.newFileDiffLines[line]?.text;
+  };
+
+  const singleAddedLineDiff = (added: string): string =>
+    `${[
+      "diff --git a/app.ts b/app.ts",
+      "new file mode 100644",
+      "index 0000000..1111111",
+      "--- /dev/null",
+      "+++ b/app.ts",
+      "@@ -0,0 +1 @@",
+      `+${added}`,
+    ].join("\n")}\n`;
+
+  it("keeps trailing spaces on the physical last data line", async () => {
+    expect(await lineText(singleAddedLineDiff("const p = 1;  "), "1")).toBe(
+      "const p = 1;  ",
+    );
+  });
+
+  it("keeps the CR byte of a CRLF final data line", async () => {
+    expect(await lineText(singleAddedLineDiff("const q = 2;\r"), "1")).toBe(
+      "const q = 2;\r",
+    );
+  });
+
+  it("keeps trailing spaces when a context line follows (non-final position)", async () => {
+    const diff = `${[
+      "diff --git a/app.ts b/app.ts",
+      "index 1111111..2222222 100644",
+      "--- a/app.ts",
+      "+++ b/app.ts",
+      "@@ -1 +1,2 @@",
+      "+const p = 1;  ",
+      " const tail = 3;",
+    ].join("\n")}\n`;
+
+    // Non-final data lines keep their "\n"; the significant spaces precede it.
+    expect(await lineText(diff, "1")).toBe("const p = 1;  \n");
+  });
+});

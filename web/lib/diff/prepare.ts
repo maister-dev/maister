@@ -44,7 +44,11 @@ type ParsedSection = {
 // A unified diff is concatenated per-file sections, each starting with
 // "diff --git a/<old> b/<new>". Mirrors extractFileSection's split regex.
 function splitSections(rawDiff: string): string[] {
-  const trimmed = rawDiff.trim();
+  // Strip only leading whitespace (for the startsWith filter) and the
+  // trailing "\n" terminator(s) of git stdout — never a blanket trim(): the
+  // physical last data line may carry significant trailing bytes (spaces, or
+  // the "\r" of a CRLF file) that anchor byte-exactness depends on.
+  const trimmed = rawDiff.replace(/^\s+/, "").replace(/\n+$/, "");
 
   if (trimmed.length === 0) return [];
 
