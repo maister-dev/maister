@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -1890,6 +1891,79 @@ export const hitlRequests = pgTable(
   },
   (t) => ({
     idxRun: index("hitl_requests_run_idx").on(t.runId),
+  }),
+);
+
+// ADR-072 (migration 0039): PR-grade, line-anchored, 1-level-threaded review
+// comments drafted at an open review gate. A root (parent_id NULL) carries the
+// anchor + status; a reply carries neither — enforced by the anchor CHECK
+// below. file_path is opaque anchor data, NEVER a filesystem path component.
+export const reviewComments = pgTable(
+  "review_comments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    // The review-gate visit (pending hitl_requests row) of authoring.
+    hitlRequestId: text("hitl_request_id")
+      .notNull()
+      .references(() => hitlRequests.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    // 1-based gate visit number — iteration tag for re-review carry.
+    gateAttempt: integer("gate_attempt").notNull(),
+    parentId: text("parent_id").references(
+      (): ReturnType<typeof text> => reviewComments.id,
+      { onDelete: "cascade" },
+    ),
+    authorUserId: text("author_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Snapshot — keeps the thread attributable after author deletion.
+    authorLabel: text("author_label").notNull(),
+    filePath: text("file_path"),
+    side: text("side", { enum: ["old", "new"] }),
+    line: integer("line"),
+    // Server-extracted at POST time; the client value is never trusted.
+    lineContent: text("line_content"),
+    body: text("body").notNull(),
+    status: text("status", { enum: ["open", "resolved"] })
+      .notNull()
+      .default("open"),
+    resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    idxRunCreated: index("review_comments_run_created_idx").on(
+      t.runId,
+      t.createdAt,
+    ),
+    idxRunStatus: index("review_comments_run_status_idx").on(t.runId, t.status),
+    idxHitlRequest: index("review_comments_hitl_request_idx").on(
+      t.hitlRequestId,
+    ),
+    idxParent: index("review_comments_parent_idx").on(t.parentId),
+    // Anchor fields non-null ⇔ root row (parent_id NULL).
+    anchorRootCheck: check(
+      "review_comments_anchor_root_check",
+      sql`(${t.parentId} is null and ${t.filePath} is not null and ${t.side} is not null and ${t.line} is not null and ${t.lineContent} is not null) or (${t.parentId} is not null and ${t.filePath} is null and ${t.side} is null and ${t.line} is null and ${t.lineContent} is null)`,
+    ),
+    sideCheck: check(
+      "review_comments_side_check",
+      sql`${t.side} in ('old', 'new')`,
+    ),
+    statusCheck: check(
+      "review_comments_status_check",
+      sql`${t.status} in ('open', 'resolved')`,
+    ),
   }),
 );
 

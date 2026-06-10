@@ -125,8 +125,8 @@ Out of scope (explicitly deferred):
 <!-- Commit checkpoint: tasks 1-2 -->
 
 ### Phase 1 — DB + service layer (TDD slice)
-- [ ] Task 3: Migration `0038_review_comments` (next-free — main is at `0037_m27_*`; re-check journal + in-flight branches) + `reviewComments` in `web/lib/db/schema.ts` (+ `$inferSelect` types, CHECK, indexes) + schema integration assertions (depends on 2)
-- [ ] Task 4: `web/lib/review-comments/service.ts` — create/reply/edit/resolve/delete/list with open-gate allow-list guard, parent/run integrity, author rules; unit + `service.integration.test.ts` (testcontainers) (depends on 3)
+- [x] Task 3: Migration `0038_review_comments` (next-free — main is at `0037_m27_*`; re-check journal + in-flight branches) + `reviewComments` in `web/lib/db/schema.ts` (+ `$inferSelect` types, CHECK, indexes) + schema integration assertions (depends on 2)
+- [x] Task 4: `web/lib/review-comments/service.ts` — create/reply/edit/resolve/delete/list with open-gate allow-list guard, parent/run integrity, author rules; unit + `service.integration.test.ts` (testcontainers) (depends on 3)
 <!-- Commit checkpoint: tasks 3-4 -->
 
 ### Phase 2 — Pure libs (parallel batch: 5 ∥ 6)

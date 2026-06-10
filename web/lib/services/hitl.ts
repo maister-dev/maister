@@ -54,7 +54,10 @@ const TERMINAL_RUN_STATUS = new Set([
 // contract) — this guard never flips status. Used as the FRESH-write allow-list
 // on every kind so a future non-terminal status can never slip a `!terminal`
 // deny-list.
-const PENDING_HITL_RUN_STATUS = new Set(["NeedsInput", "NeedsInputIdle"]);
+export const PENDING_HITL_RUN_STATUS = new Set([
+  "NeedsInput",
+  "NeedsInputIdle",
+]);
 
 function runtimeRoot(): string {
   return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();

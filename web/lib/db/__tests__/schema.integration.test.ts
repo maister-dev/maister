@@ -468,6 +468,328 @@ describe("onDelete cascade", () => {
   });
 });
 
+describe("review_comments (ADR-071, migration 0038)", () => {
+  async function seedReviewUser(): Promise<string> {
+    const userId = newId();
+
+    await db.insert(schema.users).values({
+      id: userId,
+      email: `rc-${userId.slice(0, 8)}@example.test`,
+      role: "member",
+      accountStatus: "active",
+    });
+
+    return userId;
+  }
+
+  function rootComment(
+    ids: { runId: string; hitlId: string },
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      id: newId(),
+      runId: ids.runId,
+      hitlRequestId: ids.hitlId,
+      nodeId: "review",
+      gateAttempt: 1,
+      authorLabel: "Reviewer",
+      filePath: "web/lib/db/schema.ts",
+      side: "new",
+      line: 42,
+      lineContent: "const x = 1;",
+      body: "Rename this.",
+      ...overrides,
+    };
+  }
+
+  it("exposes the expected columns and indexes", async () => {
+    const cols = await db.execute(
+      sql.raw(
+        `select column_name from information_schema.columns where table_name = 'review_comments' order by column_name`,
+      ),
+    );
+
+    expect(
+      cols.rows.map((r) => (r as { column_name: string }).column_name),
+    ).toEqual([
+      "author_label",
+      "author_user_id",
+      "body",
+      "created_at",
+      "file_path",
+      "gate_attempt",
+      "hitl_request_id",
+      "id",
+      "line",
+      "line_content",
+      "node_id",
+      "parent_id",
+      "resolved_at",
+      "resolved_by_user_id",
+      "run_id",
+      "side",
+      "status",
+      "updated_at",
+    ]);
+
+    const indexes = await db.execute(
+      sql.raw(
+        `select indexname from pg_indexes where tablename = 'review_comments' and indexname like 'review_comments_%_idx' order by indexname`,
+      ),
+    );
+
+    expect(
+      indexes.rows.map((r) => (r as { indexname: string }).indexname),
+    ).toEqual([
+      "review_comments_hitl_request_idx",
+      "review_comments_parent_idx",
+      "review_comments_run_created_idx",
+      "review_comments_run_status_idx",
+    ]);
+  });
+
+  it("accepts a root comment carrying the full anchor", async () => {
+    const ids = await seedChain();
+    const root = rootComment(ids);
+
+    await db.insert(schema.reviewComments).values(root);
+
+    expect(await countWhere("review_comments", "id", root.id as string)).toBe(
+      1,
+    );
+  });
+
+  it("defaults status to 'open' when omitted", async () => {
+    const ids = await seedChain();
+    const id = newId();
+
+    await db.execute(
+      sql.raw(
+        `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, author_label, file_path, side, line, line_content, body)
+         values ('${id}', '${ids.runId}', '${ids.hitlId}', 'review', 1, 'Reviewer', 'a.ts', 'new', 1, 'x', 'looks off')`,
+      ),
+    );
+
+    const rows = await db.execute(
+      sql.raw(`select status from review_comments where id = '${id}'`),
+    );
+
+    expect((rows.rows[0] as { status: string }).status).toBe("open");
+  });
+
+  it("accepts a reply that carries no anchor", async () => {
+    const ids = await seedChain();
+    const root = rootComment(ids);
+
+    await db.insert(schema.reviewComments).values(root);
+
+    const replyId = newId();
+
+    await db.insert(schema.reviewComments).values({
+      id: replyId,
+      runId: ids.runId,
+      hitlRequestId: ids.hitlId,
+      nodeId: "review",
+      gateAttempt: 1,
+      parentId: root.id,
+      authorLabel: "Author",
+      body: "Fixed in the next push.",
+    });
+
+    expect(await countWhere("review_comments", "id", replyId)).toBe(1);
+  });
+
+  it("rejects a root missing anchor fields (CHECK)", async () => {
+    const ids = await seedChain();
+
+    // All four anchor fields absent.
+    await expect(
+      db.execute(
+        sql.raw(
+          `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, author_label, body)
+           values ('${newId()}', '${ids.runId}', '${ids.hitlId}', 'review', 1, 'Reviewer', 'no anchor')`,
+        ),
+      ),
+    ).rejects.toThrow("review_comments_anchor_root_check");
+
+    // Partial anchor: line_content missing.
+    await expect(
+      db.execute(
+        sql.raw(
+          `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, author_label, file_path, side, line, body)
+           values ('${newId()}', '${ids.runId}', '${ids.hitlId}', 'review', 1, 'Reviewer', 'a.ts', 'new', 1, 'partial anchor')`,
+        ),
+      ),
+    ).rejects.toThrow("review_comments_anchor_root_check");
+  });
+
+  it("rejects a reply carrying anchor fields (CHECK)", async () => {
+    const ids = await seedChain();
+    const root = rootComment(ids);
+
+    await db.insert(schema.reviewComments).values(root);
+
+    // Full anchor on a reply.
+    await expect(
+      db.execute(
+        sql.raw(
+          `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, parent_id, author_label, file_path, side, line, line_content, body)
+           values ('${newId()}', '${ids.runId}', '${ids.hitlId}', 'review', 1, '${root.id}', 'Author', 'a.ts', 'new', 1, 'x', 'anchored reply')`,
+        ),
+      ),
+    ).rejects.toThrow("review_comments_anchor_root_check");
+
+    // A single stray anchor field on a reply.
+    await expect(
+      db.execute(
+        sql.raw(
+          `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, parent_id, author_label, line, body)
+           values ('${newId()}', '${ids.runId}', '${ids.hitlId}', 'review', 1, '${root.id}', 'Author', 7, 'stray line')`,
+        ),
+      ),
+    ).rejects.toThrow("review_comments_anchor_root_check");
+  });
+
+  it("rejects a side value outside old|new (CHECK)", async () => {
+    const ids = await seedChain();
+
+    await expect(
+      db.execute(
+        sql.raw(
+          `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, author_label, file_path, side, line, line_content, body)
+           values ('${newId()}', '${ids.runId}', '${ids.hitlId}', 'review', 1, 'Reviewer', 'a.ts', 'left', 1, 'x', 'bad side')`,
+        ),
+      ),
+    ).rejects.toThrow("review_comments_side_check");
+  });
+
+  it("rejects a status value outside open|resolved (CHECK)", async () => {
+    const ids = await seedChain();
+
+    await expect(
+      db.execute(
+        sql.raw(
+          `insert into review_comments (id, run_id, hitl_request_id, node_id, gate_attempt, author_label, file_path, side, line, line_content, body, status)
+           values ('${newId()}', '${ids.runId}', '${ids.hitlId}', 'review', 1, 'Reviewer', 'a.ts', 'new', 1, 'x', 'bad status', 'closed')`,
+        ),
+      ),
+    ).rejects.toThrow("review_comments_status_check");
+  });
+
+  it("cascades comments when the run is deleted", async () => {
+    const ids = await seedChain();
+    const root = rootComment(ids);
+    const replyId = newId();
+
+    await db.insert(schema.reviewComments).values(root);
+    await db.insert(schema.reviewComments).values({
+      id: replyId,
+      runId: ids.runId,
+      hitlRequestId: ids.hitlId,
+      nodeId: "review",
+      gateAttempt: 1,
+      parentId: root.id,
+      authorLabel: "Author",
+      body: "On it.",
+    });
+
+    await db.execute(sql.raw(`delete from runs where id = '${ids.runId}'`));
+
+    expect(await countWhere("review_comments", "id", root.id as string)).toBe(
+      0,
+    );
+    expect(await countWhere("review_comments", "id", replyId)).toBe(0);
+  });
+
+  it("cascades comments when the hitl request is deleted (run alive)", async () => {
+    const ids = await seedChain();
+    const root = rootComment(ids);
+    const replyId = newId();
+
+    await db.insert(schema.reviewComments).values(root);
+    await db.insert(schema.reviewComments).values({
+      id: replyId,
+      runId: ids.runId,
+      hitlRequestId: ids.hitlId,
+      nodeId: "review",
+      gateAttempt: 1,
+      parentId: root.id,
+      authorLabel: "Author",
+      body: "Ack.",
+    });
+
+    await db.execute(
+      sql.raw(`delete from hitl_requests where id = '${ids.hitlId}'`),
+    );
+
+    expect(await countWhere("runs", "id", ids.runId)).toBe(1);
+    expect(await countWhere("review_comments", "id", root.id as string)).toBe(
+      0,
+    );
+    expect(await countWhere("review_comments", "id", replyId)).toBe(0);
+  });
+
+  it("cascades replies when the root comment is deleted", async () => {
+    const ids = await seedChain();
+    const root = rootComment(ids);
+    const replyId = newId();
+
+    await db.insert(schema.reviewComments).values(root);
+    await db.insert(schema.reviewComments).values({
+      id: replyId,
+      runId: ids.runId,
+      hitlRequestId: ids.hitlId,
+      nodeId: "review",
+      gateAttempt: 1,
+      parentId: root.id,
+      authorLabel: "Author",
+      body: "Replying.",
+    });
+
+    await db.execute(
+      sql.raw(`delete from review_comments where id = '${root.id}'`),
+    );
+
+    expect(await countWhere("review_comments", "id", root.id as string)).toBe(
+      0,
+    );
+    expect(await countWhere("review_comments", "id", replyId)).toBe(0);
+  });
+
+  it("survives author deletion with author_user_id and resolved_by_user_id set NULL", async () => {
+    const ids = await seedChain();
+    const userId = await seedReviewUser();
+    const root = rootComment(ids, {
+      authorUserId: userId,
+      status: "resolved",
+      resolvedByUserId: userId,
+      resolvedAt: new Date(),
+    });
+
+    await db.insert(schema.reviewComments).values(root);
+
+    await db.execute(sql.raw(`delete from users where id = '${userId}'`));
+
+    const rows = await db.execute(
+      sql.raw(
+        `select author_user_id, resolved_by_user_id, author_label from review_comments where id = '${root.id}'`,
+      ),
+    );
+
+    expect(rows.rows).toHaveLength(1);
+    expect(
+      (rows.rows[0] as { author_user_id: string | null }).author_user_id,
+    ).toBeNull();
+    expect(
+      (rows.rows[0] as { resolved_by_user_id: string | null })
+        .resolved_by_user_id,
+    ).toBeNull();
+    expect((rows.rows[0] as { author_label: string }).author_label).toBe(
+      "Reviewer",
+    );
+  });
+});
+
 describe("connectivity sanity", () => {
   it("select 1 works", async () => {
     const result = await db.execute(sql`select 1 as n`);
