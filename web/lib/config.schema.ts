@@ -117,6 +117,10 @@ export const restrictionCapabilitySchema = capabilityCommonSchema.extend({
   kind: z.literal("restriction").default("restriction"),
   path: z.string().min(1).optional(),
   content: z.string().min(1).optional(),
+  // M29 (ADR-073): machine-readable subset the mutation sensor can check
+  // (`diff ∩ paths`). Free-text-only restrictions (no paths) are reported
+  // `unmatchable`, never failed on. Capability config — no engine floor.
+  paths: z.array(z.string().min(1)).optional(),
 });
 
 export const settingCapabilitySchema = capabilityCommonSchema.extend({
@@ -276,6 +280,8 @@ export const flowCompatSchema = z.object({
 });
 
 // --- M12: typed artifact kinds (produces[]) — ADR-TBD --------------------
+// `mutation_report` added in M29 (ADR-073): the deterministic post-condition
+// evidence of an artifact_required gate with mutation assertions.
 export const ARTIFACT_KINDS = [
   "diff",
   "log",
@@ -287,6 +293,7 @@ export const ARTIFACT_KINDS = [
   "checkpoint",
   "preview",
   "generic_file",
+  "mutation_report",
 ] as const;
 
 // --- M11a: Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------
@@ -349,6 +356,12 @@ export const gateSchema = z
     staleFrom: z.array(z.string().min(1)).optional(),
     external: gateExternalSchema.optional(),
     calibration: gateCalibrationSchema.optional(),
+    // M29 (ADR-073): deterministic mutation assertions, valid ONLY on
+    // kind: artifact_required (superRefine below). `must_not_touch` v1 accepts
+    // only the literal "restrictions" — it reads the node's resolved M14
+    // restriction set, never an own path list.
+    must_touch: z.array(z.string().min(1)).min(1).optional(),
+    must_not_touch: z.literal("restrictions").optional(),
   })
   .superRefine((gate, ctx) => {
     if (gate.external && gate.kind !== "external_check") {
@@ -368,6 +381,38 @@ export const gateSchema = z
         code: z.ZodIssueCode.custom,
         path: ["calibration"],
         message: `\`calibration\` block is only valid on kind: ai_judgment or skill_check (got: ${gate.kind})`,
+      });
+    }
+
+    const hasMutationAssertions =
+      gate.must_touch !== undefined || gate.must_not_touch !== undefined;
+
+    if (hasMutationAssertions && gate.kind !== "artifact_required") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["must_touch"],
+        message: `\`must_touch\`/\`must_not_touch\` are only valid on kind: artifact_required (got: ${gate.kind})`,
+      });
+    }
+
+    if (gate.output?.kind === "mutation_report" && !hasMutationAssertions) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["output", "kind"],
+        message:
+          'gate output kind "mutation_report" requires must_touch or must_not_touch assertions',
+      });
+    }
+
+    if (
+      hasMutationAssertions &&
+      gate.output !== undefined &&
+      gate.output.kind !== "mutation_report"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["output", "kind"],
+        message: `a gate declaring must_touch/must_not_touch must declare output kind "mutation_report" (got: ${gate.output.kind})`,
       });
     }
   });

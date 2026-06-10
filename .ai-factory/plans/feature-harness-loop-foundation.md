@@ -596,7 +596,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
 
 ### Phase C — P3 mutation sensor (after B lands; shares the seam)
 
-- [ ] **TC.1 — Schema + floor + kind fan-out.** `config.schema.ts`: gate fields per
+- [x] **TC.1 — Schema + floor + kind fan-out.** `config.schema.ts`: gate fields per
   D-C1 (+ refine: assertions only on `artifact_required`; `gate.output.kind ===
   "mutation_report"` requires assertions present); `restrictionCapabilitySchema`
   += `paths?: string[]` (D-C2); `ARTIFACT_KINDS` += `"mutation_report"`.
@@ -617,7 +617,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   accepted at 1.3.0; assertions on non-artifact_required rejected;
   `must_not_touch: "anything-else"` rejected; restriction `paths` parses; ALL
   existing suites green (no version bump — no engine-assert migrations needed).
-- [ ] **TC.2 — Diff-range helpers + path-set engine.** Extract
+- [x] **TC.2 — Diff-range helpers + path-set engine.** Extract
   `resolveDiffRange(workspace): {base, head, evaluated}` (cumulative: merge-base vs
   main) from the produces-recording block (`runner-graph.ts:1411–1446` — diff
   portion ONLY; commit_set block stays); recording block and gates share it. Add
@@ -640,7 +640,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   git repo, existing worktree-test pattern): touched set matches actual commits;
   write-if-absent preserves the first head across a second write; existing
   diff-artifact tests green after extraction (byte-identical locators).
-- [ ] **TC.3 — Gate executor extension.** In `gates-exec.ts` `artifact_required` case
+- [x] **TC.3 — Gate executor extension.** In `gates-exec.ts` `artifact_required` case
   (:439–506): AFTER the existing inputArtifacts presence check, when
   `must_touch`/`must_not_touch` declared → ranges per D-C3 (`must_touch`:
   `readNodeStartHead(...)..HEAD`, file absent → cumulative fallback with `basis`
@@ -667,7 +667,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   PASSES `must_touch` (range spans from the node's first attempt: seed attempt-1
   commit inside the glob, re-run gate on attempt 2); start-file-absent run records
   `basis: "cumulative-fallback"`.
-- [ ] **TC.4 — Readiness assertion-awareness + UI labels.** `readiness-core.ts`
+- [x] **TC.4 — Readiness assertion-awareness + UI labels.** `readiness-core.ts`
   (:111–128): the artifact_required failed-gate re-eval returns `"failed"` (not
   `"clear"`) when the verdict carries `assertionFailed: true`, regardless of input
   presence; rework that re-runs the gate and passes clears it naturally. Confirm
@@ -682,7 +682,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   artifact_required (no assertions) keeps the existing inputs-present → clear
   behavior (regression); integration: readiness summary blocked on blocking
   mutation gate, unblocked after passing rework attempt.
-- [ ] **TC.5 — Track C suite green + collision audit.** Full unit + integration;
+- [x] **TC.5 — Track C suite green + collision audit.** Full unit + integration;
   `git diff main...HEAD --stat` audit: NO diffs in review region
   (runner-graph :167–325), `hitl-validate.ts`, review UI, outcome region (~1662)
   beyond what B/C tasks own. **Phase C exit: suites green.**

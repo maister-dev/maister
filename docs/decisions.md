@@ -4920,9 +4920,14 @@ always emitting a `mutation_report` artifact when configured.
    `{ kind: "inline", text: JSON.stringify(report) }`. Report shape:
    `{basis: "node" | "cumulative-fallback", nodeRange: {base, head},
    cumulativeRange?: {base, head}, touched: string[] (node range, truncated at
-   500 with a truncated flag), mustTouch: {globs, matched: string[]},
+   500 with a truncated flag), mustTouch: {globs, matched: string[] (truncated
+   at 500 with a matchedTruncated flag; the pass/fail decision runs on the
+   full set), matchedTruncated: boolean},
    restrictions: {checked: [{id, paths, violations: string[]}],
    unmatchable: string[]}, violations: string[], evaluated: boolean}`.
+   Touched paths are read with `core.quotePath=false` so non-ASCII paths
+   match globs verbatim (a C-quoted path would silently never match — a
+   false-negative on the `must_not_touch` direction).
    The row writes `hash` (sha256 of the locator `text`) and `size_bytes` (its
    byte length) — the first writer of those columns.
    `artifact_def_id = gate.output.id` when declared (the declared kind must

@@ -1653,6 +1653,7 @@ export const artifactInstances = pgTable(
         "checkpoint",
         "preview",
         "generic_file",
+        "mutation_report",
       ],
     }).notNull(),
     producer: text("producer", {

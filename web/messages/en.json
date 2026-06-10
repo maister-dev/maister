@@ -901,7 +901,8 @@
     "kindNodeAttempt": "Node attempt",
     "kindArtifact": "Artifact",
     "kindGate": "Gate",
-    "kindDecision": "Decision"
+    "kindDecision": "Decision",
+    "artifactKindMutationReport": "Mutation report"
   },
   "readiness": {
     "summary": "Readiness",

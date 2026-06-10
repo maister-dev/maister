@@ -901,7 +901,8 @@
     "kindNodeAttempt": "Попытка узла",
     "kindArtifact": "Артефакт",
     "kindGate": "Гейт",
-    "kindDecision": "Решение"
+    "kindDecision": "Решение",
+    "artifactKindMutationReport": "Отчёт об изменениях"
   },
   "readiness": {
     "summary": "Готовность",

@@ -135,6 +135,9 @@ export async function assertEvidenceReady(
     mode: string;
     status: GateResultStatus;
     inputArtifactRefs: string[] | null;
+    // M29 (ADR-073): blockingGateContribution reads payload.assertionFailed —
+    // an assertion-failed mutation gate must NOT self-clear on inputs-present.
+    verdict: unknown;
     createdAt: Date;
   }> = await d
     .select({
@@ -145,6 +148,7 @@ export async function assertEvidenceReady(
       mode: gateResults.mode,
       status: gateResults.status,
       inputArtifactRefs: gateResults.inputArtifactRefs,
+      verdict: gateResults.verdict,
       createdAt: gateResults.createdAt,
     })
     .from(gateResults)

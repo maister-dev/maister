@@ -97,6 +97,19 @@ export function gateStatusContribution(
   }
 }
 
+// True when a gate verdict carries the M29 mutation-assertion failure marker
+// (`payload.assertionFailed: true`, ADR-073). `verdict` is open jsonb — narrow
+// structurally so callers can pass rows typed `any`/`unknown`.
+function hasAssertionFailedVerdict(verdict: unknown): boolean {
+  if (verdict === null || typeof verdict !== "object") return false;
+
+  const payload = (verdict as { payload?: unknown }).payload;
+
+  if (payload === null || typeof payload !== "object") return false;
+
+  return (payload as { assertionFailed?: unknown }).assertionFailed === true;
+}
+
 // A blocking gate's readiness contribution, accounting for the
 // `artifact_required` failed re-evaluation: a `failed` artifact_required gate
 // whose `inputArtifactRefs` are ALL currently present (a validity="current"
@@ -108,15 +121,23 @@ export function gateStatusContribution(
 // and the board/portfolio batch classifier all call it, so a `failed`
 // artifact_required gate can never read `ready` on the merge path while showing
 // `failed` on a badge. (M15, Task 21)
+//
+// M29 exception (ADR-073, D-C7): a failed gate whose verdict carries
+// `payload.assertionFailed: true` HAS its inputs present — inputs-present is
+// no longer sufficient to clear it. It stays `failed` until a rework attempt
+// re-runs the gate and passes (the latest-attempt filter then drops this row).
 export function blockingGateContribution(
   gate: {
     kind: GateKind | string;
     status: GateResultStatus;
     inputArtifactRefs?: readonly string[] | null;
+    verdict?: unknown;
   },
   currentDefIds: ReadonlySet<string>,
 ): ReadinessContribution {
   if (gate.kind === "artifact_required" && gate.status === "failed") {
+    if (hasAssertionFailedVerdict(gate.verdict)) return "failed";
+
     const refs = gate.inputArtifactRefs ?? [];
 
     return refs.length > 0 && refs.every((r) => currentDefIds.has(r))
