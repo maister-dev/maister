@@ -96,7 +96,11 @@ parallelization plan; per-item timing tags carry the sequencing, and detail stay
 in the epic/primitive each one extends (docs R7). The theme is to keep new surface
 **flow-native and HITL-first** rather than bolt on a generic agent board.
 
-### 1. Scheduled triggers — task, flow, and agent calls *(no hard dependency)*
+### 1. Scheduled triggers — task, flow, and agent calls *(task slice shipped M28)*
+The **task-target slice shipped as M28** (`run_schedules` + the seeded
+`run_schedule.dispatcher` on the M24 tick, overlap policy × cap, trigger-now,
+board Schedules tab — see `docs/system-analytics/run-schedules.md`, ADR-071).
+Flow-target (mint a task per fire) and `agent_tick` targets remain open below.
 Builds on **P5 scheduler** (the M24 slice shipped the clock, atomic claim, and
 handler seams for all four `job_kind`s). Targets to schedule: a **task**, a
 **flow**, and **agent calls** — likely through **one polymorphic mechanism**

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This domain (**Designed, M28**) covers user-facing recurring schedules: a
+This domain (**Implemented, M28**) covers user-facing recurring schedules: a
 per-project, member-gated `run_schedules` row that launches a REAL Flow run
 for its task on a cron expression (5-field, IANA timezone) with an overlap
 policy (`skip | queue_one | start_anyway`), pause/resume, trigger-now, and
@@ -13,14 +13,14 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
 
 ## Domain entities
 
-- **Run schedule** (`run_schedules`, Designed, M28) — durable per-project
+- **Run schedule** (`run_schedules`, Implemented, M28) — durable per-project
   schedule: target task, `cron_expr` + `timezone`, `overlap_policy`,
   `enabled`, precomputed `next_fire_at`, non-stacking `queue_one_pending`
   catch-up flag, and last-fire feedback (`last_fired_at`,
   `last_fire_outcome`, `last_fire_error`, `last_run_id`). ERD:
   [`../db/scheduler-domain.md`](../db/scheduler-domain.md).
 - **Schedule dispatcher job** (`scheduler_jobs` row `run_schedule.dispatcher`,
-  Designed, M28) — the ONE seeded engine job (`job_kind = 'run_schedule'`,
+  Implemented, M28) — the ONE seeded engine job (`job_kind = 'run_schedule'`,
   60s cadence, budget 1, `max_failures` 3) whose handler claims due schedule
   rows. Disabling it on `/admin/scheduler` is the global kill switch.
 - **Fire** — one dispatch decision for one schedule row: either a launch
@@ -28,11 +28,11 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
   or a recorded skip/queue outcome. Outcome enum: `launched | queued_pending
   | catchup_queued | skipped_task_busy | skipped_cap |
   skipped_target_terminal | skipped_crashed | launch_failed | dispatching`.
-- **Launchability classifier** (`classifyTaskLaunchability`, Designed, M28) —
+- **Launchability classifier** (`classifyTaskLaunchability`, Implemented, M28) —
   shared single source of truth for "can this task launch", encoding the
   board retry rule (latest run `Failed | Abandoned` → launchable, attempt
   N+1). Used by `launchRun` itself and by the dispatcher's policy decision.
-- **Schedules tab** (project board `?tab=schedules`, Designed, M28) —
+- **Schedules tab** (project board `?tab=schedules`, Implemented, M28) —
   view for `readBoard`, mutate affordances for `manageSchedules` (member).
 
 ## State machine
@@ -156,8 +156,10 @@ catch-up.
   `start_anyway` rides the existing `Pending` queue and NEVER bypasses the
   cap.
 - `queue_one_pending` MUST be non-stacking, set only when a `queue_one` fire
-  is blocked by `busy`/cap, consumed without advancing `next_fire_at`,
-  cleared by a successful due fire, and cleared by pause.
+  is blocked by `busy`/cap, consumed without advancing `next_fire_at`, and
+  cleared by any dispatched launch intent, by a `skipped_target_terminal`
+  skip (a terminal target can never satisfy it), and by pause; a
+  `skipped_crashed` skip keeps it.
 - A refused fire (`launch_failed` or any skip) MUST record its outcome on the
   schedule row while the dispatcher job attempt records `Succeeded` — one
   schedule's failure never disables the shared dispatcher.
@@ -226,6 +228,6 @@ catch-up.
   [ADR-009](../decisions.md#adr-009-global-concurrency-cap--3).
 - Engine domain: [`scheduler.md`](scheduler.md); board retry rules:
   [`tasks.md`](tasks.md).
-- Source seams (Designed): `web/lib/run-schedules/{cron,service,queries,dispatch}.ts`,
+- Source seams: `web/lib/run-schedules/{cron,service,queries,dispatch}.ts`,
   `web/lib/runs/launchability.ts`, `web/lib/scheduler/{jobs,tick-service,budgets}.ts`,
   `web/lib/services/runs.ts`, `web/lib/scheduler.ts`.

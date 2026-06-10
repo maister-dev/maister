@@ -377,8 +377,8 @@ Current Scope, these are **Implemented** today:
 - **Observatory** (M23): read-only Autonomy Score, correction-rate, signal
   clusters. → `observatory.md`
 - **Scheduler** (M24): one polymorphic cron tick (`system_sweep | command |
-  agent_tick | flow_run`); user-facing cron-schedule UI is a next bet. →
-  `scheduler.md`
+  agent_tick | flow_run | run_schedule`); user-facing task cron schedules
+  shipped (M28) → `run-schedules.md`, `scheduler.md`
 - **Authored catalog + Flow Studio** (M25/M27): in-app create/version of
   rules/skills/flows + visual graph editor; PR-to-catalog publication is
   roadmap E3. → `flow-studio.md`

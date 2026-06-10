@@ -7,7 +7,7 @@ job lifecycle, tick route, and catch-up policy.
 > **Status: Implemented (M24).** Migration `0027_m24_scheduler_service` adds these
 > tables and indexes.
 >
-> **`run_schedules`: Designed (M28).** Migration `0038_run_schedules` adds the
+> **`run_schedules`: Implemented (M28).** Migration `0038_run_schedules` adds the
 > user-facing cron schedule table fired by the seeded `run_schedule.dispatcher`
 > job — see [`../system-analytics/run-schedules.md`](../system-analytics/run-schedules.md)
 > and [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).

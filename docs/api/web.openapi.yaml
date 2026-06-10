@@ -5121,7 +5121,7 @@ paths:
       tags: [run-schedules]
       summary: (M28) List run schedules for a project
       description: |
-        (M28 — Designed.) Requires project membership at `viewer` or above
+        (M28 — Implemented.) Requires project membership at `viewer` or above
         (`requireProjectAction("readBoard")`). Returns every `run_schedules`
         row for the project as `ScheduleDTO` — `taskTitle` and
         `lastRunStatus` are joined at read time (`tasks` + `runs` on
@@ -5153,7 +5153,7 @@ paths:
       tags: [run-schedules]
       summary: (M28) Create a run schedule
       description: |
-        (M28 — Designed.) Requires `requireProjectAction("manageSchedules")`
+        (M28 — Implemented.) Requires `requireProjectAction("manageSchedules")`
         (`member` or above). The `projectId` is resolved from the URL `slug`
         (server-state). `taskId` is a body-controlled cross-resource id and is
         compared against server state: `task.projectId === project.id`,
@@ -5216,7 +5216,7 @@ paths:
       tags: [run-schedules]
       summary: (M28) Update a run schedule (single aggregating PATCH)
       description: |
-        (M28 — Designed.) Requires `manageSchedules` (`member` or above).
+        (M28 — Implemented.) Requires `manageSchedules` (`member` or above).
         ONE aggregating transactional PATCH accepting any subset of `name`,
         `cronExpr`, `timezone`, `overlapPolicy`, `runnerId`, `enabled` —
         never a per-field route fan-out. `runnerId: null` clears the
@@ -5265,7 +5265,7 @@ paths:
       tags: [run-schedules]
       summary: (M28) Delete a run schedule
       description: |
-        (M28 — Designed.) Requires `manageSchedules` (`member` or above).
+        (M28 — Implemented.) Requires `manageSchedules` (`member` or above).
         Hard delete of the schedule row; runs it launched are untouched.
       operationId: deleteProjectSchedule
       parameters:
@@ -5288,7 +5288,7 @@ paths:
       tags: [run-schedules]
       summary: (M28) Trigger a run schedule now
       description: |
-        (M28 — Designed.) Requires `manageSchedules` (`member` or above). No
+        (M28 — Implemented.) Requires `manageSchedules` (`member` or above). No
         request body. Dispatches the schedule immediately through the SAME
         claim+fire core as the tick (`dispatchScheduleNow`): respects the
         overlap policy and the global cap (no bypass), does NOT advance

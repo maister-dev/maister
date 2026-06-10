@@ -762,7 +762,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
   - Verify: `pnpm test:integration` green; suite listed by the integration
     runner (`vitest list` spot-check — runnability rule).
 
-- [ ] **T5.2 — Playwright happy path** (depends: T4.3)
+- [x] **T5.2 — Playwright happy path** (depends: T4.3)
   - Deliverable: `web/e2e/run-schedules.spec.ts` on the stub-supervisor
     harness + seeded project/task: member creates a schedule (cron+tz+policy)
     via the modal → row shows with next fire time in its tz; pause/resume
@@ -771,7 +771,7 @@ the repo). Pre-existing reds, if any surface, get an explicit quarantine note
     gotcha).
   - Verify: `pnpm test:e2e` green locally.
 
-- [ ] **T5.3 — As-built docs flip + roadmap** (depends: T5.1, T5.2)
+- [x] **T5.3 — As-built docs flip + roadmap** (depends: T5.1, T5.2)
   - Deliverable: flip `(Designed)` → `(Implemented, M28)` across
     run-schedules.md / scheduler.md / ERD / OpenAPI annotations; root
     `CLAUDE.md` M24 bullet updated ("user-facing cron-schedule UI" shipped →
