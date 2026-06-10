@@ -320,7 +320,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`).
+      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` is deliberately NOT creatable here — the singleton `run_schedule.dispatcher` is seeded by the tick (M28, ADR-071); the kind is rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -3680,7 +3680,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [system_sweep, command, agent_tick, flow_run]
+            enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
       responses:
         "200":
           description: Tick completed with no failed or skipped attempts.
@@ -3708,7 +3708,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [system_sweep, command, agent_tick, flow_run]
+            enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
       responses:
         "200":
           description: Tick completed with no failed or skipped attempts.
@@ -5116,6 +5116,239 @@ paths:
         "409": { $ref: "#/components/responses/Precondition" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/projects/{slug}/schedules:
+    get:
+      tags: [run-schedules]
+      summary: (M28) List run schedules for a project
+      description: |
+        (M28 — Designed.) Requires project membership at `viewer` or above
+        (`requireProjectAction("readBoard")`). Returns every `run_schedules`
+        row for the project as `ScheduleDTO` — `taskTitle` and
+        `lastRunStatus` are joined at read time (`tasks` + `runs` on
+        `last_run_id`), never denormalized.
+
+        Source: `web/app/api/projects/[slug]/schedules/route.ts` (Designed).
+      operationId: getProjectSchedules
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Run schedules for the project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schedules]
+                properties:
+                  schedules:
+                    type: array
+                    items: { $ref: "#/components/schemas/ScheduleDTO" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Precondition" }
+    post:
+      tags: [run-schedules]
+      summary: (M28) Create a run schedule
+      description: |
+        (M28 — Designed.) Requires `requireProjectAction("manageSchedules")`
+        (`member` or above). The `projectId` is resolved from the URL `slug`
+        (server-state). `taskId` is a body-controlled cross-resource id and is
+        compared against server state: `task.projectId === project.id`,
+        otherwise `409 PRECONDITION`. A task with `status = 'Abandoned'` is
+        refused (`409 PRECONDITION`). `runnerId`, when given, must exist in
+        `platform_acp_runners` (`400 CONFIG`). `cronExpr` must be a 5-field
+        cron expression and `timezone` a valid IANA name, validated through
+        the croner wrapper (`400 CONFIG`). `next_fire_at` is precomputed from
+        now in the schedule's timezone.
+      operationId: postProjectSchedule
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostScheduleBody" }
+            examples:
+              nightly:
+                summary: Nightly relaunch of a maintenance task
+                value:
+                  name: "Nightly dependency audit"
+                  taskId: "task-uuid-here"
+                  cronExpr: "0 3 * * *"
+                  timezone: "Europe/Moscow"
+                  overlapPolicy: skip
+      responses:
+        "201":
+          description: Run schedule created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schedule]
+                properties:
+                  schedule: { $ref: "#/components/schemas/ScheduleDTO" }
+        "400":
+          description: |
+            Bad request (`CONFIG`): malformed body, invalid or non-5-field
+            `cronExpr`, never-matching expression, unknown IANA `timezone`,
+            or unknown `runnerId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Precondition failed (`PRECONDITION`): project not found or
+            archived, `taskId` not part of this project, or target task is
+            `Abandoned`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/schedules/{scheduleId}:
+    patch:
+      tags: [run-schedules]
+      summary: (M28) Update a run schedule (single aggregating PATCH)
+      description: |
+        (M28 — Designed.) Requires `manageSchedules` (`member` or above).
+        ONE aggregating transactional PATCH accepting any subset of `name`,
+        `cronExpr`, `timezone`, `overlapPolicy`, `runnerId`, `enabled` —
+        never a per-field route fan-out. `runnerId: null` clears the
+        override. Changing `cronExpr`/`timezone` or resuming
+        (`enabled: true`) recomputes `next_fire_at` from now. Pausing
+        (`enabled: false`) clears `queue_one_pending` and `queued_fire_at`.
+        An empty body is `400 CONFIG`. A schedule belonging to a different
+        project than `slug` is a bare `404`.
+      operationId: patchProjectSchedule
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: scheduleId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchScheduleBody" }
+      responses:
+        "200":
+          description: Run schedule updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schedule]
+                properties:
+                  schedule: { $ref: "#/components/schemas/ScheduleDTO" }
+        "400":
+          description: |
+            Bad request (`CONFIG`): empty body, invalid `cronExpr` /
+            `timezone`, or unknown `runnerId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+    delete:
+      tags: [run-schedules]
+      summary: (M28) Delete a run schedule
+      description: |
+        (M28 — Designed.) Requires `manageSchedules` (`member` or above).
+        Hard delete of the schedule row; runs it launched are untouched.
+      operationId: deleteProjectSchedule
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: scheduleId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+  /api/projects/{slug}/schedules/{scheduleId}/trigger:
+    post:
+      tags: [run-schedules]
+      summary: (M28) Trigger a run schedule now
+      description: |
+        (M28 — Designed.) Requires `manageSchedules` (`member` or above). No
+        request body. Dispatches the schedule immediately through the SAME
+        claim+fire core as the tick (`dispatchScheduleNow`): respects the
+        overlap policy and the global cap (no bypass), does NOT advance
+        `next_fire_at`, and is allowed on a paused schedule. The actor is the
+        clicking user's id.
+
+        A row currently being dispatched — row-locked, or
+        `last_fire_outcome = 'dispatching'` fresher than the 300s scheduler
+        attempt timeout — returns `409 CONFLICT`; an OLDER `dispatching`
+        remnant (crash window W1) is past the window and may be triggered.
+
+        A refused launch is NOT an HTTP error: the dispatch itself succeeded
+        and recorded the outcome, so the response is `200` with
+        `outcome: launch_failed` and the `MaisterError` code in `errorCode`
+        (including `EXECUTOR_UNAVAILABLE` when the supervisor is down inside
+        `launchRun`).
+      operationId: triggerProjectSchedule
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: scheduleId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Dispatch decided; outcome reported for the UI toast.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerScheduleResponse" }
+              examples:
+                launched:
+                  summary: Run launched
+                  value: { outcome: launched, runId: "run-uuid" }
+                queued:
+                  summary: Cap full with start_anyway — run queued Pending
+                  value:
+                    {
+                      outcome: queued_pending,
+                      runId: "run-uuid",
+                      queuePosition: 2,
+                    }
+                refused:
+                  summary: launchRun refused (dirty parent repo)
+                  value: { outcome: launch_failed, errorCode: PRECONDITION }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Dispatch in progress (`CONFLICT`): the row is claimed by a
+            concurrent tick/trigger or `last_fire_outcome = 'dispatching'`
+            is fresher than the 300s attempt timeout. Project not
+            found/archived is `PRECONDITION`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
 components:
   securitySchemes:
     cronToken:
@@ -5555,7 +5788,7 @@ components:
         jobKind:
           type: string
           nullable: true
-          enum: [system_sweep, command, agent_tick, flow_run]
+          enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
         attempts:
           type: array
           items:
@@ -5566,7 +5799,7 @@ components:
               attemptId: { type: string, nullable: true }
               jobKind:
                 type: string
-                enum: [system_sweep, command, agent_tick, flow_run]
+                enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
               status:
                 type: string
                 enum: [Claimed, Running, Succeeded, Failed, Skipped]
@@ -5580,6 +5813,164 @@ components:
                 type: string
                 format: date-time
                 nullable: true
+    ScheduleOverlapPolicy:
+      type: string
+      enum: [skip, queue_one, start_anyway]
+      description: |
+        (M28) What a fire does when blocked. `skip` records the skip and
+        waits for the next slot; `queue_one` flags a single non-stacking
+        catch-up consumed by the next unblocked tick; `start_anyway`
+        overrides only the CAP dimension (the run queues `Pending`) — a
+        second concurrent run per task is structurally impossible.
+    ScheduleFireOutcome:
+      type: string
+      enum:
+        - launched
+        - queued_pending
+        - catchup_queued
+        - skipped_task_busy
+        - skipped_cap
+        - skipped_target_terminal
+        - skipped_crashed
+        - launch_failed
+        - dispatching
+      description: |
+        (M28) Dispatch decision recorded on the schedule row.
+        `dispatching` is the durable in-flight intent marker written before
+        `launchRun` (two-phase fire pipeline, ADR-071).
+    ScheduleDTO:
+      type: object
+      required:
+        - id
+        - name
+        - taskId
+        - taskTitle
+        - cronExpr
+        - timezone
+        - overlapPolicy
+        - runnerId
+        - enabled
+        - nextFireAt
+        - queueOnePending
+        - queuedFireAt
+        - lastFiredAt
+        - lastFireOutcome
+        - lastFireError
+        - lastRunId
+        - lastRunStatus
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        taskId: { type: string }
+        taskTitle:
+          type: string
+          description: Joined from `tasks` at read time.
+        cronExpr: { type: string }
+        timezone: { type: string }
+        overlapPolicy: { $ref: "#/components/schemas/ScheduleOverlapPolicy" }
+        runnerId: { type: string, nullable: true }
+        enabled: { type: boolean }
+        nextFireAt: { type: string, format: date-time }
+        queueOnePending: { type: boolean }
+        queuedFireAt: { type: string, format: date-time, nullable: true }
+        lastFiredAt: { type: string, format: date-time, nullable: true }
+        lastFireOutcome:
+          type: string
+          nullable: true
+          enum:
+            - launched
+            - queued_pending
+            - catchup_queued
+            - skipped_task_busy
+            - skipped_cap
+            - skipped_target_terminal
+            - skipped_crashed
+            - launch_failed
+            - dispatching
+            - null
+        lastFireError:
+          type: string
+          nullable: true
+          description: "Bounded `CODE: message` from a `launch_failed` fire (≤500 chars)."
+        lastRunId: { type: string, nullable: true }
+        lastRunStatus:
+          type: string
+          nullable: true
+          enum:
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              Review,
+              Done,
+              Abandoned,
+              Crashed,
+              Failed,
+              null,
+            ]
+          description: Joined live from `runs` on `last_run_id` at read time.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PostScheduleBody:
+      type: object
+      additionalProperties: false
+      required: [name, taskId, cronExpr, timezone]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        taskId: { type: string, minLength: 1 }
+        cronExpr:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 5-field cron expression (no seconds field, no `@nicknames`).
+        timezone:
+          type: string
+          minLength: 1
+          description: IANA timezone name (e.g. `Europe/Moscow`).
+        overlapPolicy:
+          $ref: "#/components/schemas/ScheduleOverlapPolicy"
+        runnerId:
+          type: string
+          nullable: true
+          description: Optional `platform_acp_runners` launch override.
+        enabled: { type: boolean, default: true }
+    PatchScheduleBody:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        cronExpr: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { type: string, minLength: 1 }
+        overlapPolicy:
+          $ref: "#/components/schemas/ScheduleOverlapPolicy"
+        runnerId:
+          type: string
+          nullable: true
+          description: "`null` clears the override (SET/CLEAR/RE-SET symmetry)."
+        enabled: { type: boolean }
+    TriggerScheduleResponse:
+      type: object
+      required: [outcome]
+      properties:
+        outcome: { $ref: "#/components/schemas/ScheduleFireOutcome" }
+        runId:
+          type: string
+          nullable: true
+          description: Present when the dispatch launched (or queued) a run.
+        queuePosition:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Present when the run landed `Pending` above the cap.
+        errorCode:
+          type: string
+          nullable: true
+          description: "`MaisterError` code recorded for a `launch_failed` outcome."
     AuthoredCapabilityKind:
       type: string
       enum: [rule, skill, flow]
