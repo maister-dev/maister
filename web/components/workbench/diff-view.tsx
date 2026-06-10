@@ -289,65 +289,72 @@ export function DiffView({
   );
 
   // Spread onto GitDiffView only in review mode so the review-off render
-  // stays byte-identical to the pre-review component.
-  const reviewDiffProps: Partial<
-    Pick<
-      GitDiffViewProps<ReviewThread[]>,
-      | "extendData"
-      | "renderExtendLine"
-      | "diffViewAddWidget"
-      | "onAddWidgetClick"
-      | "renderWidgetLine"
+  // stays byte-identical to the pre-review component. Memoized so the
+  // renderExtendLine / renderWidgetLine closures keep a stable identity across
+  // re-renders that don't change the review payload or the active file.
+  const reviewDiffProps = useMemo<
+    Partial<
+      Pick<
+        GitDiffViewProps<ReviewThread[]>,
+        | "extendData"
+        | "renderExtendLine"
+        | "diffViewAddWidget"
+        | "onAddWidgetClick"
+        | "renderWidgetLine"
+      >
     >
-  > =
-    review && reviewExtendData
-      ? {
-          extendData: reviewExtendData,
-          renderExtendLine: ({ data }) => (
-            <ReviewThreadStack
-              actions={review}
-              busy={review.busy}
-              canComment={review.canComment}
-              currentUserId={review.currentUserId}
-              labels={review.labels}
-              threads={data}
-            />
-          ),
-          ...(review.canComment && activePath !== null
-            ? {
-                diffViewAddWidget: true,
-                // The composer anchor arrives via renderWidgetLine args and
-                // the lib opens/closes the widget internally — the click
-                // notification needs no extra state here.
-                onAddWidgetClick: () => undefined,
-                renderWidgetLine: ({ side, lineNumber, onClose }) => (
-                  <div className="p-2" data-testid="review-widget">
-                    <ReviewCommentComposer
-                      busy={review.busy}
-                      labels={{
-                        placeholder: review.labels.composerPlaceholder,
-                        submit: review.labels.composerSubmit,
-                        cancel: review.labels.composerCancel,
-                      }}
-                      onCancel={onClose}
-                      onSubmit={async (body) => {
-                        await review.onCreateRoot(
-                          {
-                            filePath: activePath,
-                            side: anchorSideOf(side),
-                            line: lineNumber,
-                          },
-                          body,
-                        );
-                        onClose();
-                      }}
-                    />
-                  </div>
-                ),
-              }
-            : {}),
-        }
-      : {};
+  >(
+    () =>
+      review && reviewExtendData
+        ? {
+            extendData: reviewExtendData,
+            renderExtendLine: ({ data }) => (
+              <ReviewThreadStack
+                actions={review}
+                busy={review.busy}
+                canComment={review.canComment}
+                currentUserId={review.currentUserId}
+                labels={review.labels}
+                threads={data}
+              />
+            ),
+            ...(review.canComment && activePath !== null
+              ? {
+                  diffViewAddWidget: true,
+                  // The composer anchor arrives via renderWidgetLine args and
+                  // the lib opens/closes the widget internally — the click
+                  // notification needs no extra state here.
+                  onAddWidgetClick: () => undefined,
+                  renderWidgetLine: ({ side, lineNumber, onClose }) => (
+                    <div className="p-2" data-testid="review-widget">
+                      <ReviewCommentComposer
+                        busy={review.busy}
+                        labels={{
+                          placeholder: review.labels.composerPlaceholder,
+                          submit: review.labels.composerSubmit,
+                          cancel: review.labels.composerCancel,
+                        }}
+                        onCancel={onClose}
+                        onSubmit={async (body) => {
+                          await review.onCreateRoot(
+                            {
+                              filePath: activePath,
+                              side: anchorSideOf(side),
+                              line: lineNumber,
+                            },
+                            body,
+                          );
+                          onClose();
+                        }}
+                      />
+                    </div>
+                  ),
+                }
+              : {}),
+          }
+        : {},
+    [review, reviewExtendData, activePath],
+  );
 
   return (
     <div className="flex flex-col gap-2" data-testid="diff-view-wrap">

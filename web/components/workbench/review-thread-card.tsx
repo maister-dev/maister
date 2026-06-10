@@ -2,7 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import { ReviewCommentComposer } from "@/components/workbench/review-comment-composer";
 
@@ -442,6 +442,11 @@ export function ReviewThreadCard({
   );
 }
 
+// Memoized variant rendered by the inline stack + outdated list. The plain
+// `ReviewThreadCard` export stays a function so test `Parameters<typeof>` type
+// extraction keeps working; props are stable once the owner memoizes `review`.
+export const ReviewThreadCardMemo = memo(ReviewThreadCard);
+
 export interface ReviewThreadStackProps {
   threads: ReviewThread[];
   currentUserId: string | null;
@@ -470,7 +475,7 @@ export function ReviewThreadStack({
       data-testid="review-inline-threads"
     >
       {threads.map((thread) => (
-        <ReviewThreadCard
+        <ReviewThreadCardMemo
           key={`${thread.root.id}:${thread.root.status}`}
           actions={actions}
           busy={busy}

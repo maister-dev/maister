@@ -2,7 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -358,6 +358,20 @@ export default function RunDiff({
     [runId, router],
   );
 
+  // Memoized so the DiffViewReview object (and its onReply / onEdit /
+  // onSetStatus / onDelete / onCreateRoot closures) keeps a stable identity
+  // across renders that don't change the threads, busy flag, or mutate handle.
+  const diffReview = useMemo(
+    () =>
+      buildDiffViewReview({
+        context: review,
+        threads,
+        busy: reviewBusy,
+        mutate,
+      }),
+    [review, threads, reviewBusy, mutate],
+  );
+
   if (state.kind === "loading") {
     return (
       <p
@@ -380,13 +394,6 @@ export default function RunDiff({
       </p>
     );
   }
-
-  const diffReview = buildDiffViewReview({
-    context: review,
-    threads,
-    busy: reviewBusy,
-    mutate,
-  });
 
   return (
     <div data-testid="run-diff">

@@ -3,7 +3,7 @@
 import type { ReactElement } from "react";
 
 import {
-  ReviewThreadCard,
+  ReviewThreadCardMemo,
   type ReviewCommentsLabels,
   type ReviewThread,
   type ReviewThreadActions,
@@ -65,7 +65,7 @@ export function OutdatedThreadsSection({
                 {thread.root.lineContent}
               </blockquote>
             ) : null}
-            <ReviewThreadCard
+            <ReviewThreadCardMemo
               actions={actions}
               busy={busy}
               canComment={canComment}
