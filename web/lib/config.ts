@@ -585,6 +585,22 @@ function declaresOutputResult(nodes: NodeDef[]): boolean {
   return false;
 }
 
+// Returns true when any gate declares M29 mutation features (must_touch /
+// must_not_touch assertions or a mutation_report output kind). Shares the
+// OUTPUT_ENGINE_MIN floor — D-C6/ADR-074: no version bump, broader trigger.
+function declaresMutationAssertions(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    for (const g of n.pre_finish?.gates ?? []) {
+      if (g.must_touch !== undefined || g.must_not_touch !== undefined) {
+        return true;
+      }
+      if (g.output?.kind === "mutation_report") return true;
+    }
+  }
+
+  return false;
+}
+
 // Cross-reference + cycle + engine validation for a graph (`nodes[]`) manifest
 // (ADR-026). zod has already validated node/gate shape; this enforces the
 // graph-level invariants that zod cannot express.
@@ -624,6 +640,19 @@ export function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // Engine gate widened for M29 (ADR-074, D-C6 — NO version bump): mutation
+  // assertions / mutation_report gate outputs reuse the SAME 1.3.0 floor.
+  // Manifests without them stay valid at any engine_min.
+  if (
+    declaresMutationAssertions(nodes) &&
+    !semverGte(engineMin, OUTPUT_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring mutation assertions (must_touch/must_not_touch or a mutation_report gate output) but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 

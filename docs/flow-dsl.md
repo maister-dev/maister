@@ -418,6 +418,63 @@ status:
 
 The block is meaningful only for `kind: external_check`. Placing it on any other gate kind is a manifest validation error (`CONFIG`).
 
+### `gates[].must_touch` / `gates[].must_not_touch` mutation assertions (M29 — Implemented)
+
+> **Status (M29 — Implemented).** Deterministic post-condition assertions over the
+> run worktree's git diff, valid ONLY on `kind: artifact_required` gates.
+> Rationale, range semantics, and the `mutation_report` shape are normative in
+> [ADR-074](decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)
+> — not restated here.
+
+```yaml
+- id: impl-mutation
+  kind: artifact_required
+  mode: blocking
+  inputArtifacts: [implementation-diff]
+  must_touch: ["src/**", "web/lib/**"] # ≥1 glob; fail when the node's diff touches NONE
+  must_not_touch: restrictions # v1: the only legal value
+  output:
+    id: impl-mutation-report
+    kind: mutation_report # declared output kind MUST be mutation_report
+```
+
+| field            | type                     | meaning                                                                                                                                                                                                                       |
+| ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `must_touch?`    | `string[]` (min 1 glob)  | The gate FAILS when the **node-scoped** diff range (since this node's first attempt started; cumulative fallback when no start capture exists) touches NONE of the globs. Matched with `picomatch`, `dot: true`, repo-relative POSIX paths. |
+| `must_not_touch?`| `"restrictions"` literal | The gate FAILS when the **cumulative** branch diff (merge-base vs main → HEAD) touches any `paths` entry of the node's resolved M14 restriction set. Restrictions without `paths` are reported `unmatchable`, never failed on. |
+
+Both assertions evaluate under the gate's existing `mode`
+(`blocking | advisory`). Declaring either field on any other gate kind is a
+manifest validation error (`CONFIG`). When assertions are configured the gate
+ALWAYS records a `mutation_report` artifact (pass AND fail; see
+[`system-analytics/artifacts.md`](system-analytics/artifacts.md)). When git is
+unavailable at gate time a blocking gate FAILS (a sensor that cannot sense must
+not pass); an advisory gate records `evaluated: false`.
+
+**Restriction `paths` (capability config, M29 — Implemented).** A `restriction`
+capability gains an optional machine-readable subset:
+
+```yaml
+kind: restriction
+id: no-engine-edits
+content: "Do not modify the flow engine or generated migrations."
+paths: # optional; the subset the mutation sensor can check
+  - "web/lib/flows/graph/**"
+  - "web/lib/db/migrations/**"
+```
+
+The same record feeds M14 instruction materialization AND this sensor (single
+source of truth; ADR-041 strict enforcement reads the same field later).
+`paths` is capability config, not graph-manifest surface — additive, no engine
+floor.
+
+**Engine gate — no bump.** `MAISTER_ENGINE_VERSION` stays `1.3.0`. The existing
+`compat.engine_min >= 1.3.0` manifest check (introduced for `output.result`,
+M26) is **widened**: a manifest declaring `must_touch`/`must_not_touch` OR a
+gate `output.kind: mutation_report` is rejected with `MaisterError("CONFIG")`
+unless `compat.engine_min >= 1.3.0`. Flows using neither feature stay valid at
+any `engine_min`.
+
 Every gate has `mode: blocking | advisory`, optional input artifacts, an
 optional produced artifact, stale-from dependencies, and a status:
 `pending | running | passed | failed | stale | skipped | overridden`. A
@@ -507,9 +564,9 @@ benchmark datasets, rich preview sandboxing, cross-run artifact reuse, full
 payload-schema validation for every artifact kind, provider-specific CI apps,
 and CI ingestion beyond the generic external gate report contract.
 
-## M26: structured node output channel (`output.result`) (Designed)
+## M26: structured node output channel (`output.result`) (P1 Implemented)
 
-> **Status (M26 — Designed).** Opt-in schema-validated structured output for
+> **Status (M26 — P1 Implemented; the run-context file (P7) stays Designed).** Opt-in schema-validated structured output for
 > every graph node type, folded into the existing `node_attempts.vars` channel.
 > Decision: [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7);
 > frozen SSOT:

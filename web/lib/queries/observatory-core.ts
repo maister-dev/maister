@@ -71,6 +71,143 @@ export interface ArtifactContribution {
   runIds: string[];
 }
 
+// ADR-073 honest-N display threshold: groups with fewer terminal executions
+// render "—", never 0%.
+export const MIN_GROUP_EXECUTIONS = 3;
+
+export const GATE_TERMINAL_STATUSES = [
+  "passed",
+  "failed",
+  "stale",
+  "skipped",
+  "overridden",
+] as const;
+
+export interface HarnessGateInput {
+  projectId: string;
+  flowId: string;
+  flowRefId: string;
+  nodeId: string;
+  nodeAttemptId: string;
+  gateId: string;
+  kind: string;
+  mode: string;
+  status: string;
+}
+
+interface GateStatusCounts {
+  executions: number;
+  passed: number;
+  failed: number;
+  stale: number;
+  skipped: number;
+  overridden: number;
+  failRate: number | null;
+}
+
+export interface GateFiringStat extends GateStatusCounts {
+  projectId: string;
+  flowId: string;
+  flowRefId: string;
+  nodeId: string;
+  gateId: string;
+  kind: string;
+  mode: string;
+}
+
+export interface GateKindFiringStat extends GateStatusCounts {
+  kind: string;
+}
+
+export interface GateFiringRollup {
+  groups: GateFiringStat[];
+  byKind: GateKindFiringStat[];
+}
+
+export interface DeclaredGateInput {
+  flowId: string;
+  flowRefId: string;
+  nodeId: string;
+  gateId: string;
+  kind: string;
+  mode: string;
+}
+
+export interface NeverFiredFlag {
+  flowId: string;
+  flowRefId: string;
+  nodeId: string;
+  gateId: string;
+  kind: string;
+  executions: number;
+}
+
+export interface GateEffectiveness {
+  flowId: string;
+  flowRefId: string;
+  nodeId: string;
+  gateId: string;
+  kind: string;
+  failedAttempts: number;
+  failedFollowedByRework: number;
+  passedAttempts: number;
+  passedFollowedByRework: number;
+  reworkRateAfterFail: number | null;
+  reworkRateAfterPass: number | null;
+  lift: number | null;
+}
+
+export interface CapabilityRunInput extends ObservatoryRunInput {
+  capabilities: readonly { refId: string; kind: string }[] | null;
+}
+
+export interface CapabilityEffectiveness {
+  refId: string;
+  capabilityKind: string;
+  withCapability: CorrectionMetric;
+  withoutCapability: CorrectionMetric;
+}
+
+export interface ManifestNodeInput {
+  nodeId: string;
+  gates: readonly { gateId: string; kind: string; mode: string }[];
+  guideCount: number;
+}
+
+export interface FlowManifestInput {
+  flowId: string;
+  flowRefId: string;
+  revisionId: string;
+  nodes: readonly ManifestNodeInput[];
+}
+
+export interface CoverageNode {
+  nodeId: string;
+  gateCount: number;
+  blockingGateCount: number;
+  advisoryGateCount: number;
+  guideCount: number;
+  guidesWithoutSensors: boolean;
+  executions: number;
+}
+
+export interface CoverageFlow {
+  flowId: string;
+  flowRefId: string;
+  revisionCount: number;
+  nodes: CoverageNode[];
+}
+
+export interface ObservatoryHarness {
+  firing: GateFiringRollup;
+  neverFired: NeverFiredFlag[];
+  effectiveness: {
+    gates: GateEffectiveness[];
+    capabilities: CapabilityEffectiveness[];
+  };
+  coverage: CoverageFlow[];
+}
+
 type Interval = {
   startMs: number;
   endMs: number;
@@ -188,6 +325,408 @@ export function groupArtifactContributions(
       runIds: uniqueSorted(rows.map((row) => row.runId)),
     }))
     .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+export function rollupGateFiringStats(
+  gates: readonly HarnessGateInput[],
+): GateFiringRollup {
+  const groups = [
+    ...groupBy(
+      gates,
+      (gate) =>
+        `${gate.projectId}::${gate.flowId}::${gate.nodeId}::${gate.gateId}`,
+    ).values(),
+  ]
+    .flatMap((rows) => {
+      const first = rows[0];
+
+      if (!first) return [];
+
+      return [
+        {
+          projectId: first.projectId,
+          flowId: first.flowId,
+          flowRefId: first.flowRefId,
+          nodeId: first.nodeId,
+          gateId: first.gateId,
+          kind: first.kind,
+          mode: first.mode,
+          ...countTerminalStatuses(rows),
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        left.flowRefId.localeCompare(right.flowRefId) ||
+        left.nodeId.localeCompare(right.nodeId) ||
+        left.gateId.localeCompare(right.gateId) ||
+        left.projectId.localeCompare(right.projectId),
+    );
+  const byKind = [...groupBy(gates, (gate) => gate.kind).entries()]
+    .map(([kind, rows]) => ({ kind, ...countTerminalStatuses(rows) }))
+    .sort((left, right) => left.kind.localeCompare(right.kind));
+
+  return { groups, byKind };
+}
+
+export function detectNeverFired(input: {
+  declaredGates: readonly DeclaredGateInput[];
+  firingStats: readonly GateFiringStat[];
+  minExecutions: number;
+}): NeverFiredFlag[] {
+  const statsByGate = groupBy(
+    input.firingStats,
+    (stat) => `${stat.flowId}::${stat.nodeId}::${stat.gateId}`,
+  );
+  const declared = new Map<string, DeclaredGateInput>();
+
+  for (const gate of input.declaredGates) {
+    const key = `${gate.flowId}::${gate.nodeId}::${gate.gateId}`;
+
+    if (!declared.has(key)) declared.set(key, gate);
+  }
+
+  return [...declared.entries()]
+    .flatMap(([key, gate]) => {
+      const stats = statsByGate.get(key) ?? [];
+      const executions = stats.reduce((sum, stat) => sum + stat.executions, 0);
+      const fired = stats.reduce(
+        (sum, stat) => sum + stat.failed + stat.stale,
+        0,
+      );
+
+      if (executions < input.minExecutions || fired > 0) return [];
+
+      return [
+        {
+          flowId: gate.flowId,
+          flowRefId: gate.flowRefId,
+          nodeId: gate.nodeId,
+          gateId: gate.gateId,
+          kind: gate.kind,
+          executions,
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        left.flowRefId.localeCompare(right.flowRefId) ||
+        left.nodeId.localeCompare(right.nodeId) ||
+        left.gateId.localeCompare(right.gateId),
+    );
+}
+
+export function rollupControlEffectiveness(input: {
+  gates: readonly HarnessGateInput[];
+  attempts: readonly ObservatoryNodeAttemptInput[];
+}): GateEffectiveness[] {
+  const attemptById = new Map(
+    input.attempts.map((attempt) => [attempt.id, attempt]),
+  );
+  const maxAttemptByRunNode = new Map<string, number>();
+
+  for (const attempt of input.attempts) {
+    const key = `${attempt.runId}::${attempt.nodeId}`;
+
+    maxAttemptByRunNode.set(
+      key,
+      Math.max(maxAttemptByRunNode.get(key) ?? 0, attempt.attempt),
+    );
+  }
+
+  const verdictGates = input.gates.filter(
+    (gate) => gate.status === "failed" || gate.status === "passed",
+  );
+
+  return [
+    ...groupBy(
+      verdictGates,
+      (gate) =>
+        `${gate.projectId}::${gate.flowId}::${gate.nodeId}::${gate.gateId}`,
+    ).values(),
+  ]
+    .flatMap((rows) => {
+      const first = rows[0];
+
+      if (!first) return [];
+
+      let failedAttempts = 0;
+      let failedFollowedByRework = 0;
+      let passedAttempts = 0;
+      let passedFollowedByRework = 0;
+
+      for (const row of rows) {
+        const attempt = attemptById.get(row.nodeAttemptId);
+
+        if (!attempt) continue;
+
+        const reworkFollowed =
+          attempt.status === "Reworked" ||
+          (maxAttemptByRunNode.get(`${attempt.runId}::${attempt.nodeId}`) ??
+            attempt.attempt) > attempt.attempt;
+
+        if (row.status === "failed") {
+          failedAttempts += 1;
+          if (reworkFollowed) failedFollowedByRework += 1;
+        } else {
+          passedAttempts += 1;
+          if (reworkFollowed) passedFollowedByRework += 1;
+        }
+      }
+
+      const reworkRateAfterFail =
+        failedAttempts === 0 ? null : failedFollowedByRework / failedAttempts;
+      const reworkRateAfterPass =
+        passedAttempts === 0 ? null : passedFollowedByRework / passedAttempts;
+      const lift =
+        reworkRateAfterFail === null ||
+        reworkRateAfterPass === null ||
+        reworkRateAfterPass === 0
+          ? null
+          : reworkRateAfterFail / reworkRateAfterPass;
+
+      return [
+        {
+          flowId: first.flowId,
+          flowRefId: first.flowRefId,
+          nodeId: first.nodeId,
+          gateId: first.gateId,
+          kind: first.kind,
+          failedAttempts,
+          failedFollowedByRework,
+          passedAttempts,
+          passedFollowedByRework,
+          reworkRateAfterFail,
+          reworkRateAfterPass,
+          lift,
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        left.flowRefId.localeCompare(right.flowRefId) ||
+        left.nodeId.localeCompare(right.nodeId) ||
+        left.gateId.localeCompare(right.gateId),
+    );
+}
+
+export function rollupCapabilityEffectiveness(input: {
+  runs: readonly CapabilityRunInput[];
+  attempts: readonly ObservatoryNodeAttemptInput[];
+}): CapabilityEffectiveness[] {
+  const resolvedRuns = input.runs.filter((run) => run.capabilities !== null);
+  const attemptsByRun = groupBy(input.attempts, (attempt) => attempt.runId);
+  const kindByRefId = new Map<string, string>();
+  const refIdsByRun = new Map<string, Set<string>>();
+
+  for (const run of resolvedRuns) {
+    const refIds = new Set<string>();
+
+    for (const capability of run.capabilities ?? []) {
+      refIds.add(capability.refId);
+      if (!kindByRefId.has(capability.refId)) {
+        kindByRefId.set(capability.refId, capability.kind);
+      }
+    }
+
+    refIdsByRun.set(run.id, refIds);
+  }
+
+  return [...kindByRefId.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([refId, capabilityKind]) => {
+      const withRuns = resolvedRuns.filter((run) =>
+        refIdsByRun.get(run.id)?.has(refId),
+      );
+      const withoutRuns = resolvedRuns.filter(
+        (run) => !refIdsByRun.get(run.id)?.has(refId),
+      );
+
+      return {
+        refId,
+        capabilityKind,
+        withCapability: rollupCorrectionMetrics({
+          runs: withRuns,
+          nodeAttempts: withRuns.flatMap(
+            (run) => attemptsByRun.get(run.id) ?? [],
+          ),
+        }),
+        withoutCapability: rollupCorrectionMetrics({
+          runs: withoutRuns,
+          nodeAttempts: withoutRuns.flatMap(
+            (run) => attemptsByRun.get(run.id) ?? [],
+          ),
+        }),
+      };
+    });
+}
+
+export function declaredGatesFromManifests(
+  manifests: readonly FlowManifestInput[],
+): DeclaredGateInput[] {
+  const declared = new Map<string, DeclaredGateInput>();
+
+  for (const manifest of manifests) {
+    for (const node of manifest.nodes) {
+      for (const gate of node.gates) {
+        const key = `${manifest.flowId}::${node.nodeId}::${gate.gateId}`;
+
+        if (declared.has(key)) continue;
+
+        declared.set(key, {
+          flowId: manifest.flowId,
+          flowRefId: manifest.flowRefId,
+          nodeId: node.nodeId,
+          gateId: gate.gateId,
+          kind: gate.kind,
+          mode: gate.mode,
+        });
+      }
+    }
+  }
+
+  return [...declared.values()].sort(
+    (left, right) =>
+      left.flowRefId.localeCompare(right.flowRefId) ||
+      left.nodeId.localeCompare(right.nodeId) ||
+      left.gateId.localeCompare(right.gateId),
+  );
+}
+
+export function flowNodeKey(flowId: string, nodeId: string): string {
+  return `${flowId}::${nodeId}`;
+}
+
+export function buildCoverageMap(input: {
+  manifests: readonly FlowManifestInput[];
+  // node_attempts count per flowNodeKey(flowId, nodeId) — "how many times the
+  // node ran in the window", NOT per-gate evaluations (a K-gate node would
+  // otherwise display K× its run count).
+  nodeAttemptCounts: ReadonlyMap<string, number>;
+}): CoverageFlow[] {
+  return [...groupBy(input.manifests, (manifest) => manifest.flowId).values()]
+    .flatMap((revisions) => {
+      const first = revisions[0];
+
+      if (!first) return [];
+
+      const nodesById = new Map<
+        string,
+        {
+          gatesById: Map<
+            string,
+            { gateId: string; kind: string; mode: string }
+          >;
+          guideCount: number;
+        }
+      >();
+
+      for (const revision of revisions) {
+        for (const node of revision.nodes) {
+          const aggregate = nodesById.get(node.nodeId) ?? {
+            gatesById: new Map<
+              string,
+              { gateId: string; kind: string; mode: string }
+            >(),
+            guideCount: 0,
+          };
+
+          for (const gate of node.gates) {
+            if (!aggregate.gatesById.has(gate.gateId)) {
+              aggregate.gatesById.set(gate.gateId, gate);
+            }
+          }
+
+          aggregate.guideCount = Math.max(
+            aggregate.guideCount,
+            node.guideCount,
+          );
+          nodesById.set(node.nodeId, aggregate);
+        }
+      }
+
+      const nodes = [...nodesById.entries()]
+        .map(([nodeId, aggregate]) => {
+          const gates = [...aggregate.gatesById.values()];
+          const blockingGateCount = gates.filter(
+            (gate) => gate.mode === "blocking",
+          ).length;
+
+          return {
+            nodeId,
+            gateCount: gates.length,
+            blockingGateCount,
+            advisoryGateCount: gates.length - blockingGateCount,
+            guideCount: aggregate.guideCount,
+            guidesWithoutSensors:
+              aggregate.guideCount >= 1 && blockingGateCount === 0,
+            executions:
+              input.nodeAttemptCounts.get(flowNodeKey(first.flowId, nodeId)) ??
+              0,
+          };
+        })
+        .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
+
+      return [
+        {
+          flowId: first.flowId,
+          flowRefId: first.flowRefId,
+          revisionCount: new Set(
+            revisions.map((revision) => revision.revisionId),
+          ).size,
+          nodes,
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        left.flowRefId.localeCompare(right.flowRefId) ||
+        left.flowId.localeCompare(right.flowId),
+    );
+}
+
+function countTerminalStatuses(
+  rows: readonly { status: string }[],
+): GateStatusCounts {
+  let passed = 0;
+  let failed = 0;
+  let stale = 0;
+  let skipped = 0;
+  let overridden = 0;
+
+  for (const row of rows) {
+    switch (row.status) {
+      case "passed":
+        passed += 1;
+        break;
+      case "failed":
+        failed += 1;
+        break;
+      case "stale":
+        stale += 1;
+        break;
+      case "skipped":
+        skipped += 1;
+        break;
+      case "overridden":
+        overridden += 1;
+        break;
+      default:
+        break;
+    }
+  }
+
+  const executions = passed + failed + stale + skipped + overridden;
+
+  return {
+    executions,
+    passed,
+    failed,
+    stale,
+    skipped,
+    overridden,
+    failRate: executions === 0 ? null : failed / executions,
+  };
 }
 
 export function mergedIntervalSeconds(intervals: readonly Interval[]): number {

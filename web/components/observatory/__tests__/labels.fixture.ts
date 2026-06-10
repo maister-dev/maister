@@ -7,8 +7,13 @@ type Translator = Parameters<typeof labelsFromTranslations>[0];
 
 // Derive test labels from the real EN catalog so the fixture can never drift
 // from the shipped message namespace (the previous hand-written copy did).
-export function labelsForTest(): ObservatoryLabels {
-  const namespace = en.observatory as Record<string, unknown>;
+// Pass another catalog's namespace (e.g. ru.observatory) to test RU labels.
+export function labelsForTest(
+  namespace: Record<string, unknown> = en.observatory as Record<
+    string,
+    unknown
+  >,
+): ObservatoryLabels {
   const translate = ((key: string) =>
     key
       .split(".")

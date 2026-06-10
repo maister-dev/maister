@@ -43,6 +43,36 @@ test.describe("M23 Observatory", () => {
     ).toBeVisible();
   });
 
+  test("harness section renders firing stats, never-fired badge, and coverage", async ({
+    page,
+  }) => {
+    const fx = loadM23();
+
+    await page.goto(`/projects/${fx.projectSlug}/observatory`);
+
+    await expect(
+      page.getByRole("heading", { name: "Sensor firing" }),
+    ).toBeVisible();
+    // unit gate: 2 failed + 2 passed seeded executions
+    await expect(page.getByText("50% (n=4)")).toBeVisible();
+    // lint gate: 10 passed, zero failed/stale -> silent at the default
+    // threshold (rendered in both the firing and effectiveness tables)
+    await expect(page.getByText("0% (n=10)").first()).toBeVisible();
+    await expect(page.getByText("never fired", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Coverage map" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "aif", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("guides without sensors", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Control effectiveness" }),
+    ).toBeVisible();
+  });
+
   test("RU locale renders Observatory labels", async ({ page, context }) => {
     await context.addCookies([
       {
@@ -58,5 +88,11 @@ test.describe("M23 Observatory", () => {
       page.getByRole("heading", { name: "Обсерватория" }),
     ).toBeVisible();
     await expect(page.getByText("Метрики только для чтения")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Контур контроля" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Карта покрытия" }),
+    ).toBeVisible();
   });
 });

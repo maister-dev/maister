@@ -6,6 +6,9 @@ import type { AcpSessionState, FlowContext } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun } from "./runner-core";
+import type { RestrictionPathSet } from "./mutation-check";
+
+import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
@@ -16,6 +19,7 @@ import { runCliStep } from "../runner-cli";
 import {
   failStaleArtifactsForDef,
   getCurrentArtifact,
+  recordCurrentArtifact,
   recordSkippedArtifact,
 } from "./artifact-store";
 import {
@@ -24,6 +28,13 @@ import {
   markGatePassed,
   markGateSkipped,
 } from "./gate-store";
+import {
+  evaluateMutationAssertions,
+  readNodeStartHead,
+  resolveDiffRange,
+  runDirPath,
+  touchedPaths,
+} from "./mutation-check";
 
 import * as schemaModule from "@/lib/db/schema";
 
@@ -39,6 +50,9 @@ export type GateRunContext = {
   worktreePath: string;
   sessionState: AcpSessionState;
   supervisorApi?: SupervisorApi;
+  // M29 (ADR-074, D-C2): the node's resolved restriction path sets for
+  // must_not_touch; undefined when the node declares no restrictions.
+  restrictionPaths?: RestrictionPathSet[];
   db: Db;
 };
 
@@ -455,17 +469,26 @@ async function runOneGate(
       }
 
       if (allPresent) {
-        await markGatePassed(
-          id,
-          {
-            verdict: "pass",
-            reasons: [
-              `all ${requiredIds.length} required artifact(s) present and current`,
-            ],
-          },
-          ctx.db,
-        );
+        // M29 (ADR-074): mutation assertions evaluate AFTER the input-presence
+        // check; gates without assertions take the unchanged path below.
+        if (
+          gate.must_touch !== undefined ||
+          gate.must_not_touch !== undefined
+        ) {
+          return runMutationAssertionGate(
+            gate,
+            node,
+            nodeAttemptId,
+            loaded,
+            ctx,
+            id,
+            `all ${requiredIds.length} required artifact(s) present and current`,
+          );
+        }
 
+        // Back-ref BEFORE the terminal transition (same crash-window rule as
+        // runMutationAssertionGate): a death here leaves the gate `running`
+        // for re-execution instead of a terminal row missing the back-ref.
         if (outputRef) {
           const { gateResults } = schemaModule as unknown as Record<
             string,
@@ -476,7 +499,23 @@ async function runOneGate(
             .update(gateResults)
             .set({ outputArtifactRef: outputRef })
             .where(eq(gateResults.id, id));
+
+          log.debug(
+            { gateId: gate.id, gateResultId: id, outputArtifactRef: outputRef },
+            "gate output back-ref recorded",
+          );
         }
+
+        await markGatePassed(
+          id,
+          {
+            verdict: "pass",
+            reasons: [
+              `all ${requiredIds.length} required artifact(s) present and current`,
+            ],
+          },
+          ctx.db,
+        );
 
         return "passed";
       }
@@ -564,4 +603,172 @@ async function runOneGate(
       return "skipped";
     }
   }
+}
+
+// M29 (ADR-074): evaluate must_touch/must_not_touch on an artifact_required
+// gate whose input-presence check already passed. ALWAYS records the
+// mutation_report artifact (pass AND fail, evaluated or not) BEFORE the
+// terminal gate transition — a crash between leaves the gate `running`, so a
+// rework re-executes it (same crash-window shape as the existing sequence).
+async function runMutationAssertionGate(
+  gate: GateDef,
+  node: CompiledNode,
+  nodeAttemptId: string,
+  loaded: LoadedRun,
+  ctx: GateRunContext,
+  gateResultId: string,
+  presenceReason: string,
+): Promise<"passed" | "failed"> {
+  const branch = loaded.workspace.branch;
+  // Cumulative range (merge-base vs main → head SHA) — shared resolution with
+  // the diff artifact (byte-identical fallbacks, D-C3).
+  const cumulative = await resolveDiffRange({
+    worktreePath: ctx.worktreePath,
+    branch,
+  });
+
+  const runDir = runDirPath(ctx.runtimeRoot, loaded.projectSlug, loaded.run.id);
+  const startHead = await readNodeStartHead(runDir, node.id);
+  const basis =
+    startHead !== null ? ("node" as const) : ("cumulative-fallback" as const);
+  const nodeBase = startHead ?? cumulative.base;
+
+  let evaluated = cumulative.evaluated;
+  let nodeTouched: string[] = [];
+  let cumulativeTouched: string[] = [];
+
+  if (evaluated) {
+    try {
+      nodeTouched = await touchedPaths(
+        ctx.worktreePath,
+        nodeBase,
+        cumulative.head,
+      );
+      cumulativeTouched =
+        gate.must_not_touch === undefined
+          ? []
+          : basis === "node"
+            ? await touchedPaths(
+                ctx.worktreePath,
+                cumulative.base,
+                cumulative.head,
+              )
+            : nodeTouched;
+    } catch (err) {
+      // Refs resolved but the diff failed — a sensor that cannot sense must
+      // not pass (D-C3): same handling as git-unavailable.
+      evaluated = false;
+      log.warn(
+        {
+          runId: loaded.run.id,
+          gateId: gate.id,
+          nodeId: node.id,
+          err: (err as Error).message,
+        },
+        "git diff failed — mutation assertions not evaluated",
+      );
+    }
+  }
+
+  const { pass, report } = evaluateMutationAssertions({
+    nodeTouched,
+    cumulativeTouched,
+    mustTouch: gate.must_touch,
+    mustNotTouch: gate.must_not_touch,
+    restrictionSets: ctx.restrictionPaths,
+    basis,
+    nodeRange: { base: nodeBase, head: cumulative.head },
+    cumulativeRange: { base: cumulative.base, head: cumulative.head },
+    evaluated,
+  });
+
+  // D-C4: record the report BEFORE the terminal gate transition. hash +
+  // size_bytes get their first writer here; artifactDefId only when the gate
+  // declares an output (its kind is schema-forced to mutation_report).
+  const text = JSON.stringify(report);
+  const declaredOutputId = gate.output?.id;
+
+  await recordCurrentArtifact(
+    {
+      ...(declaredOutputId === undefined
+        ? { id: `run:${nodeAttemptId}:mutation:${gate.id}` }
+        : {}),
+      runId: loaded.run.id,
+      nodeAttemptId,
+      nodeId: node.id,
+      artifactDefId: declaredOutputId ?? null,
+      kind: "mutation_report",
+      producer: "gate",
+      locator: { kind: "inline", text },
+      hash: createHash("sha256").update(text).digest("hex"),
+      sizeBytes: Buffer.byteLength(text, "utf8"),
+      validity: "current",
+    },
+    ctx.db,
+  );
+
+  // Back-ref BEFORE the terminal transition, same crash-window shape as the
+  // report itself: a death here leaves the gate `running` and re-execution
+  // re-sets it; written after the transition, a crash in between would leave
+  // a terminal gate permanently missing the back-ref.
+  if (declaredOutputId !== undefined) {
+    const { gateResults } = schemaModule as unknown as Record<string, any>;
+
+    await ctx.db
+      .update(gateResults)
+      .set({ outputArtifactRef: declaredOutputId })
+      .where(eq(gateResults.id, gateResultId));
+
+    log.debug(
+      { gateId: gate.id, gateResultId, outputArtifactRef: declaredOutputId },
+      "mutation gate output back-ref recorded",
+    );
+  }
+
+  log.info(
+    {
+      runId: loaded.run.id,
+      gateId: gate.id,
+      nodeId: node.id,
+      touched: report.touched.length,
+      violations: report.violations,
+      evaluated: report.evaluated,
+    },
+    "mutation report",
+  );
+
+  if (pass) {
+    await markGatePassed(
+      gateResultId,
+      {
+        verdict: "pass",
+        reasons: [presenceReason, "mutation assertions passed"],
+      },
+      ctx.db,
+    );
+  } else {
+    if (gate.mode === "advisory") {
+      log.warn(
+        {
+          runId: loaded.run.id,
+          gateId: gate.id,
+          nodeId: node.id,
+          violations: report.violations,
+        },
+        "advisory mutation assertion failed — node proceeds",
+      );
+    }
+
+    await markGateFailed(
+      gateResultId,
+      {
+        verdict: "fail",
+        reasons: report.violations,
+        payload: { assertionFailed: true },
+      },
+      ctx.db,
+    );
+  }
+
+  return pass ? "passed" : "failed";
 }

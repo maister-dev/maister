@@ -66,6 +66,9 @@ export async function computeReadinessByRun(
     mode: string;
     status: GateResultStatus;
     inputArtifactRefs: string[] | null;
+    // M29 (ADR-074): blockingGateContribution reads payload.assertionFailed so
+    // board/portfolio badges match the merge guard for mutation failures.
+    verdict: unknown;
     createdAt: Date;
   }> = await client
     .select({
@@ -77,6 +80,7 @@ export async function computeReadinessByRun(
       mode: gateResults.mode,
       status: gateResults.status,
       inputArtifactRefs: gateResults.inputArtifactRefs,
+      verdict: gateResults.verdict,
       createdAt: gateResults.createdAt,
     })
     .from(gateResults)

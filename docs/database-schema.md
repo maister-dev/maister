@@ -49,7 +49,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `step_runs`                   | Per-step execution records for the linear flow runner (legacy-read after M11a).                                                                                                                                                                                                                                            | `runs.id`                                                                  |
 | `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b)                               |
 | `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
-| `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview). Deterministic upsert PK.                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
+| `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview; + `mutation_report`, M29 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
 | `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
 | `review_comments`             | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK). | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver) |
@@ -1097,7 +1097,8 @@ validity FSM.
                                             //   NULL for defaults / projector rows
   kind: 'diff' | 'log' | 'test_report' | 'lint_report'
       | 'ai_judgment' | 'human_note' | 'commit_set'
-      | 'checkpoint' | 'preview' | 'generic_file',
+      | 'checkpoint' | 'preview' | 'generic_file'
+      | 'mutation_report',                   // M29 (ADR-074) — text column, no migration
   producer: 'runner' | 'projector' | 'takeover' | 'gate' | 'human',
   locator (jsonb),                          // discriminated union, server-written only:
                                             //   git-range{ baseCommit, headRef }
@@ -1107,8 +1108,11 @@ validity FSM.
                                             //   | hitl-response{ hitlRequestId }
                                             //   | inline{ text }
   uri?,                                     // optional human/direct display ref
-  hash?,                                    // content hash (head SHA / file digest)
-  sizeBytes?,                               // integer, nullable
+  hash?,                                    // content hash (head SHA / file digest);
+                                            //   first written by the M29 gate producer
+                                            //   (sha256 of the mutation_report locator text)
+  sizeBytes?,                               // integer, nullable; first written by the
+                                            //   M29 gate producer (report byte length)
   validity: 'current' | 'stale' | 'superseded'
           | 'failed' | 'skipped',          // DEFAULT 'current'
   requiredFor (jsonb)?,                     // ('review' | 'merge')[] — declared,
@@ -1132,6 +1136,7 @@ projector replay **upsert** idempotently (`onConflictDoUpdate`):
 | Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>`  | `run:na_abc123:default:log` |
 | Runner-internal composed rework comments (ADR-072) | `run:<nodeAttemptId>:adr071:rework-comments` | `run:na_abc123:adr071:rework-comments` |
 | Projector-derived                   | `proj:<runId>:<monotonicId>`          | `proj:run_xyz789:42`        |
+| Gate mutation report, undeclared output (M29) | `run:<nodeAttemptId>:mutation:<gateId>` | `run:na_abc123:mutation:impl-mutation` |
 
 `monotonicId` is **run-global** across the single per-run `run.events.jsonl`
 log, so each projector `id` is unique across the entire run's event stream.

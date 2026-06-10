@@ -20,6 +20,11 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
+import {
+  createGateResult,
+  markGateFailed,
+  markGatePassed,
+} from "@/lib/flows/graph/gate-store";
 import { runFlow } from "@/lib/flows/runner";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -467,5 +472,155 @@ describe("T4.4: assertEvidenceReady (integration)", () => {
     // The stale [review]-only artifact is irrelevant to the merge phase, and
     // no [merge] evidence is declared → vacuously ready for merge.
     expect(result.ready).toBe(true);
+  });
+});
+
+// ============================================================================
+// M29 (ADR-074, D-C7): assertion-failed mutation gates must not self-clear
+// ============================================================================
+
+describe("M29: readiness assertion-awareness (integration)", () => {
+  const plainWorkManifest = {
+    schemaVersion: 1,
+    name: "g",
+    compat: { engine_min: "1.2.0" },
+    nodes: [
+      {
+        id: "work",
+        type: "cli",
+        action: { command: "echo work" },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+
+  // Seed the D-C7 trap: a failed blocking artifact_required gate whose input
+  // artifact IS current. Returns the work attempt id.
+  async function seedAssertionFailedGate(
+    runId: string,
+    workAttemptId: string,
+    verdictPayload: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    await recordArtifact(
+      {
+        runId,
+        nodeId: "work",
+        nodeAttemptId: workAttemptId,
+        kind: "diff",
+        producer: "runner",
+        artifactDefId: "impl-diff",
+        locator: { kind: "inline", text: "diff content" },
+        validity: "current",
+      },
+      db,
+    );
+
+    const { id } = await createGateResult({
+      runId,
+      nodeAttemptId: workAttemptId,
+      gateId: "impl-mutation",
+      kind: "artifact_required",
+      mode: "blocking",
+      status: "running",
+      inputArtifactRefs: ["impl-diff"],
+      db,
+    });
+
+    await markGateFailed(
+      id,
+      {
+        verdict: "fail",
+        reasons: ["must_touch: no path matched [src/**]"],
+        ...(verdictPayload !== undefined ? { payload: verdictPayload } : {}),
+      },
+      db,
+    );
+  }
+
+  it("blocked: assertion-failed blocking gate stays failed even with inputs present", async () => {
+    const seeded = await seedGraphRun(plainWorkManifest);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const workAttempt = (await getNodeAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "work",
+    )!;
+
+    await seedAssertionFailedGate(seeded.runId, workAttempt.id, {
+      assertionFailed: true,
+    });
+
+    const result = await assertEvidenceReady(seeded.runId, "review", db);
+
+    expect(result.ready).toBe(false);
+    expect(result.reasons.some((r) => r.includes("impl-mutation"))).toBe(true);
+  });
+
+  it("legacy regression: failed gate WITHOUT assertion verdict clears on inputs-present", async () => {
+    const seeded = await seedGraphRun(plainWorkManifest);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const workAttempt = (await getNodeAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "work",
+    )!;
+
+    await seedAssertionFailedGate(seeded.runId, workAttempt.id, undefined);
+
+    const result = await assertEvidenceReady(seeded.runId, "review", db);
+
+    expect(result.ready).toBe(true);
+  });
+
+  it("unblocked after a passing rework attempt re-runs the gate", async () => {
+    const seeded = await seedGraphRun(plainWorkManifest);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const workAttempt = (await getNodeAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "work",
+    )!;
+
+    await seedAssertionFailedGate(seeded.runId, workAttempt.id, {
+      assertionFailed: true,
+    });
+
+    expect((await assertEvidenceReady(seeded.runId, "review", db)).ready).toBe(
+      false,
+    );
+
+    // Rework re-run: attempt 2 re-executes the gate and passes — the failed
+    // attempt-1 row drops out of the live (latest-attempt) gate set.
+    const attempt2Id = randomUUID();
+
+    await db.insert(schema.nodeAttempts).values({
+      id: attempt2Id,
+      runId: seeded.runId,
+      nodeId: "work",
+      nodeType: "cli",
+      attempt: 2,
+      status: "Succeeded",
+    });
+
+    const { id: gate2 } = await createGateResult({
+      runId: seeded.runId,
+      nodeAttemptId: attempt2Id,
+      gateId: "impl-mutation",
+      kind: "artifact_required",
+      mode: "blocking",
+      status: "running",
+      inputArtifactRefs: ["impl-diff"],
+      db,
+    });
+
+    await markGatePassed(
+      gate2,
+      { verdict: "pass", reasons: ["mutation assertions passed"] },
+      db,
+    );
+
+    expect((await assertEvidenceReady(seeded.runId, "review", db)).ready).toBe(
+      true,
+    );
   });
 });

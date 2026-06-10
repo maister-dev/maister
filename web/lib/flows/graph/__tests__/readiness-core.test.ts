@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   READINESS_PRIORITY,
+  blockingGateContribution,
   gateStatusContribution,
   rollupReadiness,
   isPhaseReady,
@@ -495,5 +496,102 @@ describe("readiness-core: liveBlockingGates", () => {
     const ids = new Set(result.map((g) => g.id));
 
     expect(ids).toEqual(new Set(["g1", "g3"]));
+  });
+});
+
+// ==============================================================================
+// M29 (ADR-074, D-C7): assertion-aware artifact_required failed re-evaluation
+// ==============================================================================
+
+describe("readiness-core: blockingGateContribution (M29 assertion-awareness)", () => {
+  const currentDefIds = new Set(["impl-diff", "test-report"]);
+
+  it("legacy failed artifact_required with all inputs present → clear (regression)", () => {
+    expect(
+      blockingGateContribution(
+        {
+          kind: "artifact_required",
+          status: "failed",
+          inputArtifactRefs: ["impl-diff", "test-report"],
+        },
+        currentDefIds,
+      ),
+    ).toBe("clear");
+  });
+
+  it("legacy failed artifact_required with a missing input → failed (regression)", () => {
+    expect(
+      blockingGateContribution(
+        {
+          kind: "artifact_required",
+          status: "failed",
+          inputArtifactRefs: ["impl-diff", "absent-def"],
+        },
+        currentDefIds,
+      ),
+    ).toBe("failed");
+  });
+
+  it("assertion-failed verdict → failed even when EVERY input is present", () => {
+    expect(
+      blockingGateContribution(
+        {
+          kind: "artifact_required",
+          status: "failed",
+          inputArtifactRefs: ["impl-diff", "test-report"],
+          verdict: {
+            verdict: "fail",
+            reasons: ["must_touch: no path matched [src/**]"],
+            payload: { assertionFailed: true },
+          },
+        },
+        currentDefIds,
+      ),
+    ).toBe("failed");
+  });
+
+  it("assertion-failed verdict with EMPTY inputArtifactRefs → failed", () => {
+    expect(
+      blockingGateContribution(
+        {
+          kind: "artifact_required",
+          status: "failed",
+          inputArtifactRefs: [],
+          verdict: { verdict: "fail", payload: { assertionFailed: true } },
+        },
+        currentDefIds,
+      ),
+    ).toBe("failed");
+  });
+
+  it("a failed verdict WITHOUT assertionFailed keeps the inputs-present → clear re-eval", () => {
+    expect(
+      blockingGateContribution(
+        {
+          kind: "artifact_required",
+          status: "failed",
+          inputArtifactRefs: ["impl-diff"],
+          verdict: {
+            verdict: "fail",
+            reasons: ["missing or stale artifact(s)"],
+          },
+        },
+        currentDefIds,
+      ),
+    ).toBe("clear");
+  });
+
+  it("a PASSED gate with an assertion verdict maps clear as before", () => {
+    expect(
+      blockingGateContribution(
+        {
+          kind: "artifact_required",
+          status: "passed",
+          inputArtifactRefs: ["impl-diff"],
+          verdict: { verdict: "pass" },
+        },
+        currentDefIds,
+      ),
+    ).toBe("clear");
   });
 });

@@ -250,6 +250,7 @@ export default async function RunDetailLayout({
     kindArtifact: tEvidence("kindArtifact"),
     kindGate: tEvidence("kindGate"),
     kindDecision: tEvidence("kindDecision"),
+    artifactKindMutationReport: tEvidence("artifactKindMutationReport"),
   };
 
   // M22 (ADR-064): the flow-graph view for a flow run — compiled topology +

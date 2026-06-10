@@ -4,11 +4,14 @@ import type { FlowContext, StepResult } from "./types";
 import type { GuardConfig } from "./guards";
 
 import { execFile } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import pino from "pino";
 
 import { appendGuardMetric, evaluateGuards } from "./guards";
+import { cliOutputFilePath } from "./graph/node-output";
 import { renderStrict } from "./templating";
 
 const execFileAsync = promisify(execFile);
@@ -38,6 +41,10 @@ export type RunCliStepCtx = {
   worktreePath: string;
   context: FlowContext;
   timeoutMs?: number;
+  // M26 P1 (ADR-063): set only when the node declares `output.result` — arms
+  // the MAISTER_OUTPUT_FILE transport with the per-attempt filename. Absent =
+  // no transport provisioning (byte-identical pre-M26 child env).
+  attempt?: number;
 };
 
 function previewCommand(s: string): string {
@@ -82,6 +89,35 @@ export async function runCliStep(
     }),
   });
 
+  let outputFile: string | undefined;
+
+  if (ctx.attempt !== undefined) {
+    try {
+      outputFile = cliOutputFilePath({
+        runtimeRoot: ctx.runtimeRoot,
+        projectSlug: ctx.projectSlug,
+        runId: ctx.runId,
+        nodeId: ctx.stepId,
+        attempt: ctx.attempt,
+      });
+    } catch (err) {
+      // Invalid node id segment: do not arm the transport — the validate seam
+      // fails the attempt with CONFIG after the action.
+      log.warn(
+        { nodeId: ctx.stepId, err: (err as Error).message },
+        "cli output transport NOT armed — invalid node id",
+      );
+    }
+  }
+
+  if (outputFile !== undefined) {
+    await mkdir(path.dirname(outputFile), { recursive: true });
+    log.debug(
+      { nodeId: ctx.stepId, attempt: ctx.attempt, outputFile },
+      "cli output transport armed",
+    );
+  }
+
   const startedAt = Date.now();
   let stdout = "";
   let stderr = "";
@@ -93,6 +129,9 @@ export async function runCliStep(
       cwd: ctx.worktreePath,
       signal: AbortSignal.timeout(timeoutMs),
       maxBuffer: MAX_BUFFER,
+      ...(outputFile !== undefined
+        ? { env: { ...process.env, MAISTER_OUTPUT_FILE: outputFile } }
+        : {}),
     });
 
     stdout = String(result.stdout ?? "");

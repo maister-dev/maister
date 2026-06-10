@@ -21,6 +21,7 @@ import {
 import { Chip } from "@heroui/react";
 
 import {
+  artifactKindLabel,
   kindLabel,
   layoutGraph,
   stateLabel,
@@ -86,6 +87,10 @@ function makeEvidenceNodeView(
   return function EvidenceNodeView({ data }: NodeProps): ReactElement {
     const d = data as unknown as EvidenceNodeRenderData;
     const state = stateLabel(d.state, labels);
+    // An artifact node's label IS its artifact kind token (evidence DTO);
+    // translate catalog-mapped kinds (M29: mutation_report) for RU users.
+    const label =
+      d.kind === "artifact" ? artifactKindLabel(d.label, labels) : d.label;
     const openable = d.kind === "artifact" && Boolean(d.artifactId);
 
     function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
@@ -97,7 +102,7 @@ function makeEvidenceNodeView(
 
     return (
       <div
-        aria-label={openable ? `${labels.openPayload}: ${d.label}` : undefined}
+        aria-label={openable ? `${labels.openPayload}: ${label}` : undefined}
         className="relative cursor-pointer"
         data-artifact-id={d.artifactId ?? undefined}
         data-kind={d.kind}
@@ -110,7 +115,7 @@ function makeEvidenceNodeView(
         <Handle position={Position.Left} type="target" />
         <Chip color={colorForState(d.state)} size="sm" variant="soft">
           <span className="font-mono text-[11px]">
-            {d.label}
+            {label}
             {state ? ` · ${state}` : ""}
           </span>
         </Chip>

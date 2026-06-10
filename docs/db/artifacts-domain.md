@@ -22,7 +22,7 @@ erDiagram
         text node_id "denormalized logical node id (nullable)"
         integer attempt "denormalized attempt number (nullable)"
         text artifact_def_id "manifest output.produces[].id; NULL for defaults/projector"
-        text kind "diff|log|test_report|lint_report|ai_judgment|human_note|commit_set|checkpoint|preview|generic_file"
+        text kind "diff|log|test_report|lint_report|ai_judgment|human_note|commit_set|checkpoint|preview|generic_file|mutation_report"
         text producer "runner|projector|takeover|gate|human"
         jsonb locator "discriminated union — server-written only"
         text uri "optional human/direct display ref"
@@ -58,6 +58,7 @@ and projector replay **upsert** idempotently (`onConflictDoUpdate`).
 | Runner-inline declared output | `run:<nodeAttemptId>:<artifactDefId>` | `run:na_abc123:impl-diff` |
 | Runner-inline default (kind-scoped) | `run:<nodeAttemptId>:default:<kind>` | `run:na_abc123:default:log` |
 | Projector-derived | `proj:<runId>:<monotonicId>` | `proj:run_xyz789:42` |
+| Gate mutation report, undeclared output (M29) | `run:<nodeAttemptId>:mutation:<gateId>` | `run:na_abc123:mutation:impl-mutation` |
 
 `monotonicId` is **run-global** in the durable `run.events.jsonl` log (see
 ADR-038 Phase-0 re-confirmation correction). A single projector `id` is unique

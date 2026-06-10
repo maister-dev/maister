@@ -3923,6 +3923,11 @@ const M23_SLUG = "e2e-m23";
 const M23_NODE_ID = "checks";
 const M23_GATE_ID = "unit";
 
+// M29 harness layer: `lint` never fails (10 passed executions >= the default
+// MAISTER_HARNESS_NEVER_FIRED_MIN) -> never-fired badge; `implement` declares
+// a skill guide with zero gates -> guides-without-sensors coverage flag.
+const M23_SILENT_GATE_ID = "lint";
+
 const M23_MANIFEST = {
   schemaVersion: 1,
   name: "AIF Observatory (e2e)",
@@ -3932,12 +3937,19 @@ const M23_MANIFEST = {
       id: "implement",
       type: "ai_coding",
       action: { prompt: "implement {{ task.prompt }}" },
+      settings: { skills: ["aif-implement"] },
       transitions: { success: M23_NODE_ID },
     },
     {
       id: M23_NODE_ID,
       type: "check",
       action: { command: "pnpm test" },
+      pre_finish: {
+        gates: [
+          { id: M23_GATE_ID, kind: "command_check", mode: "blocking" },
+          { id: M23_SILENT_GATE_ID, kind: "command_check", mode: "blocking" },
+        ],
+      },
       transitions: { success: "review" },
     },
     {
@@ -3956,6 +3968,7 @@ async function seedM23Fixture(
     project: randomUUID(),
     runner: randomUUID(),
     flow: randomUUID(),
+    revision: randomUUID(),
     firstTask: randomUUID(),
     secondTask: randomUUID(),
     firstRun: randomUUID(),
@@ -3969,6 +3982,8 @@ async function seedM23Fixture(
     secondReview: randomUUID(),
     firstGate: randomUUID(),
     secondGate: randomUUID(),
+    firstGatePassed: randomUUID(),
+    secondGatePassed: randomUUID(),
     firstHitl: randomUUID(),
     secondHitl: randomUUID(),
     firstArtifact: randomUUID(),
@@ -4010,6 +4025,20 @@ async function seedM23Fixture(
     ],
   );
   await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision,
+        manifest_digest, manifest, schema_version, installed_path)
+     VALUES ($1, 'aif', $2, 'v0.0.1', $3, $4, $5, 1, $6)`,
+    [
+      ids.revision,
+      "github.com/maister/maister-flow-aif",
+      `rev-${ids.revision}`,
+      `digest-${ids.revision}`,
+      JSON.stringify(M23_MANIFEST),
+      `/tmp/maister-e2e/flows/aif-observatory@v0.0.1`,
+    ],
+  );
+  await pool.query(
     `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
      VALUES
        ($1, $2, 'E2E observatory first', 'observe first', $3, 'InFlight', 'InFlight'),
@@ -4018,12 +4047,12 @@ async function seedM23Fixture(
   );
   await pool.query(
     `INSERT INTO runs
-       (id, task_id, project_id, flow_id, runner_id, capability_agent,
+       (id, task_id, project_id, flow_id, flow_revision_id, runner_id, capability_agent,
         runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
      VALUES
-       ($1, $2, $3, $4, $5, 'claude', $6::jsonb, 'Review', 'review', 'v0.0.1',
+       ($1, $2, $3, $4, $10, $5, 'claude', $6::jsonb, 'Review', 'review', 'v0.0.1',
         now() - interval '3 hours', now() - interval '2 hours'),
-       ($7, $8, $3, $4, $5, 'claude', $6::jsonb, 'Running', $9, 'v0.0.1',
+       ($7, $8, $3, $4, $10, $5, 'claude', $6::jsonb, 'Running', $9, 'v0.0.1',
         now() - interval '90 minutes', null)`,
     [
       ids.firstRun,
@@ -4035,6 +4064,7 @@ async function seedM23Fixture(
       ids.secondRun,
       ids.secondTask,
       M23_NODE_ID,
+      ids.revision,
     ],
   );
   await pool.query(
@@ -4064,7 +4094,9 @@ async function seedM23Fixture(
        (id, run_id, node_attempt_id, gate_id, kind, mode, status, verdict)
      VALUES
        ($1, $2, $3, $4, 'command_check', 'blocking', 'failed', $5::jsonb),
-       ($6, $7, $8, $4, 'command_check', 'blocking', 'failed', $9::jsonb)`,
+       ($6, $7, $8, $4, 'command_check', 'blocking', 'failed', $9::jsonb),
+       ($10, $2, $11, $4, 'command_check', 'blocking', 'passed', null),
+       ($12, $7, $13, $4, 'command_check', 'blocking', 'passed', null)`,
     [
       ids.firstGate,
       ids.firstRun,
@@ -4075,8 +4107,27 @@ async function seedM23Fixture(
       ids.secondRun,
       ids.secondCheck1,
       JSON.stringify({ verdict: "fail", recommendedAction: "rerun tests" }),
+      ids.firstGatePassed,
+      ids.firstCheck2,
+      ids.secondGatePassed,
+      ids.secondCheck2,
     ],
   );
+  // 10 passing executions of the declared-silent gate -> never-fired flag at
+  // the default MAISTER_HARNESS_NEVER_FIRED_MIN=10 threshold.
+  for (let index = 0; index < 10; index += 1) {
+    await pool.query(
+      `INSERT INTO gate_results
+         (id, run_id, node_attempt_id, gate_id, kind, mode, status, verdict)
+       VALUES ($1, $2, $3, $4, 'command_check', 'blocking', 'passed', null)`,
+      [
+        randomUUID(),
+        index % 2 === 0 ? ids.firstRun : ids.secondRun,
+        index % 2 === 0 ? ids.firstCheck2 : ids.secondCheck2,
+        M23_SILENT_GATE_ID,
+      ],
+    );
+  }
   await pool.query(
     `INSERT INTO hitl_requests
        (id, run_id, step_id, kind, prompt, decision, rework_target,
@@ -4228,7 +4279,11 @@ async function seedM27FlowEditorFixture(
     ],
   );
 
-  return { projectId: ids.project, projectSlug: M27_EDITOR_SLUG, capId: ids.cap };
+  return {
+    projectId: ids.project,
+    projectSlug: M27_EDITOR_SLUG,
+    capId: ids.cap,
+  };
 }
 
 // --- flows-authoring fixture: a DRAFT authored Flow capability to open in the

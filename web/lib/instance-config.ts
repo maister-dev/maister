@@ -4,7 +4,37 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import pino from "pino";
+
 const execFileAsync = promisify(execFile);
+
+const log = pino({
+  name: "instance-config",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+const warnedInvalidEnv = new Set<string>();
+
+function positiveIntFromEnv(envName: string, fallback: number): number {
+  const raw = process.env[envName];
+
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    if (!warnedInvalidEnv.has(envName)) {
+      warnedInvalidEnv.add(envName);
+      log.warn(
+        { envName, raw, fallback },
+        "invalid positive-integer env value — using default",
+      );
+    }
+
+    return fallback;
+  }
+
+  return parsed;
+}
 
 export function reposRoot(): string {
   return (
@@ -142,6 +172,28 @@ export function reconcileGraceSeconds(): number {
   }
 
   return parsed;
+}
+
+const DEFAULT_NODE_OUTPUT_MAX_BYTES = 262_144;
+const DEFAULT_HARNESS_NEVER_FIRED_MIN = 10;
+
+// M26 P1 (ADR-063): max raw bytes of a structured node-output payload
+// (sentinel block / MAISTER_OUTPUT_FILE) before it is rejected at the
+// validate seam. Host env only per ADR-023 — never wired into compose.
+export function nodeOutputMaxBytes(): number {
+  return positiveIntFromEnv(
+    "MAISTER_NODE_OUTPUT_MAX_BYTES",
+    DEFAULT_NODE_OUTPUT_MAX_BYTES,
+  );
+}
+
+// M29 (ADR-073): minimum terminal gate executions before the observatory
+// never-fired heuristic may flag a gate. Host env only per ADR-023.
+export function harnessNeverFiredMin(): number {
+  return positiveIntFromEnv(
+    "MAISTER_HARNESS_NEVER_FIRED_MIN",
+    DEFAULT_HARNESS_NEVER_FIRED_MIN,
+  );
 }
 
 export type HostTool = {

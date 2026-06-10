@@ -21,6 +21,7 @@ import {
   failArtifact,
   getArtifactsForRun,
   getCurrentArtifact,
+  getCurrentRequiredForGitArtifacts,
   markArtifactsStale,
   recordArtifact,
   recordCurrentArtifact,
@@ -593,5 +594,51 @@ describe("failArtifact", () => {
     );
 
     expect((row.rows[0] as { validity: string }).validity).toBe("failed");
+  });
+});
+
+describe("getCurrentRequiredForGitArtifacts (M29 kind fan-out)", () => {
+  it("returns diff/commit_set only — mutation_report is never re-pinned", async () => {
+    const { runId, nodeAttemptId } = await seedRun();
+
+    await recordArtifact(
+      {
+        runId,
+        nodeAttemptId,
+        nodeId: "impl",
+        attempt: 1,
+        kind: "diff",
+        producer: "runner",
+        locator: {
+          kind: "git-range",
+          baseCommit: "a".repeat(40),
+          headRef: "b".repeat(40),
+        },
+        artifactDefId: "impl-diff",
+        validity: "current",
+        requiredFor: ["merge"],
+      },
+      db,
+    );
+    await recordArtifact(
+      {
+        runId,
+        nodeAttemptId,
+        nodeId: "impl",
+        attempt: 1,
+        kind: "mutation_report",
+        producer: "gate",
+        locator: { kind: "inline", text: "{}" },
+        artifactDefId: "impl-mutation-report",
+        validity: "current",
+        requiredFor: ["merge"],
+      },
+      db,
+    );
+
+    const rows = await getCurrentRequiredForGitArtifacts(runId, db);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("diff");
   });
 });

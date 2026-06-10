@@ -15,11 +15,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   type EvidenceTextLabels,
+  artifactKindLabel,
   kindLabel,
   layoutGraph,
   stateLabel,
   toFlowGraph,
 } from "@/lib/board/evidence-graph-layout";
+import en from "@/messages/en.json";
+import ru from "@/messages/ru.json";
 
 const TEXT_LABELS: EvidenceTextLabels = {
   stateCurrent: "Current",
@@ -32,6 +35,7 @@ const TEXT_LABELS: EvidenceTextLabels = {
   kindArtifact: "Artifact",
   kindGate: "Gate",
   kindDecision: "Decision",
+  artifactKindMutationReport: "Mutation report",
 };
 
 // One node of each kind + a supersession edge (old → new) so the dashed-edge
@@ -266,5 +270,35 @@ describe("stateLabel / kindLabel", () => {
     expect(kindLabel("artifact", TEXT_LABELS)).toBe("Artifact");
     expect(kindLabel("gate", TEXT_LABELS)).toBe("Gate");
     expect(kindLabel("decision", TEXT_LABELS)).toBe("Decision");
+  });
+});
+
+// M29 (ADR-074): the mutation_report artifact kind is the first artifact kind
+// with a catalog translation; every other kind passes through raw.
+describe("artifactKindLabel", () => {
+  it("translates mutation_report and falls back to the raw token otherwise", () => {
+    expect(artifactKindLabel("mutation_report", TEXT_LABELS)).toBe(
+      "Mutation report",
+    );
+    expect(artifactKindLabel("diff", TEXT_LABELS)).toBe("diff");
+    expect(artifactKindLabel("commit_set", TEXT_LABELS)).toBe("commit_set");
+  });
+
+  it("renders the run-detail evidence label from the real EN and RU catalogs", () => {
+    const enLabels = {
+      ...TEXT_LABELS,
+      artifactKindMutationReport: en.evidence.artifactKindMutationReport,
+    };
+    const ruLabels = {
+      ...TEXT_LABELS,
+      artifactKindMutationReport: ru.evidence.artifactKindMutationReport,
+    };
+
+    expect(artifactKindLabel("mutation_report", enLabels)).toBe(
+      "Mutation report",
+    );
+    expect(artifactKindLabel("mutation_report", ruLabels)).toBe(
+      "Отчёт об изменениях",
+    );
   });
 });

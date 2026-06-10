@@ -42,7 +42,23 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   [`../db/artifacts-domain.md`](../db/artifacts-domain.md).
 - **Artifact kind** — one of the closed catalog:
   `diff | log | test_report | lint_report | ai_judgment | human_note |
-  commit_set | checkpoint | preview | generic_file`.
+  commit_set | checkpoint | preview | generic_file`, plus
+  `mutation_report` **(M29 — Implemented)**. The DB `kind` column is text with a
+  TS-level enum, so the addition needs no migration.
+- **Mutation report (M29 — Implemented)** — the deterministic post-condition
+  evidence of an `artifact_required` gate with `must_touch`/`must_not_touch`
+  assertions
+  ([ADR-074](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)).
+  Recorded on EVERY evaluation (pass and fail): `producer: "gate"`,
+  `kind: "mutation_report"`, locator `{ kind: "inline", text: <report JSON> }`,
+  recorded BEFORE the terminal gate transition. First writer of
+  `artifact_instances.hash` (sha256 of the locator `text`) and `size_bytes`
+  (its byte length) — both stay nullable for legacy rows.
+  `artifact_def_id = gate.output.id` when declared (declared kind must be
+  `mutation_report`), else `null` with deterministic id
+  `run:<nodeAttemptId>:mutation:<gateId>`. Intentionally NOT part of
+  `getCurrentRequiredForGitArtifacts` re-pinning (kinds `diff`/`commit_set`
+  only).
 - **Artifact validity** — `current | stale | superseded | failed | skipped`.
   See state machine below.
 - **Locator** — typed discriminated jsonb written server-side only. Six shapes:
@@ -317,6 +333,7 @@ All logs use the module-local pino logger per the existing pattern
 - ADRs: [ADR-037](../decisions.md#adr-037-typed-artifact-model),
   [ADR-038](../decisions.md#adr-038-hybrid-write-path-for-artifact_instances-refines-adr-022),
   [ADR-039](../decisions.md#adr-039-xyflowreact--dagrejsdagre-as-the-evidence-graph-renderer),
+  [ADR-074 (mutation sensor, M29)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
   [ADR-022](../decisions.md) (projector, lands with M12),
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),

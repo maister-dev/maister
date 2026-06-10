@@ -2,9 +2,12 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
+import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
+import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
 import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
+import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
 import { requireSession } from "@/lib/authz";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 import { getPortfolioObservatory } from "@/lib/queries/observatory";
@@ -44,6 +47,28 @@ export default async function ObservatoryPage({
 
       <ObservatoryFilters current={current} labels={labels} />
       <ObservatorySummary data={data} labels={labels} />
+      <section className="mt-6">
+        <header className="mb-3">
+          <h2 className="m-0 text-lg font-semibold text-ink">
+            {labels.harness.sectionTitle}
+          </h2>
+          <p className="mt-1 max-w-[72ch] text-sm text-mute">
+            {labels.harness.sectionSubtitle}
+          </p>
+        </header>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <SensorFiringCard
+            firing={data.harness.firing}
+            labels={labels}
+            neverFired={data.harness.neverFired}
+          />
+          <ControlEffectivenessCard
+            effectiveness={data.harness.effectiveness}
+            labels={labels}
+          />
+          <CoverageMapCard coverage={data.harness.coverage} labels={labels} />
+        </div>
+      </section>
     </>
   );
 }

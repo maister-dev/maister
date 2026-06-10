@@ -27,6 +27,7 @@ import { runCliStep } from "../runner-cli";
 import { cleanupSlashSession, asError } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import { runNodeGates } from "./gates-exec";
+import { validateNodeStructuredOutput } from "./node-output";
 import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
@@ -49,6 +50,12 @@ import {
 } from "./artifact-store";
 import { recordDefaultArtifacts } from "./default-artifacts";
 import { assertEvidenceReady } from "./evidence-readiness";
+import {
+  captureNodeStartHead,
+  resolveDiffRange,
+  restrictionPathSets,
+  type RestrictionPathSet,
+} from "./mutation-check";
 
 import { gateStdioMcpsByExecTrust } from "@/lib/capabilities/agent-map";
 import {
@@ -474,6 +481,9 @@ async function executeNodeAction(
     profileDigest?: string;
     // 1-based ledger attempt number of THIS visit (ADR-072 gateAttempt source).
     nodeAttemptNumber: number;
+    // M26 (ADR-063): this execution's attempt number — arms the per-attempt
+    // MAISTER_OUTPUT_FILE transport for cli/check nodes with output.result.
+    attempt: number;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -499,7 +509,9 @@ async function executeNodeAction(
     case "check":
       return runCliStep(
         { id: node.id, type: "cli", command: def.action.command },
-        common,
+        // M26 (ADR-063): arm the MAISTER_OUTPUT_FILE transport only when the
+        // node declares output.result — no transport provisioning otherwise.
+        def.output?.result ? { ...common, attempt: ctx.attempt } : common,
       );
     case "ai_coding":
     case "judge":
@@ -757,6 +769,9 @@ async function materializeNodeCapabilities(
       adapterLaunch: ScratchAdapterLaunch;
       mcpServers: AgentMcpServer[];
       plan: MaterializationPlan;
+      // M29 (ADR-074, D-C2): the node's resolved restriction path sets,
+      // threaded into GateRunContext for must_not_touch evaluation.
+      restrictionPaths: RestrictionPathSet[];
     }
   | undefined
 > {
@@ -851,6 +866,12 @@ async function materializeNodeCapabilities(
     adapterLaunch: m.adapterLaunch,
     mcpServers,
     plan,
+    // enforced + instructed together cover every selected (non-refused)
+    // record, so a downgraded-but-selected restriction still gets sensed.
+    restrictionPaths: restrictionPathSets([
+      ...profile.enforced,
+      ...profile.instructed,
+    ]),
   };
 }
 
@@ -1233,6 +1254,22 @@ export async function runGraph(
         nodeAttemptNumber = appended.attempt;
       }
 
+      // M29 (ADR-074, D-C3): capture HEAD at this node's FIRST attempt start
+      // — write-if-absent, so attempt 2+/resume keep the true start. Best
+      // effort: git unavailable at start → skip; the must_touch range falls
+      // back to the cumulative branch range at gate time.
+      try {
+        const startHead = await resolveRefSha(worktreePath, "HEAD");
+
+        await captureNodeStartHead(
+          runDir(runtimeRoot, loaded.projectSlug, runId),
+          node.id,
+          startHead,
+        );
+      } catch {
+        // no real git repo at node start — cumulative fallback at gate time
+      }
+
       await db
         .update(runs)
         .set({ currentStepId: node.id })
@@ -1348,6 +1385,7 @@ export async function runGraph(
             adapterLaunch: ScratchAdapterLaunch;
             mcpServers: AgentMcpServer[];
             plan: MaterializationPlan;
+            restrictionPaths: RestrictionPathSet[];
           }
         | undefined;
 
@@ -1397,6 +1435,7 @@ export async function runGraph(
           mcpServers: materialized?.mcpServers,
           profileDigest: materialized?.plan.profileDigest,
           nodeAttemptNumber,
+          attempt: nodeAttemptNumber,
           db,
         });
       } catch (err) {
@@ -1479,6 +1518,33 @@ export async function runGraph(
         break;
       }
 
+      // M26 P1 (ADR-063): structured-output validate seam — post-action,
+      // pre-gates. A failure marks the attempt Failed (CONFIG) inside the
+      // seam and aborts the finish exactly like the action-failure path
+      // above; gates MUST NOT run after a seam failure. On success the seam
+      // mutates result.vars in place — markNodeSucceeded below persists it.
+      const structuredOutput = await validateNodeStructuredOutput({
+        node,
+        result,
+        attempt: nodeAttemptCount + 1,
+        nodeAttemptId,
+        runId,
+        projectSlug: loaded.projectSlug,
+        runtimeRoot,
+        flowInstallPath: loaded.flowInstallPath,
+        db,
+      });
+
+      if (!structuredOutput.ok) {
+        failed = true;
+        runErrorCode = "CONFIG";
+        log2.warn(
+          { nodeId: node.id, reason: structuredOutput.reason },
+          "structured output validation failed — node Failed",
+        );
+        break;
+      }
+
       if (result.acpSessionId && !loaded.run.acpSessionId) {
         await db
           .update(runs)
@@ -1505,6 +1571,9 @@ export async function runGraph(
             worktreePath,
             sessionState,
             supervisorApi: opts.supervisorApi,
+            // M29 (ADR-074): the node's resolved restriction path sets for
+            // must_not_touch — undefined for capability-less nodes.
+            restrictionPaths: materialized?.restrictionPaths,
             db,
           },
         );
@@ -1583,41 +1652,30 @@ export async function runGraph(
               db,
             );
           } else if (produces.kind === "diff") {
-            // Diff kind: always record with git-range locator.
-            const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-            let baseCommit = EMPTY_TREE;
+            // Diff kind: always record with git-range locator. The range
+            // (merge-base vs main → immutable head SHA, EMPTY_TREE /
+            // branch-name fallbacks) is shared with the M29 mutation sensor
+            // via resolveDiffRange (ADR-074) — recording and gates must
+            // compute byte-identical locators.
+            const range = await resolveDiffRange({
+              worktreePath: loaded.workspace.worktreePath,
+              branch: loaded.workspace.branch,
+            });
 
-            try {
-              baseCommit = await resolveBaseRef({
-                worktreePath: loaded.workspace.worktreePath,
-                branch: loaded.workspace.branch,
-                mainBranch: "main",
-              });
-            } catch {
-              // no real git repo in test environments — use empty tree
-            }
-
-            // F3: store the immutable SHA so the payload renders the recorded
-            // range, not the live branch tip. Fall back to the branch name when
-            // git is unavailable (synthetic-flow test envs).
-            let headRef = loaded.workspace.branch;
-
-            try {
-              headRef = await resolveRefSha(
-                loaded.workspace.worktreePath,
-                loaded.workspace.branch,
-              );
-            } catch (err) {
+            if (range.headError !== undefined) {
               // no real git repo — keep the branch name
               log2.warn(
                 {
                   nodeId: node.id,
                   branch: loaded.workspace.branch,
-                  err: (err as Error).message,
+                  err: range.headError,
                 },
                 "resolveRefSha failed — storing mutable branch headRef",
               );
             }
+
+            const baseCommit = range.base;
+            const headRef = range.head;
 
             const newId = `run:${nodeAttemptId}:${produces.id}`;
 

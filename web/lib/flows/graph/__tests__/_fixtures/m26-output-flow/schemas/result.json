@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    { "name": "verdict", "type": "string", "required": true },
+    { "name": "score", "type": "number" }
+  ]
+}

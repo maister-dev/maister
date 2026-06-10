@@ -53,6 +53,7 @@ beforeEach(async () => {
   await db.delete(schema.tasks);
   await db.delete(schema.projectMembers);
   await db.delete(schema.flows);
+  await db.delete(schema.flowRevisions);
   await db.delete(schema.projects);
   await db.delete(schema.users);
 
@@ -571,6 +572,267 @@ describe("observatory read models", () => {
       false,
     );
   });
+
+  it("rolls up harness firing, never-fired flags, effectiveness, and coverage from seeded revisions", async () => {
+    await seedFlowRevision({
+      id: "rev-harness",
+      manifest: {
+        schemaVersion: 1,
+        name: "aif",
+        nodes: [
+          {
+            id: "implement",
+            type: "ai_coding",
+            action: { prompt: "implement {{ task.prompt }}" },
+            settings: { skills: ["aif-implement"] },
+            transitions: { success: "checks" },
+          },
+          {
+            id: "checks",
+            type: "check",
+            action: { command: "pnpm test" },
+            pre_finish: {
+              gates: [
+                { id: "unit", kind: "command_check", mode: "blocking" },
+                { id: "lint", kind: "command_check" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    await seedFlowRevision({
+      id: "rev-broken",
+      manifest: { schemaVersion: 1, name: "broken", nodes: "garbage" },
+    });
+
+    const runA = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "harness-a",
+      flowRevisionId: "rev-harness",
+      resolvedCapabilitySet: capabilitySet(["strict-rule"]),
+    });
+    const runB = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "harness-b",
+      flowRevisionId: "rev-harness",
+      resolvedCapabilitySet: capabilitySet([]),
+    });
+    const runC = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "harness-c",
+    });
+    const runD = await seedRun({
+      projectId: visibleProjectId,
+      flowId: visibleFlowId,
+      suffix: "harness-d",
+      flowRevisionId: "rev-broken",
+      resolvedCapabilitySet: capabilitySet([]),
+    });
+
+    await db
+      .insert(schema.nodeAttempts)
+      .values([
+        attempt(
+          runA.runId,
+          "checks",
+          "check",
+          1,
+          "Failed",
+          "harness-a-checks-1",
+        ),
+        attempt(
+          runA.runId,
+          "checks",
+          "check",
+          2,
+          "Succeeded",
+          "harness-a-checks-2",
+        ),
+        attempt(
+          runB.runId,
+          "checks",
+          "check",
+          1,
+          "Succeeded",
+          "harness-b-checks-1",
+        ),
+        attempt(
+          runC.runId,
+          "checks",
+          "check",
+          1,
+          "Succeeded",
+          "harness-c-checks-1",
+        ),
+        attempt(
+          runD.runId,
+          "checks",
+          "check",
+          1,
+          "Succeeded",
+          "harness-d-checks-1",
+        ),
+      ]);
+
+    const gate = (
+      id: string,
+      runId: string,
+      nodeAttemptId: string,
+      gateId: string,
+      status: "passed" | "failed",
+    ): typeof schema.gateResults.$inferInsert => ({
+      id,
+      runId,
+      nodeAttemptId,
+      gateId,
+      kind: "command_check",
+      mode: "blocking",
+      status,
+    });
+
+    await db
+      .insert(schema.gateResults)
+      .values([
+        gate("hg-unit-a1", runA.runId, "harness-a-checks-1", "unit", "failed"),
+        gate("hg-unit-a2", runA.runId, "harness-a-checks-2", "unit", "passed"),
+        gate("hg-unit-b1", runB.runId, "harness-b-checks-1", "unit", "passed"),
+        gate("hg-unit-c1", runC.runId, "harness-c-checks-1", "unit", "passed"),
+        ...Array.from({ length: 5 }, (_, index) =>
+          gate(
+            `hg-lint-a-${index}`,
+            runA.runId,
+            "harness-a-checks-2",
+            "lint",
+            "passed",
+          ),
+        ),
+        ...Array.from({ length: 5 }, (_, index) =>
+          gate(
+            `hg-lint-b-${index}`,
+            runB.runId,
+            "harness-b-checks-1",
+            "lint",
+            "passed",
+          ),
+        ),
+      ]);
+
+    const project = await getProjectObservatory(
+      visibleProjectId,
+      { now: NOW },
+      db,
+    );
+
+    const unit = project.harness.firing.groups.find(
+      (group) => group.gateId === "unit",
+    );
+    const lint = project.harness.firing.groups.find(
+      (group) => group.gateId === "lint",
+    );
+
+    expect(unit).toMatchObject({
+      flowId: visibleFlowId,
+      flowRefId: "aif",
+      nodeId: "checks",
+      executions: 4,
+      passed: 3,
+      failed: 1,
+      failRate: 0.25,
+    });
+    expect(lint).toMatchObject({
+      executions: 10,
+      passed: 10,
+      failed: 0,
+      stale: 0,
+      failRate: 0,
+    });
+
+    expect(project.harness.neverFired).toEqual([
+      {
+        flowId: visibleFlowId,
+        flowRefId: "aif",
+        nodeId: "checks",
+        gateId: "lint",
+        kind: "command_check",
+        executions: 10,
+      },
+    ]);
+
+    const unitEffectiveness = project.harness.effectiveness.gates.find(
+      (row) => row.gateId === "unit",
+    );
+
+    expect(unitEffectiveness).toMatchObject({
+      failedAttempts: 1,
+      failedFollowedByRework: 1,
+      passedAttempts: 3,
+      passedFollowedByRework: 0,
+      reworkRateAfterFail: 1,
+      reworkRateAfterPass: 0,
+      lift: null,
+    });
+
+    const capability = project.harness.effectiveness.capabilities.find(
+      (row) => row.refId === "strict-rule",
+    );
+
+    expect(capability?.capabilityKind).toBe("rule");
+    expect(capability?.withCapability.runCount).toBe(1);
+    expect(capability?.withCapability.retryCount).toBe(1);
+    expect(capability?.withCapability.correctionRate).toBe(1);
+    // runB + runD carry resolved-but-empty sets; runC (null set) is excluded.
+    expect(capability?.withoutCapability.runCount).toBe(2);
+    expect(capability?.withoutCapability.correctionRate).toBe(0);
+    expect(capability?.withoutCapability.runIds).not.toContain(runC.runId);
+
+    expect(project.harness.coverage).toHaveLength(1);
+
+    const flowCoverage = project.harness.coverage[0];
+
+    expect(flowCoverage?.flowId).toBe(visibleFlowId);
+    expect(flowCoverage?.flowRefId).toBe("aif");
+    // rev-broken fails manifest parsing and is skipped with a WARN.
+    expect(flowCoverage?.revisionCount).toBe(1);
+
+    const checksCoverage = flowCoverage?.nodes.find(
+      (node) => node.nodeId === "checks",
+    );
+    const implementCoverage = flowCoverage?.nodes.find(
+      (node) => node.nodeId === "implement",
+    );
+
+    expect(checksCoverage).toMatchObject({
+      gateCount: 2,
+      blockingGateCount: 2,
+      advisoryGateCount: 0,
+      guideCount: 0,
+      guidesWithoutSensors: false,
+      // node attempts on (flow, checks): runA×2 + runB + runC + runD — NOT
+      // per-gate evaluations (the unit+lint sum would be 14).
+      executions: 5,
+    });
+    expect(implementCoverage).toMatchObject({
+      gateCount: 0,
+      blockingGateCount: 0,
+      guideCount: 1,
+      guidesWithoutSensors: true,
+      executions: 0,
+    });
+
+    const portfolio = await getPortfolioObservatory(
+      memberUserId,
+      "member",
+      { now: NOW },
+      db,
+    );
+
+    expect(portfolio.harness.neverFired).toEqual(project.harness.neverFired);
+    expect(portfolio.harness.coverage).toEqual(project.harness.coverage);
+  });
 });
 
 async function measureNodeDetailQueries(runCount: number): Promise<{
@@ -642,6 +904,8 @@ async function seedRun(input: {
   flowId: string;
   suffix: string;
   reworked?: boolean;
+  flowRevisionId?: string;
+  resolvedCapabilitySet?: schema.ResolvedCapabilitySet;
 }): Promise<{ runId: string; implementAttemptId: string }> {
   const taskId = `${input.suffix}-task`;
   const runId = `${input.suffix}-run`;
@@ -662,11 +926,44 @@ async function seedRun(input: {
     flowId: input.flowId,
     status: input.reworked ? "Review" : "Running",
     flowVersion: "v1.0.0",
+    flowRevisionId: input.flowRevisionId ?? null,
+    resolvedCapabilitySet: input.resolvedCapabilitySet ?? null,
     startedAt: new Date("2026-06-05T11:00:00.000Z"),
     endedAt: input.reworked ? new Date("2026-06-05T11:45:00.000Z") : null,
   });
 
   return { runId, implementAttemptId };
+}
+
+async function seedFlowRevision(input: {
+  id: string;
+  manifest: unknown;
+}): Promise<void> {
+  await db.insert(schema.flowRevisions).values({
+    id: input.id,
+    flowRefId: "aif",
+    source: "github.com/acme/aif",
+    versionLabel: "v1.0.0",
+    resolvedRevision: input.id,
+    manifestDigest: `digest-${input.id}`,
+    manifest: input.manifest,
+    schemaVersion: 1,
+    installedPath: `/tmp/flows/${input.id}`,
+  });
+}
+
+function capabilitySet(refIds: string[]): schema.ResolvedCapabilitySet {
+  return {
+    flowRevisionId: "rev-harness",
+    flowOrigin: "git",
+    capabilities: refIds.map((refId) => ({
+      refId,
+      kind: "rule",
+      sha: null,
+      scope: "project",
+    })),
+    mcps: [],
+  };
 }
 
 function attempt(
