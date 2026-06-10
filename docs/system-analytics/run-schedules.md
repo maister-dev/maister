@@ -72,8 +72,8 @@ row.
 
 ```mermaid
 flowchart TD
-    Tick[M24 tick claims run_schedule.dispatcher] --> Claim[tx1: SELECT FOR UPDATE SKIP LOCKED<br/>enabled AND due OR queue_one_pending<br/>JOIN projects: archived_at IS NULL<br/>LIMIT 10 ORDER BY next_fire_at]
-    Claim --> Decide[read task + latest run + countLiveRuns<br/>decision per overlap matrix]
+    Tick[M24 tick claims run_schedule.dispatcher] --> Claim[tx1: SELECT FOR UPDATE SKIP LOCKED<br/>enabled AND due OR queue_one_pending<br/>not freshly dispatching within 300s<br/>JOIN projects: archived_at IS NULL<br/>LIMIT 10 ORDER BY next_fire_at]
+    Claim --> Decide[read task + latest run + countLiveRuns<br/>+ slots reserved earlier in the batch<br/>decision per overlap matrix]
     Decide -- skip or catchup_queued --> NonLaunch[write final outcome + flag<br/>advance next_fire_at from now]
     NonLaunch --> Commit1[COMMIT tx1 — done]
     Decide -- launch path --> Intent[write last_fire_outcome=dispatching<br/>last_fired_at=now, advance next_fire_at<br/>clear queue_one_pending]
@@ -187,7 +187,14 @@ catch-up.
   `MaisterError("CONFLICT")` (409) while `last_fired_at` is within the 300s
   scheduler attempt timeout; an OLDER `dispatching` remnant (W1) is past the
   window and MAY be triggered — the staleness escape that keeps W1 from
-  bricking the button.
+  bricking the button. The tick's due-claim applies the SAME freshness
+  exclusion, so a row mid-trigger is never double-launched and a fast
+  `launch_failed` can never clobber the trigger's outcome.
+- **Batch slot reservation**: within one dispatcher batch, launches staged
+  earlier count as occupied slots for later rows — `skip`/`queue_one`
+  schedules never overshoot the cap into `Pending` runs the policy opted out
+  of; only an EXTERNAL concurrent launch can produce the documented benign
+  `queued_pending` race.
 - **Trigger-now racing the tick on the same due second**: the row lock
   serializes them; the loser observes the winner's run as `busy` → policy
   outcome, no duplicate. For `start_anyway` with cap headroom the worst case

@@ -400,6 +400,108 @@ describe("dispatchDueSchedules", () => {
     expect(row.lastFireOutcome).toBe("launched");
   });
 
+  it("never claims a FRESH 'dispatching' row (a trigger mid-launch owns it)", async () => {
+    const seed = await seedBase();
+    const id = await seedSchedule(seed, {
+      lastFireOutcome: "dispatching",
+      lastFiredAt: new Date(Date.now() - 10_000),
+    });
+    const launch = launchStub();
+
+    const summary = await dispatch.dispatchDueSchedules({ launch });
+
+    expect(launch).not.toHaveBeenCalled();
+    expect(summary.fired).toBe(0);
+
+    const row = await scheduleRow(id);
+
+    expect(row.lastFireOutcome).toBe("dispatching");
+  });
+
+  it("a tick during a slow trigger-now launch leaves the row alone; the trigger result survives", async () => {
+    const seed = await seedBase();
+    const id = await seedSchedule(seed);
+
+    let enterLaunch!: () => void;
+    let releaseLaunch!: () => void;
+    const entered = new Promise<void>((r) => {
+      enterLaunch = r;
+    });
+    const gate = new Promise<void>((r) => {
+      releaseLaunch = r;
+    });
+    const triggerLaunch = vi.fn(async (input: { taskId: string }) => {
+      enterLaunch();
+      await gate;
+      const inner = launchStub();
+
+      return inner(input);
+    });
+    const tickLaunch = launchStub();
+
+    const triggerPromise = dispatch.dispatchScheduleNow(id, {
+      actorUserId: seed.userId,
+      launch: triggerLaunch,
+    });
+
+    await entered;
+
+    const summary = await dispatch.dispatchDueSchedules({ launch: tickLaunch });
+
+    expect(tickLaunch).not.toHaveBeenCalled();
+    expect(summary.fired).toBe(0);
+
+    releaseLaunch();
+
+    const result = await triggerPromise;
+
+    expect(result.outcome).toBe("launched");
+
+    const row = await scheduleRow(id);
+
+    expect(row.lastFireOutcome).toBe("launched");
+    expect(row.lastRunId).not.toBeNull();
+  });
+
+  it("batch cap reservation: one tick never launches past the cap for skip, and flags queue_one overflow", async () => {
+    const seeds = await Promise.all(
+      Array.from({ length: 5 }, () => seedBase()),
+    );
+    const ids: string[] = [];
+
+    for (let i = 0; i < 5; i++) {
+      ids.push(
+        await seedSchedule(seeds[i], {
+          overlapPolicy: i < 3 ? "skip" : i === 3 ? "skip" : "queue_one",
+          nextFireAt: new Date(Date.now() - (60 - i) * MIN),
+        }),
+      );
+    }
+
+    const launch = launchStub();
+    const summary = await dispatch.dispatchDueSchedules({ launch });
+
+    // Default cap is 3: the batch itself must reserve slots as it stages
+    // launches — the 4th (skip) row skips, the 5th (queue_one) row flags.
+    expect(launch).toHaveBeenCalledTimes(3);
+    expect(summary.fired).toBe(3);
+    expect(summary.skippedCap).toBe(1);
+    expect(summary.catchupQueued).toBe(1);
+
+    const fourth = await scheduleRow(ids[3]);
+
+    expect(fourth.lastFireOutcome).toBe("skipped_cap");
+
+    const fifth = await scheduleRow(ids[4]);
+
+    expect(fifth.lastFireOutcome).toBe("catchup_queued");
+    expect(fifth.queueOnePending).toBe(true);
+
+    await db
+      .delete(schema.runSchedules)
+      .where(eq(schema.runSchedules.id, ids[4]));
+  });
+
   it("tx2 CAS: a concurrent outcome write during the launch wins; the stale dispatch result is dropped", async () => {
     const seed = await seedBase();
     const id = await seedSchedule(seed);

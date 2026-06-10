@@ -78,7 +78,7 @@
       "overlapHint": {
         "skip": "Skip the fire while the task already has an active run",
         "queue_one": "Remember one missed fire and launch it when the task frees up",
-        "start_anyway": "Always launch a new run, even in parallel"
+        "start_anyway": "Launch past the global concurrency cap (the run queues as Pending); a task with an active run is still skipped"
       },
       "runnerLabel": "Runner",
       "runnerDefault": "Project default",

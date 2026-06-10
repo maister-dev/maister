@@ -158,6 +158,15 @@ const CLAIM_COLUMNS = sql`
   rs.last_fired_at AS "lastFiredAt"
 `;
 
+// A FRESH 'dispatching' row is owned by an in-flight dispatch (a trigger-now
+// between its tx1 and tx2) — claiming it would double-launch and let a fast
+// launch_failed clobber the winner's outcome. Only rows past the scheduler
+// attempt timeout (the W1 crash-remnant escape) are claimable again — the
+// same staleness rule dispatchScheduleNow applies.
+function freshDispatchCutoff(now: Date): Date {
+  return new Date(now.getTime() - schedulerAttemptTimeoutSeconds() * 1_000);
+}
+
 async function claimDueScheduleRows(
   tx: Tx,
   now: Date,
@@ -170,6 +179,11 @@ async function claimDueScheduleRows(
     WHERE p.archived_at IS NULL
       AND rs.enabled = true
       AND (rs.next_fire_at <= ${now} OR rs.queue_one_pending = true)
+      AND (
+        rs.last_fire_outcome IS DISTINCT FROM 'dispatching'
+        OR rs.last_fired_at IS NULL
+        OR rs.last_fired_at <= ${freshDispatchCutoff(now)}
+      )
     ORDER BY rs.next_fire_at ASC NULLS LAST
     LIMIT ${limit}
     FOR UPDATE OF rs SKIP LOCKED
@@ -186,6 +200,11 @@ async function countClaimableSchedules(tx: Tx, now: Date): Promise<number> {
     WHERE p.archived_at IS NULL
       AND rs.enabled = true
       AND (rs.next_fire_at <= ${now} OR rs.queue_one_pending = true)
+      AND (
+        rs.last_fire_outcome IS DISTINCT FROM 'dispatching'
+        OR rs.last_fired_at IS NULL
+        OR rs.last_fired_at <= ${freshDispatchCutoff(now)}
+      )
   `);
 
   return Number(rowsOf<{ cnt: number }>(result)[0]?.cnt ?? 0);
@@ -207,7 +226,7 @@ async function decideAndStage(
   tx: Tx,
   row: ClaimedScheduleRow,
   now: Date,
-  opts: { advance: boolean },
+  opts: { advance: boolean; reservedSlots?: number },
 ): Promise<StagedDecision> {
   const taskRows = await tx
     .select({ status: tasks.status, projectId: tasks.projectId })
@@ -216,7 +235,12 @@ async function decideAndStage(
   const task = taskRows[0]!;
   const latestRun = await getLatestFlowRun(row.taskId, tx);
   const launchability = classifyTaskLaunchability(task, latestRun);
-  const capFull = (await countLiveRuns(tx)) >= maxConcurrentRunsCap();
+  // Launches staged earlier in the SAME batch haven't created runs yet —
+  // count them as occupied slots, or every row in the batch sees the
+  // pre-batch live count and skip/queue_one overshoot the cap into Pending.
+  const reservedSlots = opts.reservedSlots ?? 0;
+  const capFull =
+    (await countLiveRuns(tx)) + reservedSlots >= maxConcurrentRunsCap();
   const decision = decideFire({
     policy: row.overlapPolicy,
     launchability,
@@ -228,6 +252,7 @@ async function decideAndStage(
       scheduleId: row.id,
       launchability,
       capFull,
+      reservedSlots,
       policy: row.overlapPolicy,
       due: row.nextFireAt.getTime() <= now.getTime(),
       catchup: row.queueOnePending,
@@ -401,7 +426,10 @@ export async function dispatchDueSchedules(
     }
 
     for (const row of claimed) {
-      const staged = await decideAndStage(tx, row, now, { advance: true });
+      const staged = await decideAndStage(tx, row, now, {
+        advance: true,
+        reservedSlots: intents.length,
+      });
 
       if (staged.kind === "intent") {
         intents.push({
