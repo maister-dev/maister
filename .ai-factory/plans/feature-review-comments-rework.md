@@ -140,8 +140,8 @@ Out of scope (explicitly deferred):
 <!-- Commit checkpoint: tasks 7-8 -->
 
 ### Phase 4 — API routes (TDD slice; may start after 4+5, ∥ P3)
-- [ ] Task 9: `GET` (threads + placement via anchor lib) + `POST` (zod, anchor validation, server-extracted `line_content`, reply integrity) under `app/api/runs/[runId]/review-comments/route.ts`; co-located `__tests__/route.test.ts` (fake-db unit) — authz, guards, identifier checks (depends on 4, 5)
-- [ ] Task 10: `PATCH`/`DELETE` under `[commentId]/route.ts` (author-only edit/delete, root-only resolve, cascade) + co-located tests (depends on 9)
+- [x] Task 9: `GET` (threads + placement via anchor lib) + `POST` (zod, anchor validation, server-extracted `line_content`, reply integrity) under `app/api/runs/[runId]/review-comments/route.ts`; co-located `__tests__/route.test.ts` (fake-db unit) — authz, guards, identifier checks (depends on 4, 5)
+- [x] Task 10: `PATCH`/`DELETE` under `[commentId]/route.ts` (author-only edit/delete, root-only resolve, cascade) + co-located tests (depends on 9)
 <!-- Commit checkpoint: tasks 9-10 -->
 
 ### Phase 5 — UI + i18n (batch: 11 → 12; 13 after 8+12; 14 last)
