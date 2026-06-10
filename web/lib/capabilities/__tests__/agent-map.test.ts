@@ -277,4 +277,68 @@ describe("mapProfileToAgentArtifacts", () => {
     expect(result.settingsLocal).toBeNull();
     expect(result.skills).toEqual([]);
   });
+
+  // ADR-073 (decision 5) / T3.1: the configured runner model reaches the claude
+  // adapter through settings.local.json's `model` field. The write is ALWAYS-ON
+  // whenever `model` is set — even with zero permission entries (the always-on
+  // regression: settingsLocal was `null` in that case before).
+  it("carries { model, availableModels } and is non-null for claude with model + NO permissions (T3.1 always-on)", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: claudeProfile(),
+      agent: "claude",
+      model: "glm-5.1",
+    });
+
+    expect(result.settingsLocal).not.toBeNull();
+    expect(result.settingsLocal).toEqual({
+      permissions: {},
+      model: "glm-5.1",
+      availableModels: ["glm-5.1"],
+    });
+  });
+
+  it("carries permissions AND model AND availableModels for claude with model + permissions (T3.1)", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: claudeProfile(),
+      agent: "claude",
+      tools: ["Read", "Edit"],
+      permissionMode: "deny",
+      model: "claude-sonnet-4-6",
+    });
+
+    expect(result.settingsLocal).not.toBeNull();
+    expect([...result.settingsLocal!.permissions.allow!].sort()).toEqual([
+      "Edit",
+      "Read",
+    ]);
+    expect(result.settingsLocal!.permissions.defaultMode).toBe("plan");
+    expect(result.settingsLocal!.model).toBe("claude-sonnet-4-6");
+    expect(result.settingsLocal!.availableModels).toEqual([
+      "claude-sonnet-4-6",
+    ]);
+  });
+
+  it("settingsLocal stays null for claude with NO model + NO permissions (T3.1 unchanged)", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: claudeProfile(),
+      agent: "claude",
+    });
+
+    expect(result.settingsLocal).toBeNull();
+  });
+
+  it("does NOT carry model/availableModels for codex (codex uses the supervisor channel); settingsLocal stays null (T3.1)", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: codexProfile(),
+      agent: "codex",
+      model: "gpt-5-codex",
+    });
+
+    expect(result.settingsLocal).toBeNull();
+
+    const serialized = JSON.stringify(result);
+
+    expect(serialized).not.toContain("gpt-5-codex");
+    expect(serialized).not.toContain("availableModels");
+  });
 });

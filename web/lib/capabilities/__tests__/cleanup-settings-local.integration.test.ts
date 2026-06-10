@@ -418,6 +418,39 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     expect(plan!.enforcedClasses).toEqual(["github"]);
   });
 
+  // ADR-073 (decision 5) / T3.1: a claude run with executor.model set writes
+  // { model, availableModels } into settings.local.json — always-on, even with
+  // zero tools/permissionMode (the always-on regression: settingsLocal was null
+  // for a no-permission claude run before).
+  it("writes { model, availableModels } into settings.local.json for a claude run with executor.model and NO tools (T3.1)", async () => {
+    const worktreePath = await mkdtemp(join(tmpdir(), "wt-model-write-"));
+    const slPath = settingsLocalPath(worktreePath);
+
+    const materialized = await materializeCapabilityProfile({
+      runId: "run-model",
+      worktreePath,
+      profile: claudeProfile(),
+      nodeAttemptId: "node-1",
+      executor: {
+        executorRefId: "runner-1",
+        agent: "claude",
+        model: "glm-5.1",
+        router: null,
+      },
+    });
+
+    expect(materialized.settingsLocalPath).toBe(slPath);
+    expect(await exists(slPath)).toBe(true);
+
+    const written = JSON.parse(await readFile(slPath, "utf8"));
+
+    expect(written.model).toBe("glm-5.1");
+    expect(written.availableModels).toEqual(["glm-5.1"]);
+    expect(written.permissions).toEqual({});
+
+    await fsRm(worktreePath, { recursive: true, force: true });
+  });
+
   it("reclaim is idempotent: a 2nd pass never re-deletes a restored user original (Test 5, #data-loss)", async () => {
     const worktreePath = await mkdtemp(join(tmpdir(), "wt-reclaim-idem-"));
     const slPath = settingsLocalPath(worktreePath);

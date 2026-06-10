@@ -32,6 +32,12 @@
 >   threading in acp-client (T2.4); production source-registry wired in main.ts. Reviewer pass
 >   applied (robust `/vN$` models-URL heuristic; defensive probe-timeout rejection catch).
 >   Gate: supervisor unit 173 + integration 45 green, tsc + scoped eslint clean. Checkpoint #3.
+> - ✅ **Phase 3** — claude application via settings.local.json `{model, availableModels:[model]}`,
+>   always-on for every claude session (T3.1, web agent-map+materialize); codex via
+>   `unstable_setSessionModel` on new+resume (T3.2); model-mismatch **advisory** `session.update`
+>   variant — never fails the run (T3.3, supervisor acp-client `applyAndVerifyModel`). Reviewer
+>   pass (explicit runner-narrowing). Gate: supervisor unit 178 + integration 45, web agent-map 14
+>   + materialize 6, tsc + scoped eslint clean (both tiers). Checkpoint #4.
 > - **Plan-vs-reality corrections found (branch == base `633f74c7`):** (a) the plan's
 >   "architecture.md has NO component table" note is **wrong** — the table exists at
 >   ~line 188; a row was added. (b) The T0B.3 advisory shape is **frozen** as a

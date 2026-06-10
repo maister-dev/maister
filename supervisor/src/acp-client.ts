@@ -229,6 +229,16 @@ export async function createAcpConnection(
         modelCatalogCache,
         logger,
       );
+      await applyAndVerifyModel({
+        connection,
+        runner: args.runner,
+        models: resumeResp.models,
+        acpSessionId: args.resumeSessionId,
+        sessionId,
+        record,
+        emitter,
+        logger,
+      });
 
       return { connection, acpSessionId: args.resumeSessionId };
     }
@@ -259,8 +269,105 @@ export async function createAcpConnection(
     modelCatalogCache,
     logger,
   );
+  await applyAndVerifyModel({
+    connection,
+    runner: args.runner,
+    models: newSessionResp.models,
+    acpSessionId: newSessionResp.sessionId,
+    sessionId,
+    record,
+    emitter,
+    logger,
+  });
 
   return { connection, acpSessionId: newSessionResp.sessionId };
+}
+
+type ApplyModelArgs = {
+  connection: acp.ClientSideConnection;
+  runner: RunnerLaunch | undefined;
+  models: acp.SessionModelState | null | undefined;
+  acpSessionId: string;
+  sessionId: string;
+  record: SessionRecord;
+  emitter: EventEmitter;
+  logger: Logger;
+};
+
+// ADR-073 model application + verification (T3.2/T3.3). claude is pinned ahead
+// of session/new via the settings.local.json channel (web tier), so here we
+// only verify it. codex is pinned via the ACP `unstable_setSessionModel` call.
+// A residual mismatch is emitted as an ADVISORY `session.update` (a synthetic
+// payload variant, NOT a new event kind) and NEVER fails the run — env-router
+// slot-mapping legitimately reports a remapped name, and `cost.jsonl` stays the
+// billed-model ground truth. Runs on both new and resumed sessions.
+export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
+  const {
+    connection,
+    runner,
+    models,
+    acpSessionId,
+    sessionId,
+    record,
+    emitter,
+    logger,
+  } = args;
+  const observed = models?.currentModelId;
+
+  // Explicit `!runner` narrows `runner` to non-undefined for the accesses
+  // below; `!runner.model` is defensive (the schema enforces min(1)).
+  if (!runner || !runner.model || !observed || observed === runner.model)
+    return;
+
+  const configured = runner.model;
+  const channel: "settings_local" | "set_session_model" =
+    runner.adapter === "codex" ? "set_session_model" : "settings_local";
+
+  if (channel === "set_session_model") {
+    try {
+      await connection.unstable_setSessionModel({
+        sessionId: acpSessionId,
+        modelId: configured,
+      });
+      logger.info(
+        { sessionId, configuredModel: configured, observedModelId: observed },
+        "model applied via setSessionModel",
+      );
+
+      return;
+    } catch (err) {
+      logger.warn(
+        {
+          sessionId,
+          configuredModel: configured,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "setSessionModel failed; emitting advisory",
+      );
+    }
+  }
+
+  record.monotonicId += 1;
+  emitter.emit(SESSION_EVENT_CHANNEL, {
+    type: "session.update",
+    sessionId,
+    monotonicId: record.monotonicId,
+    update: {
+      sessionUpdate: "model_advisory",
+      configuredModel: configured,
+      observedModelId: observed,
+      channel,
+    },
+  } satisfies SessionEvent);
+  logger.info(
+    {
+      sessionId,
+      configuredModel: configured,
+      observedModelId: observed,
+      channel,
+    },
+    "model mismatch advisory",
+  );
 }
 
 export async function sendPromptOnConnection(

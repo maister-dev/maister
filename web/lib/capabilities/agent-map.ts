@@ -27,6 +27,8 @@ export type AgentMcpServer = {
 
 export type AgentSettingsLocal = {
   permissions: { allow?: string[]; defaultMode?: string };
+  model?: string;
+  availableModels?: string[];
 };
 
 export type AgentMaterializedSkill = {
@@ -45,6 +47,7 @@ export type MapProfileToAgentArtifactsArgs = {
   agent: CapabilityAgent;
   tools?: string[];
   permissionMode?: "ask" | "allow" | "deny";
+  model?: string;
 };
 
 const PERMISSION_MODE_TO_DEFAULT_MODE: Record<
@@ -109,13 +112,23 @@ export function mapProfileToAgentArtifacts(
     isClaude && args.permissionMode
       ? PERMISSION_MODE_TO_DEFAULT_MODE[args.permissionMode]
       : undefined;
+  // ADR-073 (decision 5): the configured runner model reaches the claude
+  // adapter via settings.local.json's `model` field (the adapter calls
+  // query.setModel() from settings at startup). `availableModels: [model]` is
+  // the minimal allowlist that lets the adapter accept a non-Claude env-router
+  // model id (e.g. glm-5.1) — and is correct for plain anthropic too, since a
+  // run pins exactly one model. codex applies the model via a separate
+  // supervisor-side channel, so this is claude-only.
+  const model = isClaude && args.model ? args.model : undefined;
   const permissions: AgentSettingsLocal["permissions"] = {};
 
   if (allow !== undefined) permissions.allow = allow;
   if (defaultMode !== undefined) permissions.defaultMode = defaultMode;
 
   const settingsLocal: AgentSettingsLocal | null =
-    allow === undefined && defaultMode === undefined ? null : { permissions };
+    allow === undefined && defaultMode === undefined && model === undefined
+      ? null
+      : { permissions, ...(model ? { model, availableModels: [model] } : {}) };
 
   const mcpServers: AgentMcpServer[] = [];
   const skills: AgentMaterializedSkill[] = [];

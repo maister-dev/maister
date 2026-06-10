@@ -224,6 +224,7 @@ export async function materializeCapabilityProfile(
     agent,
     tools: args.tools,
     permissionMode: args.permissionMode,
+    model: args.executor?.model,
   });
 
   const profilePath = path.join(rootPath, "profile.json");
