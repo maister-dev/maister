@@ -24,7 +24,14 @@ nodes:
   - id: evolve
     type: ai_coding
     action:
-      prompt: "/aif-evolve"
+      # `evolve` is both the entry node and the review rework target. On entry
+      # review_comments is empty (runner-seeded); on a rework jump it carries
+      # the reviewer's feedback so the re-run addresses exactly what was
+      # rejected.
+      prompt: |
+        /aif-evolve
+
+        {{ review_comments }}
     transitions:
       success: review
 

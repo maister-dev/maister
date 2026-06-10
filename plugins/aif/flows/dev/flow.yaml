@@ -36,11 +36,17 @@ nodes:
   - id: plan
     type: ai_coding
     action:
+      # `plan` is the plan_review rework target. On the initial visit
+      # plan_review_comments is empty (runner-seeded); on a rework jump it
+      # carries the reviewer's feedback so the re-plan addresses exactly what
+      # was rejected.
       prompt: |
         /aif-plan {{ task.prompt }}
 
         Non-interactive run — apply these preferences and do NOT ask:
         Testing={{ steps.intake.vars.tests }}, Logging={{ steps.intake.vars.logging }}, Docs={{ steps.intake.vars.docs }}.
+
+        {{ plan_review_comments }}
     transitions:
       success: improve
 
