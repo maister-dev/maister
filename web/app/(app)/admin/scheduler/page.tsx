@@ -16,6 +16,7 @@ const JOB_KINDS = [
   "command",
   "agent_tick",
   "flow_run",
+  "webhook_delivery",
 ] as const;
 const STATES = ["active", "disabled"] as const;
 

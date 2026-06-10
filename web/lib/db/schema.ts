@@ -566,7 +566,8 @@ export type SchedulerJobKind =
   | "command"
   | "agent_tick"
   | "flow_run"
-  | "run_schedule";
+  | "run_schedule"
+  | "webhook_delivery";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -588,6 +589,7 @@ export const schedulerJobs = pgTable(
         "agent_tick",
         "flow_run",
         "run_schedule",
+        "webhook_delivery",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -644,6 +646,7 @@ export const schedulerJobRuns = pgTable(
         "agent_tick",
         "flow_run",
         "run_schedule",
+        "webhook_delivery",
       ],
     }).notNull(),
     status: text("status", {

@@ -15,6 +15,7 @@ import { dispatchDueSchedules } from "@/lib/run-schedules/dispatch";
 import { runAgentTickJob } from "@/lib/scheduler/handlers/agent-tick";
 import { runCommandJob } from "@/lib/scheduler/handlers/command";
 import { runScheduledFlowJob } from "@/lib/scheduler/handlers/flow-run";
+import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { runSystemSweep } from "@/lib/scheduler/system-sweeps";
 import { isMaisterError } from "@/lib/errors";
 
@@ -129,6 +130,15 @@ async function runClaimedJob(
 
         return succeeded(job);
       }
+      case "webhook_delivery":
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: await runWebhookDeliveryJob(),
+        });
+
+        return succeeded(job);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

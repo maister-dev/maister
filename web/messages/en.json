@@ -1107,7 +1107,8 @@
       "command": "command",
       "agent_tick": "agent_tick",
       "flow_run": "flow_run",
-      "run_schedule": "run_schedule"
+      "run_schedule": "run_schedule",
+      "webhook_delivery": "webhook_delivery"
     },
     "state": {
       "active": "active",
@@ -1117,7 +1118,8 @@
       "system_sweep": "No target needed; use {}.",
       "command": "{ \"commandKind\": \"http_ping\", \"url\": \"https://…\" } or { \"commandKind\": \"console_ping\", \"host\": \"example.com\" }",
       "agent_tick": "Free-form target passed to the agent launcher.",
-      "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }"
+      "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }",
+      "webhook_delivery": "No target needed; use {}."
     }
   },
   "adminUsers": {

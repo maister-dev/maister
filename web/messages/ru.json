@@ -1107,7 +1107,8 @@
       "command": "command",
       "agent_tick": "agent_tick",
       "flow_run": "flow_run",
-      "run_schedule": "run_schedule"
+      "run_schedule": "run_schedule",
+      "webhook_delivery": "webhook_delivery"
     },
     "state": {
       "active": "активна",
@@ -1117,7 +1118,8 @@
       "system_sweep": "Цель не нужна; используйте {}.",
       "command": "{ \"commandKind\": \"http_ping\", \"url\": \"https://…\" } или { \"commandKind\": \"console_ping\", \"host\": \"example.com\" }",
       "agent_tick": "Произвольная цель, передаётся лаунчеру агента.",
-      "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }"
+      "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }",
+      "webhook_delivery": "Цель не нужна; используйте {}."
     }
   },
   "adminUsers": {

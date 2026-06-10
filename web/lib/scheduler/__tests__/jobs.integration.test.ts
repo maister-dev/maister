@@ -246,7 +246,7 @@ describe("scheduler job SQL integration", () => {
     expect(jobs[0].consecutiveFailures).toBe(1);
   });
 
-  it("bootstraps the default system_sweep and run_schedule dispatcher jobs idempotently", async () => {
+  it("bootstraps the default system_sweep, run_schedule, and webhook_delivery jobs idempotently", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
 
     await ensureDefaultSchedulerJobs({ now, db: schedulerDb });
@@ -257,7 +257,7 @@ describe("scheduler job SQL integration", () => {
       .from(schema.schedulerJobs)
       .where(isNotNull(schema.schedulerJobs.id));
 
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(rows.find((row) => row.id === "system_sweep.default")).toMatchObject(
       {
         jobKind: "system_sweep",
@@ -269,6 +269,14 @@ describe("scheduler job SQL integration", () => {
       rows.find((row) => row.id === "run_schedule.dispatcher"),
     ).toMatchObject({
       jobKind: "run_schedule",
+      cadenceIntervalSeconds: 60,
+      maxFailures: 3,
+      nextRunAt: now,
+    });
+    expect(
+      rows.find((row) => row.id === "webhook_delivery.default"),
+    ).toMatchObject({
+      jobKind: "webhook_delivery",
       cadenceIntervalSeconds: 60,
       maxFailures: 3,
       nextRunAt: now,

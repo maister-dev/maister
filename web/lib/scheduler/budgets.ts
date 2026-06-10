@@ -5,7 +5,8 @@ export type SchedulerBudgetKey =
   | "command"
   | "agent"
   | "flow"
-  | "run_schedule";
+  | "run_schedule"
+  | "webhook_delivery";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -13,6 +14,7 @@ export type SchedulerBudgetLimits = {
   agent: number;
   flow: number;
   runSchedule: number;
+  webhookDelivery: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -24,6 +26,7 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     agent: positiveEnvInt("MAISTER_MAX_CONCURRENT_AGENTS", 1),
     flow: UNBOUNDED_FLOW_DISPATCH_BUDGET,
     runSchedule: 1,
+    webhookDelivery: 1,
   };
 }
 

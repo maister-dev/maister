@@ -42,6 +42,7 @@ const JOB_KINDS: SchedulerJobKind[] = [
   "agent_tick",
   "flow_run",
   "run_schedule",
+  "webhook_delivery",
 ];
 
 const inputClass =

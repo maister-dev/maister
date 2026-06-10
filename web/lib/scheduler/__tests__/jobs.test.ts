@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { schedulerBudgetLimits } from "@/lib/scheduler/budgets";
 import {
   computeNextRunAt,
+  isSchedulerJobKind,
   schedulerBudgetForKind,
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
@@ -46,6 +48,7 @@ describe("schedulerBudgetForKind", () => {
       "agent_tick",
       "flow_run",
       "run_schedule",
+      "webhook_delivery",
     ] satisfies SchedulerJobKind[];
 
     expect(kinds.map((kind) => [kind, schedulerBudgetForKind(kind)])).toEqual([
@@ -54,6 +57,22 @@ describe("schedulerBudgetForKind", () => {
       ["agent_tick", "agent"],
       ["flow_run", "flow"],
       ["run_schedule", "run_schedule"],
+      ["webhook_delivery", "webhook_delivery"],
     ]);
+  });
+
+  it("resolves the webhook_delivery singleton drainer budget to a fixed 1", () => {
+    expect(schedulerBudgetForKind("webhook_delivery")).toBe("webhook_delivery");
+    expect(schedulerBudgetLimits().webhookDelivery).toBe(1);
+  });
+});
+
+describe("isSchedulerJobKind", () => {
+  it("accepts webhook_delivery as a registered job kind", () => {
+    expect(isSchedulerJobKind("webhook_delivery")).toBe(true);
+  });
+
+  it("rejects unknown kinds", () => {
+    expect(isSchedulerJobKind("not_a_kind")).toBe(false);
   });
 });

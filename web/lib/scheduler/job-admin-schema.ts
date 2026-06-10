@@ -5,6 +5,7 @@ const jobKindSchema = z.enum([
   "command",
   "agent_tick",
   "flow_run",
+  "webhook_delivery",
 ]);
 
 const targetSchema = z.record(z.string(), z.unknown());
