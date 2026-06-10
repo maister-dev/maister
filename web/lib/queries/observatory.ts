@@ -8,16 +8,28 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { harnessNeverFiredMin } from "@/lib/instance-config";
 import {
+  buildCoverageMap,
+  declaredGatesFromManifests,
+  detectNeverFired,
+  flowNodeKey,
   groupArtifactContributions,
   groupBy,
   rollupAutonomyMetrics,
+  rollupCapabilityEffectiveness,
+  rollupControlEffectiveness,
   rollupCorrectionMetrics,
+  rollupGateFiringStats,
   uniqueSorted,
   type ArtifactContribution,
   type AutonomyMetric,
   type CorrectionMetric,
+  type FlowManifestInput,
+  type HarnessGateInput,
+  type ManifestNodeInput,
   type ObservatoryArtifactInput,
+  type ObservatoryHarness,
   type ObservatoryHitlInput,
   type ObservatoryNodeAttemptInput,
   type ObservatoryRunInput,
@@ -33,6 +45,7 @@ import {
 
 const {
   artifactInstances,
+  flowRevisions,
   flows,
   gateResults,
   hitlRequests,
@@ -104,6 +117,7 @@ export interface ObservatoryPortfolio {
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
   topSignals: SignalCluster[];
+  harness: ObservatoryHarness;
 }
 
 export interface ObservatoryProject {
@@ -113,6 +127,7 @@ export interface ObservatoryProject {
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
   topSignals: SignalCluster[];
+  harness: ObservatoryHarness;
 }
 
 export interface ObservatoryNodeDetail {
@@ -163,6 +178,8 @@ type RunRow = {
   projectId: string;
   flowId: string;
   flowRefId: string;
+  flowRevisionId: string | null;
+  resolvedCapabilitySet: schema.ResolvedCapabilitySet | null;
   startedAt: Date;
   endedAt: Date | null;
   status: RunStatus;
@@ -186,6 +203,10 @@ type GateRow = {
   verdict: schema.GateVerdict | null;
 };
 type ArtifactRow = ObservatoryArtifactInput;
+type RevisionRow = {
+  id: string;
+  manifest: unknown;
+};
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -215,7 +236,12 @@ export async function getPortfolioObservatory(
     filters,
     now,
   );
-  const portfolio = buildPortfolio(readModel, visibleProjects, now);
+  const portfolio = buildPortfolio(
+    readModel,
+    visibleProjects,
+    now,
+    harnessNeverFiredMin(),
+  );
 
   log.info(
     {
@@ -250,7 +276,12 @@ export async function getProjectObservatory(
   }
 
   const readModel = await loadObservatoryRows(client, [project], filters, now);
-  const portfolio = buildPortfolio(readModel, [project], now);
+  const portfolio = buildPortfolio(
+    readModel,
+    [project],
+    now,
+    harnessNeverFiredMin(),
+  );
 
   log.info(
     {
@@ -268,6 +299,7 @@ export async function getProjectObservatory(
     nodes: portfolio.nodes,
     artifacts: portfolio.artifacts,
     topSignals: portfolio.topSignals,
+    harness: portfolio.harness,
   };
 }
 
@@ -430,9 +462,19 @@ async function loadObservatoryRows(
   gates: GateRow[];
   hitl: HitlRow[];
   artifacts: ArtifactRow[];
+  revisions: RevisionRow[];
 }> {
+  const emptyRows = {
+    runs: [],
+    attempts: [],
+    gates: [],
+    hitl: [],
+    artifacts: [],
+    revisions: [],
+  };
+
   if (projectScope.length === 0) {
-    return { runs: [], attempts: [], gates: [], hitl: [], artifacts: [] };
+    return emptyRows;
   }
 
   const projectIds = projectScope.map((project) => project.id);
@@ -453,6 +495,8 @@ async function loadObservatoryRows(
       projectId: runs.projectId,
       flowId: runs.flowId,
       flowRefId: flows.flowRefId,
+      flowRevisionId: runs.flowRevisionId,
+      resolvedCapabilitySet: runs.resolvedCapabilitySet,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       status: runs.status,
@@ -477,7 +521,7 @@ async function loadObservatoryRows(
   const runIds = typedRuns.map((run) => run.id);
 
   if (runIds.length === 0) {
-    return { runs: [], attempts: [], gates: [], hitl: [], artifacts: [] };
+    return emptyRows;
   }
 
   const attemptPredicates: SQL[] = [inArray(nodeAttempts.runId, runIds)];
@@ -520,7 +564,7 @@ async function loadObservatoryRows(
   );
 
   if (scopedRunIds.length === 0) {
-    return { runs: [], attempts: [], gates: [], hitl: [], artifacts: [] };
+    return emptyRows;
   }
 
   const artifactPredicates: SQL[] = [
@@ -554,7 +598,7 @@ async function loadObservatoryRows(
     : scopedRunIds;
 
   if (effectiveRunIds.length === 0) {
-    return { runs: [], attempts: [], gates: [], hitl: [], artifacts: [] };
+    return emptyRows;
   }
 
   const effectiveRunSet = new Set(effectiveRunIds);
@@ -575,7 +619,14 @@ async function loadObservatoryRows(
     "observatory eligible run scope resolved",
   );
 
-  const [gateRows, hitlRows] = await Promise.all([
+  const scopedRevisionIds = uniqueSorted(
+    typedRuns.flatMap((run) =>
+      effectiveRunSet.has(run.id) && run.flowRevisionId !== null
+        ? [run.flowRevisionId]
+        : [],
+    ),
+  );
+  const [gateRows, hitlRows, revisionRows] = await Promise.all([
     client
       .select({
         id: gateResults.id,
@@ -602,6 +653,15 @@ async function loadObservatoryRows(
       })
       .from(hitlRequests)
       .where(inArray(hitlRequests.runId, effectiveRunIds)),
+    scopedRevisionIds.length === 0
+      ? Promise.resolve([] as RevisionRow[])
+      : client
+          .select({
+            id: flowRevisions.id,
+            manifest: flowRevisions.manifest,
+          })
+          .from(flowRevisions)
+          .where(inArray(flowRevisions.id, scopedRevisionIds)),
   ]);
 
   log.debug(
@@ -622,6 +682,7 @@ async function loadObservatoryRows(
     gates: gateRows,
     hitl: hitlRows,
     artifacts: artifactRows,
+    revisions: revisionRows,
   };
 }
 
@@ -632,9 +693,11 @@ function buildPortfolio(
     gates: GateRow[];
     hitl: HitlRow[];
     artifacts: ArtifactRow[];
+    revisions: RevisionRow[];
   },
   projectScope: readonly ProjectScopeRow[],
   now: Date,
+  minExecutions: number,
 ): ObservatoryPortfolio {
   const projectsById = new Map(
     projectScope.map((project) => [project.id, project]),
@@ -736,6 +799,223 @@ function buildPortfolio(
       ),
     artifacts: summarizeArtifacts(groupArtifactContributions(rows.artifacts)),
     topSignals,
+    harness: buildHarness(rows, minExecutions),
+  };
+}
+
+function buildHarness(
+  rows: {
+    runs: RunRow[];
+    attempts: AttemptRow[];
+    gates: GateRow[];
+    revisions: RevisionRow[];
+  },
+  minExecutions: number,
+): ObservatoryHarness {
+  const runById = new Map(rows.runs.map((run) => [run.id, run]));
+  const attemptById = new Map(
+    rows.attempts.map((attempt) => [attempt.id, attempt]),
+  );
+  const harnessGates: HarnessGateInput[] = rows.gates.flatMap((gate) => {
+    const run = runById.get(gate.runId);
+    const attempt = attemptById.get(gate.nodeAttemptId);
+
+    if (!run || !attempt) return [];
+
+    return [
+      {
+        projectId: run.projectId,
+        flowId: run.flowId,
+        flowRefId: run.flowRefId,
+        nodeId: attempt.nodeId,
+        nodeAttemptId: gate.nodeAttemptId,
+        gateId: gate.gateId,
+        kind: gate.kind,
+        mode: gate.mode,
+        status: gate.status,
+      },
+    ];
+  });
+  const firing = rollupGateFiringStats(harnessGates);
+  const manifests = parseRevisionManifests(rows.revisions, rows.runs);
+
+  return {
+    firing,
+    neverFired: detectNeverFired({
+      declaredGates: declaredGatesFromManifests(manifests),
+      firingStats: firing.groups,
+      minExecutions,
+    }),
+    effectiveness: {
+      gates: rollupControlEffectiveness({
+        gates: harnessGates,
+        attempts: rows.attempts,
+      }),
+      capabilities: rollupCapabilityEffectiveness({
+        runs: rows.runs.map((run) => ({
+          id: run.id,
+          active: run.endedAt === null,
+          capabilities:
+            run.resolvedCapabilitySet === null
+              ? null
+              : run.resolvedCapabilitySet.capabilities.map((capability) => ({
+                  refId: capability.refId,
+                  kind: capability.kind,
+                })),
+        })),
+        attempts: rows.attempts,
+      }),
+    },
+    coverage: buildCoverageMap({
+      manifests,
+      nodeAttemptCounts: countNodeAttempts(rows.attempts, runById),
+    }),
+  };
+}
+
+function countNodeAttempts(
+  attempts: readonly AttemptRow[],
+  runById: ReadonlyMap<string, RunRow>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+
+  for (const attempt of attempts) {
+    const run = runById.get(attempt.runId);
+
+    if (!run) continue;
+    const key = flowNodeKey(run.flowId, attempt.nodeId);
+
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+function parseRevisionManifests(
+  revisions: readonly RevisionRow[],
+  runRows: readonly RunRow[],
+): FlowManifestInput[] {
+  const flowsByRevision = new Map<string, Map<string, string>>();
+
+  for (const run of runRows) {
+    if (run.flowRevisionId === null) continue;
+
+    const flowRefIds =
+      flowsByRevision.get(run.flowRevisionId) ?? new Map<string, string>();
+
+    flowRefIds.set(run.flowId, run.flowRefId);
+    flowsByRevision.set(run.flowRevisionId, flowRefIds);
+  }
+
+  return revisions.flatMap((revision) => {
+    const flowRefIds = flowsByRevision.get(revision.id);
+
+    if (!flowRefIds) return [];
+
+    const nodes = parseManifestNodes(revision.manifest);
+
+    if (nodes === null) {
+      log.warn(
+        { flowRevisionId: revision.id },
+        "coverage: manifest parse failed — revision skipped",
+      );
+
+      return [];
+    }
+
+    return [...flowRefIds.entries()].map(([flowId, flowRefId]) => ({
+      flowId,
+      flowRefId,
+      revisionId: revision.id,
+      nodes,
+    }));
+  });
+}
+
+function parseManifestNodes(manifest: unknown): ManifestNodeInput[] | null {
+  if (manifest === null || typeof manifest !== "object") return null;
+
+  const nodes = (manifest as Record<string, unknown>).nodes;
+
+  // Legacy linear (steps-only) manifests have no graph nodes — and nothing
+  // declared for the coverage map.
+  if (nodes === undefined) return [];
+  if (!Array.isArray(nodes)) return null;
+
+  const parsed: ManifestNodeInput[] = [];
+
+  for (const node of nodes) {
+    if (node === null || typeof node !== "object") return null;
+
+    const record = node as Record<string, unknown>;
+
+    if (typeof record.id !== "string") return null;
+
+    const gates = parseManifestGates(record.pre_finish);
+
+    if (gates === null) return null;
+
+    parsed.push({
+      nodeId: record.id,
+      gates,
+      guideCount: countGuides(record.settings),
+    });
+  }
+
+  return parsed;
+}
+
+function parseManifestGates(
+  preFinish: unknown,
+): { gateId: string; kind: string; mode: string }[] | null {
+  if (preFinish === undefined || preFinish === null) return [];
+  if (typeof preFinish !== "object") return null;
+
+  const gates = (preFinish as Record<string, unknown>).gates;
+
+  if (gates === undefined || gates === null) return [];
+  if (!Array.isArray(gates)) return null;
+
+  const parsed: { gateId: string; kind: string; mode: string }[] = [];
+
+  for (const gate of gates) {
+    if (gate === null || typeof gate !== "object") return null;
+
+    const record = gate as Record<string, unknown>;
+
+    if (typeof record.id !== "string" || typeof record.kind !== "string") {
+      return null;
+    }
+
+    parsed.push({
+      gateId: record.id,
+      kind: record.kind,
+      // mirrors the gateSchema zod default
+      mode: record.mode === "advisory" ? "advisory" : "blocking",
+    });
+  }
+
+  return parsed;
+}
+
+function countGuides(settings: unknown): number {
+  if (settings === null || typeof settings !== "object") return 0;
+
+  const record = settings as Record<string, unknown>;
+
+  return ["skills", "rules", "restrictions"].reduce((sum, key) => {
+    const value = record[key];
+
+    return sum + (Array.isArray(value) ? value.length : 0);
+  }, 0);
+}
+
+function emptyHarness(): ObservatoryHarness {
+  return {
+    firing: { groups: [], byKind: [] },
+    neverFired: [],
+    effectiveness: { gates: [], capabilities: [] },
+    coverage: [],
   };
 }
 
@@ -865,6 +1145,7 @@ function emptyProject(projectId: string, now: Date): ObservatoryProject {
     nodes: [],
     artifacts: [],
     topSignals: [],
+    harness: emptyHarness(),
   };
 }
 

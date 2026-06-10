@@ -439,7 +439,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
 
 ### Phase A — Observatory sensing layer (independent of B/C; may run in parallel after T0.1)
 
-- [ ] **TA.1 — Pure rollups.** In `web/lib/queries/observatory-core.ts` add:
+- [x] **TA.1 — Pure rollups.** In `web/lib/queries/observatory-core.ts` add:
   `rollupGateFiringStats(gates)` (per-(flow,node,gate) + per-kind counts/rates),
   `detectNeverFired({declaredGates, firingStats, minExecutions})`,
   `rollupControlEffectiveness({gates, attempts, runs})` (gate→rework lift; attempt
@@ -455,7 +455,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   zero denominators (honest-N "—"), null capability-set exclusion, multi-revision
   declared-gate union, null-`flowRevisionId` runs excluded from coverage,
   guides-without-sensors flag.
-- [ ] **TA.2 — Query layer wiring.** Extend `loadObservatoryRows`
+- [x] **TA.2 — Query layer wiring.** Extend `loadObservatoryRows`
   (`web/lib/queries/observatory.ts`) to select `runs.resolvedCapabilitySet` +
   `runs.flowRevisionId`; add ONE bulk `flow_revisions` SELECT (`inArray` on distinct
   revision ids of scoped runs); parse manifests (`nodes[].pre_finish.gates`, node
@@ -477,7 +477,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   failed — revision skipped")`.
   *Verify:* integration test asserts counts from seeds; query count unchanged except
   +1 (assert via existing patterns if the suite tracks it, else code review).
-- [ ] **TA.3 — Components + i18n.** New `components/observatory/`:
+- [x] **TA.3 — Components + i18n.** New `components/observatory/`:
   `sensor-firing-card.tsx` (table per gate: kind, mode, executions, pass/fail/stale,
   fail-rate, never-fired badge), `coverage-map-card.tsx` (per flow: nodes, gates by
   mode, imbalance flag), `control-effectiveness-card.tsx` (gate lift table +
@@ -490,7 +490,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   *Logging:* none (render-only).
   *Verify:* renderToStaticMarkup tests (no jsdom): renders stats, never-fired badge
   shown/hidden, "—" for insufficient n, RU labels resolve.
-- [ ] **TA.4 — Pages wiring.** Render the "Harness" section on
+- [x] **TA.4 — Pages wiring.** Render the "Harness" section on
   `app/(app)/observatory/page.tsx` (portfolio: across visible projects) and
   `app/(app)/projects/[slug]/observatory/page.tsx` (project-scoped); existing GET
   filters (`windowDays`, `flowId`) apply to the new section; node drill-down links
@@ -499,7 +499,7 @@ No HTTP/SSE/AsyncAPI surface changes. No error-taxonomy additions (reuses `CONFI
   *Files:* the two `page.tsx`, `app/(app)/observatory/__tests__/page-contract.test.ts`.
   *Logging:* none.
   *Verify:* page-contract tests updated; manual `pnpm dev` smoke on both pages.
-- [ ] **TA.5 — E2E over seeded fixtures.** Extend the M23 seed fixture + spec (or a
+- [x] **TA.5 — E2E over seeded fixtures.** Extend the M23 seed fixture + spec (or a
   sibling `m29-harness-observatory.spec.ts` reusing the same seeded-DB harness):
   assertions — firing table renders with seeded counts, never-fired badge appears
   for the seeded silent gate, coverage map lists the seeded flow, RU locale renders

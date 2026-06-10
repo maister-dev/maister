@@ -5,7 +5,49 @@ import type {
   ObservatoryPortfolio,
   ObservatoryProject,
 } from "@/lib/queries/observatory";
+import type {
+  CoverageFlow,
+  GateFiringRollup,
+  NeverFiredFlag,
+  ObservatoryHarness,
+} from "@/lib/queries/observatory-core";
 import type { SignalKind } from "@/lib/queries/observatory-signals";
+
+export interface ObservatoryHarnessLabels {
+  sectionTitle: string;
+  sectionSubtitle: string;
+  firingTitle: string;
+  noFiring: string;
+  gate: string;
+  kind: string;
+  mode: string;
+  executions: string;
+  passed: string;
+  failed: string;
+  stale: string;
+  failRate: string;
+  neverFired: string;
+  neverFiredHint: string;
+  insufficientData: string;
+  byKind: string;
+  coverageTitle: string;
+  noCoverage: string;
+  revisions: string;
+  blocking: string;
+  advisory: string;
+  guides: string;
+  guidesWithoutSensors: string;
+  effectivenessTitle: string;
+  noEffectiveness: string;
+  capabilitiesTitle: string;
+  reworkAfterFail: string;
+  reworkAfterPass: string;
+  lift: string;
+  capability: string;
+  withCapability: string;
+  withoutCapability: string;
+  noCapabilities: string;
+}
 
 export interface ObservatoryLabels {
   title: string;
@@ -43,6 +85,7 @@ export interface ObservatoryLabels {
   gates: string;
   hitlWaits: string;
   kind: Record<SignalKind, string>;
+  harness: ObservatoryHarnessLabels;
 }
 
 export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
@@ -77,5 +120,22 @@ export interface CorrectionHeatmapProps {
 
 export interface ArtifactListProps {
   artifacts: readonly ObservatoryArtifactSummary[];
+  labels: ObservatoryLabels;
+}
+
+export interface SensorFiringCardProps {
+  firing: GateFiringRollup;
+  neverFired: readonly NeverFiredFlag[];
+  labels: ObservatoryLabels;
+  projectSlug?: string;
+}
+
+export interface CoverageMapCardProps {
+  coverage: readonly CoverageFlow[];
+  labels: ObservatoryLabels;
+}
+
+export interface ControlEffectivenessCardProps {
+  effectiveness: ObservatoryHarness["effectiveness"];
   labels: ObservatoryLabels;
 }

@@ -35,15 +35,32 @@ describe("observatory page contract", () => {
   });
 
   it("keeps EN and RU observatory message namespaces in parity", () => {
-    const flatKeys = (value: Record<string, unknown>, prefix = ""): string[] =>
-      Object.entries(value).flatMap(([key, child]) =>
-        child && typeof child === "object"
-          ? flatKeys(child as Record<string, unknown>, `${prefix}${key}.`)
-          : [`${prefix}${key}`],
-      );
-
     expect(flatKeys(en.observatory).sort()).toEqual(
       flatKeys(ru.observatory).sort(),
     );
   });
+
+  it("ships the harness section keys both pages render from", () => {
+    const keys = flatKeys(en.observatory);
+
+    for (const key of [
+      "harness.sectionTitle",
+      "harness.firingTitle",
+      "harness.neverFired",
+      "harness.coverageTitle",
+      "harness.guidesWithoutSensors",
+      "harness.effectivenessTitle",
+      "harness.insufficientData",
+    ]) {
+      expect(keys).toContain(key);
+    }
+  });
 });
+
+function flatKeys(value: Record<string, unknown>, prefix = ""): string[] {
+  return Object.entries(value).flatMap(([key, child]) =>
+    child && typeof child === "object"
+      ? flatKeys(child as Record<string, unknown>, `${prefix}${key}.`)
+      : [`${prefix}${key}`],
+  );
+}
