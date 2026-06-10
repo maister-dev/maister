@@ -299,6 +299,49 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/acp-runners/model-suggestions:
+    post:
+      tags: [admin]
+      summary: Resolve model suggestions for a runner draft
+      description: |
+        Admin-only. Proxies a runner **draft** to the supervisor's
+        `POST /model-catalog/resolve` and returns model suggestions **grouped by
+        source** for the runner modal's combobox. Secret material is accepted
+        ONLY as `env:NAME` references — converted to bare names via `envRefName()`
+        before forwarding — and is never returned to the client. `sidecarId` is
+        validated against the platform sidecar catalog (server-state) before
+        forwarding. Discovery never blocks a save: `model` stays free text and an
+        unknown model is an advisory hint, not a validation error. See
+        [ADR-076](../decisions.md#adr-073) and
+        [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
+      operationId: postAdminAcpRunnerModelSuggestions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelSuggestionsRequest" }
+      responses:
+        "200":
+          description: Model suggestions grouped by source.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelSuggestionsResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: |
+            Invalid body, a raw (non-`env:`) secret, an unknown env-ref name, or
+            an unknown `sidecarId` (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Supervisor unreachable or returned 5xx (`EXECUTOR_UNAVAILABLE`). The
+            modal keeps the offline preset layer and a retry affordance.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/admin/scheduler-jobs:
     get:
       tags: [admin]
@@ -8191,3 +8234,62 @@ components:
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex] }
+    ModelSuggestionsRequest:
+      type: object
+      additionalProperties: false
+      required: [adapter, provider]
+      description: |
+        Runner draft for model discovery. `provider` is the web-side runner
+        provider shape whose secret fields carry `env:NAME` references; the route
+        converts them to bare names before forwarding to the supervisor. Raw
+        (non-`env:`) secret values are rejected with `CONFIG` (422).
+      properties:
+        adapter: { type: string, enum: [claude, codex] }
+        provider:
+          type: object
+          description: RunnerProvider (web shape) — `anthropic | anthropic_compatible | openai | openai_compatible`, secrets as `env:NAME`.
+        router: { type: string, enum: [ccr] }
+        sidecarId:
+          type: string
+          nullable: true
+          description: Validated against the platform sidecar catalog when `router == "ccr"`.
+        force:
+          type: boolean
+          default: false
+          description: Bypass the supervisor's in-memory cache and repopulate it.
+    ModelSuggestionsResponse:
+      type: object
+      additionalProperties: false
+      required: [groups, resolvedAt, ttlSeconds]
+      description: Model suggestions grouped by source for the runner-modal combobox. Never contains a secret value.
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, label, status, models]
+            properties:
+              source:
+                type: string
+                enum: [acp_probe, provider_api, curated, ccr, agent_observed]
+              label:
+                type: string
+                description: Localized-at-render group label (Agent / Provider / Curated / CCR / Observed).
+              status:
+                type: string
+                enum: [ok, skipped, error]
+              reason:
+                type: string
+                description: Detail for `skipped`/`error`. Never a secret.
+              models:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id]
+                  properties:
+                    id: { type: string }
+                    displayName: { type: string }
+        resolvedAt: { type: string, format: date-time }
+        ttlSeconds: { type: integer, minimum: 0 }

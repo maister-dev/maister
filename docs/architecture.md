@@ -156,6 +156,7 @@ C4Component
         Component(events_log, "events-log.ts", "Run event writer", "Appends every SessionEvent to run.events.jsonl.")
         Component(pending, "pending-permissions.ts", "Deferred registry", "Parks ACP permission requests until web responds or timeout fires.")
         Component(types, "types.ts", "Zod schemas + types", "StartSessionRequest, SessionEvent union, SupervisorError, httpStatusForCode.")
+        Component(model_catalog, "model-catalog/", "Model resolver (ADR-076, Designed)", "ModelSource registry, ACP-probe/provider/curated/CCR sources, in-memory TTL cache, passive harvest.")
     }
 
     ContainerDb_Ext(fs, "Filesystem", ".maister/{slug}/runs/{runId}/")
@@ -170,6 +171,8 @@ C4Component
     Rel(http_api, cost, "attachCost()")
     Rel(http_api, pending, "resolve/cancel permission")
     Rel(http_api, types, "Zod parse / error mapping")
+    Rel(http_api, model_catalog, "resolveModelCatalog()")
+    Rel(model_catalog, child, "ACP probe: initialize + session/new + SIGTERM", "stdio JSONL")
 
     Rel(spawn, child, "child_process.spawn", "stdio JSONL")
     Rel(spawn, fs, "Append step .log", "createWriteStream")
@@ -197,6 +200,14 @@ C4Component
 | `events-log` | `supervisor/src/events-log.ts` | Durable run events. | Append every `SessionEvent` to `.maister/<slug>/runs/<runId>/run.events.jsonl`. | `node:fs`. |
 | `pending-permissions` | `supervisor/src/pending-permissions.ts` | Permission deferreds. | Resolve or cancel ACP `requestPermission` handles by `(sessionId, requestId)`. | `types`. |
 | `types` | `supervisor/src/types.ts` | Schemas + error. | Zod request/event schemas, `SessionEvent` union, `SupervisorError` class, `httpStatusForCode()`. | `zod`. |
+| `model-catalog` | `supervisor/src/model-catalog/*` | Model discovery resolver (ADR-076). **Designed.** | `ModelSource` registry keyed by `(adapter, provider.kind, router)`; ACP-probe/provider/curated/CCR sources; in-memory TTL cache; passive harvest. Serves `POST /model-catalog/resolve`; resolves `env:NAME` secrets supervisor-side only, never returns them. | `spawn` (`buildChildEnv`), `runner-provisioner`, `acp-client`, `ccr-manager`, `types`. |
+
+The `model-catalog` resolver (Designed, ADR-076) is the supervisor's
+model-discovery surface: `POST /model-catalog/resolve` fans a runner draft across
+pluggable `ModelSource`s and caches the merged result in memory. The web tier
+reaches it via `web/lib/supervisor-client.ts` `resolveModelSuggestions()`, proxied
+through the admin-gated `POST /api/admin/acp-runners/model-suggestions`. See
+[`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
 ## C4 Component — Web foundation (Implemented)
 
@@ -242,7 +253,7 @@ C4Component
 | `lib/atomic` | `web/lib/atomic.ts` | `atomicWriteJson(path, data)` — tmp + rename. | `node:fs/promises`, `node:crypto`, `pino`. |
 | `lib/config.schema` | `web/lib/config.schema.ts` | Zod schemas for `maister.yaml` v2, `flow.yaml` v1, `form_schema`. | `zod`. |
 | `lib/config` | `web/lib/config.ts` | `loadProjectConfig`, `loadFlowManifest`, `validateFormSchemaVersion`. | `lib/config.schema`, `lib/errors`, `yaml`, `pino`. |
-| `lib/supervisor-client` | `web/lib/supervisor-client.ts` | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`. | `lib/errors`, `pino`. |
+| `lib/supervisor-client` | `web/lib/supervisor-client.ts` | `createSession`, `sendPrompt`, `deliverPermission`, `cancelPermission`, `deleteSession`, `listSessions`, `checkpointSession`, `streamSession`, `resolveModelSuggestions` (ADR-076, Designed). | `lib/errors`, `pino`. |
 | `lib/db/schema` | `web/lib/db/schema.ts` | Drizzle table definitions for the 8 tables. | `drizzle-orm/pg-core`. |
 | `lib/db/client` | `web/lib/db/client.ts` | Drizzle client factory + lazy singleton. | `drizzle-orm`, `lib/errors`. |
 | `lib/flows/runner` | `web/lib/flows/runner.ts` | Flow step execution and resume gate. | `flows/*`, `db/schema`, `scheduler`, `supervisor-client`. |

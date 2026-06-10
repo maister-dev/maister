@@ -5120,6 +5120,138 @@ branches.)
 - **Blocking on rule-guardrail frontmatter shape:** rejected — no web runtime
   parser consumes those fields, so a block would be a false compliance signal;
   WARN-only.
+---
+
+### ADR-076: ACP runner model discovery (resolver-on-supervisor) + configured-model application
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** Two stacked, code-confirmed gaps in the runner catalog domain.
+(1) **No discovery.** `platform_acp_runners.model` is free text
+(`z.string().min(1)`), rendered as a bare `<input type="text">` in
+`acp-runner-modal.tsx`; the only guidance is seven hardcoded presets in
+`web/lib/acp-runners/presets.ts`. An operator must already know the exact model
+id for the selected adapter+provider. (2) **No application.** The configured
+model never reaches the agent. `spawn.ts` only *logs* `executor.model` — no env
+var, no settings write, no ACP call — so the adapter runs its own default and
+`cost.ts` scrapes the *actual* model from the wire after the fact. A dropdown
+without the application fix would be decorative. Both are control-plane
+correctness gaps, not new product surface; they ship together. ACP already
+carries model state we ignore: `NewSessionResponse.models` (`{ availableModels[],
+currentModelId }`, also on Resume/Load/Fork) and a client `setSessionModel`. The
+supervisor today reads only `sessionId` from `session/new` and ignores the
+`session/resume` response entirely (`acp-client.ts`).
+
+**Decision:** Add a **model-catalog resolver on the supervisor** plus a **model
+application channel per adapter**, with the web tier as a thin admin-gated config
+surface. Seven locked sub-decisions:
+
+1. **Resolver-on-supervisor.** Discovery and `env:NAME` secret resolution happen
+   supervisor-side (the supervisor may run on another host and already owns
+   `process.env`, the adapter binaries, and `CcrManager`). A new supervisor route
+   `POST /model-catalog/resolve` takes a runner **draft** (`{ adapter, provider,
+   router?, sidecarId? }` + bare env-ref **names**) and returns
+   `{ models, sources, resolvedAt, ttlSeconds }`. The web proxies it through an
+   admin-gated route; secrets never reach the browser, and raw secret values are
+   never accepted (only `env:NAME` references, regex-validated, resolved
+   server-side).
+2. **Pluggable `ModelSource` registry** keyed by `(adapter, provider.kind,
+   router)`. `resolveModelCatalog(draft)` runs every source whose `supports(draft)`
+   is true, **merges + dedupes by model `id`** (first-source-wins on a dup; the
+   `origins` tags accumulate), and aggregates a per-source `status`
+   (`ok | skipped | error`). A per-source failure NEVER fails the whole resolve.
+   Adding a provider/adapter = a new `ModelSource` module registered in
+   `registry.ts`; the resolver core is untouched.
+3. **ACP active probe (A2) is the primary source.** Synthesize a throwaway
+   `RunnerLaunch` from the draft, spawn the already-trusted adapter binary in an
+   isolated tmp cwd, `initialize` → `session/new`, read `NewSessionResponse.models`,
+   then **SIGTERM**. A promptless handshake spends ~0 tokens (no `session/prompt`
+   is sent). A **passive harvest** of the same `models` from *real* session spawns
+   (and the previously-ignored `session/resume` response) also lands — free, same
+   code path. Secondary sources: **provider-API** (`anthropic`/`openai`/
+   `openai_compatible` `GET /v1/models`; OpenRouter is keyless), **curated GLM
+   static list** for `anthropic_compatible` (z.ai has no listing endpoint — verified
+   2026-06-10 — with one optional best-effort authed `GET {base}/models` that
+   gracefully falls back to curated), and **CCR** (`GET {proxy}/api/config` →
+   flatten `Providers[].models`).
+4. **In-memory cache, no DB persistence.** A single supervisor host caches resolve
+   results keyed by a stable hash of `(adapter, provider.kind, base_url, sorted
+   env-ref NAMES, router, sidecarId)` — **names, never secret values**. TTL is a
+   code constant (~3600 s); `force` bypasses and repopulates. The same cache
+   singleton backs the route and the passive harvest. The catalog is not persisted
+   to Postgres and `platform_acp_runners.model` stays free text.
+5. **Application channel per adapter.** **claude →** the M14/ADR-043
+   `settings.local.json { model, availableModels }` materialization channel (the
+   adapter calls `query.setModel()` from settings at startup; the materializer
+   already receives `executor.model` and runs on both launch paths — the fix is
+   content-only: write a non-null `settingsLocal` whenever `model` is set).
+   **codex →** ACP `unstable_setSessionModel(runner.model)` after `session/new`
+   and after every `session/resume` when `runner.model !== currentModelId`. See
+   the Phase 0A spike note (`docs/spikes/2026-06-11-acp-model-discovery-spikes.md`).
+6. **Model mismatch is advisory, never a run failure.** After application the
+   supervisor reads back `currentModelId`; on a mismatch it emits an **advisory**
+   informational event and continues. Env-router slot-mapping legitimately reports
+   a mapped name, so a mismatch is expected and benign. `cost.jsonl` model
+   attribution stays ground truth.
+7. **No new error code, no new status, no new enum, no new DB/migration/env-var.**
+   Consistent with sub-decision 2 (*a per-source failure NEVER fails the whole
+   resolve*), the supervisor resolve route throws exactly ONE status for request
+   problems — **`PRECONDITION`→409** on a malformed draft (unknown adapter, an
+   `env:`-prefixed or raw-secret value in an env-ref field, a malformed provider
+   union, `router` without `sidecarId`). Every **source-level** failure (a missing
+   provider env-ref, CCR unreachable, an ACP-probe reject/timeout, or a malformed
+   adapter/CCR/provider decode of `ACP_PROTOCOL` class) is captured as that
+   source's `status:"error"|"skipped"` **inside a 200** response and never throws.
+   The **web admin proxy** adds `CONFIG`→422 (a raw/non-`env:` secret, an unknown
+   env-ref name, or an unknown `sidecarId`) and `EXECUTOR_UNAVAILABLE`→503 (the
+   supervisor unreachable or returning 5xx). The mismatch advisory rides the
+   existing `session.update` SSE event as a supervisor-synthesized `update` payload
+   variant (`{ sessionUpdate: "model_advisory", … }`) — the closed `SessionEvent`
+   union (`types.ts`) is **not** extended, and the web SSE bridge / transcript
+   tolerate it because `session.update.update` is already opaque.
+
+**Consequences:**
+- The configured model now actually pins the agent for claude (settings) and codex
+  (`setSessionModel`), closing the silent "ran the default model" gap; the runner
+  modal gains a discovery-backed combobox instead of a blind text field.
+- Discovery is best-effort and layered: if the probe is skipped (codex without
+  non-interactive auth) or a provider source errors, the resolver still returns the
+  other sources and the offline presets remain the UI fallback — discovery never
+  blocks a save (`model` stays `min(1)` free text; an unknown model on save is an
+  advisory hint, not a validation error).
+- One supervisor host = one in-memory cache. Multi-host or persisted catalog is out
+  of scope; revisit only if a second supervisor host lands.
+- The probe spawns a child process + ACP connection — a deferred-like resource.
+  EVERY probe exit path (success, `initialize`/`session/new` reject, parse error,
+  timeout) MUST SIGTERM the child and close the connection ("log and continue" is
+  forbidden); this is carried as a T2.1 acceptance test.
+- `cost.jsonl` remains the single source of truth for billed model attribution; the
+  advisory event is observability only and never drives run state.
+
+**Alternatives Considered:**
+- **Resolver on the web tier:** rejected — the web tier does not (and must not)
+  hold provider secrets or spawn adapter binaries, and the supervisor may run on a
+  different host. Resolving web-side would either leak `env:NAME` values to the
+  browser host or duplicate the adapter/CCR lifecycle the supervisor already owns.
+- **Persist the discovered catalog to Postgres:** rejected for v1 — a single
+  supervisor host needs no shared store, and a TTL'd in-memory cache avoids a
+  migration, a projection, and a staleness-vs-DB reconciliation problem for data
+  that is cheap to re-fetch.
+- **`unstable_setSessionModel` for claude too (uniform channel):** rejected — it
+  pins *after* `session/new` and needs a read-back, whereas the adapter already
+  consults `settings.json`'s `model` at startup; the settings channel is the
+  M14-blessed, already-wired path and avoids an extra protocol round-trip. codex
+  keeps `setSessionModel` because its settings surface differs.
+- **A dedicated `session.model_advisory` SSE event (extend the union):** rejected —
+  it would touch the closed `SessionEvent` union, both AsyncAPI `EventBase` enums,
+  and force the web bridge to learn a new kind, for an informational signal that
+  rides the already-opaque `session.update` channel with zero new surface.
+- **Fail the run on a model mismatch:** rejected — env-router and CCR legitimately
+  remap model names, so a strict equality gate would false-positive and break valid
+  runs; advisory + `cost.jsonl`-as-truth is correct.
+- **Probe timeout / cache TTL as env vars:** rejected for v1 — keeping them code
+  constants holds the deployment surface flat (no new `.env`/compose wiring); they
+  graduate to env vars only if operations proves a tunable is needed.
 
 ---
 

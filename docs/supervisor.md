@@ -343,6 +343,42 @@ responses are written by the web tier's
 `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
 its row-level claim succeeds.
 
+### `POST /model-catalog/resolve` *(Designed — ADR-076)*
+
+Model-discovery resolver. The body is a runner **draft**
+(`{ adapter, provider, router?, sidecarId?, force? }`). The supervisor fans the
+draft out across the registered `ModelSource`s whose `supports(draft)` is true —
+the ACP active probe (primary), the provider listing API, the curated GLM list
+(`anthropic_compatible`), and CCR — then **merges + dedupes by model `id`** and
+caches the result in memory keyed by `(adapter, provider.kind, base_url, sorted
+env-ref NAMES, router, sidecarId)`. The TTL and the probe timeout (~15 s) are code
+constants, not env vars. `force: true` bypasses the cache and repopulates it.
+
+Response: `{ models, sources, resolvedAt, ttlSeconds }`, where `models[]` carries
+each id's accumulated `origins` and `sources[]` carries a per-source `status`
+(`ok | skipped | error`). **Secret handling:** env-ref fields inside `provider`
+are **bare** names; the supervisor resolves their values from `process.env` and
+never returns or logs a secret.
+
+Status mapping (consistent with *a per-source failure never fails the resolve*):
+- `200` — resolved. A single source's failure (missing env-ref, unreachable
+  provider/CCR, probe reject/timeout, malformed decode) is reported in that
+  source's `status`, not raised. The codex probe without non-interactive auth
+  reports `status: "skipped"`.
+- `409 { code: "PRECONDITION" }` — malformed draft (unknown adapter, an
+  `env:`-prefixed or raw-secret value in an env-ref field, a malformed provider
+  union, or `router` without `sidecarId`).
+
+The probe spawns the already-trusted adapter binary in an isolated tmp cwd,
+handshakes promptless (`initialize` → `session/new`, **zero tokens**), reads
+`NewSessionResponse.models`, and **SIGTERMs the child on every exit path**
+(success, reject, parse error, timeout). A **passive harvest** of the same
+`models` from real `session/new` / `session/resume` responses feeds the same cache
+for free. The web tier proxies this route through the admin-gated
+`POST /api/admin/acp-runners/model-suggestions`. Full contract:
+[`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
+domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
+
 ### Run-scoped durable event log: `<runId>/run.events.jsonl` *(M7+)*
 
 Every `SessionEvent` (`session.line`, `session.update`,

@@ -190,6 +190,33 @@ defined as a string union in `web/lib/errors.ts`.
 
 > **The platform-user + project-member admin surface (ADR-062) reuses existing codes and adds none** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call sites for `CONFIG` (invalid body/Zod — HTTP 422), `CONFLICT` (duplicate email, duplicate member, raced CAS — HTTP 409), `PRECONDITION` (hard-delete of referenced/non-pending user, add nonexistent user, self-delete — HTTP 409), and `UNAUTHORIZED` (role gate — HTTP 403) are noted in the relevant rows above.
 
+> **M29 / model discovery + application adds NO new `MaisterError` or `SupervisorErrorCode`**
+> ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union;
+> [ADR-073](decisions.md#adr-073)). The model-catalog resolver and the configured-model
+> application reuse existing codes at new call sites (all Designed, M29). The governing
+> rule is *a per-source discovery failure NEVER fails the whole resolve* — so source-level
+> problems are reported as a per-source `status` inside an HTTP **200**, not thrown.
+>
+> **`CONFIG` → HTTP 422 (web proxy, new call site):** `POST /api/admin/acp-runners/model-suggestions`
+> — invalid body, a raw (non-`env:`) secret in a provider field, an unknown env-ref name, or an
+> unknown `sidecarId`. The bare env-ref name never leaves the supervisor host; secret values are
+> never returned or logged.
+>
+> **`EXECUTOR_UNAVAILABLE` → HTTP 503 (web proxy, new call site):** the same route when the
+> supervisor is unreachable or returns 5xx during `POST /model-catalog/resolve`. The runner modal
+> keeps the offline `presets.ts` layer and a retry affordance. Reuses the existing retryable
+> closed-union member.
+>
+> **`PRECONDITION` → HTTP 409 (supervisor, new call site):** the supervisor `POST /model-catalog/resolve`
+> Zod boundary rejects a malformed draft (unknown adapter, an `env:`-prefixed or raw-secret value in
+> an env-ref field, a malformed provider union, or `router` without `sidecarId`). This is the ONLY
+> request-level status the resolve route throws.
+>
+> **`ACP_PROTOCOL` (supervisor, classification only — NOT thrown by resolve):** a malformed
+> adapter / CCR / provider source response is the `ACP_PROTOCOL` *class* of failure, but inside the
+> resolve it is captured as that source's `status: "error"` within a 200 response, never raised as a
+> 500. The existing live-session `ACP_PROTOCOL` (500) call site is unchanged.
+
 ## Construction
 
 ```ts

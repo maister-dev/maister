@@ -109,6 +109,24 @@ components:
             update:
               sessionUpdate: "agent_message_chunk"
               content: { type: "text", text: "Working on it..." }
+        - name: model-advisory
+          summary: |
+            Supervisor-synthesized informational update (ADR-076). Emitted when
+            the model read back after application differs from the configured
+            runner model. Informational ONLY — never changes run state, never
+            fails the run (`cost.jsonl` stays the billed-model truth). Rides the
+            existing `session.update` channel — it is NOT a new event kind, so
+            the closed `SessionEvent` union is unchanged and unknown-`sessionUpdate`
+            consumers ignore it.
+          payload:
+            type: session.update
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 9
+            update:
+              sessionUpdate: "model_advisory"
+              configuredModel: "glm-5.1"
+              observedModelId: "glm-4.6"
+              channel: "set_session_model"
     SessionPermissionRequest:
       name: session.permission_request
       title: Pending ACP permission request awaiting HITL decision
@@ -235,6 +253,11 @@ components:
                 `plan`). Treated as opaque on the wire here — typed
                 clients should refer to `@agentclientprotocol/sdk` for
                 the discriminated union.
+
+                One non-ACP variant exists: the supervisor-synthesized
+                `model_advisory` update (ADR-076) — see the
+                `ModelAdvisoryUpdate` schema below. Consumers that do not
+                recognize a `sessionUpdate` value MUST ignore it (forward-compat).
     SessionPermissionRequestEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"
@@ -318,3 +341,28 @@ components:
               type: string
               nullable: true
               description: NodeJS.Signals string (e.g. SIGSEGV, SIGTERM). Null on orphan-detected.
+    ModelAdvisoryUpdate:
+      type: object
+      description: |
+        Supervisor-synthesized `update` payload carried inside a `session.update`
+        event (ADR-076) when the model read back after application differs from
+        the configured runner model. NOT a new `SessionEvent` kind — it reuses
+        the opaque `session.update.update` field, so the closed `SessionEvent`
+        union and both AsyncAPI `EventBase` enums are unchanged. Informational
+        only: the supervisor NEVER changes `runs.status` on this signal, and
+        `cost.jsonl` remains the billed-model ground truth.
+      required: [sessionUpdate, configuredModel, observedModelId, channel]
+      properties:
+        sessionUpdate:
+          type: string
+          const: model_advisory
+        configuredModel:
+          type: string
+          description: The model id the operator configured on the runner.
+        observedModelId:
+          type: string
+          description: The `currentModelId` read back from the adapter after application.
+        channel:
+          type: string
+          enum: [settings_local, set_session_model]
+          description: Which application channel was used (claude = settings_local, codex = set_session_model).

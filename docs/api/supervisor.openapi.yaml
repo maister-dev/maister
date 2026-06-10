@@ -47,6 +47,8 @@ tags:
     description: Per-session event stream (SSE).
   - name: hitl
     description: Permission-only human-in-the-loop input delivery.
+  - name: model-catalog
+    description: Model discovery resolver for a runner draft (ADR-076).
 paths:
   /health:
     get:
@@ -410,6 +412,73 @@ paths:
                   value:
                     code: "PRECONDITION"
                     message: "optionId: optionId is required when action='select'"
+  /model-catalog/resolve:
+    post:
+      tags: [model-catalog]
+      summary: Resolve the model catalog for a runner draft
+      description: |
+        Discovers valid model ids for a runner **draft** (adapter + provider +
+        optional `router`/`sidecarId`) by fanning out across the registered
+        `ModelSource`s — ACP active probe (primary), provider listing API,
+        curated GLM list, and CCR — then merging and deduping by model `id` and
+        caching the result in memory (TTL). A `force` flag bypasses the cache.
+
+        Env-ref fields inside `provider` (`authTokenEnv` / `apiKeyEnv`) carry
+        **bare** environment-variable names; the supervisor resolves their
+        values from `process.env` and **never** returns or logs a secret. A
+        single source's failure is reported in that source's `status`
+        (`error` / `skipped`) and does **not** fail the resolve — the route
+        still returns `200` with whatever the other sources produced.
+
+        The only request-level rejection is `409 PRECONDITION` on a malformed
+        draft (unknown adapter, an `env:`-prefixed or raw-secret value in an
+        env-ref field, a malformed provider union, or `router` without
+        `sidecarId`). See [ADR-076](../decisions.md#adr-073) and
+        [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
+
+        **Identifiers.** Every body field is draft config (`body-controlled`),
+        not a locator into live server state; env-ref values are resolved
+        server-side only.
+      operationId: resolveModelCatalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelCatalogResolveRequest" }
+            examples:
+              zaiEnvRouter:
+                summary: claude + z.ai env-router draft (force refresh)
+                value:
+                  adapter: "claude"
+                  provider:
+                    kind: "anthropic_compatible"
+                    baseUrl: "https://api.z.ai/api/anthropic"
+                    authTokenEnv: "ZAI_API_KEY"
+                  force: true
+      responses:
+        "200":
+          description: |
+            Resolved catalog. `models` is merged + deduped across sources;
+            `sources` carries a per-source status (one may be `error`/`skipped`
+            while others are `ok`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelCatalogResolveResponse" }
+        "409":
+          description: Malformed draft (Zod rejection → `PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                rawSecret:
+                  value:
+                    code: "PRECONDITION"
+                    message: "provider.authTokenEnv: must be an environment variable name"
+        default:
+          description: Unhandled supervisor error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
     SessionId:
@@ -904,3 +973,94 @@ components:
             Optional, only meaningful for `action == "cancel"`. Logged by
             the supervisor for operator triage; not forwarded to the
             agent. Truncated to 256 chars upstream.
+    ModelSourceKind:
+      type: string
+      enum: [acp_probe, provider_api, curated, ccr, agent_observed]
+      description: |
+        Origin of a discovered model id. `acp_probe` = active adapter probe
+        (primary); `provider_api` = provider listing endpoint; `curated` =
+        static GLM list for z.ai (`anthropic_compatible`); `ccr` = CCR
+        `/api/config`; `agent_observed` = passive harvest from a real session.
+    ModelCatalogResolveRequest:
+      type: object
+      additionalProperties: false
+      required: [adapter, provider]
+      description: |
+        Runner draft to resolve. `provider` reuses the `RunnerProvider` union;
+        its env-ref fields (`authTokenEnv` / `apiKeyEnv`) are **bare** names
+        (`^[A-Za-z_][A-Za-z0-9_]*$`) — an `env:`-prefixed or raw-secret value is
+        rejected with `409 PRECONDITION`.
+      properties:
+        adapter: { $ref: "#/components/schemas/ExecutorAgent" }
+        provider: { $ref: "#/components/schemas/RunnerProvider" }
+        router: { $ref: "#/components/schemas/ExecutorRouter" }
+        sidecarId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: Required when `router == "ccr"`; selects the CCR sidecar instance.
+        force:
+          type: boolean
+          default: false
+          description: Bypass the in-memory cache and repopulate it.
+    ModelEntry:
+      type: object
+      required: [id, origins]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Model id as the adapter/provider expects it (e.g. `glm-5.1`, `claude-sonnet-4-6`).
+        displayName:
+          type: string
+          description: Optional human label when the source provides one.
+        origins:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ModelSourceKind" }
+          description: |
+            Every source that advertised this id. Dedupe is by `id`
+            (first-source-wins on the entry body); `origins` accumulates.
+    ModelSourceStatus:
+      type: object
+      required: [kind, status]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/ModelSourceKind" }
+        status:
+          type: string
+          enum: [ok, skipped, error]
+          description: |
+            `ok` = contributed models; `skipped` = not applicable / no
+            non-interactive auth (e.g. codex probe); `error` = the source failed
+            (missing env-ref, unreachable, malformed response). Never fails the
+            resolve.
+        reason:
+          type: string
+          description: Human-readable detail for `skipped`/`error`. Never contains a secret.
+        count:
+          type: integer
+          minimum: 0
+          description: Number of models this source contributed before dedupe.
+    ModelCatalogResolveResponse:
+      type: object
+      required: [models, sources, resolvedAt, ttlSeconds]
+      additionalProperties: false
+      properties:
+        models:
+          type: array
+          items: { $ref: "#/components/schemas/ModelEntry" }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/ModelSourceStatus" }
+          description: Per-source status, one entry per source that `supports()` the draft.
+        resolvedAt:
+          type: string
+          format: date-time
+          description: When this catalog was resolved (cache-set time on a miss).
+        ttlSeconds:
+          type: integer
+          minimum: 0
+          description: Cache validity window for this draft key.

@@ -9,8 +9,10 @@ may a run use on this host?* This domain owns the **CRUD lifecycle** of that
 catalog — create, read, update, delete, enable/disable, and platform-default
 selection — exposed on the admin-gated `/settings` page. It does NOT own runner
 **resolution** at launch (see [executors.md](executors.md)), readiness
-**evaluation** (see [readiness.md](readiness.md)), or the host-roots/host-tools
-surface of the same page (see [instance-config.md](instance-config.md)). The
+**evaluation** (see [readiness.md](readiness.md)), the host-roots/host-tools
+surface of the same page (see [instance-config.md](instance-config.md)), or model
+**discovery/application** for the `model` field (see
+[model-catalog.md](model-catalog.md), ADR-076). The
 decision record for the delete guard and the in-`/settings` CRUD surface is
 [ADR-065](../decisions.md#adr-065).
 
@@ -159,7 +161,8 @@ flowchart TD
 - **Related domains:** [executors.md](executors.md) (resolution + routing),
   [readiness.md](readiness.md) (readiness evaluation),
   [instance-config.md](instance-config.md) (host roots / host tools on the same
-  page), [capability-catalog.md](capability-catalog.md).
+  page), [capability-catalog.md](capability-catalog.md),
+  [model-catalog.md](model-catalog.md) (model discovery + application, ADR-076).
   **(Designed, M27)** The platform MCP server admin CRUD (`platform_mcp_servers`
   table, `/api/admin/mcp-servers` routes, settings panel) mirrors this runner
   CRUD pattern precisely — same usage-guard delete, same `onConflictDoNothing`
