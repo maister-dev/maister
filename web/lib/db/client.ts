@@ -66,4 +66,21 @@ export function getDb(): ReturnType<typeof buildClient> {
   return cached;
 }
 
+// Closes the cached client and resets the cache. Integration suites that
+// point DB_URL at a per-suite testcontainer and exercise real getDb()
+// callers MUST call this before stopping the container — otherwise the
+// cached pool's idle connections die with pg 57P01 as unhandled errors.
+export async function closeDb(): Promise<void> {
+  if (cached === null) return;
+
+  const client = cached.$client;
+
+  cached = null;
+  if (client instanceof Pool) {
+    await client.end();
+  } else {
+    client.close();
+  }
+}
+
 export { schema };
