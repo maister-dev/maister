@@ -13,6 +13,13 @@ import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
 import { type CcrManager } from "./ccr-manager";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
+import {
+  modelCatalogCache,
+  type ModelCatalogCache,
+} from "./model-catalog/cache";
+import { ModelSourceRegistry } from "./model-catalog/registry";
+import { resolveModelCatalog } from "./model-catalog/resolve";
+import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { pendingPermissions } from "./pending-permissions";
 import { spawnSession } from "./spawn";
 import {
@@ -79,6 +86,13 @@ export type RegisterRoutesOptions = {
   runtimeRoot: string;
   killGraceMs?: number;
   spawnOverrides?: SpawnOverrides;
+  // ADR-073 model-catalog resolver. Injected so tests can stub the source set
+  // and the cache; main.ts wires the real registry (with Phase-2 sources) and
+  // the shared cache singleton.
+  modelCatalog?: {
+    registry: ModelSourceRegistry;
+    cache?: ModelCatalogCache;
+  };
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -122,6 +136,8 @@ async function isBinaryAvailable(binary: string): Promise<boolean> {
 export function registerRoutes(opts: RegisterRoutesOptions): void {
   const { app, registry, logger, runtimeRoot } = opts;
   const killGraceMs = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  const mcRegistry = opts.modelCatalog?.registry ?? new ModelSourceRegistry();
+  const mcCache = opts.modelCatalog?.cache ?? modelCatalogCache;
 
   app.setErrorHandler((err, _req, reply) => {
     if (isSupervisorError(err)) {
@@ -601,6 +617,50 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     reply.status(200).send({ ok: true });
+  });
+
+  // ADR-073 model discovery. Body = runner draft with BARE env-ref names; an
+  // env:-prefixed or raw secret is rejected by RunnerProviderSchema → ZodError →
+  // 409 PRECONDITION via setErrorHandler. A per-source failure NEVER fails the
+  // resolve — it surfaces as that source's status inside a 200. `force` bypasses
+  // the in-memory cache. Secrets resolve supervisor-side and are never returned.
+  app.post("/model-catalog/resolve", async (req, reply) => {
+    const draft = ModelCatalogDraftSchema.parse(req.body);
+
+    if (!draft.force) {
+      const hit = mcCache.get(draft);
+
+      if (hit) {
+        logger.info(
+          {
+            adapter: draft.adapter,
+            provider: draft.provider.kind,
+            cache: "hit",
+            status: 200,
+          },
+          "http POST /model-catalog/resolve",
+        );
+        reply.status(200).send(hit);
+
+        return;
+      }
+    }
+
+    const result = await resolveModelCatalog(draft, mcRegistry, { logger });
+
+    mcCache.set(draft, result);
+    logger.info(
+      {
+        adapter: draft.adapter,
+        provider: draft.provider.kind,
+        cache: draft.force ? "force" : "miss",
+        models: result.models.length,
+        sources: result.sources.map((s) => `${s.kind}:${s.status}`),
+        status: 200,
+      },
+      "http POST /model-catalog/resolve",
+    );
+    reply.status(200).send(result);
   });
 }
 

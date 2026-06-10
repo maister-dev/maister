@@ -21,8 +21,12 @@
 >   `supervisor.md`. Changed-files gate green (17/17 mermaid, 164 ADR anchors).
 >   **Frozen error contract** + **SSE advisory = `session.update` payload variant**
 >   (no new union member) — see below.
-> - ⏸ **Owner freeze gate** — awaiting review before Phase 1 code (commit checkpoint #1
->   lands after freeze). Then Phases 1–5 run autonomously with TDD + agent teams.
+> - ✅ **Owner freeze** — spec frozen + committed (checkpoint #1 `5a08910`; run-schedules
+>   mermaid fix `b4c8d0d`). Phases 1–5 running autonomously with TDD + agent teams.
+> - ✅ **Phase 1** — `buildChildEnv` extract (T1.1); model-catalog core types/registry/resolve
+>   (T1.2); in-memory TTL cache (T1.3); `POST /model-catalog/resolve` route (T1.4). Reviewer
+>   pass applied (router-without-sidecarId→409 `superRefine` + test). Gate: supervisor unit 141
+>   + integration 40 green, tsc + scoped eslint clean. Checkpoint #2.
 > - **Plan-vs-reality corrections found (branch == base `633f74c7`):** (a) the plan's
 >   "architecture.md has NO component table" note is **wrong** — the table exists at
 >   ~line 188; a row was added. (b) The T0B.3 advisory shape is **frozen** as a

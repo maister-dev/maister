@@ -109,6 +109,21 @@ export type SpawnSessionResult = {
   eventsLogPath: string;
 };
 
+export function buildChildEnv(
+  request: StartSessionRequest,
+  opts: { ccrLayer: NodeJS.ProcessEnv },
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...opts.ccrLayer,
+    ...(request.executor.env ?? {}),
+    ...(request.capabilityProfilePath
+      ? { MAISTER_CAPABILITY_PROFILE_PATH: request.capabilityProfilePath }
+      : {}),
+    ...(request.adapterLaunch?.env ?? {}),
+  };
+}
+
 export async function spawnSession(
   opts: SpawnSessionOptions,
 ): Promise<SpawnSessionResult> {
@@ -199,15 +214,7 @@ export async function spawnSession(
     );
   }
 
-  const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...ccrLayer,
-    ...(request.executor.env ?? {}),
-    ...(request.capabilityProfilePath
-      ? { MAISTER_CAPABILITY_PROFILE_PATH: request.capabilityProfilePath }
-      : {}),
-    ...(request.adapterLaunch?.env ?? {}),
-  };
+  const childEnv = buildChildEnv(request, { ccrLayer });
 
   logger.info(
     {
