@@ -160,7 +160,7 @@ mAIster/
     │   ├── site.ts                 # navItems (Portfolio/Projects/Settings)
     │   └── fonts.ts                # system font CSS variable class names
     │
-    ├── lib/                        # ── TECHNICAL-LAYER MODULES (server-only) ──
+    ├── lib/                        # ── TECHNICAL-LAYER MODULES (server-only by default; client-safe subset below) ──
     │   ├── errors.ts               # MaisterError discriminated union (expanded taxonomy)
     │   ├── atomic.ts               # atomicWriteJson (tmp + rename)
     │   ├── worktree.ts             # git worktree add/remove/list wrapper (project-scoped paths)
@@ -193,11 +193,11 @@ mAIster/
 
 ```
 app/<route>/page.tsx     ─┐
-                          ├──► lib/* (server-only modules)  ──► lib/db/* (persistence)
+                          ├──► lib/* (server-only by default) ──► lib/db/* (persistence)
 app/api/*/route.ts       ─┘                                 ──► .maister/<project-slug>/runs/<run-id>/* (FS)
                                                             ──► lib/supervisor-client (HTTP+SSE to ../supervisor/)
 app/<route>/actions.ts   ──► lib/* (via server-only import)
-components/*             ──► (browser-safe utilities only)
+components/* ("use client") ──► client-safe lib/ subset (pure/zod-only) + `import type` from any lib/*
 
 # Cross-process boundary (HTTP+SSE)
 web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──► supervisor/src/spawn ──► child_process.spawn (claude/codex)
@@ -218,9 +218,15 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   `lib/supervisor-client.ts`, `lib/errors.ts`.
 - ✅ `lib/db/schema.ts` and `lib/db/client.ts` are server-only and may use
   `node:*` modules.
-- ❌ A Client Component (file with `"use client"`) imports anything from
-  `lib/*` — `lib/` is server-only.
-- ❌ `components/*` imports anything from `lib/*` or uses `node:*` APIs.
+- ✅ A Client Component (file with `"use client"`) value-imports modules
+  from the **client-safe `lib/` subset** (defined below) and uses
+  `import type` from any `lib/*` module (type-only imports are erased at
+  build).
+- ❌ A Client Component **value-imports a server-only `lib/*` module**
+  (`@/lib/errors`, `@/lib/db/*`, `@/lib/authz`, `@/lib/worktree`,
+  `@/lib/queries/*`, …) — server code leaks into the browser bundle.
+- ❌ `components/*` uses `node:*` APIs, directly or transitively through
+  a value import.
 - ❌ `lib/errors.ts` imports from any other `lib/*` module (errors are
   innermost — pure types).
 - ❌ Any `lib/*` module imports from `app/*` (the controller direction is
@@ -238,6 +244,29 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
 **Server-only enforcement:** prefer `"server-only"` import (Next.js
 runtime guard) at the top of any `lib/` module that must never reach the
 client bundle.
+
+**Client-safe `lib/` subset (deliberate exception — ADR-075 / Flow Studio).**
+`lib/` is server-only **by default**, but a deliberate subset is
+client-importable so the Flow Studio editor can compile, lint, and
+validate in the browser. A `lib/` module qualifies as client-safe ONLY
+when it is pure computation or zod-only:
+
+- no `node:*` import, no `@/lib/db/*` value import, no env/secret read;
+- errors are thrown via `@/lib/errors-core` — NEVER `@/lib/errors`;
+- type-only imports from server modules are fine (erased at build).
+
+Representative members: `errors-core`, `config.schema`,
+`flows/graph/{compile,topology,presentation-layout}`, `flows/editor/*`
+(pure reducers), `flows/artifact-frontmatter`, `flows/artifact-validate`,
+`flows/shell-lint`, `flows/authored-lint`, the `board/*-layout`
+projections, and the client UI utilities (`theme`, `i18n`,
+`use-run-stream`). Everything else in `lib/` stays server-only and
+should carry the `"server-only"` guard when it touches `node:*`, db, or
+secrets.
+
+⚠ Unit tests do NOT catch a `server-only` leak (they run in Node) — only
+the dev/e2e client bundle does. After touching this boundary, smoke the
+affected editor e2e (`m27-flow-editor.spec.ts` precedent).
 
 ## Layer / Module Communication
 
@@ -290,9 +319,11 @@ client bundle.
 4. **Atomic writes to `.maister/`.** Every JSON the Flow / agent may
    read is written via `atomicWriteJson` (tmp + rename). Never
    partial-write.
-5. **Server-only modules stay in `lib/`.** Anything that touches
-   `node:*`, `child_process`, `fs`, or secrets must live under `lib/`
-   and never be imported by a Client Component.
+5. **`lib/` is server-only by default.** Anything that touches
+   `node:*`, `child_process`, `fs`, or secrets must live under `lib/`,
+   carry the `"server-only"` guard, and never be value-imported by a
+   Client Component. The pure/zod-only client-safe subset (see
+   Dependency Rules) is the one documented exception.
 6. **Surgical changes.** Every changed line traces to the user's request.
    Do not refactor adjacent code while you're there.
 7. **Typed errors only.** `MaisterError` with discriminated `code` for
@@ -475,7 +506,7 @@ export function spawnAgent(opts: {
 }
 ```
 
-### Forbidden: Client Component importing `lib/`
+### Forbidden: Client Component importing a server-only `lib/` module
 
 ```typescript
 // ❌ BAD — components/run-status.tsx
@@ -543,9 +574,11 @@ export async function POST(_req: Request, ctx: { params: { id: string } }) {
 - ❌ **Partial-writing artifacts.** Direct `writeFile` into
   `.maister/<project-slug>/runs/<run-id>/` instead of `atomicWriteJson` will
   be read mid-write by the agent.
-- ❌ **`lib/` import from a Client Component.** Server-only modules leak
-  into the browser bundle. Use Route Handlers or Server Actions as the
-  boundary.
+- ❌ **Server-only `lib/` module import from a Client Component.** Server
+  code leaks into the browser bundle. Use Route Handlers / Server Actions
+  as the boundary — or the documented client-safe subset for pure
+  compile/validate logic. Client code throws via `@/lib/errors-core`,
+  never `@/lib/errors`.
 - ❌ **Layer skipping.** Route Handler running raw `execSync` instead of
   going through `lib/worktree.ts` or `lib/supervisor-client.ts`. Keep
   `app/api/` thin.
