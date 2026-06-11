@@ -39,10 +39,15 @@ vi.mock("@/lib/supervisor-client", () => ({
   checkSupervisorDiagnostics: vi.fn(async () => ({ kind: "unavailable" })),
 }));
 
+// The route's getDb() must resolve to the test pool (graph route pattern).
+// Letting the real client module build its own pool via DB_URL leaks it: it is
+// never ended, and container.stop() then kills its still-idle clients →
+// unhandled 57P01 "terminating connection due to administrator command".
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
-let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -53,10 +58,6 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: container.getConnectionUri() });
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
-
-  // Must be set before the route's first getDb() (it caches the pool).
-  originalDbUrl = process.env.DB_URL;
-  process.env.DB_URL = container.getConnectionUri();
 }, 120_000);
 
 afterAll(async () => {
