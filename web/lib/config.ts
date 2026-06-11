@@ -552,6 +552,11 @@ const ARTIFACT_ENGINE_MIN = "1.2.0";
 // `output.result` must declare engine_min >= this value.
 const OUTPUT_ENGINE_MIN = "1.3.0";
 
+// M30 floor (ADR-077/078): manifests declaring `retry_policy`,
+// `session_policy` (node or rework) or a `defaults` block must declare
+// engine_min >= this value.
+const POLICY_ENGINE_MIN = "1.4.0";
+
 // Returns true when the manifest uses any artifact feature (produces, artifact
 // input.requires, or artifact_required gates). Used to gate the engine-min check.
 function declaresArtifacts(nodes: NodeDef[]): boolean {
@@ -580,6 +585,32 @@ function declaresArtifacts(nodes: NodeDef[]): boolean {
 function declaresOutputResult(nodes: NodeDef[]): boolean {
   for (const n of nodes) {
     if (n.output?.result) return true;
+  }
+
+  return false;
+}
+
+// Returns true when any node declares the M30 retry/session-policy keys
+// (`retry_policy`, node `session_policy`, `rework.session_policy`) or the
+// manifest carries a `defaults` block. Used to gate the 1.4.0 floor.
+function declaresRetryOrSessionPolicy(
+  manifest: FlowYamlV1,
+  nodes: NodeDef[],
+): boolean {
+  const m = manifest as { defaults?: unknown };
+
+  if (m.defaults !== undefined) return true;
+
+  for (const n of nodes) {
+    const node = n as {
+      retry_policy?: unknown;
+      session_policy?: unknown;
+      rework?: { session_policy?: unknown };
+    };
+
+    if (node.retry_policy !== undefined) return true;
+    if (node.session_policy !== undefined) return true;
+    if (node.rework?.session_policy !== undefined) return true;
   }
 
   return false;
@@ -640,6 +671,19 @@ export function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // Engine gate (M30, ADR-077/078): retry_policy / session_policy / defaults
+  // require engine_min >= 1.4.0. Manifests without them stay valid at any
+  // engine_min.
+  if (
+    declaresRetryOrSessionPolicy(manifest, nodes) &&
+    !semverGte(engineMin, POLICY_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring retry_policy/session_policy but engine_min "${engineMin}" < ${POLICY_ENGINE_MIN} — bump compat.engine_min to ${POLICY_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 

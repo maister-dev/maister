@@ -75,6 +75,8 @@ export async function appendNodeAttempt(args: {
   nodeType: NodeAttemptType;
   attempt?: number;
   reworkFromNode?: string;
+  // M30 (ADR-077): true when this attempt was auto-scheduled by retry_policy.
+  autoRetry?: boolean;
   db?: Db;
 }): Promise<{ id: string; attempt: number }> {
   const db = args.db ?? getDb();
@@ -90,6 +92,7 @@ export async function appendNodeAttempt(args: {
     attempt,
     status: "Pending" as NodeAttemptStatus,
     reworkFromNode: args.reworkFromNode ?? null,
+    autoRetry: args.autoRetry ?? false,
   });
 
   log.info(

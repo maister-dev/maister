@@ -179,9 +179,9 @@ Parallelism after **B3**: Feature 4b, Feature 2, Feature 1 each consume Feature-
 - [x] B7 — Impl: diff scope switcher
 - [x] B8 — Impl: dirty-state protocol
 - [x] B9 — Reviewer pass Feature 4b
-- [ ] B10 — QA: retry_policy (red)
-- [ ] B11 — Impl: retry_policy
-- [ ] B12 — Reviewer pass Feature 2
+- [x] B10 — QA: retry_policy (red)
+- [x] B11 — Impl: retry_policy
+- [x] B12 — Reviewer pass Feature 2
 - [ ] B13 — QA: session_policy (red)
 - [ ] B14 — Impl: session_policy
 - [ ] B15 — Reviewer pass Feature 3

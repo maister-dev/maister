@@ -312,6 +312,33 @@ export const workspacePolicySchema = z.enum([
   "fresh-attempt",
 ]);
 
+// M30 (ADR-077): error codes retry_policy may auto-retry on. An ALLOW-list —
+// infra-flavored, transient-by-nature codes only. PRECONDITION/CONFIG/CRASH
+// and friends stay non-retryable: retrying them repeats a deterministic
+// failure (or worse, replays side effects).
+export const RETRYABLE_ERROR_CODES = [
+  "SPAWN",
+  "EXECUTOR_UNAVAILABLE",
+  "CHECKPOINT",
+  "ACP_PROTOCOL",
+] as const;
+
+// M30 (ADR-077): node-level auto-retry, only on ai_coding/cli nodes.
+// `attempts` is the TOTAL attempt bound (1 = no retry). `workspace` is
+// applied via the ADR-076 checkpoint engine BEFORE each retry; the
+// rewind-to-node-checkpoint default restores the exact pre-attempt state.
+// Declaring this key requires compat.engine_min >= 1.4.0 (validated in
+// validateGraphManifest).
+export const retryPolicySchema = z
+  .object({
+    attempts: z.number().int().min(1),
+    on_errors: z.array(z.enum(RETRYABLE_ERROR_CODES)).min(1),
+    workspace: workspacePolicySchema.default("rewind-to-node-checkpoint"),
+  })
+  .strict();
+
+export type RetryPolicy = z.infer<typeof retryPolicySchema>;
+
 const gateKindSchema = z.enum([
   "command_check",
   "skill_check",
@@ -702,6 +729,8 @@ const aiCodingNodeSchema = z.object({
   type: z.literal("ai_coding"),
   action: z.object({ prompt: z.string().min(1) }).passthrough(),
   settings: aiCodingSettingsSchema.optional(),
+  // M30 (ADR-077): auto-retry — agent + cli nodes only.
+  retry_policy: retryPolicySchema.optional(),
 });
 
 const judgeNodeSchema = z.object({
@@ -716,6 +745,8 @@ const cliNodeSchema = z.object({
   type: z.literal("cli"),
   action: z.object({ command: z.string().min(1) }).passthrough(),
   settings: cliCheckSettingsSchema.optional(),
+  // M30 (ADR-077): auto-retry — agent + cli nodes only.
+  retry_policy: retryPolicySchema.optional(),
 });
 
 const checkNodeSchema = z.object({

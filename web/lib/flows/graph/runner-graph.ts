@@ -7,7 +7,7 @@ import type {
 } from "@/lib/db/schema";
 import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { FormSettings } from "@/lib/config.schema";
+import type { FormSettings, RetryPolicy } from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
@@ -293,10 +293,12 @@ export async function runReviewHuman(
 
   // M30 (ADR-079): stamp the run-branch tip at THIS review visit — the base
   // for the `since-last-review` diff scope. Best-effort (non-git fixtures /
-  // detached states leave it NULL and the scope degrades).
-  const reviewTipSha = await headCommit({
-    worktreePath: loaded.workspace.worktreePath,
-  }).catch(() => null);
+  // missing workspace / detached states leave it NULL and the scope degrades).
+  const reviewTipSha = loaded.workspace?.worktreePath
+    ? await headCommit({ worktreePath: loaded.workspace.worktreePath }).catch(
+        () => null,
+      )
+    : null;
 
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
     await tx.insert(hitlRequests).values({
@@ -1209,6 +1211,87 @@ export async function runGraph(
   let runErrorCode: MaisterErrorCode | null = null;
 
   let currentNodeId: string | null = resumeNodeId ?? graph.entry;
+  // M30 (ADR-077): set when a failed attempt schedules an auto-retry — the
+  // next iteration of the SAME node appends its attempt with auto_retry=true.
+  let pendingAutoRetryNodeId: string | null = null;
+
+  // M30 (ADR-077): auto-retry decision for a failed ai_coding/cli attempt.
+  // True → the caller `continue`s on the SAME node (a fresh attempt with a
+  // fresh session — dispatch is hard-coded new-session). The workspace policy
+  // applies via the ADR-076 engine BEFORE the retry; with no checkpoint
+  // (degraded capture) it degrades to keep with a WARN. `attempts` bounds the
+  // node's TOTAL ledger attempts — rework re-visits consume the same budget
+  // by design (the bound is the observable ledger row count). An apply
+  // failure abandons the retry (normal failure path), never corrupts.
+  const scheduleAutoRetry = async (
+    node: CompiledNode,
+    code: MaisterErrorCode,
+    state: { nodeAttemptNumber: number; attemptCheckpointRef: string | null },
+  ): Promise<boolean> => {
+    if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return false;
+    if (node.source.kind !== "node") return false;
+
+    const retryPolicy = (node.source.node as { retry_policy?: RetryPolicy })
+      .retry_policy;
+
+    if (!retryPolicy) return false;
+    if (!(retryPolicy.on_errors as readonly string[]).includes(code)) {
+      return false;
+    }
+    if (state.nodeAttemptNumber >= retryPolicy.attempts) {
+      log2.warn(
+        { nodeId: node.id, code, attempts: retryPolicy.attempts },
+        "[retry] exhausted",
+      );
+
+      return false;
+    }
+
+    if (retryPolicy.workspace !== "keep") {
+      if (!state.attemptCheckpointRef) {
+        log2.warn(
+          { nodeId: node.id, workspacePolicy: retryPolicy.workspace },
+          "[retry] no checkpoint_ref — workspace policy degraded to keep",
+        );
+      } else {
+        try {
+          await applyWorkspacePolicy({
+            policy: retryPolicy.workspace,
+            worktreePath: loaded.workspace.worktreePath,
+            checkpointRef: state.attemptCheckpointRef,
+            rematerialize:
+              retryPolicy.workspace === "fresh-attempt"
+                ? () =>
+                    materializeProjectBundlesIntoWorktree({
+                      projectId: loaded.run.projectId,
+                      worktreePath: loaded.workspace.worktreePath,
+                      baseBranch: loaded.workspace.baseBranch ?? "main",
+                      db,
+                    })
+                : undefined,
+          });
+        } catch (err) {
+          log2.error(
+            { nodeId: node.id, err: asError(err).message },
+            "[retry] workspace apply failed — retry abandoned (normal failure)",
+          );
+
+          return false;
+        }
+      }
+    }
+
+    log2.info(
+      {
+        nodeId: node.id,
+        code,
+        attempt: `${state.nodeAttemptNumber}/${retryPolicy.attempts}`,
+      },
+      "[retry] scheduling auto-retry",
+    );
+
+    return true;
+  };
 
   try {
     while (currentNodeId !== null) {
@@ -1284,6 +1367,10 @@ export async function runGraph(
       // `attempt` is. ADR-072: the review-gate schema stamps this as
       // `gateAttempt` and the compose evidence row records it as `attempt`.
       let nodeAttemptNumber: number;
+      // M30 (ADR-076/077): THIS attempt's checkpoint ref — the auto-retry
+      // workspace policy applies against it. Null on resume reuse / capture
+      // degrade (policy degrades to keep).
+      let attemptCheckpointRef: string | null = null;
 
       // M11b (ADR-030): the takeover-resume claim already appended the re-entry
       // node's fresh attempt inside the claim transaction (the observable CAS
@@ -1309,8 +1396,12 @@ export async function runGraph(
           runId,
           nodeId: node.id,
           nodeType: node.nodeType,
+          // M30 (ADR-077): the prior iteration scheduled this re-entry.
+          autoRetry: pendingAutoRetryNodeId === node.id,
           db,
         });
+
+        if (pendingAutoRetryNodeId === node.id) pendingAutoRetryNodeId = null;
 
         nodeAttemptId = appended.id;
         nodeAttemptNumber = appended.attempt;
@@ -1332,6 +1423,7 @@ export async function runGraph(
             });
 
             await setCheckpointRef(nodeAttemptId, ck.ref, db);
+            attemptCheckpointRef = ck.ref;
             log2.debug(
               { nodeId: node.id, nodeAttemptId, checkpointRef: ck.ref },
               "[checkpoint] pre-attempt checkpoint captured",
@@ -1541,6 +1633,15 @@ export async function runGraph(
           "node action threw — Failed",
         );
         await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
+        if (
+          await scheduleAutoRetry(node, e.code, {
+            nodeAttemptNumber,
+            attemptCheckpointRef,
+          })
+        ) {
+          pendingAutoRetryNodeId = node.id;
+          continue;
+        }
         failed = true;
         runErrorCode = e.code;
         break;
@@ -1638,6 +1739,15 @@ export async function runGraph(
           { errorCode: code, exitCode: result.exitCode, stdout: result.stdout },
           db,
         );
+        if (
+          await scheduleAutoRetry(node, code, {
+            nodeAttemptNumber,
+            attemptCheckpointRef,
+          })
+        ) {
+          pendingAutoRetryNodeId = node.id;
+          continue;
+        }
         failed = true;
         runErrorCode = code;
         log2.warn({ nodeId: node.id, errorCode: code }, "node failed");
