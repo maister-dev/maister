@@ -13,10 +13,8 @@ import {
 export type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
-const { domainEvents, domainEventConsumers } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { domainEvents, domainEventConsumers } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -174,8 +172,7 @@ export async function dispatchDomainEvents(
       try {
         await consumer.handle(events);
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
 
         summary.failures += 1;
 
@@ -207,7 +204,8 @@ export async function dispatchDomainEvents(
       }
 
       const lastId = events.at(-1)!.id as number;
-      const isFinalBatch = events.length < batchSize || batch === maxBatches - 1;
+      const isFinalBatch =
+        events.length < batchSize || batch === maxBatches - 1;
 
       const advanced = await db
         .update(domainEventConsumers)

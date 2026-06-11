@@ -9,6 +9,7 @@ import {
   assignmentEvents as assignmentEventsTable,
   assignments as assignmentsTable,
   hitlRequests as hitlRequestsTable,
+  domainEvents as domainEventsTable,
   projects as projectsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
@@ -27,6 +28,7 @@ type Tables = {
   actor_identities: Row[];
   assignment_events: Row[];
   webhook_events: Row[];
+  domain_events: Row[];
 };
 
 const dbState: {
@@ -42,6 +44,7 @@ const dbState: {
     actor_identities: [],
     assignment_events: [],
     webhook_events: [],
+    domain_events: [],
   },
   updates: [],
 };
@@ -55,6 +58,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === actorIdentitiesTable) return "actor_identities";
   if (t === assignmentEventsTable) return "assignment_events";
   if (t === webhookEventsTable) return "webhook_events";
+  if (t === domainEventsTable) return "domain_events";
   throw new Error("unknown table");
 }
 
@@ -216,6 +220,7 @@ beforeEach(async () => {
     actor_identities: [],
     assignment_events: [],
     webhook_events: [],
+    domain_events: [],
   };
   dbState.updates = [];
   deliverPermissionSpy.mockReset();

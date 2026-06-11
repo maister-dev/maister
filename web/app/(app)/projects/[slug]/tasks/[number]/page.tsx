@@ -252,9 +252,13 @@ export default async function TaskDetailPage({
             <table className="w-full min-w-[560px] text-left text-[12px]">
               <thead>
                 <tr className="border-b border-line bg-ivory text-[11px] uppercase tracking-[0.08em] text-mute">
-                  <th className="px-3 py-2 font-semibold">{t("runsAttempt")}</th>
+                  <th className="px-3 py-2 font-semibold">
+                    {t("runsAttempt")}
+                  </th>
                   <th className="px-3 py-2 font-semibold">{t("runsStatus")}</th>
-                  <th className="px-3 py-2 font-semibold">{t("runsStarted")}</th>
+                  <th className="px-3 py-2 font-semibold">
+                    {t("runsStarted")}
+                  </th>
                   <th className="px-3 py-2 font-semibold">{t("runsEnded")}</th>
                   <th className="px-3 py-2 font-semibold">{t("runsLinks")}</th>
                 </tr>
@@ -266,10 +270,16 @@ export default async function TaskDetailPage({
                       #{detail.runs.length - index}
                     </td>
                     <td className="px-3 py-2 font-mono">{run.status}</td>
-                    <td className="px-3 py-2 font-mono" suppressHydrationWarning>
+                    <td
+                      suppressHydrationWarning
+                      className="px-3 py-2 font-mono"
+                    >
                       {formatAt(run.startedAt)}
                     </td>
-                    <td className="px-3 py-2 font-mono" suppressHydrationWarning>
+                    <td
+                      suppressHydrationWarning
+                      className="px-3 py-2 font-mono"
+                    >
                       {formatAt(run.endedAt)}
                     </td>
                     <td className="px-3 py-2">

@@ -297,10 +297,7 @@ export async function runPass2(db: Db): Promise<number> {
         .update(hitlRequests)
         .set({ respondedAt: new Date() })
         .where(
-          and(
-            eq(hitlRequests.runId, row.id),
-            isNull(hitlRequests.respondedAt),
-          ),
+          and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
         );
 
       await emitWebhookEvent({

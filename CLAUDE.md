@@ -393,7 +393,7 @@ Current Scope, these are **Implemented** today:
 - **External operations API + project tokens + MCP facade** (M16/M17):
   `/api/v1/ext/*`, scoped tokens, HITL-over-MCP (`hitl_list`/`hitl_respond`).
   → `external-operations.md`
-- **Social board substrate** (M31, ADR-078): `KEY-N` task identity
+- **Social board substrate** (M31, ADR-083): `KEY-N` task identity
   (platform-unique `task_key` + counter-allocated `number`), typed relations
   gating launch (`blocked` classification at every entry point), comments
   with write-time mention expansion, domain-only `task_activity`,
@@ -401,6 +401,15 @@ Current Scope, these are **Implemented** today:
   page, ext comment ops + MCP `comment_*` tools. Polymorphic
   `(actor_type, actor_id)` is `agent`-ready; Stage 1 writes `user`/`system`
   only. → `social-board.md`
+- **Domain-event outbox / shared trigger bus** (M32, ADR-085):
+  `domain_events` append-only fact log emitted in the SAME transaction as
+  the domain write (8-kind taxonomy v1: task/run-terminal/gate.failed,
+  polymorphic actor, xid8 commit horizon), per-consumer cursor dispatcher
+  (`domain_event_dispatch` singleton on the M24 clock, CAS lease + fenced
+  advance, at-least-once) with a permanent `noop` consumer. Webhooks
+  (ADR-077) keep their own outbox until their drainer re-points; the TTL
+  `run.abandoned` webhook gap is closed (`source: "ttl"`).
+  → `domain-events.md`
 
 Product backlog/vision (not built): `docs/pv/improvement-roadmap.md` —
 self-improvement loop, benchmarking, project memory, agents-as-actors.

@@ -76,10 +76,7 @@ export async function addTaskComment(
     const task = taskRows[0];
 
     if (!task) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `task not found: ${input.taskId}`,
-      );
+      throw new MaisterError("PRECONDITION", `task not found: ${input.taskId}`);
     }
 
     const { expanded, mentioned } = await expandMentions(input.body, tx);

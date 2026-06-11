@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The domain-event outbox (**Designed**, ADR-085, M32) is MAIster's shared
+The domain-event outbox (**Implemented**, ADR-085, M32) is MAIster's shared
 **trigger bus**: an immutable, append-only log of curated domain facts
 (`domain_events`), written from the domain layer in the SAME transaction as the
 state change, and a per-consumer cursor dispatcher running on the M24 clock.
@@ -18,29 +18,29 @@ borrows ([scheduler.md](scheduler.md)).
 
 ## Domain entities
 
-- **`domain_events`** (Designed) — the append-only fact log. One row per
+- **`domain_events`** (Implemented) — the append-only fact log. One row per
   emitted domain fact: `{ id (bigint identity, dispatch ordering key), kind,
   project_id, task_id?, run_id?, actor_type?, actor_id?, payload, occurred_at,
   created_at, tx_id (xid8, commit-visibility horizon) }`. The polymorphic
   `(actor_type, actor_id)` pair mirrors `task_activity` (ADR-083). No
   UPDATE/DELETE app paths; FKs cascade on project/task/run delete (events are
   trigger material, not the audit log). See [db/domain-events.md](../db/domain-events.md).
-- **`domain_event_consumers`** (Designed) — one cursor row per registered
+- **`domain_event_consumers`** (Implemented) — one cursor row per registered
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
   last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy v1** (Designed) — exactly 8 kinds:
+- **Kind taxonomy v1** (Implemented) — exactly 8 kinds:
   `task.created`, `task.comment_added`, `task.triage_requeued`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `gate.failed`.
   `task.triage_requeued` is registered with **no emitter** (Designed — the
   emitter lands with the Stage-3 triager). Extension rule: one taxonomy entry +
   emit site(s) in the owning domain transaction + one doc row + a CHECK update
   via migration.
-- **`domain_event_dispatch` job kind** (Designed) — singleton dispatcher on the
-  M24 clock (one seeded `domain_event_dispatch.default` job, cadence 60s,
+- **`domain_event_dispatch` job kind** (Implemented) — singleton dispatcher on
+  the M24 clock (one seeded `domain_event_dispatch.default` job, cadence 60s,
   budget `domainEventDispatch: 1`, not user-creatable). See
   [scheduler.md](scheduler.md).
-- **Consumer registry + `noop` consumer** (Designed) — code-owned
+- **Consumer registry + `noop` consumer** (Implemented) — code-owned
   `DOMAIN_EVENT_CONSUMERS` array (`web/lib/domain-events/consumers.ts`); each
   entry declares `{ id, startFrom: "beginning" | "now", handle(events) }`. v1
   ships exactly one permanently-registered `noop` consumer (`startFrom: "now"`)
@@ -49,7 +49,7 @@ borrows ([scheduler.md](scheduler.md)).
 ## State machine
 
 The consumer-cursor lifecycle (`domain_event_consumers` row). All transitions
-Designed.
+Implemented.
 
 ```mermaid
 stateDiagram-v2
@@ -71,7 +71,7 @@ value read at claim — it no-ops, converging to a duplicate delivery
 
 ## Process flows
 
-### (a) Capture — same-transaction outbox INSERT (Designed)
+### (a) Capture — same-transaction outbox INSERT (Implemented)
 
 Capture rides the existing domain write path, exactly like the webhook outbox
 (ADR-077). `emitDomainEvent` performs ONE INSERT into `domain_events` inside
@@ -89,7 +89,7 @@ flowchart TD
     COMMIT --> DONE[write path continues — no network]
 ```
 
-### (b) Dispatch tick — claim, read window, handle, advance (Designed)
+### (b) Dispatch tick — claim, read window, handle, advance (Implemented)
 
 The `domain_event_dispatch` handler iterates registered consumers. Per
 consumer: claim the cursor row by CAS lease, read the next window gated by the
@@ -118,7 +118,7 @@ sequenceDiagram
     end
 ```
 
-### (c) Catch-up and the commit horizon (Designed)
+### (c) Catch-up and the commit horizon (Implemented)
 
 Missed ticks need no special path: events accumulate, the cursor stays put, and
 the next tick drains the backlog in batches — recovery IS the cursor. The xid8
@@ -208,6 +208,6 @@ flowchart TD
   `domain_events` (it then becomes a registered consumer).
 - **Actor model:** [`social-board.md`](social-board.md) — the polymorphic
   `(actor_type, actor_id)` pair (ADR-083).
-- **Source (Designed):** `web/lib/domain-events/*` (`taxonomy.ts`, `outbox.ts`,
+- **Source (Implemented):** `web/lib/domain-events/*` (`taxonomy.ts`, `outbox.ts`,
   `consumers.ts`, `dispatch.ts`),
   `web/lib/scheduler/handlers/domain-event-dispatch.ts`.

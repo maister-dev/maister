@@ -23,6 +23,7 @@ import {
   isReviewSchema,
   resolveConfidence,
 } from "@/lib/flows/hitl-validate";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { runFlow } from "@/lib/flows/runner";
 import { cancelPermission, deliverPermission } from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -661,7 +662,12 @@ async function handlePermissionResponse(
             endedAt: new Date(),
           })
           .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-          .returning({ projectId: runs.projectId });
+          .returning({
+            projectId: runs.projectId,
+            taskId: runs.taskId,
+            flowId: runs.flowId,
+            runKind: runs.runKind,
+          });
 
         await tx
           .update(hitlRequests)
@@ -675,6 +681,21 @@ async function handlePermissionResponse(
             projectId: terminalRows[0].projectId,
             runId,
             data: { errorCode: "HITL_TIMEOUT" },
+          });
+          await emitDomainEvent({
+            db: tx,
+            kind: runRow.runKind === "scratch" ? "run.crashed" : "run.failed",
+            projectId: terminalRows[0].projectId,
+            runId,
+            taskId: terminalRows[0].taskId,
+            actor: { type: "system", id: null },
+            payload: {
+              runId,
+              taskId: terminalRows[0].taskId,
+              flowId: terminalRows[0].flowId,
+              runKind: terminalRows[0].runKind,
+              reason: "HITL_TIMEOUT",
+            },
           });
         }
 

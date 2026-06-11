@@ -27,7 +27,7 @@ until migrations exist.
 | [`artifacts-domain.md`](artifacts-domain.md) | Typed artifact instances + projection cursors (M12). |
 | [`assignments-domain.md`](assignments-domain.md) | M13 Flow roles, actors, assignments, and assignment events. |
 | [`capabilities-domain.md`](capabilities-domain.md) | Capability records + git-pinned imports + materialization plan column (M14, Implemented). |
-| [`domain-events.md`](domain-events.md) | Domain-event outbox: `domain_events` fact log + per-consumer cursors (ADR-085, Designed). |
+| [`domain-events.md`](domain-events.md) | Domain-event outbox: `domain_events` fact log + per-consumer cursors (ADR-085, Implemented). |
 
 ## Cardinality notation
 

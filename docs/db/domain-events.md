@@ -5,9 +5,8 @@ See [`../system-analytics/domain-events.md`](../system-analytics/domain-events.m
 for the dispatch mechanics, the kind taxonomy, and the consumer contract, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
 
-> **Status: Designed.** Migration `0045_domain_events.sql` (additive,
-> forward-only, no down-migration) adds both tables. This file flips to
-> Implemented when the migration lands.
+> **Status: Implemented.** Migration `0045_domain_events.sql` (additive,
+> forward-only, no down-migration) adds both tables.
 
 ```mermaid
 erDiagram
@@ -101,8 +100,7 @@ MUST honor `min(cursor_event_id)` across registered consumers.
 ## Linked artifacts
 
 - Process flows: [`../system-analytics/domain-events.md`](../system-analytics/domain-events.md).
-- Global ERD: [`erd.md`](erd.md) — entities are added there when the migration
-  lands (it draws implemented tables only).
+- Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Decision record: ADR-085 in [`../decisions.md`](../decisions.md).
-- Source (Designed): `web/lib/db/schema.ts` (migration `0045_domain_events.sql`).
+- Source (Implemented): `web/lib/db/schema.ts` (migration `0045_domain_events.sql`).

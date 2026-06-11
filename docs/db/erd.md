@@ -927,6 +927,35 @@ erDiagram
         text error_detail "NULL; <= 1KB"
         text response_snippet "NULL; <= 1KB"
     }
+
+    PROJECTS ||--o{ DOMAIN_EVENTS : "emitted per project (ADR-085)"
+    TASKS o|--o{ DOMAIN_EVENTS : "task-scoped facts (nullable FK)"
+    RUNS o|--o{ DOMAIN_EVENTS : "run-scoped facts (nullable FK)"
+
+    DOMAIN_EVENTS {
+        bigint id PK "GENERATED ALWAYS AS IDENTITY — dispatch ordering key"
+        text kind "8-kind taxonomy CHECK (ADR-085)"
+        text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
+        text task_id FK "NULL -> tasks(id) ON DELETE CASCADE"
+        text run_id FK "NULL -> runs(id) ON DELETE CASCADE"
+        text actor_type "NULL; user|system|agent CHECK"
+        text actor_id "NULL; polymorphic actor id"
+        jsonb payload "NOT NULL; ids/keys/statuses only"
+        timestamptz occurred_at
+        timestamptz created_at
+        xid8 tx_id "DEFAULT pg_current_xact_id(); commit-visibility horizon"
+    }
+
+    DOMAIN_EVENT_CONSUMERS {
+        text consumer_id PK "code-owned registry id"
+        bigint cursor_event_id "NOT NULL DEFAULT 0"
+        timestamptz lease_expires_at "NULL; CAS claim lease"
+        timestamptz last_dispatched_at "NULL"
+        text last_error "NULL"
+        integer consecutive_failures "NOT NULL DEFAULT 0"
+        timestamptz created_at
+        timestamptz updated_at
+    }
 ```
 
 ## Planned roadmap extensions

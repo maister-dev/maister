@@ -1807,7 +1807,7 @@ and the summary reports `skipped: "disabled"` + `skippedEvents`. Pending
 deliveries are not touched. Flipping back to `true` resumes drain on the next
 tick; pre-disable pending deliveries catch up naturally.
 
-## Domain-event outbox tables (Designed, ADR-085, migration `0045`)
+## Domain-event outbox tables (Implemented, ADR-085, migration `0045`)
 
 See [`db/domain-events.md`](db/domain-events.md) for the ERD and
 [`system-analytics/domain-events.md`](system-analytics/domain-events.md) for
@@ -1815,7 +1815,7 @@ the dispatch mechanics, kind taxonomy, and consumer contract.
 
 ### `domain_events`
 
-**(Designed, ADR-085, migration `0045`.)** Append-only domain-fact log — the
+**(Implemented, ADR-085, migration `0045`.)** Append-only domain-fact log — the
 shared trigger bus. One row per curated domain fact, written in the SAME
 transaction as the domain state change (`emitDomainEvent`, CAS-winner path
 only). No UPDATE/DELETE application paths; future pruning MUST honor
@@ -1852,7 +1852,7 @@ No secondary indexes by design — dispatch reads are PK-range scans
 
 ### `domain_event_consumers`
 
-**(Designed, ADR-085, migration `0045`.)** One cursor row per registered
+**(Implemented, ADR-085, migration `0045`.)** One cursor row per registered
 consumer (the registry itself is code-owned — `DOMAIN_EVENT_CONSUMERS`).
 Claim = CAS on `lease_expires_at` (5 min TTL); advance = CAS fenced on the
 cursor value read at claim; delivery is at-least-once and consumers are

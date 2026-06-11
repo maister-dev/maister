@@ -16,7 +16,11 @@ import {
   failResumedRun,
   markAbandoned,
 } from "@/lib/runs/state-transitions";
-import { createGateResult, markGateFailed, markGatePassed } from "@/lib/flows/graph/gate-store";
+import {
+  createGateResult,
+  markGateFailed,
+  markGatePassed,
+} from "@/lib/flows/graph/gate-store";
 import { runPass2 } from "@/lib/runs/keepalive-sweeper";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
@@ -140,10 +144,7 @@ async function domainRows(runId: string): Promise<Record<string, unknown>[]> {
   return (await db
     .select()
     .from(schema.domainEvents)
-    .where(eq(schema.domainEvents.runId, runId))) as Record<
-    string,
-    unknown
-  >[];
+    .where(eq(schema.domainEvents.runId, runId))) as Record<string, unknown>[];
 }
 
 describe("T-E5 — paired domain emission at terminal state transitions", () => {
@@ -322,10 +323,7 @@ describe("T-E7 — runPass2 TTL abandon: one tx, both emits", () => {
     const hitlRow = (await db
       .select()
       .from(schema.hitlRequests)
-      .where(eq(schema.hitlRequests.id, hitlId))) as Record<
-      string,
-      unknown
-    >[];
+      .where(eq(schema.hitlRequests.id, hitlId))) as Record<string, unknown>[];
 
     expect(hitlRow[0].respondedAt).not.toBeNull();
 
@@ -346,8 +344,6 @@ describe("T-E7 — runPass2 TTL abandon: one tx, both emits", () => {
       )) as Record<string, unknown>[];
 
     expect(webhookRows).toHaveLength(1);
-    expect((webhookRows[0].data as Record<string, unknown>).source).toBe(
-      "ttl",
-    );
+    expect((webhookRows[0].data as Record<string, unknown>).source).toBe("ttl");
   });
 });
