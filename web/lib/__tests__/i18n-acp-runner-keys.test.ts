@@ -57,10 +57,38 @@ const ACP_RUNNER_KEYS = [
   "saving",
 ] as const;
 
+// Nested `settings.modelSuggestions.*` keys for the runner-modal model
+// combobox (T4.x). Dotted paths relative to the `settings` namespace.
+const MODEL_SUGGESTION_KEYS = [
+  "modelSuggestions.loading",
+  "modelSuggestions.empty",
+  "modelSuggestions.refresh",
+  "modelSuggestions.unknownModelHint",
+  "modelSuggestions.error",
+  "modelSuggestions.sources.agent",
+  "modelSuggestions.sources.provider",
+  "modelSuggestions.sources.curated",
+  "modelSuggestions.sources.ccr",
+  "modelSuggestions.sources.observed",
+  "modelSuggestions.sources.preset",
+] as const;
+
 type Catalog = Record<string, Record<string, unknown>>;
 
 function settingsNs(cat: Catalog): Record<string, unknown> {
   return (cat.settings ?? {}) as Record<string, unknown>;
+}
+
+function leafAt(ns: Record<string, unknown>, dotted: string): unknown {
+  return dotted
+    .split(".")
+    .reduce<unknown>(
+      (acc, seg) =>
+        acc && typeof acc === "object"
+          ? (acc as Record<string, unknown>)[seg]
+          : undefined,
+      ns,
+    );
 }
 
 describe("i18n — ACP runner settings keys exist in EN", () => {
@@ -105,5 +133,47 @@ describe("i18n — EN and RU `settings` ACP runner keys stay in parity", () => {
     );
 
     expect(ruPresent).toEqual(enPresent);
+  });
+});
+
+describe("i18n — runner-modal modelSuggestions keys exist in EN", () => {
+  const ns = settingsNs(en as unknown as Catalog);
+
+  for (const path of MODEL_SUGGESTION_KEYS) {
+    it(`en.settings.${path} is a non-empty string`, () => {
+      const leaf = leafAt(ns, path);
+
+      expect(typeof leaf).toBe("string");
+      expect((leaf as string).length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("i18n — runner-modal modelSuggestions keys exist in RU", () => {
+  const ns = settingsNs(ru as unknown as Catalog);
+
+  for (const path of MODEL_SUGGESTION_KEYS) {
+    it(`ru.settings.${path} is a non-empty string`, () => {
+      const leaf = leafAt(ns, path);
+
+      expect(typeof leaf).toBe("string");
+      expect((leaf as string).length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("i18n — EN and RU modelSuggestions keys stay in parity", () => {
+  it("each modelSuggestions key is present in BOTH catalogs", () => {
+    const enNs = settingsNs(en as unknown as Catalog);
+    const ruNs = settingsNs(ru as unknown as Catalog);
+    const missingEn = MODEL_SUGGESTION_KEYS.filter(
+      (p) => typeof leafAt(enNs, p) !== "string",
+    );
+    const missingRu = MODEL_SUGGESTION_KEYS.filter(
+      (p) => typeof leafAt(ruNs, p) !== "string",
+    );
+
+    expect(missingEn).toEqual([]);
+    expect(missingRu).toEqual([]);
   });
 });

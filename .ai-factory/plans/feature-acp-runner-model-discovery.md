@@ -38,6 +38,15 @@
 >   variant — never fails the run (T3.3, supervisor acp-client `applyAndVerifyModel`). Reviewer
 >   pass (explicit runner-narrowing). Gate: supervisor unit 178 + integration 45, web agent-map 14
 >   + materialize 6, tsc + scoped eslint clean (both tiers). Checkpoint #4.
+> - ✅ **Phase 4** — web→supervisor `resolveModelSuggestions` (T4.1); admin proxy
+>   `POST /api/admin/acp-runners/model-suggestions` w/ env:NAME→bare + raw-secret/sidecar guards
+>   (T4.2); runner-modal model field → HeroUI v3 **ComboBox** (allowsCustomValue) via a
+>   presentational `model-autocomplete` + debounced/race-guarded `use-model-suggestions` hook + preset
+>   fallback (T4.3); EN/RU i18n `settings.modelSuggestions.*` (T4.4). Reviewer fixes: hook re-resolves
+>   on env-ref-name change; `// FIXME(any)` on drizzle peer-dep casts; **spec aligned** — a
+>   missing/unset env-ref degrades to a per-source `status:"error"` (200), NOT a 422 (error-taxonomy +
+>   web openapi corrected to match the authoritative model-catalog.md). Gate: web tsc + scoped eslint
+>   clean, web tests 168, redocly + validate:docs green. Checkpoint #5.
 > - **Plan-vs-reality corrections found (branch == base `633f74c7`):** (a) the plan's
 >   "architecture.md has NO component table" note is **wrong** — the table exists at
 >   ~line 188; a row was added. (b) The T0B.3 advisory shape is **frozen** as a

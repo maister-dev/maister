@@ -53,6 +53,9 @@ describe("AcpRunnerModal", () => {
     expect(markup).toContain("fieldId");
     expect(markup).toContain("fieldModel");
     expect(markup).toContain("fromPreset");
+    // the model field is the discovery-backed combobox, not a bare text input
+    expect(markup).toContain('role="combobox"');
+    expect(markup).toContain("modelSuggestions.refresh");
   });
 
   it("renders the edit form with delete affordance and the runner's values", () => {

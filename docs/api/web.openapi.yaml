@@ -330,8 +330,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422":
           description: |
-            Invalid body, a raw (non-`env:`) secret, an unknown env-ref name, or
-            an unknown `sidecarId` (`CONFIG`).
+            Invalid body, a raw (non-`env:`) secret, or an unknown `sidecarId`
+            (`CONFIG`). A missing/unset env-ref degrades to a per-source
+            `status:"error"` inside a 200, not a 422 (ADR-073 §2).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

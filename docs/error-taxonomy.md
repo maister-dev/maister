@@ -198,9 +198,10 @@ defined as a string union in `web/lib/errors.ts`.
 > problems are reported as a per-source `status` inside an HTTP **200**, not thrown.
 >
 > **`CONFIG` → HTTP 422 (web proxy, new call site):** `POST /api/admin/acp-runners/model-suggestions`
-> — invalid body, a raw (non-`env:`) secret in a provider field, an unknown env-ref name, or an
-> unknown `sidecarId`. The bare env-ref name never leaves the supervisor host; secret values are
-> never returned or logged.
+> — invalid body, a raw (non-`env:`) secret in a provider field, or an unknown `sidecarId`. A
+> *missing / unset* env-ref name is NOT a 422 — it degrades gracefully to that provider source's
+> `status:"error"` inside a 200 (ADR-073 §2: a per-source failure never fails the resolve). The bare
+> env-ref name never leaves the supervisor host; secret values are never returned or logged.
 >
 > **`EXECUTOR_UNAVAILABLE` → HTTP 503 (web proxy, new call site):** the same route when the
 > supervisor is unreachable or returns 5xx during `POST /model-catalog/resolve`. The runner modal

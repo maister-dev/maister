@@ -18,6 +18,7 @@ import {
   deliverPermission,
   getPlatformStatus,
   listSessions,
+  resolveModelSuggestions,
   sendPrompt,
   streamSession,
   type SupervisorEvent,
@@ -737,5 +738,107 @@ describe("permission helpers — body shape regression", () => {
 
     expect(body).not.toContain('"kind":"form"');
     expect(body).toContain('"kind":"permission"');
+  });
+});
+
+describe("resolveModelSuggestions (T4.1)", () => {
+  const draft = {
+    adapter: "claude" as const,
+    provider: {
+      kind: "anthropic_compatible",
+      baseUrl: "https://api.z.ai/api/anthropic",
+      authTokenEnv: "ZAI_API_KEY",
+    },
+  };
+
+  const catalog = {
+    models: [
+      { id: "glm-5.1", displayName: "GLM 5.1", origins: ["acp_probe"] },
+      { id: "claude-sonnet-4-6", origins: ["provider_api"] },
+    ],
+    sources: [
+      { kind: "acp_probe", status: "ok", count: 1 },
+      { kind: "codex_probe", status: "skipped", reason: "no auth" },
+    ],
+    resolvedAt: "2026-06-11T12:00:00.000Z",
+    ttlSeconds: 300,
+  };
+
+  it("POSTs to /model-catalog/resolve and maps a 200 body to SupervisorModelCatalog", async () => {
+    mockOnce(new Response(JSON.stringify(catalog), { status: 200 }));
+
+    const result = await resolveModelSuggestions(draft);
+
+    expect(result).toEqual(catalog);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/model-catalog/resolve",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("sends force:false by default in the body", async () => {
+    mockOnce(new Response(JSON.stringify(catalog), { status: 200 }));
+
+    await resolveModelSuggestions(draft);
+
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ ...draft, force: false });
+  });
+
+  it("includes force:true in the body when opts.force is set", async () => {
+    mockOnce(new Response(JSON.stringify(catalog), { status: 200 }));
+
+    await resolveModelSuggestions(draft, { force: true });
+
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+
+    expect(body.force).toBe(true);
+  });
+
+  it("translates supervisor 409 PRECONDITION to a MaisterError carrying that code", async () => {
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          code: "PRECONDITION",
+          message:
+            "provider.authTokenEnv: must be an environment variable name",
+        }),
+        { status: 409 },
+      ),
+    );
+
+    const promise = resolveModelSuggestions(draft);
+
+    await expect(promise).rejects.toBeInstanceOf(MaisterError);
+    await expect(promise).rejects.toMatchObject({
+      code: "PRECONDITION",
+      message: "provider.authTokenEnv: must be an environment variable name",
+    });
+  });
+
+  it("falls back to EXECUTOR_UNAVAILABLE on a non-2xx body without a known code", async () => {
+    mockOnce(
+      new Response(JSON.stringify({ code: "BANANAS", message: "?" }), {
+        status: 500,
+      }),
+    );
+
+    await expect(resolveModelSuggestions(draft)).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+    });
+  });
+
+  it("translates a network failure to EXECUTOR_UNAVAILABLE", async () => {
+    mockReject(new TypeError("fetch failed"));
+
+    const promise = resolveModelSuggestions(draft);
+
+    await expect(promise).rejects.toBeInstanceOf(MaisterError);
+    await expect(promise).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+    });
   });
 });

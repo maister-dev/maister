@@ -691,6 +691,21 @@
     "policyDefault": "default",
     "policyDangerous": "dangerously skip permissions",
     "saveFailed": "Save failed",
+    "modelSuggestions": {
+      "loading": "Loading model suggestions…",
+      "empty": "No suggestions — type a model id",
+      "refresh": "Refresh",
+      "unknownModelHint": "Not in the discovered list — will be used as-is",
+      "error": "Couldn't reach the discovery service",
+      "sources": {
+        "agent": "Agent",
+        "provider": "Provider",
+        "curated": "Curated",
+        "ccr": "CCR",
+        "observed": "Observed",
+        "preset": "Preset"
+      }
+    },
     "cancel": "Cancel",
     "saving": "Saving…",
     "sub": "MAIster instance configuration (read-only).",

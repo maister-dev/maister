@@ -19,6 +19,8 @@ import {
   providerKindsForAdapter,
   validateRunnerDraft,
 } from "@/lib/acp-runners/runner-form";
+import { ModelAutocomplete } from "@/components/settings/model-autocomplete";
+import { useModelSuggestions } from "@/components/settings/use-model-suggestions";
 
 type Provider = {
   kind: string;
@@ -220,6 +222,12 @@ export function AcpRunnerModal({
 
   const { ok, errors } = validateRunnerDraft(draft);
   const providerKind = draft.providerKind;
+  const modelSuggestions = useModelSuggestions(draft, presets);
+  const unknownModel =
+    draft.model.trim().length > 0 &&
+    !modelSuggestions.groups.some((group) =>
+      group.models.some((model) => model.id === draft.model),
+    );
 
   function patchDraft(patch: Partial<RunnerDraft>): void {
     setDraft((current) => ({ ...current, ...patch }));
@@ -435,23 +443,23 @@ export function AcpRunnerModal({
             )}
           </label>
 
-          <label className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("fieldModel")}</span>
-            <input
-              autoComplete="off"
-              className={inputClass}
-              disabled={busy}
-              spellCheck={false}
-              type="text"
+          <div className="flex flex-col gap-1.5">
+            <ModelAutocomplete
+              error={modelSuggestions.error}
+              groups={modelSuggestions.groups}
+              label={t("fieldModel")}
+              loading={modelSuggestions.loading}
+              unknownModel={unknownModel}
               value={draft.model}
-              onChange={(e) => patchDraft({ model: e.target.value })}
+              onRefresh={modelSuggestions.refresh}
+              onValueChange={(model) => patchDraft({ model })}
             />
             {errorFor("model") ? (
               <span className="font-mono text-[10.5px] text-[#b5332b]">
                 {errorFor("model")}
               </span>
             ) : null}
-          </label>
+          </div>
 
           <label className="flex flex-col gap-1.5">
             <span className={fieldLabel}>{t("fieldProviderKind")}</span>

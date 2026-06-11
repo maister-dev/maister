@@ -120,6 +120,25 @@ export type SupervisorSessionRecord = {
   acpSessionId?: string;
 };
 
+export type SupervisorModelCatalogDraft = {
+  adapter: "claude" | "codex";
+  provider: Record<string, unknown>;
+  router?: "ccr";
+  sidecarId?: string;
+};
+
+export type SupervisorModelCatalog = {
+  models: { id: string; displayName?: string; origins: string[] }[];
+  sources: {
+    kind: string;
+    status: "ok" | "skipped" | "error";
+    reason?: string;
+    count?: number;
+  }[];
+  resolvedAt: string;
+  ttlSeconds: number;
+};
+
 const SupervisorHealthSchema = z
   .object({
     status: z.literal("ready"),
@@ -504,6 +523,31 @@ export async function sendPrompt(
   }
 
   return (await res.json()) as PromptResult;
+}
+
+export async function resolveModelSuggestions(
+  draft: SupervisorModelCatalogDraft,
+  opts?: { force?: boolean },
+): Promise<SupervisorModelCatalog> {
+  const url = `${baseUrl()}/model-catalog/resolve`;
+
+  logger.debug({ url, adapter: draft.adapter }, "resolveModelSuggestions");
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...draft, force: opts?.force ?? false }),
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "resolveModelSuggestions");
+  }
+  if (!res.ok) {
+    throw await asMaisterError(res, "EXECUTOR_UNAVAILABLE");
+  }
+
+  return (await res.json()) as SupervisorModelCatalog;
 }
 
 async function readErrorMessage(
