@@ -381,7 +381,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` is deliberately NOT creatable here — the singleton `run_schedule.dispatcher` is seeded by the tick (M28, ADR-071); the kind is rejected at the schema.
+      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` and `domain_event_dispatch` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071) and `domain_event_dispatch.default` (ADR-085) are seeded by the tick; both kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -396,7 +396,14 @@ paths:
                 jobKind:
                   {
                     type: string,
-                    enum: [system_sweep, command, agent_tick, flow_run],
+                    enum:
+                      [
+                        system_sweep,
+                        command,
+                        agent_tick,
+                        flow_run,
+                        webhook_delivery,
+                      ],
                   }
                 target: { type: object }
                 cadenceIntervalSeconds: { type: integer, minimum: 1 }
@@ -4637,7 +4644,16 @@ paths:
           required: false
           schema:
             type: string
-            enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
+            enum:
+              [
+                system_sweep,
+                command,
+                agent_tick,
+                flow_run,
+                run_schedule,
+                webhook_delivery,
+                domain_event_dispatch,
+              ]
       responses:
         "200":
           description: Tick completed with no failed or skipped attempts.
@@ -4665,7 +4681,16 @@ paths:
           required: false
           schema:
             type: string
-            enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
+            enum:
+              [
+                system_sweep,
+                command,
+                agent_tick,
+                flow_run,
+                run_schedule,
+                webhook_delivery,
+                domain_event_dispatch,
+              ]
       responses:
         "200":
           description: Tick completed with no failed or skipped attempts.
