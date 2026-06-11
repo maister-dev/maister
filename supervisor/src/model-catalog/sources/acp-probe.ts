@@ -37,7 +37,7 @@ const BINARY_BY_AGENT: Record<ExecutorAgent, string> = {
   codex: "codex-acp",
 };
 
-// A2 active probe (ADR-073 primary source). Spawns the already-trusted adapter
+// A2 active probe (ADR-075 primary source). Spawns the already-trusted adapter
 // binary in an isolated tmp cwd, drives a promptless ACP handshake
 // (initialize → session/new, ~0 tokens), reads NewSessionResponse.models, and
 // SIGTERMs the child on EVERY exit path (deferred-release — success, reject,
@@ -49,6 +49,7 @@ export type AcpProbeOptions = {
   binaryOverride?: string;
   preArgs?: string[];
   timeoutMs?: number;
+  teardownGraceMs?: number;
 };
 
 const noopClient: acp.Client = {
@@ -84,9 +85,55 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+const PROBE_TEARDOWN_GRACE_MS = 2_000;
+
+function childIsDead(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForChildExit(child: ChildProcess, ms: number): Promise<boolean> {
+  if (childIsDead(child)) return Promise.resolve(true);
+
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+// Teardown: SIGTERM → bounded wait → SIGKILL → destroy stdio. A probe child has
+// NO session-registry entry or heartbeat, so an adapter that ignores SIGTERM (or
+// hangs) would leak silently under repeated discovery. The SIGKILL escalation
+// honors the model-catalog.md "no orphaned child MUST remain" contract; awaiting
+// exit before the caller removes the temp cwd avoids a kill/rm race.
+async function terminateProbeChild(
+  child: ChildProcess,
+  graceMs: number,
+): Promise<void> {
+  try {
+    if (!childIsDead(child)) {
+      child.kill("SIGTERM");
+
+      if (!(await waitForChildExit(child, graceMs))) {
+        child.kill("SIGKILL");
+        await waitForChildExit(child, graceMs);
+      }
+    }
+  } catch {
+    /* child already gone */
+  } finally {
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+  }
+}
+
 export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
   const spawnImpl = opts.spawnImpl ?? nodeSpawn;
   const timeoutMs = opts.timeoutMs ?? ACP_PROBE_TIMEOUT_MS;
+  const teardownGraceMs = opts.teardownGraceMs ?? PROBE_TEARDOWN_GRACE_MS;
 
   async function readModels(
     binary: string,
@@ -145,16 +192,12 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
 
       return await withTimeout(timeoutMs, probe);
     } finally {
-      // Deferred-release: SIGTERM on every exit path (success, reject, parse
-      // error, timeout). "Log and continue" is forbidden (ADR-073). The SDK's
-      // ClientSideConnection exposes no explicit close() — killing the child
-      // closes its stdio, which ends the ndJsonStream and the connection's
-      // read loop.
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* child already gone */
-      }
+      // Deferred-release on EVERY exit path (success, reject, parse error,
+      // timeout). "Log and continue" is forbidden (ADR-075). Killing the child
+      // closes its stdio, which ends the ndJsonStream and the connection read
+      // loop (the SDK exposes no explicit close()); terminateProbeChild
+      // escalates SIGTERM → SIGKILL so a SIGTERM-ignoring adapter cannot orphan.
+      await terminateProbeChild(child, teardownGraceMs);
     }
   }
 

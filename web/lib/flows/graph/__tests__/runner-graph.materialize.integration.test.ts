@@ -11,8 +11,10 @@
  *      mcpServers array carrying the seeded `github` server, AND
  *      <worktree>/.claude/settings.local.json exists on disk with
  *      permissions.allow containing the node's tools.
- *  (B) a node with NO capability-bearing settings → createSession receives
- *      NO mcpServers and NO settings.local.json is written — behavior preserved.
+ *  (B) a settings-less CLAUDE node → still writes a MODEL-ONLY
+ *      settings.local.json (ADR-075 model-pin) and NO mcpServers, AND
+ *  (C) a settings-less CODEX node → NO settings.local.json (codex pins
+ *      supervisor-side via setSessionModel) and NO mcpServers.
  *
  * Harness mirrors runner-graph.enforcement.integration.test.ts exactly.
  */
@@ -71,7 +73,10 @@ type Seeded = {
   worktreePath: string;
 };
 
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
+async function seedGraphRun(
+  manifest: unknown,
+  agent: "claude" | "codex" = "claude",
+): Promise<Seeded> {
   const projectId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
   const executorId = randomUUID();
@@ -90,7 +95,7 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
   });
   await db
     .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
+    .values(testPlatformRunnerRow(executorId, agent));
   await db.insert(schema.flows).values({
     id: flowId,
     projectId,
@@ -114,8 +119,8 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     projectId,
     flowId,
     runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
+    capabilityAgent: agent,
+    runnerSnapshot: testRunnerSnapshot(executorId, agent),
     flowVersion: "v1.0.0",
     status: "Running",
   });
@@ -301,8 +306,43 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
     );
   }, 60_000);
 
-  it("does NOT materialize mcp defs or settings.local.json for a settings-less ai_coding node", async () => {
-    const seeded = await seedGraphRun(settingsLessFlow);
+  it("pins the run model via settings.local.json for a settings-less CLAUDE node (ADR-075)", async () => {
+    const seeded = await seedGraphRun(settingsLessFlow, "claude");
+    const api = makeSupervisorSpy();
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: api,
+    });
+
+    expect(api.createSpy).toHaveBeenCalled();
+
+    const arg = api.createSpy.mock.calls[0][0] as {
+      mcpServers?: AgentMcpServer[];
+    };
+
+    // Model-only pin → no MCP servers, but settings.local.json IS written.
+    expect(arg.mcpServers ?? []).toEqual([]);
+
+    const settingsLocalPath = join(
+      seeded.worktreePath,
+      ".claude",
+      "settings.local.json",
+    );
+
+    expect((await stat(settingsLocalPath)).isFile()).toBe(true);
+
+    const settings = JSON.parse(await readFile(settingsLocalPath, "utf8"));
+
+    expect(settings.model).toBe("claude-sonnet-4-6");
+    expect(settings.availableModels).toEqual(["claude-sonnet-4-6"]);
+    // No tools declared → no allow-list synthesized.
+    expect(settings.permissions.allow).toBeUndefined();
+  }, 60_000);
+
+  it("does NOT write settings.local.json for a settings-less CODEX node (pins supervisor-side)", async () => {
+    const seeded = await seedGraphRun(settingsLessFlow, "codex");
     const api = makeSupervisorSpy();
 
     await runFlow(seeded.runId, {

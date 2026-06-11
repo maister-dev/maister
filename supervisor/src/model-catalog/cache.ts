@@ -68,6 +68,27 @@ export class ModelCatalogCache {
     this.store.set(this.keyFor(draft), { result, insertedAt: this.now() });
   }
 
+  // Passive-harvest enrichment (harvest.ts): replace the cached RESULT via `merge`
+  // while PRESERVING a live entry's original `insertedAt`, so an observed-models
+  // harvest enriches the catalog without extending the TTL of slow-moving
+  // provider/curated rows (they must still expire on their own schedule). `merge`
+  // receives the live result, or undefined when the entry is absent OR expired —
+  // in which case this behaves like a fresh set().
+  setMerged(
+    draft: ModelCatalogDraft,
+    merge: (prev: ModelCatalogResult | undefined) => ModelCatalogResult,
+  ): void {
+    const key = this.keyFor(draft);
+    const entry = this.store.get(key);
+    const live =
+      entry && this.now() - entry.insertedAt < this.ttlMs ? entry : undefined;
+
+    this.store.set(key, {
+      result: merge(live?.result),
+      insertedAt: live ? live.insertedAt : this.now(),
+    });
+  }
+
   clear(): void {
     this.store.clear();
   }

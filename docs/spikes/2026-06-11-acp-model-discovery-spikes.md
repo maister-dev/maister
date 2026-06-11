@@ -94,8 +94,12 @@ this branch @ `633f74c7`):
   runs on BOTH claude launch paths** — the scratch service *and* the flow
   runner-graph. The settings write is gated on `artifacts.settingsLocal !== null`
   (`materialize.ts` ~248). The backup + `.maister-owned` marker machinery already
-  guards overwrite/reclaim.
-- Therefore the application fix for claude is **content-only and minimal**: extend
+  guards overwrite/reclaim. *(Implementation correction: on the runner-graph path
+  the materializer ran only for capability-DECLARING nodes — a bare node skipped
+  it entirely, so the apply fix added an explicit-empty materialization for
+  claude nodes with a configured model; see ADR-075 §5.)*
+- Therefore the application fix for claude is **minimal** (content plus the
+  explicit-empty materialization above): extend
   `AgentSettingsLocal` to `{ permissions, model?, availableModels? }`, populate
   `model` (+ `availableModels` allowlist for `anthropic_compatible`/CCR GLM names)
   from the runner snapshot, and **return a non-null `settingsLocal` whenever
@@ -121,4 +125,4 @@ differs and whose `setSessionModel` is the SDK-blessed switch.
 All three findings recorded; the **T0A.3 verdict (settings.local.json for claude,
 setSessionModel for codex)** is locked and gates T3.1/T3.2. Probe timeout constant
 = 15 s. Codex probe degrades to `status: "skipped"` without non-interactive auth.
-These determinations are frozen into the Phase 0B spec (ADR-076 + `model-catalog.md`).
+These determinations are frozen into the Phase 0B spec (ADR-075 + `model-catalog.md`).

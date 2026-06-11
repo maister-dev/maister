@@ -14,7 +14,7 @@ info:
     (`session.line`, `session.update`, `session.permission_request`,
     `session.exited`, `session.crashed`) plus one web-only synthetic
     timeout event. A `session.update` may carry a supervisor-synthesized
-    `model_advisory` informational payload (ADR-076, see
+    `model_advisory` informational payload (ADR-075, see
     `supervisor-sse.asyncapi.yaml#ModelAdvisoryUpdate`); the bridge forwards it
     unchanged and unknown-`sessionUpdate` consumers ignore it.
 

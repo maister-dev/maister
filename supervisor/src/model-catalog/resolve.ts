@@ -38,7 +38,12 @@ async function runSource(
   }
 }
 
-function mergeModels(outcomes: SourceOutcome[]): ModelEntry[] {
+// Exported for passive harvest reuse (harvest.ts): dedup by id, union origins,
+// preserve first-seen order. Accepts any {models} carrier so harvest can fold an
+// existing cached catalog together with a freshly observed list.
+export function mergeModels(
+  outcomes: ReadonlyArray<{ models: ModelEntry[] }>,
+): ModelEntry[] {
   const byId = new Map<string, ModelEntry>();
 
   for (const { models } of outcomes) {

@@ -44,7 +44,7 @@ export type CreateAcpConnectionArgs = {
   // When set, resume the prior ACP session via the `session/resume` call
   // (restores context, no history replay) instead of creating a `session/new`.
   resumeSessionId?: string;
-  // The launched runner. Threaded for the ADR-073 passive harvest (the model
+  // The launched runner. Threaded for the ADR-075 passive harvest (the model
   // state on the session/new + session/resume response is fed into the shared
   // model-catalog cache) and reused by the model-application path (Phase 3).
   runner?: RunnerLaunch;
@@ -294,7 +294,7 @@ type ApplyModelArgs = {
   logger: Logger;
 };
 
-// ADR-073 model application + verification (T3.2/T3.3). claude is pinned ahead
+// ADR-075 model application + verification (T3.2/T3.3). claude is pinned ahead
 // of session/new via the settings.local.json channel (web tier), so here we
 // only verify it. codex is pinned via the ACP `unstable_setSessionModel` call.
 // A residual mismatch is emitted as an ADVISORY `session.update` (a synthetic
@@ -314,14 +314,25 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
   } = args;
   const observed = models?.currentModelId;
 
-  // Explicit `!runner` narrows `runner` to non-undefined for the accesses
-  // below; `!runner.model` is defensive (the schema enforces min(1)).
-  if (!runner || !runner.model || !observed || observed === runner.model)
-    return;
+  // `!runner` narrows `runner` to non-undefined for the accesses below;
+  // `!runner.model` is defensive (the schema enforces min(1)).
+  if (!runner || !runner.model) return;
 
   const configured = runner.model;
   const channel: "settings_local" | "set_session_model" =
     runner.adapter === "codex" ? "set_session_model" : "settings_local";
+
+  // Already on the configured model → nothing to apply or verify (only decidable
+  // when the adapter actually reported a current model).
+  if (observed === configured) return;
+
+  // claude pins via settings.local.json before session/new, so this path only
+  // VERIFIES. With no observed model there is nothing to verify — return rather
+  // than emit an advisory we cannot substantiate. codex pins HERE via
+  // setSessionModel, so it must NOT bail on absent observed: a version-skewed
+  // adapter that omits currentModelId still needs the configured model applied
+  // (ADR-075 apply-gap).
+  if (channel === "settings_local" && !observed) return;
 
   if (channel === "set_session_model") {
     try {
@@ -355,7 +366,9 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
     update: {
       sessionUpdate: "model_advisory",
       configuredModel: configured,
-      observedModelId: observed,
+      // "" when the adapter reported no current model (codex apply failed with
+      // no observable state); the asyncapi contract requires the field present.
+      observedModelId: observed ?? "",
       channel,
     },
   } satisfies SessionEvent);

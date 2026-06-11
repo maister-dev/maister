@@ -54,17 +54,33 @@ describe("ModelAutocomplete", () => {
     expect(markup).toContain('type="text"');
   });
 
-  it("renders each group's label, model ids, and origin badges from seeded groups", () => {
+  it("renders localized origin badges and model ids from seeded groups", () => {
     const markup = render({ groups });
 
-    expect(markup).toContain("Agent");
-    expect(markup).toContain("Curated");
+    // Origin badges go through i18n (mock t returns the key) — the server's
+    // EN `label` is only the fallback for unknown sources.
+    expect(markup).toContain("modelSuggestions.sources.agent");
+    expect(markup).toContain("modelSuggestions.sources.curated");
+    expect(markup).not.toContain(">Agent<");
     expect(markup).toContain("glm-5.1");
     expect(markup).toContain("glm-5.1-air");
     expect(markup).toContain("GLM Air");
     expect(markup).toContain("claude-sonnet-4-6");
-    // origin badge text appears once per group (the group label is the badge)
-    expect(markup.match(/Agent/g)?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("falls back to the server label for an unknown source", () => {
+    const markup = render({
+      groups: [
+        {
+          source: "future_source",
+          label: "Future",
+          status: "ok",
+          models: [{ id: "m-1" }],
+        },
+      ],
+    });
+
+    expect(markup).toContain("Future");
   });
 
   it("renders the loading affordance when loading", () => {

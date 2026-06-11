@@ -161,12 +161,36 @@ describe("applyAndVerifyModel", () => {
     });
   });
 
-  it("no runner / no model state / empty currentModelId → no-op", async () => {
+  it("no runner → no-op regardless of model state", async () => {
     const setModel = vi.fn();
+    const emitter = new EventEmitter();
+    const events = capture(emitter);
+
+    await applyAndVerifyModel({
+      connection: fakeConnection(setModel),
+      runner: undefined,
+      models: state("x"),
+      acpSessionId: "a",
+      sessionId: "s",
+      record: makeRecord(),
+      emitter,
+      logger: silent,
+    });
+
+    expect(setModel).not.toHaveBeenCalled();
+    expect(events).toHaveLength(0);
+  });
+
+  // ADR-075 apply-gap: codex pins via setSessionModel, so an adapter that omits
+  // currentModelId (null/empty/undefined — version skew) MUST still be pinned;
+  // bailing on absent observed would silently run the adapter default.
+  it("codex null/empty/undefined currentModelId → applies setSessionModel anyway", async () => {
+    const setModel = vi.fn().mockResolvedValue({});
     const emitter = new EventEmitter();
     const events = capture(emitter);
     const base = {
       connection: fakeConnection(setModel),
+      runner: runnerFor("codex", "gpt-5-codex"),
       acpSessionId: "a",
       sessionId: "s",
       record: makeRecord(),
@@ -174,21 +198,42 @@ describe("applyAndVerifyModel", () => {
       logger: silent,
     };
 
+    await applyAndVerifyModel({ ...base, models: null });
+    await applyAndVerifyModel({ ...base, models: state("") });
     await applyAndVerifyModel({
       ...base,
-      runner: undefined,
-      models: state("x"),
+      models: {
+        availableModels: [],
+      } as unknown as acp.SessionModelState,
     });
-    await applyAndVerifyModel({
-      ...base,
-      runner: runnerFor("codex", "m"),
-      models: null,
+
+    expect(setModel).toHaveBeenCalledTimes(3);
+    expect(setModel).toHaveBeenCalledWith({
+      sessionId: "a",
+      modelId: "gpt-5-codex",
     });
-    await applyAndVerifyModel({
-      ...base,
-      runner: runnerFor("codex", "m"),
-      models: state(""),
-    });
+    expect(events).toHaveLength(0);
+  });
+
+  // claude pins ahead of session/new via settings.local.json; this path only
+  // VERIFIES. With no observed model there is nothing to verify — stay silent
+  // rather than emit an unsubstantiated advisory.
+  it("claude null/empty currentModelId → no-op (verify-only, no advisory)", async () => {
+    const setModel = vi.fn();
+    const emitter = new EventEmitter();
+    const events = capture(emitter);
+    const base = {
+      connection: fakeConnection(setModel),
+      runner: runnerFor("claude", "glm-5.1"),
+      acpSessionId: "a",
+      sessionId: "s",
+      record: makeRecord(),
+      emitter,
+      logger: silent,
+    };
+
+    await applyAndVerifyModel({ ...base, models: null });
+    await applyAndVerifyModel({ ...base, models: state("") });
 
     expect(setModel).not.toHaveBeenCalled();
     expect(events).toHaveLength(0);

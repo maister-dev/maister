@@ -111,9 +111,11 @@ components:
               content: { type: "text", text: "Working on it..." }
         - name: model-advisory
           summary: |
-            Supervisor-synthesized informational update (ADR-076). Emitted when
-            the model read back after application differs from the configured
-            runner model. Informational ONLY — never changes run state, never
+            Supervisor-synthesized informational update (ADR-075). Emitted when
+            application cannot be confirmed: claude (verify-only channel)
+            reported a `currentModelId` differing from the configured model, or
+            the codex `setSessionModel` call failed.
+            Informational ONLY — never changes run state, never
             fails the run (`cost.jsonl` stays the billed-model truth). Rides the
             existing `session.update` channel — it is NOT a new event kind, so
             the closed `SessionEvent` union is unchanged and unknown-`sessionUpdate`
@@ -255,7 +257,7 @@ components:
                 the discriminated union.
 
                 One non-ACP variant exists: the supervisor-synthesized
-                `model_advisory` update (ADR-076) — see the
+                `model_advisory` update (ADR-075) — see the
                 `ModelAdvisoryUpdate` schema below. Consumers that do not
                 recognize a `sessionUpdate` value MUST ignore it (forward-compat).
     SessionPermissionRequestEvent:
@@ -345,8 +347,9 @@ components:
       type: object
       description: |
         Supervisor-synthesized `update` payload carried inside a `session.update`
-        event (ADR-076) when the model read back after application differs from
-        the configured runner model. NOT a new `SessionEvent` kind — it reuses
+        event (ADR-075) when application cannot be confirmed — claude (verify-only)
+        reported a differing `currentModelId`, or the codex `setSessionModel`
+        call failed. NOT a new `SessionEvent` kind — it reuses
         the opaque `session.update.update` field, so the closed `SessionEvent`
         union and both AsyncAPI `EventBase` enums are unchanged. Informational
         only: the supervisor NEVER changes `runs.status` on this signal, and
@@ -361,7 +364,10 @@ components:
           description: The model id the operator configured on the runner.
         observedModelId:
           type: string
-          description: The `currentModelId` read back from the adapter after application.
+          description: |
+            The `currentModelId` the adapter reported on `session/new` /
+            `session/resume` ("" when the adapter reported none — e.g. a codex
+            apply failure with no observable model state).
         channel:
           type: string
           enum: [settings_local, set_session_model]

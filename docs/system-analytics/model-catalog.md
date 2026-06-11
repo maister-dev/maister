@@ -13,7 +13,7 @@ agent. It does NOT own the runner CRUD lifecycle (see
 [acp-runners.md](acp-runners.md)), runner **resolution** precedence (see
 [executors.md](executors.md)), or billed model attribution (`cost.jsonl` stays
 ground truth). The decision record is
-[ADR-076](../decisions.md#adr-073); the spike basis is
+[ADR-075](../decisions.md#adr-075); the spike basis is
 [`spikes/2026-06-11-acp-model-discovery-spikes.md`](../spikes/2026-06-11-acp-model-discovery-spikes.md).
 Boundary: the catalog is **never persisted** — one supervisor host, one in-memory
 cache; `platform_acp_runners.model` stays free text.
@@ -43,7 +43,9 @@ cache; `platform_acp_runners.model` stays free text.
   never raised. (Implemented)
 - **Cache entry** — `{ key; models; sources; resolvedAt; ttlSeconds }` keyed by a
   stable hash of `(adapter, provider.kind, base_url, sorted env-ref NAMES, router,
-  sidecarId)` — **names, never secret values**. (Implemented)
+  sidecarId)` — **names, never secret values**. Expiry is anchored to the entry's
+  first insertion (`insertedAt`, internal): a passive-harvest merge refreshes
+  `resolvedAt` but never extends the expiry window. (Implemented)
 - **Suggestion DTO** — the web-facing, source-grouped shape the runner modal
   renders: `{ groups: [{ source; label; status; reason?; models: [{ id;
   displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
@@ -69,7 +71,7 @@ stateDiagram-v2
     resolving --> empty: nothing cached (caller still gets a 200 result)
     fresh --> fresh: resolve(draft) — cache hit within TTL (no source call)
     fresh --> refreshing: force=true (bypass within TTL)
-    fresh --> stale: now > resolvedAt + ttlSeconds
+    fresh --> stale: now > insertedAt + ttlSeconds
     stale --> refreshing: next resolve(draft)
     refreshing --> fresh: re-resolved, entry replaced
     note right of fresh
@@ -119,7 +121,7 @@ sequenceDiagram
     Web-->>Admin: grouped suggestions (by source) + origin badges
 ```
 
-### ACP probe with deferred-release (every exit path SIGTERMs)
+### ACP probe with deferred-release (teardown on every exit path)
 
 The primary source. A throwaway `RunnerLaunch` is synthesized; the
 already-trusted adapter binary is spawned in an isolated tmp cwd, handshaked
@@ -144,14 +146,16 @@ sequenceDiagram
     else codex without non-interactive auth
         Src->>Src: status skipped (reason)
     end
-    Src->>Child: SIGTERM + close ACP connection (EVERY path)
+    Src->>Child: teardown on EVERY path — SIGTERM, SIGKILL after bounded grace + close ACP connection
 ```
 
 ### Model application per adapter
 
-claude is pinned before the first turn through materialized settings; codex is
-pinned with a post-session ACP call on new and resumed sessions; a residual
-mismatch is advisory only. (Implemented)
+claude is pinned before the first turn through materialized settings (the
+supervisor only **verifies** the reported model); codex is pinned with a
+post-session ACP call on new and resumed sessions, including when the adapter
+omits `currentModelId`. A claude-reported mismatch or a failed codex set call
+surfaces as the advisory only — there is no read-back/re-apply loop. (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -159,18 +163,21 @@ sequenceDiagram
     participant Sup as Supervisor acp-client
     participant Child as adapter
 
-    Note over Web,Child: claude — settings.local.json channel
+    Note over Web,Child: claude — settings.local.json channel (supervisor verifies only)
     Web->>Web: mapProfileToAgentArtifacts → settingsLocal {permissions, model, availableModels}
     Web->>Sup: POST /sessions {capabilityProfilePath}
     Sup->>Child: spawn, adapter reads settings.json model at startup
+    Child-->>Sup: models {currentModelId} (session/new or session/resume)
+    opt currentModelId reported and != runner.model
+        Sup-->>Web: session.update {update.sessionUpdate = model_advisory}
+    end
 
     Note over Sup,Child: codex — setSessionModel channel
     Sup->>Child: session/new or session/resume
-    Child-->>Sup: models {currentModelId}
-    alt runner.model != currentModelId
+    Child-->>Sup: models {currentModelId?}
+    alt runner.model != currentModelId (or none reported)
         Sup->>Child: unstable_setSessionModel(runner.model)
-        Child-->>Sup: currentModelId (read back)
-        opt still mismatched
+        opt set call fails
             Sup-->>Web: session.update {update.sessionUpdate = model_advisory}
         end
     else equal
@@ -181,8 +188,10 @@ sequenceDiagram
 ### Passive harvest (free, side-effect-free)
 
 Every real `session/new` and `session/resume` already returns `models`; the
-supervisor feeds it into the same cache with `origin: "agent_observed"`. It never
-blocks or errors the live session. (Implemented)
+supervisor **merges** it into the same cache entry with `origin:
+"agent_observed"` — union by model id, because a real session usually reports a
+subset of the resolved catalog and a replace would shrink it — without extending
+the entry's expiry window. It never blocks or errors the live session. (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -191,10 +200,10 @@ sequenceDiagram
     participant Cache as In-memory cache
 
     Child-->>Sup: NewSessionResponse.models (session/new)
-    Sup->>Cache: feed(key(runner), models, origin=agent_observed)
+    Sup->>Cache: merge(key(runner), models, origin=agent_observed)
     Child-->>Sup: ResumeSessionResponse.models (session/resume)
-    Sup->>Cache: feed(key(runner), models, origin=agent_observed)
-    note over Sup,Cache: best-effort, a harvest failure never throws into the session path
+    Sup->>Cache: merge(key(runner), models, origin=agent_observed)
+    note over Sup,Cache: best-effort, never throws into the session path — merge-not-replace, expiry window preserved
 ```
 
 ## Expectations
@@ -212,9 +221,10 @@ spike baseline.)
 - A resolve response MUST NEVER contain a secret value — only model `id`,
   `displayName`, `origins`, and per-source `status`/`reason`.
 - The ACP probe MUST send NO `session/prompt` (zero-token discovery) and MUST
-  `SIGTERM` the child process **and** close the ACP connection on EVERY exit path
-  (success, `initialize`/`session/new` reject, parse error, timeout ≤ 15 s); no
-  orphaned child MUST remain.
+  tear the child process down **and** close the ACP connection on EVERY exit path
+  (success, `initialize`/`session/new` reject, parse error, timeout ≤ 15 s) —
+  `SIGTERM`, escalating to `SIGKILL` after a bounded grace when the child has not
+  exited; no orphaned child MUST remain.
 - A single source's failure MUST surface as that source's `status` (`error` |
   `skipped`) and MUST NOT fail the resolve; the resolve MUST still return every
   other source's models with HTTP 200.
@@ -233,10 +243,12 @@ spike baseline.)
   CCR) on EVERY claude session, not only when permission entries exist.
 - For a codex session the supervisor MUST call `unstable_setSessionModel(runner.model)`
   after `session/new` AND after `session/resume` iff `runner.model !==
-  currentModelId`, and MUST NOT call it when they are equal.
-- A post-application model mismatch MUST emit an advisory `session.update`
-  (`sessionUpdate = "model_advisory"`) and MUST NEVER change `runs.status` (never
-  `Failed`); `cost.jsonl` stays the billed-model ground truth.
+  currentModelId` (an absent `currentModelId` counts as different), and MUST NOT
+  call it when they are equal.
+- A claude-reported model mismatch or a failed codex `setSessionModel` call MUST
+  emit an advisory `session.update` (`sessionUpdate = "model_advisory"`) and MUST
+  NEVER change `runs.status` (never `Failed`); `cost.jsonl` stays the
+  billed-model ground truth.
 - The catalog MUST live only in supervisor memory — NO Postgres row, NO migration,
   NO new env var; `platform_acp_runners.model` stays free text and an unknown model
   on save MUST be an advisory hint, NOT a validation error.
@@ -250,6 +262,11 @@ spike baseline.)
 - **Missing provider env-ref** (`authTokenEnv`/`apiKeyEnv` absent from supervisor
   env) → that source's `status:"error"`, `reason:"env ref not set"`; the resolve
   still returns 200 with the other sources.
+- **Plain `anthropic` / `openai` provider kinds** carry no env-ref field, so the
+  `provider_api` source reads the conventional supervisor-host keys
+  (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — see
+  [configuration.md](../configuration.md)) and degrades to `status:"skipped"`
+  when the key is unset.
 - **z.ai authed listing fails** (401 / network) → the `anthropic_compatible`
   provider source falls back to the curated GLM list with `status:"ok"` (curated)
   or `status:"error"` only if curated is also unavailable (it never is — it is
@@ -278,7 +295,7 @@ spike baseline.)
   (`POST /api/admin/acp-runners/model-suggestions`).
 - **Events:** [`api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml)
   — the `model_advisory` `session.update` payload variant.
-- **Decision:** [ADR-076](../decisions.md#adr-073).
+- **Decision:** [ADR-075](../decisions.md#adr-075).
 - **Spike basis:** [`spikes/2026-06-11-acp-model-discovery-spikes.md`](../spikes/2026-06-11-acp-model-discovery-spikes.md).
 - **Architecture:** [`architecture.md`](../architecture.md) — the `model-catalog`
   supervisor component.

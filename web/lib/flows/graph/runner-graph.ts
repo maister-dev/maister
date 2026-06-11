@@ -752,10 +752,13 @@ async function recordComposedCommentsEvidence(
 }
 
 // M14 T4.1: resolve + materialize a capability profile for a capability-declaring
-// ai_coding/judge node. Returns undefined (no materialization, current behavior)
-// when the node declares no capability-bearing settings. Writes NO secrets — mcp
-// creds resolve from the host env via `${NAME}` placeholders the materializer
-// emits (R-SECRET). Does NOT write the materialization ledger (that is T4.2).
+// ai_coding/judge node. Returns undefined when the node declares no
+// capability-bearing settings — EXCEPT a claude node with a configured model,
+// which still materializes a MODEL-ONLY profile so its run model reaches the
+// adapter via settings.local.json (the only writer of that file; ADR-075).
+// Writes NO secrets — mcp creds resolve from the host env via `${NAME}`
+// placeholders the materializer emits (R-SECRET). Does NOT write the
+// materialization ledger (that is T4.2).
 async function materializeNodeCapabilities(
   node: CompiledNode,
   loaded: LoadedRun,
@@ -775,30 +778,43 @@ async function materializeNodeCapabilities(
     }
   | undefined
 > {
-  const settings = capabilityBearingSettings(node.nodeType, node.settings);
-
-  if (!settings) return undefined;
-
   const agent = loaded.executor.agent;
-  const declares = !!(
-    allNodeMcpRefs(settings.mcps).length ||
-    settings.skills?.length ||
-    settings.restrictions?.length ||
-    settings.tools?.[agent]?.length ||
-    settings.permissionMode
-  );
+  const settings = capabilityBearingSettings(node.nodeType, node.settings);
+  const declares =
+    !!settings &&
+    !!(
+      allNodeMcpRefs(settings.mcps).length ||
+      settings.skills?.length ||
+      settings.restrictions?.length ||
+      settings.tools?.[agent]?.length ||
+      settings.permissionMode
+    );
 
-  if (!declares) return undefined;
+  // claude pins its run model through settings.local.json, and this materialize
+  // path is its ONLY writer — a capability-less claude node would otherwise
+  // launch on the adapter-default model while the runner snapshot says otherwise
+  // (ADR-075). So claude with a configured model still materializes a model-only
+  // profile. codex pins supervisor-side via setSessionModel, so a settings-less
+  // codex node needs no materialization.
+  const pinModelOnly =
+    !declares && agent === "claude" && !!loaded.executor.model;
+
+  if (!declares && !pinModelOnly) return undefined;
 
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
     executorAgent: agent,
-    // Undefined → resolver selects the default MCP set; a present value
-    // (required ∪ additional, T-C6) → that explicit set.
+    // declares: undefined mcps → resolver default set; explicit list → that set
+    // (required ∪ additional, T-C6). model-only pin → explicit [] so NO default
+    // MCPs are pulled in (idsForKind treats undefined as "the default set").
     selectedMcpIds:
-      settings.mcps === undefined ? undefined : allNodeMcpRefs(settings.mcps),
-    selectedSkillIds: settings.skills,
-    selectedRestrictionIds: settings.restrictions,
+      declares && settings
+        ? settings.mcps === undefined
+          ? undefined
+          : allNodeMcpRefs(settings.mcps)
+        : [],
+    selectedSkillIds: declares && settings ? settings.skills : [],
+    selectedRestrictionIds: declares && settings ? settings.restrictions : [],
     planMode: "off",
     catalog,
   });
@@ -808,8 +824,8 @@ async function materializeNodeCapabilities(
     worktreePath,
     profile,
     nodeAttemptId,
-    tools: settings.tools?.[agent],
-    permissionMode: settings.permissionMode,
+    tools: declares && settings ? settings.tools?.[agent] : undefined,
+    permissionMode: declares && settings ? settings.permissionMode : undefined,
     executor: {
       executorRefId: loaded.executor.executorRefId,
       agent,
@@ -1139,7 +1155,9 @@ export async function runGraph(
   // Seeded once per run so any `{{ <commentsVar> }}` reference is renderable on
   // a node's initial (non-rework) visit too; pendingInjectedVars overlays the
   // real comments on the rework attempt it targets.
-  const declaredCommentsVars = collectDeclaredCommentsVars(graph.nodes.values());
+  const declaredCommentsVars = collectDeclaredCommentsVars(
+    graph.nodes.values(),
+  );
 
   let needsInput = false;
   let checkpointed = false;

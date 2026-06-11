@@ -1,4 +1,4 @@
-// T1.4 — POST /model-catalog/resolve route (ADR-073). Boots Fastify with a
+// T1.4 — POST /model-catalog/resolve route (ADR-075). Boots Fastify with a
 // stubbed ModelSource registry (no real probe/network) and exercises the route
 // through app.inject: happy path, draft validation (409), cache hit/force, and
 // the frozen invariant that a per-source failure surfaces inside a 200 — never

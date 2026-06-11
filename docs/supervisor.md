@@ -343,7 +343,7 @@ responses are written by the web tier's
 `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
 its row-level claim succeeds.
 
-### `POST /model-catalog/resolve` *(Implemented — ADR-076)*
+### `POST /model-catalog/resolve` *(Implemented — ADR-075)*
 
 Model-discovery resolver. The body is a runner **draft**
 (`{ adapter, provider, router?, sidecarId?, force? }`). The supervisor fans the
@@ -358,7 +358,10 @@ Response: `{ models, sources, resolvedAt, ttlSeconds }`, where `models[]` carrie
 each id's accumulated `origins` and `sources[]` carries a per-source `status`
 (`ok | skipped | error`). **Secret handling:** env-ref fields inside `provider`
 are **bare** names; the supervisor resolves their values from `process.env` and
-never returns or logs a secret.
+never returns or logs a secret. The plain `anthropic` / `openai` kinds carry no
+env-ref field — the provider source reads the conventional host keys
+(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, see
+[configuration.md](configuration.md)) and reports `status: "skipped"` when unset.
 
 Status mapping (consistent with *a per-source failure never fails the resolve*):
 - `200` — resolved. A single source's failure (missing env-ref, unreachable
@@ -371,10 +374,12 @@ Status mapping (consistent with *a per-source failure never fails the resolve*):
 
 The probe spawns the already-trusted adapter binary in an isolated tmp cwd,
 handshakes promptless (`initialize` → `session/new`, **zero tokens**), reads
-`NewSessionResponse.models`, and **SIGTERMs the child on every exit path**
-(success, reject, parse error, timeout). A **passive harvest** of the same
-`models` from real `session/new` / `session/resume` responses feeds the same cache
-for free. The web tier proxies this route through the admin-gated
+`NewSessionResponse.models`, and **tears the child down on every exit path**
+(success, reject, parse error, timeout — `SIGTERM`, then `SIGKILL` after a
+bounded grace if it has not exited). A **passive harvest** of the same `models`
+from real `session/new` / `session/resume` responses merges into the same cache
+entry for free (union by model id — it never replaces a resolved catalog and
+never extends its TTL window). The web tier proxies this route through the admin-gated
 `POST /api/admin/acp-runners/model-suggestions`. Full contract:
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).

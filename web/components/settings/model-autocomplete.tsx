@@ -24,6 +24,17 @@ export type ModelAutocompleteProps = {
   label: string;
 };
 
+// Localized origin-badge labels (EN/RU catalogs both ship them); the server's
+// EN `label` stays the fallback for sources this build does not know yet.
+const SOURCE_LABEL_KEYS: Record<string, string> = {
+  acp_probe: "agent",
+  provider_api: "provider",
+  curated: "curated",
+  ccr: "ccr",
+  agent_observed: "observed",
+  preset: "preset",
+};
+
 const inputClass =
   "min-h-[36px] w-full rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber";
 
@@ -48,6 +59,11 @@ export function ModelAutocomplete({
 }: ModelAutocompleteProps): ReactElement {
   const t = useTranslations("settings");
   const visibleGroups = groups.filter((group) => group.models.length > 0);
+  const badgeLabel = (group: ModelGroup): string => {
+    const key = SOURCE_LABEL_KEYS[group.source];
+
+    return key ? t(`modelSuggestions.sources.${key}`) : group.label;
+  };
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -104,7 +120,7 @@ export function ModelAutocomplete({
                 size="sm"
                 variant="secondary"
               >
-                {group.label}
+                {badgeLabel(group)}
               </Chip>
               <div className="flex flex-wrap gap-1.5">
                 {group.models.map((model) => (

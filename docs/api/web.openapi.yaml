@@ -312,7 +312,7 @@ paths:
         validated against the platform sidecar catalog (server-state) before
         forwarding. Discovery never blocks a save: `model` stays free text and an
         unknown model is an advisory hint, not a validation error. See
-        [ADR-076](../decisions.md#adr-073) and
+        [ADR-075](../decisions.md#adr-075) and
         [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
       operationId: postAdminAcpRunnerModelSuggestions
       requestBody:
@@ -332,7 +332,7 @@ paths:
           description: |
             Invalid body, a raw (non-`env:`) secret, or an unknown `sidecarId`
             (`CONFIG`). A missing/unset env-ref degrades to a per-source
-            `status:"error"` inside a 200, not a 422 (ADR-073 §2).
+            `status:"error"` inside a 200, not a 422 (ADR-075 §2).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

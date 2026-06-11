@@ -7,6 +7,9 @@
 //                                  the probe must still SIGTERM the child).
 //   "hang-newsession"            — newSession never resolves (timeout test:
 //                                  the probe must time out and SIGTERM).
+//   "ignore-sigterm"             — newSession answers, but SIGTERM is swallowed
+//                                  (escalation test: the probe must SIGKILL so
+//                                  no orphaned child remains).
 import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 
@@ -18,7 +21,12 @@ class ModelsAgent {
   async initialize() {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
+      agentCapabilities: {
+        promptCapabilities: {},
+        // Both bundled adapters advertise resume; the supervisor FAILS LOUD on
+        // a resume request without it, so the resumed-session tests need it.
+        sessionCapabilities: { resume: true },
+      },
     };
   }
 
@@ -48,7 +56,17 @@ class ModelsAgent {
   }
 
   async resumeSession() {
-    return {};
+    // ResumeSessionResponse carries model state too — the resumed-session
+    // application/harvest tests read it.
+    return {
+      models: {
+        availableModels: [
+          { modelId: "glm-5.1", name: "GLM-5.1" },
+          { modelId: "glm-5", name: "GLM-5" },
+        ],
+        currentModelId: "glm-5.1",
+      },
+    };
   }
 
   async closeSession() {
@@ -87,7 +105,13 @@ const stream = acp.ndJsonStream(
 
 new acp.AgentSideConnection((connToAgent) => new ModelsAgent(connToAgent), stream);
 
-process.on("SIGTERM", () => process.exit(143));
+// "ignore-sigterm": register a no-op handler so SIGTERM is swallowed (Node's
+// default terminate is overridden) — only SIGKILL can end the child.
+if (MODE === "ignore-sigterm") {
+  process.on("SIGTERM", () => {});
+} else {
+  process.on("SIGTERM", () => process.exit(143));
+}
 process.on("SIGINT", () => process.exit(130));
 
 setInterval(() => {}, 1 << 30);

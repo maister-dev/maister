@@ -3,6 +3,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import type { RunnerLaunch } from "../types";
 import type { ModelCatalogCache } from "./cache";
 
+import { mergeModels } from "./resolve";
 import {
   MODEL_CATALOG_TTL_SECONDS,
   type ModelCatalogDraft,
@@ -23,7 +24,7 @@ export function draftFromRunner(runner: RunnerLaunch): ModelCatalogDraft {
   };
 }
 
-// Passive harvest (ADR-073): feed the model state observed on a REAL session's
+// Passive harvest (ADR-075): feed the model state observed on a REAL session's
 // session/new or session/resume response into the shared cache, tagged
 // `agent_observed`. Best-effort and side-effect-free on the live path — it MUST
 // NEVER throw into the session flow (a harvest failure is swallowed at debug).
@@ -33,25 +34,37 @@ export function harvestSessionModels(
   cache: ModelCatalogCache,
   logger: Logger,
 ): void {
-  if (!runner || !models || models.availableModels.length === 0) return;
+  // Optional-chain the whole path: the wire is unvalidated (the ACP SDK has no
+  // response schema), so `models` may be malformed — a throw here would fail
+  // the session spawn.
+  if (!runner || !models?.availableModels?.length) return;
 
   try {
-    const entries: ModelEntry[] = models.availableModels.map((m) => ({
+    const observed: ModelEntry[] = models.availableModels.map((m) => ({
       id: m.modelId,
       ...(m.name ? { displayName: m.name } : {}),
       origins: ["agent_observed" as const],
     }));
 
-    cache.set(draftFromRunner(runner), {
-      models: entries,
+    // MERGE into any live cached catalog, never replace it: a real session only
+    // exposes its adapter's availableModels, usually a SUBSET of the resolved
+    // probe/provider/curated set. A plain set() would shrink the catalog (and the
+    // suggestions UI) for the full TTL. setMerged preserves the entry's TTL window
+    // so this enrichment never resurrects an already-stale row.
+    cache.setMerged(draftFromRunner(runner), (prev) => ({
+      models: mergeModels([
+        ...(prev ? [{ models: prev.models }] : []),
+        { models: observed },
+      ]),
       sources: [
-        { kind: "agent_observed", status: "ok", count: entries.length },
+        ...(prev?.sources ?? []).filter((s) => s.kind !== "agent_observed"),
+        { kind: "agent_observed", status: "ok", count: observed.length },
       ],
       resolvedAt: new Date().toISOString(),
       ttlSeconds: MODEL_CATALOG_TTL_SECONDS,
-    });
+    }));
     logger.info(
-      { source: "agent_observed", count: entries.length },
+      { source: "agent_observed", count: observed.length },
       "model harvest",
     );
   } catch (err) {

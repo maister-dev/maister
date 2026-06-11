@@ -86,7 +86,7 @@ export type RegisterRoutesOptions = {
   runtimeRoot: string;
   killGraceMs?: number;
   spawnOverrides?: SpawnOverrides;
-  // ADR-073 model-catalog resolver. Injected so tests can stub the source set
+  // ADR-075 model-catalog resolver. Injected so tests can stub the source set
   // and the cache; main.ts wires the real registry (with Phase-2 sources) and
   // the shared cache singleton.
   modelCatalog?: {
@@ -620,7 +620,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send({ ok: true });
   });
 
-  // ADR-073 model discovery. Body = runner draft with BARE env-ref names; an
+  // ADR-075 model discovery. Body = runner draft with BARE env-ref names; an
   // env:-prefixed or raw secret is rejected by RunnerProviderSchema → ZodError →
   // 409 PRECONDITION via setErrorHandler. A per-source failure NEVER fails the
   // resolve — it surfaces as that source's status inside a 200. `force` bypasses

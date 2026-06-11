@@ -113,6 +113,31 @@ describe("createAcpProbeSource", () => {
     expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("escalates to SIGKILL when the child ignores SIGTERM (no orphan)", async () => {
+    vi.stubEnv("MOCK_ACP_MODELS_MODE", "ignore-sigterm");
+    const { spawnImpl, children } = spyingSpawn();
+    const source = createAcpProbeSource({
+      spawnImpl,
+      binaryOverride: "node",
+      preArgs: [fixture],
+      teardownGraceMs: 200,
+    });
+
+    // Models are read before teardown, so the probe still succeeds.
+    const { status } = await source.resolve(claudeDraft, ctx);
+
+    expect(status.status).toBe("ok");
+
+    const child = children[0];
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    // The contract is "no orphaned child MUST remain": assert the process
+    // actually exited, not merely that a signal was sent.
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    expect(child.signalCode).toBe("SIGKILL");
+  });
+
   it("degrades to skipped for openai_compatible (cannot provision a direct probe)", async () => {
     const { spawnImpl, children } = spyingSpawn();
     const source = createAcpProbeSource({

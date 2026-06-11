@@ -96,8 +96,7 @@
 | [ADR-069](#adr-069-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
 | [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 | [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock) | User-facing run schedules on the M24 clock | Accepted | 2026-06-10 |
-| [ADR-072](#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard) | PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard | Accepted | 2026-06-10 |
-| [ADR-075](#adr-075-flow-studio-phase-2-viewer-fork-to-authored-draft-kind-by-path-and-content-validation-severity) | Flow Studio Phase 2 viewer, fork-to-authored-draft, kind-by-path, and content-validation severity | Accepted | 2026-06-10 |
+| [ADR-075](#adr-075-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) | ACP runner model discovery (resolver-on-supervisor) + configured-model application | Accepted | 2026-06-11 |
 
 ---
 
@@ -5120,7 +5119,9 @@ branches.)
 - **Blocking on rule-guardrail frontmatter shape:** rejected — no web runtime
   parser consumes those fields, so a block would be a false compliance signal;
   WARN-only.
+
 ---
+
 
 ### ADR-076: ACP runner model discovery (resolver-on-supervisor) + configured-model application
 
@@ -5165,11 +5166,15 @@ surface. Seven locked sub-decisions:
 3. **ACP active probe (A2) is the primary source.** Synthesize a throwaway
    `RunnerLaunch` from the draft, spawn the already-trusted adapter binary in an
    isolated tmp cwd, `initialize` → `session/new`, read `NewSessionResponse.models`,
-   then **SIGTERM**. A promptless handshake spends ~0 tokens (no `session/prompt`
+   then **tear down** (`SIGTERM`, escalating to `SIGKILL` after a bounded grace).
+   A promptless handshake spends ~0 tokens (no `session/prompt`
    is sent). A **passive harvest** of the same `models` from *real* session spawns
    (and the previously-ignored `session/resume` response) also lands — free, same
    code path. Secondary sources: **provider-API** (`anthropic`/`openai`/
-   `openai_compatible` `GET /v1/models`; OpenRouter is keyless), **curated GLM
+   `openai_compatible` `GET /v1/models`; OpenRouter is keyless; the plain
+   `anthropic`/`openai` kinds carry no env-ref field, so the source reads the
+   conventional host keys `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` and reports
+   `skipped` when unset), **curated GLM
    static list** for `anthropic_compatible` (z.ai has no listing endpoint — verified
    2026-06-10 — with one optional best-effort authed `GET {base}/models` that
    gracefully falls back to curated), and **CCR** (`GET {proxy}/api/config` →
@@ -5178,22 +5183,34 @@ surface. Seven locked sub-decisions:
    results keyed by a stable hash of `(adapter, provider.kind, base_url, sorted
    env-ref NAMES, router, sidecarId)` — **names, never secret values**. TTL is a
    code constant (~3600 s); `force` bypasses and repopulates. The same cache
-   singleton backs the route and the passive harvest. The catalog is not persisted
-   to Postgres and `platform_acp_runners.model` stays free text.
+   singleton backs the route and the passive harvest. Harvest writes MERGE into a
+   live entry (union by model id) and preserve its expiry window — they never
+   replace a resolved catalog and never extend a stale row's TTL. The catalog is
+   not persisted to Postgres and `platform_acp_runners.model` stays free text.
 5. **Application channel per adapter.** **claude →** the M14/ADR-043
    `settings.local.json { model, availableModels }` materialization channel (the
    adapter calls `query.setModel()` from settings at startup; the materializer
-   already receives `executor.model` and runs on both launch paths — the fix is
-   content-only: write a non-null `settingsLocal` whenever `model` is set).
+   already receives `executor.model`. The scratch path materializes
+   unconditionally, but a capability-less graph node previously skipped
+   materialization entirely — so the fix is content PLUS an explicit-empty
+   materialization: write a non-null `settingsLocal` whenever `model` is set, and
+   materialize claude `ai_coding`/`judge` nodes with an explicit-empty profile
+   when they declare no capabilities).
    **codex →** ACP `unstable_setSessionModel(runner.model)` after `session/new`
-   and after every `session/resume` when `runner.model !== currentModelId`. See
+   and after every `session/resume` when `runner.model !== currentModelId` (an
+   absent `currentModelId` counts as different). See
    the Phase 0A spike note (`docs/spikes/2026-06-11-acp-model-discovery-spikes.md`).
-6. **Model mismatch is advisory, never a run failure.** After application the
-   supervisor reads back `currentModelId`; on a mismatch it emits an **advisory**
-   informational event and continues. Env-router slot-mapping legitimately reports
-   a mapped name, so a mismatch is expected and benign. `cost.jsonl` model
-   attribution stays ground truth.
-7. **No new error code, no new status, no new enum, no new DB/migration/env-var.**
+6. **Model mismatch is advisory, never a run failure.** claude is verify-only: a
+   reported `currentModelId` differing from the configured model emits an
+   **advisory** informational event and the run continues. codex applies actively:
+   a failed `setSessionModel` call emits the advisory (there is no read-back /
+   re-apply loop — the set response is not re-checked). Env-router slot-mapping
+   legitimately reports a mapped name, so a mismatch is expected and benign.
+   `cost.jsonl` model attribution stays ground truth.
+7. **No new error code, no new status, no new enum, no new DB/migration, no new
+   required env-var** (the provider source optionally reads the conventional
+   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` host keys — see sub-decision 3 and
+   `configuration.md`).
    Consistent with sub-decision 2 (*a per-source failure NEVER fails the whole
    resolve*), the supervisor resolve route throws exactly ONE status for request
    problems — **`PRECONDITION`→409** on a malformed draft (unknown adapter, an
@@ -5223,8 +5240,9 @@ surface. Seven locked sub-decisions:
   of scope; revisit only if a second supervisor host lands.
 - The probe spawns a child process + ACP connection — a deferred-like resource.
   EVERY probe exit path (success, `initialize`/`session/new` reject, parse error,
-  timeout) MUST SIGTERM the child and close the connection ("log and continue" is
-  forbidden); this is carried as a T2.1 acceptance test.
+  timeout) MUST tear the child down (`SIGTERM` → bounded grace → `SIGKILL`) and
+  close the connection ("log and continue" is forbidden); this is carried as a
+  T2.1 acceptance test.
 - `cost.jsonl` remains the single source of truth for billed model attribution; the
   advisory event is observability only and never drives run state.
 
