@@ -1,4 +1,4 @@
-// Domain-event kind taxonomy v1 (ADR-085). Extension rule: one entry here +
+// Domain-event kind taxonomy v1 (ADR-086). Extension rule: one entry here +
 // emit site(s) in the owning domain transaction + one doc row + a CHECK update
 // via migration. `task.triage_requeued` is registered with NO emitter — it
 // lands with the Stage-3 triager.

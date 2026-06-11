@@ -6233,7 +6233,7 @@ the M24 clock.
   domain transactions are short, migrations run offline, and the stall is
   bounded by the transaction's lifetime, never lossy.
 - Two new tables (`domain_events`, `domain_event_consumers`) land in migration
-  `0045`; a new `job_kind: domain_event_dispatch` joins the scheduler enums,
+  `0046`; a new `job_kind: domain_event_dispatch` joins the scheduler enums,
   budgets, dispatch switch, seeds, and the admin `kind` label map (EN+RU,
   without a `targetHint` — not user-creatable).
 - The previously emit-less `NeedsInputIdle → Abandoned` TTL transition

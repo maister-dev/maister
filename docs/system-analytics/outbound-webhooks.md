@@ -204,7 +204,7 @@ cheap). (All Implemented.)
 | `run.done` | `→ Done` | `runs/promote.ts` (same three paths), `flows/runner.ts` (scratch Done) |
 | `run.failed` | `→ Failed` | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `runs/keepalive-sweeper.ts` (watchdog), `services/hitl.ts` |
 | `run.crashed` | `→ Crashed` (reconcile / GC / runner crash paths) | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `flows/runner-agent.ts`, `scratch-runs/events.ts`, `scratch-runs/service.ts`, `services/hitl.ts` |
-| `run.abandoned` | `→ Abandoned` (user, workbench drop, and idle-TTL sweep) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`), `runs/keepalive-sweeper.ts` (TTL pass, `source: "ttl"` — ADR-085 gap closure) |
+| `run.abandoned` | `→ Abandoned` (user, workbench drop, and idle-TTL sweep) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`), `runs/keepalive-sweeper.ts` (TTL pass, `source: "ttl"` — ADR-086 gap closure) |
 | `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
 | `ping` | synthetic test ping — NOT persisted, NOT fanned out | `webhooks/ping.ts` |
 
@@ -229,7 +229,7 @@ Each is additive later (one emit site + one row); none is a wire contract today.
   `gate_results` insert.
 - **`node_attempts` lifecycle** — internal ledger granularity below the curated
   taxonomy.
-- ~~**TTL-driven `NeedsInputIdle → Abandoned`**~~ — **superseded (ADR-085,
+- ~~**TTL-driven `NeedsInputIdle → Abandoned`**~~ — **superseded (ADR-086,
   Implemented):** the keepalive sweeper's TTL pass now emits `run.abandoned`
   with `source: "ttl"` inside the same transaction as the flip (the predicted
   `source` enum extension).

@@ -19,7 +19,7 @@ import {
 import * as fullSchema from "@/lib/db/schema";
 
 // =============================================================================
-// T7 — per-consumer cursor dispatcher (ADR-085 DD3/DD5).
+// T7 — per-consumer cursor dispatcher (ADR-086 DD3/DD5).
 //
 //   T-D1  cursor isolation between consumers
 //   T-D2  no double-claim under concurrent dispatch passes

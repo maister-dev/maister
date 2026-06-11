@@ -378,7 +378,7 @@ export async function reportExternalGate(
 
     gateResultId = fresh.id;
   } else {
-    // ADR-085: the CAS flip and its outbox emits commit in ONE transaction
+    // ADR-086: the CAS flip and its outbox emits commit in ONE transaction
     // (previously the emit rode the bare handle after the CAS — a crash
     // window). If `d` is already a transaction this nests as a savepoint;
     // the GateNotReportableError throw inside rolls back nothing but the

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The domain-event outbox (**Implemented**, ADR-085, M32) is MAIster's shared
+The domain-event outbox (**Implemented**, ADR-086, M32) is MAIster's shared
 **trigger bus**: an immutable, append-only log of curated domain facts
 (`domain_events`), written from the domain layer in the SAME transaction as the
 state change, and a per-consumer cursor dispatcher running on the M24 clock.
@@ -195,7 +195,7 @@ flowchart TD
 
 ## Linked artifacts
 
-- **Decision:** [ADR-085](../decisions.md#adr-085-domain-event-outbox-as-the-shared-trigger-bus).
+- **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).
 - **Spec freeze:** [`../../.ai-factory/specs/domain-event-outbox.spec.md`](../../.ai-factory/specs/domain-event-outbox.spec.md).
 - **DB:** [`db/domain-events.md`](../db/domain-events.md) and
   [`database-schema.md`](../database-schema.md) — the two tables (migration

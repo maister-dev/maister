@@ -15,7 +15,7 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import * as fullSchema from "@/lib/db/schema";
 
 // =============================================================================
-// T4 — emitDomainEvent transactional coupling (AC1, ADR-085).
+// T4 — emitDomainEvent transactional coupling (AC1, ADR-086).
 //
 //   T-E1: an INSERT riding a COMMITTED caller transaction produces exactly one
 //         domain_events row with kind/ids/actor/payload mapped and tx_id

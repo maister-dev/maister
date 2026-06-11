@@ -321,7 +321,7 @@ A platform MCP DELETE is refused (409) while any `capability_records` row
 references it (mirrors `assertCanDisable`). A duplicate id on POST returns 409
 via `onConflictDoNothing().returning()`, never a raw 500. Stdio `command` spawn
 is gated on `exec_trust = 'trusted'` for the owning `flow_revisions` row (§4.2).
-ADR-084/ADR-085 allow `supportedAgents` to include all five adapter families.
+ADR-084/ADR-086 allow `supportedAgents` to include all five adapter families.
 New rows default to `["claude","codex","gemini","opencode","mimo"]` after
 migrations `0044` and `0045`; existing custom rows are not silently widened.
 
@@ -1807,7 +1807,7 @@ and the summary reports `skipped: "disabled"` + `skippedEvents`. Pending
 deliveries are not touched. Flipping back to `true` resumes drain on the next
 tick; pre-disable pending deliveries catch up naturally.
 
-## Domain-event outbox tables (Implemented, ADR-085, migration `0045`)
+## Domain-event outbox tables (Implemented, ADR-086, migration `0046`)
 
 See [`db/domain-events.md`](db/domain-events.md) for the ERD and
 [`system-analytics/domain-events.md`](system-analytics/domain-events.md) for
@@ -1815,7 +1815,7 @@ the dispatch mechanics, kind taxonomy, and consumer contract.
 
 ### `domain_events`
 
-**(Implemented, ADR-085, migration `0045`.)** Append-only domain-fact log — the
+**(Implemented, ADR-086, migration `0046`.)** Append-only domain-fact log — the
 shared trigger bus. One row per curated domain fact, written in the SAME
 transaction as the domain state change (`emitDomainEvent`, CAS-winner path
 only). No UPDATE/DELETE application paths; future pruning MUST honor
@@ -1852,7 +1852,7 @@ No secondary indexes by design — dispatch reads are PK-range scans
 
 ### `domain_event_consumers`
 
-**(Implemented, ADR-085, migration `0045`.)** One cursor row per registered
+**(Implemented, ADR-086, migration `0046`.)** One cursor row per registered
 consumer (the registry itself is code-owned — `DOMAIN_EVENT_CONSUMERS`).
 Claim = CAS on `lease_expires_at` (5 min TTL); advance = CAS fenced on the
 cursor value read at claim; delivery is at-least-once and consumers are

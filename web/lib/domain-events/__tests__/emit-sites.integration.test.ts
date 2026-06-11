@@ -25,7 +25,7 @@ import { createTask } from "@/lib/services/tasks";
 import * as fullSchema from "@/lib/db/schema";
 
 // =============================================================================
-// T5 — task-domain emission sites (AC1, ADR-085).
+// T5 — task-domain emission sites (AC1, ADR-086).
 //
 //   T-E3: createTask captures exactly one `task.created` domain event in the
 //         SAME transaction as the task insert; an injected post-insert failure

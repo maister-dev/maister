@@ -37,7 +37,7 @@ export const noopConsumer: DomainEventConsumer = {
   },
 };
 
-// Code-owned registry (ADR-085): future consumers (agent-trigger dispatcher,
+// Code-owned registry (ADR-086): future consumers (agent-trigger dispatcher,
 // the re-pointed webhooks fanout, notifiers) register here. Removing an entry
 // leaves its cursor row dormant — cleanup is deferred until pruning lands.
 export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [noopConsumer];

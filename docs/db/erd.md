@@ -928,13 +928,13 @@ erDiagram
         text response_snippet "NULL; <= 1KB"
     }
 
-    PROJECTS ||--o{ DOMAIN_EVENTS : "emitted per project (ADR-085)"
+    PROJECTS ||--o{ DOMAIN_EVENTS : "emitted per project (ADR-086)"
     TASKS o|--o{ DOMAIN_EVENTS : "task-scoped facts (nullable FK)"
     RUNS o|--o{ DOMAIN_EVENTS : "run-scoped facts (nullable FK)"
 
     DOMAIN_EVENTS {
         bigint id PK "GENERATED ALWAYS AS IDENTITY — dispatch ordering key"
-        text kind "8-kind taxonomy CHECK (ADR-085)"
+        text kind "8-kind taxonomy CHECK (ADR-086)"
         text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
         text task_id FK "NULL -> tasks(id) ON DELETE CASCADE"
         text run_id FK "NULL -> runs(id) ON DELETE CASCADE"

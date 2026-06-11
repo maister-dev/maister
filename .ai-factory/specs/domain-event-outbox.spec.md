@@ -19,14 +19,14 @@ per-consumer cursor dispatcher on the M24 clock, and a permanently-registered
 
 The staged platform-agents/social-board design doc was never committed (owner
 decision 2026-06-11: not restored). The durable record of Stage 2 is: this
-spec + [ADR-085](../../docs/decisions.md#adr-085-domain-event-outbox-as-the-shared-trigger-bus)
+spec + [ADR-086](../../docs/decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus)
 + [`docs/system-analytics/domain-events.md`](../../docs/system-analytics/domain-events.md)
 + the roadmap row `M32`. Stage 1 (social board, ADR-083/M31) is merged; Stage 3+
 (triager, agent actors) consume this bus later.
 
 ## Table contract
 
-### `domain_events` (migration `0045`, append-only)
+### `domain_events` (migration `0046`, append-only)
 
 | Column | Type | Contract |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ No UPDATE/DELETE application paths. No secondary indexes (PK-range dispatch
 reads; `webhook_events` precedent). No retention in this stage; future pruning
 MUST honor `min(cursor_event_id)` across registered consumers.
 
-### `domain_event_consumers` (migration `0045`)
+### `domain_event_consumers` (migration `0046`)
 
 | Column | Type |
 | --- | --- |
@@ -157,7 +157,7 @@ retires. M32 additionally closes the `runPass2` webhook gap: the TTL
 ## Linked artifacts
 
 - Plan: [`../plans/feature-domain-event-outbox.md`](../plans/feature-domain-event-outbox.md)
-- ADR: [ADR-085](../../docs/decisions.md#adr-085-domain-event-outbox-as-the-shared-trigger-bus)
+- ADR: [ADR-086](../../docs/decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus)
 - Analytics: [`docs/system-analytics/domain-events.md`](../../docs/system-analytics/domain-events.md)
 - ERD: [`docs/db/domain-events.md`](../../docs/db/domain-events.md) +
   [`docs/database-schema.md`](../../docs/database-schema.md)

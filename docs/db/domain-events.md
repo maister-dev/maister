@@ -1,11 +1,11 @@
 # Domain-event outbox ERD
 
-Tables for the shared domain-event trigger bus introduced by ADR-085.
+Tables for the shared domain-event trigger bus introduced by ADR-086.
 See [`../system-analytics/domain-events.md`](../system-analytics/domain-events.md)
 for the dispatch mechanics, the kind taxonomy, and the consumer contract, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
 
-> **Status: Implemented.** Migration `0045_domain_events.sql` (additive,
+> **Status: Implemented.** Migration `0046_domain_events.sql` (additive,
 > forward-only, no down-migration) adds both tables.
 
 ```mermaid
@@ -48,7 +48,7 @@ not a table.
 
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
-| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (8 kinds, ADR-085). |
+| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (8 kinds, ADR-086). |
 | `domain_events` | `CHECK` | `actor_type` | `user \| system \| agent` (NULL allowed). |
 | `domain_event_consumers` | `PK` | `consumer_id` | One cursor row per registered consumer. |
 
@@ -102,5 +102,5 @@ MUST honor `min(cursor_event_id)` across registered consumers.
 - Process flows: [`../system-analytics/domain-events.md`](../system-analytics/domain-events.md).
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- Decision record: ADR-085 in [`../decisions.md`](../decisions.md).
-- Source (Implemented): `web/lib/db/schema.ts` (migration `0045_domain_events.sql`).
+- Decision record: ADR-086 in [`../decisions.md`](../decisions.md).
+- Source (Implemented): `web/lib/db/schema.ts` (migration `0046_domain_events.sql`).

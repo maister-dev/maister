@@ -24,7 +24,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Code constants until a real consumer needs tuning (ADR-085 — no env knobs
+// Code constants until a real consumer needs tuning (ADR-086 — no env knobs
 // in this stage).
 const BATCH_SIZE = 100;
 const MAX_BATCHES_PER_PASS = 10;
@@ -64,7 +64,7 @@ export async function ensureConsumerRows(
   }
 }
 
-// One dispatch pass over the registered consumers (ADR-085 DD3):
+// One dispatch pass over the registered consumers (ADR-086 DD3):
 //   1. claim the cursor row by CAS on lease_expires_at (zero rows ⇒ another
 //      dispatcher is live ⇒ skip — no double-claim under concurrent ticks);
 //   2. read `id > cursor AND tx_id < pg_snapshot_xmin(pg_current_snapshot())

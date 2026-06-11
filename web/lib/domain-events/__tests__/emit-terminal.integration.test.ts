@@ -28,7 +28,7 @@ import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 // =============================================================================
-// T6 — run-terminal + gate.failed domain-event pairing (ADR-085, AC1).
+// T6 — run-terminal + gate.failed domain-event pairing (ADR-086, AC1).
 //
 //   T-E5: every terminal state-transition helper that emits a webhook also
 //         captures exactly one PAIRED domain event in the SAME transaction;

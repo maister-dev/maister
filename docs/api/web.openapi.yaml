@@ -381,7 +381,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` and `domain_event_dispatch` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071) and `domain_event_dispatch.default` (ADR-085) are seeded by the tick; both kinds are rejected at the schema.
+      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` and `domain_event_dispatch` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071) and `domain_event_dispatch.default` (ADR-086) are seeded by the tick; both kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true

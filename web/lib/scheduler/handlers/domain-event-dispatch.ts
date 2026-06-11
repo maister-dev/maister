@@ -12,7 +12,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Thin scheduler seam (ADR-085): the singleton `domain_event_dispatch.default`
+// Thin scheduler seam (ADR-086): the singleton `domain_event_dispatch.default`
 // job advances every registered consumer's cursor over the domain_events
 // outbox each tick. All mechanics live in lib/domain-events/dispatch.ts.
 export async function runDomainEventDispatchJob(): Promise<DispatchSummary> {

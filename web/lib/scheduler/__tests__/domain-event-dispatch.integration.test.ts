@@ -16,7 +16,7 @@ import {
 } from "@/lib/scheduler/jobs";
 
 // =============================================================================
-// T-D8 (ADR-085): the domain_event_dispatch singleton joins the scheduler the
+// T-D8 (ADR-086): the domain_event_dispatch singleton joins the scheduler the
 // same way webhook_delivery.default did — self-healing seed, 60s cadence,
 // budget-1 single claim under concurrent ticks.
 // =============================================================================

@@ -258,7 +258,7 @@ async function runPass1(db: Db): Promise<number> {
   return idled;
 }
 
-// Exported for the ADR-085 emit-terminal integration test — the public sweep
+// Exported for the ADR-086 emit-terminal integration test — the public sweep
 // entry stays runSweepTick.
 export async function runPass2(db: Db): Promise<number> {
   const ttlHours = needsInputIdleTtlHours();
@@ -269,7 +269,7 @@ export async function runPass2(db: Db): Promise<number> {
   let abandoned = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
-    // ADR-085: the status flip, the hitl close-out, and BOTH outbox emits
+    // ADR-086: the status flip, the hitl close-out, and BOTH outbox emits
     // (webhook + domain) commit in ONE transaction — previously two bare
     // updates with no emit (the TTL run.abandoned webhook gap, now closed
     // with data.source = "ttl").

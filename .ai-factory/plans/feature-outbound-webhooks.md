@@ -199,9 +199,9 @@ Per-subscription ordering is rejected: it forces serial delivery per endpoint, s
 
 No open questions remain.
 
-## Domain-event outbox takeover (M32+, ADR-085) — coordination note (2026-06-11)
+## Domain-event outbox takeover (M32+, ADR-086) — coordination note (2026-06-11)
 
-ADR-085 (plan: `.ai-factory/plans/feature-domain-event-outbox.md`, spec:
+ADR-086 (plan: `.ai-factory/plans/feature-domain-event-outbox.md`, spec:
 `.ai-factory/specs/domain-event-outbox.spec.md`) now owns the **generic outbox
 core**: a `domain_events` fact log (task + run + gate kinds, polymorphic actor)
 plus a per-consumer cursor dispatcher (`domain_event_dispatch` job kind) on the

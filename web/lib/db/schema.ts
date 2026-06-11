@@ -2758,7 +2758,7 @@ export type TaskSubscriberInsert = typeof taskSubscribers.$inferInsert;
 export type InboxItemRow = typeof inboxItems.$inferSelect;
 export type InboxItemInsert = typeof inboxItems.$inferInsert;
 
-// Domain-event outbox (ADR-085): append-only fact log + per-consumer cursor
+// Domain-event outbox (ADR-086): append-only fact log + per-consumer cursor
 // rows — the shared trigger bus. Emission rides the domain write's transaction
 // (`emitDomainEvent`, CAS-winner path only). Dispatch reads are PK-range scans
 // gated by the xid8 commit horizon (`tx_id < pg_snapshot_xmin(...)`) so a

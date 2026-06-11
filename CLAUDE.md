@@ -401,7 +401,7 @@ Current Scope, these are **Implemented** today:
   page, ext comment ops + MCP `comment_*` tools. Polymorphic
   `(actor_type, actor_id)` is `agent`-ready; Stage 1 writes `user`/`system`
   only. → `social-board.md`
-- **Domain-event outbox / shared trigger bus** (M32, ADR-085):
+- **Domain-event outbox / shared trigger bus** (M32, ADR-086):
   `domain_events` append-only fact log emitted in the SAME transaction as
   the domain write (8-kind taxonomy v1: task/run-terminal/gate.failed,
   polymorphic actor, xid8 commit horizon), per-consumer cursor dispatcher
