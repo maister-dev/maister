@@ -378,8 +378,10 @@ describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
 
     const tags = journalTags();
     const pre0043 = tags.filter((t) => !t.startsWith("0043"));
+    const socialBoardTag = tags.find((t) => t.startsWith("0043"));
 
     expect(tags.length - pre0043.length).toBe(1);
+    if (!socialBoardTag) throw new Error("0043 migration tag missing");
     for (const tag of pre0043) {
       await applyMigrationFile(replayPool, tag);
     }
@@ -408,7 +410,7 @@ describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
        ('t3', 'p2', 'only one', 'x', 'f2', '2026-02-03T00:00:00Z')`,
     );
 
-    await applyMigrationFile(replayPool, tags[tags.length - 1]);
+    await applyMigrationFile(replayPool, socialBoardTag);
   }, 180_000);
 
   afterAll(async () => {

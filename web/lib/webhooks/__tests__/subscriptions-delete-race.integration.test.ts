@@ -103,6 +103,7 @@ async function seedRun(): Promise<SeededRun> {
   });
 
   await db.insert(schema.tasks).values({
+    number: Number.parseInt(crypto.randomUUID().slice(0, 6), 16),
     id: taskId,
     projectId,
     title: "Test task",

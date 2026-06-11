@@ -246,6 +246,7 @@ async function seedChatPause(
     schemaVersion: 1,
   });
   await db.insert(schema.tasks).values({
+    number: Number.parseInt(crypto.randomUUID().slice(0, 6), 16),
     id: taskId,
     projectId,
     title: "t",
