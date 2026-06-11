@@ -787,6 +787,33 @@ declare `output.result` stays valid at any `engine_min` (back-compat).
 transport contract and validate seam are in [`flow-dsl.md`](flow-dsl.md) §M26 and
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26.
 
+**M30 engine bump (Designed).** M30 bumps `MAISTER_ENGINE_VERSION` `1.3.0 → 1.4.0`
+in `web/lib/flows/engine-version.ts`
+([ADR-076](decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture)).
+It is a **code constant, not an env var** — no `.env`/compose wiring. The new node
+DSL keys `retry_policy`
+([ADR-077](decisions.md#adr-077-node-level-retry-policy)) and `session_policy` plus
+the flow `defaults` block
+([ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default))
+require `compat.engine_min: 1.4.0`; a manifest using any of them with
+`engine_min < 1.4.0` is refused with `CONFIG` through the same
+`engine_min..engine_max` check. A Flow using none of these keys stays valid at any
+`engine_min` (back-compat). `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`. The
+workspacePolicy-execution, review-diff scopes, and gate-chat features add **no**
+flow DSL and need no engine floor. The DSL keys are parsed fresh from
+`flow_revisions.manifest` on every launch — a removed key naturally CLEARs (no
+persisted upsert state, no SET/CLEAR asymmetry).
+
+**M30 deployment surface (Designed).** DD10 requires `MAISTER_RUNTIME_ROOT` to
+resolve **outside** every registered `repo_path` so checkpoint rewind/discard
+(`git clean -fd`) can never reach the run-artifact tree
+(`runtimeRoot/.maister/<slug>/runs/<runId>/`); this is asserted in code and is a
+deploy precondition. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
+`refs/maister/chat-checkpoints/*` are git refs, not env. Any gate-chat env toggle
+introduced at implementation (candidate `MAISTER_GATE_CHAT_ENABLED`) is audited per
+the runtime-contract-symmetry rule (`.env.example` + compose + this doc); none is
+confirmed yet.
+
 ### Verdict calibration (M15)
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing

@@ -74,6 +74,7 @@ channels:
           - $ref: "#/components/messages/SessionPermissionRequest"
           - $ref: "#/components/messages/SessionExited"
           - $ref: "#/components/messages/SessionCrashed"
+          - $ref: "#/components/messages/SessionChatTurn"
 components:
   messages:
     SessionLine:
@@ -199,6 +200,16 @@ components:
             monotonicId: 7
             exitCode: null
             signal: null
+    SessionChatTurn:
+      name: session.chat_turn
+      title: Gate-chat answer-only turn at a HITL pause (M30 — Designed)
+      summary: |
+        (M30 — Designed, ADR-075) Answer-only gate-chat reply at a `human`/`form`
+        HITL pause. Streams over the SSE bridge to the chat surface; never
+        resolves the HITL and never drives the run to `Running`. Carries the DD11
+        `mutationReverted` flag.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionChatTurnEvent" }
   schemas:
     EventBase:
       type: object
@@ -212,6 +223,7 @@ components:
             - session.permission_request
             - session.exited
             - session.crashed
+            - session.chat_turn
         sessionId:
           type: string
           format: uuid
@@ -347,7 +359,7 @@ components:
       type: object
       description: |
         Supervisor-synthesized `update` payload carried inside a `session.update`
-        event (ADR-075) when application cannot be confirmed — claude (verify-only)
+        event (ADR-076) when application cannot be confirmed — claude (verify-only)
         reported a differing `currentModelId`, or the codex `setSessionModel`
         call failed. NOT a new `SessionEvent` kind — it reuses
         the opaque `session.update.update` field, so the closed `SessionEvent`
@@ -372,3 +384,33 @@ components:
           type: string
           enum: [settings_local, set_session_model]
           description: Which application channel was used (claude = settings_local, codex = set_session_model).
+    SessionChatTurnEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, hitlRequestId, role, body]
+          properties:
+            type:
+              type: string
+              const: session.chat_turn
+            hitlRequestId:
+              type: string
+              format: uuid
+            role:
+              type: string
+              enum: [user, agent]
+            body:
+              type: string
+            seq:
+              type: integer
+            mutationReverted:
+              type: boolean
+              description: |
+                (M30 — Designed, ADR-078 DD11 L3) True when the L3 mutation sensor
+                reverted a workspace mutation made during this turn; the UI shows
+                a revert notice on the turn.
+      description: |
+        (M30 — Designed, ADR-078) Answer-only gate-chat turn at a `human`/`form`
+        HITL pause. Rendered in the chat surface, NOT the flow timeline. The
+        prompt is tagged `stepId = gate-chat-<hitlRequestId>` (server-derived,
+        dash not colon).

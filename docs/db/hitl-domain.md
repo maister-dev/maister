@@ -14,6 +14,9 @@ erDiagram
     HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (ADR-072)"
     USERS ||--o{ REVIEW_COMMENTS : "author / resolver (SET NULL)"
     REVIEW_COMMENTS ||--o{ REVIEW_COMMENTS : "replies (parent_id, cascade)"
+    RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-075)"
+    HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-075)"
+    USERS ||--o{ GATE_CHAT_MESSAGES : "author (SET NULL)"
 
     HITL_REQUESTS {
         text id PK
@@ -28,7 +31,25 @@ erDiagram
         text rework_target "M11a resolved rework target node"
         text criticality "M17 Implemented: flow-declared low|medium|high|critical (write-once at creation, NULL if undeclared)"
         real human_confidence "M17 Implemented: responder self-report 0..1 (written at respond time, NULL while open)"
+        text review_tip_sha "M30 0040 Designed: branch tip SHA per review-gate visit (since-last-review diff base, ADR-079)"
+        text dirty_resolution "M30 0040 Designed: commit|discard|proceed reviewer dirty-worktree choice (nullable, ADR-079)"
         timestamp responded_at "NULL while open"
+        timestamp created_at
+    }
+
+    GATE_CHAT_MESSAGES {
+        text id PK "randomUUID (ADR-075, migration 0040)"
+        text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
+        text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE - the pause"
+        text node_id "NOT NULL - gate node id"
+        integer gate_attempt "NOT NULL - gate visit number"
+        text role "NOT NULL - user | agent"
+        text author_user_id FK "NULL -> users(id) ON DELETE SET NULL"
+        text author_label "snapshot - survives user deletion"
+        text body "NOT NULL - turn text"
+        text acp_session_id "session that produced/answered (server-only)"
+        integer seq "NOT NULL - monotonic per hitl_request_id"
+        boolean mutation_reverted "DEFAULT false - L3 reverted a mutation (DD11)"
         timestamp created_at
     }
 

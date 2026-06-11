@@ -91,14 +91,23 @@
 | [ADR-063](#adr-063-structured-node-output-channel-p1--run-context-file-p7) | Structured node output channel (P1) + run-context file (P7) | Accepted | 2026-06-07 |
 | [ADR-064](#adr-064-authored-flow-graph-layout-in-the-flowyaml-presentation-section) | Authored flow-graph layout in the flow.yaml presentation section | Accepted | 2026-06-07 |
 | [ADR-065](#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) | Platform ACP runner CRUD in `/settings` — hard delete blocked by any usage reference | Accepted | 2026-06-08 |
+| [ADR-066](#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) | Editor and diff rendering stack (Shiki, git-diff-view, CodeMirror) | Accepted | 2026-06-08 |
 | [ADR-067](#adr-067-flow-editor-write-path--canvas-edits-as-m25-authored-flow-drafts-with-hard-gate-before-persist) | Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist | Accepted | 2026-06-08 |
 | [ADR-068](#adr-068-authoredexecutable-flow-bridge--two-axis-trust-gate-supersedes-adr-061-publish-boundary) | Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary) | Accepted | 2026-06-08 |
 | [ADR-069](#adr-069-version_binding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot) | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot | Accepted | 2026-06-08 |
 | [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 | [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock) | User-facing run schedules on the M24 clock | Accepted | 2026-06-10 |
 | [ADR-072](#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard) | PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard | Accepted | 2026-06-10 |
-| [ADR-075](#adr-075-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) | ACP runner model discovery (resolver-on-supervisor) + configured-model application | Accepted | 2026-06-11 |
+| [ADR-073](#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension) | Harness adequacy & coherence metrics (read-only Observatory extension) | Accepted | 2026-06-10 |
+| [ADR-074](#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates) | Artifact post-conditions — deterministic mutation sensor on `artifact_required` gates | Accepted | 2026-06-10 |
+| [ADR-075](#adr-075-flow-studio-phase-2-viewer-fork-to-authored-draft-kind-by-path-and-content-validation-severity) | Flow Studio Phase 2 viewer, fork-to-authored-draft, kind-by-path, and content-validation severity | Accepted | 2026-06-11 |
+| [ADR-076](#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) | ACP runner model discovery (resolver-on-supervisor) + configured-model application | Accepted | 2026-06-11 |
 | [ADR-077](#adr-077-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer) | Outbound webhooks: generic event-delivery primitive, transactional outbox + singleton drainer | Accepted | 2026-06-10 |
+| [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) | Gate-chat at HITL pauses with three-layer workspace-neutrality | Accepted | 2026-06-11 |
+| [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) | Node workspacePolicy execution and checkpoint capture | Accepted | 2026-06-11 |
+| [ADR-080](#adr-080-node-level-retry-policy) | Node-level retry policy | Accepted | 2026-06-11 |
+| [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) | Rework session policy with resume-by-default | Accepted | 2026-06-11 |
+| [ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) | Review-diff completeness with dirty-state protocol and scope switcher | Accepted | 2026-06-11 |
 
 ---
 
@@ -274,6 +283,7 @@ single-provider routing.
 
 **Date:** 2026-05-25
 **Status:** Accepted
+> **Amended by [ADR-078](#adr-078-rework-session-policy-with-resume-by-default) (2026-06-11):** rework `session_policy: resume` and idle gate-chat resume ([ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)) reuse this keep-alive + `session/resume` path.
 **Context:** Human review is slow (minutes to hours). Holding a Claude
 process in memory for the entire review wastes RAM; killing it
 immediately wastes ~$0.28 of cache_creation tokens on respawn (M0).
@@ -977,6 +987,7 @@ independent of M11/M12.
 
 **Date:** 2026-05-30
 **Status:** Accepted
+> **Amended by [ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture) (2026-06-11):** `MAISTER_ENGINE_VERSION` bumped `1.3.0 → 1.4.0`; the new DSL keys `retry_policy` ([ADR-077](#adr-077-node-level-retry-policy)) and `session_policy`/`defaults` ([ADR-078](#adr-078-rework-session-policy-with-resume-by-default)) require `compat.engine_min ≥ 1.4.0`.
 **Context:** [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl)'s
 step DSL is **strictly linear** — the runner walks `steps[]` in order and
 `on_reject.goto_step` is parsed and validated but never executed, so
@@ -1022,6 +1033,7 @@ flows MUST declare `compat.engine_min: 1.1.0`. Bump the engine constant
 
 **Date:** 2026-05-30
 **Status:** Accepted
+> **Amended by [ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture) / [ADR-077](#adr-077-node-level-retry-policy) / [ADR-078](#adr-078-rework-session-policy-with-resume-by-default) (2026-06-11):** adds ledger columns `checkpoint_ref`, `session_policy`, `session_fallback`, and `auto_retry` (migration 0040).
 **Context:** The current `step_runs` table reuses the same row on resume and
 hard-codes `attempt = 1`, so there is no append-only execution history. A rework
 loop re-runs nodes; templating must resolve `steps.<id>.output` to the **latest**
@@ -1168,6 +1180,7 @@ restriction** refs (#1) → M14; node-level **executor** refs (#1) → M11c.
 
 **Date:** 2026-05-31
 **Status:** Accepted
+> **Amended by [ADR-078](#adr-078-rework-session-policy-with-resume-by-default) (2026-06-11):** `session_policy` resolution leaves the takeover-return path unaffected (no live session to resume); the interplay is documented in `manual-takeover.md`.
 **Context:** M11b ([ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c)) ships
 **manual takeover** — a reviewer parked at an M11a `human_review` node takes the
 run over to edit it by hand, then returns it for re-validation. The run already
@@ -2135,6 +2148,7 @@ ingress is introduced.
 **Date:** 2026-06-02
 **Status:** Accepted
 > **Delivery half superseded by [ADR-044](#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven):** the CLI-flag/preArgs delivery mechanism was disproven; capability now ships via `.claude/settings.local.json` + ACP `newSession`. The registry/resolver/ledger half here stands.
+> **Amended by [ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L2 permission auto-deny is best-effort within this instructed-only model; the L3 mutation sensor is the hard neutrality guarantee.
 **Context:** [ADR-031](#adr-031-node-typed-settings-schema-carve-b) shipped typed
 node `settings` but deferred the **positive** half of roadmap criterion #6 to
 M14: resolving `mcps:[github]` / `skills:[…]` / `tools:[…]` /
@@ -4429,6 +4443,7 @@ as-is.
 
 **Date:** 2026-06-10
 **Status:** Accepted
+> **Amended by [ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** runner-side rework compose also folds `gate_chat_messages` history into `commentsVar`; gate-chat persists in a sibling table, not `review_comments`.
 **Context:** The M11a review gate offers one free-text `comments` box. That is
 too coarse to dogfood real PR-grade reviews (M20): a reviewer cannot anchor a
 remark to a diff line, track which remarks were addressed across rework
@@ -4639,6 +4654,7 @@ DSL grammar change; the diff stays committed-only `base..branch` and
 
 **Date:** 2026-06-08
 **Status:** Accepted
+> **Amended by [ADR-079](#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) (2026-06-11):** the review-diff 4-mode `scope` switcher reuses this `prepareDiff` pipeline + byte-cap truncation guard.
 **Context:** Three code-content surfaces render with no syntax highlighting.
 (1) The M22 workbench (ADR-053) shows git-tracked repo files in a plain `<pre>`
 (`file-viewer.tsx`) — no highlighting, no line numbers, read-only. (2) The same
@@ -4857,6 +4873,7 @@ as "—" (insufficient data), never as `0%`.
 
 **Date:** 2026-06-10
 **Status:** Accepted
+> **Amended by [ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L3 neutrality reuses this detect-after mutation-sensor stance with its own first-turn chat-checkpoint baseline.
 **Context:** The harness can verify that evidence EXISTS (`artifact_required`,
 M12) but not WHAT a node actually changed. Two recurring defect classes are
 invisible today: (1) a node that claims success without touching the files its
@@ -5431,6 +5448,391 @@ surface. Seven locked sub-decisions:
 - **Probe timeout / cache TTL as env vars:** rejected for v1 — keeping them code
   constants holds the deployment surface flat (no new `.env`/compose wiring); they
   graduate to env vars only if operations proves a tunable is needed.
+
+---
+
+### ADR-075: Gate-chat at HITL pauses with three-layer workspace-neutrality
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** When a run parks at a human gate (`human_review` persisted as a
+`human`-kind HITL, or a `form`), the reviewer often needs to ask the agent a
+clarifying question ("why did you choose X?", "where is Y handled?") without
+resolving the gate or mutating the worktree under review. Today the only options
+are approve/reject or a full manual takeover
+([ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)).
+There is no answer-only back-channel to the parked agent session. The chat must
+also be *workspace-neutral*: a Q&A turn must not silently change files. M14
+enforcement is `instructed`-only
+([ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization))
+and the
+[ADR-074](#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates)
+mutation sensor proved a deterministic "detect-after" stance is viable, so
+neutrality is layered, not a hard sandbox.
+
+**Decision:** Add an answer-only **gate-chat** channel at HITL pauses plus a
+three-layer workspace-neutrality guarantee. Chat NEVER resolves the HITL and
+NEVER flips the run to `Running`.
+
+1. **Persistence — new sibling table `gate_chat_messages`** (NOT
+   `review_comments`, whose anchor CHECK requires a file/line and has no
+   agent-author role): `run_id`, `hitl_request_id`, `node_id`, `gate_attempt`,
+   `role ∈ {user, agent}`, `author_user_id`, `author_label`, `body`,
+   `acp_session_id`, `seq`, `mutation_reverted`, `created_at`. Rework compose
+   ([ADR-072](#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard))
+   folds chat history into `commentsVar`.
+2. **Availability** — session-presence-driven, answer-only. Enabled iff
+   `runs.status ∈ {NeedsInput, NeedsInputIdle}` AND the open HITL
+   `kind ∈ {human, form}` AND `runs.acp_session_id ≠ null`. Excluded by
+   construction: `permission`-kind (session mid-prompt-turn), `HumanWorking`
+   (manual takeover owns the worktree, no live agent), and the no-session case
+   (explanatory empty state).
+3. **Live vs idle turn.** `NeedsInput` → prompt the live session; the reply
+   streams over the existing SSE bridge; status stays `NeedsInput`.
+   `NeedsInputIdle` → chat-resume = respawn + ACP `session/resume` on
+   `acp_session_id` + `markResumed` (Idle→NeedsInput) + keepalive bump + prompt,
+   then the sweeper re-idles. Chat-resume MUST NOT call the resumed-session
+   driver and MUST NOT touch the `hitl_requests` row. The ~$0.28 respawn cost
+   ([ADR-006](#adr-006-hybrid-hitl-keep-alive--checkpointresume)) is surfaced
+   before the first idle question. Allow-list invariant (tested): chat may drive
+   `Idle→NeedsInput`, NEVER `→Running`, and never writes
+   `hitl_requests.responded_at`.
+4. **New SSE event `session.chat_turn`** carries the streamed reply plus a
+   `mutation_reverted` flag; added to both AsyncAPI files, the supervisor event
+   union, the SSE bridge typing, and the scratch event union so chat renders
+   without polluting the flow timeline. The chat prompt is tagged with a
+   server-derived marker `stepId = "gate-chat-<hitlRequestId>"` (dash, not colon
+   — the supervisor `SAFE_PATH_SEGMENT` rejects a colon, and the marker also
+   names the per-step log file).
+5. **Three-layer neutrality — L3 is the only hard guarantee** (mirrors ADR-041
+   instructed-only + ADR-074 detect-after):
+   - **L1 Instruct** — prepend a "read-only Q&A, do not modify the workspace"
+     preamble to every chat prompt.
+   - **L2 Permission auto-deny (best-effort)** — a `readOnlyTurn` flag on the
+     prompt + session record makes `requestPermission` auto-reject unambiguous
+     mutating `toolCall.kind` (`edit | write/create | delete | move`) before any
+     SSE emit or pending-permission registration (so no
+     `session.permission_request` and no `hitl_requests` row). `read`/`fetch`
+     pass; `execute` (bash) passes and relies on L3. L2 is a no-op under
+     `--dangerously-skip-permissions` / `permissionMode:allow` — documented,
+     hence L3.
+   - **L3 Mutation sensor (hard guarantee)** — capture ONE known-good baseline
+     at the FIRST chat turn of a pause via the
+     [ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture)
+     checkpoint machinery (`refs/maister/chat-checkpoints/<runId>/<hitlRequestId>`,
+     bounded at 1), and verify EVERY subsequent turn against it
+     (`statusPorcelain` + `git diff`). On a delta, restore to the baseline
+     (overlay + targeted deletion of only the rogue untracked paths absent from
+     the baseline tree — never a blanket `git clean`, never touching
+     `.maister/`), set `gate_chat_messages.mutation_reverted = true`, emit an
+     Observatory-ready audit signal, and surface a UI notice. L3 runs
+     unconditionally and fail-closed (a sensor that cannot sense must not pass).
+     The ref is GC'd when the HITL resolves; a mid-pause dirty-resolution
+     ([ADR-079](#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher))
+     deletes it so the next turn re-anchors (no false un-discard). This makes
+     gate-chat depend on the ADR-076 checkpoint engine.
+   - **Feature-3 interplay** — when a later rework resumes the SAME session
+     ([ADR-078](#adr-078-rework-session-policy-with-resume-by-default)
+     `session_policy: resume`), the rework prompt MUST explicitly lift the
+     chat-time read-only restriction, else the agent may refuse legitimate edits.
+6. Chat input is NEVER Mustache-evaluated; the L1 preamble is server-side, not
+   user text.
+
+**Consequences:**
+- Reviewers get a grounded, answer-only conversation with the parked agent
+  without taking over the worktree or resolving the gate; chat history feeds the
+  rework compose.
+- Neutrality is honest about its limits: L1/L2 are best-effort, L3 is the
+  deterministic guarantee and the only layer that holds under permissive runners.
+- New table + new SSE event + a `readOnlyTurn` prompt flag fan out to the DB
+  docs, both AsyncAPI files, and the scratch event union.
+- An idle gate-chat question pays the ~$0.28 respawn (ADR-006); the cost is
+  surfaced in the UI.
+- Amends ADR-041 (best-effort L2 within the instructed-only model) and ADR-074
+  (L3 reuses the detect-after sensor stance), and extends ADR-072 (rework
+  compose folds chat).
+
+**Alternatives Considered:**
+- **Reuse `review_comments` for chat:** rejected — its anchor CHECK requires
+  file/line and there is no agent-author role; chat is unanchored and
+  bi-directional.
+- **Let chat resolve the HITL / drive →Running:** rejected — conflates Q&A with
+  the gate decision; the runner owns `NeedsInput→Running`. Chat is strictly
+  answer-only.
+- **Blanket-deny `execute` (bash) on read-only turns:** rejected — kills
+  legitimate read commands (`grep`, `cat`); let-through + the L3 guarantee is
+  safer and more useful.
+- **Per-turn forensic git refs:** rejected — one baseline anchored to the first
+  turn restores to the original good state even for an undetected-then-detected
+  mutation; per-turn history lives in `gate_chat_messages` rows + audit signals.
+- **A real read-only sandbox (mount/overlayfs):** rejected for v1 — heavy,
+  runner-specific, and inconsistent with the instructed-only enforcement
+  reality; revisit if a hard sandbox lands platform-wide.
+
+---
+
+### ADR-076: Node workspacePolicy execution and checkpoint capture
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** The graph engine parses `rework.workspacePolicies` but does not
+execute them — `runner-graph.ts` only warns where the policy should apply (the
+M11b execution deferral). Rework therefore always reuses whatever the prior attempt
+left in the worktree; there is no way to rewind to the pre-attempt state or start
+an attempt clean. Closing this M11b deferral also yields the checkpoint primitive
+that gate-chat neutrality
+([ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)
+L3), node-level retry
+([ADR-077](#adr-077-node-level-retry-policy)), and the review-diff `last-node`
+scope
+([ADR-079](#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher))
+all need. Checkpoints must not pollute the promoted run branch and must survive
+crashes.
+
+**Decision:** Execute `workspacePolicy` with namespaced dangling git refs as node
+checkpoints, and a strict rewind/fresh-attempt/keep state machine.
+
+1. **Checkpoint capture** — before each `ai_coding`/`cli` attempt, capture
+   HEAD + tracked + untracked (ignored EXCLUDED) as a temp-index commit
+   **parented on the current branch tip**, stored as a dangling ref
+   `refs/maister/checkpoints/<runId>/<nodeAttemptId>` (NOT on the run branch).
+   Record the ref on `node_attempts.checkpoint_ref`. The promoted branch stays
+   clean; reconcile tolerates orphans; the worktree GC removes them.
+2. **Policy semantics.** `keep` = no-op. Because the checkpoint commit is
+   parented on the then-current tip, `<ck>^` is the pre-attempt tip for free.
+   - `rewind-to-node-checkpoint` = branch back to `<ck>^` and restore the working
+     tree to the captured state WITHOUT staging it: `git reset --hard <ck>^`,
+     then overlay the captured tree (`read-tree --reset -u <ck>^{tree}` +
+     `reset --mixed <ck>^` family). Captured-tracked content restored,
+     captured-untracked files come back UNTRACKED, attempt-created untracked
+     files survive, attempt commits are discarded.
+   - `fresh-attempt` = `git reset --hard <ck>^` + `git clean -fd` (discard
+     untracked **source**, KEEP ignored — `-fd`, never `-fdx`) +
+     re-materialization (see 4).
+   - **NEVER `git reset --hard <checkpoint>`** — that grafts the temp-index
+     commit onto the run branch (violates "branch NOT advanced") and converts
+     captured-untracked files into tracked ones.
+3. **`-fd` not `-fdx`.** `-x` would delete ignored files (`node_modules`,
+   `.next/`, `target/`, `.venv/`) the checkpoint does not contain, forcing a slow
+   reinstall on every retry/discard, and is more dangerous (an ignored
+   `.maister/` symlink inside a worktree would be nuked). A future per-policy
+   `clean_ignored: true` opt-in can re-enable `-x`; not v1.
+4. **Re-materialization.** Capability bundles are materialized once at launch and
+   land **untracked + un-ignored**, so `git clean -fd` deletes them with nothing
+   re-creating them, and index rewrites drop the tracked-override `skip-worktree`
+   state. The launch materialization block (`copyBundleArtifactsToWorktree` +
+   `writeAiFactoryConfigOverride` + `ensureWorktreeGitignore`) is extracted into a
+   reusable helper and RE-RUN (idempotent) after every `fresh-attempt` and after
+   the ADR-079 dirty discard. Consumer-project review gates will list
+   materialized artifacts in `dirtySummary` — known v1 noise; dogfood is
+   unaffected (its skills/agents are repo-local).
+5. **Run-artifact safety.** Rewind/discard are worktree-only. Logs/inputs/
+   `cost.jsonl`/`run.events.jsonl` live at
+   `runtimeRoot/.maister/<slug>/runs/<runId>/`, separate from the worktree. All
+   git mutations scope `-C <worktreePath>`; a `containmentAssert` hard-blocks any
+   policy run when `MAISTER_RUNTIME_ROOT` does not resolve outside the worktree's
+   `repo_path` (a non-ignored artifacts path inside the worktree could otherwise
+   be reached by `git clean -fd`). A test asserts artifacts survive rewind.
+6. Git failure during capture/apply throws the existing `MaisterError("CHECKPOINT")`
+   — no new error code
+   ([ADR-008](#adr-008-typed-error-taxonomy-maistererror) closed union).
+
+**Consequences:**
+- Rework can rewind to the exact pre-attempt state or start clean, executing the
+  long-parsed `workspacePolicy` and closing the M11b deferral.
+- A reusable checkpoint engine (`captureCheckpoint`, `applyWorkspacePolicy`,
+  `containmentAssert`, `deleteChatCheckpoint`) backs ADR-075 L3, ADR-077 retry,
+  and ADR-079 `last-node`.
+- Checkpoints never touch the promoted branch; orphaned refs after a crash are
+  harmless and GC'd.
+- `node_attempts.checkpoint_ref` is a new ledger column (migration 0040); amends
+  [ADR-027](#adr-027-append-only-node_attempts-run-ledger).
+- `MAISTER_RUNTIME_ROOT` must resolve outside every `repo_path` — a deployment
+  precondition asserted in code + docs.
+
+**Alternatives Considered:**
+- **`git stash` per attempt:** rejected — the stash stack is global/fragile,
+  drops untracked nuance, and is not crash-durable per `(run, node)`.
+- **`git reset --hard <checkpoint>` (the checkpoint commit itself):** rejected —
+  advances the run branch onto the temp-index commit and tracks formerly-untracked
+  files; `<ck>^` is the correct target.
+- **`git clean -fdx` for fresh-attempt:** rejected — nukes ignored build caches
+  and an ignored `.maister/`, forcing reinstalls and risking the artifacts tree.
+- **Checkpoints as real commits on the run branch:** rejected — pollutes the
+  promoted history and breaks the branch-clean assertion.
+
+---
+
+### ADR-077: Node-level retry policy
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** Transient infrastructure failures (adapter spawn races, executor
+unavailability, ACP protocol hiccups, checkpoint git failures) currently fail a
+node outright, bouncing the whole run to a human even though a fresh-session
+retry would succeed. There is no declarative, observable auto-retry on the graph
+node.
+
+**Decision:** Add an optional `retry_policy` to `ai_coding` and `cli` nodes:
+`{ attempts ≥ 1, on_errors: [code…], workspace: rewind-to-node-checkpoint }`. On
+a node failure whose `MaisterError.code ∈ on_errors` with attempts remaining, the
+engine applies the `workspace` policy via the
+[ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture) engine
+first, then appends a fresh-session attempt marked `node_attempts.auto_retry =
+true`. `on_errors` is validated at manifest-load against the retryable allow-list
+`{ SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL }`; any other code (e.g.
+`PRECONDITION`, `CONFIG`) or unknown value is a manifest `CONFIG` error.
+Auto-retry always uses a fresh session, respects the global concurrency cap, never
+bypasses gates, is observable on the ledger, and emits a distinct exhaustion
+signal when `attempts` is reached (then normal failure). The new DSL key requires
+`compat.engine_min ≥ 1.4.0`
+([ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump) amendment).
+
+**Consequences:**
+- Transient failures self-heal without a human round-trip, each retry an
+  immutable `auto_retry` ledger row with the workspace reset to the pre-attempt
+  checkpoint.
+- The retryable set is an allow-list (not a deny-list): only infrastructure codes
+  retry; logic/precondition failures still stop.
+- Depends on the ADR-076 checkpoint engine for
+  `workspace: rewind-to-node-checkpoint`.
+- Exhaustion is a distinct, observable signal, not a silent give-up.
+
+**Alternatives Considered:**
+- **Retry any `MaisterError`:** rejected — retrying `PRECONDITION`/`CONFIG`/
+  `CONFLICT` masks real defects and can loop forever; an explicit allow-list is
+  the safe default.
+- **Global retry knob instead of per-node:** rejected — different nodes have
+  different idempotency/cost profiles; the policy belongs on the node.
+- **Reuse the prior session on retry:** rejected — a transient-failed session may
+  be half-dead; a fresh session is the clean baseline (session reuse is the
+  separate ADR-078 rework concern).
+
+---
+
+### ADR-078: Rework session policy with resume-by-default
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** When a review gate sends a node back for rework, the engine today
+always dispatches a brand-new agent session (hard-coded `mode: "new-session"`).
+The agent loses the prior attempt's conversation context — including the critique
+it must address — and pays to rebuild it from the rework prompt alone. Some flows
+want a fresh session; most want continuity.
+
+**Decision:** Add `session_policy ∈ {resume, new_session}` for rework, resolved
+highest-wins: rework-transition (`rework.session_policy`) → node
+(`session_policy`) → flow (`defaults.session_policy`) → engine default
+**`resume`** (a deliberate flip from today's implicit new-session). `resume`
+resumes the prior attempt's `acp_session_id` via the
+[ADR-006](#adr-006-hybrid-hitl-keep-alive--checkpointresume) idle checkpoint / ACP
+`session/resume` path; if that session is gone or unresumable, fall back to
+`new_session` and set `node_attempts.session_fallback = true`. The effective
+policy is snapshotted into `node_attempts.session_policy`. An idle/checkpointed
+prior session still resumes (no special-casing — the ~$0.28 respawn buys back the
+critique context, which is the point; the cost is surfaced in the UI).
+Manual-takeover return
+([ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status))
+is unaffected (no live session to resume), and slash-in-existing dispatch is
+unchanged. When a rework resumes the SAME session, the rework prompt MUST lift any
+ADR-075 chat-time read-only restriction. The new DSL keys require
+`compat.engine_min ≥ 1.4.0`.
+
+**Consequences:**
+- Rework keeps the critique context by default, improving correction quality and
+  avoiding a cold rebuild.
+- `resume` degrades safely to `new_session` with an observable `session_fallback`
+  flag; the effective policy is snapshotted per attempt.
+- Two new ledger columns (`session_policy`, `session_fallback`, migration 0040);
+  amends [ADR-027](#adr-027-append-only-node_attempts-run-ledger) and reuses
+  ADR-006.
+- Couples to ADR-075: a resumed rework must explicitly re-enable edits the chat
+  preamble forbade.
+
+**Alternatives Considered:**
+- **Keep new-session as the default:** rejected — discards the exact context (the
+  critique conversation) that rework most needs; the deliberate flip to `resume`
+  is the whole value.
+- **Resume but never fall back (hard-fail when the session is gone):** rejected —
+  an unresumable session is common after long idles/crashes; a silent, observable
+  fallback keeps rework moving.
+- **Special-case idle sessions to force new-session (avoid the respawn cost):**
+  rejected — the respawn cost is what buys the critique context back; surface it,
+  don't avoid it.
+
+---
+
+### ADR-079: Review-diff completeness with dirty-state protocol and scope switcher
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** The review gate shows exactly one diff:
+`workspace.baseCommit..branch`. A reviewer cannot see only what changed since
+their last visit, only the latest node's output, or uncommitted working-tree
+edits; and a dirty worktree at gate time (uncommitted/untracked work) is
+invisible, so reviews silently miss it. Closing this needs both more diff scopes
+and an explicit protocol for dirty state.
+
+**Decision:** Add a 4-mode diff scope switcher and a pre-review dirty-state
+protocol; the gate is never blocked by dirty state.
+
+1. **Pre-review dirty detection.** When a review gate opens, the runner runs
+   `statusPorcelain` (incl. untracked) — **no auto-commit**. A dirty worktree
+   does NOT block the gate; the gate payload carries a `dirtySummary` (file list
+   + staged/unstaged/untracked counts).
+2. **Reviewer's explicit dirty-resolution** (recorded on
+   `hitl_requests.dirty_resolution` + audit):
+   - **Commit as snapshot** — reuse `snapshotDirtyWorktree` (auto-message
+     `"wip after node <id>"`); scopes recompute after the tip moves.
+   - **Discard** — NEW primitive `git restore --staged --worktree . &&
+     git clean -fd` (`-fd` not `-fdx` per ADR-076, scoped `-C <worktree>`, hard
+     `.maister/`-containment assert, followed by re-materialization per ADR-076);
+     v1 is all-or-nothing.
+   - **Proceed as-is** — review the committed state; a persistent dirty badge
+     stays.
+   Every executed choice also deletes the ADR-075 chat-checkpoint ref (so the L3
+   sensor re-anchors — no false un-discard). The choice is part of review, not a
+   precondition.
+3. **4-mode scope switcher** — a `scope` query param on
+   `GET /api/runs/{runId}/diff` (enum allow-list, default `run`), all sharing the
+   [ADR-066](#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)
+   `prepareDiff` pipeline + byte-cap truncation guard:
+   - `run` (default): `workspace.baseCommit..branch` (current behavior).
+   - `since-last-review`: `<prev-review-visit-sha>..branch`; the branch tip is
+     recorded per review-gate visit in the NEW column
+     `hitl_requests.review_tip_sha`.
+   - `last-node`: `<pre-attempt-checkpoint-sha>..branch` for the latest completed
+     agent node, based on the ADR-076 checkpoint refs (exact even with zero/many
+     agent commits).
+   - `uncommitted`: `HEAD` vs working tree (tracked) + untracked rendered as
+     additions, via a NEW `git diff HEAD`+untracked helper that runs under a temp
+     `GIT_INDEX_FILE` (intent-to-add) and NEVER mutates the real index.
+4. **Graceful degrade.** A scope whose base ref is missing (pre-feature run,
+   first review visit) is hidden/disabled with a reason, never an error.
+
+**Consequences:**
+- Reviewers can scope the diff to the review delta, the last node, or uncommitted
+  work, and dirty state is explicit with three recorded resolutions instead of
+  silently missed.
+- The discard primitive is hard-guarded against escaping the worktree and
+  re-materializes capability bundles afterward; `.maister/` is never touched.
+- New columns `hitl_requests.review_tip_sha` + `hitl_requests.dirty_resolution`
+  (migration 0040); a new
+  `POST /api/runs/{runId}/hitl/{hitlRequestId}/dirty-resolution` route; amends
+  ADR-066 (new scopes) and reuses the M27 snapshot.
+- No engine bump (no new flow DSL).
+
+**Alternatives Considered:**
+- **Auto-commit the dirty worktree at gate open:** rejected — silently rewrites
+  the reviewer's pending work into history; detection + explicit choice is safer.
+- **Block the gate until the worktree is clean:** rejected — turns a review into
+  a chore and contradicts the "review the work as it is" model; dirty is
+  annotated, never a precondition.
+- **`commit_set`-artifact base for `last-node`:** rejected — checkpoint refs are
+  exact with zero or many agent commits; commit_set is a lossy proxy.
+- **Mutate the index for the `uncommitted` diff (`git add -N`):** rejected —
+  corrupts the live index; a temp `GIT_INDEX_FILE` keeps the real index
+  untouched.
 
 ---
 

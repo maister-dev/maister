@@ -53,6 +53,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
 | `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
 | `review_comments`             | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK). | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver) |
+| `gate_chat_messages`          | **(M30 — Designed, migration `0040`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`. | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author) |
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
@@ -1003,6 +1004,19 @@ One immutable row per node execution; `attempt` auto-increments per
   decision?,                                // human decision recorded on finish
   workspacePolicy?,                         // 'keep' | 'rewind-to-node-checkpoint'
                                             //   | 'fresh-attempt'
+  checkpointRef?,                           // (M30 — Designed, ADR-076, migration
+                                            //   0040) refs/maister/checkpoints/
+                                            //   <runId>/<nodeAttemptId>; rewind
+                                            //   target is <ck>^ (pre-attempt tip)
+  autoRetry,                                // (M30 — Designed, ADR-077, 0040)
+                                            //   boolean DEFAULT false; true when
+                                            //   this attempt is an auto-retry
+  sessionPolicy?,                           // (M30 — Designed, ADR-078, 0040)
+                                            //   effective rework session policy
+                                            //   snapshot: 'resume' | 'new_session'
+  sessionFallback,                          // (M30 — Designed, ADR-078, 0040)
+                                            //   boolean DEFAULT false; resume fell
+                                            //   back to new_session
   reworkFromNode?,                          // origin node when this attempt is a
                                             //   rework re-entry
   ownerUserId?,                             // M11b takeover owner (FK -> users.id,
@@ -1285,6 +1299,12 @@ on `(project_id, created_at)`. Cascade chain: deleting a project drops all its
   humanConfidence?,              // (M17 — Implemented, 0024) real 0..1 responder
                                  //   self-report; written at respond time; also
                                  //   echoed into response as { confidence }
+  reviewTipSha?,                 // (M30 — Designed, 0040) branch tip SHA stamped
+                                 //   per review-gate visit; base for the
+                                 //   since-last-review diff scope (ADR-079)
+  dirtyResolution?,              // (M30 — Designed, 0040) 'commit'|'discard'
+                                 //   |'proceed' reviewer dirty-worktree choice
+                                 //   (nullable; ADR-079)
   respondedAt?, createdAt
 }
 ```
@@ -1344,6 +1364,39 @@ step — they never reach the side-effect. Permission rows additionally
 carry `schema.supervisorSessionId` so the web tier can route the
 deferred resolution to the right supervisor session without an extra
 round-trip.
+
+## `gate_chat_messages`
+
+**(M30 — Designed, [ADR-075](decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0040`.)**
+Answer-only gate-chat turns between a reviewer and the parked agent at a
+`human`/`form` HITL pause. See
+[`system-analytics/hitl.md`](system-analytics/hitl.md) §Gate-chat.
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  runId,                          // FK -> runs.id (cascade)
+  hitlRequestId,                  // FK -> hitl_requests.id (cascade) — the pause
+  nodeId,                         // node id of the gate in the compiled graph
+  gateAttempt,                    // int — gate visit number (iteration tag)
+  role: 'user' | 'agent',         // turn author side
+  authorUserId?,                  // FK -> users.id (SET NULL); null for agent turns
+  authorLabel,                    // text snapshot — survives user deletion
+  body,                           // turn text
+  acpSessionId?,                  // session that produced/answered the turn
+                                  //   (server-only; never in the public DTO)
+  seq,                            // int — monotonic per (hitl_request_id)
+  mutationReverted,               // boolean DEFAULT false; L3 reverted a mutation
+                                  //   made during this turn (DD11)
+  createdAt
+}
+```
+
+**Write guard.** Rows are inserted only at an available pause (DD2):
+`runs.status ∈ {NeedsInput, NeedsInputIdle}` AND a pending `hitl_requests` row
+(`responded_at IS NULL`, `kind ∈ {human, form}`) AND `runs.acp_session_id` set.
+A chat turn NEVER touches `runs.status` (no `→Running`) and NEVER writes
+`hitl_requests.responded_at`. Indexes: `(run_id)`, `(hitl_request_id)`.
 
 ## `review_comments`
 

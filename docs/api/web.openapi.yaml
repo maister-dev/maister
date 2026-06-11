@@ -1836,6 +1836,25 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [run, since-last-review, last-node, uncommitted]
+            default: run
+          description: |
+            **(M30 — Designed, ADR-079)** Diff base selection (allow-list
+            validated; default `run`). `run`: `workspace.baseCommit..branch`
+            (current behavior). `since-last-review`: `<prev-review-visit-sha>..branch`
+            from `hitl_requests.review_tip_sha`. `last-node`:
+            `<pre-attempt-checkpoint-sha>..branch` for the latest completed agent
+            node (ADR-076 checkpoint ref). `uncommitted`: `HEAD` vs working tree
+            (tracked) + untracked as additions, rendered under a temp
+            `GIT_INDEX_FILE` intent-to-add — the real index is NEVER mutated. A
+            scope whose base ref is missing is hidden/disabled with a reason,
+            never an error. All scopes share the ADR-066 `prepareDiff` pipeline +
+            byte-cap truncation guard.
       responses:
         "200":
           description: Workspace diff + changed-files summary.
@@ -2207,6 +2226,204 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/hitl/{hitlRequestId}/chat:
+    get:
+      tags: [hitl]
+      summary: (M30 — Designed, ADR-075) List gate-chat messages for a HITL pause
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`). Returns the ordered
+        `gate_chat_messages` for this pause plus the DD2 `available` flag.
+        `runId`/`hitlRequestId` are url-params. The response DTO never includes
+        `acp_session_id` or `author_user_id` (server-only).
+      operationId: getRunHitlChat
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: hitlRequestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Ordered gate-chat messages + availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [available, messages]
+                properties:
+                  available:
+                    type: boolean
+                    description: DD2 availability for this pause.
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        id: { type: string }
+                        hitlRequestId: { type: string, format: uuid }
+                        nodeId: { type: string }
+                        gateAttempt: { type: integer }
+                        role: { type: string, enum: [user, agent] }
+                        authorLabel: { type: string, nullable: true }
+                        body: { type: string }
+                        seq: { type: integer }
+                        mutationReverted: { type: boolean }
+                        createdAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [hitl]
+      summary: (M30 — Designed, ADR-075) Send an answer-only gate-chat turn
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`). Sends an answer-only question to
+        the parked agent at a `human`/`form` pause and streams the reply as a
+        `session.chat_turn` SSE event. The body carries ONLY `{message}`; the
+        supervisor session id, run slug, and the server-derived `stepId`
+        (`gate-chat-<hitlRequestId>`, dash not colon) are server-state.
+
+        **Availability (DD2):** `runs.status ∈ {NeedsInput, NeedsInputIdle}` AND
+        the open HITL `kind ∈ {human, form}` AND `runs.acp_session_id ≠ null`; a
+        `permission`-kind pause, a `HumanWorking` run, or a session-less run
+        returns 409 `PRECONDITION` (the UI renders a disabled empty-state).
+
+        **Never resolves the HITL / never `→Running` (DD3):** the turn persists a
+        `gate_chat_messages` user row, prompts the session (live), or chat-resumes
+        (`NeedsInputIdle` → respawn + `session/resume` + `markResumed` + keepalive
+        bump — ~$0.28, surfaced in the UI), then persists the agent row with the
+        next `seq`. It NEVER writes `hitl_requests.responded_at` and NEVER drives
+        `→Running`.
+
+        **Workspace-neutrality (DD11):** L1 read-only preamble (server-side), L2
+        best-effort permission auto-deny (`readOnlyTurn`), and the unconditional
+        fail-closed L3 mutation sensor; a detected mutation is reverted to the
+        first-turn baseline and the reply carries `mutationReverted: true`. Chat
+        input is NEVER Mustache-evaluated.
+
+        **X-2PC:** the user row is written BEFORE the prompt; the agent row + `seq`
+        AFTER; the in-flight prompt deferred is released on every failure path.
+      operationId: postRunHitlChat
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: hitlRequestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              additionalProperties: false
+              properties:
+                message: { type: string, minLength: 1 }
+      responses:
+        "202":
+          description: Turn accepted; the reply streams as a `session.chat_turn` SSE event.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  ok: { type: boolean }
+                  seq: { type: integer, description: seq of the persisted user turn. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Gate-chat unavailable for this pause (permission-kind, HumanWorking, or no session), or the idle respawn failed (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/hitl/{hitlRequestId}/dirty-resolution:
+    post:
+      tags: [hitl]
+      summary: (M30 — Designed, ADR-079) Resolve a dirty worktree at a review gate
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("answerHitl")`). Records the reviewer's chosen
+        resolution for a dirty worktree surfaced in the review gate's
+        `dirtySummary`. `runId` and `hitlRequestId` are url-params; the worktree
+        path, run slug, and node id are server-state (never body-trusted). The
+        body carries only `{choice}`.
+
+        The gate is NEVER blocked by a dirty worktree — this resolution is part
+        of review, not a precondition. Choices:
+        - **commit**: snapshot the dirty worktree via `snapshotDirtyWorktree`
+          (auto-message `"wip after node <id>"`); the branch tip moves and diff
+          scopes recompute.
+        - **discard**: `git restore --staged --worktree . && git clean -fd`
+          (`-fd`, never `-fdx`), scoped `-C <worktree>` with a hard
+          `.maister/`-containment assert, then re-runs launch materialization
+          (ADR-076). v1 is all-or-nothing.
+        - **proceed**: review the committed state; a persistent dirty badge stays.
+
+        Order of operations (X-2PC): the `dirty_resolution` intent + audit row is
+        written under a row-level lock BEFORE the git side-effect; the git op runs
+        after. A git failure (discard escapes the worktree, snapshot/clean fails)
+        maps to 409 (`CONFLICT`/`PRECONDITION`), leaves the gate open, and records
+        no resolution. Every executed choice also deletes the gate-chat checkpoint
+        ref so the ADR-075 L3 sensor re-anchors (no false un-discard).
+      operationId: postRunHitlDirtyResolution
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: hitlRequestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [choice]
+              additionalProperties: false
+              properties:
+                choice:
+                  type: string
+                  enum: [commit, discard, proceed]
+                  description: Reviewer's dirty-worktree resolution (server validates against the allow-list).
+      responses:
+        "200":
+          description: Resolution recorded (and the git side-effect applied for commit/discard).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  ok: { type: boolean }
+                  choice: { type: string, enum: [commit, discard, proceed] }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Git side-effect failed (discard escaped the worktree, or snapshot/clean failed); the gate stays open and no resolution is recorded (`CONFLICT` / `PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:
       tags: [hitl]
@@ -7882,6 +8099,12 @@ components:
           type: string
           enum: [Pending, Running, Succeeded, Failed, NeedsInput, Reworked, Stale]
         attempt: { type: integer }
+        autoRetry:
+          type: boolean
+          description: |
+            (M30 — Designed, ADR-077) True when the latest attempt for this node
+            was an automatic retry (`node_attempts.auto_retry`) scheduled by the
+            node's `retry_policy`. Absent/false on manually-driven attempts.
         gates:
           type: array
           items: { $ref: "#/components/schemas/GraphGateStatus" }
@@ -8075,9 +8298,9 @@ components:
           type: string
           description: |
             Required when `decision` triggers rework; MUST be in
-            `schema.workspacePolicies`. M11a executes `keep`;
-            `rewind-to-node-checkpoint` / `fresh-attempt` are recorded but their
-            execution is M11b.
+            `schema.workspacePolicies`. **(M30 — Designed, ADR-076)** all three
+            execute against the node's pre-attempt checkpoint — `keep` (no-op),
+            `rewind-to-node-checkpoint`, `fresh-attempt`; pre-M30 only `keep` ran.
           enum: [keep, rewind-to-node-checkpoint, fresh-attempt]
     ReviewComment:
       type: object

@@ -147,8 +147,9 @@ nodes:
         # below (that type is M18-Designed).
     rework:
       allowedTargets: [implement]
-      # M11a executes `keep`; rewind-to-node-checkpoint / fresh-attempt are
-      # validated + recorded but execution is deferred to M11b.
+      # (M30 — Designed, ADR-076) all three execute against the node's
+      # pre-attempt checkpoint: keep (no-op), rewind-to-node-checkpoint,
+      # fresh-attempt. Pre-M30 only keep ran.
       workspacePolicies: [keep, rewind-to-node-checkpoint, fresh-attempt]
       maxLoops: 3
       commentsVar: review_comments
@@ -375,6 +376,87 @@ Two halves remain deferred:
 - **`human_edit` / `merge` node TYPES — M18 (Designed).** The first-class
   `human_edit` node type (shown in the example above) and the `merge` node type +
   conflict-handoff promotion are M18; M11b implements neither.
+
+## Node `retry_policy` (M30 — Designed)
+
+**(M30 — Designed, [ADR-077](decisions.md#adr-077-node-level-retry-policy).)** An
+optional `retry_policy` on `ai_coding` / `cli` nodes auto-retries the node on
+transient infrastructure failures without bouncing the run to a human.
+
+```yaml
+nodes:
+  - id: implement
+    type: ai_coding
+    retry_policy:
+      attempts: 3                     # integer >= 1 (total attempts incl. the first)
+      on_errors: [SPAWN, EXECUTOR_UNAVAILABLE, ACP_PROTOCOL, CHECKPOINT]
+      workspace: rewind-to-node-checkpoint
+```
+
+- **`attempts`** — integer `>= 1`; total attempts including the first. `< 1` →
+  `MaisterError("CONFIG")` at manifest load.
+- **`on_errors`** — the `MaisterError.code`s that trigger an auto-retry, validated
+  at manifest load against the **retryable allow-list**
+  `{ SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL }`. Any other code (e.g.
+  `PRECONDITION`, `CONFIG`, `CONFLICT`) or an unknown value → `CONFIG`. It is an
+  allow-list, not a deny-list: only infrastructure codes retry; logic/precondition
+  failures still stop the run.
+- **`workspace`** — the workspace policy applied (via the ADR-076 checkpoint engine)
+  BEFORE each retry attempt; `rewind-to-node-checkpoint` resets to the pre-attempt
+  checkpoint.
+
+On a failure whose `code ∈ on_errors` with attempts remaining, the engine applies
+`workspace`, then appends a **fresh-session** attempt
+(`node_attempts.auto_retry = true`), respecting the global concurrency cap and
+never bypassing gates. Exhausting `attempts` ends in normal node failure plus a
+distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
+(zod refine, else `CONFIG`).
+
+**Engine floor.** Declaring `retry_policy` (or the
+[ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default)
+`session_policy` / `defaults`) requires `compat.engine_min >= 1.4.0`, else
+`CONFIG`; `MAISTER_ENGINE_VERSION` bumps `1.3.0 → 1.4.0` (see
+[`configuration.md`](configuration.md) §M30 engine bump). Flows using none of
+these keys stay valid at any `engine_min`.
+
+## Rework `session_policy` (M30 — Designed)
+
+**(M30 — Designed, [ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default).)**
+`session_policy` controls whether a rework re-uses the prior attempt's agent
+session (keeping the critique context) or starts fresh.
+
+```yaml
+defaults:
+  session_policy: resume            # flow-level default for all rework
+
+nodes:
+  - id: implement
+    type: ai_coding
+    session_policy: resume          # node-level override
+    rework:
+      allowedTargets: [implement]
+      session_policy: new_session   # per-transition override (highest priority)
+```
+
+- **Values** — `resume | new_session`.
+- **Resolution (highest wins)** — rework-transition `rework.session_policy` → node
+  `session_policy` → flow `defaults.session_policy` → engine default **`resume`** (a
+  deliberate flip from the pre-M30 implicit `new_session`).
+- **`resume`** resumes the prior attempt's `acp_session_id` via the
+  [ADR-006](decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume) idle
+  checkpoint / ACP `session/resume` path (the ~$0.28 respawn buys back the critique
+  context — surfaced in the UI). An idle/checkpointed prior session still resumes.
+- **Fallback** — if the prior session is gone or unresumable, the engine falls back
+  to `new_session` and sets `node_attempts.session_fallback = true`. The effective
+  policy is snapshotted into `node_attempts.session_policy`.
+- **DD11 interplay** — when a rework resumes the SAME session, the rework prompt MUST
+  lift any gate-chat read-only restriction
+  ([ADR-075](decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)),
+  else the agent may refuse legitimate edits.
+- **Manual-takeover** ([ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status))
+  is unaffected (no live session to resume); slash-in-existing dispatch is unchanged.
+
+Engine floor `>= 1.4.0` (shared with `retry_policy`; see above).
 
 ## Gate execution (M11a — Implemented)
 

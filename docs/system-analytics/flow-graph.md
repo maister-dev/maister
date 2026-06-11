@@ -46,9 +46,17 @@ valid by compiling to single-action nodes, so this domain governs **all** runs.
   row.
 - **Decision** — a declared human outcome on a `finish.human` node (e.g.
   `approve`, `rework`); maps through `transitions` to a target node id.
-- **Workspace policy** — declared rework worktree treatment: `keep` (M11a),
-  `rewind-to-node-checkpoint` / `fresh-attempt` (validated + recorded, execution
-  **M11b**).
+- **Workspace policy** — declared rework worktree treatment: `keep` (no-op),
+  `rewind-to-node-checkpoint`, `fresh-attempt`. **(M30 — Designed, ADR-076)** all
+  three execute against a per-attempt node checkpoint; pre-M30 only `keep` ran and
+  the other two were validated + recorded but not executed.
+- **Node checkpoint** — **(M30 — Designed, ADR-076)** a namespaced dangling git
+  ref `refs/maister/checkpoints/<runId>/<nodeAttemptId>` capturing HEAD + tracked
+  + untracked (ignored excluded) before each `ai_coding`/`cli` attempt, parented
+  on the current branch tip and recorded on `node_attempts.checkpoint_ref`; the
+  rewind target is `<ck>^` (the pre-attempt tip). The same machinery backs the
+  gate-chat neutrality baseline (ADR-075) and the review-diff `last-node` scope
+  (ADR-079).
 - **Rework config** — `rework.{ allowedTargets[], workspacePolicies[], maxLoops,
   commentsVar }` on a node; bounds and routes the loop.
 
@@ -302,6 +310,43 @@ route, its two-phase commit, and `hitl_requests.response` /
 `input-<stepId>.json` are untouched. Serialization format + guard rules:
 [`review-comments.md`](review-comments.md).
 
+### Workspace policy execution + node checkpoints (M30 — Designed)
+
+**(M30 — Designed, [ADR-076](../decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture)).**
+Closes the M11b execution deferral: the runner captures a node checkpoint before
+every `ai_coding`/`cli` attempt and applies the rework `workspacePolicy` against
+it. `keep` is a no-op; `rewind-to-node-checkpoint` and `fresh-attempt` actually
+execute (pre-M30 they were parsed and recorded only).
+
+```mermaid
+flowchart TD
+    A(["ai_coding / cli attempt starts"]) --> B["captureCheckpoint: temp-index commit of HEAD + tracked + untracked (ignored excluded), parented on the current tip, written to refs/maister/checkpoints/runId/nodeAttemptId"]
+    B --> C["record node_attempts.checkpoint_ref (branch NOT advanced)"]
+    C --> D["run the attempt"]
+    D --> E{"rework workspacePolicy?"}
+    E -- keep --> F["no-op (worktree left as-is)"]
+    E -- "rewind-to-node-checkpoint" --> G["git reset --hard ck^, then overlay the captured tree UNSTAGED; attempt commits discarded; captured-untracked return untracked; attempt-created untracked survive"]
+    E -- "fresh-attempt" --> H["git reset --hard ck^ + git clean -fd (KEEP ignored) + re-run launch materialization of capability bundles"]
+    F --> I(["next attempt / finish"])
+    G --> I
+    H --> I
+```
+
+The checkpoint commit is parented on the then-current branch tip, so `<ck>^` is
+the pre-attempt tip for free; the rewind target is always `<ck>^`, **never**
+`git reset --hard <checkpoint>` (that would graft the temp-index commit onto the
+run branch and convert captured-untracked files into tracked ones). `fresh-attempt`
+uses `git clean -fd` (not `-fdx`): ignored build caches (`node_modules`, `.next/`,
+`target/`, `.venv/`) and an ignored `.maister/` survive. Because launch-time
+capability bundles land untracked + un-ignored, `git clean -fd` removes them, so
+`fresh-attempt` re-runs the idempotent launch materialization helper afterward
+(consumer-project review gates then list materialized artifacts in `dirtySummary`
+— known v1 noise; dogfood unaffected). Rewind/discard are worktree-scoped
+(`-C <worktreePath>`) and a containment assertion hard-blocks the policy unless
+`MAISTER_RUNTIME_ROOT` resolves outside the worktree's `repo_path`, so the run
+artifacts at `runtimeRoot/.maister/<slug>/runs/<runId>/` are never reachable by a
+git mutation.
+
 ### Gate dispatch by kind
 
 ```mermaid
@@ -383,6 +428,34 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   manifest-derived allow-list stored on the `hitl_requests` row at creation time
   (server-state); an undeclared decision is refused **before** any artifact write
   or state mutation.
+- **(M30 — Designed, ADR-076)** Before each `ai_coding`/`cli` attempt the runner
+  captures a node checkpoint (HEAD + tracked + untracked, ignored excluded) as a
+  dangling ref parented on the current tip and records
+  `node_attempts.checkpoint_ref`; the checkpoint commit MUST NOT be reachable from
+  the run branch (the promoted history stays clean).
+- **(M30 — Designed, ADR-076)** `rewind-to-node-checkpoint` resets to `<ck>^` and
+  overlays the captured tree **unstaged** (captured-untracked return untracked,
+  attempt-created untracked survive, attempt commits discarded); `fresh-attempt`
+  resets to `<ck>^` + `git clean -fd` (KEEPS ignored files) + re-runs launch
+  materialization; `keep` is a no-op. The engine NEVER runs
+  `git reset --hard <checkpoint>`.
+- **(M30 — Designed, ADR-076)** Checkpoint apply is worktree-scoped
+  (`-C <worktreePath>`) and MUST NOT touch run artifacts at
+  `runtimeRoot/.maister/<slug>/runs/<runId>/`; a containment assertion hard-blocks
+  the policy unless `MAISTER_RUNTIME_ROOT` resolves outside the worktree's
+  `repo_path`.
+- **(M30 — Designed, ADR-077)** A node with `retry_policy` auto-retries on a failure
+  whose `MaisterError.code` is in the node's `on_errors` allow-list
+  `{SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL}` while attempts remain;
+  each retry is a fresh-session `node_attempts` row with `auto_retry = true`, applies
+  the node's `workspace` policy first, respects the global concurrency cap, and never
+  bypasses gates. Exhausting `attempts` ends in normal failure + a distinct
+  exhaustion signal.
+- **(M30 — Designed, ADR-078)** A rework dispatch resolves `session_policy`
+  highest-wins (rework-transition → node → flow `defaults` → engine default
+  `resume`); `resume` resumes the prior attempt's `acp_session_id`, falling back to a
+  fresh session with `node_attempts.session_fallback = true` when unresumable; the
+  effective policy is snapshotted into `node_attempts.session_policy`.
 - `rework.maxLoops` bounds the loop (plus a hard const ceiling); exhausting it
   ends the run `Failed` with a clear error — never an unbounded cycle.
 - M11a `gate_results` **feed but do not gate promotion**; refusing a merge on an
@@ -420,6 +493,22 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **Unknown gate kind** → `CONFIG`.
 - **Cycle without `rework.maxLoops`** (graph cycle detection) → `CONFIG`.
 - **Unsupported workspace policy** → `CONFIG`.
+- **(M30 — Designed, ADR-076) Crash between checkpoint capture and attempt** → the
+  dangling `refs/maister/checkpoints/*` ref is orphaned; harmless and GC'd by the
+  worktree sweeper, reconcile tolerates it.
+- **(M30 — Designed, ADR-076) Git failure during checkpoint capture/apply** →
+  `MaisterError("CHECKPOINT")` (existing code, no new taxonomy member).
+- **(M30 — Designed, ADR-076) `MAISTER_RUNTIME_ROOT` resolves inside a
+  `repo_path`** → the policy is hard-blocked before any git mutation (a
+  non-ignored artifacts path could otherwise be reached by `git clean -fd`).
+- **(M30 — Designed, ADR-077) `retry_policy.on_errors` carries a non-retryable
+  code** (`PRECONDITION`/`CONFIG`/`CONFLICT`/unknown) → `CONFIG` at manifest load
+  (allow-list `{SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL}`).
+- **(M30 — Designed, ADR-077) `retry_policy` on a node that is not `ai_coding`/`cli`,
+  or `attempts < 1`** → `CONFIG` at manifest load.
+- **(M30 — Designed, ADR-078) Rework `session_policy: resume` but the prior session
+  is gone/unresumable** → fall back to a fresh session + `session_fallback = true`
+  (observable), never a hard failure.
 - **Human `decisions` targeting an undeclared transition** → `CONFIG` at load.
 - **Both / neither of `steps`/`nodes`** → `CONFIG`.
 - **Graph flow without `compat.engine_min >= 1.1.0`** → `CONFIG`.
@@ -501,7 +590,10 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
   [ADR-063 Structured output + run-context (M26 — P1 Implemented, P7 Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
-  [ADR-074 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates).
+  [ADR-074 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
+  [ADR-076 workspacePolicy execution + node checkpoints (M30 — Designed)](../decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture),
+  [ADR-077 Node-level retry policy (M30 — Designed)](../decisions.md#adr-077-node-level-retry-policy),
+  [ADR-078 Rework session policy (M30 — Designed)](../decisions.md#adr-078-rework-session-policy-with-resume-by-default).
 - Spec (M26 — P1 Implemented, P7 Designed):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
