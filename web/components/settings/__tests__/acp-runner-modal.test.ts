@@ -53,8 +53,8 @@ describe("AcpRunnerModal", () => {
     expect(markup).toContain("fieldId");
     expect(markup).toContain("fieldModel");
     expect(markup).toContain("fromPreset");
-    // the model field is the discovery-backed combobox, not a bare text input
-    expect(markup).toContain('role="combobox"');
+    // the model field is the discovery-backed input + suggestion affordances
+    expect(markup).toContain('aria-label="fieldModel"');
     expect(markup).toContain("modelSuggestions.refresh");
   });
 

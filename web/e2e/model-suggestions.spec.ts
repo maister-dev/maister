@@ -15,17 +15,28 @@ test("runner modal surfaces grouped model-discovery suggestions + accepts a cust
 
   await expect(modal).toBeVisible();
 
-  // The model field is now a combobox (not a bare text input).
-  await expect(modal.getByRole("combobox", { name: "Model" })).toBeVisible();
+  // The model field is a free-text input named "Model".
+  await expect(modal.getByRole("textbox", { name: "Model" })).toBeVisible();
 
-  // Discovery resolves on open → grouped suggestions render with origin labels.
-  await expect(modal.getByText("Agent", { exact: true })).toBeVisible();
+  // Discovery resolves on open → grouped suggestions render with origin labels
+  // (Chip) and clickable model chips ("<id> · <displayName>"). Generous timeout
+  // absorbs the next-dev cold-compile of the proxy route on the first hit.
+  await expect(modal.getByText("Agent", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(modal.getByText("Curated", { exact: true })).toBeVisible();
-  await expect(modal.getByText("glm-5.1", { exact: true })).toBeVisible();
-  await expect(modal.getByText("glm-5", { exact: true })).toBeVisible();
+  await expect(
+    modal.getByRole("button", { name: /glm-5\.1/ }).first(),
+  ).toBeVisible();
 
-  // Free text is always valid (allowsCustomValue) — unknown model is an
-  // advisory hint, never a validation error.
+  // Clicking a suggestion chip fills the model input.
+  await modal
+    .getByRole("button", { name: /glm-5\.1/ })
+    .first()
+    .click();
+  await expect(modal.getByLabel("Model")).toHaveValue("glm-5.1");
+
+  // Free text is always valid — unknown model is an advisory hint, not an error.
   await modal.getByLabel("Model").fill("my-custom-model");
   await expect(modal.getByLabel("Model")).toHaveValue("my-custom-model");
   await expect(

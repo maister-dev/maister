@@ -45,12 +45,13 @@ function render(
 }
 
 describe("ModelAutocomplete", () => {
-  it("renders the model combobox field with its label", () => {
+  it("renders the model field with its label", () => {
     const markup = render({ groups });
 
     expect(markup).toContain("fieldModel");
-    // a text input the user types the model id into
-    expect(markup).toContain('role="combobox"');
+    // a free-text input (any model id is valid) the user types the model id into
+    expect(markup).toContain('aria-label="fieldModel"');
+    expect(markup).toContain('type="text"');
   });
 
   it("renders each group's label, model ids, and origin badges from seeded groups", () => {

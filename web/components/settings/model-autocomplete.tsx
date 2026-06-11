@@ -3,15 +3,7 @@
 import type { ReactElement } from "react";
 
 import { useTranslations } from "next-intl";
-import {
-  Chip,
-  ComboBox,
-  Header,
-  Input,
-  Label,
-  ListBox,
-  Spinner,
-} from "@heroui/react";
+import { Chip, Spinner } from "@heroui/react";
 
 export type ModelGroup = {
   source: string;
@@ -38,6 +30,12 @@ const inputClass =
 const fieldLabel =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute";
 
+// Model field = a free-text input (any model id is always valid — unknown is an
+// advisory hint, never a validation error) PLUS discovery-backed suggestions
+// rendered as grouped, origin-badged chips that fill the input on click. A
+// native <input> (matching the modal's other fields) is used deliberately
+// instead of a dropdown combobox: the suggestion set is small and always
+// visible, and a Popover-in-Modal combobox is brittle.
 export function ModelAutocomplete({
   value,
   onValueChange,
@@ -49,7 +47,7 @@ export function ModelAutocomplete({
   label,
 }: ModelAutocompleteProps): ReactElement {
   const t = useTranslations("settings");
-  const hasModels = groups.some((group) => group.models.length > 0);
+  const visibleGroups = groups.filter((group) => group.models.length > 0);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -66,46 +64,15 @@ export function ModelAutocomplete({
         </button>
       </div>
 
-      <ComboBox
-        allowsCustomValue
+      <input
         aria-label={label}
-        inputValue={value}
-        menuTrigger="focus"
-        onInputChange={onValueChange}
-      >
-        <Label className="sr-only">{label}</Label>
-        <ComboBox.InputGroup className={inputClass}>
-          <Input
-            autoComplete="off"
-            className="w-full bg-transparent outline-none"
-            spellCheck={false}
-          />
-          <ComboBox.Trigger />
-        </ComboBox.InputGroup>
-        <ComboBox.Popover>
-          <ListBox>
-            {groups
-              .filter((group) => group.models.length > 0)
-              .map((group) => (
-                <ListBox.Section key={group.source}>
-                  <Header>{group.label}</Header>
-                  {group.models.map((model) => (
-                    <ListBox.Item
-                      key={`${group.source}:${model.id}`}
-                      id={model.id}
-                      textValue={model.id}
-                    >
-                      {model.displayName
-                        ? `${model.id} · ${model.displayName}`
-                        : model.id}
-                      <ListBox.ItemIndicator />
-                    </ListBox.Item>
-                  ))}
-                </ListBox.Section>
-              ))}
-          </ListBox>
-        </ComboBox.Popover>
-      </ComboBox>
+        autoComplete="off"
+        className={inputClass}
+        spellCheck={false}
+        type="text"
+        value={value}
+        onChange={(e) => onValueChange(e.target.value)}
+      />
 
       {unknownModel ? (
         <span className="font-mono text-[10.5px] text-mute">
@@ -125,41 +92,37 @@ export function ModelAutocomplete({
             <Spinner className="h-3 w-3" />
             {t("modelSuggestions.loading")}
           </span>
-        ) : !hasModels ? (
+        ) : visibleGroups.length === 0 ? (
           <span className="font-mono text-[10.5px] text-mute">
             {t("modelSuggestions.empty")}
           </span>
         ) : (
-          groups
-            .filter((group) => group.models.length > 0)
-            .map((group) => (
-              <div key={group.source} className="flex flex-col gap-1">
-                <div className="flex items-center gap-1.5">
-                  <Chip
-                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
-                    size="sm"
-                    variant="secondary"
+          visibleGroups.map((group) => (
+            <div key={group.source} className="flex flex-col gap-1">
+              <Chip
+                className="self-start font-mono text-[9px] uppercase tracking-[0.08em]"
+                size="sm"
+                variant="secondary"
+              >
+                {group.label}
+              </Chip>
+              <div className="flex flex-wrap gap-1.5">
+                {group.models.map((model) => (
+                  <button
+                    key={`${group.source}:${model.id}`}
+                    className="rounded-md border border-line bg-paper px-2 py-0.5 font-mono text-[10.5px] text-ink-2 hover:border-amber hover:text-ink"
+                    title={model.displayName ?? model.id}
+                    type="button"
+                    onClick={() => onValueChange(model.id)}
                   >
-                    {group.label}
-                  </Chip>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {group.models.map((model) => (
-                    <button
-                      key={`${group.source}:${model.id}`}
-                      className="rounded-md border border-line bg-paper px-2 py-0.5 font-mono text-[10.5px] text-ink-2 hover:border-amber hover:text-ink"
-                      title={model.displayName ?? model.id}
-                      type="button"
-                      onClick={() => onValueChange(model.id)}
-                    >
-                      {model.displayName
-                        ? `${model.id} · ${model.displayName}`
-                        : model.id}
-                    </button>
-                  ))}
-                </div>
+                    {model.displayName
+                      ? `${model.id} · ${model.displayName}`
+                      : model.id}
+                  </button>
+                ))}
               </div>
-            ))
+            </div>
+          ))
         )}
       </div>
     </div>

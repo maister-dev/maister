@@ -55,9 +55,18 @@ function presetGroup(
   draft: RunnerDraft,
   label: string,
 ): ModelGroup | null {
+  // Dedupe by model id — several presets share a model (e.g. two claude
+  // presets both `claude-sonnet-4-6`), which would collide React keys.
+  const seen = new Set<string>();
   const models = presets
     .filter((preset) => preset.adapter === draft.adapter)
-    .map((preset) => ({ id: preset.model }));
+    .map((preset) => ({ id: preset.model }))
+    .filter((model) => {
+      if (seen.has(model.id)) return false;
+      seen.add(model.id);
+
+      return true;
+    });
 
   if (models.length === 0) return null;
 
