@@ -3,7 +3,7 @@ info:
   title: MAIster — outbound webhooks
   version: "0.1.0"
   description: |
-    Outbound HTTP webhook delivery (ADR-075, Designed). MAIster is the
+    Outbound HTTP webhook delivery (ADR-075, Implemented). MAIster is the
     **server** here: the `webhook_delivery` scheduler job POSTs a signed JSON
     envelope to each subscribed consumer endpoint. The CRUD/admin surface for
     subscriptions, the delivery log, ping, and replay lives in

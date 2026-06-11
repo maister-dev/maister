@@ -25,6 +25,10 @@ without turning recovery sweeps into live-path polling.
   runs the GC bundle (workspace + revision GC + capabilities cleanup) only. It
   does NOT run the keepalive or reconcile sweeps, so the GC cron never transitions
   runs to `Crashed`; that live composition belongs to the `system_sweep` job kind.
+- **`webhook_delivery` job kind** (Implemented, ADR-075) — singleton outbound-webhook
+  drainer (one `webhook_delivery.default` job, 60s cadence, budget `webhookDelivery: 1`)
+  whose handler does fanout + drain + prune each tick. See
+  [outbound-webhooks.md](outbound-webhooks.md).
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
   Implemented, M24) — admin-only CRUD (create / list / update / enable-disable /
   delete) for scheduler jobs.

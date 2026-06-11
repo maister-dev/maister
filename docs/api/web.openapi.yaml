@@ -122,7 +122,7 @@ tags:
     description: M27 MCP capability management — platform-admin and project-scoped MCP servers.
   - name: webhooks
     description: >-
-      Outbound webhooks (ADR-077, Designed) — platform-admin and project-scoped
+      Outbound webhooks (ADR-077, Implemented) — platform-admin and project-scoped
       event-delivery subscriptions, delivery log, ping, replay, and the global
       kill-switch. The wire contract for the delivered payload is in
       `async/outbound-webhooks.asyncapi.yaml`.
@@ -5740,7 +5740,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) List platform webhook subscriptions
       description: |
-        (ADR-077 — Designed.) Admin-only (`requireGlobalRole("admin")`).
+        (ADR-077 — Implemented.) Admin-only (`requireGlobalRole("admin")`).
         Returns every platform-scoped `webhook_subscriptions` row
         (`project_id IS NULL`). Secret values are NEVER returned —
         `signing_secret_ref`, `secondary_signing_secret_ref`, and any
@@ -5785,7 +5785,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Create a platform webhook subscription
       description: |
-        (ADR-077 — Designed.) Admin-only. Creates a platform-scoped
+        (ADR-077 — Implemented.) Admin-only. Creates a platform-scoped
         `webhook_subscriptions` row (`project_id` stays NULL). Mirrors the
         `POST /api/admin/mcp-servers` identifier discipline: the body carries
         config values only — NO cross-resource ids.
@@ -5848,7 +5848,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Get a platform webhook subscription
       description: |
-        (ADR-077 — Designed.) Admin-only. Returns one platform-scoped
+        (ADR-077 — Implemented.) Admin-only. Returns one platform-scoped
         subscription by id. A project-scoped row id (or an unknown id) is
         `404` — platform admin sees only `project_id IS NULL` rows here.
       operationId: getAdminWebhook
@@ -5867,7 +5867,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Update a platform webhook subscription
       description: |
-        (ADR-077 — Designed.) Admin-only. Mutates any of name, url, method,
+        (ADR-077 — Implemented.) Admin-only. Mutates any of name, url, method,
         headers, event_types, signing_secret_ref, secondary_signing_secret_ref,
         or enabled. At least one field required. Secret values must remain
         `env:NAME` references; `signing_secret_ref` may be re-pointed but not
@@ -5905,7 +5905,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Delete a platform webhook subscription
       description: |
-        (ADR-077 — Designed.) Admin-only. Usage-guarded hard delete: refused
+        (ADR-077 — Implemented.) Admin-only. Usage-guarded hard delete: refused
         with `409 CONFLICT` while ANY delivery history (`webhook_deliveries`)
         references the subscription — the per-subscription delivery/attempt
         ledger is append-only audit and is never cascaded away. Retire a live
@@ -5932,7 +5932,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) List delivery log for a platform subscription
       description: |
-        (ADR-077 — Designed.) Admin-only. Paged, newest-first delivery log for
+        (ADR-077 — Implemented.) Admin-only. Paged, newest-first delivery log for
         the subscription, each delivery carrying its full `attempts[]` audit
         trail. `response_snippet`, `lastErrorKind`, and HTTP status are surfaced
         for DLQ inspection. Cursor paging via `cursor`/`limit`.
@@ -5996,7 +5996,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Send a synthetic ping to a platform subscription
       description: |
-        (ADR-077 — Designed.) Admin-only. Builds a synthetic `ping` envelope
+        (ADR-077 — Implemented.) Admin-only. Builds a synthetic `ping` envelope
         (fresh `id`/`deliveryId`, the real subscription), signs it, and POSTs it
         synchronously with the standard delivery headers and a
         `MAISTER_WEBHOOK_TIMEOUT_MS` timeout. The result is returned live and is
@@ -6027,7 +6027,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Replay a platform webhook delivery
       description: |
-        (ADR-077 — Designed.) Admin-only. Re-queues a finished delivery for
+        (ADR-077 — Implemented.) Admin-only. Re-queues a finished delivery for
         another send attempt: under one transaction the row is `SELECT … FOR
         UPDATE`, allow-listed to `status ∈ {delivered, dead}`, then reset to
         `status=pending, attempt_count=0, next_attempt_at=now()`. A `pending`
@@ -6066,7 +6066,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Read the global outbound-webhooks kill-switch
       description: |
-        (ADR-077 — Designed.) Admin-only. Reads `platform_runtime_settings.webhooks_enabled`
+        (ADR-077 — Implemented.) Admin-only. Reads `platform_runtime_settings.webhooks_enabled`
         on the singleton row. When `false`, the `webhook_delivery` scheduler job
         no-ops (no fanout, no delivery) until re-enabled.
       operationId: getAdminWebhookSettings
@@ -6085,7 +6085,7 @@ paths:
       tags: [webhooks, admin]
       summary: (ADR-077) Toggle the global outbound-webhooks kill-switch
       description: |
-        (ADR-077 — Designed.) Admin-only. Sets `platform_runtime_settings.webhooks_enabled`
+        (ADR-077 — Implemented.) Admin-only. Sets `platform_runtime_settings.webhooks_enabled`
         on the singleton row. Disabling pauses all fanout and delivery globally;
         re-enabling resumes pending deliveries from where they paused.
       operationId: patchAdminWebhookSettings
@@ -6118,7 +6118,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) List project webhook subscriptions
       description: |
-        (ADR-077 — Designed.) Requires project membership at `viewer` or above
+        (ADR-077 — Implemented.) Requires project membership at `viewer` or above
         (read). Returns `webhook_subscriptions` rows whose `project_id` matches
         the project identified by `slug`. Platform-scoped rows (`project_id IS
         NULL`) are NOT visible here. Secret values are NEVER returned.
@@ -6144,7 +6144,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) Create a project webhook subscription
       description: |
-        (ADR-077 — Designed.) Any project member writes — allow-list
+        (ADR-077 — Implemented.) Any project member writes — allow-list
         `owner | admin | member`; `viewer` is read-only (`403`). `project_id` is
         derived from the URL `slug` (server-state) — it is NEVER body-controlled.
         Same secret/url/event-type validation as the platform create route.
@@ -6193,7 +6193,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) Get a project webhook subscription
       description: |
-        (ADR-077 — Designed.) Requires project membership at `viewer` or above.
+        (ADR-077 — Implemented.) Requires project membership at `viewer` or above.
         The subscription MUST belong to the project identified by `slug`
         (server-state join); a subscription from another project or a
         platform-scoped row is `404`.
@@ -6214,7 +6214,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) Update a project webhook subscription
       description: |
-        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        (ADR-077 — Implemented.) Write allow-list `owner | admin | member`;
         `viewer` `403`. Subscription must belong to `slug` (mismatch → `404`).
         Same field/secret rules and disable semantics as the platform PATCH.
       operationId: patchProjectWebhook
@@ -6240,7 +6240,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) Delete a project webhook subscription
       description: |
-        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        (ADR-077 — Implemented.) Write allow-list `owner | admin | member`;
         `viewer` `403`. Subscription must belong to `slug` (mismatch → `404`).
         Usage-guarded hard delete: refused `409 CONFLICT` while any delivery
         history exists — disable it instead. `204` only when no delivery has
@@ -6267,7 +6267,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) List delivery log for a project subscription
       description: |
-        (ADR-077 — Designed.) Requires project membership at `viewer` or above.
+        (ADR-077 — Implemented.) Requires project membership at `viewer` or above.
         Subscription must belong to `slug` (mismatch → `404`). Paged,
         newest-first delivery log with per-delivery `attempts[]`.
       operationId: listProjectWebhookDeliveries
@@ -6291,7 +6291,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) Send a synthetic ping to a project subscription
       description: |
-        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        (ADR-077 — Implemented.) Write allow-list `owner | admin | member`;
         `viewer` `403`. Subscription must belong to `slug` (mismatch → `404`).
         Builds, signs, and synchronously POSTs a synthetic `ping` envelope;
         result returned live, never persisted. Empty request body.
@@ -6314,7 +6314,7 @@ paths:
       tags: [webhooks]
       summary: (ADR-077) Replay a project webhook delivery
       description: |
-        (ADR-077 — Designed.) Write allow-list `owner | admin | member`;
+        (ADR-077 — Implemented.) Write allow-list `owner | admin | member`;
         `viewer` `403`. Both the subscription (under `slug`) and the delivery
         (under `{id}`) ownership are server-state joins — any mismatch is `404`.
         Allow-listed to `status ∈ {delivered, dead}`; a `pending` delivery is

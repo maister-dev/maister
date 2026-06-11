@@ -18,7 +18,7 @@ the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
 the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
 `0038`)** `RUN_SCHEDULES` table for user-facing cron schedules, the
 **ADR-072 (Implemented, migration `0039`)** `REVIEW_COMMENTS`
-review-thread table, and the **(Designed, migration `0040`)**
+review-thread table, and the **(Implemented, migration `0040`)**
 outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 `WEBHOOK_DELIVERIES`, `WEBHOOK_DELIVERY_ATTEMPTS` plus the
 `PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-075). For partial views by
@@ -916,12 +916,12 @@ external-operation events) is not drawn until its migrations exist. See
 | `project_tokens` | `project_tokens_owner_idx` | `(owner_user_id)` | User-owned token audit joins. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
 | `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
-| `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-075 Designed)** Project-scope subscription lookup (NULL = platform rows). |
-| `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-075 Designed)** Ordered fanout-pass claim scan. |
-| `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-075 Designed)** Ordered drain-pass claim scan. |
-| `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | **(ADR-075 Designed)** Deliveries-drawer log UI. |
-| `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-075 Designed)** Fanout dedupe invariant. |
-| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-075 Designed)** Attempt history for a delivery. |
-| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_no_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-075 Designed)** One row per attempt number per delivery. |
+| `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-075 Implemented)** Project-scope subscription lookup (NULL = platform rows). |
+| `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-075 Implemented)** Ordered fanout-pass claim scan. |
+| `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-075 Implemented)** Ordered drain-pass claim scan. |
+| `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | **(ADR-075 Implemented)** Deliveries-drawer log UI. |
+| `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-075 Implemented)** Fanout dedupe invariant. |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-075 Implemented)** Attempt history for a delivery. |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_no_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-075 Implemented)** One row per attempt number per delivery. |
 
 Source: `web/lib/db/schema.ts`.

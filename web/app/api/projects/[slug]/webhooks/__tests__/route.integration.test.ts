@@ -1,4 +1,4 @@
-// T12 (ADR-071): project-scope webhook routes against a real testcontainer
+// T12 (ADR-075): project-scope webhook routes against a real testcontainer
 // postgres. TDD RED — the route modules under
 // `app/api/projects/[slug]/webhooks/**` do not exist yet, so every dynamic
 // `import("../route")` throws (missing module) until T12 lands. Docker-only

@@ -2218,7 +2218,7 @@ export type ProjectTokenInsert = typeof projectTokens.$inferInsert;
 export type TokenAuditLogRow = typeof tokenAuditLog.$inferSelect;
 export type TokenAuditLogInsert = typeof tokenAuditLog.$inferInsert;
 
-// Outbound webhooks (ADR-071). Transactional-outbox capture + singleton-drainer
+// Outbound webhooks (ADR-075). Transactional-outbox capture + singleton-drainer
 // fanout/delivery. Secrets are NEVER stored: signing_secret_ref and header values
 // are `env:NAME` references resolved server-side, never plaintext.
 export type WebhookEventType =

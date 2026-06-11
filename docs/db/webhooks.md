@@ -5,7 +5,7 @@ See [`../system-analytics/outbound-webhooks.md`](../system-analytics/outbound-we
 for behavior, the delivery FSM, and the event taxonomy, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
 
-> **Status: Designed.** Migration `0040_outbound_webhooks.sql` (additive,
+> **Status: Implemented.** Migration `0040_outbound_webhooks.sql` (additive,
 > forward-only, no down-migration) adds all four tables and the
 > `platform_runtime_settings.webhooks_enabled` column.
 
@@ -147,4 +147,4 @@ any `webhook_deliveries` row are kept indefinitely for replay and audit.
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Decision record: ADR-075 in [`../decisions.md`](../decisions.md).
-- Source (Designed): `web/lib/db/schema.ts` (migration `0040_outbound_webhooks.sql`).
+- Source (Implemented): `web/lib/db/schema.ts` (migration `0040_outbound_webhooks.sql`).

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Outbound webhooks (**Designed**, ADR-075) is MAIster's generic, vendor-neutral
+Outbound webhooks (**Implemented**, ADR-075) is MAIster's generic, vendor-neutral
 **event-delivery primitive**: it turns curated run/HITL/gate lifecycle
 transitions into signed HTTP POSTs to operator-registered endpoints. This domain
 owns the full path from capture to delivery — a transactional outbox written in
@@ -20,7 +20,7 @@ stream (ADR-022) — webhook events are CURATED lifecycle facts, never raw
 
 ## Domain entities
 
-- **`webhook_subscriptions`** (Designed) — one registered endpoint: `{ id,
+- **`webhook_subscriptions`** (Implemented) — one registered endpoint: `{ id,
   project_id?, name, url, method, headers, event_types, signing_secret_ref,
   secondary_signing_secret_ref?, enabled, … }`. `project_id IS NULL` = platform
   scope (matches every project); a non-null `project_id` scopes the subscription
@@ -28,26 +28,26 @@ stream (ADR-022) — webhook events are CURATED lifecycle facts, never raw
   `env:NAME` references, resolved server-side at send. `event_types` is a
   taxonomy-validated `string[]` (literal `"*"` = all types). Persisted; see
   [db/webhooks.md](../db/webhooks.md).
-- **`webhook_events`** (Designed) — the transactional outbox. One row per
+- **`webhook_events`** (Implemented) — the transactional outbox. One row per
   emitted lifecycle fact: `{ id, project_id, run_id, type, data, payload?,
   occurred_at, fanout_at?, … }`. `data` is the minimal per-type fact written at
   emit; `payload` (the full frozen envelope) is `NULL` until fanout; `fanout_at
   IS NULL` is the fanout cursor (no separate cursor table). Persisted; see
   [db/webhooks.md](../db/webhooks.md).
-- **`webhook_deliveries`** (Designed) — one row per `(subscription, event)` pair
+- **`webhook_deliveries`** (Implemented) — one row per `(subscription, event)` pair
   to attempt: `{ id, event_id, subscription_id, status, attempt_count,
   next_attempt_at, lease_expires_at?, idempotency_key, last_http_status?,
   last_error_kind?, delivered_at?, … }`. `status ∈ {pending, delivered, dead}`.
   `idempotency_key = hex(sha256("<subscriptionId>:<eventId>"))`, stable across
   every retry AND replay. Persisted; see [db/webhooks.md](../db/webhooks.md).
-- **`webhook_delivery_attempts`** (Designed) — append-only per-attempt audit:
+- **`webhook_delivery_attempts`** (Implemented) — append-only per-attempt audit:
   `{ id, delivery_id, attempt_no, requested_at, duration_ms, http_status?,
   error_kind?, error_detail?, response_snippet? }`. `error_kind ∈ {timeout,
   network, http, config}` is a LOCAL enum, not a `MaisterError` code. Persisted;
   see [db/webhooks.md](../db/webhooks.md).
-- **`platform_runtime_settings.webhooks_enabled`** (Designed) — global
+- **`platform_runtime_settings.webhooks_enabled`** (Implemented) — global
   kill-switch (`boolean NOT NULL DEFAULT true`) on the singleton settings row.
-- **Envelope v1** (Designed) — the immutable JSON delivery body (below), built
+- **Envelope v1** (Implemented) — the immutable JSON delivery body (below), built
   once at fanout and reused byte-identically by every retry and replay; only
   `deliveryId` and `attempt` are injected at send.
 
@@ -57,7 +57,7 @@ The delivery FSM (`webhook_deliveries.status`). A delivery is born `pending` at
 fanout, lands terminal `delivered` (any 2xx) or `dead` (HTTP `410 Gone`,
 attempts exhausted), and may be pushed back to `pending` by an explicit operator
 **replay** — counters reset, `idempotency_key` UNCHANGED. (All transitions
-Designed.)
+Implemented.)
 
 ```mermaid
 stateDiagram-v2
@@ -189,7 +189,7 @@ never fanned out or retried.
 
 Exactly 12 types, each mapped from a DB transition (never raw `session/update`).
 Adding a type later = one taxonomy entry + one emit site + one doc row (additive,
-cheap). (All Designed.)
+cheap). (All Implemented.)
 
 | Type | Trigger anchor |
 | ---- | -------------- |
@@ -284,7 +284,7 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 
 Per-delivery retry state lives on `webhook_deliveries.next_attempt_at`; the
 singleton job's own `consecutiveFailures` tracks only handler crashes, never
-delivery outcomes. (Designed.)
+delivery outcomes. (Implemented.)
 
 | Failure # | Delay before next attempt |
 | --------- | ------------------------- |
@@ -370,7 +370,7 @@ idempotency key absorbs:
 
 Every cross-resource id is a url-param or a server-state join; bodies carry
 config values only — zero body-controlled cross-resource ids. `ping` and
-`replay` take EMPTY bodies. (Designed.)
+`replay` take EMPTY bodies. (Implemented.)
 
 | Label | Carrier |
 | ----- | ------- |
