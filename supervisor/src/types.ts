@@ -176,7 +176,23 @@ export const SendPromptRequestSchema = z.object({
     .max(128)
     .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
   prompt: z.string().max(1_000_000),
+  // M30 (ADR-075 L2): the prompt is an answer-only gate-chat turn — while it
+  // is in flight, requestPermission auto-rejects unambiguous mutating
+  // toolCall kinds BEFORE any SSE emit / pending-permission registration.
+  readOnlyTurn: z.boolean().optional(),
 });
+
+// M30 (ADR-075 DD4): gate-chat prompts are tagged with this server-derived
+// stepId marker (dash, not colon — SAFE_PATH_SEGMENT). The suffix is the web
+// hitl_requests id; the marker also names the per-step log file.
+export const GATE_CHAT_STEP_PREFIX = "gate-chat-";
+
+export function parseGateChatHitlId(stepId: string): string | null {
+  if (!stepId.startsWith(GATE_CHAT_STEP_PREFIX)) return null;
+  const id = stepId.slice(GATE_CHAT_STEP_PREFIX.length);
+
+  return id.length > 0 ? id : null;
+}
 
 export type ExecutorAgent = z.infer<typeof ExecutorAgentSchema>;
 export type ExecutorRouter = z.infer<typeof ExecutorRouterSchema>;
@@ -272,6 +288,9 @@ export type SessionRecord = {
   logPath: string;
   monotonicId: number;
   acpSessionId?: string;
+  // M30 (ADR-075 L2): true while a read-only gate-chat prompt is in flight on
+  // this session — drives the requestPermission auto-reject.
+  readOnlyTurn?: boolean;
 };
 
 export type PermissionOptionDescriptor = {
@@ -320,6 +339,20 @@ export type SessionEvent =
       monotonicId: number;
       exitCode: number | null;
       signal: NodeJS.Signals | null;
+    }
+  // M30 (ADR-075 DD4): answer-only gate-chat turn — rendered in the chat
+  // surface, never the flow timeline. Emitted at gate-chat prompt completion
+  // with the accumulated agent reply; `mutationReverted` stays unset here
+  // (the web-side L3 sensor owns it on the persisted row).
+  | {
+      type: "session.chat_turn";
+      sessionId: string;
+      monotonicId: number;
+      hitlRequestId: string;
+      role: "user" | "agent";
+      body: string;
+      seq?: number;
+      mutationReverted?: boolean;
     };
 
 export type SupervisorErrorCode =

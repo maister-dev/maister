@@ -913,7 +913,16 @@
     "dirtyDiscardConfirm": "Really discard all uncommitted work?",
     "dirtyProceed": "Proceed as-is",
     "dirtyProceedBadge": "Reviewing committed state — the worktree still has uncommitted changes",
-    "dirtyError": "Action failed"
+    "dirtyError": "Action failed",
+    "chatTitle": "Ask the agent",
+    "chatPlaceholder": "Ask a question about this change — answer-only, the gate stays open",
+    "chatSend": "Send",
+    "chatSending": "Asking…",
+    "chatUnavailable": "Chat unavailable",
+    "chatIdleCostWarning": "The session is idle — the first question respawns it (~$0.28 of cache-creation tokens).",
+    "chatRevertNotice": "The agent attempted a workspace change during this answer — it was reverted automatically.",
+    "chatAgentLabel": "Agent",
+    "chatError": "Chat failed"
   },
   "evidence": {
     "title": "Evidence graph",

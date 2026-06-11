@@ -82,6 +82,7 @@ import {
   type DirtySummary,
 } from "@/lib/runs/dirty-resolution";
 import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner";
+import { GateChatPanel } from "@/components/runs/gate-chat-panel";
 
 type LayoutProps = {
   children: ReactNode;
@@ -715,6 +716,26 @@ export default async function RunDetailLayout({
                   status={detail.pendingHitl.assignmentStatus}
                 />
               </div>
+              {detail.pendingHitl &&
+              (detail.pendingHitl.kind === "human" ||
+                detail.pendingHitl.kind === "form") ? (
+                <GateChatPanel
+                  canAct={canAct}
+                  hitlRequestId={detail.pendingHitl.hitlRequestId}
+                  labels={{
+                    title: t("chatTitle"),
+                    placeholder: t("chatPlaceholder"),
+                    send: t("chatSend"),
+                    sending: t("chatSending"),
+                    unavailable: t("chatUnavailable"),
+                    idleCostWarning: t("chatIdleCostWarning"),
+                    revertNotice: t("chatRevertNotice"),
+                    agentLabel: t("chatAgentLabel"),
+                    error: t("chatError"),
+                  }}
+                  runId={detail.runId}
+                />
+              ) : null}
               {detail.pendingHitl &&
               hasReviewGate &&
               (dirtySummary || detail.pendingHitl.dirtyResolution) ? (

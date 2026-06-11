@@ -33,6 +33,14 @@ export interface ComposeThread {
   replies: readonly ComposeReplyComment[];
 }
 
+// M30 (ADR-075): a gate-chat turn folded into the rework payload — the
+// reviewer's questions and the agent's answers are review context.
+export interface ComposeChatMessage {
+  role: "user" | "agent";
+  authorLabel: string;
+  body: string;
+}
+
 function quoteLineContent(content: string): string {
   return content
     .split("\n")
@@ -43,34 +51,51 @@ function quoteLineContent(content: string): string {
 export function composeReworkPayload(
   summary: string,
   threads: readonly ComposeThread[],
+  // M30 (ADR-075): gate-chat history of the deciding review visit, in seq
+  // order. Optional — absent/empty keeps the pre-M30 bytes identical.
+  chatMessages: readonly ComposeChatMessage[] = [],
 ): string {
-  // D3 backward-compat guarantee: zero open threads ⇒ the raw summary bytes
-  // pass through untouched (empty summary included).
-  if (threads.length === 0) return summary;
+  // D3 backward-compat guarantee: zero open threads AND zero chat ⇒ the raw
+  // summary bytes pass through untouched (empty summary included).
+  if (threads.length === 0 && chatMessages.length === 0) return summary;
 
-  const blocks: string[] = ["## Review comments"];
+  const blocks: string[] = [];
 
-  // Sort defensively so the output is deterministic regardless of input
-  // order; copies keep the function pure (inputs are never mutated).
-  const orderedThreads = [...threads].sort((a, b) =>
-    compareThreadRoots(a.root, b.root),
-  );
+  if (threads.length > 0) {
+    blocks.push("## Review comments");
 
-  for (const thread of orderedThreads) {
-    const { root } = thread;
-
-    // Anchor fields are non-null on roots (DB CHECK); the fallbacks only
-    // keep the composer total over the structural row type.
-    blocks.push(
-      `### ${root.filePath ?? ""}:${root.line ?? 0} (${root.side ?? "new"})`,
+    // Sort defensively so the output is deterministic regardless of input
+    // order; copies keep the function pure (inputs are never mutated).
+    const orderedThreads = [...threads].sort((a, b) =>
+      compareThreadRoots(a.root, b.root),
     );
-    blocks.push(quoteLineContent(root.lineContent ?? ""));
-    blocks.push(`**${root.authorLabel}:**`);
-    blocks.push(root.body);
 
-    for (const reply of [...thread.replies].sort(compareThreadReplies)) {
-      blocks.push(`**Reply — ${reply.authorLabel}:**`);
-      blocks.push(reply.body);
+    for (const thread of orderedThreads) {
+      const { root } = thread;
+
+      // Anchor fields are non-null on roots (DB CHECK); the fallbacks only
+      // keep the composer total over the structural row type.
+      blocks.push(
+        `### ${root.filePath ?? ""}:${root.line ?? 0} (${root.side ?? "new"})`,
+      );
+      blocks.push(quoteLineContent(root.lineContent ?? ""));
+      blocks.push(`**${root.authorLabel}:**`);
+      blocks.push(root.body);
+
+      for (const reply of [...thread.replies].sort(compareThreadReplies)) {
+        blocks.push(`**Reply — ${reply.authorLabel}:**`);
+        blocks.push(reply.body);
+      }
+    }
+  }
+
+  // M30 (ADR-075): chat turns append AFTER the review-comment threads, in
+  // the given (seq) order.
+  if (chatMessages.length > 0) {
+    blocks.push("## Gate chat");
+    for (const msg of chatMessages) {
+      blocks.push(`**${msg.authorLabel} (${msg.role}):**`);
+      blocks.push(msg.body);
     }
   }
 

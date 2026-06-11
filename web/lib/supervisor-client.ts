@@ -99,6 +99,9 @@ export type PromptResult = {
 export type SendPromptInput = {
   stepId: string;
   prompt: string;
+  // M30 (ADR-075 L2): answer-only gate-chat turn — the supervisor
+  // auto-rejects unambiguous mutating toolCall kinds while it is in flight.
+  readOnlyTurn?: boolean;
 };
 
 export type SupervisorSessionRecord = {
@@ -251,6 +254,19 @@ export type SupervisorEvent =
       monotonicId: number;
       exitCode: number | null;
       signal: string | null;
+    }
+  // M30 (ADR-075 DD4): answer-only gate-chat turn — rendered in the chat
+  // surface, never the flow timeline. Mirrors supervisor/src/types.ts and
+  // both AsyncAPI files.
+  | {
+      type: "session.chat_turn";
+      sessionId: string;
+      monotonicId: number;
+      hitlRequestId: string;
+      role: "user" | "agent";
+      body: string;
+      seq?: number;
+      mutationReverted?: boolean;
     };
 
 function baseUrl(): string {

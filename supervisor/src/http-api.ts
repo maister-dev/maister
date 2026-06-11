@@ -21,10 +21,12 @@ import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { pendingPermissions } from "./pending-permissions";
+import { SESSION_EVENT_CHANNEL } from "./registry";
 import { spawnSession } from "./spawn";
 import {
   httpStatusForCode,
   isSupervisorError,
+  parseGateChatHitlId,
   SendPromptRequestSchema,
   StartSessionRequestSchema,
   SupervisorError,
@@ -292,15 +294,68 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     const body = SendPromptRequestSchema.parse(req.body);
-    const resp = await sendPromptOnConnection(
-      entry.connection,
-      {
-        acpSessionId: entry.acpSessionId,
-        stepId: body.stepId,
-        prompt: body.prompt,
-      },
-      logger,
-    );
+
+    // M30 (ADR-075 DD4): a gate-chat prompt accumulates the agent's reply
+    // text from this turn's session.update chunks and emits ONE
+    // session.chat_turn at completion — the chat surface renders it without
+    // polluting the flow timeline.
+    const chatHitlId = parseGateChatHitlId(body.stepId);
+    let chatBuf = "";
+    const chatListener = (event: SessionEvent): void => {
+      if (event.type !== "session.update") return;
+      const update = event.update as {
+        sessionUpdate?: string;
+        content?: { type?: string; text?: string };
+      } | null;
+
+      if (
+        update?.sessionUpdate === "agent_message_chunk" &&
+        update.content?.type === "text" &&
+        typeof update.content.text === "string"
+      ) {
+        chatBuf += update.content.text;
+      }
+    };
+
+    if (chatHitlId) {
+      entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
+    }
+    // M30 (ADR-075 L2): arm the read-only auto-reject for the duration of
+    // this prompt only.
+    entry.record.readOnlyTurn = body.readOnlyTurn === true;
+
+    let resp;
+
+    try {
+      resp = await sendPromptOnConnection(
+        entry.connection,
+        {
+          acpSessionId: entry.acpSessionId,
+          stepId: body.stepId,
+          prompt: body.prompt,
+        },
+        logger,
+      );
+    } finally {
+      entry.record.readOnlyTurn = false;
+      if (chatHitlId) {
+        entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
+      }
+    }
+
+    if (chatHitlId) {
+      entry.record.monotonicId += 1;
+      const chatEvent: SessionEvent = {
+        type: "session.chat_turn",
+        sessionId: req.params.id,
+        monotonicId: entry.record.monotonicId,
+        hitlRequestId: chatHitlId,
+        role: "agent",
+        body: chatBuf,
+      };
+
+      entry.emitter.emit(SESSION_EVENT_CHANNEL, chatEvent);
+    }
 
     logger.info(
       {
@@ -308,6 +363,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         stepId: body.stepId,
         stopReason: resp.stopReason,
         status: 200,
+        readOnlyTurn: body.readOnlyTurn === true,
       },
       "http POST /sessions/:id/prompt",
     );

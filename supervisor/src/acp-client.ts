@@ -61,6 +61,39 @@ type ToolCallLike = {
   kind?: string;
 };
 
+// M30 (ADR-075 L2): unambiguous MUTATING ACP toolCall kinds. `execute`
+// (bash) deliberately passes — read-only commands like grep/cat must work;
+// the web-side L3 mutation sensor is the guarantee for anything that slips.
+const READ_ONLY_MUTATING_KINDS = new Set([
+  "edit",
+  "write",
+  "create",
+  "delete",
+  "move",
+]);
+
+// M30 (ADR-075 L2): decide whether a permission request raised during a
+// read-only gate-chat turn is auto-rejected. Returns the reject option to
+// deliver, or null to pass the request through to the normal HITL flow.
+// Best-effort by design: no reject option / unknown kind / non-read-only
+// turn → null (L3 guards). Exported for the supervisor test suite.
+export function resolveReadOnlyAutoReject(
+  readOnlyTurn: boolean | undefined,
+  toolCall: ToolCallLike,
+  options: ReadonlyArray<PermissionOptionDescriptor>,
+): PermissionOptionDescriptor | null {
+  if (readOnlyTurn !== true) return null;
+  if (!toolCall.kind || !READ_ONLY_MUTATING_KINDS.has(toolCall.kind)) {
+    return null;
+  }
+
+  return (
+    options.find((o) => o.kind === "reject_once") ??
+    options.find((o) => (o.kind ?? "").startsWith("reject")) ??
+    null
+  );
+}
+
 export async function createAcpConnection(
   args: CreateAcpConnectionArgs,
 ): Promise<CreateAcpConnectionResult> {
@@ -119,6 +152,32 @@ export async function createAcpConnection(
           kind: o.kind,
           name: o.name,
         }));
+
+      // M30 (ADR-075 L2): a mutating tool on a read-only gate-chat turn is
+      // auto-rejected BEFORE the SSE emit and the pending-permission
+      // registration — no session.permission_request event fires and no web
+      // hitl row is created. No-op under permissive runner policies
+      // (--dangerously-skip-permissions never calls this) — hence L3.
+      const autoReject = resolveReadOnlyAutoReject(
+        record.readOnlyTurn,
+        tc,
+        options,
+      );
+
+      if (autoReject) {
+        logger.info(
+          {
+            sessionId,
+            toolKind: tc.kind,
+            optionId: autoReject.optionId,
+          },
+          "[neutrality] read-only turn — mutating tool auto-rejected (L2)",
+        );
+
+        return {
+          outcome: { outcome: "selected", optionId: autoReject.optionId },
+        };
+      }
 
       record.monotonicId += 1;
       const event: SessionEvent = {

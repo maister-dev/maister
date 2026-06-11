@@ -79,6 +79,16 @@ type MinimalSupervisorEvent =
   | {
       type: "session.crashed";
       monotonicId: number;
+    }
+  // M30 (ADR-075 DD4, X-FANOUT): gate-chat turns never occur on scratch
+  // sessions, but the union mirrors the supervisor event set so the
+  // projection stays total.
+  | {
+      type: "session.chat_turn";
+      monotonicId: number;
+      hitlRequestId: string;
+      role: "user" | "agent";
+      body: string;
     };
 
 // Dialog-status / HITL side effects only. Message content is produced by the

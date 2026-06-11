@@ -125,7 +125,7 @@ import { getDb } from "@/lib/db/client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, hitlRequests, reviewComments } =
+const { runs, hitlRequests, reviewComments, gateChatMessages } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -682,6 +682,44 @@ type ReviewCommentRow = ComposeRootComment & {
 
 // ADR-072: load the run's OPEN review-comment threads (open roots + their
 // replies) for the rework compose. Queries the schema directly instead of
+// M30 (ADR-075): gate-chat transcript of this review node's DECIDING visit —
+// the latest hitl row for (run, node) — in seq order, mapped for the rework
+// composer. Direct table read for the same cycle reason as
+// loadOpenReviewThreads below.
+async function loadGateChatForCompose(
+  runId: string,
+  nodeId: string,
+  db: Db,
+): Promise<Array<{ role: "user" | "agent"; authorLabel: string; body: string }>> {
+  const hitlRows: Array<{ id: string }> = await db
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(eq(hitlRequests.runId, runId), eq(hitlRequests.stepId, nodeId)),
+    )
+    .orderBy(desc(hitlRequests.createdAt))
+    .limit(1);
+  const hitlId = hitlRows[0]?.id;
+
+  if (!hitlId) return [];
+
+  const rows: Array<{
+    role: "user" | "agent";
+    authorLabel: string;
+    body: string;
+  }> = await db
+    .select({
+      role: gateChatMessages.role,
+      authorLabel: gateChatMessages.authorLabel,
+      body: gateChatMessages.body,
+    })
+    .from(gateChatMessages)
+    .where(eq(gateChatMessages.hitlRequestId, hitlId))
+    .orderBy(gateChatMessages.seq);
+
+  return rows;
+}
+
 // lib/review-comments/service.ts `listThreads`: that module imports
 // lib/services/hitl.ts (PENDING_HITL_RUN_STATUS), which imports
 // lib/flows/runner.ts → this module — a cycle. The frozen ordering contract
@@ -2377,20 +2415,29 @@ export async function runGraph(
           const vars = result.vars as Record<string, unknown>;
           const summary = vars[commentsVar] ?? vars.comments;
           const openThreads = await loadOpenReviewThreads(runId, db);
+          // M30 (ADR-075): the deciding visit's gate-chat transcript folds
+          // into the rework payload alongside the review comments.
+          const chatMessages = await loadGateChatForCompose(
+            runId,
+            node.id,
+            db,
+          );
+          const hasComposeInput =
+            openThreads.length > 0 || chatMessages.length > 0;
 
-          // D3 zero-thread guarantee: with no open threads the raw summary
-          // value passes through UNTOUCHED (byte-identical injection; nothing
-          // injected when none was submitted) — the pre-ADR-072 behavior.
-          const composed =
-            openThreads.length > 0
-              ? composeReworkPayload(
-                  typeof summary === "string" ? summary : "",
-                  openThreads,
-                )
-              : typeof summary === "string"
-                ? summary
-                : undefined;
-          const injected = openThreads.length > 0 ? composed : summary;
+          // D3 zero-input guarantee: with no open threads AND no chat the raw
+          // summary value passes through UNTOUCHED (byte-identical injection;
+          // nothing injected when none was submitted) — pre-ADR-072 behavior.
+          const composed = hasComposeInput
+            ? composeReworkPayload(
+                typeof summary === "string" ? summary : "",
+                openThreads,
+                chatMessages,
+              )
+            : typeof summary === "string"
+              ? summary
+              : undefined;
+          const injected = hasComposeInput ? composed : summary;
 
           if (injected !== undefined) {
             pendingInjectedVars = { [commentsVar]: injected };
