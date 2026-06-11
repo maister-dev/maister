@@ -31,8 +31,8 @@ erDiagram
         text rework_target "M11a resolved rework target node"
         text criticality "M17 Implemented: flow-declared low|medium|high|critical (write-once at creation, NULL if undeclared)"
         real human_confidence "M17 Implemented: responder self-report 0..1 (written at respond time, NULL while open)"
-        text review_tip_sha "M30 0040 Designed: branch tip SHA per review-gate visit (since-last-review diff base, ADR-079)"
-        text dirty_resolution "M30 0040 Designed: commit|discard|proceed reviewer dirty-worktree choice (nullable, ADR-079)"
+        text review_tip_sha "M30 0040: branch tip SHA per review-gate visit (since-last-review diff base, ADR-079)"
+        text dirty_resolution "M30 0040: commit|discard|proceed reviewer dirty-worktree choice (nullable, ADR-079)"
         timestamp responded_at "NULL while open"
         timestamp created_at
     }

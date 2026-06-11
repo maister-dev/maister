@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireProjectAction } from "@/lib/authz";
 import {
+  hitlRequests as hitlRequestsTable,
+  nodeAttempts as nodeAttemptsTable,
   projects as projectsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
@@ -37,10 +39,20 @@ type Tables = {
   scratch_runs: Row[];
   workspaces: Row[];
   projects: Row[];
+  // M30 (ADR-079): the scope availability map reads these two.
+  hitl_requests: Row[];
+  node_attempts: Row[];
 };
 
 const dbState: { tables: Tables } = {
-  tables: { runs: [], scratch_runs: [], workspaces: [], projects: [] },
+  tables: {
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+    projects: [],
+    hitl_requests: [],
+    node_attempts: [],
+  },
 };
 
 function tableOf(t: unknown): keyof Tables {
@@ -48,13 +60,26 @@ function tableOf(t: unknown): keyof Tables {
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
   if (t === projectsTable) return "projects";
+  if (t === hitlRequestsTable) return "hitl_requests";
+  if (t === nodeAttemptsTable) return "node_attempts";
   throw new Error("unknown table");
 }
 
+// Thenable chain: the original flow queries `await ...where()`, the M30 scope
+// queries chain `.where().orderBy().limit()` — both resolve to the rows.
 const selectChain = () => ({
-  from: (table: unknown) => ({
-    where: async () => dbState.tables[tableOf(table)],
-  }),
+  from: (table: unknown) => {
+    const rows = dbState.tables[tableOf(table)];
+    const chain: Record<string, unknown> = {
+      then: (onFulfilled: (v: unknown) => unknown) =>
+        Promise.resolve(rows).then(onFulfilled),
+      where: () => chain,
+      orderBy: () => chain,
+      limit: () => chain,
+    };
+
+    return chain;
+  },
 });
 
 const fakeDb = {
@@ -90,6 +115,16 @@ vi.mock("@/lib/worktree", () => ({
   })),
   diffNameStatus: vi.fn(async () => [{ path: "file.txt", status: "M" }]),
   resolveBaseRef: vi.fn(async () => "resolvedbase0000000000000000000000000000"),
+  // M30 (ADR-079): scope-switcher imports — unused in these M22 default-scope
+  // cases but required for the module factory to satisfy the route's imports.
+  diffRange: vi.fn(async () => ({ text: "", truncated: false })),
+  diffWorkingTree: vi.fn(async () => ({
+    text: "",
+    truncated: false,
+    nameStatus: [],
+  })),
+  headCommit: vi.fn(async () => "headsha0000000000000000000000000000000000"),
+  resolveRefSha: vi.fn(async () => "refsha00000000000000000000000000000000000"),
 }));
 
 function seedScratchRun(
@@ -180,7 +215,14 @@ async function invokeGet(runId: string) {
 }
 
 beforeEach(() => {
-  dbState.tables = { runs: [], scratch_runs: [], workspaces: [], projects: [] };
+  dbState.tables = {
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+    projects: [],
+    hitl_requests: [],
+    node_attempts: [],
+  };
   vi.mocked(diffRunWorkspace).mockClear();
   vi.mocked(diffRunWorkspace).mockResolvedValue({
     text: "diff --git a/file.txt b/file.txt\n",

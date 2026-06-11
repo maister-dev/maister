@@ -1844,7 +1844,7 @@ paths:
             enum: [run, since-last-review, last-node, uncommitted]
             default: run
           description: |
-            **(M30 — Designed, ADR-079)** Diff base selection (allow-list
+            **(M30 — Implemented, ADR-079)** Diff base selection (allow-list
             validated; default `run`). `run`: `workspace.baseCommit..branch`
             (current behavior). `since-last-review`: `<prev-review-visit-sha>..branch`
             from `hitl_requests.review_tip_sha`. `last-node`:
@@ -2229,7 +2229,7 @@ paths:
   /api/runs/{runId}/hitl/{hitlRequestId}/chat:
     get:
       tags: [hitl]
-      summary: (M30 — Designed, ADR-075) List gate-chat messages for a HITL pause
+      summary: (M30 — Implemented, ADR-075) List gate-chat messages for a HITL pause
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Returns the ordered
@@ -2280,7 +2280,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [hitl]
-      summary: (M30 — Designed, ADR-075) Send an answer-only gate-chat turn
+      summary: (M30 — Implemented, ADR-075) Send an answer-only gate-chat turn
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Sends an answer-only question to
@@ -2352,7 +2352,7 @@ paths:
   /api/runs/{runId}/hitl/{hitlRequestId}/dirty-resolution:
     post:
       tags: [hitl]
-      summary: (M30 — Designed, ADR-079) Resolve a dirty worktree at a review gate
+      summary: (M30 — Implemented, ADR-079) Resolve a dirty worktree at a review gate
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Records the reviewer's chosen
@@ -8102,7 +8102,7 @@ components:
         autoRetry:
           type: boolean
           description: |
-            (M30 — Designed, ADR-077) True when the latest attempt for this node
+            (M30 — Implemented, ADR-077) True when the latest attempt for this node
             was an automatic retry (`node_attempts.auto_retry`) scheduled by the
             node's `retry_policy`. Absent/false on manually-driven attempts.
         gates:
@@ -8298,7 +8298,7 @@ components:
           type: string
           description: |
             Required when `decision` triggers rework; MUST be in
-            `schema.workspacePolicies`. **(M30 — Designed, ADR-076)** all three
+            `schema.workspacePolicies`. **(M30 — Implemented, ADR-076)** all three
             execute against the node's pre-attempt checkpoint — `keep` (no-op),
             `rewind-to-node-checkpoint`, `fresh-attempt`; pre-M30 only `keep` ran.
           enum: [keep, rewind-to-node-checkpoint, fresh-attempt]

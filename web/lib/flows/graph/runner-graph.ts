@@ -690,13 +690,13 @@ async function loadGateChatForCompose(
   runId: string,
   nodeId: string,
   db: Db,
-): Promise<Array<{ role: "user" | "agent"; authorLabel: string; body: string }>> {
+): Promise<
+  Array<{ role: "user" | "agent"; authorLabel: string; body: string }>
+> {
   const hitlRows: Array<{ id: string }> = await db
     .select({ id: hitlRequests.id })
     .from(hitlRequests)
-    .where(
-      and(eq(hitlRequests.runId, runId), eq(hitlRequests.stepId, nodeId)),
-    )
+    .where(and(eq(hitlRequests.runId, runId), eq(hitlRequests.stepId, nodeId)))
     .orderBy(desc(hitlRequests.createdAt))
     .limit(1);
   const hitlId = hitlRows[0]?.id;
@@ -2417,11 +2417,7 @@ export async function runGraph(
           const openThreads = await loadOpenReviewThreads(runId, db);
           // M30 (ADR-075): the deciding visit's gate-chat transcript folds
           // into the rework payload alongside the review comments.
-          const chatMessages = await loadGateChatForCompose(
-            runId,
-            node.id,
-            db,
-          );
+          const chatMessages = await loadGateChatForCompose(runId, node.id, db);
           const hasComposeInput =
             openThreads.length > 0 || chatMessages.length > 0;
 

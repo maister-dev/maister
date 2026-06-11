@@ -126,9 +126,9 @@ components:
       payload: { $ref: "#/components/schemas/SessionStreamTimeoutEvent" }
     SessionChatTurn:
       name: session.chat_turn
-      title: Gate-chat answer-only turn at a HITL pause (M30 — Designed)
+      title: Gate-chat answer-only turn at a HITL pause (M30 — Implemented)
       summary: |
-        (M30 — Designed, ADR-075) Answer-only gate-chat reply streamed at a
+        (M30 — Implemented, ADR-075) Answer-only gate-chat reply streamed at a
         `human`/`form` HITL pause. Rendered in the chat surface, NOT the flow
         timeline. The full payload (role, body, seq, mutationReverted) is
         documented in `supervisor-sse.asyncapi.yaml`.

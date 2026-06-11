@@ -36,6 +36,8 @@ export interface RuntimeGateSummary {
 export interface GraphNodeStatus {
   status: string;
   attempt: number;
+  // M30 (ADR-077): the latest attempt was auto-scheduled by retry_policy.
+  autoRetry: boolean;
   gates: GraphGateStatus[];
   rollup: string;
   gateSummary: RuntimeGateSummary;
@@ -128,6 +130,7 @@ export async function getRunNodeStatuses(
     nodes[nodeId] = {
       status: entry.status,
       attempt: entry.attempt,
+      autoRetry: entry.autoRetry,
       gates,
       rollup: blockingRollup(gates),
       gateSummary: gateSummary(gates),

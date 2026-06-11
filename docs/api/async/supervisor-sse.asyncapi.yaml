@@ -202,9 +202,9 @@ components:
             signal: null
     SessionChatTurn:
       name: session.chat_turn
-      title: Gate-chat answer-only turn at a HITL pause (M30 — Designed)
+      title: Gate-chat answer-only turn at a HITL pause (M30 — Implemented)
       summary: |
-        (M30 — Designed, ADR-075) Answer-only gate-chat reply at a `human`/`form`
+        (M30 — Implemented, ADR-075) Answer-only gate-chat reply at a `human`/`form`
         HITL pause. Streams over the SSE bridge to the chat surface; never
         resolves the HITL and never drives the run to `Running`. Carries the DD11
         `mutationReverted` flag.
@@ -406,11 +406,11 @@ components:
             mutationReverted:
               type: boolean
               description: |
-                (M30 — Designed, ADR-078 DD11 L3) True when the L3 mutation sensor
+                (M30 — Implemented, ADR-078 DD11 L3) True when the L3 mutation sensor
                 reverted a workspace mutation made during this turn; the UI shows
                 a revert notice on the turn.
       description: |
-        (M30 — Designed, ADR-078) Answer-only gate-chat turn at a `human`/`form`
+        (M30 — Implemented, ADR-078) Answer-only gate-chat turn at a `human`/`form`
         HITL pause. Rendered in the chat surface, NOT the flow timeline. The
         prompt is tagged `stepId = gate-chat-<hitlRequestId>` (server-derived,
         dash not colon).

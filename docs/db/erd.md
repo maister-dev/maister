@@ -545,10 +545,10 @@ erDiagram
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision
         text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
-        text checkpoint_ref "M30 0040 Designed: node checkpoint ref, rewind base is the checkpoint parent"
-        boolean auto_retry "M30 0040 Designed: DEFAULT false; true when this attempt is an auto-retry (retry_policy)"
-        text session_policy "M30 0040 Designed: effective rework session policy snapshot resume|new_session"
-        boolean session_fallback "M30 0040 Designed: DEFAULT false; true when resume fell back to new_session"
+        text checkpoint_ref "M30 0040: node checkpoint ref, rewind base is the checkpoint parent"
+        boolean auto_retry "M30 0040: DEFAULT false; true when this attempt is an auto-retry (retry_policy)"
+        text session_policy "M30 0040: effective rework session policy snapshot resume|new_session"
+        boolean session_fallback "M30 0040: DEFAULT false; true when resume fell back to new_session"
         text rework_from_node
         text owner_user_id FK "M11b 0011 takeover owner (users.id SET NULL)"
         text base_ref "M11b 0011 merge-base SHA for returned range"
@@ -627,8 +627,8 @@ erDiagram
         text rework_target "M11a resolved rework target"
         text criticality "M17 Implemented: low|medium|high|critical, write-once"
         real human_confidence "M17 Implemented: responder self-report 0..1"
-        text review_tip_sha "M30 0040 Designed: branch tip per review visit (since-last-review base)"
-        text dirty_resolution "M30 0040 Designed: commit|discard|proceed (nullable)"
+        text review_tip_sha "M30 0040: branch tip per review visit (since-last-review base)"
+        text dirty_resolution "M30 0040: commit|discard|proceed (nullable)"
         timestamp responded_at
         timestamp created_at
     }

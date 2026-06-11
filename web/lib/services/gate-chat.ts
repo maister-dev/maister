@@ -394,7 +394,7 @@ export async function sendGateChatTurn(args: {
   const gateAttempt =
     typeof (hitl.schema as { gateAttempt?: unknown } | null)?.gateAttempt ===
     "number"
-      ? ((hitl.schema as { gateAttempt: number }).gateAttempt)
+      ? (hitl.schema as { gateAttempt: number }).gateAttempt
       : 1;
   const seqRows = await d
     .select({ max: sql<number>`coalesce(max(${gateChatMessages.seq}), 0)` })

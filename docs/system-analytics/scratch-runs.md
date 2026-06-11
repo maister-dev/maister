@@ -356,7 +356,7 @@ secret material.
 - SSE contract: [`../api/async/web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml).
 - DB references: [`../db/runs-domain.md`](../db/runs-domain.md),
   [`../database-schema.md`](../database-schema.md).
-- **Reused by (M30 — Designed, ADR-075):** gate-chat at HITL pauses reuses this
+- **Reused by (M30 — Implemented, ADR-075):** gate-chat at HITL pauses reuses this
   chat/projector substrate (`web/lib/scratch-runs/events.ts` table-agnostic seam)
   bound to `gate_chat_messages`; see [`hitl.md`](hitl.md) §Gate-chat.
 - Source areas: `web/app/api/scratch-runs/*`,

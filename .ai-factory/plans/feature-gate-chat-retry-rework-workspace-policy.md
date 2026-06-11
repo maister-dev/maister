@@ -189,8 +189,8 @@ Parallelism after **B3**: Feature 4b, Feature 2, Feature 1 each consume Feature-
 - [x] B17 — Impl: gate-chat backend + neutrality (L1/L2/L3)
 - [x] B18 — Impl: gate-chat UI
 - [x] B19 — Reviewer pass Feature 1
-- [ ] B20 — Deployment wiring audit
-- [ ] B21 — Final verification gate
+- [x] B20 — Deployment wiring audit
+- [x] B21 — Final verification gate
 
 ### Phase A — Documentation-first analytics (complete + internally consistent before ANY code)
 

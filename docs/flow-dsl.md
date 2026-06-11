@@ -147,7 +147,7 @@ nodes:
         # below (that type is M18-Designed).
     rework:
       allowedTargets: [implement]
-      # (M30 — Designed, ADR-076) all three execute against the node's
+      # (M30 — Implemented, ADR-076) all three execute against the node's
       # pre-attempt checkpoint: keep (no-op), rewind-to-node-checkpoint,
       # fresh-attempt. Pre-M30 only keep ran.
       workspacePolicies: [keep, rewind-to-node-checkpoint, fresh-attempt]
@@ -377,9 +377,9 @@ Two halves remain deferred:
   `human_edit` node type (shown in the example above) and the `merge` node type +
   conflict-handoff promotion are M18; M11b implements neither.
 
-## Node `retry_policy` (M30 — Designed)
+## Node `retry_policy` (M30 — Implemented)
 
-**(M30 — Designed, [ADR-077](decisions.md#adr-077-node-level-retry-policy).)** An
+**(M30 — Implemented, [ADR-077](decisions.md#adr-077-node-level-retry-policy).)** An
 optional `retry_policy` on `ai_coding` / `cli` nodes auto-retries the node on
 transient infrastructure failures without bouncing the run to a human.
 
@@ -419,9 +419,9 @@ distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
 [`configuration.md`](configuration.md) §M30 engine bump). Flows using none of
 these keys stay valid at any `engine_min`.
 
-## Rework `session_policy` (M30 — Designed)
+## Rework `session_policy` (M30 — Implemented)
 
-**(M30 — Designed, [ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default).)**
+**(M30 — Implemented, [ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default).)**
 `session_policy` controls whether a rework re-uses the prior attempt's agent
 session (keeping the critique context) or starts fresh.
 

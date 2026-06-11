@@ -384,6 +384,8 @@ export interface TimelineEntry {
   decision: string | null;
   reworkFromNode: string | null;
   acpSessionId: string | null;
+  // M30 (ADR-077): true when this attempt was auto-scheduled by retry_policy.
+  autoRetry: boolean;
   startedAt: string;
   endedAt: string | null;
   gates: TimelineGate[];
@@ -412,6 +414,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
       attempt: nodeAttempts.attempt,
       status: nodeAttempts.status,
       decision: nodeAttempts.decision,
+      autoRetry: nodeAttempts.autoRetry,
       reworkFromNode: nodeAttempts.reworkFromNode,
       acpSessionId: nodeAttempts.acpSessionId,
       ownerUserId: nodeAttempts.ownerUserId,
@@ -488,6 +491,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     decision: r.decision,
     reworkFromNode: r.reworkFromNode,
     acpSessionId: r.acpSessionId,
+    autoRetry: r.autoRetry ?? false,
     startedAt: r.startedAt.toISOString(),
     endedAt: r.endedAt ? r.endedAt.toISOString() : null,
     gates: gatesByAttempt.get(r.id) ?? [],

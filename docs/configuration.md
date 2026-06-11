@@ -787,7 +787,7 @@ declare `output.result` stays valid at any `engine_min` (back-compat).
 transport contract and validate seam are in [`flow-dsl.md`](flow-dsl.md) §M26 and
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26.
 
-**M30 engine bump (Designed).** M30 bumps `MAISTER_ENGINE_VERSION` `1.3.0 → 1.4.0`
+**M30 engine bump (Implemented).** M30 bumps `MAISTER_ENGINE_VERSION` `1.3.0 → 1.4.0`
 in `web/lib/flows/engine-version.ts`
 ([ADR-076](decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture)).
 It is a **code constant, not an env var** — no `.env`/compose wiring. The new node
@@ -804,15 +804,18 @@ flow DSL and need no engine floor. The DSL keys are parsed fresh from
 `flow_revisions.manifest` on every launch — a removed key naturally CLEARs (no
 persisted upsert state, no SET/CLEAR asymmetry).
 
-**M30 deployment surface (Designed).** DD10 requires `MAISTER_RUNTIME_ROOT` to
+**M30 deployment surface (Implemented).** DD10 requires `MAISTER_RUNTIME_ROOT` to
 resolve **outside** every registered `repo_path` so checkpoint rewind/discard
 (`git clean -fd`) can never reach the run-artifact tree
-(`runtimeRoot/.maister/<slug>/runs/<runId>/`); this is asserted in code and is a
-deploy precondition. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
-`refs/maister/chat-checkpoints/*` are git refs, not env. Any gate-chat env toggle
-introduced at implementation (candidate `MAISTER_GATE_CHAT_ENABLED`) is audited per
-the runtime-contract-symmetry rule (`.env.example` + compose + this doc); none is
-confirmed yet.
+(`runtimeRoot/.maister/<slug>/runs/<runId>/`); the containment assert
+(`containmentAssert` in `workspace-checkpoint.ts` + the `discardWorktree` guard)
+hard-blocks any policy run with `MaisterError("PRECONDITION")` when violated —
+a deploy precondition. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
+`refs/maister/chat-checkpoints/*` are git refs, not env. B20 audit verdict: **no
+new env var was introduced** — the candidate `MAISTER_GATE_CHAT_ENABLED` toggle
+was not needed (availability is session-presence-driven, ADR-075 DD2), so M30
+adds no deployment surface beyond the existing `MAISTER_RUNTIME_ROOT` layout
+precondition.
 
 ### Verdict calibration (M15)
 
