@@ -47,6 +47,10 @@ export type NodeSideFormLabels = {
   allowTakeover: string;
   outputSchema: string;
   outputRequired: string;
+  presentation: string;
+  presentationWidth: string;
+  presentationHeight: string;
+  presentationColor: string;
   reworkAllowedTargets: string;
   reworkWorkspacePolicies: string;
   reworkMaxLoops: string;
@@ -148,14 +152,24 @@ function SelectField({
   );
 }
 
+export type NodePresentationStyle = {
+  width?: number;
+  height?: number;
+  color?: string;
+};
+
 export function NodeSideForm({
   node,
   labels,
+  presentation,
   onChange,
+  onPresentationChange,
 }: {
   node: NodeDef | null;
   labels: NodeSideFormLabels;
+  presentation?: NodePresentationStyle;
   onChange: (next: NodeDef) => void;
+  onPresentationChange?: (patch: NodePresentationStyle) => void;
 }): ReactElement {
   if (node === null) {
     return (
@@ -595,6 +609,46 @@ export function NodeSideForm({
           <span className={LABEL_CLS}>{labels.outputRequired}</span>
         </label>
       </section>
+
+      {onPresentationChange ? (
+        <section className="grid gap-2" data-testid="node-presentation">
+          <h3 className={SECTION_CLS}>{labels.presentation}</h3>
+          <div className="grid grid-cols-2 gap-2">
+            <TextField
+              label={labels.presentationWidth}
+              testid="node-presentation-width"
+              type="number"
+              value={str(presentation?.width)}
+              onChange={(v) =>
+                onPresentationChange({
+                  width: v === "" ? undefined : Number(v),
+                })
+              }
+            />
+            <TextField
+              label={labels.presentationHeight}
+              testid="node-presentation-height"
+              type="number"
+              value={str(presentation?.height)}
+              onChange={(v) =>
+                onPresentationChange({
+                  height: v === "" ? undefined : Number(v),
+                })
+              }
+            />
+          </div>
+          <label className="grid gap-1">
+            <span className={LABEL_CLS}>{labels.presentationColor}</span>
+            <input
+              className={FIELD_CLS}
+              data-testid="node-presentation-color"
+              type="color"
+              value={presentation?.color ?? "#000000"}
+              onChange={(e) => onPresentationChange({ color: e.target.value })}
+            />
+          </label>
+        </section>
+      ) : null}
     </div>
   );
 }

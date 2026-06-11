@@ -1,8 +1,9 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -11,7 +12,7 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 
-const { flowRevisions, flows, runs } = schema;
+const { flowRevisions, flows, projects, runs } = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -245,4 +246,160 @@ export async function getFlowPackages(
       projectsUsing: projectsUsingByRef.get(flow.ref)?.size ?? 1,
     };
   });
+}
+
+// A single installed revision, resolved server-side. `installedPath` and the
+// raw `manifest` are SERVER-ONLY (§3.1): the page reads disk + compiles the
+// graph from them, but never hands either to a client component. The client
+// gets `FlowRevisionDetailDTO` instead.
+export interface FlowRevisionDetail {
+  id: string;
+  versionLabel: string;
+  resolvedRevision: string;
+  manifestDigest: string;
+  manifest: FlowYamlV1;
+  execTrust: string;
+  setupStatus: string;
+  packageStatus: string;
+  installedPath: string;
+}
+
+export interface FlowRevisionDetailDTO {
+  id: string;
+  versionLabel: string;
+  resolvedRevision: string;
+  manifestDigest: string;
+  execTrust: string;
+  packageStatus: string;
+}
+
+// Client-safe header + revision-list projection. NO `installedPath`, NO
+// `manifest` blob — the invariant in §3.1.
+export interface FlowPackageDetailDTO {
+  ref: string;
+  version: string;
+  versionBinding: string;
+  trustStatus: string;
+  enablementState: string;
+  enabledRevisionId: string | null;
+  revisions: FlowRevisionDetailDTO[];
+}
+
+export interface FlowPackageDetail {
+  project: { id: string; slug: string; name: string };
+  flow: {
+    id: string;
+    flowRefId: string;
+    source: string;
+    enabledRevisionId: string | null;
+  };
+  revisions: FlowRevisionDetail[];
+  dto: FlowPackageDetailDTO;
+}
+
+function toRevisionDetailDTO(r: FlowRevisionDetail): FlowRevisionDetailDTO {
+  return {
+    id: r.id,
+    versionLabel: r.versionLabel,
+    resolvedRevision: r.resolvedRevision,
+    manifestDigest: r.manifestDigest,
+    execTrust: r.execTrust,
+    packageStatus: r.packageStatus,
+  };
+}
+
+// Resolve a single installed package for the viewer page (§5.4): the project,
+// the (projectId, flowRefId) flows row, and its source-scoped installed
+// revisions (the same source-scope guard as getFlowPackages — a project must
+// not see/select a revision installed by another project from a different
+// source under the same flow id, ADR-021). Returns null when the project or the
+// flow does not exist → the page calls notFound().
+export async function getFlowPackageDetail(
+  slug: string,
+  flowRefId: string,
+): Promise<FlowPackageDetail | null> {
+  const client = db();
+
+  const projectRows = await client
+    .select({ id: projects.id, slug: projects.slug, name: projects.name })
+    .from(projects)
+    .where(eq(projects.slug, slug));
+  const project = projectRows[0];
+
+  if (!project) return null;
+
+  const flowRows = await client
+    .select({
+      id: flows.id,
+      flowRefId: flows.flowRefId,
+      source: flows.source,
+      version: flows.version,
+      versionBinding: flows.versionBinding,
+      enabledRevisionId: flows.enabledRevisionId,
+      enablementState: flows.enablementState,
+      trustStatus: flows.trustStatus,
+    })
+    .from(flows)
+    .where(
+      and(eq(flows.projectId, project.id), eq(flows.flowRefId, flowRefId)),
+    );
+  const flow = flowRows[0];
+
+  if (!flow) return null;
+
+  const revisionRows = await client
+    .select({
+      id: flowRevisions.id,
+      versionLabel: flowRevisions.versionLabel,
+      resolvedRevision: flowRevisions.resolvedRevision,
+      manifestDigest: flowRevisions.manifestDigest,
+      manifest: flowRevisions.manifest,
+      execTrust: flowRevisions.execTrust,
+      setupStatus: flowRevisions.setupStatus,
+      packageStatus: flowRevisions.packageStatus,
+      installedPath: flowRevisions.installedPath,
+      source: flowRevisions.source,
+      installedAt: flowRevisions.installedAt,
+    })
+    .from(flowRevisions)
+    .where(
+      and(
+        eq(flowRevisions.flowRefId, flow.flowRefId),
+        eq(flowRevisions.source, flow.source),
+        notInArray(flowRevisions.packageStatus, ["Removed"]),
+      ),
+    )
+    .orderBy(asc(flowRevisions.installedAt));
+
+  const revisions: FlowRevisionDetail[] = revisionRows.map((r) => ({
+    id: r.id,
+    versionLabel: r.versionLabel,
+    resolvedRevision: r.resolvedRevision,
+    manifestDigest: r.manifestDigest,
+    manifest: r.manifest as FlowYamlV1,
+    execTrust: r.execTrust,
+    setupStatus: r.setupStatus,
+    packageStatus: r.packageStatus,
+    installedPath: r.installedPath,
+  }));
+
+  return {
+    project,
+    flow: {
+      id: flow.id,
+      flowRefId: flow.flowRefId,
+      source: flow.source,
+      enabledRevisionId: flow.enabledRevisionId,
+    },
+    revisions,
+    dto: {
+      ref: flow.flowRefId,
+      version: flow.version,
+      versionBinding: flow.versionBinding,
+      trustStatus: flow.trustStatus,
+      enablementState: flow.enablementState,
+      enabledRevisionId: flow.enabledRevisionId,
+      revisions: revisions.map(toRevisionDetailDTO),
+    },
+  };
 }

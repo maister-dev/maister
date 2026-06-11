@@ -16,40 +16,145 @@ const KIND_LABELS = {
   template: "Template",
 };
 
+const FRONTMATTER_LABELS = {
+  frontmatterHeading: "Frontmatter",
+  bodyHeading: "Body",
+  name: "Name",
+  description: "Description",
+  tools: "Tools",
+  model: "Model",
+  permissionMode: "Permission mode",
+  maxTurns: "Max turns",
+  allowedPaths: "Allowed paths",
+  forbiddenPaths: "Forbidden paths",
+  allowedCommands: "Allowed commands",
+  requireStructuredResponse: "Require structured response",
+  listHint: "One per line",
+  guardrailNotice: "Guardrails are advisory.",
+  malformedNotice: "The frontmatter could not be parsed.",
+  rawHeading: "Raw content",
+};
+
+const SCRIPT_LABELS = {
+  editorAriaLabel: "Script editor",
+  trustBannerTitle: "Execution is gated by trust.",
+  trustBanner: "Scripts never run until explicit executable trust.",
+};
+
+const FORM_SCHEMA_LABELS = {
+  builderTab: "Builder",
+  jsonTab: "Raw JSON",
+  previewHeading: "Live preview",
+  fieldName: "Name",
+  fieldLabel: "Label",
+  fieldType: "Type",
+  fieldRequired: "Required",
+  fieldOptions: "Options",
+  addField: "Add field",
+  addNestedField: "Add nested field",
+  removeField: "Remove",
+  moveUp: "Move up",
+  moveDown: "Move down",
+  invalidJson: "The JSON is invalid.",
+  noFields: "No fields yet.",
+  type: {
+    string: "String",
+    number: "Number",
+    boolean: "Boolean",
+    enum: "Enum",
+    array: "Array",
+    object: "Object",
+  },
+  preview: {
+    criticalityLabel: "Criticality",
+    "criticality.low": "low",
+    "criticality.medium": "medium",
+    "criticality.high": "high",
+    "criticality.critical": "critical",
+    confidenceLabel: "Confidence",
+    reviewComments: "Review comments",
+    decisionApprove: "Approve",
+    decisionRework: "Request rework",
+    sendBackWithComments: "Send back with comments",
+    responseLabel: "Response (JSON)",
+    responseHint: "Enter a JSON value.",
+    schemaLabel: "Requested schema",
+    submit: "Submit",
+    reviewCommentsPlaceholder: "What needs to change?",
+    formInstructions: "Pick an option or type your own.",
+    formCustomPlaceholder: "Type a custom value…",
+  },
+};
+
+const CONTENT_ISSUES_LABELS = {
+  clean: "No content issues.",
+  blockTitle: "Blocking issues",
+  warnTitle: "Warnings",
+};
+
 const LABELS = {
   addFile: "Add file",
+  cancel: "Cancel",
   content: "Content",
+  editPathTitle: "Edit path",
   kind: "Kind",
+  noFiles: "No package files yet.",
   path: "Path",
+  pathError: {
+    unsafe_path: "Path must be relative and must not contain ..",
+    duplicate_path: "Another file already uses this path.",
+    path_conflict: "Path conflicts with an existing file or folder.",
+  },
   removeFile: "Remove",
+  renamePath: "Rename / move",
+  save: "Save",
+  frontmatter: FRONTMATTER_LABELS,
+  script: SCRIPT_LABELS,
+  formSchema: FORM_SCHEMA_LABELS,
+  contentIssues: CONTENT_ISSUES_LABELS,
 };
 
 describe("PackageFilesEditor", () => {
-  it("renders typed package file controls and keeps the JSON server-action field hidden", () => {
+  it("renders a derived file tree, an inferred-kind badge, and keeps the hidden JSON field", () => {
     const html = renderToStaticMarkup(
       createElement(PackageFilesEditor, {
         disabled: false,
         files: [
           {
-            kind: "script",
-            path: "scripts/setup.sh",
-            content: "#!/usr/bin/env bash\n",
+            kind: "skill",
+            path: "skills/deploy/SKILL.md",
+            content: "# Deploy\n",
           },
+          { kind: "readme", path: "README.md", content: "Hello" },
         ],
         kindLabels: KIND_LABELS,
         labels: LABELS,
       }),
     );
 
+    // hidden save contract preserved exactly
     expect(html).toContain('name="packageFilesJson"');
     expect(html).toContain('type="hidden"');
-    expect(html).toContain("<select");
-    expect(html).toContain("scripts/setup.sh");
+
+    // derived tree: folder segments + leaf name appear (not only the flat path)
+    expect(html).toContain("skills");
+    expect(html).toContain("deploy");
+    expect(html).toContain("SKILL.md");
+    expect(html).toContain("README.md");
+
+    // inferred-kind badge for the (default-selected) first file
+    expect(html).toContain("Skill");
+
+    // editing actions present in editable mode
     expect(html).toContain("Add file");
     expect(html).toContain("Remove");
+    expect(html).toContain("Rename / move");
+
+    // the manual kind <select> is GONE
+    expect(html).not.toContain("<select");
   });
 
-  it("renders viewers as read-only inspectors", () => {
+  it("renders viewers as read-only inspectors with no editing affordances", () => {
     const html = renderToStaticMarkup(
       createElement(PackageFilesEditor, {
         disabled: true,
@@ -60,8 +165,123 @@ describe("PackageFilesEditor", () => {
     );
 
     expect(html).toContain("README.md");
-    expect(html).toContain("disabled");
+    // inferred-kind badge still shows in read-only mode
+    expect(html).toContain("README");
+    expect(html).not.toContain("<select");
     expect(html).not.toContain("Add file");
     expect(html).not.toContain("Remove");
+    expect(html).not.toContain("Rename / move");
+  });
+
+  it("shows the empty state when there are no files", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(html).toContain('name="packageFilesJson"');
+    expect(html).toContain("No package files yet.");
+    expect(html).toContain("Add file");
+  });
+
+  it("dispatches a selected SKILL.md to the frontmatter artifact editor", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          {
+            kind: "skill",
+            path: "skills/demo/SKILL.md",
+            content:
+              "---\nname: Demo\ndescription: A demo skill\n---\n# Demo\n",
+          },
+        ],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    // frontmatter form surfaced (heading + name/description fields), not the
+    // bare generic CodeEditor host.
+    expect(html).toContain("Frontmatter");
+    expect(html).toContain("Name");
+    expect(html).toContain("Description");
+    expect(html).not.toContain('data-testid="script-exec-trust-banner"');
+    expect(html).not.toContain('data-testid="form-schema-builder"');
+  });
+
+  it("dispatches a selected scripts/*.sh to the script artifact editor", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          { kind: "script", path: "scripts/run.sh", content: "echo hi\n" },
+        ],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(html).toContain('data-testid="script-exec-trust-banner"');
+    expect(html).toContain("Execution is gated by trust.");
+  });
+
+  it("dispatches a selected schemas/*.json to the form-schema builder", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          {
+            kind: "schema",
+            path: "schemas/review.json",
+            content: '{"fields":[]}',
+          },
+        ],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(html).toContain('data-testid="form-schema-builder"');
+  });
+
+  it("renders the generic fallback editor for a README.md", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [{ kind: "readme", path: "README.md", content: "Hello" }],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(html).toContain('data-testid="code-editor"');
+    expect(html).not.toContain("Frontmatter");
+    expect(html).not.toContain('data-testid="script-exec-trust-banner"');
+    expect(html).not.toContain('data-testid="form-schema-builder"');
+  });
+
+  it("surfaces a BLOCK content issue (SKILL.md missing description)", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          {
+            kind: "skill",
+            path: "skills/demo/SKILL.md",
+            content: "---\nname: Demo\n---\n# Demo\n",
+          },
+        ],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(html).toContain('data-testid="artifact-content-issues"');
+    expect(html).toContain('data-testid="artifact-content-block"');
   });
 });

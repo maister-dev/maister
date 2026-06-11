@@ -140,6 +140,10 @@ steps:
   await page.waitForLoadState("networkidle");
   await page.goto(`/flows/${fx.projectSlug}/${fx.capId}`);
 
+  // The saved manifest now compiles → the editor defaults to the graph tab;
+  // open the raw-YAML tab before asserting the persisted buffer.
+  await page.getByTestId("flow-tab-yaml").click();
+
   const editor = page
     .locator('[data-testid="code-editor"] .cm-content')
     .first();

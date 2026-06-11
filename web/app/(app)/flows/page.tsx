@@ -215,7 +215,7 @@ export default async function FlowsPage({
                 <Link
                   key={flow.id}
                   className="rounded-xl border border-line bg-paper p-4 transition-[border-color,transform] hover:-translate-y-px hover:border-mute"
-                  href={`/projects/${flow.projectSlug}?tab=packages`}
+                  href={`/projects/${flow.projectSlug}/packages/${flow.ref}`}
                 >
                   <div className="mb-2 flex items-start justify-between gap-3">
                     <div className="min-w-0">

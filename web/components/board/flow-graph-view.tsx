@@ -31,6 +31,7 @@ import {
   colorForNodeStatus,
   isTerminalRunStatus,
   toFlowGraphView,
+  type FlowLayoutOverride,
 } from "@/lib/board/flow-graph-view-layout";
 import { useRunStream } from "@/lib/use-run-stream";
 
@@ -48,14 +49,20 @@ export interface FlowGraphViewLabels {
   blockingGateSummary?: string;
 }
 
-export interface FlowGraphViewProps {
+// Run coupling is optional: present → live status overlay (SSE + /graph-status,
+// chips, current-node ring); absent → static topology + presentation layout.
+export interface FlowGraphRunContext {
   runId: string;
-  topology: GraphTopology;
-  layout: Record<string, { x: number; y: number }>;
   initialStatuses: RunNodeStatuses["nodes"];
   currentStepId: string | null;
   runStatus: string;
+}
+
+export interface FlowGraphViewProps {
+  topology: GraphTopology;
+  layout: Record<string, FlowLayoutOverride>;
   labels: FlowGraphViewLabels;
+  runContext?: FlowGraphRunContext;
 }
 
 interface FlowNodeBodyProps {
@@ -67,6 +74,14 @@ interface FlowNodeBodyProps {
   statusLabel?: string;
   isCurrent: boolean;
   rollup: string;
+  // Additive presentation (ADR-064): authored size + color paint the node box in
+  // both the read-only view and the editor canvas; absent → default dims/border.
+  presentationWidth?: number;
+  presentationHeight?: number;
+  presentationColor?: string;
+  // Static (run-less) render: drop the status chip, current-node ring, and the
+  // run-only gate-rollup — leaving pure topology + declared-gate metadata.
+  presentationOnly?: boolean;
   declaredGateSummary?: {
     total: number;
     blocking: number;
@@ -155,6 +170,10 @@ export function FlowNodeBody({
   statusLabel,
   isCurrent,
   rollup,
+  presentationOnly,
+  presentationWidth,
+  presentationHeight,
+  presentationColor,
   declaredGateSummary,
   runtimeGateSummary,
   labels,
@@ -162,6 +181,18 @@ export function FlowNodeBody({
   const declaredCount = declaredGateSummary?.total ?? 0;
   const runtimeGateCount = runtimeGateSummary?.total ?? 0;
   const blockingGateCount = runtimeGateSummary?.blockingTotal ?? 0;
+
+  const boxStyle: {
+    width?: number;
+    height?: number;
+    borderColor?: string;
+  } = {};
+
+  if (typeof presentationWidth === "number") boxStyle.width = presentationWidth;
+  if (typeof presentationHeight === "number")
+    boxStyle.height = presentationHeight;
+  if (presentationColor) boxStyle.borderColor = presentationColor;
+  const hasBoxStyle = Object.keys(boxStyle).length > 0;
 
   return (
     <div
@@ -171,13 +202,16 @@ export function FlowNodeBody({
           ? "relative rounded-[10px] ring-2 ring-amber ring-offset-1"
           : "relative"
       }
-      data-current={isCurrent ? "true" : "false"}
+      data-current={presentationOnly ? undefined : isCurrent ? "true" : "false"}
       data-node-role={nodeRole}
-      data-node-status={status}
+      data-node-status={presentationOnly ? undefined : status}
       data-testid="flow-node"
       title={isCurrent ? labels.currentNode : undefined}
     >
-      <div className="flex h-[60px] w-[180px] flex-col justify-between rounded-[8px] border border-line bg-paper px-2 py-1.5">
+      <div
+        className="flex h-[60px] w-[180px] flex-col justify-between rounded-[8px] border border-line bg-paper px-2 py-1.5"
+        style={hasBoxStyle ? boxStyle : undefined}
+      >
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate text-[12px] font-medium leading-4 text-forest-text-primary">
@@ -189,15 +223,17 @@ export function FlowNodeBody({
               </p>
             ) : null}
           </div>
-          <Chip
-            color={colorForNodeStatus(status, isCurrent)}
-            size="sm"
-            variant="soft"
-          >
-            <span className="font-mono text-[10px]" title={statusLabel}>
-              {statusLabel ?? status}
-            </span>
-          </Chip>
+          {presentationOnly ? null : (
+            <Chip
+              color={colorForNodeStatus(status, isCurrent)}
+              size="sm"
+              variant="soft"
+            >
+              <span className="font-mono text-[10px]" title={statusLabel}>
+                {statusLabel ?? status}
+              </span>
+            </Chip>
+          )}
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 overflow-hidden text-[10px] leading-3 text-forest-text-secondary">
           {declaredCount > 0 ? (
@@ -239,19 +275,26 @@ type FlowNodeRenderData = {
   nodeTypeLabel?: string;
   nodeRole?: string;
   declaredGateSummary?: FlowNodeBodyProps["declaredGateSummary"];
-  status: string;
-  isCurrent: boolean;
-  rollup: string;
+  status?: string;
+  isCurrent?: boolean;
+  rollup?: string;
   runtimeGateSummary?: GraphNodeStatus["gateSummary"];
+  presentationColor?: string;
+  presentationWidth?: number;
+  presentationHeight?: number;
 };
 
 // A nodeType render fn closing over the translation labels: source/target
-// handles wrap the presentational body so the canvas can draw edges.
+// handles wrap the presentational body so the canvas can draw edges. When
+// `presentationOnly` (static run-less view) the body drops status/ring/rollup —
+// the canvas then carries pure topology + presentation layout only.
 function makeFlowNodeView(
   labels: FlowGraphViewLabels,
+  presentationOnly = false,
 ): (props: NodeProps) => ReactElement {
   return function FlowNodeView({ data }: NodeProps): ReactElement {
     const d = data as unknown as FlowNodeRenderData;
+    const status = d.status ?? "Pending";
 
     return (
       <>
@@ -259,7 +302,7 @@ function makeFlowNodeView(
         <FlowNodeBody
           declaredGateSummary={d.declaredGateSummary}
           displayLabel={d.displayLabel}
-          isCurrent={d.isCurrent}
+          isCurrent={d.isCurrent ?? false}
           label={d.label}
           labels={labels}
           nodeRole={d.nodeRole}
@@ -268,10 +311,14 @@ function makeFlowNodeView(
               ? (labels.role?.[d.nodeRole] ?? d.nodeTypeLabel)
               : d.nodeTypeLabel
           }
-          rollup={d.rollup}
+          presentationColor={d.presentationColor}
+          presentationHeight={d.presentationHeight}
+          presentationOnly={presentationOnly}
+          presentationWidth={d.presentationWidth}
+          rollup={d.rollup ?? "none"}
           runtimeGateSummary={d.runtimeGateSummary}
-          status={d.status}
-          statusLabel={labels.node[d.status] ?? d.status}
+          status={status}
+          statusLabel={labels.node[status] ?? status}
         />
         <Handle position={Position.Right} type="source" />
       </>
@@ -324,47 +371,94 @@ function makeFlowEdgeView(
   };
 }
 
-export default function FlowGraphView({
-  runId,
+// Presentational core shared by both modes: positions the topology (dagre +
+// presentation overrides), draws the canvas, and overlays run status per node
+// ONLY when given a status map. With `presentationOnly` it carries pure
+// topology + presentation layout — no chips, no current-node ring.
+function FlowGraphCanvas({
   topology,
   layout,
-  initialStatuses,
-  currentStepId,
-  runStatus,
   labels,
-}: FlowGraphViewProps): ReactElement {
+  presentationOnly,
+  statusByNode,
+  currentStep,
+}: {
+  topology: GraphTopology;
+  layout: Record<string, FlowLayoutOverride>;
+  labels: FlowGraphViewLabels;
+  presentationOnly: boolean;
+  statusByNode?: RunNodeStatuses["nodes"];
+  currentStep?: string | null;
+}): ReactElement {
   const nodeTypes = useMemo<NodeTypes>(
-    () => ({ flowNode: makeFlowNodeView(labels) }),
-    [labels],
+    () => ({ flowNode: makeFlowNodeView(labels, presentationOnly) }),
+    [labels, presentationOnly],
   );
   const edgeTypes = useMemo<EdgeTypes>(
     () => ({ flowEdge: makeFlowEdgeView(labels) }),
     [labels],
   );
-
   const positioned = useMemo(
     () => toFlowGraphView(topology, layout),
     [topology, layout],
   );
 
+  const nodes = useMemo<Node[]>(
+    () =>
+      presentationOnly
+        ? positioned.nodes
+        : positioned.nodes.map((n) => ({
+            ...n,
+            data: {
+              ...n.data,
+              status: statusByNode?.[n.id]?.status ?? "Pending",
+              isCurrent: n.id === currentStep,
+              rollup: statusByNode?.[n.id]?.rollup ?? "none",
+              runtimeGateSummary: statusByNode?.[n.id]?.gateSummary,
+            },
+          })),
+    [positioned, presentationOnly, statusByNode, currentStep],
+  );
+
+  return (
+    <div
+      className="h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
+      data-testid="flow-graph-view"
+    >
+      <ReactFlow
+        fitView
+        edgeTypes={edgeTypes}
+        edges={positioned.edges}
+        nodeTypes={nodeTypes}
+        nodes={nodes}
+        nodesConnectable={false}
+        nodesDraggable={false}
+      >
+        <Background />
+        <Controls showInteractive={false} />
+      </ReactFlow>
+    </div>
+  );
+}
+
+// Run-coupled layer: lives ONLY when `runContext` is present, so the SSE
+// subscription + /graph-status fetch + status state never exist in static mode.
+function RunStatusLayer({
+  topology,
+  layout,
+  labels,
+  runContext,
+}: {
+  topology: GraphTopology;
+  layout: Record<string, FlowLayoutOverride>;
+  labels: FlowGraphViewLabels;
+  runContext: FlowGraphRunContext;
+}): ReactElement {
+  const { runId, initialStatuses, currentStepId, runStatus } = runContext;
+
   const [statuses, setStatuses] = useState(initialStatuses);
   const [currentStep, setCurrentStep] = useState(currentStepId);
   const [liveRunStatus, setLiveRunStatus] = useState(runStatus);
-
-  const nodes = useMemo<Node[]>(
-    () =>
-      positioned.nodes.map((n) => ({
-        ...n,
-        data: {
-          ...n.data,
-          status: statuses[n.id]?.status ?? "Pending",
-          isCurrent: n.id === currentStep,
-          rollup: statuses[n.id]?.rollup ?? "none",
-          runtimeGateSummary: statuses[n.id]?.gateSummary,
-        },
-      })),
-    [positioned, statuses, currentStep],
-  );
 
   // Live coloring (ADR-052): refetch the lightweight graph-status snapshot ONLY
   // on an SSE event tick (debounced), never on a timer. A terminal run has no
@@ -410,22 +504,40 @@ export default function FlowGraphView({
   }, [eventCount, live, runId]);
 
   return (
-    <div
-      className="h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
-      data-testid="flow-graph-view"
-    >
-      <ReactFlow
-        fitView
-        edgeTypes={edgeTypes}
-        edges={positioned.edges}
-        nodeTypes={nodeTypes}
-        nodes={nodes}
-        nodesConnectable={false}
-        nodesDraggable={false}
-      >
-        <Background />
-        <Controls showInteractive={false} />
-      </ReactFlow>
-    </div>
+    <FlowGraphCanvas
+      currentStep={currentStep}
+      labels={labels}
+      layout={layout}
+      presentationOnly={false}
+      statusByNode={statuses}
+      topology={topology}
+    />
+  );
+}
+
+export default function FlowGraphView({
+  topology,
+  layout,
+  labels,
+  runContext,
+}: FlowGraphViewProps): ReactElement {
+  if (runContext) {
+    return (
+      <RunStatusLayer
+        labels={labels}
+        layout={layout}
+        runContext={runContext}
+        topology={topology}
+      />
+    );
+  }
+
+  return (
+    <FlowGraphCanvas
+      labels={labels}
+      layout={layout}
+      presentationOnly={true}
+      topology={topology}
+    />
   );
 }

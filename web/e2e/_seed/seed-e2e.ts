@@ -506,6 +506,186 @@ const M11C_REFUSE_MANIFEST = {
   ],
 };
 
+// --- Flow Studio Phase 2 (T2.5) fixture: installed-package viewer + fork ----
+// A REAL on-disk immutable bundle (written to /tmp/maister-e2e/flows/...) plus
+// the `flows` + enabled `flow_revisions` rows that point at it. The nav-path
+// e2e (flow-package-viewer.spec.ts) clicks: board → Packages tab → package card
+// → viewer (static graph + raw flow.yaml + a file from the list) → Fork → the
+// authored-flow editor → Save. The manifest is a graph with two presentation-
+// positioned nodes so the static graph renders honoring x/y; every bundle file
+// is valid UTF-8 text so the fork reads it cleanly. `name` is slug-shaped so
+// `resolvePackageSlug` (fork path) resolves from the manifest, never the `@`-dir
+// basename.
+const FLOW_VIEWER_SLUG = "e2e-flow-viewer";
+const FLOW_VIEWER_REF = "aif-flow-viewer";
+const FLOW_VIEWER_VERSION = "v0.0.1";
+const FLOW_VIEWER_IMPLEMENT_NODE = "implement";
+const FLOW_VIEWER_REVIEW_NODE = "review";
+
+const FLOW_VIEWER_MANIFEST = {
+  schemaVersion: 1,
+  name: "flow-package-viewer-demo",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: FLOW_VIEWER_IMPLEMENT_NODE,
+      type: "ai_coding",
+      action: { prompt: "/aif-implement {{ task.prompt }}" },
+      transitions: { success: FLOW_VIEWER_REVIEW_NODE },
+    },
+    {
+      id: FLOW_VIEWER_REVIEW_NODE,
+      type: "human",
+      finish: {
+        human: { role: "maintainer", decisions: ["approve", "rework"] },
+      },
+      transitions: { approve: "done", rework: FLOW_VIEWER_IMPLEMENT_NODE },
+      rework: {
+        allowedTargets: [FLOW_VIEWER_IMPLEMENT_NODE],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+  presentation: {
+    nodes: [
+      { id: FLOW_VIEWER_IMPLEMENT_NODE, x: 80, y: 60 },
+      { id: FLOW_VIEWER_REVIEW_NODE, x: 80, y: 260 },
+    ],
+  },
+};
+
+// The raw flow.yaml written to disk + read read-only by the viewer. Kept
+// byte-consistent with FLOW_VIEWER_MANIFEST (same nodes/presentation) so the
+// rendered graph and the raw text agree.
+const FLOW_VIEWER_FLOW_YAML = `schemaVersion: 1
+name: flow-package-viewer-demo
+compat:
+  engine_min: "1.1.0"
+nodes:
+  - id: ${FLOW_VIEWER_IMPLEMENT_NODE}
+    type: ai_coding
+    action:
+      prompt: "/aif-implement {{ task.prompt }}"
+    transitions:
+      success: ${FLOW_VIEWER_REVIEW_NODE}
+  - id: ${FLOW_VIEWER_REVIEW_NODE}
+    type: human
+    finish:
+      human:
+        role: maintainer
+        decisions: [approve, rework]
+    transitions:
+      approve: done
+      rework: ${FLOW_VIEWER_IMPLEMENT_NODE}
+    rework:
+      allowedTargets: [${FLOW_VIEWER_IMPLEMENT_NODE}]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
+presentation:
+  nodes:
+    - id: ${FLOW_VIEWER_IMPLEMENT_NODE}
+      x: 80
+      y: 60
+    - id: ${FLOW_VIEWER_REVIEW_NODE}
+      x: 80
+      y: 260
+`;
+
+// Bundle artifact files (besides flow.yaml). Each is valid UTF-8 text so the
+// fork's `readAuthoredFlowPackageDirectory` decodes them without throwing, and
+// each classifies to its kind by path (skills/→skill, rules/→rule, etc.).
+const FLOW_VIEWER_BUNDLE_FILES: Record<string, string> = {
+  "skills/demo/SKILL.md": `---
+name: demo
+description: A demo skill bundled with the viewer fixture flow.
+---
+
+# Demo skill
+
+This skill exists to populate the package file list for the viewer e2e.
+`,
+  "rules/guard.md": `---
+allowed_paths:
+  - src/**
+forbidden_paths:
+  - .git/**
+---
+
+# Guard rule
+
+Keep edits inside src.
+`,
+  "schemas/review.json": `${JSON.stringify(
+    {
+      schemaVersion: 1,
+      fields: [
+        {
+          name: "decision",
+          label: "Decision",
+          type: "enum",
+          required: true,
+          options: ["approve", "rework"],
+        },
+        { name: "notes", label: "Notes", type: "string" },
+      ],
+    },
+    null,
+    2,
+  )}\n`,
+  "scripts/run.sh": `#!/usr/bin/env bash
+set -euo pipefail
+echo "viewer fixture script"
+`,
+  "setup.sh": `#!/usr/bin/env bash
+set -euo pipefail
+echo "viewer fixture setup (never executed by the fork)"
+`,
+  "README.md": `# flow-package-viewer-demo
+
+Fixture flow package for the Flow Studio Phase 2 nav-path e2e.
+`,
+};
+
+type FlowViewerFixtureRecord = {
+  projectSlug: string;
+  flowRefId: string;
+  revisionId: string;
+  implementNode: string;
+  reviewNode: string;
+  // A bundle file the spec opens from the viewer's file list (kind: skill).
+  sampleFilePath: string;
+};
+
+// Local copy of `@/lib/flows/editor/package-file-tree` `classifyPackageFilePath`
+// (the seeder cannot import app modules). Used to build the artifacts fixture's
+// `body.files[].kind` the same way `readAuthoredFlowPackageDirectory` would.
+type BundleFileKind =
+  | "readme"
+  | "setup"
+  | "schema"
+  | "skill"
+  | "rule"
+  | "agent_definition"
+  | "script"
+  | "template"
+  | "asset";
+
+function classifyBundlePath(relativePath: string): BundleFileKind {
+  if (relativePath === "README.md") return "readme";
+  if (relativePath === "setup.sh") return "setup";
+  if (relativePath.startsWith("schemas/")) return "schema";
+  if (relativePath.startsWith("skills/")) return "skill";
+  if (relativePath.startsWith("rules/")) return "rule";
+  if (relativePath.startsWith("agents/")) return "agent_definition";
+  if (relativePath.startsWith("scripts/")) return "script";
+  if (relativePath.startsWith("templates/")) return "template";
+
+  return "asset";
+}
+
 // --- M19 fixture: reconcile + GC UI ----------------------------------------
 // One project carrying a recoverable Crashed flow run plus two terminal
 // Abandoned runs with staggered workspace removal deadlines. The Crashed run's
@@ -4393,6 +4573,237 @@ async function seedFlowsAuthoringFixture(
   };
 }
 
+// --- Flow Studio Phase 2 (T5.1): artifact-editing DRAFT fixture --------------
+// A DEDICATED authored `flow` DRAFT the artifact-editing spec opens DIRECTLY
+// (page.goto /flows/<slug>/<capId>, like flows-authoring) — NOT a fork of the
+// shared installed package. Decoupling kills the slug-probe race that flaked
+// when flow-studio-artifacts and flow-package-viewer both forked aif-flow-viewer
+// under fullyParallel (both probed the same free `aif-flow-viewer-fork` slug →
+// one lost the (project_id,kind,slug) unique → CONFLICT 409).
+//
+// The body MIRRORS what `readAuthoredFlowPackageDirectory` produces for the
+// viewer bundle (same flow.yaml + same SKILL.md / review.json / rule / script /
+// setup / readme files), so the editor surface is byte-identical to a fork:
+// the SKILL.md frontmatter form (journey 1), the review.json form-schema builder
+// (journey 2), and — because the revision `manifest` column carries the 2-node
+// graph with `compat.engine_min` — the Graph tab (journeys 3 + 4).
+const FLOW_STUDIO_ARTIFACTS_SLUG = "e2e-flow-studio-artifacts";
+const FLOW_STUDIO_ARTIFACTS_CAP_SLUG = "flow-package-viewer-demo";
+
+// The body files: the viewer bundle (minus flow.yaml), classified by path and
+// sorted by path — exactly the shape readAuthoredFlowPackageDirectory emits.
+const FLOW_STUDIO_ARTIFACTS_FILES = Object.entries(FLOW_VIEWER_BUNDLE_FILES)
+  .map(([rel, content]) => ({
+    kind: classifyBundlePath(rel),
+    path: rel,
+    content,
+  }))
+  .sort((a, b) => a.path.localeCompare(b.path));
+
+type FlowStudioArtifactsFixtureRecord = {
+  projectSlug: string;
+  capId: string;
+  implementNode: string;
+  reviewNode: string;
+};
+
+async function seedFlowStudioArtifactsFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FlowStudioArtifactsFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    member: randomUUID(),
+    cap: randomUUID(),
+    revision: randomUUID(),
+  };
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const body = {
+    flowYaml: FLOW_VIEWER_FLOW_YAML,
+    manifest: FLOW_VIEWER_MANIFEST,
+    packageMetadata: {
+      slug: FLOW_STUDIO_ARTIFACTS_CAP_SLUG,
+      name: "flow-package-viewer-demo",
+      versionLabel: "none",
+    },
+    files: FLOW_STUDIO_ARTIFACTS_FILES,
+    validation: {
+      status: "valid",
+      issueCount: 0,
+      issues: [],
+      manifestDigest: null,
+      contentHash: null,
+    },
+  };
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [
+    FLOW_STUDIO_ARTIFACTS_SLUG,
+  ]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      FLOW_STUDIO_ARTIFACTS_SLUG,
+      "MAIster E2E Flow Studio Artifacts",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  await pool.query(
+    `INSERT INTO authored_capabilities
+       (id, project_id, kind, slug, title, lifecycle, draft_version,
+        current_draft_revision_id)
+     VALUES ($1, $2, 'flow', $3, $4, 'DRAFT', 1, $5)`,
+    [
+      ids.cap,
+      ids.project,
+      FLOW_STUDIO_ARTIFACTS_CAP_SLUG,
+      "flow-package-viewer-demo",
+      ids.revision,
+    ],
+  );
+  // The revision `manifest` column carries the 2-node graph (NOT null) so the
+  // editor's buildAuthoredFlowGraph compiles → the Graph tab is available.
+  await pool.query(
+    `INSERT INTO authored_capability_revisions
+       (id, capability_id, project_id, kind, revision_number, lifecycle,
+        draft_version, title, body, manifest, schema_version, content_hash)
+     VALUES ($1, $2, $3, 'flow', 1, 'DRAFT', 1, $4, $5::jsonb, $6::jsonb, 1, $7)`,
+    [
+      ids.revision,
+      ids.cap,
+      ids.project,
+      "flow-package-viewer-demo",
+      JSON.stringify(body),
+      JSON.stringify(FLOW_VIEWER_MANIFEST),
+      "e2e1111111111111111111111111111111111111111111111111111111111111",
+    ],
+  );
+
+  return {
+    projectSlug: FLOW_STUDIO_ARTIFACTS_SLUG,
+    capId: ids.cap,
+    implementNode: FLOW_VIEWER_IMPLEMENT_NODE,
+    reviewNode: FLOW_VIEWER_REVIEW_NODE,
+  };
+}
+
+// --- Flow Studio Phase 2 (T2.5): installed-package viewer + fork fixture -----
+// Writes a REAL immutable bundle to disk, then plants the `flows` + enabled
+// `flow_revisions` rows pointing at it. The bundle dir is rebuilt from scratch
+// each run (rm + recreate) so re-seeds are clean. `flows.source` ==
+// `flow_revisions.source` (the `getFlowPackageDetail` join keys on both), and
+// `package_status='Installed'` keeps the revision out of the `Removed` filter.
+async function seedInstalledPackageFixture(
+  pool: Pool,
+  userId: string,
+): Promise<FlowViewerFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    member: randomUUID(),
+    flow: randomUUID(),
+    revision: randomUUID(),
+  };
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const source = "github.com/maister/maister-flow-aif-viewer";
+  const installedPath = `${RUNTIME_ROOT}/flows/${FLOW_VIEWER_REF}@${FLOW_VIEWER_VERSION}`;
+
+  // Rebuild the on-disk bundle from scratch (idempotent across re-runs).
+  rmSync(installedPath, { recursive: true, force: true });
+  mkdirSync(installedPath, { recursive: true });
+  writeFileSync(
+    path.join(installedPath, "flow.yaml"),
+    FLOW_VIEWER_FLOW_YAML,
+    "utf8",
+  );
+  for (const [rel, content] of Object.entries(FLOW_VIEWER_BUNDLE_FILES)) {
+    const abs = path.join(installedPath, rel);
+
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, content, "utf8");
+  }
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [FLOW_VIEWER_SLUG]);
+  // Scope by source too — flow_ref_id is NOT globally unique across projects, so
+  // an unscoped delete could wipe an unrelated flow's revisions (Reviewer pass).
+  await pool.query(
+    `DELETE FROM flow_revisions WHERE flow_ref_id = $1 AND source = $2`,
+    [FLOW_VIEWER_REF, source],
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
+     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    [
+      ids.project,
+      FLOW_VIEWER_SLUG,
+      "MAIster E2E Flow Viewer",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  // The enabled revision: Installed + supported schema + on-disk bundle. The
+  // viewer compiles `manifest` for the static graph and reads `installed_path`
+  // for the raw flow.yaml + file list. `exec_trust='untrusted'` drives the
+  // script-editor trust banner (display-only).
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision, manifest_digest,
+        manifest, schema_version, engine_min, installed_path, setup_status,
+        package_status, exec_trust)
+     VALUES ($1, $2, $3, $4, 'rev-flow-viewer',
+        'f10wv1ewe40000000000000000000000000000000', $5, 1, '1.1.0', $6, 'done',
+        'Installed', 'untrusted')`,
+    [
+      ids.revision,
+      FLOW_VIEWER_REF,
+      source,
+      FLOW_VIEWER_VERSION,
+      JSON.stringify(FLOW_VIEWER_MANIFEST),
+      installedPath,
+    ],
+  );
+  // The project flow row: Enabled + trusted, pointing at the revision. The
+  // packages tab lists this (getFlowPackages) → the card links to the viewer.
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, revision, installed_path,
+        manifest, schema_version, enabled_revision_id, enablement_state, trust_status)
+     VALUES ($1, $2, $3, $4, $5, 'rev-flow-viewer', $6, $7, 1, $8, 'Enabled', 'trusted')`,
+    [
+      ids.flow,
+      ids.project,
+      FLOW_VIEWER_REF,
+      source,
+      FLOW_VIEWER_VERSION,
+      installedPath,
+      JSON.stringify(FLOW_VIEWER_MANIFEST),
+      ids.revision,
+    ],
+  );
+
+  return {
+    projectSlug: FLOW_VIEWER_SLUG,
+    flowRefId: FLOW_VIEWER_REF,
+    revisionId: ids.revision,
+    implementNode: FLOW_VIEWER_IMPLEMENT_NODE,
+    reviewNode: FLOW_VIEWER_REVIEW_NODE,
+    sampleFilePath: "skills/demo/SKILL.md",
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -4425,6 +4836,8 @@ async function main(): Promise<void> {
         M27_EDITOR_SLUG,
         FLOWS_AUTHORING_SLUG,
         RC_SLUG,
+        FLOW_STUDIO_ARTIFACTS_SLUG,
+        FLOW_VIEWER_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -4570,6 +4983,11 @@ async function main(): Promise<void> {
     const m27Editor = await seedM27FlowEditorFixture(pool, admin.id);
     const flowsAuthoring = await seedFlowsAuthoringFixture(pool, admin.id);
     const reviewComments = await seedReviewCommentsFixture(pool, admin);
+    const flowStudioArtifacts = await seedFlowStudioArtifactsFixture(
+      pool,
+      admin.id,
+    );
+    const flowViewer = await seedInstalledPackageFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -4617,6 +5035,8 @@ async function main(): Promise<void> {
         m27Editor,
         flowsAuthoring,
         reviewComments,
+        flowStudioArtifacts,
+        flowViewer,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -4639,7 +5059,9 @@ async function main(): Promise<void> {
         `, m22 run ${m22.runId} (${M22_SLUG})` +
         `, m23 project ${m23.projectSlug}` +
         `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})` +
-        `, review-comments ${reviewComments.runId} (${RC_SLUG})`,
+        `, review-comments ${reviewComments.runId} (${RC_SLUG})` +
+        `, flow-studio-artifacts cap ${flowStudioArtifacts.capId} (${FLOW_STUDIO_ARTIFACTS_SLUG})` +
+        `, flow-viewer ref ${flowViewer.flowRefId} (${FLOW_VIEWER_SLUG})`,
     );
   } finally {
     await pool.end();

@@ -1,8 +1,11 @@
 "use client";
 
-import type { FlowGraphViewLabels } from "./flow-graph-view";
+import type {
+  FlowGraphRunContext,
+  FlowGraphViewLabels,
+} from "./flow-graph-view";
+import type { FlowLayoutOverride } from "@/lib/board/flow-graph-view-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
-import type { RunNodeStatuses } from "@/lib/queries/run-node-status";
 import type { ReactElement } from "react";
 
 import dynamic from "next/dynamic";
@@ -15,32 +18,23 @@ const FlowGraphView = dynamic(() => import("./flow-graph-view"), {
 });
 
 export interface FlowGraphViewSectionProps {
-  runId: string;
   topology: GraphTopology;
-  layout: Record<string, { x: number; y: number }>;
-  initialStatuses: RunNodeStatuses["nodes"];
-  currentStepId: string | null;
-  runStatus: string;
+  layout: Record<string, FlowLayoutOverride>;
   labels: FlowGraphViewLabels;
+  runContext?: FlowGraphRunContext;
 }
 
 export function FlowGraphViewSection({
-  runId,
   topology,
   layout,
-  initialStatuses,
-  currentStepId,
-  runStatus,
   labels,
+  runContext,
 }: FlowGraphViewSectionProps): ReactElement {
   return (
     <FlowGraphView
-      currentStepId={currentStepId}
-      initialStatuses={initialStatuses}
       labels={labels}
       layout={layout}
-      runId={runId}
-      runStatus={runStatus}
+      runContext={runContext}
       topology={topology}
     />
   );

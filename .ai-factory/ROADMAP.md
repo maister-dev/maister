@@ -559,6 +559,17 @@
   - A required MCP that cannot resolve+materialize refuses launch (`CONFIG`/`EXECUTOR_UNAVAILABLE`); an additional MCP absence is non-fatal; resolved MCP revisions are in the launch snapshot; secrets stay `env:NAME` server-side.
   - EN+RU parity for all new UI; per-phase full-suite-green; no engine bump; no new `runs.status`.
 
+- [x] **M29. Flow Studio Phase 2 (part 1) — package viewing/reachability + artifact-aware editing** — direct continuation of M27 Stage 1. **Track 0:** make an INSTALLED (git-pinned, immutable) flow package browsable from the project UI — read-only graph (compiled from the DB `manifest`) + raw `flow.yaml` + every bundled artifact file (read from disk at `flow_revisions.installed_path`) — kill the decoy `cursor-pointer` cards, and add "Fork to edit" (immutable revisions always fork to an M25 authored draft with `source_flow_ref_id` lineage, via `POST …/revisions/{revisionId}/fork`). **Track 1:** replace the flat package-file list with a derived file tree + per-kind artifact editors (skill/rule/agent frontmatter forms, shell editor + heuristic lint, `form_schema` builder with live preview), wire per-kind content validation into the draft-save hard-gate (BLOCK/WARN severity), swap the `flow.yaml` `<textarea>` for CodeMirror with live YAML→graph re-seed, add the typed-edge modal-on-connect, and complete the presentation round-trip (persist canvas spawn x/y on add; carry width/height/color through to views). **No migration, no engine bump, no new `runs.status` / `MaisterError` code** (every column relied on already exists). Excluded: markdown/mermaid artifact preview, AI authoring assistant, governance/publication pipeline, in-place installed-file editing. SDD: `.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md`; plan: `.ai-factory/plans/feature-flow-studio-phase2-viewing-editing.md`; decision ADR-075. (M28 is reserved for the in-flight user-facing cron-schedules branch — the "reserve the other branch's slot" pattern; M29 is the next free number on this branch.)
+
+  **Acceptance criteria:**
+
+  - A member opens an installed package from the project flows/packages tab and views the read-only graph (honouring `presentation`, dagre fallback, OUTSIDE any run) + raw `flow.yaml` + every artifact file read-only; no decoy cards remain; a missing-on-disk bundle degrades (metadata + graph from the DB `manifest`) without throwing.
+  - Every `?file=` read is path-confined (`repoRelPathSchema` sink-invariant → lexical prefix → `realpath`, 1 MiB cap); no client surface exposes `installed_path`.
+  - A manager "Fork to edit" seeds an authored `flow` draft with `flow.yaml` + files + `source_flow_ref_id` in ONE transaction (executing nothing), slug defaults to `flowRefId` with `-fork`/`-fork-N` probe (explicit collision → 409, missing bundle → 422, foreign revision → 404), and lands in the editor.
+  - Per-kind artifact editors block draft save on a BLOCK content issue (`CONFIG` 422, not persisted) on BOTH save paths; rule-guardrail/shell-lint/unreferenced-schema/unknown-key issues are WARN-only.
+  - File tree with add/rename/move and kind-by-path inferred badge (no manual `<select>`); `flow.yaml` via CodeMirror with live YAML→graph re-seed and modal-typed edges; canvas drag + size/color round-trip save→reload and match the read-only view.
+  - EN+RU parity for all new UI; per-phase full-suite-green; migrations: none.
+
 ## Completed
 
 | Milestone                                                                    | Date       |
@@ -590,3 +601,4 @@
 | M24. Scheduler service (one clock, polymorphic jobs)                         | 2026-06-05 |
 | M25. Capability catalog groundwork                                           | 2026-06-05 |
 | M28. User-facing run schedules (cron)                                        | 2026-06-10 |
+| M29. Flow Studio Phase 2 (part 1): viewer/reachability + artifact editing     | 2026-06-11 |

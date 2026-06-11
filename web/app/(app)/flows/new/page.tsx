@@ -15,7 +15,13 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t("newTitle") };
 }
 
-export default async function NewFlowPage(): Promise<ReactElement> {
+type PageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function NewFlowPage({
+  searchParams,
+}: PageProps = {}): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("flows");
   const view = await getPlatformFlows({
@@ -27,6 +33,13 @@ export default async function NewFlowPage(): Promise<ReactElement> {
   );
 
   if (manageableProjects.length === 0) redirect("/flows");
+
+  const requestedProject = (await searchParams)?.project;
+  const preselectedSlug =
+    typeof requestedProject === "string" &&
+    manageableProjects.some((project) => project.slug === requestedProject)
+      ? requestedProject
+      : manageableProjects[0].slug;
 
   return (
     <div className="mx-auto w-full max-w-[680px]">
@@ -60,6 +73,7 @@ export default async function NewFlowPage(): Promise<ReactElement> {
             <select
               required
               className="rounded-md border border-line bg-ivory px-3 py-2.5 font-mono text-[13px] text-ink outline-none focus:border-amber"
+              defaultValue={preselectedSlug}
               name="projectSlug"
             >
               {manageableProjects.map((project) => (

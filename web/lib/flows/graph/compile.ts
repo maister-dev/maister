@@ -1,10 +1,8 @@
-import "server-only";
-
 import type { NodeAttemptType } from "@/lib/db/schema";
 import type { FlowYamlV1, GateDef, NodeDef, Step } from "@/lib/config.schema";
 
 import { TERMINAL_TRANSITION_TARGET } from "@/lib/config.schema";
-import { MaisterError } from "@/lib/errors";
+import { MaisterError } from "@/lib/errors-core";
 
 // A node in the compiled graph. It carries either the original linear `Step`
 // (compiled-linear back-compat — executed via the existing per-step runners) or

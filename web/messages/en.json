@@ -167,6 +167,17 @@
     "packageFileContent": "Content",
     "addPackageFile": "Add file",
     "removePackageFile": "Remove",
+    "packageFilePathEdit": {
+      "title": "Edit path",
+      "rename": "Rename / move",
+      "save": "Save",
+      "cancel": "Cancel",
+      "error": {
+        "unsafe_path": "Path must be relative and must not contain ..",
+        "duplicate_path": "Another file already uses this path.",
+        "path_conflict": "Path conflicts with an existing file or folder."
+      }
+    },
     "packageSlug": "Package slug",
     "packageName": "Package name",
     "packageVersion": "Package version",
@@ -1211,7 +1222,37 @@
     "added": "added",
     "removed": "removed",
     "errorGeneric": "Action failed. Try again.",
-    "adminOnly": "Package management requires the admin project role."
+    "adminOnly": "Package management requires the admin project role.",
+    "viewer": {
+      "backToPackages": "Back to packages",
+      "execTrust": "Executable trust",
+      "execUntrusted": "Scripts blocked until trusted",
+      "execTrusted": "Scripts allowed",
+      "graphTitle": "Flow graph",
+      "graphEmpty": "This package declares no flow graph.",
+      "graphUnavailable": "Graph unavailable — the manifest could not be compiled. Showing the raw flow.yaml only.",
+      "flowYamlTitle": "flow.yaml",
+      "filesTitle": "Package files",
+      "filesEmpty": "This package ships no additional files.",
+      "fileBinary": "Binary file — not shown.",
+      "fileTooLarge": "File is larger than 1 MiB and is not shown.",
+      "fileNotFound": "File not found.",
+      "fileBundleMissing": "Bundle not available on disk.",
+      "fileEmptyPrompt": "Select a file to view its contents.",
+      "bundleMissing": "Bundle not available on disk. The graph and metadata are reconstructed from the stored manifest; package files cannot be read until the bundle is reinstalled.",
+      "revisionsTitle": "Revisions",
+      "revisionEnabled": "enabled",
+      "forkToEdit": "Fork to edit",
+      "forkHint": "Installed revisions are immutable. Forking creates an editable authored draft.",
+      "fork": {
+        "fork": "Fork to edit",
+        "pending": "Forking…",
+        "errorConflict": "A flow with that name already exists.",
+        "errorConfig": "The package bundle is not available on disk.",
+        "errorUnauthorized": "You do not have permission to fork this package.",
+        "errorGeneric": "Could not fork the package. Try again."
+      }
+    }
   },
   "mcpPanel": {
     "title": "Project MCP servers",
@@ -1425,6 +1466,10 @@
       "allowTakeover": "Allow takeover",
       "outputSchema": "Result schema path",
       "outputRequired": "Required",
+      "presentation": "Appearance",
+      "presentationWidth": "Width (px)",
+      "presentationHeight": "Height (px)",
+      "presentationColor": "Color",
       "reworkAllowedTargets": "Allowed targets (comma-separated)",
       "reworkWorkspacePolicies": "Workspace policies (comma-separated)",
       "reworkMaxLoops": "Max loops",
@@ -1448,6 +1493,21 @@
       "staleOnNewCommit": "Stale on new commit",
       "remove": "Remove gate"
     },
+    "edgeModal": {
+      "title": "Connect nodes",
+      "outcome": "Outcome",
+      "suggestionsHint": "Common outcomes",
+      "freeTextHint": "Or type a custom outcome",
+      "retargetWarning": "This outcome already exists for the source — confirming will retarget the existing edge.",
+      "confirm": "Connect",
+      "cancel": "Cancel",
+      "suggestion": {
+        "success": "success",
+        "failure": "failure",
+        "rework": "rework",
+        "takeover": "takeover"
+      }
+    },
     "diff": {
       "empty": "No changes since the last published revision"
     },
@@ -1462,7 +1522,80 @@
       "save": "Save draft",
       "saving": "Saving…",
       "saved": "Saved",
-      "saveError": "Save failed"
+      "saveError": "Save failed",
+      "syncError": "YAML is invalid — the canvas keeps the last valid graph until the YAML parses."
+    },
+    "artifacts": {
+      "frontmatterHeading": "Frontmatter",
+      "bodyHeading": "Body",
+      "name": "Name",
+      "description": "Description",
+      "tools": "Tools",
+      "model": "Model",
+      "permissionMode": "Permission mode",
+      "maxTurns": "Max turns",
+      "allowedPaths": "Allowed paths",
+      "forbiddenPaths": "Forbidden paths",
+      "allowedCommands": "Allowed commands",
+      "requireStructuredResponse": "Require structured response",
+      "listHint": "One per line",
+      "guardrailNotice": "Guardrails are advisory and never block execution.",
+      "malformedNotice": "The frontmatter could not be parsed. Fix it in the raw view below.",
+      "rawHeading": "Raw content",
+      "scriptEditorAriaLabel": "Script editor",
+      "scriptTrustBannerTitle": "Execution is gated by trust.",
+      "scriptTrustBanner": "Scripts never run until explicit executable trust.",
+      "formSchema": {
+        "builderTab": "Builder",
+        "jsonTab": "Raw JSON",
+        "previewHeading": "Live preview",
+        "fieldName": "Name",
+        "fieldLabel": "Label",
+        "fieldType": "Type",
+        "fieldRequired": "Required",
+        "fieldOptions": "Options (comma-separated)",
+        "addField": "Add field",
+        "addNestedField": "Add nested field",
+        "removeField": "Remove",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "invalidJson": "The JSON is invalid — fix it to re-enable the builder.",
+        "noFields": "No fields yet.",
+        "type": {
+          "string": "String",
+          "number": "Number",
+          "boolean": "Boolean",
+          "enum": "Enum",
+          "array": "Array",
+          "object": "Object"
+        },
+        "preview": {
+          "criticalityLabel": "Criticality",
+          "criticality": {
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "critical": "critical"
+          },
+          "confidenceLabel": "Confidence",
+          "reviewComments": "Review comments",
+          "decisionApprove": "Approve",
+          "decisionRework": "Request rework",
+          "sendBackWithComments": "Send back with comments",
+          "responseLabel": "Response (JSON)",
+          "responseHint": "Enter a JSON value matching the requested schema below.",
+          "schemaLabel": "Requested schema",
+          "submit": "Submit",
+          "reviewCommentsPlaceholder": "What needs to change? (optional)",
+          "formInstructions": "Pick an option or type your own answer for each field.",
+          "formCustomPlaceholder": "Type a custom value…"
+        }
+      },
+      "contentIssues": {
+        "clean": "No content issues.",
+        "blockTitle": "Blocking content issues",
+        "warnTitle": "Content warnings"
+      }
     }
   },
   "apiErrors": {

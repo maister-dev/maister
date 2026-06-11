@@ -31,6 +31,7 @@ import { validateGraphManifest } from "@/lib/config";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { manifestDigest } from "@/lib/flows/digest";
+import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
 
 const log = pino({
   name: "flow-package-authoring",
@@ -364,7 +365,7 @@ async function readPackageFiles(
       }
 
       files.push({
-        kind: classifyPackageFile(relativePath),
+        kind: classifyPackageFilePath(relativePath),
         path: relativePath,
         content: decodeUtf8TextFile({
           bytes: await readFile(absolutePath),
@@ -380,20 +381,7 @@ async function readPackageFiles(
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function classifyPackageFile(
-  relativePath: string,
-): AuthoredFlowPackageFileKind {
-  if (relativePath === "README.md") return "readme";
-  if (relativePath === "setup.sh") return "setup";
-  if (relativePath.startsWith("schemas/")) return "schema";
-  if (relativePath.startsWith("skills/")) return "skill";
-  if (relativePath.startsWith("rules/")) return "rule";
-  if (relativePath.startsWith("agents/")) return "agent_definition";
-  if (relativePath.startsWith("scripts/")) return "script";
-  if (relativePath.startsWith("templates/")) return "template";
-
-  return "asset";
-}
+export { classifyPackageFilePath as classifyPackageFile } from "@/lib/flows/editor/package-file-tree";
 
 function packageNameFromFlowYaml(flowYaml: string): string | null {
   try {

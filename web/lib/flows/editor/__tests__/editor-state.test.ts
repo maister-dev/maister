@@ -1,7 +1,9 @@
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { describe, expect, it } from "vitest";
 
+import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -17,6 +19,7 @@ import {
 } from "@/lib/flows/editor/editor-state";
 import { readPresentation } from "@/lib/flows/editor/manifest-io";
 import { validateNodeDraft } from "@/lib/flows/editor/node-form";
+import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 
 // ─── Fixture ─────────────────────────────────────────────────────────────────
 
@@ -116,6 +119,23 @@ describe("addNode", () => {
       expect(added?.type, `type ${type}`).toBe(type);
       expect(validateNodeDraft(added), `type ${type}`).toEqual({ ok: true });
     }
+  });
+
+  it("writes the spawn {x,y} into presentation when a position is given (T2.4 audit b)", () => {
+    const result = addNode(BASE_MANIFEST, "cli", "build", { x: 140, y: 90 });
+    const pres = readPresentation(result);
+    const buildPres = pres.find((p) => p.id === "build");
+
+    expect(buildPres).toEqual({ id: "build", x: 140, y: 90 });
+    // Pre-existing entries are preserved.
+    expect(pres.find((p) => p.id === "plan")).toBeDefined();
+  });
+
+  it("writes NO presentation entry when no position is given (back-compat)", () => {
+    const result = addNode(BASE_MANIFEST, "cli", "build");
+    const pres = readPresentation(result);
+
+    expect(pres.find((p) => p.id === "build")).toBeUndefined();
   });
 });
 
@@ -558,5 +578,67 @@ describe("replaceNode", () => {
 
     replaceNode(BASE_MANIFEST, "plan", nextPlan);
     expect(snapshot(BASE_MANIFEST)).toBe(before);
+  });
+});
+
+// ─── presentation round-trip (T2.4) ──────────────────────────────────────────
+
+// Hand-built topology keyed by the manifest's node ids — mirrors the
+// flow-graph-view-layout test fixture so the projection can be exercised purely
+// (no server-only compile). Edges are irrelevant to the presentation overrides.
+function topologyFor(ids: string[]): GraphTopology {
+  return {
+    nodes: ids.map((id) => ({
+      id,
+      nodeType: "ai_coding",
+      label: id,
+      displayLabel: id,
+      nodeTypeLabel: "Agent",
+      nodeRole: "agent",
+      declaredGateSummary: { total: 0, blocking: 0, advisory: 0, kinds: [] },
+    })),
+    edges: [],
+  } as unknown as GraphTopology;
+}
+
+describe("presentation round-trip (save -> reload -> read-only view parity)", () => {
+  it("drag position + size + color survive serialize→parse and reach toFlowGraphView", () => {
+    // Add a node with a spawn position (audit b), then set size/color via the
+    // editor-state moveNode merge (audit c).
+    let m = addNode(BASE_MANIFEST, "ai_coding", "code", { x: 120, y: 80 });
+
+    m = moveNode(m, "code", {
+      x: 320,
+      y: 140,
+      width: 240,
+      height: 96,
+      color: "#22c55e",
+    });
+
+    // "Save -> reload": the draft-save gate persists via flowYamlV1Schema; a
+    // re-parse models reading the manifest back off disk.
+    const reloaded = flowYamlV1Schema.parse(JSON.parse(JSON.stringify(m)));
+
+    // The projection the read-only view + editor canvas both consume.
+    const layout = presentationLayout(reloaded);
+
+    expect(layout.code).toEqual({
+      x: 320,
+      y: 140,
+      width: 240,
+      height: 96,
+      color: "#22c55e",
+    });
+
+    const ids = (reloaded.nodes ?? []).map((n) => n.id);
+    const { nodes } = toFlowGraphView(topologyFor(ids), layout);
+    const codeNode = nodes.find((n) => n.id === "code")!;
+
+    expect(codeNode.position).toEqual({ x: 320, y: 140 });
+    expect(codeNode.width).toBe(240);
+    expect(codeNode.height).toBe(96);
+    expect((codeNode.data as Record<string, unknown>).presentationColor).toBe(
+      "#22c55e",
+    );
   });
 });

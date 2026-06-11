@@ -2,7 +2,10 @@
 
 import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { EditorValidationSummaryLabels } from "@/components/flows/editor-validation-summary";
-import type { NodeSideFormLabels } from "@/components/flows/node-form/node-side-form";
+import type {
+  NodePresentationStyle,
+  NodeSideFormLabels,
+} from "@/components/flows/node-form/node-side-form";
 import type { FlowNodeData } from "@/lib/board/flow-graph-view-layout";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { GateKind, NodeType } from "@/lib/flows/editor/editor-state";
@@ -31,16 +34,22 @@ import {
 
 import { FlowNodeBody } from "@/components/board/flow-graph-view";
 import { EditorValidationSummary } from "@/components/flows/editor-validation-summary";
+import {
+  EdgeConnectModal,
+  type EdgeConnectModalLabels,
+} from "@/components/flows/edge-connect-modal";
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import {
   addGate,
   addNode,
   moveNode,
+  outcomeExistsForSource,
   removeNode,
   replaceNode,
   setTransition,
 } from "@/lib/flows/editor/editor-state";
+import { readPresentation } from "@/lib/flows/editor/manifest-io";
 import { GATE_KINDS, NODE_TYPES } from "@/lib/flows/editor/node-form";
 import { validateEditorManifest } from "@/lib/flows/editor/validation";
 
@@ -59,6 +68,7 @@ export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   graph: FlowGraphViewLabels;
   nodeForm: NodeSideFormLabels;
   validation: EditorValidationSummaryLabels;
+  edgeModal: EdgeConnectModalLabels;
 };
 
 export interface FlowGraphEditorProps {
@@ -185,6 +195,9 @@ function makeEditorNodeView(
           labels={labels}
           nodeRole={d.nodeRole}
           nodeTypeLabel={d.nodeTypeLabel}
+          presentationColor={d.presentationColor}
+          presentationHeight={d.presentationHeight}
+          presentationWidth={d.presentationWidth}
           rollup="none"
           status="Pending"
           statusLabel={d.nodeTypeLabel}
@@ -218,11 +231,18 @@ function nextGateId(
   return `${kind}_${i}`;
 }
 
+// Deterministic spawn position for a freshly added node, indexed off the current
+// node count. Shared by the canvas node AND the manifest presentation write so a
+// new node's position survives serialize→reload (audit b).
+function spawnPosition(index: number): { x: number; y: number } {
+  return { x: 80 + (index % 4) * 60, y: 60 + Math.floor(index / 4) * 90 };
+}
+
 function editorCanvasNode(
   id: string,
   type: NodeType,
   nodeTypeLabel: string,
-  index: number,
+  pos: { x: number; y: number },
 ): Node {
   const data: FlowNodeData = {
     label: id,
@@ -237,7 +257,7 @@ function editorCanvasNode(
   return {
     id,
     type: "flowNode",
-    position: { x: 80 + (index % 4) * 60, y: 60 + Math.floor(index / 4) * 90 },
+    position: pos,
     data: data as unknown as Record<string, unknown>,
   };
 }
@@ -302,6 +322,11 @@ export default function FlowGraphEditor({
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [manifest, setManifest] = useState<FlowYamlV1>(initialManifest);
+  const [pendingConnection, setPendingConnection] = useState<{
+    source: string;
+    target: string;
+  } | null>(null);
+  const [pendingOutcome, setPendingOutcome] = useState("success");
 
   const manifestRef = useRef<FlowYamlV1>(initialManifest);
 
@@ -333,11 +358,12 @@ export default function FlowGraphEditor({
   const handleAddNode = useCallback(
     (type: NodeType): void => {
       const id = nextNodeId(manifestRef.current, type);
+      const pos = spawnPosition(manifestRef.current.nodes?.length ?? 0);
 
-      applyManifest((m) => addNode(m, type, id), `add-node:${id}`);
+      applyManifest((m) => addNode(m, type, id, pos), `add-node:${id}`);
       setNodes((nds) => [
         ...nds,
-        editorCanvasNode(id, type, labels.nodeType[type], nds.length),
+        editorCanvasNode(id, type, labels.nodeType[type], pos),
       ]);
       select(id);
     },
@@ -373,22 +399,35 @@ export default function FlowGraphEditor({
     [applyManifest, selectedNodeId, setNodes],
   );
 
-  const handleConnect = useCallback(
-    (conn: Connection): void => {
-      if (!conn.source || !conn.target) return;
+  // A new connection opens the typed-edge modal (D7); the edge is written ONLY
+  // on confirm, through the same setTransition→applyManifest path the side-form
+  // uses. Cancel adds no edge.
+  const handleConnect = useCallback((conn: Connection): void => {
+    if (!conn.source || !conn.target) return;
 
-      const source = conn.source;
-      const target = conn.target;
-      const outcome = "success";
+    setPendingConnection({ source: conn.source, target: conn.target });
+    setPendingOutcome("success");
+  }, []);
+
+  const confirmConnection = useCallback(
+    (outcome: string): void => {
+      if (pendingConnection === null) return;
+
+      const { source, target } = pendingConnection;
 
       applyManifest(
         (m) => setTransition(m, source, outcome, target),
         `rewire:${source}->${target}`,
       );
       setEdges((eds) => upsertEdge(eds, source, target, outcome));
+      setPendingConnection(null);
     },
-    [applyManifest, setEdges],
+    [applyManifest, pendingConnection, setEdges],
   );
+
+  const cancelConnection = useCallback((): void => {
+    setPendingConnection(null);
+  }, []);
 
   const handleNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]): void => {
@@ -419,10 +458,69 @@ export default function FlowGraphEditor({
     [applyManifest, selectedNodeId],
   );
 
+  // Side-form width/height/color edits merge into the node's presentation entry
+  // through the SAME moveNode merge as drag, so x/y are carried from the live
+  // canvas position. The canvas node's data + dims are patched in lockstep so the
+  // box repaints without a reseed.
+  const handlePresentationChange = useCallback(
+    (patch: NodePresentationStyle): void => {
+      if (selectedNodeId === null) return;
+
+      const id = selectedNodeId;
+      const canvasNode = nodes.find((n) => n.id === id);
+      const pos = canvasNode?.position ?? { x: 0, y: 0 };
+      const existing = readPresentation(manifestRef.current).find(
+        (p) => p.id === id,
+      );
+
+      const width =
+        "width" in patch ? patch.width : (existing?.width ?? undefined);
+      const height =
+        "height" in patch ? patch.height : (existing?.height ?? undefined);
+      const color =
+        "color" in patch ? patch.color : (existing?.color ?? undefined);
+
+      applyManifest(
+        (m) =>
+          moveNode(m, id, {
+            x: pos.x,
+            y: pos.y,
+            ...(width !== undefined ? { width } : {}),
+            ...(height !== undefined ? { height } : {}),
+            ...(color !== undefined ? { color } : {}),
+          }),
+        `presentation:${id}`,
+      );
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id
+            ? {
+                ...n,
+                ...(width !== undefined ? { width } : {}),
+                ...(height !== undefined ? { height } : {}),
+                data: {
+                  ...n.data,
+                  presentationWidth: width,
+                  presentationHeight: height,
+                  presentationColor: color,
+                },
+              }
+            : n,
+        ),
+      );
+    },
+    [applyManifest, nodes, selectedNodeId, setNodes],
+  );
+
   const selectedNode =
     selectedNodeId === null
       ? null
       : (manifest.nodes?.find((nd) => nd.id === selectedNodeId) ?? null);
+
+  const selectedPresentation =
+    selectedNodeId === null
+      ? undefined
+      : readPresentation(manifest).find((p) => p.id === selectedNodeId);
 
   const validation = validateEditorManifest(manifest);
 
@@ -467,9 +565,34 @@ export default function FlowGraphEditor({
         <NodeSideForm
           labels={labels.nodeForm}
           node={selectedNode}
+          presentation={
+            selectedPresentation
+              ? {
+                  width: selectedPresentation.width,
+                  height: selectedPresentation.height,
+                  color: selectedPresentation.color,
+                }
+              : undefined
+          }
           onChange={handleNodeFormChange}
+          onPresentationChange={handlePresentationChange}
         />
       </aside>
+      {pendingConnection ? (
+        <EdgeConnectModal
+          duplicate={outcomeExistsForSource(
+            manifest,
+            pendingConnection.source,
+            pendingOutcome,
+          )}
+          labels={labels.edgeModal}
+          source={pendingConnection.source}
+          target={pendingConnection.target}
+          onCancel={cancelConnection}
+          onConfirm={confirmConnection}
+          onOutcomeChange={setPendingOutcome}
+        />
+      ) : null}
     </div>
   );
 }

@@ -97,6 +97,7 @@
 | [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve) | MCP + capability management model: 3-scope identity, local-first precedence, platform storage, setup-time resolve | Accepted | 2026-06-08 |
 | [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock) | User-facing run schedules on the M24 clock | Accepted | 2026-06-10 |
 | [ADR-072](#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard) | PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard | Accepted | 2026-06-10 |
+| [ADR-075](#adr-075-flow-studio-phase-2-viewer-fork-to-authored-draft-kind-by-path-and-content-validation-severity) | Flow Studio Phase 2 viewer, fork-to-authored-draft, kind-by-path, and content-validation severity | Accepted | 2026-06-10 |
 
 ---
 
@@ -4987,6 +4988,138 @@ always emitting a `mutation_report` artifact when configured.
 - **Recording the report only on failure:** rejected — a pass with an empty
   match set vs a pass with rich touches are different signals; ADR-073
   effectiveness metrics need both sides.
+
+---
+
+### ADR-075: Flow Studio Phase 2 viewer, fork-to-authored-draft, kind-by-path, and content-validation severity
+
+**Date:** 2026-06-10
+**Status:** Accepted
+**Context:** M27 Stage 1 shipped the authored-flow graph editor write path but
+left INSTALLED (git-pinned) flow packages unviewable from the project UI (decoy
+`cursor-pointer` cards that navigate nowhere) and the package-file editor a flat
+generic-CodeMirror list with a manual, divergence-prone kind `<select>`.
+Installed `flow_revisions` are immutable and store only the parsed `manifest`
+jsonb + `manifest_digest` in the DB — raw `flow.yaml` text and bundled artifact
+files exist ONLY on disk at `flow_revisions.installed_path`. Phase 2 (part 1)
+must make a package browsable + forkable and give its artifacts real editors,
+WITHOUT a migration, engine bump, or new `runs.status` / `MaisterError` code.
+(Numbered ADR-075 — renumbered from 072 at verification on 2026-06-11: while
+this branch was in flight, main took 071 (run schedules), 072 (review
+comments), and 073/074 (harness metrics, artifact post-conditions); 075 is the
+next free number, ADR numbers being globally sequential across parallel
+branches.)
+
+**Decision:** Eight locked choices (D1–D8):
+
+1. **Installed-content source + viewer route (D1).** File bodies and raw
+   `flow.yaml` come from DISK at `flow_revisions.installed_path`; graph topology
+   compiles from the DB `manifest` jsonb (digest-pinned, survives disk loss). The
+   viewer is a NEW project-scoped RSC page
+   `app/(app)/projects/[slug]/packages/[flowRefId]/page.tsx` — the URL segment is
+   the human-readable `flow_ref_id` (unique per project via
+   `(project_id, flow_ref_id)`), never a row UUID. `?rev=` selects a non-enabled
+   revision; `?file=` selects an artifact. NO new GET content API routes — server
+   components read disk directly (ADR-066 RSC-reads precedent). Authz
+   `requireProjectAction(projectId, "readRepoFiles")` (member). Degraded mode: a
+   missing `installed_path` still renders metadata + graph from the DB `manifest`,
+   with a typed "bundle not available on disk" files state — never a throw.
+
+2. **Fork-to-edit (D2).** Installed revisions are immutable; editing always forks
+   to an M25 authored `flow` draft. NEW route
+   `POST /api/projects/[slug]/flow-packages/[flowRefId]/revisions/[revisionId]/fork`
+   (`manageCatalog`). Body `{slug?, title?}` names only the NEW resource — NO
+   filesystem / cross-resource locator (`installed_path` is read from the DB row).
+   Server: resolve flow+revision (project-scoped) →
+   `readAuthoredFlowPackageDirectory(revision.installedPath)` →
+   `createAuthoredCapability({kind:"flow", …, sourceFlowRefId: flow.flowRefId})`
+   in ONE transaction → 201 `{capId, projectSlug, slug}`. Slug defaults to
+   `flowRefId`; collision probes `-fork`/`-fork-N`; an EXPLICIT colliding slug →
+   409. All reads precede the single write; no idempotency marker. The fork reads
+   `setup.sh`/scripts as draft TEXT and executes nothing.
+
+3. **Static read-only graph (D3).** `FlowGraphView` gains optional `runContext?`;
+   absent → static mode (no `useRunStream`, no `/graph-status` fetch, no status
+   chips / current-node ring). Existing run callers pass `runContext` unchanged.
+   The viewer compiles `compileManifest(revision.manifest)` →
+   `buildGraphTopology` + `presentationLayout` server-side and passes plain DTOs.
+
+4. **File model: tree + kind-by-path (D4).** The persisted model stays
+   `files[{path, content}]`; the tree is a derived client view. Kind is STRICTLY
+   inferred from path via `classifyPackageFile` (the manual `<select>` is removed
+   — install/bridge classify by path only, so a hand-set kind silently diverges
+   at publish). Add = a new path; rename/move = ONE path-edit operation, kind
+   re-inferred.
+
+5. **`form_schema` builder (D5).** A structured field editor over
+   `formSchemaSchema` with a raw-JSON CodeMirror toggle + a LIVE preview rendering
+   `HitlDecisionControls` via `formFieldsFromSchema` (no-op callbacks). Same
+   builder serves `output.result` schemas (same grammar, ADR-063). No full visual
+   drag-builder.
+
+6. **Per-kind validation severity (D6).** One shared module emits
+   `{severity:"block"|"warn", code, path, message}`; the BLOCK subset is wired
+   into the server draft-save hard-gate (alongside
+   `assertAuthoredFlowManifestValid`, BEFORE the `draft_version` CAS → `CONFIG`
+   422), mirrored client-side. BLOCK: malformed `schemas/*.json`; a manifest-
+   REFERENCED schema failing `formSchemaSchema`; skill/agent md with
+   missing/unparseable frontmatter or missing `name`/`description`. WARN (never
+   blocks): rule-guardrail frontmatter shape, shell heuristic lint,
+   unreferenced-schema grammar, unknown frontmatter keys. Manifest-reference
+   resolution runs only when the manifest parses; file-level BLOCK checks run
+   regardless. An installed package with pre-existing BLOCK violations still
+   forks; the first save surfaces the blocks.
+
+7. **Typed edges: one source of truth (D7).** The connect-modal and the side-form
+   both write through `setTransition(manifest, source, outcome, target)` →
+   `applyManifest`. On connect: a modal collects the outcome (default `success`);
+   a duplicate outcome for the source warns it will retarget. No second edge
+   store.
+
+8. **Presentation completion (D8).** `addNode` writes the canvas spawn x/y into
+   `presentation` at add time; `presentationLayout` / `toFlowGraphView` carry and
+   apply `width/height/color`; the node side-form gains three optional inputs. No
+   canvas resize-handles / colour palette. The YAML-tab ↔ canvas state fork is
+   fixed by making `FlowEditorTabs` the single manifest-state owner with a
+   debounced YAML→graph re-seed (a parse error keeps the last-good graph + an
+   inline banner).
+
+**Consequences:**
+- No migration, no engine bump, no new `runs.status`, no new `MaisterError` code
+  — every column relied on (`source_flow_ref_id`, `installed_path`, `exec_trust`,
+  `version_binding`, `manifest`, `manifest_digest`, `enabled_revision_id`)
+  already exists.
+- `flow_revisions.installed_path` (absolute server path) becomes a read source
+  but MUST NEVER appear in a client DTO / prop / log / error (explicit-DTO
+  projection discipline).
+- `compileManifest` + the topology builder become client-safe (errors-core swap,
+  drop `server-only`, extract the topology builder) to enable the live
+  YAML→graph preview; `server-only` leaks are caught only by the e2e
+  client-bundle smoke, not unit tests.
+- Kind-by-path removes a latent publish-time divergence; the editor shows a
+  read-only inferred-kind badge.
+- `createAuthoredCapabilitySchema` is unchanged: the fork calls
+  `createAuthoredCapability` with the TS input directly (no zod re-parse), so
+  `source_flow_ref_id` is server-seeded without widening the public `POST /caps`
+  create body (fork is the only setter).
+- Trust / execution stays separated: this feature DISPLAYS `exec_trust` and
+  executes nothing.
+
+**Alternatives Considered:**
+- **New GET content API routes for file bodies:** rejected — ADR-066 retired the
+  run/project `files/content` routes in favor of RSC disk reads; page query
+  params are documented in system-analytics, not OpenAPI.
+- **Editing installed package files in place:** rejected — installed revisions
+  are immutable; in-place edits would break the digest-pinned / run-pinned
+  contract. Edit = fork to an authored draft.
+- **Manual kind `<select>` retained:** rejected — install/bridge classify by path
+  only; a hand-set kind silently diverges at publish. Path is the single source.
+- **shellcheck host binary for script lint:** rejected — it would add a
+  deployment touchpoint (container wiring); a pure-JS heuristic WARN-only lint is
+  sufficient and dependency-free.
+- **Blocking on rule-guardrail frontmatter shape:** rejected — no web runtime
+  parser consumes those fields, so a block would be a false compliance signal;
+  WARN-only.
 
 ---
 

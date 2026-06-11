@@ -1,5 +1,6 @@
 "use client";
 
+import type { LintDiagnostic } from "@/lib/flows/authored-lint";
 import type { ReactElement } from "react";
 
 import dynamic from "next/dynamic";
@@ -32,6 +33,10 @@ export interface CodeEditorProps {
   onChange?: (next: string) => void;
   readOnly?: boolean;
   ariaLabel?: string;
+  // Optional extra linter, merged into the kind-driven `@codemirror/lint`
+  // pipeline. Re-evaluated against live doc text on every change (e.g. the
+  // shell heuristic lint for `kind="script" | "setup"`).
+  lintSource?: (text: string) => LintDiagnostic[];
 }
 
 // Two shapes:
@@ -47,6 +52,7 @@ export function CodeEditor({
   onChange,
   readOnly = false,
   ariaLabel,
+  lintSource,
 }: CodeEditorProps): ReactElement {
   // `value` SEEDS the buffer once (the editor is uncontrolled thereafter); the
   // buffer is the source of truth, propagated up via onChange. A parent that
@@ -69,6 +75,7 @@ export function CodeEditor({
       <CodeEditorInner
         ariaLabel={ariaLabel}
         kind={kind}
+        lintSource={lintSource}
         readOnly={readOnly}
         value={buffer}
         onChange={handleChange}

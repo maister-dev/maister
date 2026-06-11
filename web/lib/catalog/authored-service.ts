@@ -9,6 +9,7 @@ import type {
   CreateAuthoredCapabilityInput,
   UpdateAuthoredDraftInput,
 } from "@/lib/catalog/authored-types";
+import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 
 import { createHash, randomUUID } from "node:crypto";
 
@@ -19,6 +20,10 @@ import { validateGraphManifest } from "@/lib/config";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
+import {
+  validateArtifactContent,
+  type ArtifactContentIssue,
+} from "@/lib/flows/artifact-validate";
 import { compileManifest } from "@/lib/flows/graph/compile";
 
 export type { AuthoredCapabilityKind };
@@ -311,6 +316,78 @@ function assertAuthoredFlowManifestValid(manifest: unknown): void {
   compileManifest(parsed);
 }
 
+/**
+ * T4.2: per-kind CONTENT validation hard-gate. Runs the BLOCK subset of
+ * `validateArtifactContent` over the draft's `files[]` (kind inferred by path)
+ * alongside the manifest gate, BEFORE the CAS write, so a BLOCK content issue
+ * (malformed `schemas/*.json`, a manifest-referenced form schema failing the
+ * grammar, or a skill/agent md with missing frontmatter / `name`/`description`)
+ * is refused (`CONFIG` → 422) and the row is never mutated. Per the manifest-null
+ * rule (spec §6.1) this runs REGARDLESS of manifest parseability: file-level
+ * BLOCK checks always apply; manifest-reference resolution is skipped inside
+ * `validateArtifactContent` when `manifest` is null. WARN issues never block —
+ * they are surfaced client-side only.
+ */
+function assertAuthoredFlowContentValid(
+  body: AuthoredCapabilityBody,
+  manifest: AuthoredCapabilityBody | null,
+): void {
+  const files = packageFilesFromBody(body);
+
+  if (files.length === 0) return;
+
+  const blocks = validateArtifactContent({ files, manifest }).filter(
+    (issue): issue is ArtifactContentIssue => issue.severity === "block",
+  );
+
+  if (blocks.length === 0) return;
+
+  const detail = blocks
+    .map((issue) => `${issue.path} [${issue.code}]: ${issue.message}`)
+    .join("; ");
+
+  throw new MaisterError(
+    "CONFIG",
+    `authored flow package has blocking content issues: ${detail}`,
+  );
+}
+
+// The persisted authored-flow body carries `files: {kind,path,content}[]`. Read
+// it defensively (the body is loosely typed `Record<string, unknown>`): only
+// well-formed entries are validated; anything else is skipped (the manifest gate
+// + publish gate own structural rejection).
+function packageFilesFromBody(
+  body: AuthoredCapabilityBody,
+): AuthoredFlowPackageFile[] {
+  const raw = body.files;
+
+  if (!Array.isArray(raw)) return [];
+
+  const files: AuthoredFlowPackageFile[] = [];
+
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+
+    const record = entry as Record<string, unknown>;
+
+    if (
+      typeof record.path === "string" &&
+      typeof record.content === "string" &&
+      typeof record.kind === "string"
+    ) {
+      files.push({
+        kind: record.kind as AuthoredFlowPackageFile["kind"],
+        path: record.path,
+        content: record.content,
+      });
+    }
+  }
+
+  return files;
+}
+
 export async function updateAuthoredDraft(args: {
   projectSlug: string;
   capId: string;
@@ -363,6 +440,12 @@ export async function updateAuthoredDraft(args: {
     // an invalid flow manifest is refused (CONFIG) and the row is never mutated.
     if (cap.kind === "flow" && manifest !== null) {
       assertAuthoredFlowManifestValid(manifest);
+    }
+    // T4.2: per-kind CONTENT validation hard-gate — also BEFORE the CAS. Runs
+    // regardless of manifest parseability (file-level BLOCKs always apply;
+    // manifest-reference checks are skipped when manifest is null).
+    if (cap.kind === "flow") {
+      assertAuthoredFlowContentValid(body, manifest);
     }
 
     const updatedCapability = await tx.execute(sql`

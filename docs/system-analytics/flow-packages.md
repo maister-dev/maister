@@ -348,6 +348,54 @@ manifest + install path from that pinned revision.
 - **Authored package publish/export invalid** -> validation refusal; authored
   content remains a draft or inert local revision and cannot become executable.
 
+## Installed-package viewer and reachability (Implemented, Flow Studio Phase 2)
+
+**(Implemented, [ADR-075](../decisions.md#adr-075))** An installed (git-pinned)
+package becomes browsable from the project UI. Raw `flow.yaml` text and bundled
+artifact files exist ONLY on disk at `flow_revisions.installed_path`; the
+read-only graph compiles from the DB `manifest` (digest-pinned, survives disk
+loss). The fork-to-edit, per-kind artifact editors, and content-validation gate
+live in [`flow-studio.md`](flow-studio.md) (this section covers viewing +
+information architecture only).
+
+- **Viewer route** — NEW project-scoped RSC page
+  `/projects/{slug}/packages/{flowRefId}` (the URL segment is the human-readable
+  `flow_ref_id`, unique per project via `(project_id, flow_ref_id)`, never a row
+  UUID). Authz `requireProjectAction(projectId, "readRepoFiles")` (member — same
+  bar as the workbench file browser). NO new GET content API routes: the server
+  component reads disk directly (ADR-066 RSC-reads precedent), so the query
+  params below are documented here, NOT in OpenAPI.
+- **`?rev=<revisionId>`** — selects a non-enabled revision; validated as an id
+  then resolved via a project-scoped join (`flow_revisions.flow_ref_id =
+  flows.flow_ref_id AND project`); a revision from another flow/project →
+  not-found. Default = `flows.enabled_revision_id`.
+- **`?file=<relPath>`** — UNTRUSTED → a `repoRelPathSchema`-shaped zod (no
+  NUL/absolute/`..`/leading `-`) BEFORE any fs call, then lexical `path.resolve`
+  prefix + `realpath` symlink-escape confinement under `installed_path`, then a
+  1 MiB size cap and NUL/UTF-8 binary detection → `text | binary | too-large |
+  not-found | bundle-missing`.
+- **Degraded-disk mode** — a missing `installed_path` still renders header
+  metadata + the static graph from the DB `manifest`, with a typed "bundle not
+  available on disk" files state. The page NEVER throws on disk loss.
+- **Reachability (IA)** — the `flows-panel` + `flow-packages-panel` decoy cards
+  (`<div className="cursor-pointer">` that navigate nowhere) become
+  `<Link href="/projects/{slug}/packages/{flowRefId}">`; admin action buttons keep
+  working via stop-propagation. The `/flows` installed-package card targets the
+  viewer; the project flows tab gains a `manageCatalog`-gated "New flow" entry
+  (`/flows/new?project={slug}`). `installed_path` (an absolute server path) is
+  NEVER projected to any client surface, prop, log, or error.
+
+```mermaid
+flowchart LR
+    Card([Packages tab card]) -->|click| Viewer[/projects/slug/packages/flowRefId/]
+    Viewer --> Auth[readRepoFiles gate]
+    Auth --> Graph[static graph from DB manifest]
+    Auth --> Yaml[raw flow.yaml from disk]
+    Auth --> Filelist[artifact file list from disk]
+    Viewer -->|manageCatalog| Fork[Fork to edit button]
+    Fork --> Editor[authored flow draft editor]
+```
+
 ## Linked artifacts
 
 - Decision: [`../decisions.md` ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)

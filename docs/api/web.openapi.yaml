@@ -4409,6 +4409,81 @@ paths:
         "409": { $ref: "#/components/responses/Precondition" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork:
+    post:
+      tags: [flow-packages, flow-studio]
+      summary: (Implemented) Fork an installed package revision to an authored flow draft
+      description: |
+        Implemented (Flow Studio Phase 2, ADR-075). Installed `flow_revisions` are
+        immutable, so editing forks the revision into an M25 authored `flow`
+        draft (`kind=flow`) carrying `source_flow_ref_id = flowRefId` lineage,
+        then lands the caller in the existing editor. Admin-only
+        (`manageCatalog`). `slug` / `flowRefId` / `revisionId` are URL parameters
+        resolved to server-side state — the revision is asserted to belong to the
+        flow under this project (mismatch → 404). The request body names ONLY the
+        new authored cap; it never carries a filesystem path or cross-resource
+        locator (`installed_path` is read from the resolved DB row). The bundle
+        directory is read (`readAuthoredFlowPackageDirectory`) and the authored
+        cap is created in a single transaction; `setup.sh` / scripts are copied as
+        draft text and NEVER executed. Slug defaults to `flowRefId` and probes
+        `-fork`/`-fork-N` on `(project_id, kind, slug)` collision; an EXPLICIT
+        colliding `slug` returns 409. A missing/unreadable bundle directory
+        returns 422 (nothing persisted). No new GET content routes accompany this
+        (RSC disk reads, ADR-066). Source:
+        `.../flow-packages/[flowRefId]/revisions/[revisionId]/fork/route.ts`.
+      operationId: forkFlowPackageRevision
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: flowRefId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                slug:
+                  type: string
+                  description: Optional slug for the new authored cap (defaults to flowRefId; collision → probe).
+                title:
+                  type: string
+                  description: Optional human title for the new authored cap.
+      responses:
+        "201":
+          description: Authored flow draft seeded from the revision.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [capId, projectSlug, slug]
+                additionalProperties: false
+                properties:
+                  capId: { type: string }
+                  projectSlug: { type: string }
+                  slug: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/remove:
     post:
       tags: [flow-packages]

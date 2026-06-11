@@ -18,11 +18,15 @@ export type GateKind = (typeof GATE_KINDS)[number];
 /**
  * Append a blank node of `type` with `id`.
  * Throws MaisterError("CONFIG") if the id already exists in nodes[].
+ * When `pos` is given, the canvas spawn {x,y} is written into `presentation` at
+ * add time (audit b) so a freshly added node's position survives serialize→
+ * reload. Omitting `pos` leaves presentation untouched (back-compat).
  */
 export function addNode(
   manifest: FlowYamlV1,
   type: NodeType,
   id: string,
+  pos?: { x: number; y: number },
 ): FlowYamlV1 {
   const existing = (manifest.nodes ?? []).find((n) => n.id === id);
 
@@ -32,13 +36,15 @@ export function addNode(
 
   const newNode = blankNode(type, id);
 
-  return {
+  const withNode: FlowYamlV1 = {
     ...manifest,
     nodes: [
       ...(manifest.nodes ?? []),
       newNode as NonNullable<FlowYamlV1["nodes"]>[number],
     ],
   };
+
+  return pos ? moveNode(withNode, id, pos) : withNode;
 }
 
 /**
@@ -125,6 +131,21 @@ export function setTransition(
   });
 
   return { ...manifest, nodes: updatedNodes };
+}
+
+/**
+ * True if `fromId` already declares a transition for `outcome`. Pure read used
+ * by the typed-edge connect modal (D7) to warn that confirming will retarget the
+ * existing edge rather than add a new one. No-throw; unknown source → false.
+ */
+export function outcomeExistsForSource(
+  manifest: FlowYamlV1,
+  fromId: string,
+  outcome: string,
+): boolean {
+  const node = (manifest.nodes ?? []).find((n) => n.id === fromId);
+
+  return node?.transitions?.[outcome] !== undefined;
 }
 
 /**

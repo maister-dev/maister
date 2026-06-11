@@ -178,15 +178,186 @@ For platform MCP CRUD edge cases (delete while referenced, duplicate id), see
 [`acp-runners.md`](acp-runners.md) for the mirror pattern; the MCP server CRUD
 follows the same usage-guard and dup-id rules as ADR-065.
 
+## Phase 2 (part 1): package viewing, reachability, fork, and artifact-aware editing (Implemented)
+
+> **Status: Implemented (Flow Studio Phase 2, part 1).** Source of truth:
+> [`.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md`](../../.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md);
+> decision [ADR-075](../decisions.md#adr-075). This part makes an INSTALLED
+> (git-pinned, immutable) flow package browsable + forkable and gives its
+> bundled artifacts real editors. **No migration, no engine bump, no new
+> `runs.status` / `MaisterError` code.** The sections below ADD to the M27
+> Stage-1 contract above; they do not change it.
+
+### Scope (Implemented)
+
+**Track 0** — view an installed package's read-only graph (compiled from the DB
+`manifest`) + raw `flow.yaml` + every bundled artifact file (read from disk at
+`flow_revisions.installed_path`), kill the decoy `cursor-pointer` cards, and add
+"Fork to edit" (immutable revisions always fork to an M25 authored draft with
+`source_flow_ref_id` lineage). **Track 1** — a derived file tree + per-kind
+artifact editors (skill/rule/agent frontmatter forms, shell editor + heuristic
+lint, `form_schema` builder with live preview), per-kind content validation wired
+into the draft-save hard-gate, a CodeMirror `flow.yaml` editor with live
+YAML→graph re-seed, and a typed-edge modal-on-connect.
+
+### Domain deltas (Implemented)
+
+- **No DDL.** Every column relied on already exists: `flow_revisions.installed_path`
+  (disk root for file bodies), `flow_revisions.manifest` (compiled to the static
+  graph), `flow_revisions.exec_trust` (DISPLAYED, never flipped here),
+  `flows.flow_ref_id` (viewer URL segment + fork lineage target),
+  `flows.enabled_revision_id` (default revision), `authored_capabilities.source_flow_ref_id`
+  (written by the fork). This feature adds no migration.
+- **`installed_path` is a server-only handle** — it MUST NOT appear in any
+  client-visible DTO, RSC-serialized prop, browser-streamed log line, or error
+  message.
+- **NEW client-safe modules (no DB, no new dep):** `lib/flows/package-content.ts`
+  (confined disk reader, §below), `lib/flows/artifact-frontmatter.ts`
+  (split/serialize + `skillFrontmatterSchema` / `agentFrontmatterSchema` /
+  `ruleGuardrailSchema`, unknown keys preserved), `lib/flows/artifact-validate.ts`
+  (per-kind content issues). `source_flow_ref_id` is server-seeded by the fork via
+  a direct `createAuthoredCapability` call (the public `POST /caps` body is NOT
+  widened; `createAuthoredCapabilitySchema` is unchanged).
+- **File model** stays `files[{path, content}]`; the tree is a derived client
+  view; **kind is inferred from path** via `classifyPackageFile` (the manual kind
+  `<select>` is removed — install/bridge classify by path only).
+
+### Process flows (Implemented)
+
+Installed-package read path — authz precedes every read; disk loss degrades, never
+throws; `?file=` is confined before any fs call.
+
+```mermaid
+flowchart TD
+    Open([Member opens package viewer]) --> Auth[requireProjectAction readRepoFiles]
+    Auth --> Flow[load flows row by project and flowRefId]
+    Flow -->|none| NF[404 not found]
+    Flow --> Rev{rev query given}
+    Rev -->|yes| Join[resolve via project-scoped join]
+    Rev -->|no| Enabled[use enabled revision pointer]
+    Join --> Compile[compileManifest from DB manifest]
+    Enabled --> Compile
+    Compile -->|ok| Graph[static FlowGraphView without runContext]
+    Compile -->|throws| YamlOnly[yaml-only fallback plus notice]
+    Graph --> Files[list installed_path files on disk]
+    Files -->|dir gone| Degraded[bundle-not-available state]
+    Files --> Pick{file query given}
+    Pick -->|yes| Confined[confined read text binary too-large not-found]
+    Pick -->|no| Done([render])
+```
+
+Fork-to-edit — all reads precede ONE transaction; nothing executes; the fork
+lands the caller in the existing editor.
+
+```mermaid
+sequenceDiagram
+    actor Mgr as Manager (manageCatalog)
+    participant W as Web tier
+    participant DB as Postgres
+    participant FS as Bundle on disk
+
+    Mgr->>W: POST .../revisions/{revisionId}/fork {slug?, title?}
+    W->>DB: resolve flows + revision (project-scoped)
+    alt foreign or unknown
+        W-->>Mgr: 404 NotFound
+    else resolved
+        W->>FS: readAuthoredFlowPackageDirectory(installedPath)
+        alt missing or unreadable bundle
+            W-->>Mgr: 422 CONFIG (nothing persisted)
+        else read ok
+            W->>DB: createAuthoredCapability kind=flow, sourceFlowRefId=flowRefId (one tx)
+            alt explicit slug collision
+                W-->>Mgr: 409 CONFLICT
+            else
+                W-->>Mgr: 201 {capId, projectSlug, slug}
+            end
+        end
+    end
+```
+
+### Per-kind content-validation severity (Implemented)
+
+One shared module emits `{severity, code, path, message}`. The BLOCK subset is
+wired into the server draft-save hard-gate (alongside
+`assertAuthoredFlowManifestValid`, BEFORE the `draft_version` CAS → `CONFIG` 422),
+mirrored client-side; the WARN subset is advisory only. New codes EXTEND the
+existing `AuthoredFlowPackageValidationIssueCode` union (`yaml_parse | schema |
+graph | unsafe_path | duplicate_path | path_conflict | unsupported_kind |
+binary_content`).
+
+| Severity | Code | Fires when |
+|---|---|---|
+| BLOCK | `schema_json_invalid` | a `schemas/**/*.json` file fails `JSON.parse` |
+| BLOCK | `form_schema_invalid` | a schema file REFERENCED by the manifest (`form_schema:` / `output.result.schema:`) fails `formSchemaSchema` |
+| BLOCK | `frontmatter_missing` | `skills/**/SKILL.md` or `agents/*.md` with missing/unparseable frontmatter |
+| BLOCK | `frontmatter_field_missing` | such a file missing `name` or `description` |
+| WARN | `rule_guardrail_shape` | rule guardrail frontmatter malformed (no web runtime parser → cannot block) |
+| WARN | `shell_lint` | a shell heuristic-lint finding (pure JS, no shellcheck) |
+| WARN | `form_schema_unreferenced` | `formSchemaSchema` issue on a schema file NOT referenced by the manifest |
+| WARN | `frontmatter_unknown_key` | unknown frontmatter key (preserved verbatim) |
+
+Manifest-reference resolution runs ONLY when the manifest parses (an unparseable
+yaml persists RAW with `manifest=null` by design); file-level BLOCK checks run
+regardless. Both save paths gate: the `updateAuthoredFlowAction` server action and
+`PATCH /caps/[capId]/draft`. An installed package with pre-existing BLOCK-violating
+artifacts still FORKS; the first SAVE surfaces the blocks.
+
+### Editor behavior contracts (Implemented)
+
+- **Static graph:** `FlowGraphView` gains optional `runContext?`; absent → no SSE
+  subscription, no `/graph-status` fetch, no status chips / current-node ring.
+- **Live YAML→graph:** `FlowEditorTabs` becomes the single manifest-state owner;
+  a debounced (~400ms) parse re-seeds the canvas; a parse/validate error keeps the
+  last-good graph + an inline banner. Requires `compileManifest` + the topology
+  builder to be client-safe (errors-core swap; `server-only` leaks caught only by
+  the e2e client-bundle smoke).
+- **Typed edges:** `handleConnect` opens a modal collecting the outcome (default
+  `success`; duplicate outcome → retarget warning) and writes through
+  `setTransition` — the SAME action the side-form uses; no second edge store.
+- **Presentation:** `addNode` persists the canvas spawn x/y into `presentation`;
+  `width/height/color` round-trip and are applied in both the editor canvas and
+  the read-only view. No canvas resize-handles / colour palette.
+
+### Expectations (Implemented)
+
+1. The viewer MUST gate on `readRepoFiles` before any read; a missing-on-disk bundle MUST degrade (metadata + graph from the DB `manifest`) and MUST NOT throw.
+2. The read-only graph MUST render OUTSIDE any run with NO SSE subscription and NO `/graph-status` fetch, honouring `presentation` (dagre fallback).
+3. Every `?file=` read MUST be path-confined (`repoRelPathSchema` sink-invariant → lexical prefix → `realpath`) before any fs call; files > 1 MiB → `too-large`; NO client surface MUST contain `installed_path`.
+4. "Fork to edit" MUST seed an authored `flow` draft with `flow.yaml` + files + `source_flow_ref_id = flowRefId` in ONE transaction, executing NOTHING, then land in the editor.
+5. Fork slug MUST default to `flowRefId` and probe `-fork`/`-fork-N` on `(project_id, kind, slug)` collision; an EXPLICIT colliding slug MUST return 409; a missing/unreadable bundle MUST return 422 with nothing persisted; a foreign revision/flow MUST return 404.
+6. A draft save MUST run the per-kind BLOCK content validation alongside `assertAuthoredFlowManifestValid`, BEFORE the `draft_version` CAS; a BLOCK issue MUST throw `CONFIG` (422) and MUST NOT mutate the draft row; BOTH save paths MUST gate.
+7. Artifact kind MUST be inferred from path; frontmatter round-trip MUST be byte-stable for untouched fields and preserve unknown keys.
+8. Editing `flow.yaml` text MUST re-seed the canvas without reload; a parse error MUST keep the last-good graph; `handleConnect` MUST write through `setTransition`.
+9. `addNode` MUST persist spawn x/y; `width/height/color` MUST round-trip and be applied in editor + read-only view.
+10. The editor MUST be read-write only for `manageCatalog`; the run-scoped view stays `readBoard`. No engine bump, no new `runs.status`.
+
+### Edge cases (Implemented)
+
+| Case | `MaisterError` code | HTTP |
+|---|---|---|
+| Fork: missing/unreadable bundle dir | `CONFIG` | 422 |
+| Fork: explicit colliding slug | `CONFLICT` | 409 |
+| Fork: foreign/unknown `flowRefId` or `revisionId` | (not-found) | 404 |
+| Draft save: BLOCK content issue (frontmatter/JSON/`form_schema`) | `CONFIG` | 422 (not persisted) |
+| `?file=` traversal/symlink/NUL/abs/leading-`-` | rejected pre-fs | not-found state (no throw) |
+| Compile failure of stored `manifest` | yaml-only fallback | n/a (no 500) |
+
 ## Linked artifacts
 
 - **SDD (FROZEN SSOT):** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
+- **SDD Phase 2 (FROZEN SSOT, Implemented):** [`.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md`](../../.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md) — viewer/fork/artifact-editor contracts.
 - **ADRs (Accepted):**
   ADR-067 (flow editor write path — authored drafts + hard-gate),
   ADR-068 (authored→executable bridge + two-axis trust gate),
   ADR-069 (version_binding + resolve-at-launch + resolved-set snapshot),
-  ADR-070 (MCP + capability management model) —
+  ADR-070 (MCP + capability management model),
+  [ADR-075](../decisions.md#adr-075) (Phase 2 viewer, fork, kind-by-path, content-validation severity) —
   all accepted in [`../decisions.md`](../decisions.md).
+- **OpenAPI route (Implemented, Phase 2):**
+  `POST /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork` —
+  see [`../api/web.openapi.yaml`](../api/web.openapi.yaml). The viewer page
+  (`/projects/{slug}/packages/{flowRefId}` + `?rev=`/`?file=`) is page params, NOT
+  OpenAPI (ADR-066 RSC-reads precedent) — see [`flow-packages.md`](flow-packages.md).
 - **ADR-065 (Implemented):** [`../decisions.md#adr-065`](../decisions.md#adr-065-platform-acp-runner-crud-in-settings--hard-delete-blocked-by-any-usage-reference) — admin CRUD pattern mirrored for `platform_mcp_servers`.
 - **ADR-064 (Implemented):** authored layout in `flow.yaml` `presentation` section — consumed by the editor, described in [`workbench.md`](workbench.md).
 - **ADR-061 (Implemented):** [`../decisions.md#adr-061`](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle) — local authored capability catalog lifecycle (reused M25 draft/CAS).

@@ -167,6 +167,17 @@
     "packageFileContent": "Контент",
     "addPackageFile": "Добавить файл",
     "removePackageFile": "Удалить",
+    "packageFilePathEdit": {
+      "title": "Изменить путь",
+      "rename": "Переименовать / переместить",
+      "save": "Сохранить",
+      "cancel": "Отмена",
+      "error": {
+        "unsafe_path": "Путь должен быть относительным и не содержать ..",
+        "duplicate_path": "Этот путь уже занят другим файлом.",
+        "path_conflict": "Путь конфликтует с существующим файлом или папкой."
+      }
+    },
     "packageSlug": "Slug пакета",
     "packageName": "Имя пакета",
     "packageVersion": "Версия пакета",
@@ -1211,7 +1222,37 @@
     "added": "добавлено",
     "removed": "удалено",
     "errorGeneric": "Не удалось выполнить действие. Повторите.",
-    "adminOnly": "Управление пакетами требует роли admin в проекте."
+    "adminOnly": "Управление пакетами требует роли admin в проекте.",
+    "viewer": {
+      "backToPackages": "К пакетам",
+      "execTrust": "Доверие к исполнению",
+      "execUntrusted": "Скрипты заблокированы до выдачи доверия",
+      "execTrusted": "Скрипты разрешены",
+      "graphTitle": "Граф потока",
+      "graphEmpty": "В пакете не описан граф потока.",
+      "graphUnavailable": "Граф недоступен — не удалось скомпилировать манифест. Показан только исходный flow.yaml.",
+      "flowYamlTitle": "flow.yaml",
+      "filesTitle": "Файлы пакета",
+      "filesEmpty": "В пакете нет дополнительных файлов.",
+      "fileBinary": "Бинарный файл — не отображается.",
+      "fileTooLarge": "Файл больше 1 МиБ и не отображается.",
+      "fileNotFound": "Файл не найден.",
+      "fileBundleMissing": "Бандл недоступен на диске.",
+      "fileEmptyPrompt": "Выберите файл, чтобы посмотреть содержимое.",
+      "bundleMissing": "Бандл недоступен на диске. Граф и метаданные восстановлены из сохранённого манифеста; файлы пакета нельзя прочитать до переустановки бандла.",
+      "revisionsTitle": "Ревизии",
+      "revisionEnabled": "включена",
+      "forkToEdit": "Форкнуть для редактирования",
+      "forkHint": "Установленные ревизии неизменяемы. Форк создаёт редактируемый авторский черновик.",
+      "fork": {
+        "fork": "Форкнуть для редактирования",
+        "pending": "Форкаем…",
+        "errorConflict": "Поток с таким именем уже существует.",
+        "errorConfig": "Бандл пакета недоступен на диске.",
+        "errorUnauthorized": "Недостаточно прав, чтобы форкнуть этот пакет.",
+        "errorGeneric": "Не удалось форкнуть пакет. Попробуйте ещё раз."
+      }
+    }
   },
   "mcpPanel": {
     "title": "MCP-серверы проекта",
@@ -1425,6 +1466,10 @@
       "allowTakeover": "Разрешить перехват",
       "outputSchema": "Путь к схеме результата",
       "outputRequired": "Обязательно",
+      "presentation": "Оформление",
+      "presentationWidth": "Ширина (px)",
+      "presentationHeight": "Высота (px)",
+      "presentationColor": "Цвет",
       "reworkAllowedTargets": "Допустимые цели (через запятую)",
       "reworkWorkspacePolicies": "Политики рабочей области (через запятую)",
       "reworkMaxLoops": "Макс. циклов",
@@ -1448,6 +1493,21 @@
       "staleOnNewCommit": "Сбрасывать при новом коммите",
       "remove": "Удалить гейт"
     },
+    "edgeModal": {
+      "title": "Соединить узлы",
+      "outcome": "Исход",
+      "suggestionsHint": "Типовые исходы",
+      "freeTextHint": "Или введите свой исход",
+      "retargetWarning": "Этот исход уже есть у источника — подтверждение перенаправит существующее ребро.",
+      "confirm": "Соединить",
+      "cancel": "Отмена",
+      "suggestion": {
+        "success": "success",
+        "failure": "failure",
+        "rework": "rework",
+        "takeover": "takeover"
+      }
+    },
     "diff": {
       "empty": "Нет изменений с последней опубликованной ревизии"
     },
@@ -1462,7 +1522,80 @@
       "save": "Сохранить черновик",
       "saving": "Сохранение…",
       "saved": "Сохранено",
-      "saveError": "Ошибка сохранения"
+      "saveError": "Ошибка сохранения",
+      "syncError": "YAML некорректен — холст сохраняет последний валидный граф, пока YAML не разберётся."
+    },
+    "artifacts": {
+      "frontmatterHeading": "Фронтматтер",
+      "bodyHeading": "Тело",
+      "name": "Имя",
+      "description": "Описание",
+      "tools": "Инструменты",
+      "model": "Модель",
+      "permissionMode": "Режим разрешений",
+      "maxTurns": "Макс. шагов",
+      "allowedPaths": "Разрешённые пути",
+      "forbiddenPaths": "Запрещённые пути",
+      "allowedCommands": "Разрешённые команды",
+      "requireStructuredResponse": "Требовать структурированный ответ",
+      "listHint": "По одному на строку",
+      "guardrailNotice": "Ограничения носят рекомендательный характер и не блокируют выполнение.",
+      "malformedNotice": "Не удалось разобрать фронтматтер. Исправьте его в сыром виде ниже.",
+      "rawHeading": "Сырое содержимое",
+      "scriptEditorAriaLabel": "Редактор скрипта",
+      "scriptTrustBannerTitle": "Выполнение ограничено доверием.",
+      "scriptTrustBanner": "Скрипты не запускаются до явного доверия на исполнение.",
+      "formSchema": {
+        "builderTab": "Конструктор",
+        "jsonTab": "Сырой JSON",
+        "previewHeading": "Живой предпросмотр",
+        "fieldName": "Имя",
+        "fieldLabel": "Подпись",
+        "fieldType": "Тип",
+        "fieldRequired": "Обязательное",
+        "fieldOptions": "Варианты (через запятую)",
+        "addField": "Добавить поле",
+        "addNestedField": "Добавить вложенное поле",
+        "removeField": "Удалить",
+        "moveUp": "Вверх",
+        "moveDown": "Вниз",
+        "invalidJson": "JSON некорректен — исправьте его, чтобы снова включить конструктор.",
+        "noFields": "Пока нет полей.",
+        "type": {
+          "string": "Строка",
+          "number": "Число",
+          "boolean": "Логическое",
+          "enum": "Перечисление",
+          "array": "Массив",
+          "object": "Объект"
+        },
+        "preview": {
+          "criticalityLabel": "Критичность",
+          "criticality": {
+            "low": "низкая",
+            "medium": "средняя",
+            "high": "высокая",
+            "critical": "критическая"
+          },
+          "confidenceLabel": "Уверенность",
+          "reviewComments": "Комментарии ревью",
+          "decisionApprove": "Одобрить",
+          "decisionRework": "Вернуть на доработку",
+          "sendBackWithComments": "Вернуть с комментарием",
+          "responseLabel": "Ответ (JSON)",
+          "responseHint": "Введите JSON-значение по схеме ниже.",
+          "schemaLabel": "Запрошенная схема",
+          "submit": "Отправить",
+          "reviewCommentsPlaceholder": "Что нужно изменить? (необязательно)",
+          "formInstructions": "Выберите вариант или впишите свой ответ для каждого поля.",
+          "formCustomPlaceholder": "Введите своё значение…"
+        }
+      },
+      "contentIssues": {
+        "clean": "Проблем с содержимым нет.",
+        "blockTitle": "Блокирующие проблемы содержимого",
+        "warnTitle": "Предупреждения содержимого"
+      }
     }
   },
   "apiErrors": {

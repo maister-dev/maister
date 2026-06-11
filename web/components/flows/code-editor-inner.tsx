@@ -1,8 +1,11 @@
 "use client";
 
 import type { CodeEditorKind } from "./code-editor";
+import type { Diagnostic } from "@codemirror/lint";
 import type { TagStyle } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
+import type { LintDiagnostic } from "@/lib/flows/authored-lint";
+import type { EditorView } from "@codemirror/view";
 import type { ReactElement } from "react";
 
 import { json } from "@codemirror/lang-json";
@@ -10,7 +13,8 @@ import { markdown } from "@codemirror/lang-markdown";
 import { yaml } from "@codemirror/lang-yaml";
 import { StreamLanguage } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { EditorView } from "@codemirror/view";
+import { linter } from "@codemirror/lint";
+import { EditorView as CmEditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { createTheme } from "@uiw/codemirror-themes";
 import CodeMirror from "@uiw/react-codemirror";
@@ -117,8 +121,20 @@ function languageExtension(kind: CodeEditorKind): Extension | null {
   }
 }
 
-function buildExtensions(kind: CodeEditorKind): Extension[] {
-  const extensions: Extension[] = [EditorView.lineWrapping];
+function toCmDiagnostic(diagnostic: LintDiagnostic): Diagnostic {
+  return {
+    from: diagnostic.from,
+    to: diagnostic.to,
+    severity: diagnostic.severity,
+    message: diagnostic.message,
+  };
+}
+
+function buildExtensions(
+  kind: CodeEditorKind,
+  lintSource?: (text: string) => LintDiagnostic[],
+): Extension[] {
+  const extensions: Extension[] = [CmEditorView.lineWrapping];
   const language = languageExtension(kind);
 
   if (language) extensions.push(language);
@@ -127,6 +143,14 @@ function buildExtensions(kind: CodeEditorKind): Extension[] {
     kind === "flow" ? "flow" : kind === "schema" ? "json" : "other";
 
   extensions.push(authoredFlowLinter(lintKind));
+
+  if (lintSource) {
+    extensions.push(
+      linter((view: EditorView): readonly Diagnostic[] =>
+        lintSource(view.state.doc.toString()).map(toCmDiagnostic),
+      ),
+    );
+  }
 
   if (kind === "flow") {
     extensions.push(authoredFlowAutocomplete());
@@ -140,6 +164,7 @@ export interface CodeEditorInnerProps {
   kind: CodeEditorKind;
   readOnly: boolean;
   ariaLabel?: string;
+  lintSource?: (text: string) => LintDiagnostic[];
   onChange: (next: string) => void;
 }
 
@@ -148,11 +173,15 @@ export default function CodeEditorInner({
   kind,
   readOnly,
   ariaLabel,
+  lintSource,
   onChange,
 }: CodeEditorInnerProps): ReactElement {
   const { resolvedTheme } = useTheme();
   const mode = resolvedTheme === "light" ? "light" : "dark";
-  const extensions = useMemo(() => buildExtensions(kind), [kind]);
+  const extensions = useMemo(
+    () => buildExtensions(kind, lintSource),
+    [kind, lintSource],
+  );
   const theme = useMemo(() => forestTheme(mode), [mode]);
 
   return (

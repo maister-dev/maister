@@ -1,16 +1,21 @@
-// T3.4 (RED): failing render tests for the PRESENTATIONAL flow-node body
-// (Track A, Phase 3). Uses renderToStaticMarkup (no jsdom), mirroring
+// Render tests for the PRESENTATIONAL flow-node body (Track A, Phase 3) PLUS
+// the static-vs-run-coupled split of the full `FlowGraphView` (T1.2). Uses
+// renderToStaticMarkup (no jsdom), mirroring
 // components/run/__tests__/readiness-summary.test.ts.
 //
-// We render ONLY `FlowNodeBody` — the named, presentational export with NO
-// `<Handle>` and NO ReactFlow context. The full `FlowGraphView` (and the
-// `<Handle>`-wrapped `makeFlowNodeView`) requires ReactFlow provider context and
-// is NOT renderable via renderToStaticMarkup; drag persistence + live-coloring
-// behavior is the e2e's job (T6.2).
+// `FlowNodeBody` is the named, presentational export with NO `<Handle>` and NO
+// ReactFlow context. The full `FlowGraphView` DOES render under
+// renderToStaticMarkup: React Flow server-renders the node bodies (no DOM
+// measurement needed for the static markup), so the run-mode chips/current-ring
+// and the static-mode topology-only render are both assertable here. Drag
+// persistence + live-coloring behavior remains the e2e's job (T6.2).
 //
-// Contract (module not built yet — RED on the missing import):
+// Contract:
 //   web/components/board/flow-graph-view.tsx exports
-//     default FlowGraphView   (client component, NOT rendered here)
+//     default FlowGraphView({ topology, layout, labels, runContext? })
+//       runContext PRESENT → run-coupled (SSE + /graph-status, status chips,
+//         current-node ring); runContext ABSENT → static mode (pure topology +
+//         presentation layout, no subscription, no chips, no ring).
 //     FlowNodeBody({ label, status, isCurrent, rollup, labels }): ReactElement
 //
 // `Chip` from @heroui/react renders cleanly under renderToStaticMarkup in node
@@ -18,11 +23,14 @@
 // on the emitted data attributes, the chip color class, and the label text —
 // never chip internals.
 
+import type { GraphTopology } from "@/lib/queries/flow-graph-view";
+import type { RunNodeStatuses } from "@/lib/queries/run-node-status";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import {
+import FlowGraphView, {
   FlowEdgeLabel,
   FlowNodeBody,
   applyFlowGraphStatusSnapshot,
@@ -321,5 +329,92 @@ describe("FlowGraphView runtime snapshot state", () => {
 
     expect(next.runStatus).toBe("Done");
     expect(next.currentStep).toBeNull();
+  });
+});
+
+const graphViewLabels = {
+  title: "Flow",
+  empty: "Empty",
+  currentNode: "Current node",
+  node: { Pending: "Pending", Running: "Running", Succeeded: "Done" },
+  role: { agent: "Agent" },
+};
+
+const oneNodeTopology: GraphTopology = {
+  nodes: [
+    {
+      id: "plan",
+      label: "plan",
+      displayLabel: "Plan",
+      nodeType: "agent",
+      nodeTypeLabel: "Agent",
+      nodeRole: "agent",
+      declaredGateSummary: { total: 0, blocking: 0, advisory: 0, kinds: [] },
+    },
+  ],
+  edges: [],
+};
+
+const runningStatus: RunNodeStatuses["nodes"] = {
+  plan: {
+    status: "Running",
+    attempt: 1,
+    gates: [],
+    rollup: "none",
+    gateSummary: {
+      total: 0,
+      blockingTotal: 0,
+      advisoryTotal: 0,
+      worstBlockingStatus: null,
+      failedBlocking: 0,
+      staleBlocking: 0,
+    },
+  },
+};
+
+describe("FlowGraphView — run-coupled vs static mode", () => {
+  it("renders status chips and the current-node ring when runContext is present", () => {
+    const html = renderToStaticMarkup(
+      createElement(FlowGraphView, {
+        topology: oneNodeTopology,
+        layout: {},
+        labels: graphViewLabels,
+        runContext: {
+          runId: "run-1",
+          initialStatuses: runningStatus,
+          currentStepId: "plan",
+          runStatus: "Running",
+        },
+      }),
+    );
+
+    expect(html).toContain('data-testid="flow-graph-view"');
+    expect(html).toContain('data-testid="flow-node"');
+    expect(html).toContain("Plan");
+    // run-coupled affordances: status chip + current-node emphasis.
+    expect(html).toContain('data-node-status="Running"');
+    expect(html).toContain('data-current="true"');
+    expect(html).toContain("chip--");
+  });
+
+  it("renders pure topology with NO chips and NO current ring when runContext is absent (static mode)", () => {
+    const html = renderToStaticMarkup(
+      createElement(FlowGraphView, {
+        topology: oneNodeTopology,
+        layout: {},
+        labels: graphViewLabels,
+      }),
+    );
+
+    // The topology still renders (node body + presentation label).
+    expect(html).toContain('data-testid="flow-graph-view"');
+    expect(html).toContain('data-testid="flow-node"');
+    expect(html).toContain("Plan");
+    // Static mode emits NO run-coupled markup — the attributes are omitted
+    // entirely, not just set false (a regression re-coupling status would
+    // re-introduce `data-current`/`data-node-status` in any form).
+    expect(html).not.toContain("chip--");
+    expect(html).not.toContain("data-node-status");
+    expect(html).not.toContain("data-current");
   });
 });

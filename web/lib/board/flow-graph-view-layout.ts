@@ -62,6 +62,21 @@ export type FlowNodeData = {
   nodeTypeLabel: string;
   nodeRole: GraphNodeRole;
   declaredGateSummary: DeclaredGateSummary;
+  // Additive presentation styling (ADR-064): authored size + color, threaded
+  // into `data` so both the read-only view and the editor canvas body can paint
+  // them. Kept separate from React Flow's measured Node.width/height (which the
+  // override also sets, for edge geometry) so only author-set dims drive the box.
+  presentationColor?: string;
+  presentationWidth?: number;
+  presentationHeight?: number;
+};
+
+export type FlowLayoutOverride = {
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  color?: string;
 };
 
 export type FlowEdgeData = {
@@ -88,10 +103,12 @@ function edgeAnimated(role: GraphEdgeRole): boolean {
 // Map the server graph topology onto React Flow nodes/edges, run the dagre LR
 // baseline, then apply stored layout overrides on top (override x/y wins;
 // un-overridden nodes keep the dagre seed; overrides for ids absent from the
-// topology are ignored — no phantom nodes). Pure, no I/O.
+// topology are ignored — no phantom nodes). An override may also carry authored
+// width/height (applied as node size) and color (applied as node style +
+// `data.presentationColor` for the body). Pure, no I/O.
 export function toFlowGraphView(
   topology: GraphTopology,
-  layoutOverrides: Record<string, { x: number; y: number }>,
+  layoutOverrides: Record<string, FlowLayoutOverride>,
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = topology.nodes.map((n) => {
     const data: FlowNodeData = {
@@ -137,7 +154,28 @@ export function toFlowGraphView(
   const merged: Node[] = laid.map((n) => {
     const override = layoutOverrides[n.id];
 
-    return override ? { ...n, position: { x: override.x, y: override.y } } : n;
+    if (!override) return n;
+
+    const next: Node = { ...n, position: { x: override.x, y: override.y } };
+    const dataPatch: Record<string, unknown> = {};
+
+    if (typeof override.width === "number") {
+      next.width = override.width;
+      dataPatch.presentationWidth = override.width;
+    }
+    if (typeof override.height === "number") {
+      next.height = override.height;
+      dataPatch.presentationHeight = override.height;
+    }
+    if (typeof override.color === "string") {
+      next.style = { ...n.style, borderColor: override.color };
+      dataPatch.presentationColor = override.color;
+    }
+    if (Object.keys(dataPatch).length > 0) {
+      next.data = { ...n.data, ...dataPatch };
+    }
+
+    return next;
   });
 
   return { nodes: merged, edges };

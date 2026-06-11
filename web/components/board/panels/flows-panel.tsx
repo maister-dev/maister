@@ -1,11 +1,14 @@
 import type { ProjectFlow } from "@/lib/queries/project";
 import type { ReactElement } from "react";
 
+import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
 export interface FlowsPanelProps {
   flows: ProjectFlow[];
+  projectSlug: string;
+  canManageCatalog: boolean;
 }
 
 const GLYPH: Record<string, string> = {
@@ -17,8 +20,11 @@ const GLYPH: Record<string, string> = {
 
 export async function FlowsPanel({
   flows,
+  projectSlug,
+  canManageCatalog,
 }: FlowsPanelProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
+  const tFlows = await getTranslations("flows");
 
   return (
     <section>
@@ -26,15 +32,26 @@ export async function FlowsPanel({
         <h2 className="m-0 font-sans text-base font-bold tracking-[-0.01em] text-ink">
           {t("flows")}
         </h2>
-        <span className="font-mono text-[10.5px] tracking-[0.02em] text-mute">
-          {flows.length} configured
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-[10.5px] tracking-[0.02em] text-mute">
+            {flows.length} configured
+          </span>
+          {canManageCatalog ? (
+            <Link
+              className="rounded-md bg-ink px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-paper hover:bg-ink-2"
+              href={`/flows/new?project=${projectSlug}`}
+            >
+              {tFlows("newFlow")}
+            </Link>
+          ) : null}
+        </div>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
         {flows.map((flow) => (
-          <div
+          <Link
             key={flow.id}
-            className="cursor-pointer rounded-xl border border-line bg-paper p-4 transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-mute hover:shadow-[var(--shadow-md)]"
+            className="rounded-xl border border-line bg-paper p-4 transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-mute hover:shadow-[var(--shadow-md)]"
+            href={`/projects/${projectSlug}/packages/${flow.ref}`}
           >
             <div className="mb-2.5 flex items-center justify-between gap-2.5">
               <span className="inline-flex items-center gap-2 font-mono text-[13px] font-bold text-ink">
@@ -60,7 +77,7 @@ export async function FlowsPanel({
               </span>
               <span>runner defaults</span>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
     </section>

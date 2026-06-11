@@ -4,7 +4,7 @@ import { flowYamlV1Schema } from "@/lib/config.schema";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 
 describe("presentationLayout", () => {
-  it("projects nodes that declare both coordinates into a nodeId -> {x,y} map", () => {
+  it("projects nodes that declare both coordinates, carrying width/height/color (T2.4)", () => {
     const manifest = flowYamlV1Schema.parse({
       schemaVersion: 1,
       name: "demo",
@@ -15,14 +15,21 @@ describe("presentationLayout", () => {
       presentation: {
         nodes: [
           { id: "plan", x: 10, y: 20 },
-          { id: "review", x: 200, y: 20, width: 120, color: "accent" },
+          {
+            id: "review",
+            x: 200,
+            y: 20,
+            width: 120,
+            height: 90,
+            color: "accent",
+          },
         ],
       },
     });
 
     expect(presentationLayout(manifest)).toEqual({
       plan: { x: 10, y: 20 },
-      review: { x: 200, y: 20 },
+      review: { x: 200, y: 20, width: 120, height: 90, color: "accent" },
     });
   });
 

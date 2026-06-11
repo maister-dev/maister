@@ -15,6 +15,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { describe, expect, it } from "vitest";
 
+import { NODE_HEIGHT, NODE_WIDTH } from "@/lib/board/evidence-graph-layout";
 import {
   colorForNodeStatus,
   isTerminalRunStatus,
@@ -240,6 +241,34 @@ describe("toFlowGraphView — layout overrides", () => {
 
     expect(nodes).toHaveLength(topology.nodes.length);
     expect(nodes.find((n) => n.id === "ghost-node")).toBeUndefined();
+  });
+
+  it("applies override width/height as node size + color as node style/data (T2.4)", () => {
+    const topology = sampleTopology();
+    const { nodes } = toFlowGraphView(topology, {
+      plan: { x: 40, y: 50, width: 260, height: 110, color: "#22c55e" },
+    });
+
+    const plan = nodes.find((n) => n.id === "plan")!;
+
+    expect(plan.position).toEqual({ x: 40, y: 50 });
+    expect(plan.width).toBe(260);
+    expect(plan.height).toBe(110);
+    expect((plan.data as Record<string, unknown>).presentationColor).toBe(
+      "#22c55e",
+    );
+    expect(
+      (plan.style as Record<string, unknown> | undefined)?.borderColor,
+    ).toBe("#22c55e");
+
+    // A node WITHOUT a size/color override keeps the default node dimensions.
+    const implement = nodes.find((n) => n.id === "implement")!;
+
+    expect(implement.width).toBe(NODE_WIDTH);
+    expect(implement.height).toBe(NODE_HEIGHT);
+    expect(
+      (implement.data as Record<string, unknown>).presentationColor,
+    ).toBeUndefined();
   });
 });
 

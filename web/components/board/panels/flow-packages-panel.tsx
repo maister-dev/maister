@@ -1,6 +1,7 @@
 import type { FlowPackageView } from "@/lib/queries/flow-packages";
 import type { ReactElement } from "react";
 
+import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
@@ -86,11 +87,20 @@ export async function FlowPackagesPanel({
             return (
               <div
                 key={pkg.flowRowId}
-                className="rounded-xl border border-line bg-paper p-4"
+                className="relative rounded-xl border border-line bg-paper p-4 transition-[border-color] hover:border-mute"
               >
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2.5">
-                  <span className="inline-flex items-center gap-2 font-mono text-[14px] font-bold text-ink">
-                    {pkg.ref}
+                  {/* Link wraps ONLY the ref so its accessible name is just the
+                      package id; the stretched ::before still makes the whole
+                      card clickable. Status badges are siblings, not part of the
+                      link's accessible name (a11y — Reviewer pass). */}
+                  <div className="inline-flex flex-wrap items-center gap-2">
+                    <Link
+                      className="font-mono text-[14px] font-bold text-ink before:absolute before:inset-0 before:rounded-xl before:content-['']"
+                      href={`/projects/${slug}/packages/${pkg.ref}`}
+                    >
+                      {pkg.ref}
+                    </Link>
                     <span
                       className={clsx(
                         "rounded-full border px-[7px] py-[3px] font-mono text-[9px] font-bold uppercase tracking-[0.08em]",
@@ -120,19 +130,24 @@ export async function FlowPackagesPanel({
                         {pkg.availableUpdate.versionLabel}
                       </span>
                     ) : null}
-                  </span>
+                  </div>
                   {isAdmin ? (
-                    <PackageActions
-                      availableUpdateRevisionId={
-                        pkg.availableUpdate?.id ?? null
-                      }
-                      enablementState={pkg.enablementState}
-                      flowRef={pkg.ref}
-                      labels={labels}
-                      rollbackTargets={rollbackTargets}
-                      slug={slug}
-                      trusted={pkg.trustStatus !== "untrusted"}
-                    />
+                    <div
+                      className="relative z-[1]"
+                      data-testid="package-card-actions"
+                    >
+                      <PackageActions
+                        availableUpdateRevisionId={
+                          pkg.availableUpdate?.id ?? null
+                        }
+                        enablementState={pkg.enablementState}
+                        flowRef={pkg.ref}
+                        labels={labels}
+                        rollbackTargets={rollbackTargets}
+                        slug={slug}
+                        trusted={pkg.trustStatus !== "untrusted"}
+                      />
+                    </div>
                   ) : null}
                 </div>
 

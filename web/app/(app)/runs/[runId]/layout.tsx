@@ -764,12 +764,14 @@ export default async function RunDetailLayout({
             }
             graph={
               <FlowGraphViewSection
-                currentStepId={flowGraphData.statuses.currentStepId}
-                initialStatuses={flowGraphData.statuses.nodes}
                 labels={flowGraphData.labels}
                 layout={flowGraphData.layout}
-                runId={detail.runId}
-                runStatus={detail.status}
+                runContext={{
+                  runId: detail.runId,
+                  initialStatuses: flowGraphData.statuses.nodes,
+                  currentStepId: flowGraphData.statuses.currentStepId,
+                  runStatus: detail.status,
+                }}
                 topology={flowGraphData.topology}
               />
             }

@@ -106,6 +106,10 @@ const labels: NodeSideFormProps["labels"] = {
   allowTakeover: "Allow takeover",
   outputSchema: "Result schema",
   outputRequired: "Required",
+  presentation: "Appearance",
+  presentationWidth: "Width (px)",
+  presentationHeight: "Height (px)",
+  presentationColor: "Color",
   reworkAllowedTargets: "Allowed targets",
   reworkWorkspacePolicies: "Workspace policies",
   reworkMaxLoops: "Max loops",
@@ -214,5 +218,33 @@ describe("NodeSideForm — human", () => {
     expect(html).toContain('data-testid="node-allow-takeover"');
     expect(html).not.toContain('data-testid="node-action-prompt"');
     expect(html).not.toContain('data-testid="node-action-command"');
+  });
+});
+
+describe("NodeSideForm — presentation (T2.4c)", () => {
+  it("renders width/height/color inputs with values when onPresentationChange is wired", () => {
+    const html = renderToStaticMarkup(
+      createElement(NodeSideForm, {
+        node: nodeById("plan"),
+        labels,
+        presentation: { width: 240, height: 96, color: "#22c55e" },
+        onChange: () => {},
+        onPresentationChange: () => {},
+      }),
+    );
+
+    expect(html).toContain('data-testid="node-presentation"');
+    expect(html).toContain('data-testid="node-presentation-width"');
+    expect(html).toContain('data-testid="node-presentation-height"');
+    expect(html).toContain('data-testid="node-presentation-color"');
+    expect(html).toContain('value="240"');
+    expect(html).toContain('value="96"');
+    expect(html).toContain('value="#22c55e"');
+  });
+
+  it("omits the presentation section when onPresentationChange is absent", () => {
+    const html = render(nodeById("plan"));
+
+    expect(html).not.toContain('data-testid="node-presentation"');
   });
 });

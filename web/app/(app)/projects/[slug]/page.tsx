@@ -263,7 +263,13 @@ export default async function ProjectBoardPage({
           slug={slug}
         />
       ) : null}
-      {tab === "flows" ? <FlowsPanel flows={pageData.flows} /> : null}
+      {tab === "flows" ? (
+        <FlowsPanel
+          canManageCatalog={isAdmin}
+          flows={pageData.flows}
+          projectSlug={slug}
+        />
+      ) : null}
       {tab === "repo" ? (
         <RepoFilesPanel
           canReadRepoFiles={canReadRepoFiles}

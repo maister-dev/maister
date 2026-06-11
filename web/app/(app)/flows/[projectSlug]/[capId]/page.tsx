@@ -1,7 +1,11 @@
 import type { AuthoredCapabilityRevision } from "@/lib/catalog/authored-types";
 import type { AuthoredFlowPackageBody } from "@/lib/catalog/authored-types";
+import type { ArtifactContentIssuesLabels } from "@/components/flows/editor-validation-summary";
 import type { FlowEditorTabsLabels } from "@/components/flows/flow-editor-tabs";
 import type { FlowGraphEditorLabels } from "@/components/flows/flow-graph-editor";
+import type { FormSchemaBuilderLabels } from "@/components/flows/artifact-editors/form-schema-builder";
+import type { FrontmatterArtifactEditorLabels } from "@/components/flows/artifact-editors/frontmatter-artifact-editor";
+import type { ScriptArtifactEditorLabels } from "@/components/flows/artifact-editors/script-artifact-editor";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
@@ -74,9 +78,8 @@ export default async function FlowDetailPage({
   // M27/T-A8: server-compile the draft for the canvas + diff (compile is
   // server-only). An invalid/legacy draft that fails to compile falls back to
   // the raw-YAML tab only.
-  const editorLabels = buildFlowEditorTabsLabels(
-    await getTranslations("flowEditor"),
-  );
+  const te = await getTranslations("flowEditor");
+  const editorLabels = buildFlowEditorTabsLabels(te);
   const draftManifest = (detail.draft?.manifest ??
     detail.published?.manifest ??
     null) as FlowYamlV1 | null;
@@ -189,7 +192,10 @@ export default async function FlowDetailPage({
                 disabled={!canManage}
                 files={packageFiles}
                 kindLabels={packageFileKindLabels(t)}
-                labels={packageFilesEditorLabels(t)}
+                labels={packageFilesEditorLabels(t, te)}
+                manifest={
+                  (draftManifest as Record<string, unknown> | null) ?? null
+                }
               />
             </section>
 
@@ -450,13 +456,130 @@ function packageFileKindLabels(
 
 function packageFilesEditorLabels(
   t: Awaited<ReturnType<typeof getTranslations>>,
+  te: Awaited<ReturnType<typeof getTranslations>>,
 ): PackageFilesEditorLabels {
   return {
     addFile: t("addPackageFile"),
+    cancel: t("packageFilePathEdit.cancel"),
     content: t("packageFileContent"),
+    editPathTitle: t("packageFilePathEdit.title"),
     kind: t("packageFileKindLabel"),
+    noFiles: t("packageFilesEmpty"),
     path: t("packageFilePath"),
+    pathError: {
+      unsafe_path: t("packageFilePathEdit.error.unsafe_path"),
+      duplicate_path: t("packageFilePathEdit.error.duplicate_path"),
+      path_conflict: t("packageFilePathEdit.error.path_conflict"),
+    },
     removeFile: t("removePackageFile"),
+    renamePath: t("packageFilePathEdit.rename"),
+    save: t("packageFilePathEdit.save"),
+    frontmatter: frontmatterArtifactEditorLabels(te),
+    script: scriptArtifactEditorLabels(te),
+    formSchema: formSchemaBuilderLabels(te),
+    contentIssues: artifactContentIssuesLabels(te),
+  };
+}
+
+function frontmatterArtifactEditorLabels(
+  te: Awaited<ReturnType<typeof getTranslations>>,
+): FrontmatterArtifactEditorLabels {
+  return {
+    frontmatterHeading: te("artifacts.frontmatterHeading"),
+    bodyHeading: te("artifacts.bodyHeading"),
+    name: te("artifacts.name"),
+    description: te("artifacts.description"),
+    tools: te("artifacts.tools"),
+    model: te("artifacts.model"),
+    permissionMode: te("artifacts.permissionMode"),
+    maxTurns: te("artifacts.maxTurns"),
+    allowedPaths: te("artifacts.allowedPaths"),
+    forbiddenPaths: te("artifacts.forbiddenPaths"),
+    allowedCommands: te("artifacts.allowedCommands"),
+    requireStructuredResponse: te("artifacts.requireStructuredResponse"),
+    listHint: te("artifacts.listHint"),
+    guardrailNotice: te("artifacts.guardrailNotice"),
+    malformedNotice: te("artifacts.malformedNotice"),
+    rawHeading: te("artifacts.rawHeading"),
+  };
+}
+
+function scriptArtifactEditorLabels(
+  te: Awaited<ReturnType<typeof getTranslations>>,
+): ScriptArtifactEditorLabels {
+  return {
+    editorAriaLabel: te("artifacts.scriptEditorAriaLabel"),
+    trustBannerTitle: te("artifacts.scriptTrustBannerTitle"),
+    trustBanner: te("artifacts.scriptTrustBanner"),
+  };
+}
+
+function formSchemaBuilderLabels(
+  te: Awaited<ReturnType<typeof getTranslations>>,
+): FormSchemaBuilderLabels {
+  return {
+    builderTab: te("artifacts.formSchema.builderTab"),
+    jsonTab: te("artifacts.formSchema.jsonTab"),
+    previewHeading: te("artifacts.formSchema.previewHeading"),
+    fieldName: te("artifacts.formSchema.fieldName"),
+    fieldLabel: te("artifacts.formSchema.fieldLabel"),
+    fieldType: te("artifacts.formSchema.fieldType"),
+    fieldRequired: te("artifacts.formSchema.fieldRequired"),
+    fieldOptions: te("artifacts.formSchema.fieldOptions"),
+    addField: te("artifacts.formSchema.addField"),
+    addNestedField: te("artifacts.formSchema.addNestedField"),
+    removeField: te("artifacts.formSchema.removeField"),
+    moveUp: te("artifacts.formSchema.moveUp"),
+    moveDown: te("artifacts.formSchema.moveDown"),
+    invalidJson: te("artifacts.formSchema.invalidJson"),
+    noFields: te("artifacts.formSchema.noFields"),
+    type: {
+      string: te("artifacts.formSchema.type.string"),
+      number: te("artifacts.formSchema.type.number"),
+      boolean: te("artifacts.formSchema.type.boolean"),
+      enum: te("artifacts.formSchema.type.enum"),
+      array: te("artifacts.formSchema.type.array"),
+      object: te("artifacts.formSchema.type.object"),
+    },
+    preview: {
+      criticalityLabel: te("artifacts.formSchema.preview.criticalityLabel"),
+      "criticality.low": te("artifacts.formSchema.preview.criticality.low"),
+      "criticality.medium": te(
+        "artifacts.formSchema.preview.criticality.medium",
+      ),
+      "criticality.high": te("artifacts.formSchema.preview.criticality.high"),
+      "criticality.critical": te(
+        "artifacts.formSchema.preview.criticality.critical",
+      ),
+      confidenceLabel: te("artifacts.formSchema.preview.confidenceLabel"),
+      reviewComments: te("artifacts.formSchema.preview.reviewComments"),
+      decisionApprove: te("artifacts.formSchema.preview.decisionApprove"),
+      decisionRework: te("artifacts.formSchema.preview.decisionRework"),
+      sendBackWithComments: te(
+        "artifacts.formSchema.preview.sendBackWithComments",
+      ),
+      responseLabel: te("artifacts.formSchema.preview.responseLabel"),
+      responseHint: te("artifacts.formSchema.preview.responseHint"),
+      schemaLabel: te("artifacts.formSchema.preview.schemaLabel"),
+      submit: te("artifacts.formSchema.preview.submit"),
+      reviewCommentsPlaceholder: te(
+        "artifacts.formSchema.preview.reviewCommentsPlaceholder",
+      ),
+      formInstructions: te("artifacts.formSchema.preview.formInstructions"),
+      formCustomPlaceholder: te(
+        "artifacts.formSchema.preview.formCustomPlaceholder",
+      ),
+    },
+  };
+}
+
+function artifactContentIssuesLabels(
+  te: Awaited<ReturnType<typeof getTranslations>>,
+): ArtifactContentIssuesLabels {
+  return {
+    clean: te("artifacts.contentIssues.clean"),
+    blockTitle: te("artifacts.contentIssues.blockTitle"),
+    warnTitle: te("artifacts.contentIssues.warnTitle"),
   };
 }
 
@@ -522,6 +645,10 @@ function buildFlowEditorTabsLabels(
       allowTakeover: te("nodeForm.allowTakeover"),
       outputSchema: te("nodeForm.outputSchema"),
       outputRequired: te("nodeForm.outputRequired"),
+      presentation: te("nodeForm.presentation"),
+      presentationWidth: te("nodeForm.presentationWidth"),
+      presentationHeight: te("nodeForm.presentationHeight"),
+      presentationColor: te("nodeForm.presentationColor"),
       reworkAllowedTargets: te("nodeForm.reworkAllowedTargets"),
       reworkWorkspacePolicies: te("nodeForm.reworkWorkspacePolicies"),
       reworkMaxLoops: te("nodeForm.reworkMaxLoops"),
@@ -550,6 +677,21 @@ function buildFlowEditorTabsLabels(
       valid: te("validation.valid"),
       title: te("validation.title"),
     },
+    edgeModal: {
+      title: te("edgeModal.title"),
+      outcome: te("edgeModal.outcome"),
+      suggestionsHint: te("edgeModal.suggestionsHint"),
+      freeTextHint: te("edgeModal.freeTextHint"),
+      retargetWarning: te("edgeModal.retargetWarning"),
+      confirm: te("edgeModal.confirm"),
+      cancel: te("edgeModal.cancel"),
+      suggestion: {
+        success: te("edgeModal.suggestion.success"),
+        failure: te("edgeModal.suggestion.failure"),
+        rework: te("edgeModal.suggestion.rework"),
+        takeover: te("edgeModal.suggestion.takeover"),
+      },
+    },
   };
 
   return {
@@ -557,6 +699,7 @@ function buildFlowEditorTabsLabels(
     yamlTab: te("page.yamlTab"),
     diffTab: te("page.diffTab"),
     diffEmpty: te("diff.empty"),
+    syncError: te("page.syncError"),
     editor,
   };
 }
