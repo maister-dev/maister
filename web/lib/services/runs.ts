@@ -47,6 +47,8 @@ import {
   classifyTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
+import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
+import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
 import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import {
@@ -235,12 +237,32 @@ export async function launchRun(
   // launch), so the latest flow run — not the task row — decides
   // relaunchability (board retry rule, attempt N+1).
   const latestFlowRun = await getLatestFlowRun(input.taskId, _db);
-  const launchability = classifyTaskLaunchability(task, latestFlowRun);
+  const openBlockers =
+    (await getOpenRelationBlockers([input.taskId], _db)).get(input.taskId) ??
+    [];
+  const launchability = classifyTaskLaunchability(task, latestFlowRun, {
+    openBlockers,
+  });
 
   if (launchability !== "launchable") {
+    if (launchability === "blocked") {
+      log.warn(
+        {
+          taskId: input.taskId,
+          blockers: openBlockers.map((b) => `${b.key}-${b.number}`),
+        },
+        "launch refused: blocked",
+      );
+    }
+
+    const blockerSuffix =
+      launchability === "blocked"
+        ? ` — blocked by ${openBlockers.map((b) => `${b.key}-${b.number}`).join(", ")}`
+        : "";
+
     throw new MaisterError(
       "PRECONDITION",
-      `task is not launchable (classification: ${launchability})`,
+      `task is not launchable (classification: ${launchability})${blockerSuffix}`,
     );
   }
   log.debug(
@@ -774,6 +796,17 @@ export async function launchRun(
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, task.id));
+
+      // ADR-075 D7: run_launched is the activity for the only real
+      // task-status transition (the launch flip), written in the same tx.
+      // Scheduler fires pass actorUserId: null ⇒ system actor.
+      await recordTaskActivity(tx, {
+        taskId: task.id,
+        projectId: project.id,
+        actor: actorForUserId(ctx.actorUserId),
+        eventKind: "run_launched",
+        payload: { runId, attemptNumber: newAttempt },
+      });
 
       await ctx.recordSuccessAudit?.(tx);
     });

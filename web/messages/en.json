@@ -52,6 +52,7 @@
       "skipped_cap": "Skipped — at capacity",
       "skipped_target_terminal": "Skipped — task terminal",
       "skipped_crashed": "Skipped — last run crashed",
+      "skipped_blocked": "Skipped — blocked by relations",
       "launch_failed": "Launch failed",
       "dispatching": "Dispatching…"
     },
@@ -63,6 +64,7 @@
       "skipped_cap": "Skipped: concurrency cap reached",
       "skipped_target_terminal": "Skipped: task is in a terminal state",
       "skipped_crashed": "Skipped: latest run crashed",
+      "skipped_blocked": "Skipped: task is blocked by a relation",
       "launch_failed": "Launch failed",
       "dispatching": "Dispatching"
     },

@@ -8,6 +8,8 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
+import { subscribe } from "@/lib/social/subscriptions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
 const { flows, projects, runs, tasks } = schemaModule as unknown as Record<
@@ -98,6 +100,24 @@ export async function createTask(
       status: "Backlog",
       stage: "Backlog",
     });
+
+    const actor = actorForUserId(ctx.actorUserId);
+
+    await recordTaskActivity(tx, {
+      taskId,
+      projectId: ctx.projectId,
+      actor,
+      eventKind: "task_created",
+      payload: {},
+    });
+
+    if (actor.type === "user") {
+      await subscribe(tx, {
+        taskId,
+        subscriber: { type: "user", id: actor.id },
+        reason: "creator",
+      });
+    }
 
     return {
       number: allocatedNumber,

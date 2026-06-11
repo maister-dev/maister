@@ -1119,6 +1119,7 @@ export type RunScheduleFireOutcome =
   | "skipped_cap"
   | "skipped_target_terminal"
   | "skipped_crashed"
+  | "skipped_blocked"
   | "launch_failed"
   | "dispatching";
 
@@ -1166,6 +1167,7 @@ export const runSchedules = pgTable(
         "skipped_cap",
         "skipped_target_terminal",
         "skipped_crashed",
+        "skipped_blocked",
         "launch_failed",
         "dispatching",
       ],

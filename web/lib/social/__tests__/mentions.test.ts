@@ -108,10 +108,15 @@ describe("collectMentionCandidates", () => {
     );
   });
 
-  it("requires a word boundary — no match inside larger words", () => {
+  it("extends a leading word char into the key; a trailing one kills the match", () => {
+    // "XMAI-1" is itself a well-formed token (key XMAI) — it resolves only
+    // if such a project exists. "MAI-1x" has no boundary after the digits.
     expect(
       collectMentionCandidates(segmentMarkdown("XMAI-1 MAI-1x MAI-2")),
-    ).toEqual([{ key: "MAI", number: 2 }]);
+    ).toEqual([
+      { key: "XMAI", number: 1 },
+      { key: "MAI", number: 2 },
+    ]);
   });
 
   it("dedupes repeated mentions of the same task", () => {

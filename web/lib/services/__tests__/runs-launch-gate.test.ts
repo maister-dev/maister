@@ -37,8 +37,14 @@ type LatestRunChain = {
     };
   };
 };
+// ADR-075: getOpenRelationBlockers joins task_relations→tasks→projects; the
+// gate tests model "no open blockers" with an empty result.
+type RelationJoinChain = {
+  innerJoin: (table: unknown, on: unknown) => RelationJoinChain;
+  where: (predicate: unknown) => Promise<Record<string, unknown>[]>;
+};
 type SelectChain = {
-  from: (table: unknown) => FromResult | LatestRunChain;
+  from: (table: unknown) => FromResult | LatestRunChain | RelationJoinChain;
 };
 type InsertCall = { table: unknown; values: Record<string, unknown> };
 
@@ -77,9 +83,14 @@ function nextSelectResult(): Record<string, unknown>[] {
   return result;
 }
 
+const relationJoinChain: RelationJoinChain = {
+  innerJoin: () => relationJoinChain,
+  where: async () => [],
+};
+
 const fakeDb: FakeDb = {
   select: () => ({
-    from: (table: unknown): FromResult | LatestRunChain => {
+    from: (table: unknown): FromResult | LatestRunChain | RelationJoinChain => {
       if (getTableName(table as never) === "runs") {
         return {
           where: () => ({
@@ -88,6 +99,9 @@ const fakeDb: FakeDb = {
             }),
           }),
         };
+      }
+      if (getTableName(table as never) === "task_relations") {
+        return relationJoinChain;
       }
 
       return {

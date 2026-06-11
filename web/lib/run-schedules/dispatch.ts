@@ -18,6 +18,7 @@ import {
   classifyTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
+import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { countLiveRuns, maxConcurrentRunsCap } from "@/lib/scheduler";
 import { schedulerAttemptTimeoutSeconds } from "@/lib/scheduler/jobs";
 import { launchRun } from "@/lib/services/runs";
@@ -47,7 +48,8 @@ export type FireDecision =
         | "skipped_task_busy"
         | "skipped_cap"
         | "skipped_target_terminal"
-        | "skipped_crashed";
+        | "skipped_crashed"
+        | "skipped_blocked";
     }
   | { action: "catchup"; outcome: "catchup_queued" };
 
@@ -66,6 +68,11 @@ export function decideFire(input: {
     return input.policy === "queue_one"
       ? { action: "catchup", outcome: "catchup_queued" }
       : { action: "skip", outcome: "skipped_task_busy" };
+  }
+  // ADR-075 D5: relations gate launching under EVERY policy; like crashed,
+  // an existing queue_one flag is kept (unblocking fires the catch-up).
+  if (input.launchability === "blocked") {
+    return { action: "skip", outcome: "skipped_blocked" };
   }
   if (input.capFull) {
     if (input.policy === "skip") {
@@ -98,6 +105,7 @@ export type DispatchSummary = {
   skippedBusy: number;
   skippedCap: number;
   skippedTerminal: number;
+  skippedBlocked: number;
   catchupQueued: number;
   launchFailed: number;
   truncated: boolean;
@@ -221,6 +229,7 @@ type StagedDecision =
         | "skipped_cap"
         | "skipped_target_terminal"
         | "skipped_crashed"
+        | "skipped_blocked"
         | "catchup_queued";
     };
 
@@ -236,7 +245,11 @@ async function decideAndStage(
     .where(eq(tasks.id, row.taskId));
   const task = taskRows[0]!;
   const latestRun = await getLatestFlowRun(row.taskId, tx);
-  const launchability = classifyTaskLaunchability(task, latestRun);
+  const openBlockers =
+    (await getOpenRelationBlockers([row.taskId], tx)).get(row.taskId) ?? [];
+  const launchability = classifyTaskLaunchability(task, latestRun, {
+    openBlockers,
+  });
   // Launches staged earlier in the SAME batch haven't created runs yet —
   // count them as occupied slots, or every row in the batch sees the
   // pre-batch live count and skip/queue_one overshoot the cap into Pending.
@@ -253,6 +266,7 @@ async function decideAndStage(
     {
       scheduleId: row.id,
       launchability,
+      blockers: openBlockers.map((b) => `${b.key}-${b.number}`),
       capFull,
       reservedSlots,
       policy: row.overlapPolicy,
@@ -411,6 +425,7 @@ export async function dispatchDueSchedules(
     skippedBusy: 0,
     skippedCap: 0,
     skippedTerminal: 0,
+    skippedBlocked: 0,
     catchupQueued: 0,
     launchFailed: 0,
     truncated: false,
@@ -456,6 +471,9 @@ export async function dispatchDueSchedules(
           case "skipped_target_terminal":
           case "skipped_crashed":
             summary.skippedTerminal += 1;
+            break;
+          case "skipped_blocked":
+            summary.skippedBlocked += 1;
             break;
           case "catchup_queued":
             summary.catchupQueued += 1;

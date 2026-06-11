@@ -1,4 +1,5 @@
 import type { RunStatus, TaskStatus } from "@/lib/db/schema";
+import type { RelationGate } from "@/lib/runs/launchability";
 
 import { describe, expect, it } from "vitest";
 
@@ -94,5 +95,61 @@ describe("classifyTaskLaunchability — latest flow run drives the verdict", () 
     expect(classifyTaskLaunchability(task("InFlight"), run(runStatus))).toBe(
       "busy",
     );
+  });
+});
+
+// ADR-075 D5 — relations gate LAUNCHING only, with precedence
+// target_terminal > crashed > busy > blocked > launchable.
+describe("classifyTaskLaunchability — relation gate (blocked)", () => {
+  const gate: RelationGate = { openBlockers: [{ key: "MAI", number: 7 }] };
+  const emptyGate: RelationGate = { openBlockers: [] };
+
+  it("otherwise-launchable Backlog task with open blockers → blocked", () => {
+    expect(classifyTaskLaunchability(task("Backlog"), null, gate)).toBe(
+      "blocked",
+    );
+  });
+
+  it("retry-eligible task (latest run Failed) with open blockers → blocked", () => {
+    expect(
+      classifyTaskLaunchability(task("Backlog"), run("Failed"), gate),
+    ).toBe("blocked");
+  });
+
+  it("retry-eligible task (latest run Abandoned) with open blockers → blocked", () => {
+    expect(
+      classifyTaskLaunchability(task("InFlight"), run("Abandoned"), gate),
+    ).toBe("blocked");
+  });
+
+  it("busy task with open blockers stays busy (blocked never masks run state)", () => {
+    expect(
+      classifyTaskLaunchability(task("InFlight"), run("Running"), gate),
+    ).toBe("busy");
+  });
+
+  it("crashed task with open blockers stays crashed", () => {
+    expect(
+      classifyTaskLaunchability(task("InFlight"), run("Crashed"), gate),
+    ).toBe("crashed");
+  });
+
+  it("terminal task with open blockers stays target_terminal", () => {
+    expect(classifyTaskLaunchability(task("Done"), null, gate)).toBe(
+      "target_terminal",
+    );
+    expect(
+      classifyTaskLaunchability(task("InFlight"), run("Done"), gate),
+    ).toBe("target_terminal");
+  });
+
+  it("an empty gate never blocks", () => {
+    expect(classifyTaskLaunchability(task("Backlog"), null, emptyGate)).toBe(
+      "launchable",
+    );
+  });
+
+  it("an omitted gate keeps the original two-arg behavior", () => {
+    expect(classifyTaskLaunchability(task("Backlog"), null)).toBe("launchable");
   });
 });

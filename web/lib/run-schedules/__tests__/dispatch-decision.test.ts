@@ -21,6 +21,16 @@ describe("decideFire (overlap policy × launchability × cap matrix)", () => {
     }
   });
 
+  it("skips relation-blocked targets under every policy, regardless of cap (ADR-075)", () => {
+    for (const policy of ["skip", "queue_one", "start_anyway"] as const) {
+      for (const capFull of [false, true]) {
+        expect(
+          decideFire({ policy, launchability: "blocked", capFull }),
+        ).toEqual({ action: "skip", outcome: "skipped_blocked" });
+      }
+    }
+  });
+
   it("busy task: skip and start_anyway record the skip; queue_one flags a catch-up", () => {
     expect(
       decideFire({ policy: "skip", launchability: "busy", capFull: false }),
