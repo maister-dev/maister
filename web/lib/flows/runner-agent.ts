@@ -76,6 +76,10 @@ export type RunAgentStepCtx = {
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
   profileDigest?: string;
+  // M30 (ADR-078): rework `resume` — respawn the adapter and restore the
+  // prior attempt's conversation via the ACP session/resume protocol call.
+  // Unresumable → fall back to a fresh session and flag sessionFallback.
+  resumeSessionId?: string;
   db?: DbClientLike;
 };
 
@@ -535,16 +539,27 @@ function startEventConsumer(
   };
 }
 
+// M30 (ADR-075/078 interplay): a resumed rework session may carry gate-chat
+// turns whose L1 preamble said "read-only, do not modify the workspace" — the
+// rework prompt must explicitly lift that, or the agent may refuse edits.
+// Server-side constant, never user text, prepended AFTER template rendering.
+const RESUME_READONLY_LIFT =
+  "Note: any earlier read-only review-chat instructions no longer apply — " +
+  "this is a rework turn and workspace edits are expected.\n\n";
+
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   supervisorApi: SupervisorApi = defaultSupervisor,
-): Promise<StepResult & { acpSessionId?: string }> {
-  const resolvedPrompt = renderStrict(
+): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
+  const rendered = renderStrict(
     step.prompt,
     ctx.context as unknown as Record<string, unknown>,
     { traceLog: log },
   );
+  const resolvedPrompt = ctx.resumeSessionId
+    ? RESUME_READONLY_LIFT + rendered
+    : rendered;
 
   log.info(
     {
@@ -569,13 +584,14 @@ async function runNewSession(
   ctx: RunAgentStepCtx,
   api: SupervisorApi,
   resolvedPrompt: string,
-): Promise<StepResult & { acpSessionId?: string }> {
+): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
   const startedAt = Date.now();
   let session: CreateSessionResult | null = null;
   let consumer: EventConsumer | null = null;
+  let sessionFallback = false;
 
   try {
-    session = await api.createSession({
+    const createInput = {
       runId: ctx.runId,
       projectSlug: ctx.projectSlug,
       worktreePath: ctx.worktreePath,
@@ -585,7 +601,32 @@ async function runNewSession(
       capabilityProfilePath: ctx.capabilityProfilePath,
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
-    });
+    };
+
+    if (ctx.resumeSessionId) {
+      // M30 (ADR-078): try the resume respawn first; a gone/unresumable
+      // session degrades OBSERVABLY to a fresh one (session_fallback).
+      try {
+        session = await api.createSession({
+          ...createInput,
+          resumeSessionId: ctx.resumeSessionId,
+        });
+      } catch (err) {
+        sessionFallback = true;
+        log.warn(
+          {
+            runId: ctx.runId,
+            stepId: ctx.stepId,
+            resumeSessionId: ctx.resumeSessionId,
+            err: (err as Error).message,
+          },
+          "[session-policy] resume failed — falling back to a new session",
+        );
+        session = await api.createSession(createInput);
+      }
+    } else {
+      session = await api.createSession(createInput);
+    }
 
     consumer = startEventConsumer(session.sessionId, api, {
       db: ctx.db ?? getDb(),
@@ -640,6 +681,7 @@ async function runNewSession(
         durationMs: Date.now() - startedAt,
         errorCode: "STEP_CHECKPOINTED" as const,
         acpSessionId: session.acpSessionId,
+        sessionFallback,
       };
     }
 
@@ -668,6 +710,7 @@ async function runNewSession(
       durationMs: Date.now() - startedAt,
       errorCode,
       acpSessionId: session.acpSessionId,
+      sessionFallback,
     };
   } finally {
     if (session) {

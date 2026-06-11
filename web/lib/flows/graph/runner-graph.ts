@@ -7,7 +7,11 @@ import type {
 } from "@/lib/db/schema";
 import type { CapabilityCatalogRecord } from "@/lib/capabilities/types";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
-import type { FormSettings, RetryPolicy } from "@/lib/config.schema";
+import type {
+  FormSettings,
+  RetryPolicy,
+  SessionPolicy,
+} from "@/lib/config.schema";
 import type { AcpSessionState, FlowContext, StepResult } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 import type { CompiledNode } from "./compile";
@@ -42,12 +46,14 @@ import {
   setCheckpointRef,
   setEnforcementSnapshot,
   setMaterializationPlan,
+  setSessionFallback,
 } from "./ledger";
 import {
   applyWorkspacePolicy,
   captureCheckpoint,
   deleteRunCheckpointRefs,
 } from "./workspace-checkpoint";
+import { resolveSessionPolicy } from "./session-policy";
 import {
   failArtifact,
   getCurrentArtifact,
@@ -143,6 +149,9 @@ type NodeResult = StepResult & {
   acpSessionId?: string;
   decision?: string;
   workspacePolicy?: string;
+  // M30 (ADR-078): the dispatch requested a resume but fell back to a fresh
+  // session (gone/unresumable prior session).
+  sessionFallback?: boolean;
 };
 
 function runDir(
@@ -517,6 +526,8 @@ async function executeNodeAction(
     // M26 (ADR-063): this execution's attempt number — arms the per-attempt
     // MAISTER_OUTPUT_FILE transport for cli/check nodes with output.result.
     attempt: number;
+    // M30 (ADR-078): resume the prior attempt's ACP session on this dispatch.
+    resumeSessionId?: string;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -557,6 +568,10 @@ async function executeNodeAction(
         },
         {
           ...common,
+          // M30 (ADR-078): rework `resume` — the dispatch carries the prior
+          // attempt's session handle (runner-agent falls back to a fresh
+          // session, observably, when it is unresumable).
+          resumeSessionId: ctx.resumeSessionId,
           executor: {
             id: loaded.executor.id,
             agent: loaded.executor.agent,
@@ -1214,6 +1229,11 @@ export async function runGraph(
   // M30 (ADR-077): set when a failed attempt schedules an auto-retry — the
   // next iteration of the SAME node appends its attempt with auto_retry=true.
   let pendingAutoRetryNodeId: string | null = null;
+  // M30 (ADR-078): set by the rework block — the next visit of the TARGET
+  // node carries the resolved session policy (resume threads the prior
+  // attempt's acp_session_id into the dispatch).
+  let pendingSessionPolicy: { nodeId: string; policy: SessionPolicy } | null =
+    null;
 
   // M30 (ADR-077): auto-retry decision for a failed ai_coding/cli attempt.
   // True → the caller `continue`s on the SAME node (a fresh attempt with a
@@ -1371,6 +1391,9 @@ export async function runGraph(
       // workspace policy applies against it. Null on resume reuse / capture
       // degrade (policy degrades to keep).
       let attemptCheckpointRef: string | null = null;
+      // M30 (ADR-078): the resume handle for THIS dispatch (rework re-entry
+      // with an effective `resume` policy and a live prior session id).
+      let attemptResumeSessionId: string | undefined;
 
       // M11b (ADR-030): the takeover-resume claim already appended the re-entry
       // node's fresh attempt inside the claim transaction (the observable CAS
@@ -1392,12 +1415,29 @@ export async function runGraph(
           "resuming existing node attempt from NeedsInput",
         );
       } else {
+        // M30 (ADR-078): a rework re-entry consumes the resolved session
+        // policy. The resume handle is the PRIOR attempt's acp_session_id —
+        // resolved BEFORE the new row is appended.
+        let appendSessionPolicy: SessionPolicy | undefined;
+
+        if (pendingSessionPolicy && pendingSessionPolicy.nodeId === node.id) {
+          appendSessionPolicy = pendingSessionPolicy.policy;
+          pendingSessionPolicy = null;
+
+          if (appendSessionPolicy === "resume") {
+            const prior = await latestAttemptForNode(runId, node.id, db);
+
+            attemptResumeSessionId = prior?.acpSessionId ?? undefined;
+          }
+        }
+
         const appended = await appendNodeAttempt({
           runId,
           nodeId: node.id,
           nodeType: node.nodeType,
           // M30 (ADR-077): the prior iteration scheduled this re-entry.
           autoRetry: pendingAutoRetryNodeId === node.id,
+          sessionPolicy: appendSessionPolicy,
           db,
         });
 
@@ -1405,6 +1445,12 @@ export async function runGraph(
 
         nodeAttemptId = appended.id;
         nodeAttemptNumber = appended.attempt;
+
+        // Resume requested but no prior session handle exists → observable
+        // immediate fallback (the dispatch goes out fresh).
+        if (appendSessionPolicy === "resume" && !attemptResumeSessionId) {
+          await setSessionFallback(nodeAttemptId, db);
+        }
 
         // M30 (ADR-076): capture the pre-attempt workspace checkpoint for
         // ai_coding/cli attempts (new attempts only — a NeedsInput resume or
@@ -1619,6 +1665,7 @@ export async function runGraph(
           profileDigest: materialized?.plan.profileDigest,
           nodeAttemptNumber,
           attempt: nodeAttemptNumber,
+          resumeSessionId: attemptResumeSessionId,
           db,
         });
       } catch (err) {
@@ -1729,6 +1776,13 @@ export async function runGraph(
             "[checkpoint] chat baseline GC skipped (no git worktree)",
           );
         }
+      }
+
+      // M30 (ADR-078): the dispatch requested a resume but the session was
+      // gone/unresumable — runner-agent fell back to a fresh session; record
+      // it on the attempt row (observable, never silent).
+      if (result.sessionFallback) {
+        await setSessionFallback(nodeAttemptId, db);
       }
 
       if (!result.ok) {
@@ -2258,6 +2312,39 @@ export async function runGraph(
           { decision: outcome, workspacePolicy: chosenPolicy },
           db,
         );
+
+        // M30 (ADR-078): resolve the rework session policy for the TARGET's
+        // next attempt — rework-transition > target node > flow defaults >
+        // engine default `resume`.
+        if (target) {
+          const targetDef =
+            graph.nodes.get(target)?.source.kind === "node"
+              ? (
+                  graph.nodes.get(target)?.source as {
+                    node: { session_policy?: SessionPolicy };
+                  }
+                ).node
+              : undefined;
+          const resolved = resolveSessionPolicy({
+            reworkPolicy: node.rework?.session_policy,
+            nodePolicy: targetDef?.session_policy,
+            flowDefault: (
+              loaded.manifest as {
+                defaults?: { session_policy?: SessionPolicy };
+              }
+            ).defaults?.session_policy,
+          });
+
+          pendingSessionPolicy = { nodeId: target, policy: resolved.policy };
+          log2.info(
+            {
+              nodeId: target,
+              resolved: resolved.policy,
+              source: resolved.source,
+            },
+            "[session-policy] resolved for rework re-entry",
+          );
+        }
 
         // Flip downstream nodes/gates stale so they rerun on the next attempt
         // (Issue 2 fix / AC-3 staleness). `target` is the rework jump destination;

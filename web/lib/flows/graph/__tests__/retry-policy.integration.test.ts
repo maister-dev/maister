@@ -25,7 +25,15 @@ import {
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import {
@@ -141,9 +149,12 @@ beforeEach(() => {
   agentScript = [];
 });
 
-function retryManifest(retryPolicy: Record<string, unknown> | undefined, opts: {
-  gate?: boolean;
-} = {}) {
+function retryManifest(
+  retryPolicy: Record<string, unknown> | undefined,
+  opts: {
+    gate?: boolean;
+  } = {},
+) {
   return {
     schemaVersion: 1,
     name: "Retry",

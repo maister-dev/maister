@@ -339,6 +339,15 @@ export const retryPolicySchema = z
 
 export type RetryPolicy = z.infer<typeof retryPolicySchema>;
 
+// M30 (ADR-078): rework session policy — whether a rework re-entry of an
+// agent node RESUMES the prior attempt's ACP session (critique context
+// preserved; ~$0.28 respawn when idle) or starts clean. Resolved
+// highest-wins: rework-transition > node > flow defaults > engine default
+// `resume` (a deliberate flip). Declaring it requires engine_min >= 1.4.0.
+export const sessionPolicySchema = z.enum(["resume", "new_session"]);
+
+export type SessionPolicy = z.infer<typeof sessionPolicySchema>;
+
 const gateKindSchema = z.enum([
   "command_check",
   "skill_check",
@@ -501,6 +510,8 @@ const reworkSchema = z.object({
   workspacePolicies: z.array(workspacePolicySchema).min(1),
   maxLoops: z.number().int().positive(),
   commentsVar: z.string().min(1).optional(),
+  // M30 (ADR-078): transition-level session policy — highest precedence.
+  session_policy: sessionPolicySchema.optional(),
 });
 
 // --- M11c: typed per-node-type `settings` (replaces M11a opaque passthrough) ---
@@ -731,6 +742,8 @@ const aiCodingNodeSchema = z.object({
   settings: aiCodingSettingsSchema.optional(),
   // M30 (ADR-077): auto-retry — agent + cli nodes only.
   retry_policy: retryPolicySchema.optional(),
+  // M30 (ADR-078): node-level rework session policy.
+  session_policy: sessionPolicySchema.optional(),
 });
 
 const judgeNodeSchema = z.object({
@@ -861,6 +874,12 @@ export const flowYamlV1Schema = z
     // gate's effective calibration at compile time.
     verdict_calibration: z
       .object({ confidence_min: z.number().min(0).max(1).optional() })
+      .strict()
+      .optional(),
+    // M30 (ADR-078): flow-level defaults — today only the rework session
+    // policy. Lowest declared precedence (above the engine default only).
+    defaults: z
+      .object({ session_policy: sessionPolicySchema.optional() })
       .strict()
       .optional(),
     // Exactly one of `steps` (linear) or `nodes` (graph v1) is present —

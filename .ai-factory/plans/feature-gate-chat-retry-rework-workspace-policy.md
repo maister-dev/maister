@@ -182,9 +182,9 @@ Parallelism after **B3**: Feature 4b, Feature 2, Feature 1 each consume Feature-
 - [x] B10 — QA: retry_policy (red)
 - [x] B11 — Impl: retry_policy
 - [x] B12 — Reviewer pass Feature 2
-- [ ] B13 — QA: session_policy (red)
-- [ ] B14 — Impl: session_policy
-- [ ] B15 — Reviewer pass Feature 3
+- [x] B13 — QA: session_policy (red)
+- [x] B14 — Impl: session_policy
+- [x] B15 — Reviewer pass Feature 3
 - [ ] B16 — QA: gate-chat + neutrality (red)
 - [ ] B17 — Impl: gate-chat backend + neutrality (L1/L2/L3)
 - [ ] B18 — Impl: gate-chat UI

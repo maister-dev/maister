@@ -77,6 +77,8 @@ export async function appendNodeAttempt(args: {
   reworkFromNode?: string;
   // M30 (ADR-077): true when this attempt was auto-scheduled by retry_policy.
   autoRetry?: boolean;
+  // M30 (ADR-078): the effective rework session policy snapshot.
+  sessionPolicy?: "resume" | "new_session";
   db?: Db;
 }): Promise<{ id: string; attempt: number }> {
   const db = args.db ?? getDb();
@@ -93,6 +95,7 @@ export async function appendNodeAttempt(args: {
     status: "Pending" as NodeAttemptStatus,
     reworkFromNode: args.reworkFromNode ?? null,
     autoRetry: args.autoRetry ?? false,
+    sessionPolicy: args.sessionPolicy ?? null,
   });
 
   log.info(
@@ -222,6 +225,7 @@ export async function latestAttemptForNode(
   id: string;
   attempt: number;
   checkpointRef: string | null;
+  acpSessionId: string | null;
 } | null> {
   const d = db ?? getDb();
 
@@ -229,11 +233,13 @@ export async function latestAttemptForNode(
     id: string;
     attempt: number;
     checkpointRef: string | null;
+    acpSessionId: string | null;
   }> = await d
     .select({
       id: nodeAttempts.id,
       attempt: nodeAttempts.attempt,
       checkpointRef: nodeAttempts.checkpointRef,
+      acpSessionId: nodeAttempts.acpSessionId,
     })
     .from(nodeAttempts)
     .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, nodeId)))
@@ -241,6 +247,23 @@ export async function latestAttemptForNode(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+// M30 (ADR-078): record that `resume` was requested but the prior session was
+// gone/unresumable and the engine fell back to a fresh session. Observable —
+// never silent.
+export async function setSessionFallback(
+  nodeAttemptId: string,
+  db?: Db,
+): Promise<void> {
+  const d = db ?? getDb();
+
+  await d
+    .update(nodeAttempts)
+    .set({ sessionFallback: true })
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  log.warn({ nodeAttemptId }, "[session-policy] unresumable → new_session");
 }
 
 // M11c (ADR-032): persist the resolved per-capability-class enforcement
