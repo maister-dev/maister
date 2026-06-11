@@ -552,7 +552,7 @@ describe("ledger — checkpoint_ref on the attempt row", () => {
   }, 180_000);
 });
 
-describe("promotion keeps history clean (B5 reviewer assert, ADR-076)", () => {
+describe("promotion keeps history clean (B5 reviewer assert, ADR-079)", () => {
   it("no checkpoint commit is reachable from main after a no-ff promotion of the run branch", async () => {
     const wb = await createPolicyWorkbench("run-promote");
 
@@ -585,7 +585,7 @@ describe("promotion keeps history clean (B5 reviewer assert, ADR-076)", () => {
   });
 });
 
-describe("deleteRunCheckpointRefs (GC, ADR-076)", () => {
+describe("deleteRunCheckpointRefs (GC, ADR-079)", () => {
   it("deletes all of the run's refs in both namespaces, sparing other runs; idempotent", async () => {
     const wb = await createPolicyWorkbench("run-gc");
 

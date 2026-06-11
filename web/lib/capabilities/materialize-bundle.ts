@@ -189,9 +189,9 @@ export async function ensureWorktreeGitignore(
   );
 }
 
-// The full launch-time materialization block, extracted for reuse (ADR-076 §4):
+// The full launch-time materialization block, extracted for reuse (ADR-079 §4):
 // bundle artifacts land untracked + un-ignored, so `git clean -fd`
-// (fresh-attempt rewinds, ADR-079 dirty discard) deletes them and index
+// (fresh-attempt rewinds, ADR-082 dirty discard) deletes them and index
 // rewrites drop the skip-worktree override state. Idempotent — re-run after
 // every such mutation. No-op for projects without Installed imports (a
 // non-AIF project never gets a stray config override).

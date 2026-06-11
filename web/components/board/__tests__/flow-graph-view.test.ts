@@ -359,6 +359,7 @@ const runningStatus: RunNodeStatuses["nodes"] = {
   plan: {
     status: "Running",
     attempt: 1,
+    autoRetry: false,
     gates: [],
     rollup: "none",
     gateSummary: {

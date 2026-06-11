@@ -7,7 +7,7 @@ import { createCcrSource } from "./ccr";
 import { createCuratedSource } from "./curated";
 import { createProviderApiSource } from "./provider-api";
 
-// Assemble the production model-catalog source set (ADR-075). Order is the
+// Assemble the production model-catalog source set (ADR-076). Order is the
 // dedupe priority (first-source-wins on the entry body; origins still
 // accumulate): the ACP active probe is the primary source, then the curated
 // GLM list (the offline source of truth for z.ai), the optional provider

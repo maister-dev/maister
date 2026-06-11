@@ -149,7 +149,7 @@ type NodeResult = StepResult & {
   acpSessionId?: string;
   decision?: string;
   workspacePolicy?: string;
-  // M30 (ADR-078): the dispatch requested a resume but fell back to a fresh
+  // M30 (ADR-081): the dispatch requested a resume but fell back to a fresh
   // session (gone/unresumable prior session).
   sessionFallback?: boolean;
 };
@@ -300,7 +300,7 @@ export async function runReviewHuman(
         ).criticality ?? null)
       : null;
 
-  // M30 (ADR-079): stamp the run-branch tip at THIS review visit — the base
+  // M30 (ADR-082): stamp the run-branch tip at THIS review visit — the base
   // for the `since-last-review` diff scope. Best-effort (non-git fixtures /
   // missing workspace / detached states leave it NULL and the scope degrades).
   const reviewTipSha = loaded.workspace?.worktreePath
@@ -526,7 +526,7 @@ async function executeNodeAction(
     // M26 (ADR-063): this execution's attempt number — arms the per-attempt
     // MAISTER_OUTPUT_FILE transport for cli/check nodes with output.result.
     attempt: number;
-    // M30 (ADR-078): resume the prior attempt's ACP session on this dispatch.
+    // M30 (ADR-081): resume the prior attempt's ACP session on this dispatch.
     resumeSessionId?: string;
     db: Db;
   },
@@ -568,7 +568,7 @@ async function executeNodeAction(
         },
         {
           ...common,
-          // M30 (ADR-078): rework `resume` — the dispatch carries the prior
+          // M30 (ADR-081): rework `resume` — the dispatch carries the prior
           // attempt's session handle (runner-agent falls back to a fresh
           // session, observably, when it is unresumable).
           resumeSessionId: ctx.resumeSessionId,
@@ -682,7 +682,7 @@ type ReviewCommentRow = ComposeRootComment & {
 
 // ADR-072: load the run's OPEN review-comment threads (open roots + their
 // replies) for the rework compose. Queries the schema directly instead of
-// M30 (ADR-075): gate-chat transcript of this review node's DECIDING visit —
+// M30 (ADR-078): gate-chat transcript of this review node's DECIDING visit —
 // the latest hitl row for (run, node) — in seq order, mapped for the rework
 // composer. Direct table read for the same cycle reason as
 // loadOpenReviewThreads below.
@@ -841,7 +841,7 @@ async function recordComposedCommentsEvidence(
 // ai_coding/judge node. Returns undefined when the node declares no
 // capability-bearing settings — EXCEPT a claude node with a configured model,
 // which still materializes a MODEL-ONLY profile so its run model reaches the
-// adapter via settings.local.json (the only writer of that file; ADR-075).
+// adapter via settings.local.json (the only writer of that file; ADR-076).
 // Writes NO secrets — mcp creds resolve from the host env via `${NAME}`
 // placeholders the materializer emits (R-SECRET). Does NOT write the
 // materialization ledger (that is T4.2).
@@ -879,7 +879,7 @@ async function materializeNodeCapabilities(
   // claude pins its run model through settings.local.json, and this materialize
   // path is its ONLY writer — a capability-less claude node would otherwise
   // launch on the adapter-default model while the runner snapshot says otherwise
-  // (ADR-075). So claude with a configured model still materializes a model-only
+  // (ADR-076). So claude with a configured model still materializes a model-only
   // profile. codex pins supervisor-side via setSessionModel, so a settings-less
   // codex node needs no materialization.
   const pinModelOnly =
@@ -1264,19 +1264,19 @@ export async function runGraph(
   let runErrorCode: MaisterErrorCode | null = null;
 
   let currentNodeId: string | null = resumeNodeId ?? graph.entry;
-  // M30 (ADR-077): set when a failed attempt schedules an auto-retry — the
+  // M30 (ADR-080): set when a failed attempt schedules an auto-retry — the
   // next iteration of the SAME node appends its attempt with auto_retry=true.
   let pendingAutoRetryNodeId: string | null = null;
-  // M30 (ADR-078): set by the rework block — the next visit of the TARGET
+  // M30 (ADR-081): set by the rework block — the next visit of the TARGET
   // node carries the resolved session policy (resume threads the prior
   // attempt's acp_session_id into the dispatch).
   let pendingSessionPolicy: { nodeId: string; policy: SessionPolicy } | null =
     null;
 
-  // M30 (ADR-077): auto-retry decision for a failed ai_coding/cli attempt.
+  // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt.
   // True → the caller `continue`s on the SAME node (a fresh attempt with a
   // fresh session — dispatch is hard-coded new-session). The workspace policy
-  // applies via the ADR-076 engine BEFORE the retry; with no checkpoint
+  // applies via the ADR-079 engine BEFORE the retry; with no checkpoint
   // (degraded capture) it degrades to keep with a WARN. `attempts` bounds the
   // node's TOTAL ledger attempts — rework re-visits consume the same budget
   // by design (the bound is the observable ledger row count). An apply
@@ -1425,11 +1425,11 @@ export async function runGraph(
       // `attempt` is. ADR-072: the review-gate schema stamps this as
       // `gateAttempt` and the compose evidence row records it as `attempt`.
       let nodeAttemptNumber: number;
-      // M30 (ADR-076/077): THIS attempt's checkpoint ref — the auto-retry
+      // M30 (ADR-079/080): THIS attempt's checkpoint ref — the auto-retry
       // workspace policy applies against it. Null on resume reuse / capture
       // degrade (policy degrades to keep).
       let attemptCheckpointRef: string | null = null;
-      // M30 (ADR-078): the resume handle for THIS dispatch (rework re-entry
+      // M30 (ADR-081): the resume handle for THIS dispatch (rework re-entry
       // with an effective `resume` policy and a live prior session id).
       let attemptResumeSessionId: string | undefined;
 
@@ -1453,7 +1453,7 @@ export async function runGraph(
           "resuming existing node attempt from NeedsInput",
         );
       } else {
-        // M30 (ADR-078): a rework re-entry consumes the resolved session
+        // M30 (ADR-081): a rework re-entry consumes the resolved session
         // policy. The resume handle is the PRIOR attempt's acp_session_id —
         // resolved BEFORE the new row is appended.
         let appendSessionPolicy: SessionPolicy | undefined;
@@ -1473,7 +1473,7 @@ export async function runGraph(
           runId,
           nodeId: node.id,
           nodeType: node.nodeType,
-          // M30 (ADR-077): the prior iteration scheduled this re-entry.
+          // M30 (ADR-080): the prior iteration scheduled this re-entry.
           autoRetry: pendingAutoRetryNodeId === node.id,
           sessionPolicy: appendSessionPolicy,
           db,
@@ -1490,7 +1490,7 @@ export async function runGraph(
           await setSessionFallback(nodeAttemptId, db);
         }
 
-        // M30 (ADR-076): capture the pre-attempt workspace checkpoint for
+        // M30 (ADR-079): capture the pre-attempt workspace checkpoint for
         // ai_coding/cli attempts (new attempts only — a NeedsInput resume or
         // takeover re-entry is mid-attempt). Best-effort at THIS site only
         // (mirrors the M29 start-HEAD capture below: test fixtures run
@@ -1799,7 +1799,7 @@ export async function runGraph(
         break;
       }
 
-      // M30 (ADR-075 DD11): this node was resumed from a pause and is now
+      // M30 (ADR-078 DD11): this node was resumed from a pause and is now
       // past it (success, failure, or rework — all leave the pause), so the
       // gate-chat L3 baseline refs for the run are stale — GC them. Bounded
       // at 1 per hitlRequest; best-effort (non-git fixtures / no refs).
@@ -1816,7 +1816,7 @@ export async function runGraph(
         }
       }
 
-      // M30 (ADR-078): the dispatch requested a resume but the session was
+      // M30 (ADR-081): the dispatch requested a resume but the session was
       // gone/unresumable — runner-agent fell back to a fresh session; record
       // it on the attempt row (observable, never silent).
       if (result.sessionFallback) {
@@ -2264,7 +2264,7 @@ export async function runGraph(
 
       if (isRework) {
         // Record the operator's chosen workspacePolicy from the artifact (Issue
-        // 3 fix). M30 (ADR-076) executes it for real — closing the M11b
+        // 3 fix). M30 (ADR-079) executes it for real — closing the M11b
         // deferral — against the rework TARGET's pre-attempt checkpoint.
         const policyParse = workspacePolicySchema.safeParse(
           result.workspacePolicy,
@@ -2351,7 +2351,7 @@ export async function runGraph(
           db,
         );
 
-        // M30 (ADR-078): resolve the rework session policy for the TARGET's
+        // M30 (ADR-081): resolve the rework session policy for the TARGET's
         // next attempt — rework-transition > target node > flow defaults >
         // engine default `resume`.
         if (target) {
@@ -2415,7 +2415,7 @@ export async function runGraph(
           const vars = result.vars as Record<string, unknown>;
           const summary = vars[commentsVar] ?? vars.comments;
           const openThreads = await loadOpenReviewThreads(runId, db);
-          // M30 (ADR-075): the deciding visit's gate-chat transcript folds
+          // M30 (ADR-078): the deciding visit's gate-chat transcript folds
           // into the rework payload alongside the review comments.
           const chatMessages = await loadGateChatForCompose(runId, node.id, db);
           const hasComposeInput =

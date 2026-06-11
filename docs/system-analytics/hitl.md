@@ -48,24 +48,24 @@ enum | array`.
 - **`needs-input.json`** — artifact written when a checkpointable
   structured-form request is raised.
 - **`input-<stepId>.json`** — atomic-written response payload.
-- **`dirty_summary`** — **(M30 — Implemented, ADR-079)** computed when a review gate
+- **`dirty_summary`** — **(M30 — Implemented, ADR-082)** computed when a review gate
   opens (`statusPorcelain`, incl. untracked): file list + staged/unstaged/untracked
   counts. Carried on the gate/HITL payload; a dirty worktree never blocks the gate.
-- **`review_tip_sha`** — **(M30 — Implemented, ADR-079)** branch tip SHA stamped per
+- **`review_tip_sha`** — **(M30 — Implemented, ADR-082)** branch tip SHA stamped per
   review-gate visit on `hitl_requests.review_tip_sha`; the base for the
   `since-last-review` diff scope.
-- **`dirty_resolution`** — **(M30 — Implemented, ADR-079)** the reviewer's chosen
+- **`dirty_resolution`** — **(M30 — Implemented, ADR-082)** the reviewer's chosen
   dirty-worktree treatment on `hitl_requests.dirty_resolution`:
   `commit | discard | proceed` (nullable).
-- **Diff scope** — **(M30 — Implemented, ADR-079)** the `scope` query param on
+- **Diff scope** — **(M30 — Implemented, ADR-082)** the `scope` query param on
   `GET /api/runs/{runId}/diff`: `run | since-last-review | last-node | uncommitted`.
-- **Gate-chat message** — **(M30 — Implemented, ADR-075)** a `gate_chat_messages` row:
+- **Gate-chat message** — **(M30 — Implemented, ADR-078)** a `gate_chat_messages` row:
   an answer-only Q&A turn between a reviewer (`role=user`) and the parked agent
   (`role=agent`) at a HITL pause. Carries `hitl_request_id`, `node_id`,
   `gate_attempt`, `body`, `acp_session_id`, `seq`, and `mutation_reverted`.
-- **Chat checkpoint** — **(M30 — Implemented, ADR-075)** the single L3 neutrality
+- **Chat checkpoint** — **(M30 — Implemented, ADR-078)** the single L3 neutrality
   baseline ref `refs/maister/chat-checkpoints/<runId>/<hitlRequestId>` (bounded at 1,
-  captured at the first chat turn) via the ADR-076 checkpoint machinery.
+  captured at the first chat turn) via the ADR-079 checkpoint machinery.
 
 ## Three kinds — when to use which
 
@@ -294,7 +294,7 @@ no status flip (409 `CONFLICT`, retryable).
 
 ### Gate-chat at HITL pauses + workspace-neutrality (M30 — Implemented)
 
-**(M30 — Implemented, [ADR-075](../decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).)**
+**(M30 — Implemented, [ADR-078](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).)**
 At a `human`/`form` pause a reviewer can ask the parked agent an answer-only
 question through **gate-chat**, persisted to `gate_chat_messages`. Chat NEVER
 resolves the HITL and NEVER flips the run to `Running`.
@@ -348,7 +348,7 @@ sensor):
   under `--dangerously-skip-permissions` / `permissionMode:allow` — hence L3.
 - **L3 Mutation sensor (hard guarantee).** ONE known-good baseline is captured at
   the FIRST chat turn (`refs/maister/chat-checkpoints/<runId>/<hitlRequestId>`,
-  bounded at 1, via the ADR-076 machinery) and EVERY subsequent turn is verified
+  bounded at 1, via the ADR-079 machinery) and EVERY subsequent turn is verified
   against it (`statusPorcelain` + `git diff`). On a delta the workspace is restored
   to the baseline (overlay + targeted deletion of only the rogue untracked paths
   absent from the baseline tree — never a blanket `git clean`, never touching
@@ -356,11 +356,11 @@ sensor):
   Observatory-ready audit signal is emitted, and a UI notice rides the turn. L3 runs
   **unconditionally** and **fail-closed** (a sensor that cannot sense must not pass);
   it covers permissive runners where L2 is a no-op. The ref is GC'd when the HITL
-  resolves; a mid-pause dirty-resolution (ADR-079) deletes it so the next turn
+  resolves; a mid-pause dirty-resolution (ADR-082) deletes it so the next turn
   re-anchors (no false un-discard).
 
 **Feature-3 interplay.** When a later rework resumes the SAME session
-([ADR-078](../decisions.md#adr-078-rework-session-policy-with-resume-by-default)
+([ADR-081](../decisions.md#adr-081-rework-session-policy-with-resume-by-default)
 `session_policy: resume`), the rework prompt MUST explicitly lift the chat-time
 read-only restriction, else the agent may refuse legitimate edits. Rework compose
 ([ADR-072](../decisions.md#adr-072-pr-grade-review-comments--review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard))
@@ -368,7 +368,7 @@ folds the chat history into `commentsVar`.
 
 ### Review-diff completeness — dirty-state protocol + scope switcher (M30 — Implemented)
 
-**(M30 — Implemented, [ADR-079](../decisions.md#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).)**
+**(M30 — Implemented, [ADR-082](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).)**
 When a review gate opens, the runner computes `dirtySummary` via `statusPorcelain`
 (incl. untracked) — **no auto-commit**. A dirty worktree does NOT block the gate;
 the summary rides on the gate/HITL payload so the reviewer sees uncommitted work
@@ -396,10 +396,10 @@ concurrent second resolution gets `CONFLICT` without running git; a git failure
 rolls the claim back, returns 409, and leaves the gate open, unrecorded). **Discard is hard-guarded**:
 `git clean -fd` (never `-fdx`), scoped `-C <worktree>`, with a `.maister/`
 containment assertion, and re-runs launch materialization afterward
-([ADR-076](../decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture))
+([ADR-079](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture))
 — `.maister/` is never touched. Every executed choice deletes the gate-chat
 checkpoint ref (`refs/maister/chat-checkpoints/<runId>/<hitlRequestId>`) so the
-ADR-075 L3 sensor re-anchors and never "reverts" an explicit Discard.
+ADR-078 L3 sensor re-anchors and never "reverts" an explicit Discard.
 
 **4-mode diff scope switcher** — `scope` on `GET /api/runs/{runId}/diff`, all
 sharing the
@@ -410,13 +410,13 @@ sharing the
 | --- | --- | --- |
 | `run` (default) | `workspace.baseCommit..branch` | current behavior |
 | `since-last-review` | `<prev-review-visit-sha>..branch` | `hitl_requests.review_tip_sha` (stamped per review visit) |
-| `last-node` | `<pre-attempt-checkpoint-sha>..branch` | ADR-076 checkpoint ref of the latest completed agent node |
+| `last-node` | `<pre-attempt-checkpoint-sha>..branch` | ADR-079 checkpoint ref of the latest completed agent node |
 | `uncommitted` | `HEAD` vs working tree + untracked as additions | temp `GIT_INDEX_FILE` intent-to-add; the real index is never mutated |
 
 A scope whose base ref is missing (pre-feature run, first review visit) is
 hidden/disabled with a reason, never an error. Consumer-project review gates list
 launch-materialized capability bundles in `dirtySummary` — known v1 noise
-(ADR-076); the dogfood project is unaffected (its skills/agents are repo-local).
+(ADR-079); the dogfood project is unaffected (its skills/agents are repo-local).
 
 ### Cross-project Inbox block and numeric badge (Implemented — M17)
 
@@ -541,33 +541,33 @@ fields:
 - Every new permission/form/human wait creates an open M13 assignment; legacy
   HITL rows without assignments remain readable as compatibility data, but new
   inbox ownership/counts prefer assignments.
-- **(M30 — Implemented, ADR-079)** A dirty worktree at a review gate NEVER blocks the
+- **(M30 — Implemented, ADR-082)** A dirty worktree at a review gate NEVER blocks the
   gate; `dirtySummary` (from `statusPorcelain`, incl. untracked) rides on the gate
   payload and the reviewer's `commit | discard | proceed` choice is recorded on
   `hitl_requests.dirty_resolution` + audit in one transaction.
-- **(M30 — Implemented, ADR-079)** Discard runs `git clean -fd` (never `-fdx`) scoped
+- **(M30 — Implemented, ADR-082)** Discard runs `git clean -fd` (never `-fdx`) scoped
   `-C <worktree>` with a `.maister/`-containment assert and re-materialization; it
   MUST NOT touch `.maister/`. Every executed dirty-resolution deletes the gate-chat
-  checkpoint ref so the ADR-075 L3 sensor re-anchors.
-- **(M30 — Implemented, ADR-079)** `GET /api/runs/{runId}/diff?scope=` accepts exactly
+  checkpoint ref so the ADR-078 L3 sensor re-anchors.
+- **(M30 — Implemented, ADR-082)** `GET /api/runs/{runId}/diff?scope=` accepts exactly
   `run | since-last-review | last-node | uncommitted` (allow-list); a missing-base
   scope is hidden/disabled with a reason, never an error; `uncommitted` renders via
   a temp `GIT_INDEX_FILE` and MUST NOT mutate the real index.
-- **(M30 — Implemented, ADR-079)** `hitl_requests.review_tip_sha` is stamped with the
+- **(M30 — Implemented, ADR-082)** `hitl_requests.review_tip_sha` is stamped with the
   branch tip (`headCommit`) at each review-gate visit; it is the base for the
   `since-last-review` scope.
-- **(M30 — Implemented, ADR-075)** Gate-chat is available iff `runs.status ∈
+- **(M30 — Implemented, ADR-078)** Gate-chat is available iff `runs.status ∈
   {NeedsInput, NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND
   `runs.acp_session_id ≠ null`; `permission`-kind and `HumanWorking` are excluded.
-- **(M30 — Implemented, ADR-075)** A gate-chat turn NEVER resolves the HITL, NEVER
+- **(M30 — Implemented, ADR-078)** A gate-chat turn NEVER resolves the HITL, NEVER
   writes `hitl_requests.responded_at`, and NEVER drives the run `→Running`; on
   `NeedsInputIdle` it may drive `Idle→NeedsInput` (chat-resume) and then re-idle.
-- **(M30 — Implemented, ADR-075)** The L3 mutation sensor captures ONE baseline at the
+- **(M30 — Implemented, ADR-078)** The L3 mutation sensor captures ONE baseline at the
   first chat turn, runs unconditionally + fail-closed on every turn, reverts any
   detected mutation to that baseline, sets `gate_chat_messages.mutation_reverted =
   true`, and emits an audit signal — even under permissive runners where L2 is a
   no-op; the baseline ref is GC'd on HITL resolve and deleted by any dirty-resolution.
-- **(M30 — Implemented, ADR-075)** Chat input is NEVER Mustache-evaluated; the L1
+- **(M30 — Implemented, ADR-078)** Chat input is NEVER Mustache-evaluated; the L1
   preamble is server-side; the chat-prompt `stepId` marker uses a dash
   (`gate-chat-<hitlRequestId>`), never a colon.
 - **(Implemented)** A run in `NeedsInput` extends `keepalive_until` by
@@ -726,20 +726,20 @@ fields:
   same-payload retry is idempotent (200 + re-queue resume); a
   different-payload retry is rejected with 409 BEFORE any artifact
   or supervisor side-effect runs.
-- **(M30 — Implemented, ADR-079) Discard path escapes the worktree** → the
+- **(M30 — Implemented, ADR-082) Discard path escapes the worktree** → the
   `.maister/`-containment assert hard-fails the discard with a mapped 409
   (`CONFLICT`/`PRECONDITION`); the gate stays open and no `dirty_resolution` is
   recorded.
-- **(M30 — Implemented, ADR-079) Diff scope base ref missing** (pre-feature run,
+- **(M30 — Implemented, ADR-082) Diff scope base ref missing** (pre-feature run,
   first review visit, no completed agent node yet) → that scope is hidden/disabled
   with a reason; the default `run` scope always resolves. Never an error.
-- **(M30 — Implemented, ADR-075) Gate-chat on a `permission`-kind pause or
+- **(M30 — Implemented, ADR-078) Gate-chat on a `permission`-kind pause or
   `HumanWorking` run** → unavailable; the UI shows a disabled empty-state, not a chat
   box (the session is mid-prompt-turn or human-owned).
-- **(M30 — Implemented, ADR-075) Idle gate-chat respawn fails** → the chat prompt's
+- **(M30 — Implemented, ADR-078) Idle gate-chat respawn fails** → the chat prompt's
   deferred is released, the turn errors without resolving the HITL, and the run stays
   `NeedsInputIdle` (never a partial `→Running`).
-- **(M30 — Implemented, ADR-075) Agent mutates the workspace during a chat turn** → L3
+- **(M30 — Implemented, ADR-078) Agent mutates the workspace during a chat turn** → L3
   reverts to the first-turn baseline, marks `mutation_reverted=true`, and emits an
   audit signal; the turn's answer still renders with a revert notice.
 - **Supervisor restart while the user response is in-flight** —
@@ -866,8 +866,8 @@ runner-agent enforcement is queued for a follow-up patch.
   ADR-056 (flat-runner `on_reject` atomic repark; Implemented — M17),
   ADR-057 (HITL hybrid-surface composition — cross-project inbox; Implemented — M17),
   [ADR-066 Diff rendering stack](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (M30 scope-switcher reuse),
-  [ADR-079 Review-diff completeness (M30 — Implemented)](../decisions.md#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
-  [ADR-075 Gate-chat + workspace-neutrality (M30 — Implemented)](../decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).
+  [ADR-082 Review-diff completeness (M30 — Implemented)](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
+  [ADR-078 Gate-chat + workspace-neutrality (M30 — Implemented)](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).
 - ERD: [`../db/hitl-domain.md`](../db/hitl-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`form_schema versioning`;

@@ -157,7 +157,7 @@ export function useModelSuggestions(
   const refresh = useCallback((): void => {
     void run(requestBody(draft, true));
     // env-ref NAMES (authToken/apiKey) are part of the supervisor cache key
-    // (ADR-075 §4) — changing them must re-resolve.
+    // (ADR-076 §4) — changing them must re-resolve.
   }, [
     run,
     draft.adapter,
@@ -175,7 +175,7 @@ export function useModelSuggestions(
 
     return () => clearTimeout(handle);
     // env-ref NAMES (authToken/apiKey) are part of the supervisor cache key
-    // (ADR-075 §4) — changing them must re-resolve.
+    // (ADR-076 §4) — changing them must re-resolve.
   }, [
     run,
     draft.adapter,

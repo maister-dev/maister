@@ -111,7 +111,7 @@ async function makeBundleDir(skillName: string): Promise<string> {
   return dir;
 }
 
-describe("materializeProjectBundlesIntoWorktree (ADR-076 §4)", () => {
+describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
   it("copies each Installed bundle, skips non-Installed, writes the override once", async () => {
     const projectId = await seedProject();
     const worktree = await mkdtemp(join(tmpdir(), "maister-wt-"));

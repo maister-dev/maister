@@ -1,4 +1,4 @@
-// M30 (ADR-075 L2): read-only chat turns — the prompt carries readOnlyTurn,
+// M30 (ADR-078 L2): read-only chat turns — the prompt carries readOnlyTurn,
 // and requestPermission auto-rejects unambiguous MUTATING toolCall kinds
 // BEFORE any SSE emit or pending-permission registration (so no
 // session.permission_request event and no web hitl row). read/fetch pass;
@@ -15,7 +15,7 @@ const OPTIONS = [
   { optionId: "reject-1", kind: "reject_once", name: "Reject" },
 ];
 
-describe("SendPromptRequestSchema readOnlyTurn (ADR-075 L2)", () => {
+describe("SendPromptRequestSchema readOnlyTurn (ADR-078 L2)", () => {
   it("accepts an optional readOnlyTurn boolean", () => {
     const r = SendPromptRequestSchema.safeParse({
       stepId: "gate-chat-abc",

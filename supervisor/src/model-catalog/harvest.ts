@@ -24,7 +24,7 @@ export function draftFromRunner(runner: RunnerLaunch): ModelCatalogDraft {
   };
 }
 
-// Passive harvest (ADR-075): feed the model state observed on a REAL session's
+// Passive harvest (ADR-076): feed the model state observed on a REAL session's
 // session/new or session/resume response into the shared cache, tagged
 // `agent_observed`. Best-effort and side-effect-free on the live path — it MUST
 // NEVER throw into the session flow (a harvest failure is swallowed at debug).

@@ -1,6 +1,6 @@
 import type { SessionPolicy } from "@/lib/config.schema";
 
-// M30 (ADR-078, DD8): 3-level highest-wins resolution of the rework session
+// M30 (ADR-081, DD8): 3-level highest-wins resolution of the rework session
 // policy, with the deliberate `resume` engine default — the ~$0.28 idle
 // respawn buys back the critique context, which is the point of resuming.
 export type SessionPolicySource =

@@ -789,12 +789,12 @@ transport contract and validate seam are in [`flow-dsl.md`](flow-dsl.md) §M26 a
 
 **M30 engine bump (Implemented).** M30 bumps `MAISTER_ENGINE_VERSION` `1.3.0 → 1.4.0`
 in `web/lib/flows/engine-version.ts`
-([ADR-076](decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture)).
+([ADR-079](decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture)).
 It is a **code constant, not an env var** — no `.env`/compose wiring. The new node
 DSL keys `retry_policy`
-([ADR-077](decisions.md#adr-077-node-level-retry-policy)) and `session_policy` plus
+([ADR-080](decisions.md#adr-080-node-level-retry-policy)) and `session_policy` plus
 the flow `defaults` block
-([ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default))
+([ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default))
 require `compat.engine_min: 1.4.0`; a manifest using any of them with
 `engine_min < 1.4.0` is refused with `CONFIG` through the same
 `engine_min..engine_max` check. A Flow using none of these keys stays valid at any
@@ -813,7 +813,7 @@ hard-blocks any policy run with `MaisterError("PRECONDITION")` when violated —
 a deploy precondition. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
 `refs/maister/chat-checkpoints/*` are git refs, not env. B20 audit verdict: **no
 new env var was introduced** — the candidate `MAISTER_GATE_CHAT_ENABLED` toggle
-was not needed (availability is session-presence-driven, ADR-075 DD2), so M30
+was not needed (availability is session-presence-driven, ADR-076 DD2), so M30
 adds no deployment surface beyond the existing `MAISTER_RUNTIME_ROOT` layout
 precondition.
 
@@ -954,10 +954,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_KILL_GRACE_MS` | no | `5000` | SIGTERM → SIGKILL grace per session |
 | `MAISTER_SHUTDOWN_GRACE_MS` | no | `15000` | Total budget for graceful supervisor shutdown |
 | `LOG_LEVEL` | no | `debug` (dev) / `info` (prod) | pino level for both web and supervisor |
-| `ANTHROPIC_API_KEY` | yes for default | — | Claude executor (unless overridden by per-executor `env`); also read by the model-discovery `provider_api` source for plain `anthropic` runner drafts (ADR-075) |
+| `ANTHROPIC_API_KEY` | yes for default | — | Claude executor (unless overridden by per-executor `env`); also read by the model-discovery `provider_api` source for plain `anthropic` runner drafts (ADR-076) |
 | `ANTHROPIC_BASE_URL` | no | api.anthropic.com | Per-executor `env` overrides the global default |
 | `ANTHROPIC_AUTH_TOKEN` | no | uses `ANTHROPIC_API_KEY` | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …) |
-| `OPENAI_API_KEY` | no | — | Model discovery only (ADR-075): the supervisor's `provider_api` source lists models for plain `openai` codex runner drafts; unset → that source reports `skipped`. NOT used to run codex sessions. |
+| `OPENAI_API_KEY` | no | — | Model discovery only (ADR-076): the supervisor's `provider_api` source lists models for plain `openai` codex runner drafts; unset → that source reports `skipped`. NOT used to run codex sessions. |
 | `MAISTER_CCR_AUTH_TOKEN` | no | unset | Fallback for `ANTHROPIC_AUTH_TOKEN` when an executor has `router: ccr` and does not pin the token in `executor.env`. Missing token → `EXECUTOR_UNAVAILABLE` (503). |
 | `MAISTER_CCR_CONFIG_PATH` | no | `/app/.ccr/config.json` in Docker, `~/.claude-code-router/config.json` otherwise | Container-side path the supervisor reads for CCR host+port. In compose this aligns with the bind-mount target — leave unset unless changing the layout. |
 | `MAISTER_CCR_CONFIG_HOST_PATH` | no (Docker only) | `${HOME}/.claude-code-router` | Host directory bind-mounted at `/app/.ccr` (read-only) in the supervisor service. Point at a secret-mount directory for hardened deployments. |

@@ -369,5 +369,5 @@ before supervisor child spawn.
 - [Flow DSL](../flow-dsl.md)
 - [Database schema](../database-schema.md)
 - [Error taxonomy](../error-taxonomy.md)
-- [Model catalog](model-catalog.md) — discovers valid `model` ids for a runner draft and applies the configured model to the agent (ADR-075).
+- [Model catalog](model-catalog.md) — discovers valid `model` ids for a runner draft and applies the configured model to the agent (ADR-076).
 - [ADR-050](../decisions.md#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars)

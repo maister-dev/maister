@@ -489,7 +489,7 @@ delivery history exists (retire via `enabled=false`).
 
 ## Linked artifacts
 
-- **Decision:** [ADR-077](../decisions.md#adr-076-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer).
+- **Decision:** [ADR-077](../decisions.md#adr-077-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer).
 - **HTTP API:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) — admin +
   project webhooks CRUD, deliveries log, ping, replay, webhook-settings.
 - **Outbound wire contract:** [`api/async/outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml)

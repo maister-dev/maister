@@ -75,9 +75,9 @@ export async function appendNodeAttempt(args: {
   nodeType: NodeAttemptType;
   attempt?: number;
   reworkFromNode?: string;
-  // M30 (ADR-077): true when this attempt was auto-scheduled by retry_policy.
+  // M30 (ADR-080): true when this attempt was auto-scheduled by retry_policy.
   autoRetry?: boolean;
-  // M30 (ADR-078): the effective rework session policy snapshot.
+  // M30 (ADR-081): the effective rework session policy snapshot.
   sessionPolicy?: "resume" | "new_session";
   db?: Db;
 }): Promise<{ id: string; attempt: number }> {
@@ -193,7 +193,7 @@ export async function markNodeFailed(
   );
 }
 
-// M30 (ADR-076): record the namespaced dangling checkpoint ref captured
+// M30 (ADR-079): record the namespaced dangling checkpoint ref captured
 // before this attempt started. Written right after the capture succeeds;
 // stays NULL when capture was skipped/degraded (policies degrade to keep).
 export async function setCheckpointRef(
@@ -214,7 +214,7 @@ export async function setCheckpointRef(
   );
 }
 
-// M30 (ADR-076): latest attempt row for a (run, node) — the rework path reads
+// M30 (ADR-079): latest attempt row for a (run, node) — the rework path reads
 // its checkpoint_ref to apply the chosen workspacePolicy against the rework
 // target's pre-attempt state.
 export async function latestAttemptForNode(
@@ -249,7 +249,7 @@ export async function latestAttemptForNode(
   return rows[0] ?? null;
 }
 
-// M30 (ADR-078): record that `resume` was requested but the prior session was
+// M30 (ADR-081): record that `resume` was requested but the prior session was
 // gone/unresumable and the engine fell back to a fresh session. Observable —
 // never silent.
 export async function setSessionFallback(

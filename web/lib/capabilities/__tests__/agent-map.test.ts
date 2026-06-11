@@ -278,7 +278,7 @@ describe("mapProfileToAgentArtifacts", () => {
     expect(result.skills).toEqual([]);
   });
 
-  // ADR-075 (decision 5) / T3.1: the configured runner model reaches the claude
+  // ADR-076 (decision 5) / T3.1: the configured runner model reaches the claude
   // adapter through settings.local.json's `model` field. The write is ALWAYS-ON
   // whenever `model` is set — even with zero permission entries (the always-on
   // regression: settingsLocal was `null` in that case before).

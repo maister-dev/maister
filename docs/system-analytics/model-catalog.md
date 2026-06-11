@@ -13,7 +13,7 @@ agent. It does NOT own the runner CRUD lifecycle (see
 [acp-runners.md](acp-runners.md)), runner **resolution** precedence (see
 [executors.md](executors.md)), or billed model attribution (`cost.jsonl` stays
 ground truth). The decision record is
-[ADR-075](../decisions.md#adr-075); the spike basis is
+[ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application); the spike basis is
 [`spikes/2026-06-11-acp-model-discovery-spikes.md`](../spikes/2026-06-11-acp-model-discovery-spikes.md).
 Boundary: the catalog is **never persisted** — one supervisor host, one in-memory
 cache; `platform_acp_runners.model` stays free text.
@@ -295,7 +295,7 @@ spike baseline.)
   (`POST /api/admin/acp-runners/model-suggestions`).
 - **Events:** [`api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml)
   — the `model_advisory` `session.update` payload variant.
-- **Decision:** [ADR-075](../decisions.md#adr-075).
+- **Decision:** [ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application).
 - **Spike basis:** [`spikes/2026-06-11-acp-model-discovery-spikes.md`](../spikes/2026-06-11-acp-model-discovery-spikes.md).
 - **Architecture:** [`architecture.md`](../architecture.md) — the `model-catalog`
   supervisor component.

@@ -1,4 +1,4 @@
-// M30 (ADR-077): auto-retry on retryable failures, observable on the ledger.
+// M30 (ADR-080): auto-retry on retryable failures, observable on the ledger.
 // runGraph drives a real DB (testcontainers) + a real git worktree; ONLY the
 // agent action is scripted (vi.mock of runner-agent). Asserts:
 //   - an on-list failure auto-schedules attempts up to `attempts`, then the
@@ -326,7 +326,7 @@ async function runStatus(runId: string): Promise<string> {
   return r.rows[0].status as string;
 }
 
-describe("retry_policy auto-retry (ADR-077)", () => {
+describe("retry_policy auto-retry (ADR-080)", () => {
   it("retries an on-list failure with fresh sessions, applies the workspace policy, then succeeds", async () => {
     const { runGraph } = await import("@/lib/flows/graph/runner-graph");
     const manifest = retryManifest(

@@ -1,4 +1,4 @@
-// M30 (ADR-075): gate-chat turns against a real DB + real git worktree with
+// M30 (ADR-078): gate-chat turns against a real DB + real git worktree with
 // an injected fake supervisor API. Pins:
 //   - live turn: user+agent rows (seq), L1 preamble + readOnlyTurn on the
 //     prompt, gate-chat-<hitlId> stepId, keepalive bump, HITL stays open,
@@ -584,7 +584,7 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
     ).trim();
 
     // The reviewer explicitly discards — wip.txt is removed and the chat
-    // baseline ref is deleted (ADR-079 → deleteChatCheckpoint).
+    // baseline ref is deleted (ADR-082 → deleteChatCheckpoint).
     await resolveDirtyWorktree({
       runId,
       hitlRequestId: hitlId,

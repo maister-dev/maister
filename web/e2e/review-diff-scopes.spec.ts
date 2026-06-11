@@ -1,4 +1,4 @@
-// M30 (ADR-079): review-diff scope switcher + dirty-state banner, end-to-end
+// M30 (ADR-082): review-diff scope switcher + dirty-state banner, end-to-end
 // on the review-comments fixture (real worktree, parked review HITL).
 //
 // Asserted, supervisor-independent outcomes:

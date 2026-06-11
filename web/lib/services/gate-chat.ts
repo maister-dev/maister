@@ -46,7 +46,7 @@ const log = pino({
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
 
-// M30 (ADR-075 L1): the instruct layer — server-side constant prepended to
+// M30 (ADR-078 L1): the instruct layer — server-side constant prepended to
 // every chat prompt, never user text. L2/L3 back it up.
 export const GATE_CHAT_READONLY_PREAMBLE =
   "You are answering a reviewer's question at a review pause. This is a " +
@@ -54,13 +54,13 @@ export const GATE_CHAT_READONLY_PREAMBLE =
   "the workspace, do not run commands that write, and do not commit. " +
   "Reading files to ground your answer is fine.\n\n";
 
-// M30 (ADR-075 DD4): server-derived stepId marker — dash, never a colon
+// M30 (ADR-078 DD4): server-derived stepId marker — dash, never a colon
 // (supervisor SAFE_PATH_SEGMENT); also names the per-step log file.
 export function gateChatStepId(hitlRequestId: string): string {
   return `gate-chat-${hitlRequestId}`;
 }
 
-// M30 (ADR-075 DD2): session-presence-driven, answer-only availability.
+// M30 (ADR-078 DD2): session-presence-driven, answer-only availability.
 export function gateChatAvailability(input: {
   runStatus: string;
   hitlKind: string | null;
@@ -207,9 +207,9 @@ async function treePaths(
   );
 }
 
-// M30 (ADR-075 L3): the hard neutrality guarantee. Compares the current
+// M30 (ADR-078 L3): the hard neutrality guarantee. Compares the current
 // worktree content (tree probe + branch tip) against the first-turn
-// baseline; on a delta restores the baseline (ADR-076 rewind overlay) and
+// baseline; on a delta restores the baseline (ADR-079 rewind overlay) and
 // deletes ONLY the rogue untracked paths absent from the baseline tree —
 // never a blanket clean, never `.maister/`. Fail-closed: a sensor that
 // cannot sense throws CHECKPOINT.
@@ -275,7 +275,7 @@ export interface SendGateChatTurnResult {
   resumed: boolean;
 }
 
-// M30 (ADR-075): one answer-only chat turn. Order of operations (X-2PC):
+// M30 (ADR-078): one answer-only chat turn. Order of operations (X-2PC):
 //   1. server-state load + DD2 availability guard
 //   2. L3 baseline ensure (fail-closed BEFORE any persist)
 //   3. persist the user row (intent)

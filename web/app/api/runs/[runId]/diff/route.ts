@@ -100,7 +100,7 @@ async function loadScratchDiffRows(db: Db, runId: string) {
   return { scratch, workspace };
 }
 
-// M30 (ADR-079): the 4-mode diff scope switcher. `run` stays the default
+// M30 (ADR-082): the 4-mode diff scope switcher. `run` stays the default
 // (workspace base → branch); the other scopes resolve their base from
 // server-state rows and degrade gracefully when that base does not exist
 // (disabled in the availability map; a direct request gets PRECONDITION).
@@ -156,7 +156,7 @@ async function loadPriorReviewTipSha(
 }
 
 // Latest completed agent attempt carrying a checkpoint ref — the `last-node`
-// base (exact even with zero/many agent commits, ADR-076/079).
+// base (exact even with zero/many agent commits, ADR-079/082).
 async function loadLastNodeCheckpointRef(
   db: Db,
   runId: string,
@@ -251,7 +251,7 @@ export async function GET(
 
     const { workspace, project } = await loadFlowDiffRows(db, run);
 
-    // Availability map (graceful degrade, ADR-079): resolve each scope's base
+    // Availability map (graceful degrade, ADR-082): resolve each scope's base
     // precondition once; the UI disables unavailable scopes with the reason.
     const priorReviewTipSha = await loadPriorReviewTipSha(db, runId);
     const lastNodeRef = await loadLastNodeCheckpointRef(db, runId);

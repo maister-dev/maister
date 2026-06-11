@@ -77,8 +77,8 @@ erDiagram
     HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (ADR-072)"
     USERS ||--o{ REVIEW_COMMENTS : "author / resolver (SET NULL)"
     REVIEW_COMMENTS ||--o{ REVIEW_COMMENTS : "replies (parent_id, cascade)"
-    RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-075)"
-    HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-075)"
+    RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-078)"
+    HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-078)"
     USERS ||--o{ GATE_CHAT_MESSAGES : "author (SET NULL)"
     RUNS ||--o{ ASSIGNMENTS : "work queue (M13)"
     HITL_REQUESTS ||--o| ASSIGNMENTS : "linked wait (M13)"
@@ -545,10 +545,10 @@ erDiagram
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision
         text workspace_policy "keep|rewind-to-node-checkpoint|fresh-attempt"
-        text checkpoint_ref "M30 0040: node checkpoint ref, rewind base is the checkpoint parent"
-        boolean auto_retry "M30 0040: DEFAULT false; true when this attempt is an auto-retry (retry_policy)"
-        text session_policy "M30 0040: effective rework session policy snapshot resume|new_session"
-        boolean session_fallback "M30 0040: DEFAULT false; true when resume fell back to new_session"
+        text checkpoint_ref "M30 0041: node checkpoint ref, rewind base is the checkpoint parent"
+        boolean auto_retry "M30 0041: DEFAULT false; true when this attempt is an auto-retry (retry_policy)"
+        text session_policy "M30 0041: effective rework session policy snapshot resume|new_session"
+        boolean session_fallback "M30 0041: DEFAULT false; true when resume fell back to new_session"
         text rework_from_node
         text owner_user_id FK "M11b 0011 takeover owner (users.id SET NULL)"
         text base_ref "M11b 0011 merge-base SHA for returned range"
@@ -627,14 +627,14 @@ erDiagram
         text rework_target "M11a resolved rework target"
         text criticality "M17 Implemented: low|medium|high|critical, write-once"
         real human_confidence "M17 Implemented: responder self-report 0..1"
-        text review_tip_sha "M30 0040: branch tip per review visit (since-last-review base)"
-        text dirty_resolution "M30 0040: commit|discard|proceed (nullable)"
+        text review_tip_sha "M30 0041: branch tip per review visit (since-last-review base)"
+        text dirty_resolution "M30 0041: commit|discard|proceed (nullable)"
         timestamp responded_at
         timestamp created_at
     }
 
     GATE_CHAT_MESSAGES {
-        text id PK "randomUUID (ADR-075, migration 0040)"
+        text id PK "randomUUID (ADR-078, migration 0041)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
         text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE - the pause"
         text node_id "NOT NULL - gate node id"

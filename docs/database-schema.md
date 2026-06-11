@@ -53,7 +53,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
 | `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
 | `review_comments`             | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK). | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver) |
-| `gate_chat_messages`          | **(M30 — Implemented, migration `0040`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`. | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author) |
+| `gate_chat_messages`          | **(M30 — Implemented, migration `0041`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`. | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author) |
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
 | `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
@@ -64,10 +64,10 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
 | `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
 | `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
-| `webhook_subscriptions`       | **(Implemented, ADR-077, migration `0040`)** Operator-configured delivery endpoints. `project_id = NULL` = platform scope; non-null = project scope. Secrets stored as `env:NAME` refs only. Usage-guarded DELETE.                                                                                                                              | optional `projects.id`                                                     |
-| `webhook_events`              | **(Implemented, ADR-077, migration `0040`)** Transactional outbox. One row per curated lifecycle event, written in the same transaction as the triggering state transition. `fanout_at IS NULL` is the fanout cursor.                                                                                                                           | `projects.id`, `runs.id`                                                   |
-| `webhook_deliveries`          | **(Implemented, ADR-077, migration `0040`)** Per-subscription delivery state. UNIQUE `(subscription_id, event_id)`. Status `pending` to `delivered` or `dead`. Retry: up to 8 attempts over ~41.5 h.                                                                                                                                          | `webhook_events.id`, `webhook_subscriptions.id`                            |
-| `webhook_delivery_attempts`   | **(Implemented, ADR-077, migration `0040`)** Append-only per-attempt audit. `attempt_no` continues from the running total across replay cycles. UNIQUE `(delivery_id, attempt_no)`.                                                                                                                                                            | `webhook_deliveries.id`                                                    |
+| `webhook_subscriptions`       | **(Implemented, ADR-077, migration `0041`)** Operator-configured delivery endpoints. `project_id = NULL` = platform scope; non-null = project scope. Secrets stored as `env:NAME` refs only. Usage-guarded DELETE.                                                                                                                              | optional `projects.id`                                                     |
+| `webhook_events`              | **(Implemented, ADR-077, migration `0041`)** Transactional outbox. One row per curated lifecycle event, written in the same transaction as the triggering state transition. `fanout_at IS NULL` is the fanout cursor.                                                                                                                           | `projects.id`, `runs.id`                                                   |
+| `webhook_deliveries`          | **(Implemented, ADR-077, migration `0041`)** Per-subscription delivery state. UNIQUE `(subscription_id, event_id)`. Status `pending` to `delivered` or `dead`. Retry: up to 8 attempts over ~41.5 h.                                                                                                                                          | `webhook_events.id`, `webhook_subscriptions.id`                            |
+| `webhook_delivery_attempts`   | **(Implemented, ADR-077, migration `0041`)** Append-only per-attempt audit. `attempt_no` continues from the running total across replay cycles. UNIQUE `(delivery_id, attempt_no)`.                                                                                                                                                            | `webhook_deliveries.id`                                                    |
 ## `users`
 
 (Introduced in M9 — migration `0004_petite_gamora.sql`.)
@@ -1008,13 +1008,13 @@ One immutable row per node execution; `attempt` auto-increments per
                                             //   0040) refs/maister/checkpoints/
                                             //   <runId>/<nodeAttemptId>; rewind
                                             //   target is <ck>^ (pre-attempt tip)
-  autoRetry,                                // (M30 — Implemented, ADR-077, 0040)
+  autoRetry,                                // (M30 — Implemented, ADR-080, 0041)
                                             //   boolean DEFAULT false; true when
                                             //   this attempt is an auto-retry
-  sessionPolicy?,                           // (M30 — Implemented, ADR-078, 0040)
+  sessionPolicy?,                           // (M30 — Implemented, ADR-081, 0041)
                                             //   effective rework session policy
                                             //   snapshot: 'resume' | 'new_session'
-  sessionFallback,                          // (M30 — Implemented, ADR-078, 0040)
+  sessionFallback,                          // (M30 — Implemented, ADR-081, 0041)
                                             //   boolean DEFAULT false; resume fell
                                             //   back to new_session
   reworkFromNode?,                          // origin node when this attempt is a
@@ -1367,7 +1367,7 @@ round-trip.
 
 ## `gate_chat_messages`
 
-**(M30 — Implemented, [ADR-075](decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0040`.)**
+**(M30 — Implemented, [ADR-078](decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality), migration `0041`.)**
 Answer-only gate-chat turns between a reviewer and the parked agent at a
 `human`/`form` HITL pause. See
 [`system-analytics/hitl.md`](system-analytics/hitl.md) §Gate-chat.
@@ -1517,7 +1517,7 @@ Events are append-only. Current M13 services write
 `created`/`claimed`/`released`/`taken_over`/`responded`/`returned`/`completed`/`cancelled`/`system_closed`
 events in the same DB transaction as the corresponding assignment state change.
 
-## Outbound webhook tables (Implemented, ADR-077, migration `0040`)
+## Outbound webhook tables (Implemented, ADR-077, migration `0041`)
 
 See [`db/webhooks.md`](db/webhooks.md) for the ERD and
 [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md)
@@ -1525,7 +1525,7 @@ for the delivery FSM and event taxonomy.
 
 ### `webhook_subscriptions`
 
-**(Implemented, ADR-077, migration `0040`.)** Operator-configured delivery
+**(Implemented, ADR-077, migration `0041`.)** Operator-configured delivery
 endpoints. Platform-scope rows have `project_id = NULL`; project-scope rows
 have a non-null FK. Both shapes live in the single table because the column
 set is identical and authorization differs only by scope.
@@ -1562,7 +1562,7 @@ retirement path for subscriptions that have delivery history.
 
 ### `webhook_events`
 
-**(Implemented, ADR-077, migration `0040`.)** Transactional outbox. One row per
+**(Implemented, ADR-077, migration `0041`.)** Transactional outbox. One row per
 curated lifecycle event emitted in the same DB transaction as the triggering
 run/HITL/gate state transition. The outbox INSERT is the only write-path
 addition — no joins, no network I/O on the run path.
@@ -1596,7 +1596,7 @@ row are kept indefinitely for replay and audit.
 
 ### `webhook_deliveries`
 
-**(Implemented, ADR-077, migration `0040`.)** Per-subscription delivery state.
+**(Implemented, ADR-077, migration `0041`.)** Per-subscription delivery state.
 One row per (subscription, event) pair, inserted during fanout. Status lifecycle:
 `pending → delivered | dead`; replay resets `pending` with counters cleared.
 
@@ -1635,7 +1635,7 @@ concurrent double-send.
 
 ### `webhook_delivery_attempts`
 
-**(Implemented, ADR-077, migration `0040`.)** Append-only per-attempt audit.
+**(Implemented, ADR-077, migration `0041`.)** Append-only per-attempt audit.
 Mirrors the spirit of `scheduler_job_runs`. `attempt_no` continues from the
 running total across replay cycles — it is never reset.
 
@@ -1660,7 +1660,7 @@ from `webhook_deliveries.id`.
 
 ### `platform_runtime_settings.webhooks_enabled` (additive column)
 
-**(Implemented, ADR-077, migration `0040`.)** A single boolean column
+**(Implemented, ADR-077, migration `0041`.)** A single boolean column
 `webhooks_enabled NOT NULL DEFAULT true` added to the existing
 `platform_runtime_settings` singleton row. When `false`, the
 `webhook_delivery` scheduler job handler runs a skip pass: un-fanned events

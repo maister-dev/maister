@@ -39,7 +39,7 @@ type Tables = {
   scratch_runs: Row[];
   workspaces: Row[];
   projects: Row[];
-  // M30 (ADR-079): the scope availability map reads these two.
+  // M30 (ADR-082): the scope availability map reads these two.
   hitl_requests: Row[];
   node_attempts: Row[];
 };
@@ -115,7 +115,7 @@ vi.mock("@/lib/worktree", () => ({
   })),
   diffNameStatus: vi.fn(async () => [{ path: "file.txt", status: "M" }]),
   resolveBaseRef: vi.fn(async () => "resolvedbase0000000000000000000000000000"),
-  // M30 (ADR-079): scope-switcher imports — unused in these M22 default-scope
+  // M30 (ADR-082): scope-switcher imports — unused in these M22 default-scope
   // cases but required for the module factory to satisfy the route's imports.
   diffRange: vi.fn(async () => ({ text: "", truncated: false })),
   diffWorkingTree: vi.fn(async () => ({

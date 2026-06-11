@@ -1,7 +1,7 @@
 // Route-contract pins for /api/runs/{runId}/hitl/{hitlRequestId}/chat —
 // the implemented envelope documented in docs/api/web.openapi.yaml:
 //   GET  200 {runId, hitlRequestId, availability, idleResumeCost, messages}
-//        guarded by answerHitl (member+, ADR-075 — NOT readBoard)
+//        guarded by answerHitl (member+, ADR-078 — NOT readBoard)
 //   POST 200 {runId, hitlRequestId, userMessage, agentMessage, resumed}
 //        (synchronous reply, not 202 {ok, seq}) + the error-status map
 //        CONFIG→400, PRECONDITION/CONFLICT→409, CHECKPOINT/ACP_PROTOCOL→502.

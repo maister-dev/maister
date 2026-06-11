@@ -23,9 +23,9 @@ const log = pino({
 const GIT_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
-// ADR-076: dangling checkpoint refs live OUTSIDE refs/heads — never on the
+// ADR-079: dangling checkpoint refs live OUTSIDE refs/heads — never on the
 // run branch. `checkpoints` holds per-node-attempt pre-attempt state;
-// `chat-checkpoints` holds the ADR-075 L3 gate-chat baseline (bounded at 1
+// `chat-checkpoints` holds the ADR-078 L3 gate-chat baseline (bounded at 1
 // per hitlRequest).
 export type CheckpointNamespace = "checkpoints" | "chat-checkpoints";
 
@@ -92,7 +92,7 @@ export function checkpointRefName(
   return `refs/maister/${namespace}/${runId}/${id}`;
 }
 
-// DD10 / ADR-076 §5: hard-block any workspace mutation when the runtime
+// DD10 / ADR-079 §5: hard-block any workspace mutation when the runtime
 // artifacts root resolves INSIDE the worktree — `git clean -fd` could reach a
 // non-ignored artifacts path. Operational precondition → PRECONDITION.
 export function containmentAssert(
@@ -113,7 +113,7 @@ export function containmentAssert(
   }
 }
 
-// ADR-076 §1: capture HEAD + tracked + untracked (ignored EXCLUDED) as a
+// ADR-079 §1: capture HEAD + tracked + untracked (ignored EXCLUDED) as a
 // temp-index commit PARENTED ON THE CURRENT TIP, stored as a dangling
 // namespaced ref. The branch is never advanced; `<ck>^` is the pre-attempt
 // tip for free.
@@ -167,14 +167,14 @@ export async function captureCheckpoint(args: {
   }
 }
 
-// ADR-076 §2: policy semantics against a captured checkpoint.
+// ADR-079 §2: policy semantics against a captured checkpoint.
 // - keep: strict no-op.
 // - rewind-to-node-checkpoint: branch back to `<ck>^`, working tree restored
 //   to the captured state UNSTAGED. NEVER `reset --hard <ck>` (grafts the
 //   temp-index commit onto the branch and tracks captured-untracked files).
 // - fresh-attempt: `reset --hard <ck>^` + `git clean -fd` (`-fd`, never
 //   `-fdx` — ignored build caches and an ignored .maister/ survive), then
-//   the re-materialization hook (ADR-076 §4).
+//   the re-materialization hook (ADR-079 §4).
 export async function applyWorkspacePolicy(args: {
   policy: WorkspacePolicy;
   worktreePath: string;
@@ -240,7 +240,7 @@ export async function applyWorkspacePolicy(args: {
   );
 }
 
-// ADR-076 GC: delete every checkpoint ref a run accumulated. Refs are
+// ADR-079 GC: delete every checkpoint ref a run accumulated. Refs are
 // repo-global (shared common git dir), so worktree removal alone never
 // cleans them — the workspace GC calls this against the PARENT repo, and the
 // runner calls the chat-only variant when a HITL pause resolves. Returns the
@@ -277,7 +277,7 @@ export async function deleteRunCheckpointRefs(
   return removed;
 }
 
-// ADR-075 (DD11/DD12): drop the gate-chat L3 baseline ref so the sensor
+// ADR-078 (DD11/DD12): drop the gate-chat L3 baseline ref so the sensor
 // re-anchors on the next turn. Idempotent — a missing ref is fine (already
 // GC'd / never captured / invalidated twice).
 export async function deleteChatCheckpoint(

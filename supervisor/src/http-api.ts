@@ -88,7 +88,7 @@ export type RegisterRoutesOptions = {
   runtimeRoot: string;
   killGraceMs?: number;
   spawnOverrides?: SpawnOverrides;
-  // ADR-075 model-catalog resolver. Injected so tests can stub the source set
+  // ADR-076 model-catalog resolver. Injected so tests can stub the source set
   // and the cache; main.ts wires the real registry (with Phase-2 sources) and
   // the shared cache singleton.
   modelCatalog?: {
@@ -295,7 +295,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     const body = SendPromptRequestSchema.parse(req.body);
 
-    // M30 (ADR-075 DD4): a gate-chat prompt accumulates the agent's reply
+    // M30 (ADR-078 DD4): a gate-chat prompt accumulates the agent's reply
     // text from this turn's session.update chunks and emits ONE
     // session.chat_turn at completion — the chat surface renders it without
     // polluting the flow timeline.
@@ -320,7 +320,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     if (chatHitlId) {
       entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
     }
-    // M30 (ADR-075 L2): arm the read-only auto-reject for the duration of
+    // M30 (ADR-078 L2): arm the read-only auto-reject for the duration of
     // this prompt only.
     entry.record.readOnlyTurn = body.readOnlyTurn === true;
 
@@ -676,7 +676,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send({ ok: true });
   });
 
-  // ADR-075 model discovery. Body = runner draft with BARE env-ref names; an
+  // ADR-076 model discovery. Body = runner draft with BARE env-ref names; an
   // env:-prefixed or raw secret is rejected by RunnerProviderSchema → ZodError →
   // 409 PRECONDITION via setErrorHandler. A per-source failure NEVER fails the
   // resolve — it surfaces as that source's status inside a 200. `force` bypasses

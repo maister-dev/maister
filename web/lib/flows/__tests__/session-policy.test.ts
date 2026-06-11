@@ -1,4 +1,4 @@
-// M30 (ADR-078): rework session_policy — 3-level highest-wins resolution
+// M30 (ADR-081): rework session_policy — 3-level highest-wins resolution
 // with the deliberate `resume` engine default:
 //   rework-transition (`rework.session_policy`) > node (`session_policy`)
 //   > flow (`defaults.session_policy`) > engine default `resume`.
@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveSessionPolicy } from "@/lib/flows/graph/session-policy";
 
-describe("resolveSessionPolicy (ADR-078, DD8)", () => {
+describe("resolveSessionPolicy (ADR-081, DD8)", () => {
   it("defaults to resume when nothing is declared (the deliberate flip)", () => {
     const r = resolveSessionPolicy({});
 

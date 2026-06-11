@@ -1,7 +1,7 @@
 import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// T6 "wiring" (migrated for M30/ADR-076 §4): launchRun delegates the
+// T6 "wiring" (migrated for M30/ADR-079 §4): launchRun delegates the
 // launch-time capability-bundle materialization to the extracted
 // `materializeProjectBundlesIntoWorktree` helper, right after `addWorktree`,
 // passing the project id, the new worktree path, and

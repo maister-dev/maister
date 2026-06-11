@@ -112,7 +112,7 @@ export function mapProfileToAgentArtifacts(
     isClaude && args.permissionMode
       ? PERMISSION_MODE_TO_DEFAULT_MODE[args.permissionMode]
       : undefined;
-  // ADR-075 (decision 5): the configured runner model reaches the claude
+  // ADR-076 (decision 5): the configured runner model reaches the claude
   // adapter via settings.local.json's `model` field (the adapter calls
   // query.setModel() from settings at startup). `availableModels: [model]` is
   // the minimal allowlist that lets the adapter accept a non-Claude env-router

@@ -14,8 +14,8 @@ erDiagram
     HITL_REQUESTS ||--o{ REVIEW_COMMENTS : "authoring gate visit (ADR-072)"
     USERS ||--o{ REVIEW_COMMENTS : "author / resolver (SET NULL)"
     REVIEW_COMMENTS ||--o{ REVIEW_COMMENTS : "replies (parent_id, cascade)"
-    RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-075)"
-    HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-075)"
+    RUNS ||--o{ GATE_CHAT_MESSAGES : "gate-chat turns (ADR-078)"
+    HITL_REQUESTS ||--o{ GATE_CHAT_MESSAGES : "pause of authoring (ADR-078)"
     USERS ||--o{ GATE_CHAT_MESSAGES : "author (SET NULL)"
 
     HITL_REQUESTS {
@@ -31,14 +31,14 @@ erDiagram
         text rework_target "M11a resolved rework target node"
         text criticality "M17 Implemented: flow-declared low|medium|high|critical (write-once at creation, NULL if undeclared)"
         real human_confidence "M17 Implemented: responder self-report 0..1 (written at respond time, NULL while open)"
-        text review_tip_sha "M30 0040: branch tip SHA per review-gate visit (since-last-review diff base, ADR-079)"
-        text dirty_resolution "M30 0040: commit|discard|proceed reviewer dirty-worktree choice (nullable, ADR-079)"
+        text review_tip_sha "M30 0041: branch tip SHA per review-gate visit (since-last-review diff base, ADR-082)"
+        text dirty_resolution "M30 0041: commit|discard|proceed reviewer dirty-worktree choice (nullable, ADR-082)"
         timestamp responded_at "NULL while open"
         timestamp created_at
     }
 
     GATE_CHAT_MESSAGES {
-        text id PK "randomUUID (ADR-075, migration 0040)"
+        text id PK "randomUUID (ADR-078, migration 0041)"
         text run_id FK "NOT NULL -> runs(id) ON DELETE CASCADE"
         text hitl_request_id FK "NOT NULL -> hitl_requests(id) ON DELETE CASCADE - the pause"
         text node_id "NOT NULL - gate node id"

@@ -1,4 +1,4 @@
-// M30 (ADR-075): gate-chat UI affordances on a parked review run.
+// M30 (ADR-078): gate-chat UI affordances on a parked review run.
 //
 // The seeded review fixtures carry NO acp_session_id (no live agent session
 // in the supervisor-less e2e stack), so the DD2 availability predicate

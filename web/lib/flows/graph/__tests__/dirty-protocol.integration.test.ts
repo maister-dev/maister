@@ -195,7 +195,7 @@ describe("discardWorktree (DD12 discard primitive)", () => {
   });
 });
 
-describe("runReviewHuman stamps review_tip_sha (ADR-079)", () => {
+describe("runReviewHuman stamps review_tip_sha (ADR-082)", () => {
   it("records the worktree HEAD sha on the review HITL insert", async () => {
     const { runReviewHuman } = await import("@/lib/flows/graph/runner-graph");
     const { compileManifest } = await import("@/lib/flows/graph/compile");

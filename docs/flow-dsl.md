@@ -379,7 +379,7 @@ Two halves remain deferred:
 
 ## Node `retry_policy` (M30 — Implemented)
 
-**(M30 — Implemented, [ADR-077](decisions.md#adr-077-node-level-retry-policy).)** An
+**(M30 — Implemented, [ADR-080](decisions.md#adr-080-node-level-retry-policy).)** An
 optional `retry_policy` on `ai_coding` / `cli` nodes auto-retries the node on
 transient infrastructure failures without bouncing the run to a human.
 
@@ -401,7 +401,7 @@ nodes:
   `PRECONDITION`, `CONFIG`, `CONFLICT`) or an unknown value → `CONFIG`. It is an
   allow-list, not a deny-list: only infrastructure codes retry; logic/precondition
   failures still stop the run.
-- **`workspace`** — the workspace policy applied (via the ADR-076 checkpoint engine)
+- **`workspace`** — the workspace policy applied (via the ADR-079 checkpoint engine)
   BEFORE each retry attempt; `rewind-to-node-checkpoint` resets to the pre-attempt
   checkpoint.
 
@@ -413,7 +413,7 @@ distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
 (zod refine, else `CONFIG`).
 
 **Engine floor.** Declaring `retry_policy` (or the
-[ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default)
+[ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default)
 `session_policy` / `defaults`) requires `compat.engine_min >= 1.4.0`, else
 `CONFIG`; `MAISTER_ENGINE_VERSION` bumps `1.3.0 → 1.4.0` (see
 [`configuration.md`](configuration.md) §M30 engine bump). Flows using none of
@@ -421,7 +421,7 @@ these keys stay valid at any `engine_min`.
 
 ## Rework `session_policy` (M30 — Implemented)
 
-**(M30 — Implemented, [ADR-078](decisions.md#adr-078-rework-session-policy-with-resume-by-default).)**
+**(M30 — Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**
 `session_policy` controls whether a rework re-uses the prior attempt's agent
 session (keeping the critique context) or starts fresh.
 
@@ -451,7 +451,7 @@ nodes:
   policy is snapshotted into `node_attempts.session_policy`.
 - **DD11 interplay** — when a rework resumes the SAME session, the rework prompt MUST
   lift any gate-chat read-only restriction
-  ([ADR-075](decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)),
+  ([ADR-078](decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)),
   else the agent may refuse legitimate edits.
 - **Manual-takeover** ([ADR-030](decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status))
   is unaffected (no live session to resume); slash-in-existing dispatch is unchanged.

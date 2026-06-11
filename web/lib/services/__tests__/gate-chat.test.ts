@@ -1,4 +1,4 @@
-// M30 (ADR-075): gate-chat availability predicate (DD2) + the rework-compose
+// M30 (ADR-078): gate-chat availability predicate (DD2) + the rework-compose
 // chat fold (ADR-072 extension). Pure units — no DB, no git.
 
 import { describe, expect, it } from "vitest";
@@ -71,7 +71,7 @@ describe("gateChatStepId (DD4 marker)", () => {
   });
 });
 
-describe("composeReworkPayload folds chat history (ADR-072 + ADR-075)", () => {
+describe("composeReworkPayload folds chat history (ADR-072 + ADR-078)", () => {
   it("appends a gate-chat section after the review comments", () => {
     const composed = composeReworkPayload(
       "tighten the parser",

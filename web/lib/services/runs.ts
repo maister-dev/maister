@@ -714,8 +714,8 @@ export async function launchRun(
     // write the per-run .ai-factory/config.yaml git-ownership override. Gated
     // on >=1 Installed import so non-AIF projects never get a stray config.
     // A failure here lands in the catch below → worktree compensation + abort.
-    // Extracted to a reusable helper (ADR-076 §4) — fresh-attempt rewinds and
-    // the ADR-079 dirty discard re-run it after `git clean -fd`.
+    // Extracted to a reusable helper (ADR-079 §4) — fresh-attempt rewinds and
+    // the ADR-082 dirty discard re-run it after `git clean -fd`.
     const { bundles } = await materializeProjectBundlesIntoWorktree({
       projectId: project.id,
       worktreePath,

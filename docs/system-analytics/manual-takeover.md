@@ -178,7 +178,7 @@ linear run renders an empty-but-valid timeline (no crash).
   `Running`/`NeedsInput` through BOTH scheduler cap-check predicates.
 - `HumanWorking` is session-less and is NEVER classified `Crashed` by
   `runResumeRecoverySweep` (its SELECT filters `status='NeedsInput'`).
-- **(M30 — Implemented, ADR-078)** Rework `session_policy` resolution does NOT affect
+- **(M30 — Implemented, ADR-081)** Rework `session_policy` resolution does NOT affect
   the takeover-return path: a returned takeover has no live agent session to resume,
   so downstream re-validation always dispatches a fresh session regardless of
   `session_policy`; takeover claim/return semantics are unchanged.
@@ -279,7 +279,7 @@ linear run renders an empty-but-valid timeline (no crash).
   [ADR-008 Typed error taxonomy](../decisions.md#adr-008-typed-error-taxonomy-maistererror),
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-029 Split M11](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
-  [ADR-078 Rework session policy (M30 — Implemented)](../decisions.md#adr-078-rework-session-policy-with-resume-by-default).
+  [ADR-081 Rework session policy (M30 — Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
   (`/api/runs/{runId}/takeover/claim`, `.../takeover/return`,
   `/api/runs/{runId}/abandon`).

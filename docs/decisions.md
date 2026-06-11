@@ -283,7 +283,7 @@ single-provider routing.
 
 **Date:** 2026-05-25
 **Status:** Accepted
-> **Amended by [ADR-078](#adr-078-rework-session-policy-with-resume-by-default) (2026-06-11):** rework `session_policy: resume` and idle gate-chat resume ([ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)) reuse this keep-alive + `session/resume` path.
+> **Amended by [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** rework `session_policy: resume` and idle gate-chat resume ([ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)) reuse this keep-alive + `session/resume` path.
 **Context:** Human review is slow (minutes to hours). Holding a Claude
 process in memory for the entire review wastes RAM; killing it
 immediately wastes ~$0.28 of cache_creation tokens on respawn (M0).
@@ -987,7 +987,7 @@ independent of M11/M12.
 
 **Date:** 2026-05-30
 **Status:** Accepted
-> **Amended by [ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture) (2026-06-11):** `MAISTER_ENGINE_VERSION` bumped `1.3.0 → 1.4.0`; the new DSL keys `retry_policy` ([ADR-077](#adr-077-node-level-retry-policy)) and `session_policy`/`defaults` ([ADR-078](#adr-078-rework-session-policy-with-resume-by-default)) require `compat.engine_min ≥ 1.4.0`.
+> **Amended by [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) (2026-06-11):** `MAISTER_ENGINE_VERSION` bumped `1.3.0 → 1.4.0`; the new DSL keys `retry_policy` ([ADR-080](#adr-080-node-level-retry-policy)) and `session_policy`/`defaults` ([ADR-081](#adr-081-rework-session-policy-with-resume-by-default)) require `compat.engine_min ≥ 1.4.0`.
 **Context:** [ADR-010](#adr-010-flow-engine-v2-plugin-packaging--step-dsl)'s
 step DSL is **strictly linear** — the runner walks `steps[]` in order and
 `on_reject.goto_step` is parsed and validated but never executed, so
@@ -1033,7 +1033,7 @@ flows MUST declare `compat.engine_min: 1.1.0`. Bump the engine constant
 
 **Date:** 2026-05-30
 **Status:** Accepted
-> **Amended by [ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture) / [ADR-077](#adr-077-node-level-retry-policy) / [ADR-078](#adr-078-rework-session-policy-with-resume-by-default) (2026-06-11):** adds ledger columns `checkpoint_ref`, `session_policy`, `session_fallback`, and `auto_retry` (migration 0040).
+> **Amended by [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) / [ADR-080](#adr-080-node-level-retry-policy) / [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** adds ledger columns `checkpoint_ref`, `session_policy`, `session_fallback`, and `auto_retry` (migration 0041).
 **Context:** The current `step_runs` table reuses the same row on resume and
 hard-codes `attempt = 1`, so there is no append-only execution history. A rework
 loop re-runs nodes; templating must resolve `steps.<id>.output` to the **latest**
@@ -1180,7 +1180,7 @@ restriction** refs (#1) → M14; node-level **executor** refs (#1) → M11c.
 
 **Date:** 2026-05-31
 **Status:** Accepted
-> **Amended by [ADR-078](#adr-078-rework-session-policy-with-resume-by-default) (2026-06-11):** `session_policy` resolution leaves the takeover-return path unaffected (no live session to resume); the interplay is documented in `manual-takeover.md`.
+> **Amended by [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) (2026-06-11):** `session_policy` resolution leaves the takeover-return path unaffected (no live session to resume); the interplay is documented in `manual-takeover.md`.
 **Context:** M11b ([ADR-029](#adr-029-split-m11-into-m11a--m11b--m11c)) ships
 **manual takeover** — a reviewer parked at an M11a `human_review` node takes the
 run over to edit it by hand, then returns it for re-validation. The run already
@@ -2148,7 +2148,7 @@ ingress is introduced.
 **Date:** 2026-06-02
 **Status:** Accepted
 > **Delivery half superseded by [ADR-044](#adr-044-capability-delivery-via-settingslocaljson--acp-newsession-cli-flag-mechanism-disproven):** the CLI-flag/preArgs delivery mechanism was disproven; capability now ships via `.claude/settings.local.json` + ACP `newSession`. The registry/resolver/ledger half here stands.
-> **Amended by [ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L2 permission auto-deny is best-effort within this instructed-only model; the L3 mutation sensor is the hard neutrality guarantee.
+> **Amended by [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L2 permission auto-deny is best-effort within this instructed-only model; the L3 mutation sensor is the hard neutrality guarantee.
 **Context:** [ADR-031](#adr-031-node-typed-settings-schema-carve-b) shipped typed
 node `settings` but deferred the **positive** half of roadmap criterion #6 to
 M14: resolving `mcps:[github]` / `skills:[…]` / `tools:[…]` /
@@ -4443,7 +4443,7 @@ as-is.
 
 **Date:** 2026-06-10
 **Status:** Accepted
-> **Amended by [ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** runner-side rework compose also folds `gate_chat_messages` history into `commentsVar`; gate-chat persists in a sibling table, not `review_comments`.
+> **Amended by [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** runner-side rework compose also folds `gate_chat_messages` history into `commentsVar`; gate-chat persists in a sibling table, not `review_comments`.
 **Context:** The M11a review gate offers one free-text `comments` box. That is
 too coarse to dogfood real PR-grade reviews (M20): a reviewer cannot anchor a
 remark to a diff line, track which remarks were addressed across rework
@@ -4654,7 +4654,7 @@ DSL grammar change; the diff stays committed-only `base..branch` and
 
 **Date:** 2026-06-08
 **Status:** Accepted
-> **Amended by [ADR-079](#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) (2026-06-11):** the review-diff 4-mode `scope` switcher reuses this `prepareDiff` pipeline + byte-cap truncation guard.
+> **Amended by [ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) (2026-06-11):** the review-diff 4-mode `scope` switcher reuses this `prepareDiff` pipeline + byte-cap truncation guard.
 **Context:** Three code-content surfaces render with no syntax highlighting.
 (1) The M22 workbench (ADR-053) shows git-tracked repo files in a plain `<pre>`
 (`file-viewer.tsx`) — no highlighting, no line numbers, read-only. (2) The same
@@ -4873,7 +4873,7 @@ as "—" (insufficient data), never as `0%`.
 
 **Date:** 2026-06-10
 **Status:** Accepted
-> **Amended by [ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L3 neutrality reuses this detect-after mutation-sensor stance with its own first-turn chat-checkpoint baseline.
+> **Amended by [ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality) (2026-06-11):** gate-chat L3 neutrality reuses this detect-after mutation-sensor stance with its own first-turn chat-checkpoint baseline.
 **Context:** The harness can verify that evidence EXISTS (`artifact_required`,
 M12) but not WHAT a node actually changed. Two recurring defect classes are
 invisible today: (1) a node that claims success without touching the files its
@@ -5451,7 +5451,7 @@ surface. Seven locked sub-decisions:
 
 ---
 
-### ADR-075: Gate-chat at HITL pauses with three-layer workspace-neutrality
+### ADR-078: Gate-chat at HITL pauses with three-layer workspace-neutrality
 
 **Date:** 2026-06-11
 **Status:** Accepted
@@ -5521,7 +5521,7 @@ NEVER flips the run to `Running`.
      hence L3.
    - **L3 Mutation sensor (hard guarantee)** — capture ONE known-good baseline
      at the FIRST chat turn of a pause via the
-     [ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture)
+     [ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture)
      checkpoint machinery (`refs/maister/chat-checkpoints/<runId>/<hitlRequestId>`,
      bounded at 1), and verify EVERY subsequent turn against it
      (`statusPorcelain` + `git diff`). On a delta, restore to the baseline
@@ -5531,11 +5531,11 @@ NEVER flips the run to `Running`.
      Observatory-ready audit signal, and surface a UI notice. L3 runs
      unconditionally and fail-closed (a sensor that cannot sense must not pass).
      The ref is GC'd when the HITL resolves; a mid-pause dirty-resolution
-     ([ADR-079](#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher))
+     ([ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher))
      deletes it so the next turn re-anchors (no false un-discard). This makes
-     gate-chat depend on the ADR-076 checkpoint engine.
+     gate-chat depend on the ADR-079 checkpoint engine.
    - **Feature-3 interplay** — when a later rework resumes the SAME session
-     ([ADR-078](#adr-078-rework-session-policy-with-resume-by-default)
+     ([ADR-081](#adr-081-rework-session-policy-with-resume-by-default)
      `session_policy: resume`), the rework prompt MUST explicitly lift the
      chat-time read-only restriction, else the agent may refuse legitimate edits.
 6. Chat input is NEVER Mustache-evaluated; the L1 preamble is server-side, not
@@ -5574,7 +5574,7 @@ NEVER flips the run to `Running`.
 
 ---
 
-### ADR-076: Node workspacePolicy execution and checkpoint capture
+### ADR-079: Node workspacePolicy execution and checkpoint capture
 
 **Date:** 2026-06-11
 **Status:** Accepted
@@ -5584,11 +5584,11 @@ M11b execution deferral). Rework therefore always reuses whatever the prior atte
 left in the worktree; there is no way to rewind to the pre-attempt state or start
 an attempt clean. Closing this M11b deferral also yields the checkpoint primitive
 that gate-chat neutrality
-([ADR-075](#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)
+([ADR-078](#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)
 L3), node-level retry
-([ADR-077](#adr-077-node-level-retry-policy)), and the review-diff `last-node`
+([ADR-080](#adr-080-node-level-retry-policy)), and the review-diff `last-node`
 scope
-([ADR-079](#adr-079-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher))
+([ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher))
 all need. Checkpoints must not pollute the promoted run branch and must survive
 crashes.
 
@@ -5626,7 +5626,7 @@ checkpoints, and a strict rewind/fresh-attempt/keep state machine.
    state. The launch materialization block (`copyBundleArtifactsToWorktree` +
    `writeAiFactoryConfigOverride` + `ensureWorktreeGitignore`) is extracted into a
    reusable helper and RE-RUN (idempotent) after every `fresh-attempt` and after
-   the ADR-079 dirty discard. Consumer-project review gates will list
+   the ADR-082 dirty discard. Consumer-project review gates will list
    materialized artifacts in `dirtySummary` — known v1 noise; dogfood is
    unaffected (its skills/agents are repo-local).
 5. **Run-artifact safety.** Rewind/discard are worktree-only. Logs/inputs/
@@ -5644,11 +5644,11 @@ checkpoints, and a strict rewind/fresh-attempt/keep state machine.
 - Rework can rewind to the exact pre-attempt state or start clean, executing the
   long-parsed `workspacePolicy` and closing the M11b deferral.
 - A reusable checkpoint engine (`captureCheckpoint`, `applyWorkspacePolicy`,
-  `containmentAssert`, `deleteChatCheckpoint`) backs ADR-075 L3, ADR-077 retry,
-  and ADR-079 `last-node`.
+  `containmentAssert`, `deleteChatCheckpoint`) backs ADR-078 L3, ADR-080 retry,
+  and ADR-082 `last-node`.
 - Checkpoints never touch the promoted branch; orphaned refs after a crash are
   harmless and GC'd.
-- `node_attempts.checkpoint_ref` is a new ledger column (migration 0040); amends
+- `node_attempts.checkpoint_ref` is a new ledger column (migration 0041); amends
   [ADR-027](#adr-027-append-only-node_attempts-run-ledger).
 - `MAISTER_RUNTIME_ROOT` must resolve outside every `repo_path` — a deployment
   precondition asserted in code + docs.
@@ -5666,7 +5666,7 @@ checkpoints, and a strict rewind/fresh-attempt/keep state machine.
 
 ---
 
-### ADR-077: Node-level retry policy
+### ADR-080: Node-level retry policy
 
 **Date:** 2026-06-11
 **Status:** Accepted
@@ -5680,7 +5680,7 @@ node.
 `{ attempts ≥ 1, on_errors: [code…], workspace: rewind-to-node-checkpoint }`. On
 a node failure whose `MaisterError.code ∈ on_errors` with attempts remaining, the
 engine applies the `workspace` policy via the
-[ADR-076](#adr-076-node-workspacepolicy-execution-and-checkpoint-capture) engine
+[ADR-079](#adr-079-node-workspacepolicy-execution-and-checkpoint-capture) engine
 first, then appends a fresh-session attempt marked `node_attempts.auto_retry =
 true`. `on_errors` is validated at manifest-load against the retryable allow-list
 `{ SPAWN, EXECUTOR_UNAVAILABLE, CHECKPOINT, ACP_PROTOCOL }`; any other code (e.g.
@@ -5697,7 +5697,7 @@ signal when `attempts` is reached (then normal failure). The new DSL key require
   checkpoint.
 - The retryable set is an allow-list (not a deny-list): only infrastructure codes
   retry; logic/precondition failures still stop.
-- Depends on the ADR-076 checkpoint engine for
+- Depends on the ADR-079 checkpoint engine for
   `workspace: rewind-to-node-checkpoint`.
 - Exhaustion is a distinct, observable signal, not a silent give-up.
 
@@ -5709,11 +5709,11 @@ signal when `attempts` is reached (then normal failure). The new DSL key require
   different idempotency/cost profiles; the policy belongs on the node.
 - **Reuse the prior session on retry:** rejected — a transient-failed session may
   be half-dead; a fresh session is the clean baseline (session reuse is the
-  separate ADR-078 rework concern).
+  separate ADR-081 rework concern).
 
 ---
 
-### ADR-078: Rework session policy with resume-by-default
+### ADR-081: Rework session policy with resume-by-default
 
 **Date:** 2026-06-11
 **Status:** Accepted
@@ -5738,7 +5738,7 @@ Manual-takeover return
 ([ADR-030](#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status))
 is unaffected (no live session to resume), and slash-in-existing dispatch is
 unchanged. When a rework resumes the SAME session, the rework prompt MUST lift any
-ADR-075 chat-time read-only restriction. The new DSL keys require
+ADR-078 chat-time read-only restriction. The new DSL keys require
 `compat.engine_min ≥ 1.4.0`.
 
 **Consequences:**
@@ -5746,10 +5746,10 @@ ADR-075 chat-time read-only restriction. The new DSL keys require
   avoiding a cold rebuild.
 - `resume` degrades safely to `new_session` with an observable `session_fallback`
   flag; the effective policy is snapshotted per attempt.
-- Two new ledger columns (`session_policy`, `session_fallback`, migration 0040);
+- Two new ledger columns (`session_policy`, `session_fallback`, migration 0041);
   amends [ADR-027](#adr-027-append-only-node_attempts-run-ledger) and reuses
   ADR-006.
-- Couples to ADR-075: a resumed rework must explicitly re-enable edits the chat
+- Couples to ADR-078: a resumed rework must explicitly re-enable edits the chat
   preamble forbade.
 
 **Alternatives Considered:**
@@ -5765,7 +5765,7 @@ ADR-075 chat-time read-only restriction. The new DSL keys require
 
 ---
 
-### ADR-079: Review-diff completeness with dirty-state protocol and scope switcher
+### ADR-082: Review-diff completeness with dirty-state protocol and scope switcher
 
 **Date:** 2026-06-11
 **Status:** Accepted
@@ -5788,12 +5788,12 @@ protocol; the gate is never blocked by dirty state.
    - **Commit as snapshot** — reuse `snapshotDirtyWorktree` (auto-message
      `"wip after node <id>"`); scopes recompute after the tip moves.
    - **Discard** — NEW primitive `git restore --staged --worktree . &&
-     git clean -fd` (`-fd` not `-fdx` per ADR-076, scoped `-C <worktree>`, hard
-     `.maister/`-containment assert, followed by re-materialization per ADR-076);
+     git clean -fd` (`-fd` not `-fdx` per ADR-079, scoped `-C <worktree>`, hard
+     `.maister/`-containment assert, followed by re-materialization per ADR-079);
      v1 is all-or-nothing.
    - **Proceed as-is** — review the committed state; a persistent dirty badge
      stays.
-   Every executed choice also deletes the ADR-075 chat-checkpoint ref (so the L3
+   Every executed choice also deletes the ADR-078 chat-checkpoint ref (so the L3
    sensor re-anchors — no false un-discard). The choice is part of review, not a
    precondition.
 3. **4-mode scope switcher** — a `scope` query param on
@@ -5805,7 +5805,7 @@ protocol; the gate is never blocked by dirty state.
      recorded per review-gate visit in the NEW column
      `hitl_requests.review_tip_sha`.
    - `last-node`: `<pre-attempt-checkpoint-sha>..branch` for the latest completed
-     agent node, based on the ADR-076 checkpoint refs (exact even with zero/many
+     agent node, based on the ADR-079 checkpoint refs (exact even with zero/many
      agent commits).
    - `uncommitted`: `HEAD` vs working tree (tracked) + untracked rendered as
      additions, via a NEW `git diff HEAD`+untracked helper that runs under a temp
@@ -5820,7 +5820,7 @@ protocol; the gate is never blocked by dirty state.
 - The discard primitive is hard-guarded against escaping the worktree and
   re-materializes capability bundles afterward; `.maister/` is never touched.
 - New columns `hitl_requests.review_tip_sha` + `hitl_requests.dirty_resolution`
-  (migration 0040); a new
+  (migration 0041); a new
   `POST /api/runs/{runId}/hitl/{hitlRequestId}/dirty-resolution` route; amends
   ADR-066 (new scopes) and reuses the M27 snapshot.
 - No engine bump (no new flow DSL).

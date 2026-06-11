@@ -318,7 +318,7 @@ paths:
         validated against the platform sidecar catalog (server-state) before
         forwarding. Discovery never blocks a save: `model` stays free text and an
         unknown model is an advisory hint, not a validation error. See
-        [ADR-075](../decisions.md#adr-075) and
+        [ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) and
         [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
       operationId: postAdminAcpRunnerModelSuggestions
       requestBody:
@@ -338,7 +338,7 @@ paths:
           description: |
             Invalid body, a raw (non-`env:`) secret, or an unknown `sidecarId`
             (`CONFIG`). A missing/unset env-ref degrades to a per-source
-            `status:"error"` inside a 200, not a 422 (ADR-075 §2).
+            `status:"error"` inside a 200, not a 422 (ADR-076 §2).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -1844,12 +1844,12 @@ paths:
             enum: [run, since-last-review, last-node, uncommitted]
             default: run
           description: |
-            **(M30 — Implemented, ADR-079)** Diff base selection (allow-list
+            **(M30 — Implemented, ADR-082)** Diff base selection (allow-list
             validated; default `run`). `run`: `workspace.baseCommit..branch`
             (current behavior). `since-last-review`: `<prev-review-visit-sha>..branch`
             from `hitl_requests.review_tip_sha`. `last-node`:
             `<pre-attempt-checkpoint-sha>..branch` for the latest completed agent
-            node (ADR-076 checkpoint ref). `uncommitted`: `HEAD` vs working tree
+            node (ADR-079 checkpoint ref). `uncommitted`: `HEAD` vs working tree
             (tracked) + untracked as additions, rendered under a temp
             `GIT_INDEX_FILE` intent-to-add — the real index is NEVER mutated. A
             scope whose base ref is missing is hidden/disabled with a reason,
@@ -2229,7 +2229,7 @@ paths:
   /api/runs/{runId}/hitl/{hitlRequestId}/chat:
     get:
       tags: [hitl]
-      summary: (M30 — Implemented, ADR-075) List gate-chat messages for a HITL pause
+      summary: (M30 — Implemented, ADR-078) List gate-chat messages for a HITL pause
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Returns the ordered
@@ -2284,7 +2284,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [hitl]
-      summary: (M30 — Implemented, ADR-075) Send an answer-only gate-chat turn
+      summary: (M30 — Implemented, ADR-078) Send an answer-only gate-chat turn
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Sends an answer-only question to
@@ -2385,7 +2385,7 @@ paths:
   /api/runs/{runId}/hitl/{hitlRequestId}/dirty-resolution:
     post:
       tags: [hitl]
-      summary: (M30 — Implemented, ADR-079) Resolve a dirty worktree at a review gate
+      summary: (M30 — Implemented, ADR-082) Resolve a dirty worktree at a review gate
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Records the reviewer's chosen
@@ -2402,7 +2402,7 @@ paths:
         - **discard**: `git restore --staged --worktree . && git clean -fd`
           (`-fd`, never `-fdx`), scoped `-C <worktree>` with a hard
           `.maister/`-containment assert, then re-runs launch materialization
-          (ADR-076). v1 is all-or-nothing.
+          (ADR-079). v1 is all-or-nothing.
         - **proceed**: review the committed state; a persistent dirty badge stays.
 
         Order of operations (X-2PC): the `dirty_resolution` intent is claimed
@@ -2412,7 +2412,7 @@ paths:
         git failure (discard escapes the worktree, snapshot/clean fails) rolls
         the claim back, maps to 409 (`CONFLICT`/`PRECONDITION`), leaves the
         gate open, and records no resolution. Every executed choice also
-        deletes the gate-chat checkpoint ref so the ADR-075 L3 sensor
+        deletes the gate-chat checkpoint ref so the ADR-078 L3 sensor
         re-anchors — for `discard` the ref dies the moment the tree is cleaned
         (no false un-discard even if re-materialization fails).
       operationId: postRunHitlDirtyResolution
@@ -8156,7 +8156,7 @@ components:
         autoRetry:
           type: boolean
           description: |
-            (M30 — Implemented, ADR-077) True when the latest attempt for this node
+            (M30 — Implemented, ADR-080) True when the latest attempt for this node
             was an automatic retry (`node_attempts.auto_retry`) scheduled by the
             node's `retry_policy`. Absent/false on manually-driven attempts.
         gates:
@@ -8559,7 +8559,7 @@ components:
     GateChatMessage:
       type: object
       description: |
-        (M30, ADR-075) One persisted gate-chat turn. The DTO never includes
+        (M30, ADR-078) One persisted gate-chat turn. The DTO never includes
         `acp_session_id` or `author_user_id` (server-only).
       additionalProperties: false
       required: [id, role, authorLabel, body, seq, mutationReverted, createdAt]

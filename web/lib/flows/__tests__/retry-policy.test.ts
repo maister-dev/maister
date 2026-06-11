@@ -1,4 +1,4 @@
-// M30 (ADR-077): node-level retry_policy — manifest validation. The
+// M30 (ADR-080): node-level retry_policy — manifest validation. The
 // on_errors allow-list is an ALLOW-list ({SPAWN, EXECUTOR_UNAVAILABLE,
 // CHECKPOINT, ACP_PROTOCOL}); everything else (PRECONDITION, CONFIG,
 // unknown strings) is rejected at parse → CONFIG. attempts >= 1; workspace
@@ -14,7 +14,7 @@ import {
   retryPolicySchema,
 } from "@/lib/config.schema";
 
-describe("retryPolicySchema (ADR-077)", () => {
+describe("retryPolicySchema (ADR-080)", () => {
   it("accepts every code on the retryable allow-list", () => {
     for (const code of RETRYABLE_ERROR_CODES) {
       const r = retryPolicySchema.safeParse({

@@ -43,7 +43,7 @@ export const ModelCatalogDraftSchema = z
   })
   .strict()
   .superRefine((draft, ctx) => {
-    // ADR-075 edge case: a router selects a sidecar instance, so `router`
+    // ADR-076 edge case: a router selects a sidecar instance, so `router`
     // without `sidecarId` is a malformed draft → PRECONDITION (409).
     if (draft.router && !draft.sidecarId) {
       ctx.addIssue({

@@ -149,7 +149,7 @@ sequenceDiagram
     R->>R: rework target attempt N+1 renders {{ commentsVar }} with the composed payload
 ```
 
-**(M30 — Implemented, [ADR-075](../decisions.md#adr-075-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)) Gate-chat folded into compose.**
+**(M30 — Implemented, [ADR-078](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality)) Gate-chat folded into compose.**
 When a pause had answer-only gate-chat turns (`gate_chat_messages`), the same
 runner-side compose appends the chat transcript (reviewer questions + agent
 answers, in `seq` order) after the review-comment threads in the `commentsVar`

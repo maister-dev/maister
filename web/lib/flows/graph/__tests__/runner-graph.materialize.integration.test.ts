@@ -12,7 +12,7 @@
  *      <worktree>/.claude/settings.local.json exists on disk with
  *      permissions.allow containing the node's tools.
  *  (B) a settings-less CLAUDE node → still writes a MODEL-ONLY
- *      settings.local.json (ADR-075 model-pin) and NO mcpServers, AND
+ *      settings.local.json (ADR-076 model-pin) and NO mcpServers, AND
  *  (C) a settings-less CODEX node → NO settings.local.json (codex pins
  *      supervisor-side via setSessionModel) and NO mcpServers.
  *
@@ -306,7 +306,7 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
     );
   }, 60_000);
 
-  it("pins the run model via settings.local.json for a settings-less CLAUDE node (ADR-075)", async () => {
+  it("pins the run model via settings.local.json for a settings-less CLAUDE node (ADR-076)", async () => {
     const seeded = await seedGraphRun(settingsLessFlow, "claude");
     const api = makeSupervisorSpy();
 

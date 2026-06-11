@@ -71,7 +71,7 @@ export function startStubSupervisor(): Promise<Server> {
     }
 
     if (req.method === "POST" && req.url === "/model-catalog/resolve") {
-      // ADR-075 model discovery (T5.2): return a fixed flat catalog the web
+      // ADR-076 model discovery (T5.2): return a fixed flat catalog the web
       // admin proxy groups by source for the runner-modal combobox.
       const body = JSON.stringify({
         models: [

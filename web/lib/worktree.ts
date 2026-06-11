@@ -1106,7 +1106,7 @@ async function streamGitDiffTruncated(
   });
 }
 
-// M30 (ADR-079, `uncommitted` diff scope): HEAD vs working tree, with
+// M30 (ADR-082, `uncommitted` diff scope): HEAD vs working tree, with
 // untracked files rendered as additions, WITHOUT ever mutating the real
 // index. Mechanism: copy the worktree's real index file to a temp
 // GIT_INDEX_FILE, run `git add -N .` (intent-to-add for untracked; respects
@@ -1355,13 +1355,13 @@ export async function snapshotDirtyWorktree(
   return true;
 }
 
-// M30 (ADR-079, dirty-resolution "Discard"): drop ALL uncommitted work in the
+// M30 (ADR-082, dirty-resolution "Discard"): drop ALL uncommitted work in the
 // worktree — staged + unstaged restored to HEAD, untracked source removed.
-// `git clean -fd`, never `-fdx` (ADR-076 §3: ignored build caches and an
+// `git clean -fd`, never `-fdx` (ADR-079 §3: ignored build caches and an
 // ignored .maister/ survive). Hard containment guard: refuses when the
 // runtime artifacts root resolves inside the worktree, since a non-ignored
 // artifacts path could otherwise be reached by the clean. v1 all-or-nothing.
-// Callers re-run bundle materialization afterwards (ADR-076 §4).
+// Callers re-run bundle materialization afterwards (ADR-079 §4).
 export async function discardWorktree(worktreePath: string): Promise<void> {
   const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
   const runtimeRootPath = path.resolve(

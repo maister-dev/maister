@@ -16,7 +16,7 @@ const log = pino({
 // Bumped 1.1.0 -> 1.2.0 for typed artifact produces/requires validation (M12).
 // Bumped 1.2.0 -> 1.3.0 for structured node output (`output.result`) validation (M26).
 // Bumped 1.3.0 -> 1.4.0 for node `retry_policy` + rework `session_policy`/`defaults`
-// (M30, ADR-077/078); flows declaring those keys MUST `compat.engine_min >= 1.4.0`.
+// (M30, ADR-080/081); flows declaring those keys MUST `compat.engine_min >= 1.4.0`.
 export const MAISTER_ENGINE_VERSION = "1.4.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in

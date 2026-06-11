@@ -76,7 +76,7 @@ export type RunAgentStepCtx = {
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
   profileDigest?: string;
-  // M30 (ADR-078): rework `resume` — respawn the adapter and restore the
+  // M30 (ADR-081): rework `resume` — respawn the adapter and restore the
   // prior attempt's conversation via the ACP session/resume protocol call.
   // Unresumable → fall back to a fresh session and flag sessionFallback.
   resumeSessionId?: string;
@@ -539,7 +539,7 @@ function startEventConsumer(
   };
 }
 
-// M30 (ADR-075/078 interplay): a resumed rework session may carry gate-chat
+// M30 (ADR-078/081 interplay): a resumed rework session may carry gate-chat
 // turns whose L1 preamble said "read-only, do not modify the workspace" — the
 // rework prompt must explicitly lift that, or the agent may refuse edits.
 // Server-side constant, never user text, prepended AFTER template rendering.
@@ -604,7 +604,7 @@ async function runNewSession(
     };
 
     if (ctx.resumeSessionId) {
-      // M30 (ADR-078): try the resume respawn first; a gone/unresumable
+      // M30 (ADR-081): try the resume respawn first; a gone/unresumable
       // session degrades OBSERVABLY to a fresh one (session_fallback).
       try {
         session = await api.createSession({

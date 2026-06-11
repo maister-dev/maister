@@ -44,7 +44,7 @@ export type CreateAcpConnectionArgs = {
   // When set, resume the prior ACP session via the `session/resume` call
   // (restores context, no history replay) instead of creating a `session/new`.
   resumeSessionId?: string;
-  // The launched runner. Threaded for the ADR-075 passive harvest (the model
+  // The launched runner. Threaded for the ADR-076 passive harvest (the model
   // state on the session/new + session/resume response is fed into the shared
   // model-catalog cache) and reused by the model-application path (Phase 3).
   runner?: RunnerLaunch;
@@ -61,7 +61,7 @@ type ToolCallLike = {
   kind?: string;
 };
 
-// M30 (ADR-075 L2): unambiguous MUTATING ACP toolCall kinds. `execute`
+// M30 (ADR-078 L2): unambiguous MUTATING ACP toolCall kinds. `execute`
 // (bash) deliberately passes — read-only commands like grep/cat must work;
 // the web-side L3 mutation sensor is the guarantee for anything that slips.
 const READ_ONLY_MUTATING_KINDS = new Set([
@@ -72,7 +72,7 @@ const READ_ONLY_MUTATING_KINDS = new Set([
   "move",
 ]);
 
-// M30 (ADR-075 L2): decide whether a permission request raised during a
+// M30 (ADR-078 L2): decide whether a permission request raised during a
 // read-only gate-chat turn is auto-rejected. Returns the reject option to
 // deliver, or null to pass the request through to the normal HITL flow.
 // Best-effort by design: no reject option / unknown kind / non-read-only
@@ -153,7 +153,7 @@ export async function createAcpConnection(
           name: o.name,
         }));
 
-      // M30 (ADR-075 L2): a mutating tool on a read-only gate-chat turn is
+      // M30 (ADR-078 L2): a mutating tool on a read-only gate-chat turn is
       // auto-rejected BEFORE the SSE emit and the pending-permission
       // registration — no session.permission_request event fires and no web
       // hitl row is created. No-op under permissive runner policies
@@ -353,7 +353,7 @@ type ApplyModelArgs = {
   logger: Logger;
 };
 
-// ADR-075 model application + verification (T3.2/T3.3). claude is pinned ahead
+// ADR-076 model application + verification (T3.2/T3.3). claude is pinned ahead
 // of session/new via the settings.local.json channel (web tier), so here we
 // only verify it. codex is pinned via the ACP `unstable_setSessionModel` call.
 // A residual mismatch is emitted as an ADVISORY `session.update` (a synthetic
@@ -390,7 +390,7 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
   // than emit an advisory we cannot substantiate. codex pins HERE via
   // setSessionModel, so it must NOT bail on absent observed: a version-skewed
   // adapter that omits currentModelId still needs the configured model applied
-  // (ADR-075 apply-gap).
+  // (ADR-076 apply-gap).
   if (channel === "settings_local" && !observed) return;
 
   if (channel === "set_session_model") {

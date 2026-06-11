@@ -434,7 +434,7 @@ export default async function RunDetailLayout({
   let gateDiffReview: RunDiffReviewContext | undefined;
   let gateDiffScopeLabels: RunDiffScopeLabels | undefined;
 
-  // M30 (ADR-079): pre-review dirty detection — no auto-commit, the gate is
+  // M30 (ADR-082): pre-review dirty detection — no auto-commit, the gate is
   // never blocked. Best-effort: a gone/non-git worktree simply hides the
   // banner.
   let dirtySummary: DirtySummary | null = null;
@@ -463,7 +463,7 @@ export default async function RunDetailLayout({
 
     const tWorkbench = await getTranslations("workbench");
 
-    // M30 (ADR-079): the gate diff gets the 4-mode scope toggle.
+    // M30 (ADR-082): the gate diff gets the 4-mode scope toggle.
     gateDiffScopeLabels = {
       label: tWorkbench("diff.scope.label"),
       run: tWorkbench("diff.scope.run"),

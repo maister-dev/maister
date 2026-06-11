@@ -108,7 +108,7 @@ export async function GET(
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 
-    // ADR-075: chat transcripts are HITL content — member+ (answerHitl), the
+    // ADR-078: chat transcripts are HITL content — member+ (answerHitl), the
     // same bar as POST; a viewer's panel degrades to its empty initial state.
     await requireProjectAction(run.projectId, "answerHitl");
 

@@ -37,7 +37,7 @@ const BINARY_BY_AGENT: Record<ExecutorAgent, string> = {
   codex: "codex-acp",
 };
 
-// A2 active probe (ADR-075 primary source). Spawns the already-trusted adapter
+// A2 active probe (ADR-076 primary source). Spawns the already-trusted adapter
 // binary in an isolated tmp cwd, drives a promptless ACP handshake
 // (initialize → session/new, ~0 tokens), reads NewSessionResponse.models, and
 // SIGTERMs the child on EVERY exit path (deferred-release — success, reject,
@@ -193,7 +193,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
       return await withTimeout(timeoutMs, probe);
     } finally {
       // Deferred-release on EVERY exit path (success, reject, parse error,
-      // timeout). "Log and continue" is forbidden (ADR-075). Killing the child
+      // timeout). "Log and continue" is forbidden (ADR-076). Killing the child
       // closes its stdio, which ends the ndJsonStream and the connection read
       // loop (the SDK exposes no explicit close()); terminateProbeChild
       // escalates SIGTERM → SIGKILL so a SIGTERM-ignoring adapter cannot orphan.

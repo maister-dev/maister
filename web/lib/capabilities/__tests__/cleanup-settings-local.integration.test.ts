@@ -418,7 +418,7 @@ describe("cleanup reclaims worktree settings.local.json (M14 T4.5-E)", () => {
     expect(plan!.enforcedClasses).toEqual(["github"]);
   });
 
-  // ADR-075 (decision 5) / T3.1: a claude run with executor.model set writes
+  // ADR-076 (decision 5) / T3.1: a claude run with executor.model set writes
   // { model, availableModels } into settings.local.json — always-on, even with
   // zero tools/permissionMode (the always-on regression: settingsLocal was null
   // for a no-permission claude run before).

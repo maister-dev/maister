@@ -181,7 +181,7 @@ describe("applyAndVerifyModel", () => {
     expect(events).toHaveLength(0);
   });
 
-  // ADR-075 apply-gap: codex pins via setSessionModel, so an adapter that omits
+  // ADR-076 apply-gap: codex pins via setSessionModel, so an adapter that omits
   // currentModelId (null/empty/undefined — version skew) MUST still be pinned;
   // bailing on absent observed would silently run the adapter default.
   it("codex null/empty/undefined currentModelId → applies setSessionModel anyway", async () => {

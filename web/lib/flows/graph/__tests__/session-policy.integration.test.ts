@@ -1,4 +1,4 @@
-// M30 (ADR-078): rework session_policy threading, end-to-end through the
+// M30 (ADR-081): rework session_policy threading, end-to-end through the
 // real rework loop (runGraph #1 pauses at the review gate; the operator's
 // rework decision artifact re-enters the target). ONLY the agent action is
 // scripted. Asserts:
@@ -354,7 +354,7 @@ async function attemptRow(runId: string, nodeId: string, attempt: number) {
     | undefined;
 }
 
-describe("session_policy rework threading (ADR-078)", () => {
+describe("session_policy rework threading (ADR-081)", () => {
   it("engine default = resume: the rework re-dispatch carries the prior attempt's session id", async () => {
     const { runId, redispatch } = await driveReworkLoop({
       manifest: reworkManifest(),

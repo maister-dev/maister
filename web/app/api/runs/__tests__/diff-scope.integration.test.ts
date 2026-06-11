@@ -1,4 +1,4 @@
-// M30 (ADR-079): 4-mode diff scope switcher contract — `?scope=` enum on
+// M30 (ADR-082): 4-mode diff scope switcher contract — `?scope=` enum on
 // GET /api/runs/{runId}/diff with per-scope base selection, an availability
 // map with graceful degrade (missing-base scopes are disabled with a reason,
 // never 500), and the new `uncommitted` working-tree diff that NEVER mutates
@@ -195,7 +195,7 @@ afterAll(async () => {
   }
 });
 
-describe("GET /api/runs/{runId}/diff?scope= (ADR-079)", () => {
+describe("GET /api/runs/{runId}/diff?scope= (ADR-082)", () => {
   it("default scope=run diffs baseCommit..branch and reports the availability map", async () => {
     const runId = "run-scope-default";
     const fx = await buildFixture(runId);

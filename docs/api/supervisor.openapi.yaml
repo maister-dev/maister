@@ -48,7 +48,7 @@ tags:
   - name: hitl
     description: Permission-only human-in-the-loop input delivery.
   - name: model-catalog
-    description: Model discovery resolver for a runner draft (ADR-075).
+    description: Model discovery resolver for a runner draft (ADR-076).
 paths:
   /health:
     get:
@@ -433,7 +433,7 @@ paths:
         The only request-level rejection is `409 PRECONDITION` on a malformed
         draft (unknown adapter, an `env:`-prefixed or raw-secret value in an
         env-ref field, a malformed provider union, or `router` without
-        `sidecarId`). See [ADR-075](../decisions.md#adr-075) and
+        `sidecarId`). See [ADR-076](../decisions.md#adr-075) and
         [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
 
         **Identifiers.** Every body field is draft config (`body-controlled`),

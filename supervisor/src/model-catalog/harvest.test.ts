@@ -106,7 +106,7 @@ describe("harvestSessionModels", () => {
     ).not.toThrow();
   });
 
-  // ADR-075 regression: a real session observes only a subset of the catalog;
+  // ADR-076 regression: a real session observes only a subset of the catalog;
   // harvest must ENRICH the existing resolved entry, never shrink it.
   it("merges observed models into an existing catalog without dropping prior models/sources", () => {
     const cache = new ModelCatalogCache();

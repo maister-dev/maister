@@ -5,7 +5,7 @@ import type {
   ResolveContext,
 } from "../types";
 
-// ADR-075 §3: z.ai has no listing endpoint (verified), so this static GLM list
+// ADR-076 §3: z.ai has no listing endpoint (verified), so this static GLM list
 // is the source of truth for the anthropic_compatible provider kind. Ordered as
 // shown in the runner modal.
 const CURATED_GLM_MODELS: ReadonlyArray<{ id: string; displayName: string }> = [
