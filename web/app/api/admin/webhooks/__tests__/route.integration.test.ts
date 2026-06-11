@@ -159,6 +159,7 @@ async function seedRunForEvents(): Promise<SeededRun> {
   const slug = `proj-${projectId.slice(0, 8)}`;
 
   await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${projectId.slice(0, 8)}`,

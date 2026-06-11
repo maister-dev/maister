@@ -143,6 +143,7 @@ async function seedRun(runStatus = "Review"): Promise<SeededRun> {
   const branch = `maister/${runId.slice(0, 8)}`;
 
   await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name,

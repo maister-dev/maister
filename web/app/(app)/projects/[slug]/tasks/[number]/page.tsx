@@ -294,12 +294,14 @@ export default async function TaskDetailPage({
             {t("latestRunTitle")}
           </h2>
           <FlowGraphViewSection
-            currentStepId={graph.currentStepId}
-            initialStatuses={graph.statuses.nodes}
             labels={graph.labels}
             layout={graph.layout}
-            runId={graph.runId}
-            runStatus={graph.runStatus}
+            runContext={{
+              runId: graph.runId,
+              initialStatuses: graph.statuses.nodes,
+              currentStepId: graph.currentStepId,
+              runStatus: graph.runStatus,
+            }}
             topology={graph.topology}
           />
         </section>

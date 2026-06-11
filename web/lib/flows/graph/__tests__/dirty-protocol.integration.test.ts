@@ -355,6 +355,7 @@ describe("resolveDirtyWorktree (service, X-2PC/X-ATOMIC)", () => {
     const hitlId = randomUUID();
 
     await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: projectId,
       slug: `proj-${projectId.slice(0, 8)}`,
       name: "Test",
@@ -375,6 +376,7 @@ describe("resolveDirtyWorktree (service, X-2PC/X-ATOMIC)", () => {
       schemaVersion: 1,
     });
     await db.insert(schema.tasks).values({
+      number: Number.parseInt(crypto.randomUUID().slice(0, 6), 16),
       id: taskId,
       projectId,
       title: "Test task",

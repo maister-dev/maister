@@ -163,6 +163,7 @@ async function seedFlowRunWithHitl(args: {
   const stepId = args.kind === "permission" ? "plan" : "review";
 
   await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `proj-${projectId.slice(0, 8)}`,
     name: "Test",
@@ -186,6 +187,7 @@ async function seedFlowRunWithHitl(args: {
   });
 
   await db.insert(schema.tasks).values({
+    number: Number.parseInt(crypto.randomUUID().slice(0, 6), 16),
     id: taskId,
     projectId,
     title: "Test task",
@@ -305,6 +307,7 @@ async function seedScratchRun(): Promise<{
   });
 
   await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `proj-${projectId.slice(0, 8)}`,
     name: "Test",

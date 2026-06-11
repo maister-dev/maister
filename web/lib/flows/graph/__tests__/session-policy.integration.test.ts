@@ -188,6 +188,7 @@ async function seedRun(manifest: Record<string, unknown>): Promise<{
   await git(repo, "worktree", "add", "-q", "-b", branch, worktree, "HEAD");
 
   await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: projectSlug,
     name: "Test",

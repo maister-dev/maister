@@ -148,6 +148,7 @@ async function seedAdminFlowCap(
     id: randomUUID(),
     slug: projectSlug,
     name: projectSlug,
+    taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
     repoPath: `/tmp/${projectSlug}`,
     maisterYamlPath: `/tmp/${projectSlug}/maister.yaml`,
   });
