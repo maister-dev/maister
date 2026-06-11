@@ -1,4 +1,4 @@
-// T12 (ADR-075): project-scope webhook routes against a real testcontainer
+// T12 (ADR-076): project-scope webhook routes against a real testcontainer
 // postgres. TDD RED — the route modules under
 // `app/api/projects/[slug]/webhooks/**` do not exist yet, so every dynamic
 // `import("../route")` throws (missing module) until T12 lands. Docker-only
@@ -173,7 +173,7 @@ const VALID_CREATE = () => ({
   name: "team-notifier",
   url: "https://hooks.example.com/maister",
   method: "POST" as const,
-  headers: { "X-Team": "project" },
+  headers: { "X-Team": "env:WH_TEAM_HEADER" },
   event_types: ["run.review", "run.done"],
   signing_secret_ref: "env:WH_PROJ",
   enabled: true,
@@ -996,6 +996,23 @@ describe("project webhook CRUD round-trip (as member)", () => {
     const res = await item.PATCH(
       patchRequest({ signing_secret_ref: "rawsecretvalue" }),
       idParams(PROJECT_A_SLUG, id),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+  });
+
+  it("rejects a literal header value (env:NAME ref required) on POST with 422", async () => {
+    sessionRef.value = MEMBER;
+    const { POST } = await listMod();
+
+    const res = await POST(
+      postRequest({
+        ...VALID_CREATE(),
+        headers: { Authorization: "Bearer raw-token" },
+      }),
+      slugParams(PROJECT_A_SLUG),
     );
     const body = (await res.json()) as { code?: string };
 

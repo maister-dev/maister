@@ -3,7 +3,10 @@ import "server-only";
 import type { WebhookErrorKind } from "./backoff";
 import type { WebhookEventType } from "./taxonomy";
 
+import { fetch as undiciFetch, type Dispatcher } from "undici";
+
 import { buildDeliveryHeaders } from "./signing";
+import { pinnedDispatcher, resolveAllowedDestination } from "./destination";
 
 const MAX_TEXT = 1024;
 
@@ -42,8 +45,11 @@ export interface SignAndSendResult {
 // the drain's per-delivery send and the synchronous test-ping. Reject a
 // credential-embedding URL BEFORE fetch: a `https://user:pass@host` URL makes
 // fetch throw a TypeError carrying the password, which must never be persisted
-// or returned. HTTP/timeout/network outcomes are reported inline; only the
-// caller's own bugs throw.
+// or returned. The egress policy runs BEFORE signing: a blocked destination is
+// a `config` failure that never reaches the wire, and a hostname destination
+// connects through a dispatcher pinned to the vetted DNS answers (rebind-safe).
+// HTTP/timeout/network outcomes are reported inline; only the caller's own
+// bugs throw.
 export async function signAndSend(
   input: SignAndSendInput,
 ): Promise<SignAndSendResult> {
@@ -69,6 +75,23 @@ export async function signAndSend(
     };
   }
 
+  const destination = await resolveAllowedDestination(parsedUrl.hostname);
+
+  if (!destination.ok) {
+    return {
+      httpStatus: undefined,
+      errorKind: "config",
+      responseSnippet: null,
+      errorDetail:
+        destination.reason ?? "destination blocked by the egress policy",
+      durationMs: 0,
+    };
+  }
+
+  const dispatcher: Dispatcher | undefined = destination.addresses
+    ? pinnedDispatcher(destination.addresses)
+    : undefined;
+
   const t = Math.floor(Date.now() / 1000);
   const headers = buildDeliveryHeaders({
     type: input.type,
@@ -92,12 +115,13 @@ export async function signAndSend(
   let errorDetail: string | null = null;
 
   try {
-    const res = await fetch(input.url, {
+    const res = await undiciFetch(input.url, {
       method: input.method,
       headers,
       body: input.rawBody,
       redirect: "manual",
       signal: controller.signal,
+      ...(dispatcher ? { dispatcher } : {}),
     });
 
     httpStatus = res.status;
@@ -119,6 +143,7 @@ export async function signAndSend(
     }
   } finally {
     clearTimeout(timer);
+    await dispatcher?.close().catch(() => undefined);
   }
 
   return {

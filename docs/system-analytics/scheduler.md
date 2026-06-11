@@ -25,7 +25,7 @@ without turning recovery sweeps into live-path polling.
   runs the GC bundle (workspace + revision GC + capabilities cleanup) only. It
   does NOT run the keepalive or reconcile sweeps, so the GC cron never transitions
   runs to `Crashed`; that live composition belongs to the `system_sweep` job kind.
-- **`webhook_delivery` job kind** (Implemented, ADR-075) — singleton outbound-webhook
+- **`webhook_delivery` job kind** (Implemented, ADR-076) — singleton outbound-webhook
   drainer (one `webhook_delivery.default` job, 60s cadence, budget `webhookDelivery: 1`)
   whose handler does fanout + drain + prune each tick. See
   [outbound-webhooks.md](outbound-webhooks.md).
@@ -118,12 +118,14 @@ flowchart TD
 - The tick service MUST idempotently seed `system_sweep.default` with a 60-second
   cadence so the recovery sweep is live after migration without hand-authored
   SQL; it MUST likewise seed `run_schedule.dispatcher` (60-second cadence,
-  `max_failures` 3; Implemented, M28).
+  `max_failures` 3; Implemented, M28) and `webhook_delivery.default`
+  (60-second cadence; Implemented, ADR-076).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` uses
   `MAISTER_MAX_CONCURRENT_AGENTS`; `flow_run` remains delegated to the existing
   Flow run launch/concurrency path; `run_schedule` is a hardcoded budget of 1
-  (serial dispatcher, like `system_sweep`; Implemented, M28).
+  (serial dispatcher, like `system_sweep`; Implemented, M28); `webhook_delivery`
+  is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-076).
 - `agent_tick` without a launcher MUST record terminal `Skipped` with
   `PRECONDITION` and auto-disable after
   `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. This is an explicit M24 dispatch

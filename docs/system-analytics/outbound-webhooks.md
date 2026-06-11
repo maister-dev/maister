@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Outbound webhooks (**Implemented**, ADR-075) is MAIster's generic, vendor-neutral
+Outbound webhooks (**Implemented**, ADR-076) is MAIster's generic, vendor-neutral
 **event-delivery primitive**: it turns curated run/HITL/gate lifecycle
 transitions into signed HTTP POSTs to operator-registered endpoints. This domain
 owns the full path from capture to delivery — a transactional outbox written in
@@ -115,7 +115,7 @@ belt-and-braces.
 ```mermaid
 flowchart TD
     Tick([webhook_delivery tick]) --> Kill{webhooks_enabled?}
-    Kill -- false --> Skip[no-op — skipped: disabled]
+    Kill -- false --> Skip[skip pass — stamp fanout_at, zero deliveries<br/>summary: skipped disabled + skippedEvents]
     Kill -- true --> Claim[claim webhook_events<br/>WHERE fanout_at IS NULL<br/>FOR UPDATE SKIP LOCKED, LIMIT batch]
     Claim --> Build[build + freeze envelope per event<br/>one batched join runs⋈projects⋈workspaces⋈tasks]
     Build --> Match[matchSubscriptions: enabled + scope + type incl. '*']
@@ -160,7 +160,9 @@ sequenceDiagram
 `POST …/deliveries/{deliveryId}/replay` is a single transaction: `SELECT … FOR
 UPDATE`, allow-list `status ∈ {delivered, dead}` (a `pending` delivery → 409
 `CONFLICT`), then reset `status='pending', attempt_count=0,
-next_attempt_at=now(), lease_expires_at=NULL`. The event row is NOT re-emitted
+next_attempt_at=now(), lease_expires_at=NULL` and clear the prior outcome
+(`delivered_at`, `last_http_status`, `last_error_kind`, `last_error_message`
+→ NULL). The event row is NOT re-emitted
 and `idempotency_key` is UNCHANGED, so a consumer that already processed the
 event treats the replay as a duplicate. Attempt audit rows keep appending —
 `attempt_no` continues from the running total.
@@ -172,7 +174,7 @@ flowchart TD
     Auth -- yes --> Lock[SELECT FOR UPDATE]
     Lock --> Allow{status in delivered,dead?}
     Allow -- no --> E409[409 CONFLICT — pending not replayable]
-    Allow -- yes --> Reset[status=pending, attempt_count=0,<br/>next_attempt_at=now, lease=NULL<br/>idempotency_key UNCHANGED]
+    Allow -- yes --> Reset[status=pending, attempt_count=0,<br/>next_attempt_at=now, lease=NULL<br/>outcome fields delivered_at/last_* → NULL<br/>idempotency_key UNCHANGED]
     Reset --> Drain[next drain re-sends; attempt_no continues]
 ```
 
@@ -191,20 +193,20 @@ Exactly 12 types, each mapped from a DB transition (never raw `session/update`).
 Adding a type later = one taxonomy entry + one emit site + one doc row (additive,
 cheap). (All Implemented.)
 
-| Type | Trigger anchor |
-| ---- | -------------- |
-| `run.started` | `Pending → Running` (direct start and queue-promote) |
-| `run.needs_input` | `→ NeedsInput` (permission / form / human) |
-| `hitl.requested` | `hitl_requests` INSERT |
-| `hitl.responded` | `hitl_requests.responded_at` write (incl. idle-resume + auto-deliver) |
-| `run.review` | `Running → Review` (runner and workbench paths) |
-| `run.promoted` | promotion success (mode + target in `data`) |
-| `run.done` | `→ Done` |
-| `run.failed` | `→ Failed` |
-| `run.crashed` | `→ Crashed` (reconcile / GC / runner crash paths) |
-| `run.abandoned` | `→ Abandoned` (user and workbench drop) |
-| `gate.decided` | `gate_results` reaching `passed | failed | overridden` |
-| `ping` | synthetic test ping — NOT persisted, NOT fanned out |
+| Type | Trigger anchor | Emit sites (`web/lib/`) |
+| ---- | -------------- | ----------------------- |
+| `run.started` | `Pending → Running` (direct start and queue-promote) | `scheduler.ts` (`tryStartRun`, `promoteNextPending`) |
+| `run.needs_input` | `→ NeedsInput` (permission / form / human) | `flows/runner.ts`, `flows/runner-human.ts`, `flows/runner-agent.ts`, `flows/graph/runner-graph.ts`, `scratch-runs/events.ts` |
+| `hitl.requested` | `hitl_requests` INSERT | `flows/runner-agent.ts`, `flows/runner-human.ts`, `flows/graph/runner-graph.ts` (persist writepoint), `scratch-runs/events.ts` |
+| `hitl.responded` | `hitl_requests.responded_at` write (incl. idle-resume + auto-deliver) | `services/hitl.ts` (permission / form / human review), `flows/runner-agent.ts` (auto-deliver), `runs/resume-driver.ts` (idle-resume) |
+| `run.review` | `Running → Review` (runner and workbench paths) | `flows/runner.ts`, `flows/graph/runner-graph.ts`, `workbench-lifecycle/service.ts` (stop / drop→Review), `runs/resume-driver.ts`, `scratch-runs/events.ts` |
+| `run.promoted` | promotion success (mode + target in `data`) | `runs/promote.ts` (local_merge / pull_request / scratch) |
+| `run.done` | `→ Done` | `runs/promote.ts` (same three paths), `flows/runner.ts` (scratch Done) |
+| `run.failed` | `→ Failed` | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `runs/keepalive-sweeper.ts` (watchdog), `services/hitl.ts` |
+| `run.crashed` | `→ Crashed` (reconcile / GC / runner crash paths) | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `flows/runner-agent.ts`, `scratch-runs/events.ts`, `scratch-runs/service.ts`, `services/hitl.ts` |
+| `run.abandoned` | `→ Abandoned` (user and workbench drop) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`) |
+| `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
+| `ping` | synthetic test ping — NOT persisted, NOT fanned out | `webhooks/ping.ts` |
 
 ### Deliberately NOT emitted in v1
 
@@ -354,17 +356,42 @@ idempotency key absorbs:
 - Global `platform_runtime_settings.webhooks_enabled = false` OR per-subscription
   `enabled = false` → the subscription is SKIPPED at fanout. Window events are
   NEVER delivered retroactively (skip, not buffer).
-- Deliveries already fanned out before disable PAUSE in `pending` (the drain
-  re-checks the toggle/subscription) and RESUME on re-enable.
+- While globally disabled, each scheduler tick runs a **skip pass**: un-fanned
+  events are claimed (same `FOR UPDATE SKIP LOCKED` batch bound as fanout) and
+  stamped `fanout_at = now()` with NO frozen payload and ZERO delivery rows —
+  consumed-and-dropped, reported as `skippedEvents` in the job summary. The
+  prune tail-pass GCs them after retention once re-enabled.
+- Deliveries already fanned out before a global disable PAUSE in `pending`
+  (the disabled tick skips the drain pass entirely) and RESUME on re-enable.
 
 ## SSRF stance
 
 - Scheme allow-list: **http / https only**, boundary-validated on the `url`
   field.
-- Private-address (SSRF) blocking is **deliberately NOT in v1** — endpoints are
-  self-hosted and operator-trusted, consistent with the M16 precedent
-  ("public-internet webhook hardening beyond token/HMAC" deferred). Documented
-  here and in ADR-075; hardening is a later additive change.
+- **Destination egress policy (Implemented, ADR-076 revised)** —
+  `web/lib/webhooks/destination.ts`. Blocked ranges: loopback (`127.0.0.0/8`,
+  `::1`), private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local
+  incl. the `169.254.169.254` cloud-metadata endpoint (`169.254/16`,
+  `fe80::/10`), multicast, unspecified (`0.0.0.0/8`, `::`); IPv4-mapped IPv6
+  classifies by the embedded IPv4.
+  - **Write-time** (`assertUrl` on create/update): an IP-literal host in a
+    blocked range → `MaisterError("CONFIG")` → 422. Hostnames pass here —
+    their records are only knowable at send time.
+  - **Send-time** (`signAndSend`, the single chokepoint for drain AND ping):
+    IP literals re-checked; hostnames resolved (`dns.lookup`, all records) and
+    refused if ANY answer is blocked. A refused destination is an
+    `error_kind: "config"` failure decided BEFORE the wire — the drain retries
+    on the curve, ping reports the config failure, nothing is sent.
+  - **DNS-rebind (TOCTOU) closed**: the connect goes through an undici
+    dispatcher pinned to the vetted lookup answers; TLS SNI/cert validation
+    still uses the hostname.
+  - **Operator override**: `MAISTER_WEBHOOK_ALLOW_HOSTS` (comma-separated
+    exact hosts, case-insensitive) exempts known-internal endpoints — e.g.
+    `127.0.0.1` for a local consumer in dev/e2e.
+- Rationale (supersedes the v1 deferral): a `member`-created subscription or
+  ping must not become a read primitive against IMDS or intra-host services —
+  the truncated response snippet is persisted on the delivery attempt and
+  readable by project viewers.
 
 ## Identifier discipline (per route)
 
@@ -420,9 +447,15 @@ delivery history exists (retire via `enabled=false`).
   `enabled=false`.
 - When `platform_runtime_settings.webhooks_enabled = false` OR a subscription's
   `enabled = false`, that subscription MUST be skipped at fanout (window events
-  never delivered retroactively); already-fanned-out `pending` deliveries pause
-  and resume on re-enable.
-- Subscription `url` MUST be `http`/`https` only; project-scope writes MUST
+  never delivered retroactively); a globally-disabled tick MUST stamp un-fanned
+  events consumed-and-dropped (`fanout_at` set, `payload` NULL, zero
+  deliveries); already-fanned-out `pending` deliveries pause and resume on
+  re-enable.
+- Subscription `url` MUST be `http`/`https` only AND satisfy the destination
+  egress policy at write and send time (blocked: loopback / private /
+  link-local incl. metadata / multicast / unspecified; a blocked send records
+  `error_kind: "config"` and never reaches the wire;
+  `MAISTER_WEBHOOK_ALLOW_HOSTS` exempts exact hosts); project-scope writes MUST
   require `owner | admin | member` (`viewer` read-only) and platform-scope writes
   MUST require `requireGlobalRole("admin")`.
 
@@ -456,7 +489,7 @@ delivery history exists (retire via `enabled=false`).
 
 ## Linked artifacts
 
-- **Decision:** [ADR-075](../decisions.md#adr-075-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer).
+- **Decision:** [ADR-076](../decisions.md#adr-076-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer).
 - **HTTP API:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) — admin +
   project webhooks CRUD, deliveries log, ping, replay, webhook-settings.
 - **Outbound wire contract:** [`api/async/outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml)

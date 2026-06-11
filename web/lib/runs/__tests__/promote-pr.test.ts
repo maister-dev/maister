@@ -109,6 +109,15 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+// Pins the finalize-tx run.promoted/run.done emit pair — a dropped emit in
+// promote.ts must fail here (the outbox row itself is integration-tested in
+// lib/webhooks/__tests__).
+const emitWebhookEventMock = vi.fn();
+
+vi.mock("@/lib/webhooks/outbox", () => ({
+  emitWebhookEvent: (...args: unknown[]) => emitWebhookEventMock(...args),
+}));
+
 // `pushBranch` + `selectPrAdapter` are the NEW seams. The createOrUpdatePr spy
 // is shared so tests can inspect / reconfigure it.
 const createOrUpdatePr = vi.fn(async () => ({
@@ -252,6 +261,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue([]);
   authorize.mockReset().mockResolvedValue(undefined);
+  emitWebhookEventMock.mockClear();
 });
 
 // =============================================================================
@@ -312,6 +322,21 @@ describe("promoteRun — pull_request happy path (github)", () => {
     );
     expect(dbState.tables.workspaces[0].prNumber).toBe(77);
     expect(systemCloseActiveAssignmentsForRun).toHaveBeenCalled();
+
+    // The finalize tx emits exactly run.promoted then run.done.
+    expect(
+      emitWebhookEventMock.mock.calls.map(
+        (c) => (c[0] as { type: string }).type,
+      ),
+    ).toEqual(["run.promoted", "run.done"]);
+    expect(emitWebhookEventMock.mock.calls[0][0]).toMatchObject({
+      type: "run.promoted",
+      data: {
+        mode: "pull_request",
+        target: "main",
+        pullRequestUrl: "https://github.com/org/repo/pull/77",
+      },
+    });
   });
 
   it("records a PR artifact carrying pr_url/pr_number in its payload", async () => {

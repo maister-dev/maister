@@ -21,7 +21,7 @@ the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
 review-thread table, and the **(Implemented, migration `0040`)**
 outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 `WEBHOOK_DELIVERIES`, `WEBHOOK_DELIVERY_ATTEMPTS` plus the
-`PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-075). For partial views by
+`PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-076). For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
@@ -214,6 +214,7 @@ erDiagram
     PLATFORM_RUNTIME_SETTINGS {
         text id PK
         text default_runner_id FK
+        boolean webhooks_enabled "NOT NULL DEFAULT true"
         timestamp updated_at
     }
 
@@ -806,7 +807,7 @@ erDiagram
 
     WEBHOOK_DELIVERIES {
         text id PK
-        text event_id FK "NOT NULL -> webhook_events(id)"
+        text event_id FK "NOT NULL -> webhook_events(id) ON DELETE CASCADE"
         text subscription_id FK "NOT NULL -> webhook_subscriptions(id) ON DELETE CASCADE"
         text status "pending|delivered|dead DEFAULT pending"
         integer attempt_count "DEFAULT 0"
@@ -916,12 +917,12 @@ external-operation events) is not drawn until its migrations exist. See
 | `project_tokens` | `project_tokens_owner_idx` | `(owner_user_id)` | User-owned token audit joins. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
 | `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
-| `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-075 Implemented)** Project-scope subscription lookup (NULL = platform rows). |
-| `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-075 Implemented)** Ordered fanout-pass claim scan. |
-| `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-075 Implemented)** Ordered drain-pass claim scan. |
-| `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | **(ADR-075 Implemented)** Deliveries-drawer log UI. |
-| `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-075 Implemented)** Fanout dedupe invariant. |
-| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-075 Implemented)** Attempt history for a delivery. |
-| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_no_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-075 Implemented)** One row per attempt number per delivery. |
+| `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-076 Implemented)** Project-scope subscription lookup (NULL = platform rows). |
+| `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-076 Implemented)** Ordered fanout-pass claim scan. |
+| `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-076 Implemented)** Ordered drain-pass claim scan. |
+| `webhook_deliveries` | `webhook_deliveries_subscription_log_idx` | `(subscription_id, created_at DESC)` | **(ADR-076 Implemented)** Deliveries-drawer log UI. |
+| `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-076 Implemented)** Fanout dedupe invariant. |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-076 Implemented)** Attempt history for a delivery. |
+| `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_attempt_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-076 Implemented)** One row per attempt number per delivery. |
 
 Source: `web/lib/db/schema.ts`.

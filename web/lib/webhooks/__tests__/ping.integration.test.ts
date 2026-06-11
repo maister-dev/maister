@@ -203,6 +203,9 @@ beforeEach(async () => {
   savedTimeout = process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
   process.env.WH_PING_SECRET = SECRET;
   delete process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
+  // The 127.0.0.1 stub is a blocked loopback destination under the egress
+  // policy — exempt it the way an operator exempts a local consumer.
+  process.env.MAISTER_WEBHOOK_ALLOW_HOSTS = "127.0.0.1";
 
   stub = await startStub();
 });
@@ -294,6 +297,33 @@ describe("pingSubscription — non-2xx", () => {
     expect(result.httpStatus).toBe(500);
 
     expect(stub.requests).toHaveLength(1);
+
+    const counts = await countRows();
+
+    expect(counts.events).toBe(0);
+    expect(counts.deliveries).toBe(0);
+    expect(counts.attempts).toBe(0);
+  });
+});
+
+// ===========================================================================
+// 3. blocked destination -> config failure decided BEFORE the wire: the stub
+//    sees nothing, nothing is persisted (10.0.0.1 is private; the allowlist
+//    carries only the literal "127.0.0.1").
+// ===========================================================================
+
+describe("pingSubscription — blocked destination (egress policy)", () => {
+  it("returns errorKind config without sending", async () => {
+    const result = await pingSubscription({
+      subscription: subscription("http://10.0.0.1/hook"),
+      db,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errorKind).toBe("config");
+    expect(result.httpStatus).toBeUndefined();
+
+    expect(stub.requests).toHaveLength(0);
 
     const counts = await countRows();
 

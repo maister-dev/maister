@@ -527,27 +527,31 @@ export async function runFlow(
       }
 
       if (result.needsInput) {
-        await markStepNeedsInput(stepRunId, db);
-        const flipped = await db
-          .update(runs)
-          .set({ status: "NeedsInput", currentStepId: step.id })
-          .where(eq(runs.id, runId))
-          .returning({ projectId: runs.projectId });
+        // Ledger mark + status flip + run.needs_input outbox row are one
+        // logical transition — they commit atomically or not at all.
+        await db.transaction(async (tx: Db) => {
+          await markStepNeedsInput(stepRunId, tx);
+          const flipped = await tx
+            .update(runs)
+            .set({ status: "NeedsInput", currentStepId: step.id })
+            .where(eq(runs.id, runId))
+            .returning({ projectId: runs.projectId });
 
-        if (flipped.length > 0) {
-          // Only the human step yields needsInput on the linear path; its HITL
-          // kind (and thus the reason) mirrors runHumanStep's on_reject branch.
-          const reason: "human" | "form" =
-            step.type === "human" && step.on_reject ? "human" : "form";
+          if (flipped.length > 0) {
+            // Only the human step yields needsInput on the linear path; its HITL
+            // kind (and thus the reason) mirrors runHumanStep's on_reject branch.
+            const reason: "human" | "form" =
+              step.type === "human" && step.on_reject ? "human" : "form";
 
-          await emitWebhookEvent({
-            db,
-            type: "run.needs_input",
-            projectId: flipped[0].projectId,
-            runId,
-            data: { reason, nodeId: null },
-          });
-        }
+            await emitWebhookEvent({
+              db: tx,
+              type: "run.needs_input",
+              projectId: flipped[0].projectId,
+              runId,
+              data: { reason, nodeId: null },
+            });
+          }
+        });
         if (result.acpSessionId && !loaded.run.acpSessionId) {
           await db
             .update(runs)

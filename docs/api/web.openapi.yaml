@@ -5769,7 +5769,7 @@ paths:
                         name: ops-notifier
                         url: "https://hooks.example.com/maister"
                         method: POST
-                        headers: { "X-Team": "platform" }
+                        headers: { "X-Team": "env:WEBHOOK_TEAM_HEADER" }
                         event_types: ["run.review", "run.failed"]
                         signing_secret_ref: "env:WEBHOOK_SIGNING_SECRET"
                         secondary_signing_secret_ref: null
@@ -5793,10 +5793,14 @@ paths:
         **Secret constraint:** `signing_secret_ref` is REQUIRED and MUST be an
         `env:NAME` reference (pattern `^env:[A-Za-z_][A-Za-z0-9_]*$`).
         `secondary_signing_secret_ref` (rotation overlap) is optional and
-        follows the same pattern. `headers` values MAY be `env:NAME` references.
-        Plain secret values are NEVER accepted, stored, or echoed (`422 CONFIG`).
-        `url` MUST be `http`/`https`; `event_types` entries MUST be taxonomy
-        types or the single literal `"*"`.
+        follows the same pattern. `headers` values MUST be `env:NAME`
+        references — a raw header value is refused `422 CONFIG`. Plain secret
+        values are NEVER accepted, stored, or echoed (`422 CONFIG`).
+        `url` MUST be `http`/`https` AND satisfy the destination egress policy
+        (a loopback / private / link-local / metadata IP-literal destination is
+        refused `422 CONFIG`; hostnames are re-checked at send time);
+        `event_types` entries MUST be taxonomy types or the single literal
+        `"*"`.
       operationId: postAdminWebhook
       requestBody:
         required: true
@@ -5810,7 +5814,7 @@ paths:
                   name: ops-notifier
                   url: "https://hooks.example.com/maister"
                   method: POST
-                  headers: { "X-Team": "platform" }
+                  headers: { "X-Team": "env:WEBHOOK_TEAM_HEADER" }
                   event_types: ["*"]
                   signing_secret_ref: "env:WEBHOOK_SIGNING_SECRET"
                   enabled: true
@@ -6030,7 +6034,9 @@ paths:
         (ADR-077 — Implemented.) Admin-only. Re-queues a finished delivery for
         another send attempt: under one transaction the row is `SELECT … FOR
         UPDATE`, allow-listed to `status ∈ {delivered, dead}`, then reset to
-        `status=pending, attempt_count=0, next_attempt_at=now()`. A `pending`
+        `status=pending, attempt_count=0, next_attempt_at=now()` with the
+        prior outcome fields (`delivered_at`, `last_http_status`,
+        `last_error_*`) cleared. A `pending`
         delivery is refused `409 CONFLICT` (already in flight). The stored event
         payload and `X-Maister-Idempotency-Key` are unchanged, so a consumer
         that already processed the event de-dupes the replay. The attempt audit
@@ -6068,7 +6074,8 @@ paths:
       description: |
         (ADR-077 — Implemented.) Admin-only. Reads `platform_runtime_settings.webhooks_enabled`
         on the singleton row. When `false`, the `webhook_delivery` scheduler job
-        no-ops (no fanout, no delivery) until re-enabled.
+        skips: un-fanned events are stamped consumed-and-dropped (never
+        delivered retroactively) and the drain pauses until re-enabled.
       operationId: getAdminWebhookSettings
       responses:
         "200":
@@ -8998,8 +9005,9 @@ components:
       description: |
         (ADR-077) A `webhook_subscriptions` row. `projectId` is `null` for
         platform-scoped subscriptions. Secret values are NEVER returned —
-        `signing_secret_ref`, `secondary_signing_secret_ref`, and any secret
-        `headers` values are echoed as their `env:NAME` reference strings only.
+        `signing_secret_ref`, `secondary_signing_secret_ref`, and `headers`
+        values persist as `env:NAME` references only and are echoed as those
+        reference strings.
       required:
         - id
         - projectId
@@ -9034,9 +9042,10 @@ components:
           additionalProperties: { type: string }
           description: |
             Static request headers merged with the signature/identity headers.
-            Values MAY be `env:NAME` references (resolved server-side at send,
-            returned here as the raw reference). Reserved `X-Maister-*` and
-            signature headers cannot be overridden.
+            Values MUST be `env:NAME` references — literal values are rejected
+            (resolved server-side at send, returned here as the raw
+            reference). Reserved `X-Maister-*` and signature headers cannot be
+            overridden.
         event_types:
           type: array
           items: { $ref: "#/components/schemas/WebhookEventTypeSelector" }
@@ -9076,7 +9085,11 @@ components:
           type: string
           format: uri
           maxLength: 2048
-          description: Delivery endpoint. MUST be `http` or `https` (`422 CONFIG` otherwise).
+          description: |
+            Delivery endpoint. MUST be `http` or `https` and satisfy the
+            destination egress policy — a loopback / private / link-local /
+            metadata IP-literal destination is refused (`422 CONFIG`);
+            hostnames are re-checked (resolved) at send time.
         method:
           type: string
           enum: [POST, PUT]
@@ -9085,9 +9098,11 @@ components:
           type: object
           additionalProperties:
             type: string
+            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
             description: |
-              Header value. A secret MUST be an `env:NAME` reference
-              (`^env:[A-Za-z_][A-Za-z0-9_]*$`); plain secret values are refused.
+              Header value. MUST be an `env:NAME` reference
+              (`^env:[A-Za-z_][A-Za-z0-9_]*$`), resolved server-side at send;
+              a raw value is refused `422 CONFIG`.
           default: {}
         event_types:
           type: array
@@ -9126,6 +9141,7 @@ components:
           type: string
           format: uri
           maxLength: 2048
+          description: Same `http`/`https` + destination egress policy constraints as create.
         method:
           type: string
           enum: [POST, PUT]
@@ -9133,6 +9149,8 @@ components:
           type: object
           additionalProperties:
             type: string
+            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+            description: MUST be an `env:NAME` reference; a raw value is refused `422 CONFIG`.
         event_types:
           type: array
           minItems: 1
@@ -9253,8 +9271,11 @@ components:
         enabled:
           type: boolean
           description: |
-            When `false`, the `webhook_delivery` scheduler job no-ops — no
-            fanout, no delivery — until re-enabled.
+            When `false`, the `webhook_delivery` scheduler job runs a skip
+            pass: un-fanned events are stamped consumed (`fanout_at` set,
+            zero deliveries created — disabled-window events are never
+            delivered retroactively) and no sends happen; already-pending
+            deliveries pause and resume on re-enable.
 
     PingResult:
       type: object

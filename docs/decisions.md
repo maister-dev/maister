@@ -5069,9 +5069,31 @@ board sync) subscribe to it later; none is built here.
   works only for never-delivered subscriptions — matching the
   `platform_mcp_servers` / `platform_acp_runners` usage-guard precedent
   (ADR-065/070) and the project's append-only-ledger DNA.
-- **SSRF v1 stance.** Scheme allow-list `http`/`https` only; private-address
-  blocking is deliberately NOT in v1 (self-hosted, operator-trusted endpoints;
-  M16 precedent that public-internet hardening beyond token/HMAC is deferred).
+- **Disable = skip, not buffer** (user-confirmed 2026-06-10). With the global
+  `webhooks_enabled=false` kill-switch the drain runs a skip pass — un-fanned
+  events are stamped `fanout_at` with zero delivery inserts — and a disabled
+  subscription is simply not matched at fanout: disabled-window events are
+  never delivered retroactively. Already-fanned-out pending deliveries pause
+  and resume on re-enable.
+- **SSRF stance (revised 2026-06-11).** Scheme allow-list `http`/`https` only,
+  PLUS an enforced destination egress policy (`web/lib/webhooks/destination.ts`):
+  blocked ranges are loopback (`127.0.0.0/8`, `::1`), private (`10/8`,
+  `172.16/12`, `192.168/16`, `fc00::/7`), link-local incl. the
+  `169.254.169.254` cloud-metadata endpoint (`169.254/16`, `fe80::/10`),
+  multicast, and unspecified (`0.0.0.0/8`, `::`); IPv4-mapped IPv6 classifies
+  by the embedded IPv4. An IP-literal destination in a blocked range is
+  refused `CONFIG` → 422 at write time; the single `signAndSend` chokepoint
+  (drain AND ping) re-checks literals and resolves hostnames (`dns.lookup`,
+  all records — ANY blocked answer refuses) BEFORE the wire, then connects
+  through an undici dispatcher pinned to the vetted addresses so the
+  connect-time answer cannot differ from the checked one (DNS-rebind TOCTOU
+  closed; TLS SNI keeps the hostname). A refused destination records
+  `error_kind: config` — nothing is sent. `MAISTER_WEBHOOK_ALLOW_HOSTS`
+  (comma-separated exact hosts, operator env) exempts known-internal
+  endpoints (e.g. `127.0.0.1` for a local consumer in dev/e2e). The v1
+  "operator-trusted" deferral was dropped: a `member`-created subscription or
+  ping plus the persisted, viewer-readable response snippet forms a cloud-IMDS
+  credential read primitive.
 - **No new error code.** Reuse `CONFIG` (bad `env:` ref / validation), `CONFLICT`
   (replay state / dup / usage-guarded delete), `PRECONDITION`, `UNAUTHORIZED`;
   `docs/error-taxonomy.md` is untouched. The attempt `error_kind`
@@ -5116,9 +5138,13 @@ board sync) subscribe to it later; none is built here.
   makes one stuck delivery (24h backoff) dam every later event (head-of-line
   blocking), fatal for notification semantics; unordered + idempotency key is
   safe and live.
-- **Private-address SSRF blocking in v1:** deferred — endpoints are self-hosted
-  and operator-trusted (M16 precedent); adding allow/deny-list hardening is an
-  additive later change, not a v1 blocker.
+- **Private-address SSRF blocking in v1:** initially deferred (endpoints
+  self-hosted and operator-trusted, M16 precedent) — revised 2026-06-11: a
+  `member`-created `http://169.254.169.254/…` destination plus the persisted,
+  viewer-readable response snippet is an IMDS credential-exfil primitive on a
+  cloud host, sharper than the deferral's rationale. The destination egress
+  policy in the Decision is now part of v1; `MAISTER_WEBHOOK_ALLOW_HOSTS`
+  covers legitimate internal endpoints.
 - **A new `MaisterError` code (e.g. `WEBHOOK`):** rejected — `CONFIG`/`CONFLICT`/
   `PRECONDITION`/`UNAUTHORIZED` cover every failure; a new code would churn
   `error-taxonomy.md` and the UI branch table for no behavioural gain.

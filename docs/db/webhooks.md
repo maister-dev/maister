@@ -1,6 +1,6 @@
 # Webhooks domain ERD
 
-Tables for the outbound webhook delivery primitive introduced by ADR-075.
+Tables for the outbound webhook delivery primitive introduced by ADR-076.
 See [`../system-analytics/outbound-webhooks.md`](../system-analytics/outbound-webhooks.md)
 for behavior, the delivery FSM, and the event taxonomy, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
@@ -28,7 +28,7 @@ erDiagram
         text name "display name"
         text url "http/https only; boundary-validated"
         text method "POST|PUT DEFAULT POST"
-        jsonb headers "Record<string,string> DEFAULT {}; values may be env:NAME refs"
+        jsonb headers "Record<string,string> DEFAULT {}; values are env:NAME refs only"
         jsonb event_types "string[]; taxonomy types or literal *"
         text signing_secret_ref "NOT NULL; env:NAME ref"
         text secondary_signing_secret_ref "NULL; env:NAME ref for rotation overlap"
@@ -111,7 +111,7 @@ projects
   │     └── webhook_deliveries  (FK subscription_id, ON DELETE CASCADE)
   │           └── webhook_delivery_attempts  (FK delivery_id, ON DELETE CASCADE)
   └── webhook_events  (FK project_id,      ON DELETE CASCADE)
-        └── webhook_deliveries  (FK event_id)
+        └── webhook_deliveries  (FK event_id,        ON DELETE CASCADE)
 
 runs
   └── webhook_events  (FK run_id,          ON DELETE CASCADE)
@@ -119,10 +119,12 @@ runs
 
 Deleting a project drops all its `webhook_subscriptions`, `webhook_events`,
 and all `webhook_deliveries` / `webhook_delivery_attempts` that hang off them.
-Deleting a run drops its `webhook_events` rows; because
-`webhook_deliveries.event_id` has no cascade (the event row is the delivery
-target, not the parent entity), delivery history survives independently only
-as long as the event row exists. Deleting a `webhook_subscriptions` row
+Deleting a run drops its `webhook_events` rows and — because
+`webhook_deliveries.event_id` cascades too — every delivery and attempt
+recorded for those events. Delivery-history longevity is therefore guaranteed
+by the retention pass, not the FK: the prune deletes only zero-delivery
+events, so an event referenced by any delivery (and the audit under it) is
+never removed by the system itself. Deleting a `webhook_subscriptions` row
 cascades to its `webhook_deliveries` and their `webhook_delivery_attempts`.
 
 ## Fanout cursor model
@@ -146,5 +148,5 @@ any `webhook_deliveries` row are kept indefinitely for replay and audit.
 - Process flows: [`../system-analytics/outbound-webhooks.md`](../system-analytics/outbound-webhooks.md).
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- Decision record: ADR-075 in [`../decisions.md`](../decisions.md).
+- Decision record: ADR-076 in [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0040_outbound_webhooks.sql`).

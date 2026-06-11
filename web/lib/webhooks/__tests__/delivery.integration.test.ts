@@ -78,7 +78,7 @@ let db: NodePgDatabase;
 // ---------------------------------------------------------------------------
 
 type StubMode =
-  | { kind: "status"; status: number }
+  | { kind: "status"; status: number; headers?: Record<string, string> }
   | { kind: "delay"; ms: number; status: number };
 
 interface CapturedRequest {
@@ -123,6 +123,11 @@ async function startStub(): Promise<HttpStub> {
 
       const respond = () => {
         res.statusCode = mode.status;
+        if (mode.kind === "status" && mode.headers) {
+          for (const [k, v] of Object.entries(mode.headers)) {
+            res.setHeader(k, v);
+          }
+        }
         res.end("ok");
       };
 
@@ -292,6 +297,7 @@ interface SeedSubscriptionOpts {
   eventTypes?: string[];
   enabled?: boolean;
   url: string;
+  secondarySigningSecretRef?: string;
 }
 
 async function seedSubscription(opts: SeedSubscriptionOpts): Promise<string> {
@@ -304,6 +310,7 @@ async function seedSubscription(opts: SeedSubscriptionOpts): Promise<string> {
     url: opts.url,
     eventTypes: opts.eventTypes ?? ["run.review"],
     signingSecretRef: "env:WH_TEST_SECRET",
+    secondarySigningSecretRef: opts.secondarySigningSecretRef ?? null,
     enabled: opts.enabled ?? true,
   });
 
@@ -496,6 +503,7 @@ async function setWebhooksEnabled(enabled: boolean): Promise<void> {
 
 const ENV_KEYS = [
   "WH_TEST_SECRET",
+  "WH_TEST_SECRET_NEXT",
   "MAISTER_WEBHOOK_DELIVERY_BATCH",
   "MAISTER_WEBHOOK_TIMEOUT_MS",
   "MAISTER_WEBHOOK_MAX_ATTEMPTS",
@@ -537,6 +545,9 @@ beforeEach(async () => {
   for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
 
   process.env.WH_TEST_SECRET = SECRET;
+  // The 127.0.0.1 stub is a blocked loopback destination under the egress
+  // policy — exempt it the way an operator exempts a local consumer.
+  process.env.MAISTER_WEBHOOK_ALLOW_HOSTS = "127.0.0.1";
   delete process.env.MAISTER_WEBHOOK_DELIVERY_BATCH;
   delete process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
   delete process.env.MAISTER_WEBHOOK_MAX_ATTEMPTS;
@@ -891,22 +902,20 @@ describe("disabled subscription skipped at fanout", () => {
 });
 
 // ===========================================================================
-// 7. global kill-switch. webhooks_enabled=false -> handler returns
-//    { skipped:"disabled" }, no fanout (event stays fanout_at IS NULL), stub
-//    receives nothing.
-//    VACUOUSLY GREEN now: the skeleton already short-circuits on the
-//    kill-switch — this case is expected to PASS against the skeleton and
-//    guards the disabled branch through the T9 rewrite.
+// 7. global kill-switch — SKIP, not buffer. webhooks_enabled=false -> the
+//    handler stamps un-fanned events consumed-and-dropped (fanout_at set,
+//    payload NULL, ZERO delivery rows) so a later re-enable does NOT deliver
+//    the disabled-window backlog. Pending deliveries created BEFORE the
+//    disable pause (drain skipped) and resume on re-enable.
 // ===========================================================================
 
 describe("global kill-switch", () => {
-  it("returns skipped:'disabled', does not fan out, and sends nothing", async () => {
+  it("skips: stamps the event consumed-and-dropped, creates no deliveries, never delivers it after re-enable", async () => {
     await setWebhooksEnabled(false);
 
     const run = await seedRun("Review");
     const eventId = await seedEvent(run, "run.review");
-
-    await seedSubscription({
+    const subId = await seedSubscription({
       projectId: run.projectId,
       eventTypes: ["run.review"],
       url: stub.url,
@@ -915,15 +924,94 @@ describe("global kill-switch", () => {
     const summary = await runWebhookDeliveryJob({ db });
 
     expect(summary.skipped).toBe("disabled");
+    expect(summary.skippedEvents).toBe(1);
     expect(summary.fanout).toBe(0);
     expect(summary.delivered).toBe(0);
 
     const ev = await fetchEventPayload(eventId);
 
-    expect(ev.fanout_at).toBeNull();
+    expect(ev.fanout_at).not.toBeNull();
     expect(ev.payload).toBeNull();
 
+    expect(await countDeliveriesForEventSub(eventId, subId)).toBe(0);
     expect(stub.requests).toHaveLength(0);
+
+    // Re-enable: the skip-dropped event is consumed — nothing fans out or
+    // delivers from the disabled window.
+    await setWebhooksEnabled(true);
+
+    const after = await runWebhookDeliveryJob({ db });
+
+    expect(after.fanout).toBe(0);
+    expect(after.delivered).toBe(0);
+    expect(await countDeliveriesForEventSub(eventId, subId)).toBe(0);
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it("pauses a pre-disable pending delivery and resumes it on re-enable", async () => {
+    const run = await seedRun("Review");
+    const eventId = await seedEvent(run, "run.review");
+    const subId = await seedSubscription({
+      projectId: run.projectId,
+      eventTypes: ["run.review"],
+      url: stub.url,
+    });
+
+    await freezeEventPayload(run, eventId, "run.review");
+
+    const deliveryId = await seedDelivery({ run, subId, eventId });
+
+    await setWebhooksEnabled(false);
+
+    const paused = await runWebhookDeliveryJob({ db });
+
+    expect(paused.skipped).toBe("disabled");
+    expect(paused.delivered).toBe(0);
+    expect(stub.requests).toHaveLength(0);
+    expect((await fetchDelivery(deliveryId))?.status).toBe("pending");
+
+    await setWebhooksEnabled(true);
+    stub.setMode({ kind: "status", status: 200 });
+
+    const resumed = await runWebhookDeliveryJob({ db });
+
+    expect(resumed.delivered).toBe(1);
+    expect(stub.requests).toHaveLength(1);
+    expect((await fetchDelivery(deliveryId))?.status).toBe("delivered");
+  });
+});
+
+// ===========================================================================
+// 7b. egress policy at send. A hostname that passed write-time validation but
+//     resolves to a blocked address (the rebind shape — `localhost` stands in
+//     for a record that moved private after write) is refused BEFORE the wire:
+//     config-kind failure, zero requests on the stub. The allowlist exempts
+//     the literal "127.0.0.1" only — the hostname "localhost" is not on it.
+// ===========================================================================
+
+describe("egress policy blocks a private-resolving hostname at send", () => {
+  it("records a config failure and never reaches the wire", async () => {
+    const run = await seedRun("Review");
+    const eventId = await seedEvent(run, "run.review");
+    const subId = await seedSubscription({
+      projectId: run.projectId,
+      eventTypes: ["run.review"],
+      url: `http://localhost:${stub.port}/hook`,
+    });
+
+    await freezeEventPayload(run, eventId, "run.review");
+    await seedDelivery({ run, subId, eventId });
+
+    const summary = await runWebhookDeliveryJob({ db });
+
+    expect(summary.delivered).toBe(0);
+    expect(summary.failed).toBe(1);
+    expect(stub.requests).toHaveLength(0);
+
+    const delivery = await fetchDeliveryByEvent(eventId);
+
+    expect(delivery?.status).toBe("pending");
+    expect(delivery?.last_error_kind).toBe("config");
   });
 });
 
@@ -1030,5 +1118,119 @@ describe("lease-expiry reclaim (at-least-once)", () => {
     expect(stub.requests[0].headers["x-maister-idempotency-key"]).toBe(
       expectedIdempotencyKey(subId, eventId),
     );
+  });
+});
+
+// ===========================================================================
+// 11. Secret rotation — a subscription with `secondary_signing_secret_ref`
+//     sends TWO `v1=` entries; a consumer holding EITHER secret verifies
+//     (Stripe-style overlap window).
+// ===========================================================================
+
+describe("secret rotation — dual v1= signatures on the wire", () => {
+  it("signs with both refs and either secret independently verifies", async () => {
+    const SECRET_NEXT = "whsec_test_next_fedcba9876543210";
+
+    process.env.WH_TEST_SECRET_NEXT = SECRET_NEXT;
+
+    const run = await seedRun("Review");
+    const eventId = await seedEvent(run, "run.review");
+    const subId = await seedSubscription({
+      projectId: run.projectId,
+      eventTypes: ["run.review"],
+      url: stub.url,
+      secondarySigningSecretRef: "env:WH_TEST_SECRET_NEXT",
+    });
+
+    stub.setMode({ kind: "status", status: 200 });
+
+    const summary = await runWebhookDeliveryJob({ db });
+
+    expect(summary.delivered).toBe(1);
+    expect(stub.requests).toHaveLength(1);
+
+    const sent = stub.requests[0];
+    const signature = sent.headers["x-maister-signature"];
+    const delivery = await fetchDeliveryByEvent(eventId);
+
+    expect(delivery?.status).toBe("delivered");
+
+    // Exactly two v1= entries — primary + rotation overlap.
+    expect(signature.split(",").filter((p) => p.startsWith("v1=")).length).toBe(
+      2,
+    );
+
+    // A consumer holding ONLY the old secret verifies; one holding ONLY the
+    // new secret verifies too; a wrong secret does not.
+    expect(
+      verifySignatureHeader(signature, delivery!.id, sent.rawBody, SECRET),
+    ).toBe(true);
+    expect(
+      verifySignatureHeader(signature, delivery!.id, sent.rawBody, SECRET_NEXT),
+    ).toBe(true);
+    expect(
+      verifySignatureHeader(signature, delivery!.id, sent.rawBody, "wrong"),
+    ).toBe(false);
+
+    expect(stub.requests[0].headers["x-maister-idempotency-key"]).toBe(
+      expectedIdempotencyKey(subId, eventId),
+    );
+  });
+});
+
+// ===========================================================================
+// 12. 3xx redirect — `redirect:"manual"` means the Location target is NEVER
+//     fetched (a redirect after the egress check could point anywhere,
+//     including a blocked-range host); the 302 classifies as a retryable
+//     `http` failure.
+// ===========================================================================
+
+describe("302 redirect — never followed, classified retryable", () => {
+  it("does not fetch the Location target and leaves the delivery pending", async () => {
+    const redirectTarget = await startStub();
+
+    try {
+      const run = await seedRun("Review");
+      const eventId = await seedEvent(run, "run.review");
+
+      await seedSubscription({
+        projectId: run.projectId,
+        eventTypes: ["run.review"],
+        url: stub.url,
+      });
+
+      stub.setMode({
+        kind: "status",
+        status: 302,
+        headers: { location: redirectTarget.url },
+      });
+
+      const summary = await runWebhookDeliveryJob({ db });
+
+      expect(summary.delivered).toBe(0);
+      expect(summary.failed).toBe(1);
+
+      // The redirect target was NEVER contacted.
+      expect(redirectTarget.requests).toHaveLength(0);
+      // Exactly one POST went to the original destination.
+      expect(stub.requests).toHaveLength(1);
+
+      const delivery = await fetchDeliveryByEvent(eventId);
+
+      expect(delivery?.status).toBe("pending");
+      expect(delivery?.last_http_status).toBe(302);
+      expect(delivery?.last_error_kind).toBe("http");
+      expect(
+        new Date(delivery!.next_attempt_at as Date).getTime(),
+      ).toBeGreaterThan(Date.now());
+
+      const attempts = await fetchAttempts(delivery!.id);
+
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0].http_status).toBe(302);
+      expect(attempts[0].error_kind).toBe("http");
+    } finally {
+      await redirectTarget.close();
+    }
   });
 });

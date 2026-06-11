@@ -1,4 +1,4 @@
-// T11 (ADR-075): platform admin webhook routes against a real testcontainer
+// T11 (ADR-076): platform admin webhook routes against a real testcontainer
 // postgres. TDD RED — the route modules under `app/api/admin/webhooks/**` and
 // `app/api/admin/webhook-settings` do not exist yet, so every dynamic
 // `import("../route")` throws (missing module) until T11 lands. Docker-only
@@ -138,7 +138,7 @@ const VALID_CREATE = () => ({
   name: "ops-notifier",
   url: "https://hooks.example.com/maister",
   method: "POST" as const,
-  headers: { "X-Team": "platform" },
+  headers: { "X-Team": "env:WH_TEAM_HEADER" },
   event_types: ["run.review", "run.done"],
   signing_secret_ref: "env:WH_X",
   enabled: true,
@@ -465,6 +465,44 @@ describe("admin webhook CRUD round-trip", () => {
     expectNoSecretValue(afterText);
   });
 
+  it("clears secondary_signing_secret_ref and headers on PATCH (CLEAR half persists)", async () => {
+    const { POST } = await import("../route");
+    const byId = await import("../[id]/route");
+
+    const created = await POST(postRequest(VALID_CREATE()));
+    const { id } = (await created.json()) as { id: string };
+
+    // SET half: rotation overlap ref lands.
+    const setRes = await byId.PATCH(
+      patchRequest({ secondary_signing_secret_ref: "env:WH_X_NEXT" }),
+      idParams(id),
+    );
+
+    expect(setRes.status).toBe(200);
+
+    const afterSetRes = await byId.GET(getRequest(), idParams(id));
+    const afterSet = (await afterSetRes.json()) as Record<string, unknown>;
+
+    expect(afterSet.secondary_signing_secret_ref).toBe("env:WH_X_NEXT");
+
+    // CLEAR half: dropping the old ref (rotation completion) and the extra
+    // headers persists the cleared state — not the stale prior values.
+    const clearRes = await byId.PATCH(
+      patchRequest({ secondary_signing_secret_ref: null, headers: {} }),
+      idParams(id),
+    );
+
+    expect(clearRes.status).toBe(200);
+
+    const afterClearRes = await byId.GET(getRequest(), idParams(id));
+    const afterClear = (await afterClearRes.json()) as Record<string, unknown>;
+
+    expect(afterClear.secondary_signing_secret_ref).toBeNull();
+    expect(afterClear.headers).toEqual({});
+    // The primary ref is untouched by the clear.
+    expect(afterClear.signing_secret_ref).toBe("env:WH_X");
+  });
+
   it("returns 404 for GET/PATCH/DELETE of an unknown id", async () => {
     const byId = await import("../[id]/route");
     const unknown = randomUUID();
@@ -547,6 +585,53 @@ describe("admin webhook validation", () => {
 
     const res = await byId.PATCH(
       patchRequest({ signing_secret_ref: "rawsecretvalue" }),
+      idParams(id),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+  });
+
+  it("rejects a literal header value (env:NAME ref required) on POST with 422", async () => {
+    const { POST } = await import("../route");
+
+    const res = await POST(
+      postRequest({
+        ...VALID_CREATE(),
+        headers: { Authorization: "Bearer raw-token" },
+      }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+  });
+
+  it("rejects a blocked (loopback/metadata) destination url on POST with 422", async () => {
+    const { POST } = await import("../route");
+
+    const res = await POST(
+      postRequest({
+        ...VALID_CREATE(),
+        url: "http://169.254.169.254/latest/meta-data/",
+      }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+  });
+
+  it("rejects a literal header value on PATCH with 422", async () => {
+    const { POST } = await import("../route");
+    const byId = await import("../[id]/route");
+
+    const created = await POST(postRequest(VALID_CREATE()));
+    const { id } = (await created.json()) as { id: string };
+
+    const res = await byId.PATCH(
+      patchRequest({ headers: { "X-Team": "platform" } }),
       idParams(id),
     );
     const body = (await res.json()) as { code?: string };

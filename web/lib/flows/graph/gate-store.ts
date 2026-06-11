@@ -9,7 +9,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -63,7 +63,7 @@ export async function createGateResult(args: {
   const id = randomUUID();
   const status = args.status ?? "running";
 
-  await db.insert(gateResults).values({
+  const row = {
     id,
     runId: args.runId,
     nodeAttemptId: args.nodeAttemptId,
@@ -75,22 +75,32 @@ export async function createGateResult(args: {
     staleFrom: args.staleFrom ?? null,
     verdict: args.verdict ?? null,
     endedAt: status === "running" || status === "pending" ? null : new Date(),
-  });
+  };
 
   if (TERMINAL_GATE_STATUSES.has(status)) {
-    await emitWebhookEvent({
-      db,
-      type: "gate.decided",
-      projectId: await projectIdForRun(db, args.runId),
-      runId: args.runId,
-      data: {
-        gateId: args.gateId,
-        kind: args.kind,
-        mode: args.mode,
-        status,
-        nodeAttemptId: args.nodeAttemptId,
-      },
+    // Insert-at-terminal (reportExternalGate's supersede path) commits the row
+    // and its gate.decided outbox row atomically — same invariant as
+    // transition() below. If the caller's handle is already a transaction,
+    // this nests as a savepoint.
+    await db.transaction(async (tx: Db) => {
+      await tx.insert(gateResults).values(row);
+
+      await emitWebhookEvent({
+        db: tx,
+        type: "gate.decided",
+        projectId: await projectIdForRun(tx, args.runId),
+        runId: args.runId,
+        data: {
+          gateId: args.gateId,
+          kind: args.kind,
+          mode: args.mode,
+          status,
+          nodeAttemptId: args.nodeAttemptId,
+        },
+      });
     });
+  } else {
+    await db.insert(gateResults).values(row);
   }
 
   log.info(
@@ -108,6 +118,12 @@ export async function createGateResult(args: {
   return { id };
 }
 
+// The flip and its gate.decided outbox row commit in ONE transaction (ADR-076)
+// — a crash between them must not flip the gate while losing the event. The
+// `status <>` CAS makes a repeat same-status transition a no-op (0 rows, no
+// emit) while cross-status moves (failed → overridden) still pass. Callers only
+// ever hand in a plain db (gates-exec via ctx.db), so owning a transaction here
+// never nests inside a caller tx.
 async function transition(
   id: string,
   status: GateResultStatus,
@@ -116,35 +132,37 @@ async function transition(
 ): Promise<void> {
   const d = db ?? getDb();
 
-  const rows = await d
-    .update(gateResults)
-    .set({ status, endedAt: new Date(), ...extra })
-    .where(eq(gateResults.id, id))
-    .returning({
-      runId: gateResults.runId,
-      gateId: gateResults.gateId,
-      kind: gateResults.kind,
-      mode: gateResults.mode,
-      nodeAttemptId: gateResults.nodeAttemptId,
-    });
+  await d.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(gateResults)
+      .set({ status, endedAt: new Date(), ...extra })
+      .where(and(eq(gateResults.id, id), ne(gateResults.status, status)))
+      .returning({
+        runId: gateResults.runId,
+        gateId: gateResults.gateId,
+        kind: gateResults.kind,
+        mode: gateResults.mode,
+        nodeAttemptId: gateResults.nodeAttemptId,
+      });
 
-  if (rows.length > 0 && TERMINAL_GATE_STATUSES.has(status)) {
-    const row = rows[0];
+    if (rows.length > 0 && TERMINAL_GATE_STATUSES.has(status)) {
+      const row = rows[0];
 
-    await emitWebhookEvent({
-      db: d,
-      type: "gate.decided",
-      projectId: await projectIdForRun(d, row.runId),
-      runId: row.runId,
-      data: {
-        gateId: row.gateId,
-        kind: row.kind,
-        mode: row.mode,
-        status,
-        nodeAttemptId: row.nodeAttemptId,
-      },
-    });
-  }
+      await emitWebhookEvent({
+        db: tx,
+        type: "gate.decided",
+        projectId: await projectIdForRun(tx, row.runId),
+        runId: row.runId,
+        data: {
+          gateId: row.gateId,
+          kind: row.kind,
+          mode: row.mode,
+          status,
+          nodeAttemptId: row.nodeAttemptId,
+        },
+      });
+    }
+  });
 
   log.info({ gateResultId: id, status }, "gate-result transition");
 }

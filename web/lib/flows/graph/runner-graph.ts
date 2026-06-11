@@ -1502,25 +1502,29 @@ export async function runGraph(
       }
 
       if (result.needsInput) {
-        await markNodeNeedsInput(nodeAttemptId, db);
-        const flipped = await db
-          .update(runs)
-          .set({ status: "NeedsInput", currentStepId: node.id })
-          .where(eq(runs.id, runId))
-          .returning({ projectId: runs.projectId });
+        // Ledger mark + status flip + run.needs_input outbox row are one
+        // logical transition — they commit atomically or not at all.
+        await db.transaction(async (tx: Db) => {
+          await markNodeNeedsInput(nodeAttemptId, tx);
+          const flipped = await tx
+            .update(runs)
+            .set({ status: "NeedsInput", currentStepId: node.id })
+            .where(eq(runs.id, runId))
+            .returning({ projectId: runs.projectId });
 
-        if (flipped.length > 0) {
-          await emitWebhookEvent({
-            db,
-            type: "run.needs_input",
-            projectId: flipped[0].projectId,
-            runId,
-            data: {
-              reason: node.nodeType as "human" | "form",
-              nodeId: node.id,
-            },
-          });
-        }
+          if (flipped.length > 0) {
+            await emitWebhookEvent({
+              db: tx,
+              type: "run.needs_input",
+              projectId: flipped[0].projectId,
+              runId,
+              data: {
+                reason: node.nodeType as "human" | "form",
+                nodeId: node.id,
+              },
+            });
+          }
+        });
         if (result.acpSessionId && !loaded.run.acpSessionId) {
           await db
             .update(runs)

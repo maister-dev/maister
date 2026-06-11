@@ -208,6 +208,9 @@ beforeEach(async () => {
   `);
 
   process.env.WH_TEST_SECRET = "whsec_test_0123456789abcdef";
+  // The 127.0.0.1 stub is a blocked loopback destination under the egress
+  // policy — exempt it the way an operator exempts a local consumer.
+  process.env.MAISTER_WEBHOOK_ALLOW_HOSTS = "127.0.0.1";
 
   // Kill-switch ON so the prune tail-pass runs.
   await setWebhooksEnabled(true);

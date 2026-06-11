@@ -7,6 +7,7 @@ import pino from "pino";
 
 import { isWebhookEventType } from "./taxonomy";
 import { isEnvRef } from "./signing";
+import { assertAllowedDestinationUrl } from "./destination";
 
 import { getDb } from "@/lib/db/client";
 import {
@@ -95,6 +96,8 @@ function assertUrl(url: string): void {
       `webhook url "${url}" must be http or https`,
     );
   }
+
+  assertAllowedDestinationUrl(parsed);
 }
 
 function assertSecretRef(field: string, ref: string): void {
@@ -130,14 +133,16 @@ function assertMethod(method: string): void {
   }
 }
 
-// Header values may be an env:NAME ref OR a literal. A ref is left as-is (never
-// resolved here); a literal is stored verbatim. Both are safe to echo back.
+// Header values MUST persist as env:NAME references only (the same rule as the
+// signing-secret refs): headers carry endpoint credentials, and the DTO echoes
+// them back to any project viewer — a literal would store and leak the value.
+// Refs are never resolved here; resolution happens at send time.
 function assertHeaders(headers: Record<string, string>): void {
   for (const [k, v] of Object.entries(headers)) {
-    if (typeof v !== "string") {
+    if (typeof v !== "string" || !isEnvRef(v)) {
       throw new MaisterError(
         "CONFIG",
-        `webhook header "${k}" value must be a string`,
+        `webhook header "${k}" must be an env:NAME reference, not a value`,
       );
     }
   }
@@ -346,38 +351,56 @@ export async function updateSubscription(
 // Usage-guarded hard delete: the per-subscription delivery/attempt ledger is
 // append-only audit, so a subscription with ANY delivery history is refused
 // (CONFLICT → 409); disable it instead. Only a never-delivered subscription
-// hard-deletes.
+// hard-deletes. One transaction with the subscription row locked FOR UPDATE:
+// a concurrent fanout INSERT holds FOR KEY SHARE on this row (FK parent), so
+// the usage check and the DELETE serialize against it — a delivery committed
+// in the gap can no longer be erased by the ON DELETE CASCADE.
 export async function deleteSubscription(
   scope: SubscriptionScope,
   id: string,
   db?: Db,
 ): Promise<boolean> {
   const handle: Db = db ?? getDb();
-  const current = await loadRow(handle, scope, id);
 
-  if (!current) return false;
+  const deleted = await handle.transaction(async (tx: Db) => {
+    const scopeSql =
+      scope.projectId === null
+        ? sql`project_id IS NULL`
+        : sql`project_id = ${scope.projectId}`;
+    const current = await tx.execute(sql`
+      SELECT 1 FROM webhook_subscriptions
+      WHERE id = ${id} AND ${scopeSql}
+      FOR UPDATE
+    `);
 
-  const used = await handle.execute(sql`
-    SELECT 1 FROM webhook_deliveries WHERE subscription_id = ${id} LIMIT 1
-  `);
+    if ((current.rows ?? []).length === 0) return false;
 
-  if ((used.rows ?? []).length > 0) {
-    throw new MaisterError(
-      "CONFLICT",
-      `webhook subscription ${id} has delivery history and cannot be deleted; disable it instead`,
+    const used = await tx.execute(sql`
+      SELECT 1 FROM webhook_deliveries WHERE subscription_id = ${id} LIMIT 1
+    `);
+
+    if ((used.rows ?? []).length > 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `webhook subscription ${id} has delivery history and cannot be deleted; disable it instead`,
+      );
+    }
+
+    await tx
+      .delete(webhookSubscriptions)
+      .where(and(eq(webhookSubscriptions.id, id), scopeFilter(scope)));
+
+    return true;
+  });
+
+  if (deleted) {
+    log.info(
+      { id, projectId: scope.projectId },
+      "[webhooks.subscriptions] deleted",
     );
   }
 
-  await handle
-    .delete(webhookSubscriptions)
-    .where(and(eq(webhookSubscriptions.id, id), scopeFilter(scope)));
-
-  log.info(
-    { id, projectId: scope.projectId },
-    "[webhooks.subscriptions] deleted",
-  );
-
-  return true;
+  return deleted;
 }
 
 // ---------------------------------------------------------------------------

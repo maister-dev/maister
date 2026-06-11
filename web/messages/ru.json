@@ -1661,7 +1661,7 @@
     "fieldMethod": "Метод",
     "fieldEventTypes": "Типы событий",
     "fieldHeaders": "Заголовки",
-    "headersHint": "Значение заголовка может быть строкой или ссылкой env:NAME.",
+    "headersHint": "Значение заголовка должно быть ссылкой env:NAME — литералы отклоняются.",
     "headerKeyLabel": "Имя заголовка",
     "headerKeyPlaceholder": "X-Custom-Header",
     "headerValueLabel": "Значение заголовка",

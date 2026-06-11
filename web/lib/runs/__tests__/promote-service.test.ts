@@ -93,6 +93,15 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+// Pins the finalize-tx run.promoted/run.done emit pair — a dropped emit in
+// promote.ts must fail here (the outbox row itself is integration-tested in
+// lib/webhooks/__tests__).
+const emitWebhookEventMock = vi.fn();
+
+vi.mock("@/lib/webhooks/outbox", () => ({
+  emitWebhookEvent: (...args: unknown[]) => emitWebhookEventMock(...args),
+}));
+
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
   promoteLocalMerge: vi.fn(async () => "merged00"),
@@ -255,6 +264,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue([]);
   authorize.mockReset().mockResolvedValue(undefined);
+  emitWebhookEventMock.mockClear();
 });
 
 describe("promoteRun — flow terminal allow-list", () => {
@@ -438,6 +448,7 @@ describe("promoteRun — finalize attempt-token mismatch (Codex F5)", () => {
     expect(dbState.tables.workspaces[0].promotedAt).toBeNull();
     expect(dbState.tables.workspaces[0].promotionState).not.toBe("done");
     expect(systemCloseActiveAssignmentsForRun).not.toHaveBeenCalled();
+    expect(emitWebhookEventMock).not.toHaveBeenCalled();
   });
 });
 
@@ -467,6 +478,7 @@ describe("promoteRun — local_merge conflict (flow)", () => {
     );
     expect(dbState.tables.runs[0].status).toBe("Review");
     expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+    expect(emitWebhookEventMock).not.toHaveBeenCalled();
   });
 });
 
@@ -499,6 +511,18 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     expect(dbState.tables.runs[0].endedAt).toBeInstanceOf(Date);
     expect(dbState.tables.workspaces[0].promotionState).toBe("done");
     expect(systemCloseActiveAssignmentsForRun).toHaveBeenCalled();
+
+    // The finalize tx emits exactly run.promoted then run.done.
+    expect(
+      emitWebhookEventMock.mock.calls.map(
+        (c) => (c[0] as { type: string }).type,
+      ),
+    ).toEqual(["run.promoted", "run.done"]);
+    expect(emitWebhookEventMock.mock.calls[0][0]).toMatchObject({
+      type: "run.promoted",
+      runId,
+      data: { mode: "local_merge", target: "main", pullRequestUrl: null },
+    });
   });
 
   it("allows a flow target branch that differs from the base", async () => {
@@ -542,6 +566,13 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
     );
     expect(dbState.tables.scratch_runs[0].dialogStatus).toBe("Done");
     expect(dbState.tables.runs[0].status).toBe("Done");
+
+    // The scratch finalize tx emits the same run.promoted + run.done pair.
+    expect(
+      emitWebhookEventMock.mock.calls.map(
+        (c) => (c[0] as { type: string }).type,
+      ),
+    ).toEqual(["run.promoted", "run.done"]);
   });
 
   it("refuses a not-ready scratch promotion (M15 merge-readiness guard, no claim)", async () => {

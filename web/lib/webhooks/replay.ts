@@ -17,11 +17,14 @@ const log = pino({
 // DQ8 replay: re-queue a terminal delivery for another delivery cycle. Single
 // tx, row-locked. Allowed only from `delivered|dead` — a still-`pending` row is
 // already queued, so replaying it is a CONFLICT. Resets the retry budget
-// (attempt_count=0, next_attempt_at=now, lease cleared) WITHOUT re-emitting the
-// event or rotating the idempotency_key: the key is stable per (subscription,
-// event), so the duplicate send is consumer-deduped. The webhook_delivery_attempts
-// audit trail is left intact — its attempt_no sequence keeps climbing on the
-// next drain (decoupled from attempt_count in the drain handler).
+// (attempt_count=0, next_attempt_at=now, lease cleared) and clears the prior
+// cycle's outcome fields (delivered_at, last_http_status, last_error_*) — a
+// re-queued pending row must not read as simultaneously delivered/failed —
+// WITHOUT re-emitting the event or rotating the idempotency_key: the key is
+// stable per (subscription, event), so the duplicate send is consumer-deduped.
+// The webhook_delivery_attempts audit trail is left intact — its attempt_no
+// sequence keeps climbing on the next drain (decoupled from attempt_count in
+// the drain handler).
 //
 // Ownership (subscription/project) is resolved by the route layer (404 on
 // mismatch) BEFORE this is called — replay assumes the row belongs to the caller.
@@ -59,6 +62,10 @@ export async function replayDelivery(
           attempt_count = 0,
           next_attempt_at = now(),
           lease_expires_at = NULL,
+          delivered_at = NULL,
+          last_http_status = NULL,
+          last_error_kind = NULL,
+          last_error_message = NULL,
           updated_at = now()
       WHERE id = ${deliveryId}
     `);

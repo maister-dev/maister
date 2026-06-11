@@ -90,13 +90,14 @@ describe("webhook_delivery scheduler integration", () => {
     expect(claimedDeliveryJobs[0].id).toBe("webhook_delivery.default");
   });
 
-  it("no-ops with skipped:disabled when platform_runtime_settings.webhooksEnabled is false", async () => {
+  it("skip-passes with skipped:disabled when platform_runtime_settings.webhooksEnabled is false", async () => {
     await seedRuntimeSettings(false);
 
     const summary = await runWebhookDeliveryJob({ db: schedulerDb });
 
     expect(summary).toEqual({
       skipped: "disabled",
+      skippedEvents: 0,
       fanout: 0,
       delivered: 0,
       failed: 0,

@@ -1661,7 +1661,7 @@
     "fieldMethod": "Method",
     "fieldEventTypes": "Event types",
     "fieldHeaders": "Headers",
-    "headersHint": "Header values may be a literal or an env:NAME reference.",
+    "headersHint": "Header values must be env:NAME references — raw values are rejected.",
     "headerKeyLabel": "Header name",
     "headerKeyPlaceholder": "X-Custom-Header",
     "headerValueLabel": "Header value",

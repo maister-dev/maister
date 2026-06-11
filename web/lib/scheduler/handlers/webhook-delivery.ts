@@ -31,6 +31,9 @@ type Db = any;
 
 export type WebhookDeliverySummary = {
   skipped?: "disabled";
+  // Disabled-path accounting: un-fanned events stamped consumed-and-dropped
+  // by the skip pass. Absent on the enabled path.
+  skippedEvents?: number;
   fanout: number;
   delivered: number;
   failed: number;
@@ -73,9 +76,17 @@ export async function runWebhookDeliveryJob(
     .where(eq(platformRuntimeSettings.id, "singleton"));
   const webhooksEnabled = rows[0]?.webhooksEnabled !== false;
 
+  const batch = positiveEnvInt("MAISTER_WEBHOOK_DELIVERY_BATCH", DEFAULT_BATCH);
+
   if (!webhooksEnabled) {
+    // Skip, not buffer: disabled-window events are stamped consumed-and-dropped
+    // so a re-enable never delivers the backlog. Drain (pending deliveries
+    // pause until re-enable) and prune stay skipped.
+    const skippedEvents = await runSkipPass(db, batch);
+
     const summary: WebhookDeliverySummary = {
       skipped: "disabled",
+      skippedEvents,
       fanout: 0,
       delivered: 0,
       failed: 0,
@@ -88,7 +99,6 @@ export async function runWebhookDeliveryJob(
     return summary;
   }
 
-  const batch = positiveEnvInt("MAISTER_WEBHOOK_DELIVERY_BATCH", DEFAULT_BATCH);
   const timeoutMs = positiveEnvInt(
     "MAISTER_WEBHOOK_TIMEOUT_MS",
     DEFAULT_TIMEOUT_MS,
@@ -113,6 +123,34 @@ export async function runWebhookDeliveryJob(
   log.info(summary, "[scheduler.webhook_delivery] summary");
 
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// SKIP — the disabled-path counterpart of fanout. Claims un-fanned events
+// (same FOR UPDATE SKIP LOCKED claim, same batch bound) and stamps
+// fanout_at = now() with NO payload freeze and ZERO delivery inserts:
+// consumed-and-dropped. The prune pass GCs the stamped rows after retention.
+// ---------------------------------------------------------------------------
+
+async function runSkipPass(db: Db, batch: number): Promise<number> {
+  return db.transaction(async (tx: Db) => {
+    const result = await tx.execute(sql`
+      WITH claimed_events AS (
+        SELECT id
+        FROM webhook_events
+        WHERE fanout_at IS NULL
+        ORDER BY created_at
+        LIMIT ${batch}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE webhook_events e
+      SET fanout_at = now()
+      FROM claimed_events c
+      WHERE e.id = c.id
+    `);
+
+    return result.rowCount ?? 0;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -581,6 +619,8 @@ async function finishDelivery(
             delivered_at = now(),
             attempt_count = ${attemptCount},
             last_http_status = ${httpStatusValue},
+            last_error_kind = NULL,
+            last_error_message = NULL,
             lease_expires_at = NULL,
             updated_at = now()
         WHERE id = ${claimed.id}

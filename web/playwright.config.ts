@@ -87,6 +87,10 @@ export default defineConfig({
       // outbound-webhooks.spec.ts: server-side signing secret behind
       // `env:WH_E2E_SECRET` (resolved at webhook send time).
       WH_E2E_SECRET,
+      // outbound-webhooks.spec.ts: the spec's consumer stub binds 127.0.0.1,
+      // which the SSRF egress policy blocks — exempt it the way an operator
+      // exempts a local consumer.
+      MAISTER_WEBHOOK_ALLOW_HOSTS: "127.0.0.1",
     },
   },
 });

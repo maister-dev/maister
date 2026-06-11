@@ -273,6 +273,9 @@ interface SeedDeliveryOpts {
   eventId: string;
   status: "pending" | "delivered" | "dead";
   attemptCount?: number;
+  lastHttpStatus?: number;
+  lastErrorKind?: string;
+  lastErrorMessage?: string;
 }
 
 async function seedDelivery(opts: SeedDeliveryOpts): Promise<string> {
@@ -288,6 +291,9 @@ async function seedDelivery(opts: SeedDeliveryOpts): Promise<string> {
     leaseExpiresAt: null,
     idempotencyKey: expectedIdempotencyKey(opts.subId, opts.eventId),
     deliveredAt: opts.status === "delivered" ? new Date() : null,
+    lastHttpStatus: opts.lastHttpStatus ?? null,
+    lastErrorKind: opts.lastErrorKind ?? null,
+    lastErrorMessage: opts.lastErrorMessage ?? null,
   });
 
   return deliveryId;
@@ -317,6 +323,10 @@ interface DeliveryRow {
   idempotency_key: string;
   event_id: string;
   subscription_id: string;
+  delivered_at: Date | null;
+  last_http_status: number | null;
+  last_error_kind: string | null;
+  last_error_message: string | null;
 }
 
 async function fetchDelivery(
@@ -324,7 +334,8 @@ async function fetchDelivery(
 ): Promise<DeliveryRow | undefined> {
   const r = await db.execute(sql`
     SELECT id, status, attempt_count, next_attempt_at, lease_expires_at,
-           idempotency_key, event_id, subscription_id
+           idempotency_key, event_id, subscription_id, delivered_at,
+           last_http_status, last_error_kind, last_error_message
     FROM webhook_deliveries
     WHERE id = ${deliveryId}
   `);
@@ -394,6 +405,9 @@ beforeEach(async () => {
   `);
 
   process.env.WH_TEST_SECRET = SECRET;
+  // The 127.0.0.1 stub is a blocked loopback destination under the egress
+  // policy — exempt it the way an operator exempts a local consumer.
+  process.env.MAISTER_WEBHOOK_ALLOW_HOSTS = "127.0.0.1";
   savedTimeout = process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
   delete process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
 
@@ -427,6 +441,7 @@ describe("replay state matrix", () => {
       eventId,
       status: "delivered",
       attemptCount: 3,
+      lastHttpStatus: 200,
     });
 
     await seedAttempt(deliveryId, 1);
@@ -442,6 +457,11 @@ describe("replay state matrix", () => {
     expect(delivery?.attempt_count).toBe(0);
     expect(delivery?.lease_expires_at).toBeNull();
     expect(delivery?.next_attempt_at).not.toBeNull();
+
+    // Prior-cycle outcome fields are cleared — a pending row must not carry a
+    // delivered_at or a stale terminal status.
+    expect(delivery?.delivered_at).toBeNull();
+    expect(delivery?.last_http_status).toBeNull();
 
     const nextMs = new Date(delivery!.next_attempt_at as Date).getTime();
 
@@ -462,7 +482,7 @@ describe("replay state matrix", () => {
     expect(attempts[0].attempt_no).toBe(1);
   });
 
-  it("resets a dead delivery to pending", async () => {
+  it("resets a dead delivery to pending and clears the stale error fields", async () => {
     const run = await seedRun("Review");
     const eventId = await seedEvent(run);
     const subId = await seedSubscription(run, stub.url);
@@ -475,6 +495,9 @@ describe("replay state matrix", () => {
       eventId,
       status: "dead",
       attemptCount: 8,
+      lastHttpStatus: 500,
+      lastErrorKind: "http",
+      lastErrorMessage: "HTTP 500",
     });
 
     await replayDelivery(deliveryId, db);
@@ -484,6 +507,9 @@ describe("replay state matrix", () => {
     expect(delivery?.status).toBe("pending");
     expect(delivery?.attempt_count).toBe(0);
     expect(delivery?.lease_expires_at).toBeNull();
+    expect(delivery?.last_http_status).toBeNull();
+    expect(delivery?.last_error_kind).toBeNull();
+    expect(delivery?.last_error_message).toBeNull();
   });
 
   it("refuses to replay a pending delivery with MaisterError CONFLICT", async () => {
@@ -576,5 +602,37 @@ describe("replay -> drain — attempt_no continues, idempotency key stable", () 
 
     expect(attempts.map((a) => a.attempt_no)).toEqual([1, 2]);
     expect(attempts[1].http_status).toBe(200);
+  });
+
+  it("a replayed-then-dead delivery carries no stale delivered_at", async () => {
+    const run = await seedRun("Review");
+    const eventId = await seedEvent(run);
+    const subId = await seedSubscription(run, stub.url);
+
+    await freezeEventPayload(run, eventId);
+
+    const deliveryId = await seedDelivery({
+      run,
+      subId,
+      eventId,
+      status: "delivered",
+      attemptCount: 1,
+      lastHttpStatus: 200,
+    });
+
+    await replayDelivery(deliveryId, db);
+
+    // 410 → dead at the first attempt of the replay cycle.
+    stub.setStatus(410);
+
+    const summary = await runWebhookDeliveryJob({ db });
+
+    expect(summary.dead).toBe(1);
+
+    const delivery = await fetchDelivery(deliveryId);
+
+    expect(delivery?.status).toBe("dead");
+    expect(delivery?.delivered_at).toBeNull();
+    expect(delivery?.last_http_status).toBe(410);
   });
 });

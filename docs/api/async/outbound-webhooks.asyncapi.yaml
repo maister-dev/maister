@@ -3,7 +3,7 @@ info:
   title: MAIster — outbound webhooks
   version: "0.1.0"
   description: |
-    Outbound HTTP webhook delivery (ADR-075, Implemented). MAIster is the
+    Outbound HTTP webhook delivery (ADR-076, Implemented). MAIster is the
     **server** here: the `webhook_delivery` scheduler job POSTs a signed JSON
     envelope to each subscribed consumer endpoint. The CRUD/admin surface for
     subscriptions, the delivery log, ping, and replay lives in
@@ -80,16 +80,23 @@ info:
       value is never logged.
     - **Disable = skip.** A disabled subscription (per-row or the global
       `webhooks_enabled` kill-switch) is skipped at fanout; window events are
-      never delivered retroactively. Deliveries already fanned out pause and
-      resume on re-enable.
-    - **SSRF stance (v1).** Scheme allow-list `http`/`https` only;
-      private-address blocking is deliberately out of v1 (self-hosted,
-      operator-trusted endpoints).
+      never delivered retroactively. While globally disabled, the tick stamps
+      un-fanned events consumed-and-dropped (`fanout_at` set, payload NULL,
+      zero deliveries). Deliveries already fanned out pause and resume on
+      re-enable.
+    - **Destination egress policy.** Scheme allow-list `http`/`https` only,
+      plus enforced private-address blocking: loopback, private, link-local
+      (incl. the `169.254.169.254` metadata endpoint), multicast, and
+      unspecified destinations are refused — `422 CONFIG` for IP literals at
+      write time; at send time hostnames are resolved and refused if ANY
+      record is blocked (`error_kind=config`, nothing sent), with the connect
+      pinned to the vetted addresses (DNS-rebind safe).
+      `MAISTER_WEBHOOK_ALLOW_HOSTS` exempts exact hosts (operator env).
 
     See also:
       - [`../web.openapi.yaml`](../web.openapi.yaml) — subscription CRUD, log, ping, replay (tag `webhooks`).
       - [`../../system-analytics/outbound-webhooks.md`](../../system-analytics/outbound-webhooks.md) — domain process doc.
-      - [`../../decisions.md`](../../decisions.md) — ADR-075.
+      - [`../../decisions.md`](../../decisions.md) — ADR-076.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
