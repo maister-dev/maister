@@ -12,7 +12,7 @@ only `user`/`system` actors — `agent` is schema-supported for the later
 platform-agents stages and never written today. Task numbering, typed
 relations, and the `"blocked"` launchability gate are documented in
 [`tasks.md`](tasks.md); this file owns the comment/activity/subscription/
-inbox substrate. (Designed)
+inbox substrate. (Implemented)
 
 ## Domain entities
 
@@ -48,7 +48,7 @@ Comments and activity events are append-only and immutable in Stage 1 —
 their only lifecycle is FK cascade on task/project deletion. The stateful
 pieces are the inbox item read marker and the per-task subscriber set.
 
-Inbox item lifecycle (Designed):
+Inbox item lifecycle (Implemented):
 
 ```mermaid
 stateDiagram-v2
@@ -59,7 +59,7 @@ stateDiagram-v2
     Read --> [*]: task or project deleted (FK cascade)
 ```
 
-Subscription lifecycle (Designed) — one row per `(task, subscriber pair)`,
+Subscription lifecycle (Implemented) — one row per `(task, subscriber pair)`,
 first reason wins:
 
 ```mermaid
@@ -72,7 +72,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### Comment pipeline (Designed)
+### Comment pipeline (Implemented)
 
 One `db.transaction` covers all five steps; no external side-effect runs
 inside it (no supervisor call, no filesystem write).
@@ -100,7 +100,7 @@ sequenceDiagram
     R-->>U: 201 { comment }
 ```
 
-### Mention expansion (Designed)
+### Mention expansion (Implemented)
 
 Mentions expand at write time; the expanded body is what `task_comments.body`
 stores. Rendering never re-resolves (single render path, immutable history;
@@ -123,7 +123,7 @@ to the task page]
     Join --> Store[Store expanded body in task_comments]
 ```
 
-### Inbox fanout (Designed)
+### Inbox fanout (Implemented)
 
 Fanout runs inside the same transaction as the triggering write, as one
 batch `INSERT … SELECT` per target task. Stage-1 triggers: `comment_added`
@@ -143,7 +143,7 @@ recipient pair, event kind, source_ref]
     Ins --> Badge[Unread count feeds Needs you badge]
 ```
 
-### Reading the inbox (Designed)
+### Reading the inbox (Implemented)
 
 `GET` surfaces (portfolio panel + board section) list items for the session
 user. `PATCH /api/inbox/[itemId]/read` and `POST /api/inbox/read-all`
@@ -157,38 +157,38 @@ project-scoped). See [`hitl.md`](hitl.md) for the HITL half.
 - Every `task_activity` row MUST be written by the domain layer
   (`recordTaskActivity` from `web/lib/social/*` or a named service
   write-site) inside the same transaction as its triggering domain write;
-  route handlers MUST NOT insert activity directly. (Designed)
+  route handlers MUST NOT insert activity directly. (Implemented)
 - `task_activity.event_kind` MUST be one of `task_created | comment_added |
   task_mentioned | relation_added | relation_removed | run_launched`;
   `run_finished` joins only when a `setRunStatus` choke point exists
-  (Phase 2). (Designed)
+  (Phase 2). (Implemented)
 - Every social-table row MUST satisfy `actor_type ∈ {user, agent, system}`
   and `(actor_type = 'system') = (actor_id IS NULL)`; Stage 1 MUST NOT
-  write `actor_type = 'agent'` or `recipient_type = 'agent'` rows. (Designed)
+  write `actor_type = 'agent'` or `recipient_type = 'agent'` rows. (Implemented)
 - `addTaskComment` MUST run resolution, comment insert, activity writes,
   subscription upserts, and inbox fanout in exactly ONE `db.transaction`,
-  with no external side-effect inside it. (Designed)
+  with no external side-effect inside it. (Implemented)
 - Comment bodies MUST be stored with mentions already expanded; renderers
-  MUST NOT re-resolve `KEY-N` tokens at read time. (Designed)
+  MUST NOT re-resolve `KEY-N` tokens at read time. (Implemented)
 - Mention candidates inside fenced code blocks, inline code spans, and
   existing markdown links MUST NOT be expanded; unresolved candidates MUST
-  stay literal text. (Designed)
+  stay literal text. (Implemented)
 - Subscription writes MUST be `ON CONFLICT DO NOTHING` against
   `UNIQUE(task_id, subscriber_type, subscriber_id)` — the first reason
-  wins and is never overwritten. (Designed)
+  wins and is never overwritten. (Implemented)
 - Inbox fanout MUST exclude the acting pair and MUST fire only for
-  `comment_added` and `task_mentioned` in Stage 1. (Designed)
+  `comment_added` and `task_mentioned` in Stage 1. (Implemented)
 - Inbox read mutations MUST be recipient-owned: a session user can mark
-  only their own items; foreign `itemId`s answer 404. (Designed)
+  only their own items; foreign `itemId`s answer 404. (Implemented)
 - The "Needs you (N)" badge MUST equal pending HITL + unread inbox in both
-  the portfolio (cross-project) and project board scopes. (Designed)
+  the portfolio (cross-project) and project board scopes. (Implemented)
 - Comment markdown MUST render through the shared remark-only wrapper
   (no `rehype-raw`): raw HTML in a body renders as text, never as markup.
-  (Designed)
+  (Implemented)
 - Ext comment routes MUST reuse `addTaskComment`/`listTaskComments` and
   write a `token_audit_log` row in-tx; user-owned tokens act as
   `('user', ownerUserId)`, ownerless tokens as `('system', NULL)` with
-  `{via: 'ext', tokenId}` in the activity payload. (Designed)
+  `{via: 'ext', tokenId}` in the activity payload. (Implemented)
 
 ## Edge cases
 
@@ -224,6 +224,6 @@ project-scoped). See [`hitl.md`](hitl.md) for the HITL half.
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) and
   [`../db/erd.md`](../db/erd.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
-- Source (Designed): `web/lib/social/*`, `web/lib/queries/inbox.ts`,
+- Source (Implemented): `web/lib/social/*`, `web/lib/queries/inbox.ts`,
   `web/lib/queries/activity.ts`, `web/app/api/projects/[slug]/tasks/[number]/*`,
   `web/app/api/inbox/*`.

@@ -12,8 +12,8 @@ const labels = {
   system: "system",
   event: {
     task_created: "created this task",
-    run_launched: "launched run attempt {attempt}",
-    relation_added: "added a relation to {ref}",
+    run_launched: "launched run attempt %attempt%",
+    relation_added: "added a relation to %ref%",
   },
 };
 

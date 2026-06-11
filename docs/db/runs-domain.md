@@ -46,7 +46,7 @@ erDiagram
     TASKS {
         text id PK
         text project_id FK
-        integer number "ADR-075 Designed: per-project, UNIQUE (project_id, number)"
+        integer number "ADR-075 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
         text flow_id FK
@@ -310,7 +310,7 @@ erDiagram
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
-> **(ADR-075 — Designed, migration `0040`.)** `TASKS` gains `number`
+> **(ADR-075 — Implemented, migration `0040`.)** `TASKS` gains `number`
 > (per-project, backfilled by `(created_at, id)` order); the five social
 > tables carry the polymorphic actor pair (`actor_type CHECK IN
 > ('user','agent','system')`, `(actor_type = 'system') = (actor_id IS NULL)`,
@@ -360,21 +360,21 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - **(M11a)** `gate_results_run_idx` on `(run_id)` and
   `gate_results_node_attempt_idx` on `(node_attempt_id)` — per-run and
   per-node-attempt gate lookups.
-- **(ADR-075, Designed)** `tasks_project_number_uq` on `(project_id,
+- **(ADR-075, Implemented)** `tasks_project_number_uq` on `(project_id,
   number)` UNIQUE — numbering backstop; allocation itself is serialized by
   the `projects.next_task_number` row lock.
-- **(ADR-075, Designed)** `task_relations_from_kind_to_uq` on
+- **(ADR-075, Implemented)** `task_relations_from_kind_to_uq` on
   `(from_task_id, kind, to_task_id)` UNIQUE + CHECK `from_task_id <>
   to_task_id`; `task_relations_to_task_idx` on `(to_task_id)` for inverse
   lookups.
-- **(ADR-075, Designed)** `task_comments_task_created_idx` on
+- **(ADR-075, Implemented)** `task_comments_task_created_idx` on
   `(task_id, created_at)`; `task_activity_task_created_idx` on
   `(task_id, created_at)` + `task_activity_project_created_idx` on
   `(project_id, created_at)`.
-- **(ADR-075, Designed)** `task_subscribers_task_pair_uq` on
+- **(ADR-075, Implemented)** `task_subscribers_task_pair_uq` on
   `(task_id, subscriber_type, subscriber_id)` UNIQUE — first subscription
   reason wins.
-- **(ADR-075, Designed)** `inbox_items_recipient_idx` on
+- **(ADR-075, Implemented)** `inbox_items_recipient_idx` on
   `(recipient_type, recipient_id, read_at, created_at DESC)` — unread badge
   and inbox panel.
 

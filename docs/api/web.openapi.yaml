@@ -821,7 +821,7 @@ paths:
       responses:
         "201":
           description: |
-            Task created in `Backlog`. (ADR-075, Designed) `number` and
+            Task created in `Backlog`. (ADR-075, Implemented) `number` and
             `taskKey` are returned additively — the task's `KEY-N` identity.
           content:
             application/json:
@@ -835,11 +835,11 @@ paths:
                   number:
                     type: integer
                     minimum: 1
-                    description: (ADR-075, Designed) Per-project task number.
+                    description: (ADR-075, Implemented) Per-project task number.
                   taskKey:
                     type: string
                     pattern: "^[A-Z][A-Z0-9]{1,9}$"
-                    description: (ADR-075, Designed) The project's task key.
+                    description: (ADR-075, Implemented) The project's task key.
         "401":
           description: No valid session (`UNAUTHENTICATED`).
           content:
@@ -868,7 +868,7 @@ paths:
   /api/projects/{slug}/tasks/{number}/comments:
     get:
       tags: [social-board]
-      summary: (ADR-075, Designed) List comments on a task
+      summary: (ADR-075, Implemented) List comments on a task
       description: |
         Requires project membership at `viewer` or above
         (`requireProjectAction("readBoard")`). The project is resolved from
@@ -918,7 +918,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     post:
       tags: [social-board]
-      summary: (ADR-075, Designed) Add a comment to a task
+      summary: (ADR-075, Implemented) Add a comment to a task
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("commentTask")`). The project is resolved
@@ -978,7 +978,7 @@ paths:
   /api/projects/{slug}/tasks/{number}/relations:
     post:
       tags: [social-board]
-      summary: (ADR-075, Designed) Add a typed relation from this task
+      summary: (ADR-075, Implemented) Add a typed relation from this task
       description: |
         Requires `requireProjectAction("manageTaskRelations")` (`member`).
         Creates the canonical one-direction relation
@@ -1041,7 +1041,7 @@ paths:
             this project.
     delete:
       tags: [social-board]
-      summary: (ADR-075, Designed) Remove a typed relation from this task
+      summary: (ADR-075, Implemented) Remove a typed relation from this task
       description: |
         Requires `requireProjectAction("manageTaskRelations")` (`member`).
         Deletes the canonical row `(from = task {number}, kind,
@@ -1085,7 +1085,7 @@ paths:
   /api/projects/{slug}/tasks/{number}/subscription:
     post:
       tags: [social-board]
-      summary: (ADR-075, Designed) Follow a task (manual subscription)
+      summary: (ADR-075, Implemented) Follow a task (manual subscription)
       description: |
         Requires project membership at `viewer` or above
         (`requireProjectAction("readBoard")`). Subscribes the SESSION USER
@@ -1122,7 +1122,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     delete:
       tags: [social-board]
-      summary: (ADR-075, Designed) Unfollow a task
+      summary: (ADR-075, Implemented) Unfollow a task
       description: |
         Requires project membership at `viewer` or above. Removes the
         SESSION USER's subscription regardless of reason. Idempotent.
@@ -1157,7 +1157,7 @@ paths:
   /api/inbox/{itemId}/read:
     patch:
       tags: [social-board]
-      summary: (ADR-075, Designed) Mark an inbox item read
+      summary: (ADR-075, Implemented) Mark an inbox item read
       description: |
         Session-auth. Sets `read_at` on the addressed `inbox_items` row ONLY
         when its recipient pair equals `('user', session user id)`
@@ -1191,7 +1191,7 @@ paths:
   /api/inbox/read-all:
     post:
       tags: [social-board]
-      summary: (ADR-075, Designed) Mark all of the caller's inbox items read
+      summary: (ADR-075, Implemented) Mark all of the caller's inbox items read
       description: |
         Session-auth. Sets `read_at` on every unread `inbox_items` row whose
         recipient pair equals `('user', session user id)`. Scope is the
@@ -7131,7 +7131,7 @@ components:
           type: string
           pattern: "^[A-Z][A-Z0-9]{1,9}$"
           description: |
-            (ADR-075, Designed) Optional explicit task key for `KEY-N` task
+            (ADR-075, Implemented) Optional explicit task key for `KEY-N` task
             identities. Body-controlled but regex allow-listed and checked
             against the platform-wide UNIQUE — a collision (with an explicit
             OR derived key) refuses registration with `CONFLICT` (409).
@@ -7177,7 +7177,7 @@ components:
     TaskCommentDTO:
       type: object
       description: |
-        (ADR-075, Designed) Comment projection. `body` is markdown with
+        (ADR-075, Implemented) Comment projection. `body` is markdown with
         `KEY-N` mentions already expanded at write time. The actor is the
         polymorphic pair plus a render label resolved at read time
         ("former user" fallback for dangling ids; system actors label
@@ -7195,7 +7195,7 @@ components:
     SocialActor:
       type: object
       description: |
-        (ADR-075, Designed) Polymorphic actor pair projection. `id` is null
+        (ADR-075, Implemented) Polymorphic actor pair projection. `id` is null
         exactly when `type` is `system`. Stage 1 never emits `agent`.
       required: [type, id, label]
       properties:

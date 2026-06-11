@@ -32,18 +32,18 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `runs.attempt_number` with a real UNIQUE `(task_id, attempt_number)`
   so every run row is immutably tagged and duplicates are rejected at
   the DB.
-- **Task key** (Designed, ADR-075) — `projects.task_key`: platform-wide
+- **Task key** (Implemented, ADR-075) — `projects.task_key`: platform-wide
   unique, matches `^[A-Z][A-Z0-9]{1,9}$`, set at registration (optional
   explicit `taskKey` or derived from the project name; collision →
   `CONFLICT`), immutable in Stage 1 (comment bodies store expanded `KEY-N`
   links). Migration backfill auto-uniquifies deterministically.
-- **Task number** (Designed, ADR-075) — `tasks.number`: per-project
+- **Task number** (Implemented, ADR-075) — `tasks.number`: per-project
   monotonic integer allocated from `projects.next_task_number` inside the
   `createTask` transaction (`UPDATE … RETURNING`; the projects-row lock
   serializes concurrent creates), backstopped by
   `UNIQUE(project_id, number)`. Numbers are never reused — deletion leaves
   a hole. `KEY-N` = `task_key` + `-` + `number`.
-- **Relation** (Designed, ADR-075) — `task_relations` row: canonical
+- **Relation** (Implemented, ADR-075) — `task_relations` row: canonical
   one-direction `(from_task_id, kind, to_task_id)` with
   `kind ∈ {blocks, depends_on, parent_of}`,
   `UNIQUE(from_task_id, kind, to_task_id)`, no self-relations,
@@ -174,7 +174,7 @@ flowchart LR
     UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
 
-### Relations gate launching (Designed, ADR-075)
+### Relations gate launching (Implemented, ADR-075)
 
 `classifyTaskLaunchability` gains optional relation context and a
 `"blocked"` classification with precedence
@@ -263,16 +263,16 @@ flowchart TD
 - **(M16 — Implemented)** The thin MCP facade can create/list/get/update tasks only
   through the same domain path as the API; it cannot bypass token scopes,
   assignment rules, or run launch preconditions.
-- **(Designed, ADR-075)** `tasks.number` MUST be unique per project
+- **(Implemented, ADR-075)** `tasks.number` MUST be unique per project
   (`UNIQUE(project_id, number)`), allocated only inside the `createTask`
   transaction, and never reused; `projects.task_key` MUST be platform-wide
   unique and immutable in Stage 1.
-- **(Designed, ADR-075)** A task with an open relation blocker
+- **(Implemented, ADR-075)** A task with an open relation blocker
   (`X blocks T` or `T depends_on Y`, counterpart ∈ {`Backlog`, `InFlight`})
   MUST be refused launch as `"blocked"` at EVERY entry point — internal
   `POST /api/runs`, ext `POST /api/v1/ext/runs`, and the schedules
   dispatcher — via the shared classifier, never via UI-only logic.
-- **(Designed, ADR-075)** Relations MUST be same-project in Stage 1
+- **(Implemented, ADR-075)** Relations MUST be same-project in Stage 1
   (`MaisterError("CONFIG")` otherwise) and duplicate relation writes MUST
   be idempotent no-ops.
 - Launch runs precondition checks (clean repo, branch free, worktree
@@ -302,13 +302,13 @@ flowchart TD
 /sessions/<id>`, then mark worktree stale, then `tasks.status =
 Abandoned`. Failure to terminate the session does NOT block the task
 transition (the run reconciles to `Crashed` on next heartbeat tick).
-- **(Designed, ADR-075) Mutual block (`A blocks B` + `B blocks A`)** —
+- **(Implemented, ADR-075) Mutual block (`A blocks B` + `B blocks A`)** —
   both tasks classify `blocked` until one relation is removed; the UI
   renders blockers as removable chips, so the state is always recoverable.
   No cycle detection in Stage 1.
-- **(Designed, ADR-075) Cross-project or self relation** →
+- **(Implemented, ADR-075) Cross-project or self relation** →
   `MaisterError("CONFIG")` (400).
-- **(Designed, ADR-075) Hole-y numbering** — deleting a task leaves a
+- **(Implemented, ADR-075) Hole-y numbering** — deleting a task leaves a
   permanent gap in `KEY-N`; `next_task_number` never decrements. Not an
   error.
 

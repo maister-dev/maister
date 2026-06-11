@@ -656,13 +656,13 @@ queries.
 User-owned external tokens set it to the token owner's `users.id` when creating
 tasks through `/api/v1/ext/projects/{slug}/tasks`.
 
-`number` (ADR-075, Designed) is allocated inside the `createTask` transaction
+`number` (ADR-075, Implemented) is allocated inside the `createTask` transaction
 from `projects.next_task_number` (`UPDATE … RETURNING`; the projects-row lock
 serializes concurrent creates) and never reused — deletion leaves a hole.
 Migration `0040` backfills existing tasks per project ordered by
 `(created_at, id)`.
 
-## Social board tables (Designed — ADR-075, migration `0040`)
+## Social board tables (Implemented — ADR-075, migration `0040`)
 
 Five tables for the Stage-1 social substrate. All four actor-carrying tables
 share the polymorphic actor pair: `actor_type CHECK IN
@@ -1940,14 +1940,14 @@ Created via Drizzle:
 | `assignments`         | `assignments_hitl_request_idx`          | `(hitlRequestId)`                 | HITL assignment lookup                                             |
 | `assignment_events`   | `assignment_events_assignment_idx`      | `(assignmentId)`                  | Assignment event history                                           |
 | `assignment_events`   | `assignment_events_project_created_idx` | `(projectId, createdAt)`          | Project audit stream                                               |
-| `tasks`               | `tasks_project_number_uq`               | `(projectId, number)` UNIQUE      | **(ADR-075, Designed)** Per-project task numbering backstop        |
-| `task_relations`      | `task_relations_from_kind_to_uq`        | `(fromTaskId, kind, toTaskId)` UNIQUE | **(ADR-075, Designed)** Canonical relation rows, no duplicates |
-| `task_relations`      | `task_relations_to_task_idx`            | `(toTaskId)`                      | **(ADR-075, Designed)** Inverse-direction lookups                  |
-| `task_comments`       | `task_comments_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Designed)** Task timeline listing                      |
-| `task_activity`       | `task_activity_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Designed)** Task timeline interleave                   |
-| `task_activity`       | `task_activity_project_created_idx`     | `(projectId, createdAt)`          | **(ADR-075, Designed)** Project Log page stream                    |
-| `task_subscribers`    | `task_subscribers_task_pair_uq`         | `(taskId, subscriberType, subscriberId)` UNIQUE | **(ADR-075, Designed)** One subscription per pair    |
-| `inbox_items`         | `inbox_items_recipient_idx`             | `(recipientType, recipientId, readAt, createdAt DESC)` | **(ADR-075, Designed)** Unread badge + inbox panel |
+| `tasks`               | `tasks_project_number_uq`               | `(projectId, number)` UNIQUE      | **(ADR-075, Implemented)** Per-project task numbering backstop        |
+| `task_relations`      | `task_relations_from_kind_to_uq`        | `(fromTaskId, kind, toTaskId)` UNIQUE | **(ADR-075, Implemented)** Canonical relation rows, no duplicates |
+| `task_relations`      | `task_relations_to_task_idx`            | `(toTaskId)`                      | **(ADR-075, Implemented)** Inverse-direction lookups                  |
+| `task_comments`       | `task_comments_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Implemented)** Task timeline listing                      |
+| `task_activity`       | `task_activity_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Implemented)** Task timeline interleave                   |
+| `task_activity`       | `task_activity_project_created_idx`     | `(projectId, createdAt)`          | **(ADR-075, Implemented)** Project Log page stream                    |
+| `task_subscribers`    | `task_subscribers_task_pair_uq`         | `(taskId, subscriberType, subscriberId)` UNIQUE | **(ADR-075, Implemented)** One subscription per pair    |
+| `inbox_items`         | `inbox_items_recipient_idx`             | `(recipientType, recipientId, readAt, createdAt DESC)` | **(ADR-075, Implemented)** Unread badge + inbox panel |
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |

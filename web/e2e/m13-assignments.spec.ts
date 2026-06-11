@@ -113,8 +113,12 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
       ],
     );
     await pool.query(
-      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
-       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
+      `WITH alloc AS (
+         UPDATE projects SET next_task_number = next_task_number + 1
+         WHERE id = $2 RETURNING next_task_number - 1 AS n
+       )
+       INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+       SELECT $1, $2, alloc.n, $3, $4, $5, 'InFlight', 'Backlog' FROM alloc`,
       [
         ids.task,
         ids.project,

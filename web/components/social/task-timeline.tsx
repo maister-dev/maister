@@ -38,7 +38,7 @@ function activityText(
       ? String(payload.attemptNumber)
       : "";
 
-  return template.replace("{ref}", ref).replace("{attempt}", attempt);
+  return template.replace("%ref%", ref).replace("%attempt%", attempt);
 }
 
 function timestamp(at: Date): ReactElement {

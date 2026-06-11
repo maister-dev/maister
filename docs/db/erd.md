@@ -192,8 +192,8 @@ erDiagram
         text maister_yaml_path
         text default_runner_id "platform runner override"
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
-        text task_key UK "ADR-075 Designed: platform-wide unique, immutable Stage 1"
-        integer next_task_number "ADR-075 Designed: allocation counter, DEFAULT 1"
+        text task_key UK "ADR-075 Implemented: platform-wide unique, immutable Stage 1"
+        integer next_task_number "ADR-075 Implemented: allocation counter, DEFAULT 1"
         timestamp created_at
         timestamp archived_at
     }
@@ -469,7 +469,7 @@ erDiagram
     TASKS {
         text id PK
         text project_id FK
-        integer number "ADR-075 Designed: per-project, UNIQUE (project_id, number)"
+        integer number "ADR-075 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
         text flow_id FK

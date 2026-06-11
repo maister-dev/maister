@@ -418,10 +418,10 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
 
 ### Phase 6 — e2e + gate + docs flip
 
-- [ ] **T6.1 e2e spec `web/e2e/social-board.spec.ts`** (authed project; extend `e2e/_seed/seed-e2e.ts` with a second seeded task to mention, via the raw-SQL insert helpers + numbering from T2.4 — beware the known seed gotchas fixed only on the unmerged acp-model-discovery branch: `default_runner_id` clobber at seed-e2e.ts:1536 and `getByLabel('Project')` collision — do not depend on those fixes). Flow: open `/projects/<slug>/tasks/<n>` → post comment containing `KEY-M` of the second task → timeline shows the comment with an expanded link + `comment_added` activity row → board card shows `KEY-N` chip. Kill ports 3100/7788 first; never `test:e2e -- --last-failed`.
-- [ ] **T6.2 Full gate.** `tsc --noEmit`; check-only `pnpm --filter maister-web exec eslint .`; `test:unit`; `test:integration`; `test:e2e` (compare against T0.2 baseline — only pre-existing reds tolerated, list them); `i18n-parity`; ADR anchor validation script. Record results in `## Progress`.
-- [ ] **T6.3 Docs finalization.** Flip `(Designed)` → `(Implemented)` tags in social-board.md / tasks.md / external-operations.md; add M31 entry to `.ai-factory/ROADMAP.md` with as-built note; add "Built since baseline" line to root `CLAUDE.md`; reconcile any drift between specs and as-built (specs win or get fixed — no silent skew).
-- [ ] **T6.4 Mandatory docs checkpoint** (Settings: Docs=yes): run `/aif-docs` for narrative docs (configuration/getting-started untouched expected — confirm no env/script changes leaked in).
+- [x] **T6.1 e2e spec `web/e2e/social-board.spec.ts`** (authed project; extend `e2e/_seed/seed-e2e.ts` with a second seeded task to mention, via the raw-SQL insert helpers + numbering from T2.4 — beware the known seed gotchas fixed only on the unmerged acp-model-discovery branch: `default_runner_id` clobber at seed-e2e.ts:1536 and `getByLabel('Project')` collision — do not depend on those fixes). Flow: open `/projects/<slug>/tasks/<n>` → post comment containing `KEY-M` of the second task → timeline shows the comment with an expanded link + `comment_added` activity row → board card shows `KEY-N` chip. Kill ports 3100/7788 first; never `test:e2e -- --last-failed`.
+- [x] **T6.2 Full gate.** `tsc --noEmit`; check-only `pnpm --filter maister-web exec eslint .`; `test:unit`; `test:integration`; `test:e2e` (compare against T0.2 baseline — only pre-existing reds tolerated, list them); `i18n-parity`; ADR anchor validation script. Record results in `## Progress`.
+- [x] **T6.3 Docs finalization.** Flip `(Designed)` → `(Implemented)` tags in social-board.md / tasks.md / external-operations.md; add M31 entry to `.ai-factory/ROADMAP.md` with as-built note; add "Built since baseline" line to root `CLAUDE.md`; reconcile any drift between specs and as-built (specs win or get fixed — no silent skew).
+- [x] **T6.4 Mandatory docs checkpoint** (Settings: Docs=yes): run `/aif-docs` for narrative docs (configuration/getting-started untouched expected — confirm no env/script changes leaked in).
 
 **Commit C6** — `test(e2e)+docs: social-board happy path, gate results, status flips, roadmap M31`
 
@@ -513,6 +513,42 @@ No renumbering performed.
   task-key tests); integration 125 files / 959 tests green (incl. 11 new
   migration tests); fresh `maister_e2e` reset+migrate+seed green (25/25
   tasks numbered, 20/20 distinct keys).
+
+### Phase 6 — Final gate results (2026-06-11)
+
+- `tsc --noEmit`: **0 errors** (web + mcp).
+- check-only `eslint .`: **0 errors** (1675 pre-existing repo-wide warnings;
+  touched files contribute none — the single warning in the touched set,
+  `board.ts` unused `artifactInstances`, predates this branch).
+- `test:unit`: **278 files / 3147 tests green** (incl. i18n parity).
+- `test:integration`: **130 files / 1007 tests green** (three full runs; two
+  interim one-off infra flakes — a testcontainers port-binding race and a
+  fake-ACP stdout timing miss — each file green in isolation and in the
+  final run).
+- `test:e2e` (clean run, playwright-owned server): **63 passed / 11 failed /
+  1 skipped — ZERO new reds**; the 11 are a strict subset of the 13-red
+  T0.2 baseline (m17-hitl:199 and m18:97 even passed this run; the m18 file
+  flips between :49/:97 across runs — same-file shared-fixture flake family,
+  red at baseline too). `social-board.spec.ts` green.
+- Docs: mermaid 176/176, ADR anchors 360/360 across the whole tree; both
+  OpenAPI files lint valid (pre-existing warnings only).
+- Grep-proofs: `task_activity` inserted ONLY via `lib/social/activity.ts`;
+  no `fs.watch`/`chokidar`/`setInterval` introduced; `comments:*` scopes
+  wired through types + token UI + ext route; no `acp_session_id` in any
+  social DTO.
+- e2e hardening found and fixed two REAL bugs this phase: (1) raw-SQL seeded
+  tasks left `projects.next_task_number` stale → first runtime `createTask`
+  collided (fixed by a global counter reconcile at seed end); (2) two specs'
+  runtime raw task inserts used `MAX(number)+1`, racing the app allocator in
+  parallel runs (fixed by allocating through the counter with a CTE).
+- i18n gotcha fixed: `{ref}`-style placeholders in messages are ICU
+  arguments to next-intl — switched the timeline event templates to `%ref%`
+  with component-side substitution.
+- T6.4 docs checkpoint: configuration.md / getting-started.md untouched
+  (verified zero env/dep/script changes); system-analytics README +
+  docs/CLAUDE.md glossaries gained the social-board rows; all (Designed)
+  ADR-075 tags flipped to (Implemented); ROADMAP M31 added (milestone +
+  Completed row); root CLAUDE.md "Built since baseline" entry added.
 
 ## 6. Unresolved questions
 

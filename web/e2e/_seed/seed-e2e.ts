@@ -4951,6 +4951,22 @@ async function main(): Promise<void> {
       },
       hitl: true,
     });
+
+    // ADR-075 social-board e2e fixture: a deterministic task key on the board
+    // project (random elsewhere) plus a SECOND task to mention as EAB-2 from
+    // a comment on EAB-1 (social-board.spec.ts).
+    await pool.query(
+      `UPDATE projects SET task_key = 'EAB' WHERE slug = $1`,
+      [BOARD_SLUG],
+    );
+    await pool.query(
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+       SELECT $1, p.id, 42,
+              'Social mention target', 'Referenced from EAB-1 comments.', f.id, 'Backlog', 'Backlog'
+       FROM projects p JOIN flows f ON f.project_id = p.id
+       WHERE p.slug = $2`,
+      [randomUUID(), BOARD_SLUG],
+    );
     const scratch = await seedLaunchableProjectFixture(pool, {
       slug: SCRATCH_SLUG,
       projectName: "E2E Acceptance Scratch",
@@ -5042,6 +5058,17 @@ async function main(): Promise<void> {
       },
     };
     const outDir = path.resolve("e2e/.auth");
+
+    // ADR-075 D1: raw-SQL task fixtures above do not advance the per-project
+    // allocation counter — reconcile every project so runtime createTask
+    // never collides with a seeded number.
+    await pool.query(
+      `UPDATE projects p
+       SET next_task_number = GREATEST(
+         p.next_task_number,
+         COALESCE((SELECT MAX(t.number) + 1 FROM tasks t WHERE t.project_id = p.id), 1)
+       )`,
+    );
 
     mkdirSync(outDir, { recursive: true });
     writeFileSync(

@@ -1781,10 +1781,10 @@
     "systemActor": "system",
     "event": {
       "taskCreated": "created this task",
-      "taskMentioned": "mentioned this task in a comment on {ref}",
-      "relationAdded": "added a relation to {ref}",
-      "relationRemoved": "removed a relation to {ref}",
-      "runLaunched": "launched run attempt {attempt}"
+      "taskMentioned": "mentioned this task in a comment on %ref%",
+      "relationAdded": "added a relation to %ref%",
+      "relationRemoved": "removed a relation to %ref%",
+      "runLaunched": "launched run attempt %attempt%"
     },
     "composerPlaceholder": "Write a comment… KEY-N references become links.",
     "composerSubmit": "Comment",

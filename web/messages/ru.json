@@ -1781,10 +1781,10 @@
     "systemActor": "система",
     "event": {
       "taskCreated": "создал(а) задачу",
-      "taskMentioned": "упомянул(а) задачу в комментарии к {ref}",
-      "relationAdded": "добавил(а) связь с {ref}",
-      "relationRemoved": "удалил(а) связь с {ref}",
-      "runLaunched": "запустил(а) попытку {attempt}"
+      "taskMentioned": "упомянул(а) задачу в комментарии к %ref%",
+      "relationAdded": "добавил(а) связь с %ref%",
+      "relationRemoved": "удалил(а) связь с %ref%",
+      "runLaunched": "запустил(а) попытку %attempt%"
     },
     "composerPlaceholder": "Напишите комментарий… ссылки KEY-N станут кликабельными.",
     "composerSubmit": "Комментировать",

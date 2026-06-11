@@ -51,7 +51,7 @@ tags:
       `human`-kind request (D7).
   - name: comments
     description: |
-      (ADR-075, Designed) Task comment list + create via token auth. The
+      (ADR-075, Implemented) Task comment list + create via token auth. The
       routes enforce `comments:read` / `comments:create` or `*` and call the
       SAME `addTaskComment` / `listTaskComments` domain functions as the
       session-auth routes — no parallel write path.
@@ -239,7 +239,7 @@ paths:
   /api/v1/ext/projects/{slug}/tasks/{taskId}/comments:
     get:
       tags: [comments]
-      summary: (ADR-075, Designed) List comments on a task
+      summary: (ADR-075, Implemented) List comments on a task
       description: |
         Scope `comments:read`. Returns comments for the task identified by
         `taskId` on the project identified by `slug`, ascending by
@@ -297,7 +297,7 @@ paths:
 
     post:
       tags: [comments]
-      summary: (ADR-075, Designed) Add a comment to a task
+      summary: (ADR-075, Implemented) Add a comment to a task
       description: |
         Scope `comments:create`. Adds a markdown comment through the SAME
         `addTaskComment` domain pipeline as the session-auth route (ONE
@@ -799,7 +799,7 @@ components:
     CommentDTO:
       type: object
       description: |
-        (ADR-075, Designed) Comment projection. `body` is markdown with
+        (ADR-075, Implemented) Comment projection. `body` is markdown with
         mentions already expanded. The actor pair is `('user', id)` for
         user-owned tokens / session users, `('system', null)` for ownerless
         project tokens; `label` is resolved at read time.
@@ -846,14 +846,14 @@ components:
           type: integer
           minimum: 1
           description: |
-            (ADR-075, Designed) Per-project task number; `KEY-N` =
+            (ADR-075, Implemented) Per-project task number; `KEY-N` =
             `taskKey` + `-` + `number`. Additive — present once migration
             `0040` lands (backfill makes it NOT NULL).
         taskKey:
           type: string
           pattern: "^[A-Z][A-Z0-9]{1,9}$"
           description: |
-            (ADR-075, Designed) The owning project's platform-unique task
+            (ADR-075, Implemented) The owning project's platform-unique task
             key. Additive alongside `number`.
         title:
           type: string
