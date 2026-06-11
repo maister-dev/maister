@@ -323,6 +323,13 @@
       "when": 1781180000001,
       "tag": "0045_mcp_supported_agents_mimo",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1781207814181,
+      "tag": "0045_domain_events",
+      "breakpoints": true
     }
   ]
 }

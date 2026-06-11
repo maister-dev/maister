@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
+  customType,
   index,
   integer,
   jsonb,
@@ -15,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
+import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 
 export const users = pgTable(
   "users",
@@ -2751,3 +2754,83 @@ export type TaskSubscriberRow = typeof taskSubscribers.$inferSelect;
 export type TaskSubscriberInsert = typeof taskSubscribers.$inferInsert;
 export type InboxItemRow = typeof inboxItems.$inferSelect;
 export type InboxItemInsert = typeof inboxItems.$inferInsert;
+
+// Domain-event outbox (ADR-085): append-only fact log + per-consumer cursor
+// rows — the shared trigger bus. Emission rides the domain write's transaction
+// (`emitDomainEvent`, CAS-winner path only). Dispatch reads are PK-range scans
+// gated by the xid8 commit horizon (`tx_id < pg_snapshot_xmin(...)`) so a
+// late-committing lower id is never skipped. No UPDATE/DELETE app paths; no
+// pruning in this stage (a future prune must honor min(cursor_event_id)).
+const xid8 = customType<{ data: string }>({
+  dataType() {
+    return "xid8";
+  },
+});
+
+export const domainEvents = pgTable(
+  "domain_events",
+  {
+    id: bigint("id", { mode: "number" })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    kind: text("kind", { enum: DOMAIN_EVENT_KINDS }).notNull(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "cascade",
+    }),
+    runId: text("run_id").references(() => runs.id, { onDelete: "cascade" }),
+    actorType: text("actor_type", { enum: ["user", "system", "agent"] }),
+    actorId: text("actor_id"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    txId: xid8("tx_id")
+      .notNull()
+      .default(sql`pg_current_xact_id()`),
+  },
+  (t) => ({
+    kindCheck: check(
+      "domain_events_kind_check",
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'gate.failed')`,
+    ),
+    actorTypeCheck: check(
+      "domain_events_actor_type_check",
+      sql`${t.actorType} in ('user', 'system', 'agent')`,
+    ),
+  }),
+);
+export type DomainEventRow = typeof domainEvents.$inferSelect;
+export type DomainEventInsert = typeof domainEvents.$inferInsert;
+
+export const domainEventConsumers = pgTable("domain_event_consumers", {
+  consumerId: text("consumer_id").primaryKey(),
+  cursorEventId: bigint("cursor_event_id", { mode: "number" })
+    .notNull()
+    .default(0),
+  leaseExpiresAt: timestamp("lease_expires_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  lastDispatchedAt: timestamp("last_dispatched_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  lastError: text("last_error"),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+export type DomainEventConsumerRow = typeof domainEventConsumers.$inferSelect;
+export type DomainEventConsumerInsert =
+  typeof domainEventConsumers.$inferInsert;
