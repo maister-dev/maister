@@ -193,7 +193,7 @@ defined as a string union in `web/lib/errors.ts`.
 > **M29 / model discovery + application adds NO new `MaisterError` or `SupervisorErrorCode`**
 > ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union;
 > [ADR-073](decisions.md#adr-073)). The model-catalog resolver and the configured-model
-> application reuse existing codes at new call sites (all Designed, M29). The governing
+> application reuse existing codes at new call sites (all Implemented, M29). The governing
 > rule is *a per-source discovery failure NEVER fails the whole resolve* — so source-level
 > problems are reported as a per-source `status` inside an HTTP **200**, not thrown.
 >

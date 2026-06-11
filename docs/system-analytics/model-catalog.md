@@ -26,37 +26,40 @@ cache; `platform_acp_runners.model` stays free text.
   `supervisor/src/types.ts`. Env-ref fields (`authTokenEnv`, `apiKeyEnv`) carry
   **bare** names (`^[A-Za-z_][A-Za-z0-9_]*$`); the supervisor rejects an
   `env:`-prefixed or raw-secret value. The web tier converts its stored `env:NAME`
-  refs to bare names via `envRefName()` before forwarding. (Designed)
+  refs to bare names via `envRefName()` before forwarding. (Implemented)
 - **`ModelSource`** — a pluggable resolver: `{ kind; supports(draft): boolean;
   resolve(draft, ctx): Promise<{ models: ModelEntry[]; status: SourceStatus }> }`.
   `SourceKind = "acp_probe" | "provider_api" | "curated" | "ccr" | "agent_observed"`.
   The registry (`registry.ts`) holds an ordered list; a new adapter/provider = a
-  new `ModelSource` module, resolver core untouched. (Designed)
+  new `ModelSource` module, resolver core untouched. Routing: a CCR-routed draft
+  (`router:"ccr"`) resolves ONLY via the `ccr` source — the direct-provider
+  sources (`acp_probe` / `curated` / `provider_api`) decline it, because a CCR
+  runner's model namespace is CCR's `provider,model` format, not direct ids. (Implemented)
 - **`ModelEntry`** — one discovered model: `{ id; displayName?; origins: SourceKind[] }`.
   `origins` accumulates every source that advertised the id (dedupe is by `id`,
-  first-source-wins on the entry body). (Designed)
+  first-source-wins on the entry body). (Implemented)
 - **`SourceStatus`** — per-source outcome: `{ kind: SourceKind; status: "ok" |
   "skipped" | "error"; reason?; count? }`. A failure of one source is reported here,
-  never raised. (Designed)
+  never raised. (Implemented)
 - **Cache entry** — `{ key; models; sources; resolvedAt; ttlSeconds }` keyed by a
   stable hash of `(adapter, provider.kind, base_url, sorted env-ref NAMES, router,
-  sidecarId)` — **names, never secret values**. (Designed)
+  sidecarId)` — **names, never secret values**. (Implemented)
 - **Suggestion DTO** — the web-facing, source-grouped shape the runner modal
   renders: `{ groups: [{ source; label; status; reason?; models: [{ id;
-  displayName? }] }]; resolvedAt; ttlSeconds }`. (Designed)
+  displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
 - **Application channel** — how the configured model is pinned: **claude** via the
   M14/ADR-043 `settings.local.json { model, availableModels }` materialization;
-  **codex** via ACP `unstable_setSessionModel`. (Designed)
+  **codex** via ACP `unstable_setSessionModel`. (Implemented)
 - **Model advisory** — a supervisor-synthesized `session.update` payload
   (`{ sessionUpdate: "model_advisory", configuredModel, observedModelId, channel }`)
-  emitted on a post-application mismatch; informational only. (Designed)
+  emitted on a post-application mismatch; informational only. (Implemented)
 
 ## State machine
 
 A **cache entry**'s lifecycle for one draft key. `resolving`/`refreshing` are
 transient (a resolve is in flight); `fresh` serves hits until TTL; a read past TTL
 finds the entry `stale` and re-resolves; `force:true` jumps a `fresh` entry
-straight to `refreshing`. (All Designed.)
+straight to `refreshing`. (All Implemented.)
 
 ```mermaid
 stateDiagram-v2
@@ -83,7 +86,7 @@ stateDiagram-v2
 The modal resolves on open and on a debounced change of adapter / provider kind /
 base URL / sidecar. The web proxy is admin-gated and converts `env:NAME` → bare
 names; the supervisor fans out across `supports()`-matching sources, merges, and
-caches. (Designed)
+caches. (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -120,7 +123,7 @@ sequenceDiagram
 
 The primary source. A throwaway `RunnerLaunch` is synthesized; the
 already-trusted adapter binary is spawned in an isolated tmp cwd, handshaked
-promptless (zero tokens), and torn down on **every** exit path. (Designed)
+promptless (zero tokens), and torn down on **every** exit path. (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -148,7 +151,7 @@ sequenceDiagram
 
 claude is pinned before the first turn through materialized settings; codex is
 pinned with a post-session ACP call on new and resumed sessions; a residual
-mismatch is advisory only. (Designed)
+mismatch is advisory only. (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -179,7 +182,7 @@ sequenceDiagram
 
 Every real `session/new` and `session/resume` already returns `models`; the
 supervisor feeds it into the same cache with `origin: "agent_observed"`. It never
-blocks or errors the live session. (Designed)
+blocks or errors the live session. (Implemented)
 
 ```mermaid
 sequenceDiagram
@@ -197,7 +200,10 @@ sequenceDiagram
 ## Expectations
 
 The steady-state acceptance contract. Each bullet is one testable invariant.
-(All **Designed** until Phase 5 flips them.)
+(All **Implemented** at M29. Discovery + application are CI-tested against
+mocks — mock ACP adapter, stubbed CCR, mocked provider fetch, stub-supervisor;
+live-provider / live-agent verification is pending, consistent with the ACP
+spike baseline.)
 
 - The supervisor resolve route MUST accept env-ref **names** only
   (`^[A-Za-z_][A-Za-z0-9_]*$`); an `env:`-prefixed or raw-secret value MUST be
@@ -280,10 +286,11 @@ The steady-state acceptance contract. Each bullet is one testable invariant.
   `EXECUTOR_UNAVAILABLE` / `PRECONDITION` / `ACP_PROTOCOL` (supervisor).
 - **Related domains:** [acp-runners.md](acp-runners.md) (runner CRUD),
   [executors.md](executors.md) (resolution + routing).
-- **Source (Designed):** `supervisor/src/model-catalog/{types,registry,resolve,cache}.ts`,
-  `supervisor/src/model-catalog/sources/{acp-probe,provider-api,ccr}.ts`,
-  `supervisor/src/{spawn,acp-client,http-api}.ts`,
+- **Source (Implemented):** `supervisor/src/model-catalog/{types,registry,resolve,cache,harvest}.ts`,
+  `supervisor/src/model-catalog/sources/{acp-probe,provider-api,curated,ccr,index}.ts`,
+  `supervisor/src/{spawn,acp-client,http-api,main}.ts`,
   `web/lib/capabilities/{agent-map,materialize}.ts`,
   `web/lib/supervisor-client.ts`,
   `web/app/api/admin/acp-runners/model-suggestions/route.ts`,
-  `web/components/settings/acp-runner-modal.tsx`.
+  `web/components/settings/{acp-runner-modal,model-autocomplete}.tsx` +
+  `web/components/settings/use-model-suggestions.ts`.

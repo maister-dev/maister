@@ -213,11 +213,14 @@ export function createProviderApiSource(opts?: {
 
   return {
     kind: "provider_api",
+    // Direct provider listing — declines CCR-routed drafts (a CCR runner's
+    // models come from the CCR proxy config, not a direct provider /v1/models).
     supports: (draft: ModelCatalogDraft) =>
-      draft.provider.kind === "anthropic" ||
-      draft.provider.kind === "openai" ||
-      draft.provider.kind === "openai_compatible" ||
-      draft.provider.kind === "anthropic_compatible",
+      draft.router !== "ccr" &&
+      (draft.provider.kind === "anthropic" ||
+        draft.provider.kind === "openai" ||
+        draft.provider.kind === "openai_compatible" ||
+        draft.provider.kind === "anthropic_compatible"),
     resolve: async (
       draft: ModelCatalogDraft,
       ctx: ResolveContext,

@@ -47,6 +47,17 @@
 >   missing/unset env-ref degrades to a per-source `status:"error"` (200), NOT a 422 (error-taxonomy +
 >   web openapi corrected to match the authoritative model-catalog.md). Gate: web tsc + scoped eslint
 >   clean, web tests 168, redocly + validate:docs green. Checkpoint #5.
+> - ✅ **Phase 5** — supervisor end-to-end resolve integration through the route w/ a REAL registry
+>   (T5.1; surfaced + fixed a real routing bug: curated/provider-api now decline CCR-routed drafts);
+>   application integration via the full POST /sessions→spawn→ACP path asserting the advisory in
+>   run.events.jsonl (T5.3); web e2e stub-supervisor handler + playwright spec (T5.2 — CI-ready,
+>   browser run deferred per the shared-infra memory note); R6 docs flip Designed→Implemented across
+>   model-catalog.md/architecture.md/supervisor.md/error-taxonomy.md (live-provider verification noted
+>   pending). Final sweep: supervisor unit 178 + integration 51, web 207, both tiers tsc + scoped
+>   eslint clean, validate:docs:all + both redocly + both asyncapi green, surgical-diff audit clean.
+>   Checkpoint #6.
+> - **DONE** — all phases complete. Branch `feature/acp-runner-model-discovery`, 6 checkpoints +
+>   the standalone run-schedules mermaid fix. Awaiting `/aif-verify` + merge.
 > - **Plan-vs-reality corrections found (branch == base `633f74c7`):** (a) the plan's
 >   "architecture.md has NO component table" note is **wrong** — the table exists at
 >   ~line 188; a row was added. (b) The T0B.3 advisory shape is **frozen** as a

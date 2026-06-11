@@ -343,7 +343,7 @@ responses are written by the web tier's
 `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
 its row-level claim succeeds.
 
-### `POST /model-catalog/resolve` *(Designed — ADR-076)*
+### `POST /model-catalog/resolve` *(Implemented — ADR-076)*
 
 Model-discovery resolver. The body is a runner **draft**
 (`{ adapter, provider, router?, sidecarId?, force? }`). The supervisor fans the

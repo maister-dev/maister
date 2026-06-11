@@ -70,6 +70,29 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
+    if (req.method === "POST" && req.url === "/model-catalog/resolve") {
+      // ADR-073 model discovery (T5.2): return a fixed flat catalog the web
+      // admin proxy groups by source for the runner-modal combobox.
+      const body = JSON.stringify({
+        models: [
+          { id: "glm-5.1", displayName: "GLM-5.1", origins: ["acp_probe"] },
+          { id: "glm-5", displayName: "GLM-5", origins: ["curated"] },
+        ],
+        sources: [
+          { kind: "acp_probe", status: "ok", count: 1 },
+          { kind: "curated", status: "ok", count: 1 },
+        ],
+        resolvedAt: new Date().toISOString(),
+        ttlSeconds: 3600,
+      });
+
+      req.resume(); // drain the request body
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(body);
+
+      return;
+    }
+
     res.writeHead(404, { "content-type": "application/json" });
     res.end(
       JSON.stringify({ code: "PRECONDITION", message: "not implemented" }),
