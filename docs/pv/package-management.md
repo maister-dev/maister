@@ -199,11 +199,18 @@ All five flows:
   `rework.workspacePolicies: [keep, rewind-to-node-checkpoint]` — the
   reviewer chooses. `plan_review → plan` stays `[keep]`.
 - **File-edit gates (`must_touch`)** on the meta-flows whose write zones
-  are project-agnostic: `aif-evolve` and `aif-init` nodes must touch
+  are project-agnostic: `aif-evolve`/`aif-init` runs must touch
   `.ai-factory/**` or `.claude/**`; `aif-roadmap` must touch
-  `.ai-factory/**`. Each gated node gains a `diff` artifact in
-  `output.produces` + a blocking `artifact_required` gate carrying
-  `must_touch` globs. `aif-dev`/`aif-bugfix` keep their existing
+  `.ai-factory/**`. Mechanism (constrained by two engine facts discovered
+  during this design): `pre_finish` gates run BEFORE `output.produces`
+  recording, so a node cannot gate on its own produced artifact; and
+  mutation ranges are committed-only (`git diff base..head`), while AIF
+  defers all committing to the final `/aif-commit` node. Therefore the
+  gate lands on the **`commit` node** — a blocking `artifact_required`
+  gate with NO `inputArtifacts` (presence check passes vacuously),
+  `must_touch` globs, and a declared `mutation_report` output. The commit
+  node's node-range (its start HEAD → tip after `/aif-commit`) is exactly
+  the flow's full changeset. `aif-dev`/`aif-bugfix` keep their existing
   `impl-diff` gates (a generic package cannot know a host project's code
   layout, and `must_touch: ["**"]` is a tautology).
 - **`must_not_touch` is deliberately NOT in v2.0.0**: it resolves through
@@ -310,3 +317,10 @@ be planned cold; pointers: this doc, `docs/system-analytics/flow-packages.md`,
 - **GC**: package installs join the existing revision-GC story (M19
   preserve-then-prune); a `Removed` package revision sweeps only when no
   run pins it and no project attaches it.
+- **Engine feedback (found here, candidate later work)**: mutation
+  assertions are commit-range sensors and `pre_finish` gates run before
+  `produces` recording — together this forces commit-at-end flows to
+  carry mutation gates on the commit node and makes mid-flow `diff`
+  artifacts empty until something commits. Candidate engine work:
+  working-tree-aware mutation ranges and/or recording `produces` before
+  gate execution. Not in P0–P2 scope.
