@@ -16,9 +16,11 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await expect(
     page.getByRole("link", { name: "E2E Acceptance Board", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("things need your review")).toBeVisible();
+  // The home "needs review" strip was removed in the project-grouped
+  // active-workspaces redesign; home now exposes the seeded NeedsInput
+  // workspace as a run row inside the project group.
   await expect(
-    page.getByText("Acceptance review is waiting on you.").first(),
+    page.getByRole("link", { name: /acceptance-needs-input/ }).first(),
   ).toBeVisible();
 
   await page.goto(`/projects/${fx.projectSlug}`);
@@ -27,6 +29,11 @@ test("portfolio and project board expose seeded acceptance work", async ({
     page.getByRole("heading", { name: "E2E Acceptance Board" }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "HITL inbox" })).toBeVisible();
+  // The seeded HITL question surfaces in the board's inbox (the home strip
+  // that used to carry it is gone).
+  await expect(
+    page.getByText("Acceptance review is waiting on you.").first(),
+  ).toBeVisible();
   await expect(page.getByText("Acceptance backlog launch")).toBeVisible();
   await expect(page.locator("[data-board]")).toBeVisible();
   await expect(page.locator('[data-stage="backlog"]')).toContainText(
@@ -48,8 +55,10 @@ test("portfolio and project board expose seeded acceptance work", async ({
 
   await page.getByRole("tab", { name: /MCPs/i }).click();
   await expect(page).toHaveURL(/tab=mcps/);
+  // The MCPs tab is the real project MCP catalog since M27 (ADR-070), not a
+  // POC placeholder.
   await expect(
-    page.getByText("MCP server management isn't wired up on this POC yet."),
+    page.getByRole("heading", { name: "Project MCP servers" }),
   ).toBeVisible();
 
   await page.getByRole("tab", { name: /Packages/i }).click();

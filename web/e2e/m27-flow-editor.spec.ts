@@ -62,9 +62,9 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   await page.getByTestId("flow-tab-yaml").click();
   await expect(page.getByTestId("flow-yaml-editor")).toBeVisible();
 
-  const afterAdd = await flowYamlValue(page);
-
-  expect(afterAdd).toContain("cli_1");
+  // Retrying assertion: the canvas edit reaches the hidden input on a React
+  // state flush, which can lag on a loaded host.
+  await expect(page.locator('input[name="flowYaml"]')).toHaveValue(/cli_1/);
 
   // Save the draft through the existing updateAuthoredFlowAction form.
   await page.getByRole("button", { name: "Save draft" }).click();
@@ -94,7 +94,9 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   ].join("\n");
 
   await replaceYamlEditor(page, badYaml);
-  await expect(flowYamlValue(page)).resolves.toContain("Broken Draft");
+  await expect(page.locator('input[name="flowYaml"]')).toHaveValue(
+    /Broken Draft/,
+  );
   await page.getByRole("button", { name: "Save draft" }).click();
   await page.waitForLoadState("networkidle");
 

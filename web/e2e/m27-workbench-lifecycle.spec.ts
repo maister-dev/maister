@@ -32,7 +32,9 @@ async function expectLifecycleActions(page: Page): Promise<void> {
   await expect(actions.getByRole("button", { name: "Archive" })).toBeVisible();
   await expect(actions.getByRole("button", { name: "Drop" })).toBeVisible();
   await expect(actions.getByRole("button", { name: "Commit" })).toBeVisible();
-  await expect(actions.getByRole("button", { name: "Handoff" })).toBeVisible();
+  // Handoff-branch creation lives INSIDE the Export dialog (no standalone
+  // Handoff button since the export/handoff consolidation).
+  await expect(actions.getByRole("button", { name: "Export" })).toBeVisible();
 }
 
 test.describe.configure({ mode: "serial" });
@@ -49,12 +51,15 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   await expectLifecycleActions(page);
 
   await page.goto(`/projects/${fx.projectSlug}`);
-  await expect(page.getByRole("heading", { name: /M27 Lifecycle/i })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /M27 Lifecycle/i }),
+  ).toBeVisible();
   await expectLifecycleActions(page);
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
-  await expect(page.getByRole("heading", { name: /M27 scratch lifecycle/i }))
-    .toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /M27 scratch lifecycle/i }),
+  ).toBeVisible();
   await expectLifecycleActions(page);
 
   await page.goto(`/runs/${fx.flowRunId}`);
@@ -87,8 +92,8 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   await expect(dialog).toContainText("Snapshot commit");
   await dialog.getByRole("button", { name: "Cancel" }).click();
 
-  await lifecycleActions(page).getByRole("button", { name: "Handoff" }).click();
-  dialog = page.getByRole("dialog", { name: "Branch handoff" });
+  await lifecycleActions(page).getByRole("button", { name: "Export" }).click();
+  dialog = page.getByRole("dialog", { name: "Export branch" });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator("select")).toHaveValue("origin");
   await Promise.all([

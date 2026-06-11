@@ -2,6 +2,11 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
+// Serial: the inline-response test CONSUMES the seeded HITL requests the
+// styling test asserts on; under fullyParallel, same-file tests land in
+// different workers and race over the shared rows (m27-workbench precedent).
+test.describe.configure({ mode: "serial" });
+
 test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", () => {
   test("portfolio home shows cross-project HITL inbox with pending count badge", async ({
     page,
@@ -103,6 +108,44 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", 
     await expect(approveButton).toBeVisible();
   });
 
+  test("HITL inbox blocks are styled with criticality-driven visual hierarchy", async ({
+    page,
+  }) => {
+    await page.goto("/");
+
+    const inboxSection = page.getByTestId("cross-project-hitl-inbox");
+
+    // Scope each item to ITS project card, and run BEFORE the inline-response
+    // test below — that test approves Project 1's request, which removes the
+    // very inbox item asserted here (serial declaration order is authoritative).
+    const proj1Item = inboxSection
+      .locator("article")
+      .filter({ hasText: "MAIster E2E M17 Project 1" })
+      .first();
+    const proj1Criticality = proj1Item.locator('span[data-criticality="high"]');
+
+    await expect(proj1Criticality).toBeVisible();
+
+    const proj2Item = inboxSection
+      .locator("article")
+      .filter({ hasText: "MAIster E2E M17 Project 2" })
+      .first();
+    const proj2Criticality = proj2Item.locator(
+      'span[data-criticality="medium"]',
+    );
+
+    await expect(proj2Criticality).toBeVisible();
+
+    // Both items have distinct criticality styling
+    const proj1Styles = await proj1Criticality.getAttribute("class");
+    const proj2Styles = await proj2Criticality.getAttribute("class");
+
+    expect(proj1Styles).toBeTruthy();
+    expect(proj2Styles).toBeTruthy();
+    // High and medium have different style classes
+    expect(proj1Styles).not.toEqual(proj2Styles);
+  });
+
   test("inline HITL response: confidence input + approve decision", async ({
     page,
   }) => {
@@ -194,36 +237,5 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", 
     const exists = await reworkButton.count();
 
     expect(exists).toBeGreaterThan(0);
-  });
-
-  test("HITL inbox blocks are styled with criticality-driven visual hierarchy", async ({
-    page,
-  }) => {
-    await page.goto("/");
-
-    const inboxSection = page.getByTestId("cross-project-hitl-inbox");
-
-    // Project 1 (high criticality) item
-    const proj1Item = inboxSection.locator("article").first();
-    const proj1Criticality = proj1Item.locator('span[data-criticality="high"]');
-
-    await expect(proj1Criticality).toBeVisible();
-
-    // Project 2 (medium criticality) item
-    const proj2Item = inboxSection.locator("article").nth(1);
-    const proj2Criticality = proj2Item.locator(
-      'span[data-criticality="medium"]',
-    );
-
-    await expect(proj2Criticality).toBeVisible();
-
-    // Both items have distinct criticality styling
-    const proj1Styles = await proj1Criticality.getAttribute("class");
-    const proj2Styles = await proj2Criticality.getAttribute("class");
-
-    expect(proj1Styles).toBeTruthy();
-    expect(proj2Styles).toBeTruthy();
-    // High and medium have different style classes
-    expect(proj1Styles).not.toEqual(proj2Styles);
   });
 });

@@ -44,7 +44,11 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
 
   const scratchRunner = page.getByLabel("Runner");
 
-  await expect(scratchRunner).toHaveValue(scratch.runnerId);
+  // Generous first wait: the composer shows "Loading launch options…" until
+  // the async options fetch resolves.
+  await expect(scratchRunner).toHaveValue(scratch.runnerId, {
+    timeout: 15_000,
+  });
   await expect(scratchRunner).toHaveValue("codex-openai");
   await expect(
     scratchRunner.locator('option[value="codex-zai-glm"]'),

@@ -33,22 +33,30 @@ test("scratch launch controls render, while capacity guard fails without durable
   await expect(
     page.getByRole("heading", { name: "Start a scratch run." }),
   ).toBeVisible();
-  await expect(page.getByLabel("Project")).toHaveValue(fx.projectId);
-  await expect(page.getByLabel("Base branch")).toHaveValue("main");
-  await expect(page.getByLabel("Branch name")).toHaveValue("");
 
-  await expect(page.getByLabel("Runner")).toHaveValue(fx.runnerId);
+  // Scope to the composer: the left rail's per-project "Start scratch
+  // workspace in …" buttons substring-match getByLabel("Project"). The first
+  // assertion also rides out the async "Loading launch options…" phase.
+  const form = page.locator("main");
 
-  await page.getByLabel("Work mode").selectOption("plan_first");
-  await page.getByLabel("Reasoning effort").selectOption("extra");
+  await expect(form.getByLabel("Project")).toHaveValue(fx.projectId, {
+    timeout: 15_000,
+  });
+  await expect(form.getByLabel("Base branch")).toHaveValue("main");
+  await expect(form.getByLabel("Branch name")).toHaveValue("");
 
-  await page.getByLabel("Workspace name").fill("Unreachable supervisor");
-  await page.getByLabel("Branch name").fill(branchName);
-  await page
+  await expect(form.getByLabel("Runner")).toHaveValue(fx.runnerId);
+
+  await form.getByLabel("Work mode").selectOption("plan_first");
+  await form.getByLabel("Reasoning effort").selectOption("extra");
+
+  await form.getByLabel("Workspace name").fill("Unreachable supervisor");
+  await form.getByLabel("Branch name").fill(branchName);
+  await form
     .getByLabel("What do you want to do?")
     .fill("Try a deterministic scratch launch against an unavailable daemon.");
 
-  await page.getByLabel("Files").setInputFiles(uploadPath);
+  await form.getByLabel("Files").setInputFiles(uploadPath);
 
   const beforeRuns = await countRows("runs", "project_id = $1", [fx.projectId]);
   const beforeScratchRuns = await countRows("scratch_runs", "project_id = $1", [

@@ -118,8 +118,10 @@ test("nav-path: board → package viewer → open file → fork → editor → s
 
   const editorUrl = page.url();
 
-  // The editor mounts the CodeMirror buffer seeded from the forked draft (it
-  // carries the bundle's flow.yaml → the manifest name).
+  // The forked manifest compiles → the editor defaults to the graph tab; open
+  // the raw-YAML tab so the FIRST CodeMirror buffer is the manifest (not the
+  // README file editor below it).
+  await page.getByTestId("flow-tab-yaml").click();
   await expect(
     page.locator('[data-testid="code-editor"] .cm-content').first(),
   ).toBeVisible();
@@ -139,10 +141,24 @@ steps:
 `;
 
   await replaceEditorContent(page, validManifest);
+  // Wait for the React state flush to reach the hidden form input before
+  // submitting — a loaded host can otherwise post the OLD yaml.
+  await expect(page.locator('input[name="flowYaml"]')).toHaveValue(
+    new RegExp(savedName),
+  );
+
+  const saveResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST",
+  );
+
   await page.getByRole("button", { name: /save draft/i }).click();
+  expect((await saveResponse).status()).toBe(200);
 
   await page.waitForLoadState("networkidle");
   await page.goto(editorUrl);
+
+  // The saved manifest still compiles → open the yaml tab again.
+  await page.getByTestId("flow-tab-yaml").click();
 
   const editor = page
     .locator('[data-testid="code-editor"] .cm-content')

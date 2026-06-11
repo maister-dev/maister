@@ -132,7 +132,11 @@ steps:
   await replaceEditorContent(page, validManifest);
 
   // Submit the draft through the existing updateAuthoredFlowAction form. The
-  // hidden flowYaml input carries the live buffer.
+  // hidden flowYaml input carries the live buffer — wait for the React state
+  // flush to reach it before submitting, or a loaded host posts the OLD yaml.
+  await expect(page.locator('input[name="flowYaml"]')).toHaveValue(
+    new RegExp(savedName),
+  );
   await page.getByRole("button", { name: /save draft/i }).click();
 
   // The action redirects back to the detail page; reload to read the persisted

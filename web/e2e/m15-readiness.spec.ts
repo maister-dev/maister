@@ -67,9 +67,10 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await expect(failedBadge).toBeVisible();
   await expect(overriddenBadge).toBeVisible();
 
-  // (2) Click the failed run card. The run-detail page loads and the
-  // ReadinessSummary panel renders with state "Failed".
-  await failedBadge.click({ force: true });
+  // (2) Open the failed run. The readiness badge sits in the card's actions
+  // block OUTSIDE the run link (by design — actions need a non-link surface),
+  // so navigate via the card's run-detail link instead of the badge.
+  await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.failedRunId}*`);
 
   // The ReadinessSummary panel is present with the failed state badge.
@@ -104,7 +105,7 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
 
   await expect(overriddenCard).toBeVisible();
 
-  await overriddenCard.click({ force: true });
+  await page.locator(`a[href="/runs/${fx.overriddenRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.overriddenRunId}*`);
 
   // The ReadinessSummary panel renders with the overridden state badge.

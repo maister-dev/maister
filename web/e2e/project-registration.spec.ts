@@ -11,7 +11,7 @@ async function loginAs(page: Page, user: E2EUserFixture): Promise<void> {
   await page.locator('input[name="password"]').fill(user.password);
   await page.locator('form button[type="submit"]').click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
-    timeout: 30_000,
+    timeout: 60_000,
   });
 }
 
@@ -64,6 +64,10 @@ test("non-admin users cannot register projects", async ({
   browser,
   baseURL,
 }) => {
+  // The only test in this file doing a cold credentials login (no
+  // storageState); under full-suite parallel dev-server compiles the login
+  // round-trip alone can eat the default 30s budget.
+  test.slow();
   if (!baseURL) throw new Error("Playwright baseURL is required");
   const { users } = loadFixtures();
   const context = await browser.newContext({
@@ -73,7 +77,12 @@ test("non-admin users cannot register projects", async ({
   const page = await context.newPage();
 
   try {
-    await loginAs(page, users.member);
+    // users.memberCandidate, NOT users.member: admin-users.spec renames
+    // member's email in the DB mid-suite, which kills member's fixture
+    // credentials whenever that spec wins the parallel race. memberCandidate's
+    // user row is never mutated (project-members.spec only touches its
+    // project_members rows).
+    await loginAs(page, users.memberCandidate);
     await page.goto("/projects/new");
     await expect(
       page.getByText("Only an admin can register a project."),

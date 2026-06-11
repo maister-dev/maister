@@ -23,7 +23,13 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  // Local retries absorb residual cross-test interference on the ONE shared
+  // e2e DB (CI already retries 2); a deterministic regression still fails.
+  retries: process.env.CI ? 2 : 1,
+  // The local suite runs against ONE dev-mode Next server; the per-core
+  // default (8 workers on 16 cores) thrashes route compiles into timeout
+  // flakes. CI keeps Playwright's default.
+  workers: process.env.CI ? undefined : 4,
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
   use: {

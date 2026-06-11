@@ -1140,7 +1140,7 @@ project:
   repo_path: ${args.repoPath}
   main_branch: main
   branch_prefix: maister/
-  default_runner: claude-sonnet
+  default_runner: claude-code
 flows: []
 `,
   );
@@ -2065,8 +2065,10 @@ async function seedLaunchableProjectFixture(
      ON CONFLICT (id) DO NOTHING`,
     [ids.runner],
   );
+  // Respect an explicitly requested default runner (e.g. the scratch fixture
+  // pins codex-openai); only fall back to the per-project Ready runner.
   await pool.query(`UPDATE projects SET default_runner_id = $1 WHERE id = $2`, [
-    ids.runner,
+    args.defaultRunnerId ?? ids.runner,
     ids.project,
   ]);
   await pool.query(
