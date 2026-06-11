@@ -1,4 +1,4 @@
-// ADR-075 social-board domain semantics against real Postgres: numbering
+// ADR-078 social-board domain semantics against real Postgres: numbering
 // allocation (incl. concurrency), relations validation/idempotency/blockers,
 // and the single-transaction comment pipeline (activity, subscriptions
 // first-wins, inbox fanout excluding the actor, D8 mention rule).
@@ -107,7 +107,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe("createTask numbering (ADR-075 D1)", () => {
+describe("createTask numbering (ADR-078 D1)", () => {
   it("allocates sequential numbers and returns the task key", async () => {
     const { projectId, flowId } = await seedProject("SEQ");
     const creator = await seedUser();
@@ -226,7 +226,7 @@ describe("createTask numbering (ADR-075 D1)", () => {
   });
 });
 
-describe("task relations (ADR-075 D4/D5)", () => {
+describe("task relations (ADR-078 D4/D5)", () => {
   async function seedPair(taskKey: string) {
     const { projectId, flowId, slug } = await seedProject(taskKey);
     const creator = await seedUser();
@@ -478,7 +478,7 @@ describe("task relations (ADR-075 D4/D5)", () => {
   });
 });
 
-describe("comment pipeline (ADR-075 D6/D7/D8/D9)", () => {
+describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
   it("stores the body with resolvable mentions expanded; unresolved stay literal", async () => {
     const { projectId, flowId, slug } = await seedProject("EXP");
     const creator = await seedUser();

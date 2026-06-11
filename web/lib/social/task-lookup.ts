@@ -29,7 +29,7 @@ export type ResolvedProjectTask = {
 };
 
 // Both identifiers are URL params resolved against server state — the task
-// strictly via (project_id, number), never a body id (ADR-075 audit table).
+// strictly via (project_id, number), never a body id (ADR-078 audit table).
 export async function resolveProjectTaskByNumber(
   slug: string,
   number: number,

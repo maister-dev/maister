@@ -44,7 +44,7 @@ type LatestRunChain = {
 type SelectChain = {
   from: (table: unknown) => FromResult | LatestRunChain | RelationJoinChain;
 };
-// ADR-075: getOpenRelationBlockers joins task_relations→tasks→projects; these
+// ADR-078: getOpenRelationBlockers joins task_relations→tasks→projects; these
 // tests model "no open blockers" with an empty result.
 type RelationJoinChain = {
   innerJoin: (table: unknown, on: unknown) => RelationJoinChain;

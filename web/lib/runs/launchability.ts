@@ -20,7 +20,7 @@ export type TaskLaunchability =
   | "target_terminal"
   | "blocked";
 
-// ADR-075 D5: open relation blockers (X blocks T / T depends_on Y with the
+// ADR-078 D5: open relation blockers (X blocks T / T depends_on Y with the
 // counterpart in Backlog|InFlight), computed by getOpenRelationBlockers.
 export type RelationGate = {
   openBlockers: Array<{ key: string; number: number }>;

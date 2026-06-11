@@ -25,7 +25,7 @@ export function actorForUserId(userId: string | null | undefined): SocialActor {
   return userId ? { type: "user", id: userId } : { type: "system", id: null };
 }
 
-// THE ONLY task_activity writer. Domain rule (ADR-075 D7): activity rows are
+// THE ONLY task_activity writer. Domain rule (ADR-078 D7): activity rows are
 // written exclusively through this function, inside the same transaction as
 // the triggering domain write — route handlers never insert directly.
 export async function recordTaskActivity(

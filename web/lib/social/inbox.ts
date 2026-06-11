@@ -17,7 +17,7 @@ const log = pino({
 });
 
 // One batch INSERT … SELECT over the task's subscribers, excluding the acting
-// pair, inside the caller's transaction (ADR-075 D9). Stage-1 triggers are
+// pair, inside the caller's transaction (ADR-078 D9). Stage-1 triggers are
 // comment_added and task_mentioned only.
 export async function fanoutToSubscribers(
   tx: any,
@@ -58,7 +58,7 @@ export async function fanoutToSubscribers(
   return fanout;
 }
 
-// Recipient-owned read mutations (ADR-075 D9): a session user can mark only
+// Recipient-owned read mutations (ADR-078 D9): a session user can mark only
 // their own items; a foreign or missing itemId is indistinguishable (404 at
 // the route). The first read_at is preserved on repeat marks.
 export async function markInboxItemRead(

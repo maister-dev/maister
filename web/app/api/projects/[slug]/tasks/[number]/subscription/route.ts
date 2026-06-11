@@ -59,7 +59,7 @@ function parseTaskNumber(raw: string): number | null {
 type RouteParams = { params: Promise<{ slug: string; number: string }> };
 
 // The subscriber is ALWAYS the session user (auth-context) — never a
-// body-supplied pair (ADR-075 audit table).
+// body-supplied pair (ADR-078 audit table).
 async function handleSubscription(
   { params }: RouteParams,
   mode: "follow" | "unfollow",

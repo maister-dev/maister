@@ -6,7 +6,7 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-// Safe-by-default markdown (ADR-075 D10): remark-only, NO rehype-raw — raw
+// Safe-by-default markdown (ADR-078 D10): remark-only, NO rehype-raw — raw
 // HTML in a comment body renders as text, never as markup. Mirrors the
 // scratch-transcript wrapper; kept separate so scratch styling stays
 // untouched (deliberate small duplication).

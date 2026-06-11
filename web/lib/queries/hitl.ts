@@ -85,7 +85,7 @@ export interface HitlItem {
   agent: HitlAgent;
   branch: string;
   flowRef: string;
-  // ADR-075: KEY-N of the launching task (null for scratch-run HITL).
+  // ADR-078: KEY-N of the launching task (null for scratch-run HITL).
   taskRef: string | null;
   prompt: string;
   options: HitlOption[];

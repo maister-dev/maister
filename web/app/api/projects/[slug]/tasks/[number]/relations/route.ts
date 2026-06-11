@@ -16,7 +16,7 @@ const log = pino({
 
 // `toNumber` is body-controlled but resolved STRICTLY within the URL-param
 // project via (project_id, number) — cross-project reach is impossible by
-// construction (ADR-075 audit table).
+// construction (ADR-078 audit table).
 const bodySchema = z
   .object({
     kind: z.enum(["blocks", "depends_on", "parent_of"]),

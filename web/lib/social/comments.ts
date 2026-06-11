@@ -41,7 +41,7 @@ export type TaskCommentRecord = {
   createdAt: Date;
 };
 
-// ADR-075 D7: the full comment pipeline runs in ONE db.transaction — mention
+// ADR-078 D7: the full comment pipeline runs in ONE db.transaction — mention
 // expansion, comment insert, comment_added + task_mentioned activity,
 // subscription upserts (first reason wins), and inbox fanout excluding the
 // acting pair. No external side-effect ever runs inside the tx.
@@ -115,7 +115,7 @@ export async function addTaskComment(
       });
     }
 
-    // Mention rule (ADR-075 D8): mentioning task B in a comment on task A
+    // Mention rule (ADR-078 D8): mentioning task B in a comment on task A
     // subscribes B's CREATOR to task A — the owner of the referenced work
     // joins the discussion. Creator-less tasks (project-token automation)
     // simply have no one to subscribe.

@@ -1,4 +1,4 @@
-// ADR-075 social-board happy path: open the task page, post a comment that
+// ADR-078 social-board happy path: open the task page, post a comment that
 // mentions EAB-42, see the comment with the expanded task link plus the
 // activity rows, and the KEY-N chip on the board card. Fixture: the
 // e2e-acceptance-board project carries the deterministic task key EAB and a

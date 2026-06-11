@@ -45,7 +45,7 @@ const postBodySchema = z
   .object({
     repoUrl: z.string().min(1).max(2048).optional(),
     target: z.string().min(1).max(4096).optional(),
-    // ADR-075 D2: body-controlled but regex allow-listed; names no path and
+    // ADR-078 D2: body-controlled but regex allow-listed; names no path and
     // no cross-resource lookup — it becomes an attribute of the new project.
     taskKey: z
       .string()
@@ -205,7 +205,7 @@ async function register(
   // the legacy .mcp.json registry.
   const platformMcps = await loadPlatformMcpCapabilitiesFromDb(db);
 
-  // ADR-075 D2: explicit key wins, else derive from the project name. A
+  // ADR-078 D2: explicit key wins, else derive from the project name. A
   // collision (explicit OR derived) refuses registration — auto-uniquify
   // exists only in the migration backfill.
   const taskKey = explicitTaskKey ?? deriveTaskKey(config.project.name, slug);

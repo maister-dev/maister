@@ -797,7 +797,7 @@ export async function launchRun(
         })
         .where(eq(tasks.id, task.id));
 
-      // ADR-075 D7: run_launched is the activity for the only real
+      // ADR-078 D7: run_launched is the activity for the only real
       // task-status transition (the launch flip), written in the same tx.
       // Scheduler fires pass actorUserId: null ⇒ system actor.
       await recordTaskActivity(tx, {

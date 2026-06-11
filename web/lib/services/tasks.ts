@@ -62,7 +62,7 @@ export async function createTask(
 
   const taskId = randomUUID();
 
-  // ADR-075 D1: number allocation + task insert in ONE transaction. The
+  // ADR-078 D1: number allocation + task insert in ONE transaction. The
   // projects-row lock (UPDATE … RETURNING) serializes concurrent creates;
   // UNIQUE(project_id, number) is the backstop.
   const { number, taskKey } = await _db.transaction(async (tx: any) => {

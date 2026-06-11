@@ -88,7 +88,7 @@ export interface RunDetail {
   runId: string;
   projectId: string;
   projectSlug: string;
-  // ADR-075: KEY-N back-reference to the launching task (null for scratch).
+  // ADR-078: KEY-N back-reference to the launching task (null for scratch).
   taskNumber: number | null;
   taskRef: string | null;
   status: string;

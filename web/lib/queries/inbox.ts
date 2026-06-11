@@ -23,7 +23,7 @@ export type InboxItemView = {
   createdAt: Date;
 };
 
-// "Needs you (N)" (ADR-075 D11) — unread inbox count; project-scoped when
+// "Needs you (N)" (ADR-078 D11) — unread inbox count; project-scoped when
 // `projectId` is given, cross-project otherwise. Added to the pending-HITL
 // count by both badge scopes.
 export async function getUnreadInboxCount(

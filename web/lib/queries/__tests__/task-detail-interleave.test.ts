@@ -18,7 +18,7 @@ function activity(id: string, kind: string, at: string) {
   };
 }
 
-describe("interleaveTimeline (ADR-075 task timeline)", () => {
+describe("interleaveTimeline (ADR-078 task timeline)", () => {
   it("merges comments and activity ascending by createdAt", () => {
     const items = interleaveTimeline(
       [comment("c2", "2026-06-02T00:00:00Z"), comment("c1", "2026-06-01T00:00:00Z")],

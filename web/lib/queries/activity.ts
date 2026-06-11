@@ -196,7 +196,7 @@ function titleForRun(status: string): string {
   }
 }
 
-// --- ADR-075: task activity log (project Log view on the Activity tab) -----
+// --- ADR-078: task activity log (project Log view on the Activity tab) -----
 
 export type TaskActivityLogRow = {
   id: string;

@@ -86,7 +86,7 @@ export async function addTaskRelation(
     input.toTaskId,
   );
 
-  // Same-project only in Stage 1 (ADR-075 D4) — a cross-table CHECK cannot
+  // Same-project only in Stage 1 (ADR-078 D4) — a cross-table CHECK cannot
   // express this, so the domain layer enforces it.
   if (
     from.projectId !== input.projectId ||
@@ -213,7 +213,7 @@ export async function removeTaskRelation(
   return { removed };
 }
 
-// Blocking predicate (ADR-075 D5): task T is relation-blocked iff there is a
+// Blocking predicate (ADR-078 D5): task T is relation-blocked iff there is a
 // relation (X blocks T) or (T depends_on Y) whose counterpart task status is
 // Backlog or InFlight — Done AND Abandoned both release. parent_of never gates.
 export async function getOpenRelationBlockers(

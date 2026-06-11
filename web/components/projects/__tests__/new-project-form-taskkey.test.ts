@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-// ADR-075 T5.5 — the registration form exposes the optional task key with an
+// ADR-078 T5.5 — the registration form exposes the optional task key with an
 // uppercase format hint; CONFLICT/CONFIG map through the existing ERROR_KEY.
 
 vi.mock("next/navigation", () => ({

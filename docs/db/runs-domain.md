@@ -2,7 +2,7 @@
 
 Tables for the execution lifecycle: tasks (board), runs (Flow attempts and
 scratch sessions), workspaces (worktrees), scratch dialog metadata, messages,
-attachments, and capability snapshots, plus the **ADR-075 (Designed,
+attachments, and capability snapshots, plus the **ADR-078 (Designed,
 migration `0040`)** social-board tables around tasks (`task_relations`,
 `task_comments`, `task_activity`, `task_subscribers`, `inbox_items` — each
 also FK-cascading from `projects`, edges omitted here for readability; the
@@ -36,17 +36,17 @@ erDiagram
     SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments"
     SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments"
     SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot"
-    TASKS ||--o{ TASK_RELATIONS : "from-end (ADR-075)"
-    TASKS ||--o{ TASK_RELATIONS : "to-end (ADR-075)"
-    TASKS ||--o{ TASK_COMMENTS : "discussion (ADR-075)"
-    TASKS ||--o{ TASK_ACTIVITY : "event log (ADR-075)"
-    TASKS ||--o{ TASK_SUBSCRIBERS : "subscriber set (ADR-075)"
-    TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-075)"
+    TASKS ||--o{ TASK_RELATIONS : "from-end (ADR-078)"
+    TASKS ||--o{ TASK_RELATIONS : "to-end (ADR-078)"
+    TASKS ||--o{ TASK_COMMENTS : "discussion (ADR-078)"
+    TASKS ||--o{ TASK_ACTIVITY : "event log (ADR-078)"
+    TASKS ||--o{ TASK_SUBSCRIBERS : "subscriber set (ADR-078)"
+    TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-078)"
 
     TASKS {
         text id PK
         text project_id FK
-        integer number "ADR-075 Implemented: per-project, UNIQUE (project_id, number)"
+        integer number "ADR-078 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
         text flow_id FK
@@ -310,14 +310,14 @@ erDiagram
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
-> **(ADR-075 — Implemented, migration `0040`.)** `TASKS` gains `number`
+> **(ADR-078 — Implemented, migration `0040`.)** `TASKS` gains `number`
 > (per-project, backfilled by `(created_at, id)` order); the five social
 > tables carry the polymorphic actor pair (`actor_type CHECK IN
 > ('user','agent','system')`, `(actor_type = 'system') = (actor_id IS NULL)`,
 > no FK to `users`). All five also FK `projects` with cascade (edges in
 > [`erd.md`](erd.md)). `task_activity` is written only by the domain layer.
 > See [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
-> and [ADR-075](../decisions.md#adr-075-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+> and [ADR-078](../decisions.md#adr-078-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 
 ## Constraints
 
@@ -360,21 +360,21 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - **(M11a)** `gate_results_run_idx` on `(run_id)` and
   `gate_results_node_attempt_idx` on `(node_attempt_id)` — per-run and
   per-node-attempt gate lookups.
-- **(ADR-075, Implemented)** `tasks_project_number_uq` on `(project_id,
+- **(ADR-078, Implemented)** `tasks_project_number_uq` on `(project_id,
   number)` UNIQUE — numbering backstop; allocation itself is serialized by
   the `projects.next_task_number` row lock.
-- **(ADR-075, Implemented)** `task_relations_from_kind_to_uq` on
+- **(ADR-078, Implemented)** `task_relations_from_kind_to_uq` on
   `(from_task_id, kind, to_task_id)` UNIQUE + CHECK `from_task_id <>
   to_task_id`; `task_relations_to_task_idx` on `(to_task_id)` for inverse
   lookups.
-- **(ADR-075, Implemented)** `task_comments_task_created_idx` on
+- **(ADR-078, Implemented)** `task_comments_task_created_idx` on
   `(task_id, created_at)`; `task_activity_task_created_idx` on
   `(task_id, created_at)` + `task_activity_project_created_idx` on
   `(project_id, created_at)`.
-- **(ADR-075, Implemented)** `task_subscribers_task_pair_uq` on
+- **(ADR-078, Implemented)** `task_subscribers_task_pair_uq` on
   `(task_id, subscriber_type, subscriber_id)` UNIQUE — first subscription
   reason wins.
-- **(ADR-075, Implemented)** `inbox_items_recipient_idx` on
+- **(ADR-078, Implemented)** `inbox_items_recipient_idx` on
   `(recipient_type, recipient_id, read_at, created_at DESC)` — unread badge
   and inbox panel.
 

@@ -140,7 +140,7 @@ export async function POST(
         );
       }
 
-      // Actor mapping (ADR-075 D12): a user-owned token acts as that user; an
+      // Actor mapping (ADR-078 D12): a user-owned token acts as that user; an
       // ownerless project token acts as system with the token recorded in the
       // comment-activity payload.
       const ownerUserId = actorUserIdForToken(ctx.actor);

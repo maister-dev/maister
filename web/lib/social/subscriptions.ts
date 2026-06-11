@@ -23,7 +23,7 @@ export type SubscriptionReason =
   | "manual";
 
 // Upsert is ON CONFLICT DO NOTHING against UNIQUE(task_id, subscriber_type,
-// subscriber_id) — the FIRST reason wins and is never overwritten (ADR-075 D8).
+// subscriber_id) — the FIRST reason wins and is never overwritten (ADR-078 D8).
 export async function subscribe(
   tx: any,
   input: { taskId: string; subscriber: Subscriber; reason: SubscriptionReason },

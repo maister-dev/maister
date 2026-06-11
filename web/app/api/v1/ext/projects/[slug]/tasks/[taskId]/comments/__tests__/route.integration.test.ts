@@ -1,4 +1,4 @@
-// ADR-075 D12 — ext comment routes: scope enforcement, in-tx success audit
+// ADR-078 D12 — ext comment routes: scope enforcement, in-tx success audit
 // with the new scope labels, and token→actor mapping (user-owned token acts
 // as the user; ownerless project token acts as system with {via, tokenId}
 // recorded in the comment-activity payload).
@@ -215,7 +215,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe("ext comment routes (ADR-075 D12)", () => {
+describe("ext comment routes (ADR-078 D12)", () => {
   it("user-owned token posts as ('user', owner) and the audit row carries comments:create", async () => {
     const res = await POST(
       request("POST", fx.userToken, { body: "from a user token" }),

@@ -24,7 +24,7 @@ export async function PATCH(
     const user = await requireActiveSession();
 
     // Recipient-owned: a foreign or missing item answers 404 identically
-    // (existence-hide, ADR-075 D9).
+    // (existence-hide, ADR-078 D9).
     const marked = await markInboxItemRead({ itemId, userId: user.id });
 
     if (!marked) {

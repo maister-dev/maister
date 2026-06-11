@@ -100,7 +100,7 @@ Verified against `main` HEAD `19888156` on 2026-06-11:
 `git show main:web/lib/db/migrations/meta/_journal.json | grep -oE '"tag": "[0-9]+' | sort -V | tail -1`,
 then renumbers every placeholder in this plan + ADR + migration before any
 code. Renumbering rules (patches 2026-06-10-23.57 + 2026-06-09-18.47):
-**never a global find-replace** — enumerate every `ADR-075`/`0040` occurrence
+**never a global find-replace** — enumerate every `ADR-078`/`0040` occurrence
 and classify it by which feature it names (this plan's §0.4 prose
 legitimately references the SIBLINGS' claims on the same numbers — those
 references must NOT be rewritten). Markdown anchor links lowercase the ADR id
@@ -111,7 +111,7 @@ eyeball-grep both forms.
 ### 0.5 Locked constraints / out of scope
 
 - **No agent runtime.** `actor_type='agent'` and `recipient_type='agent'` are schema-legal, never written in Stage 1. No triager, no agent sessions, no agent rows.
-- **Single migration** (`0040_social_board.sql`) covering all DDL + data backfill.
+- **Single migration** (`0041_social_board.sql`) covering all DDL + data backfill.
 - `task_activity` rows are written **only by the domain layer** (`web/lib/social/*` + the named service write-sites in D7) — never directly by route handlers.
 - Existing conventions binding: `MaisterError` only, atomic `.maister/` writes N/A here, EN+RU i18n with parity test, strict TS (no `any`), view-table + popup-edit data pages, fetch-to-route-handler mutations, pino logging.
 - Out of scope (Stage 2+ of the design): agent actors writing comments/activity, agent inbox consumption, @user/@agent mentions, task_key rename/migration tooling, cross-project relations, websocket/SSE live comment updates, comment editing/deleting/threading, full Kanban mechanics, outbound webhooks integration.
@@ -160,7 +160,7 @@ agents table to join yet. The pair is self-contained for fanout SQL
 Columns on all four tables: `actor_type text CHECK in ('user','agent','system')`,
 `actor_id text` with `CHECK ((actor_type = 'system') = (actor_id IS NULL))`.
 No FK to `users` (polymorphic target) — a deleted user leaves a dangling id;
-UI renders a "former user" fallback label. ADR-075 records the relationship to
+UI renders a "former user" fallback label. ADR-078 records the relationship to
 `actor_identities` (parallel precedent, deliberately not reused) and the
 Stage-1 write restriction (`user`/`system` only).
 
@@ -308,14 +308,14 @@ reusing the block's layout idiom).
 
 | Surface | Spec file(s) |
 | --- | --- |
-| 5 new tables + 3 new columns (`projects.task_key`, `projects.next_task_number`, `tasks.number`) | migration `0040_social_board.sql` + `docs/database-schema.md` + `docs/db/erd.md` + `docs/db/runs-domain.md` (tasks domain ERD) |
+| 5 new tables + 3 new columns (`projects.task_key`, `projects.next_task_number`, `tasks.number`) | migration `0041_social_board.sql` + `docs/database-schema.md` + `docs/db/erd.md` + `docs/db/runs-domain.md` (tasks domain ERD) |
 | Internal routes: comments GET/POST, relations POST/DELETE, subscription POST/DELETE, inbox PATCH/read-all, registration `taskKey` field | `docs/api/web.openapi.yaml` |
 | Ext routes: comments GET/POST + 2 new token scopes | `docs/api/web.openapi.yaml` + `docs/system-analytics/external-operations.md` |
 | Ext task responses gain additive `number` + `taskKey` fields (shared `TaskDTO` propagates automatically) | `docs/api/web.openapi.yaml` ext task schemas |
 | MCP tools `comment_create` / `comment_list` | `docs/system-analytics/external-operations.md` |
 | Launchability `"blocked"` + relations semantics + numbering | `docs/system-analytics/tasks.md` (update) + `docs/system-analytics/run-schedules.md` (decideFire skip reason) |
 | Social domain (comments/activity/subscribers/inbox/mentions, actor model, event kinds, fanout) | **new** `docs/system-analytics/social-board.md` (R5 sections) |
-| Decision record | `docs/decisions.md` ADR-075 (provisional) |
+| Decision record | `docs/decisions.md` ADR-078 (provisional) |
 | Error codes | none new — reuse `PRECONDITION/CONFLICT/CONFIG/UNAUTHORIZED`; `docs/error-taxonomy.md` untouched unless impl proves otherwise |
 | New UI strings | `web/messages/en.json` + `ru.json` (parity test enforces) |
 | Root docs | `CLAUDE.md` "Built since baseline" line + `web/CLAUDE.md` if conventions surface changes (final phase) |
@@ -331,13 +331,13 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
 ### Phase 0 — Preflight (no code)
 
 - [x] **T0.1 Re-verify global numbers against current `main`.** `sort -V` greps per §0.4 (NOT tail-of-file — ADR-066 sits out of order mid-file). If gate-chat / outbound-webhooks landed: renumber ADR-075→next-free, 0040→next-free, M31→next-free by **enumerating and classifying every occurrence** (patch 2026-06-10-23.57: never a global sed — §0.4 prose legitimately references the siblings' claims on the same numbers and must NOT be rewritten), including the lowercase `#adr-0nn` anchor second pass. Record the resolved numbers in this file under a `## Progress` note.
-  Verify: every `ADR-075` / `0040_social_board` / `M31` occurrence in this plan names THIS feature's resolved number or is an explicitly sibling-referencing sentence.
+  Verify: every `ADR-078` / `0041_social_board` / `M31` occurrence in this plan names THIS feature's resolved number or is an explicitly sibling-referencing sentence.
 - [x] **T0.2 Baseline gate.** Run typecheck + unit + integration at branch point; record any pre-existing reds (expected: none per repo state; ~10 e2e reds are main's known debt — list them, do NOT fix). Kill ports 3100/7788 before any e2e run.
   Verify: baseline list recorded in `## Progress`.
 
 ### Phase 1 — SDD: complete, internally consistent specs (docs-first)
 
-- [x] **T1.1 ADR-075 "Social board substrate: per-project task numbering, typed relations, polymorphic actor"** in `docs/decisions.md`. Content: D1–D9, D12 (actor pair vs `actor_identities` rationale; counter allocation; canonical one-direction relations; `blocked` launchability; expansion-at-write; fanout pattern; agent schema-readiness + Stage-1 write restriction; event-kind enum + deferred `run_finished`). Link from the ADR index if one exists.
+- [x] **T1.1 ADR-078 "Social board substrate: per-project task numbering, typed relations, polymorphic actor"** in `docs/decisions.md`. Content: D1–D9, D12 (actor pair vs `actor_identities` rationale; counter allocation; canonical one-direction relations; `blocked` launchability; expansion-at-write; fanout pattern; agent schema-readiness + Stage-1 write restriction; event-kind enum + deferred `run_finished`). Link from the ADR index if one exists.
 - [x] **T1.2 New `docs/system-analytics/social-board.md`** — R5 sections (Purpose, Domain entities, State machine [comment/inbox-item lifecycle + subscriber set], Process flows [comment pipeline sequence incl. tx boundary; mention expansion flowchart; inbox fanout], Expectations ≤12 RFC-2119 bullets, Edge cases [dangling actor ids, mention of deleted task, mutual blocks, hole-y numbering, unresolved KEY-N], Linked artifacts). Every section tagged `(Designed)` initially.
 - [x] **T1.3 Update `docs/system-analytics/tasks.md`** — numbering (task_key, counter, KEY-N), relations + inverse rendering, launchability `blocked` extension; update `docs/system-analytics/run-schedules.md` decideFire skip-on-blocked row. Status tags per R6.
 - [x] **T1.4 DB docs** — `docs/database-schema.md` table entries + `docs/db/erd.md` and `docs/db/runs-domain.md` Mermaid ERDs: 5 new tables, 3 new columns, FKs, uniques.
@@ -349,12 +349,12 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
   there; internal routes + `PostProjectBody.taskKey` + `postTask` response landed
   in `web.openapi.yaml`. Both lint clean (redocly; only pre-existing warnings).
 
-**Commit C1** — `docs(social-board): ADR-075 + stage-1 analytics/ERD/API specs`
+**Commit C1** — `docs(social-board): ADR-078 + stage-1 analytics/ERD/API specs`
 
 ### Phase 2 — Schema + single migration
 
 - [x] **T2.1 Schema changes in `web/lib/db/schema.ts`** (exact shapes from D2/D3/D4/D8/D9): `projects.taskKey` (text NOT NULL + UNIQUE), `projects.nextTaskNumber` (integer NOT NULL default 1), `tasks.number` (integer NOT NULL) + `unique("tasks_project_number_uq").on(projectId, number)` + index; tables `task_relations`, `task_comments` (id, taskId FK cascade, projectId FK cascade, actor pair, body text, createdAt), `task_activity` (id, taskId, projectId, actor pair, eventKind CHECK, payload jsonb NOT NULL default '{}', createdAt; index `(task_id, created_at)`, `(project_id, created_at)`), `task_subscribers`, `inbox_items` — CHECKs and indexes per §1. Follow house idioms (text PK + `$defaultFn(randomUUID)`, withTimezone timestamps).
-- [x] **T2.2 Generate + hand-finish migration `0040_social_board.sql`.** `pnpm --filter maister-web db:generate -- --name=social_board` (drizzle-kit `^0.28.1` writes `0040_social_board.sql` + journal tag directly; NOT `--custom` — stale-snapshot gotcha). Hand-edit ONLY the new-column ordering for live data: `tasks.number` and `projects.task_key` are added nullable → backfill → `SET NOT NULL` → add UNIQUEs, all inside this one file. Backfill SQL: per project, number tasks by `(created_at, id)` from 1 (window function); `next_task_number = COALESCE(max,0)+1`; `task_key` = derivation per D2 with deterministic uniquify (DO block). Final schema state must equal `schema.ts` exactly (snapshot stays truthful).
+- [x] **T2.2 Generate + hand-finish migration `0041_social_board.sql`.** `pnpm --filter maister-web db:generate -- --name=social_board` (drizzle-kit `^0.28.1` writes `0041_social_board.sql` + journal tag directly; NOT `--custom` — stale-snapshot gotcha). Hand-edit ONLY the new-column ordering for live data: `tasks.number` and `projects.task_key` are added nullable → backfill → `SET NOT NULL` → add UNIQUEs, all inside this one file. Backfill SQL: per project, number tasks by `(created_at, id)` from 1 (window function); `next_task_number = COALESCE(max,0)+1`; `task_key` = derivation per D2 with deterministic uniquify (DO block). Final schema state must equal `schema.ts` exactly (snapshot stays truthful).
   Logging: none (SQL); migration runner already logs.
 - [x] **T2.3 Migration integration test** (`web/lib/db/__tests__/social-board-migration.integration.test.ts`, runner: `integration` project, glob `lib/**/*.integration.test.ts` — matches). Fresh testcontainer: all migrations apply green; constraints exist (insert dup `(project_id, number)` ⇒ 23505; dup task_key ⇒ 23505; actor CHECK rejects `('system', 'x')`); seeded-then-migrated path: insert 2 projects + 3 tasks via SQL *before* 0040 within the test harness if the harness applies migrations stepwise — if the harness only supports apply-all (verify at impl), cover backfill by asserting derivation/uniquify logic in a unit test against the extracted TS util instead, and assert post-migration invariants (`next_task_number = max(number)+1`) on rows created pre-backfill via raw SQL replay. State which path was taken in the test header comment.
   Verify: `pnpm --filter maister-web test:integration` green; `pnpm --filter maister-web db:migrate` green on the dev DB.
@@ -431,7 +431,7 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
 
 | # | After | Message |
 | --- | --- | --- |
-| C1 | Phase 1 | `docs(social-board): ADR-075 + stage-1 analytics/ERD/API specs` |
+| C1 | Phase 1 | `docs(social-board): ADR-078 + stage-1 analytics/ERD/API specs` |
 | C2 | Phase 2 | `feat(db): social-board schema + migration 0040 (numbering, relations, actor tables, inbox)` |
 | C3 | Phase 3 | `feat(social): numbering, mentions, relations, comments/activity/subscribers/inbox domain + launchability gate` |
 | C4 | Phase 4 | `feat(api): social-board internal routes + ext comment ops + MCP facade tools` |
@@ -457,8 +457,8 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
 ### T0.1 — Global numbers re-verified (2026-06-11)
 
 Checked against `main` HEAD `19888156` (== branch point, no sibling merges since plan creation):
-- `git show main:docs/decisions.md | grep -oE 'ADR-[0-9]+' | sort -V | tail -1` → **ADR-074** ⇒ this plan keeps **ADR-075**.
-- `git show main:web/lib/db/migrations/meta/_journal.json` max tag → **0039** ⇒ this plan keeps **0040_social_board**.
+- `git show main:docs/decisions.md | grep -oE 'ADR-[0-9]+' | sort -V | tail -1` → **ADR-074** ⇒ this plan keeps **ADR-078**.
+- `git show main:web/lib/db/migrations/meta/_journal.json` max tag → **0039** ⇒ this plan keeps **0041_social_board**.
 - `.ai-factory/ROADMAP.md` on main: milestones end at M28; M29/M30/M31 absent ⇒ this plan keeps **M31** (M29 = harness-loop roadmap TODO, M30 = gate-chat reservation).
 
 No renumbering performed.
@@ -489,7 +489,7 @@ No renumbering performed.
 - **Stale-0039-snapshot fact confirmed:** `db:generate` re-emitted
   `run_schedules` DDL (the 0039 snapshot on main lacks the 0038 tables — the
   known gate-chat B1 finding). The redundant statements were stripped from
-  `0040_social_board.sql` (the table already exists via 0038 everywhere); the
+  `0041_social_board.sql` (the table already exists via 0038 everywhere); the
   0040 snapshot now correctly includes `run_schedules`, healing the chain for
   future generates.
 - **Backfill proven on real data** via a CLONE of the dev DB
@@ -547,8 +547,26 @@ No renumbering performed.
 - T6.4 docs checkpoint: configuration.md / getting-started.md untouched
   (verified zero env/dep/script changes); system-analytics README +
   docs/CLAUDE.md glossaries gained the social-board rows; all (Designed)
-  ADR-075 tags flipped to (Implemented); ROADMAP M31 added (milestone +
+  ADR-078 tags flipped to (Implemented); ROADMAP M31 added (milestone +
   Completed row); root CLAUDE.md "Built since baseline" entry added.
+
+### Gate #9 — merge-time number collision re-check (2026-06-11, post-implementation)
+
+Main MOVED during implementation: `19888156` → `58a2e07a`, absorbing THREE
+siblings — flow-studio-phase2 (**took ADR-075**), acp-model-discovery
+(ADR-076), outbound-webhooks (ADR-077 + **migration `0040_outbound_webhooks`**).
+Renumbered per T0.1 rules (enumerate + classify, never a global sed):
+
+- **ADR-075 → ADR-078** (heading, index row, lowercase anchor second pass,
+  155 referencing lines across docs/code/tests/seed; the §0.4 sibling-claim
+  sentences in this plan kept verbatim).
+- **Migration `0040_social_board` → `0041_social_board`** (git mv of .sql +
+  snapshot, journal `idx: 41`, `when` untouched; journal-integrity test
+  requires uniqueness, not contiguity — merge-ready against main's 0040).
+- **M31 unchanged** (main's roadmap claims only M29).
+
+Re-validated after the renumber: docs validators, tsc, journal integrity +
+migration integration test, fresh e2e DB migrate+seed.
 
 ## 6. Unresolved questions
 

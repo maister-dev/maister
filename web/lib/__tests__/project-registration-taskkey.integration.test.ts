@@ -1,4 +1,4 @@
-// ADR-075 D2 — task_key at registration: derived default, explicit override,
+// ADR-078 D2 — task_key at registration: derived default, explicit override,
 // and collision refusal (explicit OR derived) with CONFLICT. Exercises the
 // REAL POST /api/projects handler against tmp dirs + minimal maister.yaml.
 
@@ -90,7 +90,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe("POST /api/projects task_key (ADR-075 D2)", () => {
+describe("POST /api/projects task_key (ADR-078 D2)", () => {
   it("derives the key from the project name when no explicit key is given", async () => {
     const res = await POST(
       postRequest({ target: projectDir("Quebec Social") }),

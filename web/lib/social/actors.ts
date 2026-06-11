@@ -17,7 +17,7 @@ export type ActorDTO = {
   label: string;
 };
 
-// The actor pair has no FK to users (polymorphic target, ADR-075 D3): a
+// The actor pair has no FK to users (polymorphic target, ADR-078 D3): a
 // deleted user leaves a dangling id, rendered as the "former user" fallback.
 export async function resolveActorLabels(
   pairs: Array<{ actorType: string; actorId: string | null }>,

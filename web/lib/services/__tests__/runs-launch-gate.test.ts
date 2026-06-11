@@ -37,7 +37,7 @@ type LatestRunChain = {
     };
   };
 };
-// ADR-075: getOpenRelationBlockers joins task_relations→tasks→projects; the
+// ADR-078: getOpenRelationBlockers joins task_relations→tasks→projects; the
 // gate tests model "no open blockers" with an empty result.
 type RelationJoinChain = {
   innerJoin: (table: unknown, on: unknown) => RelationJoinChain;

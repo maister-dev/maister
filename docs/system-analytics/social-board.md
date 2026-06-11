@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The social board layer (Stage 1, ADR-075) gives every task a stable
+The social board layer (Stage 1, ADR-078) gives every task a stable
 per-project identity (`KEY-N`) and a social substrate around it: markdown
 comments with task mentions, domain-written activity, auto-subscriptions,
 and a per-recipient inbox. All four social tables
@@ -215,7 +215,7 @@ project-scoped). See [`hitl.md`](hitl.md) for the HITL half.
 
 ## Linked artifacts
 
-- ADR: [ADR-075](../decisions.md#adr-075-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+- ADR: [ADR-078](../decisions.md#adr-078-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 - Sibling domains: [`tasks.md`](tasks.md) (numbering, relations,
   launchability gate), [`hitl.md`](hitl.md) (the HITL half of "Needs you"),
   [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked),

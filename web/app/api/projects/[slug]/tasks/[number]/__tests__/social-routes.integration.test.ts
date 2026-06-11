@@ -1,4 +1,4 @@
-// ADR-075 T4.1 — HTTP wiring for the social-board routes: auth-first, role
+// ADR-078 T4.1 — HTTP wiring for the social-board routes: auth-first, role
 // gates (commentTask/manageTaskRelations = member; reads = viewer), 404
 // existence-hide on slug/number, recipient-owned inbox reads. Domain
 // semantics live in lib/social/__tests__/social-domain.integration.test.ts.

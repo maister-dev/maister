@@ -4952,7 +4952,7 @@ async function main(): Promise<void> {
       hitl: true,
     });
 
-    // ADR-075 social-board e2e fixture: a deterministic task key on the board
+    // ADR-078 social-board e2e fixture: a deterministic task key on the board
     // project (random elsewhere) plus a SECOND task to mention as EAB-2 from
     // a comment on EAB-1 (social-board.spec.ts).
     await pool.query(
@@ -5059,7 +5059,7 @@ async function main(): Promise<void> {
     };
     const outDir = path.resolve("e2e/.auth");
 
-    // ADR-075 D1: raw-SQL task fixtures above do not advance the per-project
+    // ADR-078 D1: raw-SQL task fixtures above do not advance the per-project
     // allocation counter — reconcile every project so runtime createTask
     // never collides with a seeded number.
     await pool.query(

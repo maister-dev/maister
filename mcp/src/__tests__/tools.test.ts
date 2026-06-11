@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 12 external tools (incl. ADR-075 comment_list, comment_create)", () => {
+  it("registers all 12 external tools (incl. ADR-078 comment_list, comment_create)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",

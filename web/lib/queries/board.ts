@@ -60,7 +60,7 @@ export interface BacklogCard {
   prompt: string;
   flowRef: string;
   priority: CardPriority;
-  // ADR-075 D5: open relation blockers — non-empty disables Launch and
+  // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
   blockedBy: Array<{ key: string; number: number }>;
 }

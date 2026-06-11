@@ -98,7 +98,7 @@ describe("classifyTaskLaunchability — latest flow run drives the verdict", () 
   });
 });
 
-// ADR-075 D5 — relations gate LAUNCHING only, with precedence
+// ADR-078 D5 — relations gate LAUNCHING only, with precedence
 // target_terminal > crashed > busy > blocked > launchable.
 describe("classifyTaskLaunchability — relation gate (blocked)", () => {
   const gate: RelationGate = { openBlockers: [{ key: "MAI", number: 7 }] };

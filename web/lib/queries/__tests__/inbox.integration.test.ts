@@ -1,4 +1,4 @@
-// ADR-075 D11 — unread inbox counts feeding "Needs you (N)" in both scopes,
+// ADR-078 D11 — unread inbox counts feeding "Needs you (N)" in both scopes,
 // item listing with task refs, and per-project grouping.
 
 import { randomUUID } from "node:crypto";
@@ -101,7 +101,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe("inbox queries (ADR-075 D11)", () => {
+describe("inbox queries (ADR-078 D11)", () => {
   it("counts unread cross-project and per-project", async () => {
     expect(await getUnreadInboxCount(fx.userId)).toBe(2);
     expect(await getUnreadInboxCount(fx.userId, fx.projectA)).toBe(1);

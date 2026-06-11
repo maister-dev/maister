@@ -69,7 +69,7 @@ export function decideFire(input: {
       ? { action: "catchup", outcome: "catchup_queued" }
       : { action: "skip", outcome: "skipped_task_busy" };
   }
-  // ADR-075 D5: relations gate launching under EVERY policy; like crashed,
+  // ADR-078 D5: relations gate launching under EVERY policy; like crashed,
   // an existing queue_one flag is kept (unblocking fires the catch-up).
   if (input.launchability === "blocked") {
     return { action: "skip", outcome: "skipped_blocked" };
