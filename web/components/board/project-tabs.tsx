@@ -16,6 +16,7 @@ export type ProjectTab =
   | "mcps"
   | "schedules"
   | "members"
+  | "webhooks"
   | "settings";
 
 export interface ProjectTabsProps {
@@ -36,6 +37,7 @@ const TABS: readonly ProjectTab[] = [
   "mcps",
   "schedules",
   "members",
+  "webhooks",
   "settings",
 ];
 
@@ -58,6 +60,7 @@ export async function ProjectTabs({
     mcps: t("mcps"),
     schedules: t("schedules"),
     members: t("members"),
+    webhooks: t("webhooks"),
     settings: t("settings"),
   };
 

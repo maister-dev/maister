@@ -19,6 +19,7 @@ import { IntegrationsPanel } from "@/components/board/panels/integrations-panel"
 import { McpPanel } from "@/components/board/panels/mcp-panel";
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
+import { WebhooksPanel } from "@/components/board/panels/webhooks-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
@@ -46,6 +47,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "mcps",
   "schedules",
   "members",
+  "webhooks",
   "settings",
 ];
 
@@ -317,6 +319,9 @@ export default async function ProjectBoardPage({
           selfUserId={user.id}
           slug={slug}
         />
+      ) : null}
+      {tab === "webhooks" ? (
+        <WebhooksPanel canWrite={canAct} slug={slug} />
       ) : null}
       {tab === "settings" ? (
         <SettingsPanel data={pageData} isAdmin={isAdmin} />

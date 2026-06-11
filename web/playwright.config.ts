@@ -15,9 +15,15 @@ const AUTH_SECRET =
 // valid-token→200/207 deterministically.
 const MAISTER_CRON_TOKEN =
   process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
+// outbound-webhooks.spec.ts: the value behind a subscription's
+// `signing_secret_ref = env:WH_E2E_SECRET`. The webhook drain resolves this env
+// var SERVER-SIDE at send time, so it must live in the webServer process env
+// below; the spec's in-process stub re-derives the HMAC from the SAME value to
+// verify each captured signature. Re-read by the spec via process.env.
+const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|portfolio-board|task-launch-gating|project-registration|admin-users|project-members|review-comments|scratch-launch|platform-acp-runners|model-suggestions|flows-authoring|run-schedules|flow-package-viewer|flow-studio-artifacts)\.spec\.ts$/;
+  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|portfolio-board|task-launch-gating|project-registration|admin-users|project-members|review-comments|scratch-launch|platform-acp-runners|model-suggestions|flows-authoring|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -75,8 +81,12 @@ export default defineConfig({
       // button is enabled and POST /api/runs gets PAST the health check to the
       // settings-enforcement gate (which is what refuses with CONFIG 400).
       MAISTER_SUPERVISOR_URL: STUB_SUPERVISOR_URL,
-      // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts).
+      // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts). Also gates the
+      // outbound-webhooks drain trigger (POST /api/cron/tick).
       MAISTER_CRON_TOKEN,
+      // outbound-webhooks.spec.ts: server-side signing secret behind
+      // `env:WH_E2E_SECRET` (resolved at webhook send time).
+      WH_E2E_SECRET,
     },
   },
 });

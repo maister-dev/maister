@@ -1,4 +1,8 @@
-import "server-only";
+// NOTE: intentionally NOT "server-only". This module is pure, secret-free data
+// (the event-type list + envelope-shape builders) and the client subscription
+// modal imports WEBHOOK_EVENT_TYPES for its event-type checkboxes. A
+// "server-only" guard here makes the whole /settings webhooks panel fail to
+// build ("server-only cannot be imported from a Client Component").
 
 export const WEBHOOK_API_VERSION = 1 as const;
 

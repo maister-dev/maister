@@ -8,6 +8,7 @@ import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel";
 import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
+import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
 import { getDb } from "@/lib/db/client";
@@ -124,6 +125,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
               />
               <RouterSidecarsPanel sidecars={runtime.sidecars} />
               <McpServersPanel servers={runtime.mcpServers} />
+              <WebhooksPanel />
             </div>
           ) : null}
         </>
