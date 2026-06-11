@@ -111,6 +111,7 @@
 | [ADR-083](#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor) | Social board substrate — per-project task numbering, typed relations, polymorphic actor | Accepted | 2026-06-11 |
 | [ADR-084](#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) | ACP adapter families for Gemini CLI and OpenCode | Accepted | 2026-06-11 |
 | [ADR-085](#adr-085-mimo-code-as-a-distinct-acp-adapter-family) | MiMo Code as a distinct ACP adapter family | Accepted | 2026-06-11 |
+| [ADR-086](#adr-086-domain-event-outbox-as-the-shared-trigger-bus) | Domain-event outbox as the shared trigger bus | Accepted | 2026-06-11 |
 
 ---
 
@@ -6143,6 +6144,126 @@ does not currently have `mimo` on PATH.
 - Existing `platform_mcp_servers.supported_agents` rows that exactly matched
   the previous all-adapters default are migrated to include `mimo`; custom
   subsets remain unchanged.
+
+---
+
+### ADR-086: Domain-event outbox as the shared trigger bus
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** ADR-077 proved the transactional-outbox capture seam, but its
+outbox is structurally webhook-shaped: `webhook_events.run_id` is `NOT NULL`
+(task-scoped facts like `task.created` cannot ride it) and the row carries
+delivery-tier columns (`payload`, `fanout_at`) that belong to webhook fanout,
+not to the fact itself. Stage 2 of the platform-agents/social-board design
+(Layer 3) needs a **shared trigger bus**: multiple independent consumers — the
+future agent-trigger dispatcher (platform agents), the outbound-webhooks
+drainer itself, notifiers — must each consume the same durable domain-fact log
+at their own pace, with at-least-once delivery and catch-up after outages. The
+social board (ADR-083) added the task/comment domain writes with the
+polymorphic `(actor_type, actor_id)` pair; the M24 scheduler (ADR-060) is the
+sanctioned background clock. The original design doc for the staged
+platform-agents work was never committed (owner decision: not restored); the
+spec freeze at `.ai-factory/specs/domain-event-outbox.spec.md` plus this ADR
+are the durable record of Stage 2.
+
+**Decision:** Add `domain_events` — an immutable, append-only domain-fact log
+emitted from the domain layer **inside the same transaction as the state
+change** — plus a per-consumer cursor dispatcher running as a singleton job on
+the M24 clock.
+
+- **Capture seam mirrors ADR-077.** `emitDomainEvent({db, …})` is a single
+  INSERT riding the caller's transaction (dual db/tx handle, copied from
+  `web/lib/webhooks/outbox.ts`); it fires only on the CAS-winner path of the
+  surrounding transition. No reads, no joins, no network on the write path.
+- **New table, NOT an in-place generalization of `webhook_events`.**
+  `domain_events {id bigint identity PK, kind, project_id NOT NULL FK,
+  task_id? FK, run_id? FK, actor_type?, actor_id?, payload jsonb, occurred_at,
+  created_at, tx_id xid8 DEFAULT pg_current_xact_id()}`. The webhook outbox
+  stays as-is until the webhooks drainer is re-pointed at `domain_events` in a
+  later stage (it becomes a registered consumer; `webhook_events` then
+  retires). Until then run-terminal/gate sites emit BOTH rows in the same
+  transaction — accepted, bounded, grep-audited duplication.
+- **Kind taxonomy v1 = 8 kinds.** `task.created`, `task.comment_added`,
+  `task.triage_requeued` (registered, **no emitter yet** — lands with the
+  Stage-3 triager), `run.done`, `run.failed`, `run.crashed`, `run.abandoned`
+  (the four terminal run statuses), `gate.failed`. Extension rule mirrors
+  ADR-077: one taxonomy entry + emit site(s) in the owning domain transaction
+  + one doc row (+ CHECK update via migration).
+- **Per-consumer cursors with CAS lease + xid8 commit horizon.** Each consumer
+  owns a `domain_event_consumers` row `{consumer_id PK, cursor_event_id,
+  lease_expires_at, consecutive_failures, last_error, …}`. A dispatch pass
+  claims the row by CAS on `lease_expires_at` (zero rows ⇒ another claimer is
+  live ⇒ skip), reads `WHERE id > cursor AND tx_id <
+  pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch`, invokes
+  the consumer, then advances the cursor with a CAS fenced on the cursor value
+  read at claim. The horizon predicate closes the identity-out-of-order-commit
+  hole: an open transaction holding a lower `id` holds back ALL later events
+  until it resolves, so a cursor can never skip a late-committing event.
+  Delivery is **at-least-once** (crash after handle, before advance ⇒
+  redelivery); consumers MUST be idempotent.
+- **Dispatcher = singleton M24 job.** New `job_kind: domain_event_dispatch`,
+  one seeded `domain_event_dispatch.default` row (cadence 60s, budget
+  `domainEventDispatch: 1`, `ensureDefaultSchedulerJobs` `ON CONFLICT DO
+  NOTHING`), deliberately **excluded** from `createSchedulerJobSchema`
+  (`run_schedule` precedent — the seeded singleton is the only instance). The
+  consumer registry is code-owned (`DOMAIN_EVENT_CONSUMERS`); v1 ships exactly
+  one permanently-registered `noop` consumer (`startFrom: "now"`) as the
+  liveness proof of the seam. ADR-§1 is preserved: the live path is emission
+  inside the domain transaction + tick dispatch; recovery after any outage is
+  the same cursor on the next tick — no fs.watch, no polling for run state,
+  and the dispatcher drives only consumer-cursor state, never run state.
+- **Retention: none in this stage.** `domain_events` is unbounded append-only
+  (volume ≈ a few rows per run/task interaction). Pruning lands with the first
+  real consumer and MUST honor `min(cursor_event_id)` across registered
+  consumers. FKs cascade on project/task/run delete — events are trigger
+  material, not the audit log (`task_activity` keeps that role, ADR-083).
+- **No HTTP surface, no new error code, no env knobs.** Cadence/batch/lease
+  (60s / 100 / 5min / max 10 batches per tick) are code constants until a real
+  consumer needs tuning.
+
+**Consequences:**
+- Future consumers (agent triggers, webhooks, notifiers) plug in by adding one
+  registry entry + cursor row — no new capture machinery, no new clock.
+- Run-terminal/gate sites carry two adjacent emit calls during the coexistence
+  period; the sweep is grep-gated (`every terminal emitWebhookEvent has a
+  paired emitDomainEvent`) and collapses when the webhooks drainer migrates.
+- One long-running open transaction anywhere in the DB stalls dispatch past
+  its first inserted event until it resolves (horizon head-of-line) — accepted:
+  domain transactions are short, migrations run offline, and the stall is
+  bounded by the transaction's lifetime, never lossy.
+- Two new tables (`domain_events`, `domain_event_consumers`) land in migration
+  `0045`; a new `job_kind: domain_event_dispatch` joins the scheduler enums,
+  budgets, dispatch switch, seeds, and the admin `kind` label map (EN+RU,
+  without a `targetHint` — not user-creatable).
+- The previously emit-less `NeedsInputIdle → Abandoned` TTL transition
+  (`keepalive-sweeper runPass2`) becomes transactional and emits both the
+  domain event and the previously missing `run.abandoned` webhook (closing an
+  ADR-077 gap; its "deliberately NOT emitted" entry is superseded).
+
+**Alternatives Considered:**
+- **Generalize `webhook_events` in place (relax `run_id`, add task/actor
+  columns):** rejected — entangles the fact log with webhook delivery columns,
+  forces the webhook fanout/prune machinery to filter foreign kinds, and makes
+  the later consumer-model migration harder than standing up the clean table
+  now.
+- **Fanout-marker rows per (event, consumer) — the webhook-deliveries shape:**
+  rejected — write amplification per registered consumer for no gain (no
+  per-event retry state is needed at this layer), and it double-bookkeeps once
+  the webhooks drainer (which already owns a marker table) plugs in. The
+  task's catch-up semantics are cursor-shaped.
+- **Pure `id > cursor` reads without the xid8 horizon:** rejected — identity
+  assignment order ≠ commit order; a cursor that advances past a still-open
+  transaction's lower id loses that event permanently. This is the classic
+  outbox-cursor bug; the horizon predicate is the textbook fix.
+- **Postgres LISTEN/NOTIFY as the dispatch trigger:** rejected — delivery
+  still needs the durable table for at-least-once + catch-up, NOTIFY adds an
+  unsanctioned push channel alongside the M24 clock for no latency requirement
+  (60s tick is fine for triggers), and it dies with the connection.
+- **One scheduler job per consumer:** rejected — same reasons ADR-077 rejected
+  per-delivery jobs (admin catalog flooding, `max_failures` auto-disable
+  fighting consumer-level retry); consumer failure accounting lives on the
+  cursor row instead.
 
 ---
 

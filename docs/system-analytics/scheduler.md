@@ -29,6 +29,12 @@ without turning recovery sweeps into live-path polling.
   drainer (one `webhook_delivery.default` job, 60s cadence, budget `webhookDelivery: 1`)
   whose handler does fanout + drain + prune each tick. See
   [outbound-webhooks.md](outbound-webhooks.md).
+- **`domain_event_dispatch` job kind** (Designed, ADR-085) — singleton
+  domain-event dispatcher (one `domain_event_dispatch.default` job, 60s
+  cadence, budget `domainEventDispatch: 1`) whose handler advances
+  per-consumer cursors over the `domain_events` outbox each tick. Not
+  user-creatable — `createSchedulerJobSchema` rejects it (`run_schedule`
+  precedent). See [domain-events.md](domain-events.md).
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
   Implemented, M24) — admin-only CRUD (create / list / update / enable-disable /
   delete) for scheduler jobs.
@@ -118,14 +124,17 @@ flowchart TD
 - The tick service MUST idempotently seed `system_sweep.default` with a 60-second
   cadence so the recovery sweep is live after migration without hand-authored
   SQL; it MUST likewise seed `run_schedule.dispatcher` (60-second cadence,
-  `max_failures` 3; Implemented, M28) and `webhook_delivery.default`
-  (60-second cadence; Implemented, ADR-077).
+  `max_failures` 3; Implemented, M28), `webhook_delivery.default`
+  (60-second cadence; Implemented, ADR-077), and `domain_event_dispatch.default`
+  (60-second cadence; Designed, ADR-085).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` uses
   `MAISTER_MAX_CONCURRENT_AGENTS`; `flow_run` remains delegated to the existing
   Flow run launch/concurrency path; `run_schedule` is a hardcoded budget of 1
   (serial dispatcher, like `system_sweep`; Implemented, M28); `webhook_delivery`
-  is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077).
+  is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077);
+  `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
+  Designed, ADR-085).
 - `agent_tick` without a launcher MUST record terminal `Skipped` with
   `PRECONDITION` and auto-disable after
   `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. This is an explicit M24 dispatch
@@ -161,6 +170,7 @@ flowchart TD
 - ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets).
 - User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
+- Domain-event dispatcher (Designed, ADR-085): [`domain-events.md`](domain-events.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,

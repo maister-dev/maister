@@ -1807,6 +1807,71 @@ and the summary reports `skipped: "disabled"` + `skippedEvents`. Pending
 deliveries are not touched. Flipping back to `true` resumes drain on the next
 tick; pre-disable pending deliveries catch up naturally.
 
+## Domain-event outbox tables (Designed, ADR-085, migration `0045`)
+
+See [`db/domain-events.md`](db/domain-events.md) for the ERD and
+[`system-analytics/domain-events.md`](system-analytics/domain-events.md) for
+the dispatch mechanics, kind taxonomy, and consumer contract.
+
+### `domain_events`
+
+**(Designed, ADR-085, migration `0045`.)** Append-only domain-fact log — the
+shared trigger bus. One row per curated domain fact, written in the SAME
+transaction as the domain state change (`emitDomainEvent`, CAS-winner path
+only). No UPDATE/DELETE application paths; future pruning MUST honor
+`min(cursor_event_id)` across registered consumers (no pruning in this stage).
+
+```ts
+{
+  id,                              // bigint GENERATED ALWAYS AS IDENTITY PK —
+                                   //   dispatch ordering key
+  kind,                            // one of 8 taxonomy kinds (CHECK):
+                                   //   task.created | task.comment_added |
+                                   //   task.triage_requeued | run.done |
+                                   //   run.failed | run.crashed |
+                                   //   run.abandoned | gate.failed
+  projectId,                       // NOT NULL, FK -> projects.id (cascade)
+  taskId?,                         // NULL, FK -> tasks.id (cascade) — task.* kinds
+  runId?,                          // NULL, FK -> runs.id (cascade) — run.*/gate.* kinds
+  actorType?,                      // NULL; 'user' | 'system' | 'agent' (CHECK) —
+                                   //   the ADR-083 polymorphic actor pair
+  actorId?,                        // NULL; polymorphic actor id
+  payload (jsonb),                 // NOT NULL; ids/keys/titles/statuses only —
+                                   //   never secrets, env values, or raw agent output
+  occurredAt,                      // NOT NULL; domain time
+  createdAt,                       // NOT NULL DEFAULT now()
+  txId,                            // xid8 NOT NULL DEFAULT pg_current_xact_id() —
+                                   //   commit-visibility horizon for dispatch reads
+}
+```
+
+No secondary indexes by design — dispatch reads are PK-range scans
+(`id > cursor ORDER BY id`), gated by the xid8 horizon
+(`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a late-committing lower
+`id` is never skipped.
+
+### `domain_event_consumers`
+
+**(Designed, ADR-085, migration `0045`.)** One cursor row per registered
+consumer (the registry itself is code-owned — `DOMAIN_EVENT_CONSUMERS`).
+Claim = CAS on `lease_expires_at` (5 min TTL); advance = CAS fenced on the
+cursor value read at claim; delivery is at-least-once and consumers are
+idempotent.
+
+```ts
+{
+  consumerId,                      // text PK — registry id (e.g. "noop")
+  cursorEventId,                   // bigint NOT NULL DEFAULT 0 —
+                                   //   last dispatched domain_events.id
+  leaseExpiresAt?,                 // NULL; claim lease
+  lastDispatchedAt?,               // NULL
+  lastError?,                      // NULL; truncated
+  consecutiveFailures,             // integer NOT NULL DEFAULT 0 — observability
+                                   //   only, no auto-disable in this stage
+  createdAt, updatedAt
+}
+```
+
 ## Planned roadmap persistence
 
 The roadmap introduces product objects that are not yet represented as first

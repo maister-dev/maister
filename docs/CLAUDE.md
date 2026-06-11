@@ -56,6 +56,7 @@ truth). The fix is to update docs in the same PR.
 | [`db/hitl-domain.md`](db/hitl-domain.md) | HITL Requests ERD + form-schema shape. |
 | [`db/artifacts-domain.md`](db/artifacts-domain.md) | Artifact instances + projection cursors ERD. |
 | [`db/webhooks.md`](db/webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts ERD, plus the `webhooks_enabled` settings column (ADR-077). |
+| [`db/domain-events.md`](db/domain-events.md) | Domain-event outbox ERD: `domain_events` fact log + per-consumer cursor rows (ADR-085). |
 | [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
 
 ### System analysis (`system-analytics/`)
@@ -91,6 +92,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md) | Model discovery + application: supervisor-side resolver (ACP probe / provider API / curated GLM / CCR sources), in-memory TTL cache, passive harvest, per-adapter model pinning + mismatch advisory (ADR-076). |
 | [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 12-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
 | [`system-analytics/social-board.md`](system-analytics/social-board.md) | Social board substrate (ADR-083, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
+| [`system-analytics/domain-events.md`](system-analytics/domain-events.md) | Domain-event outbox / shared trigger bus (ADR-085): same-transaction emission, 8-kind taxonomy v1, per-consumer cursor dispatcher with xid8 commit horizon on the M24 clock, webhooks-takeover path. |
 
 ### Cross-cutting reference
 

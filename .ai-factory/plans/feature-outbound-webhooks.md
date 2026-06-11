@@ -198,3 +198,25 @@ Per-subscription ordering is rejected: it forces serial delivery per endpoint, s
 7. Subscription DELETE is **usage-guarded** (409 `CONFLICT` while delivery history exists; `enabled=false` is the retirement path) — history is kept, never cascaded away.
 
 No open questions remain.
+
+## Domain-event outbox takeover (M32+, ADR-085) — coordination note (2026-06-11)
+
+ADR-085 (plan: `.ai-factory/plans/feature-domain-event-outbox.md`, spec:
+`.ai-factory/specs/domain-event-outbox.spec.md`) now owns the **generic outbox
+core**: a `domain_events` fact log (task + run + gate kinds, polymorphic actor)
+plus a per-consumer cursor dispatcher (`domain_event_dispatch` job kind) on the
+M24 clock. Relationship to THIS plan:
+
+- `webhook_events` capture stays as-is for now. During coexistence,
+  run-terminal and gate-terminal sites emit BOTH `webhook_events` AND
+  `domain_events` rows in the same transaction (grep-gated pairing).
+- In a later stage the webhooks **fanout pass is re-pointed at
+  `domain_events`**: this feature becomes a registered consumer with its own
+  cursor row; `webhook_events` then retires (deliveries/attempts machinery
+  stays unchanged).
+- M32 also closes this plan's `runPass2` gap (owner-approved 2026-06-11): the
+  TTL `NeedsInputIdle → Abandoned` transition becomes transactional and emits
+  the previously missing `run.abandoned` webhook with `data.source: "ttl"` —
+  the DQ2 "deliberately NOT emitted / TTL-driven abandon" entry and the
+  `source: user | workbench` enum in the AsyncAPI spec are superseded by that
+  extension.
