@@ -9,6 +9,11 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { recordTaskActivity, type SocialActor } from "@/lib/social/activity";
+import {
+  actorDTO,
+  resolveActorLabels,
+  type ActorDTO,
+} from "@/lib/social/actors";
 import { fanoutToSubscribers } from "@/lib/social/inbox";
 import { expandMentions } from "@/lib/social/mentions";
 import { subscribe } from "@/lib/social/subscriptions";
@@ -216,4 +221,28 @@ export async function listTaskComments(
     .offset(offset)) as TaskCommentRecord[];
 
   return rows;
+}
+
+export type TaskCommentDTO = {
+  id: string;
+  taskId: string;
+  body: string;
+  actor: ActorDTO;
+  createdAt: Date;
+};
+
+// Explicit DTO projection at the boundary — rows never serialize verbatim.
+export async function toCommentDTOs(
+  rows: TaskCommentRecord[],
+  db?: Db,
+): Promise<TaskCommentDTO[]> {
+  const labels = await resolveActorLabels(rows, db);
+
+  return rows.map((row) => ({
+    id: row.id,
+    taskId: row.taskId,
+    body: row.body,
+    actor: actorDTO(row, labels),
+    createdAt: row.createdAt,
+  }));
 }

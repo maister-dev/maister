@@ -6,6 +6,11 @@ import pino from "pino";
 import type { InboxSourceRef, TaskActivityEventKind } from "@/lib/db/schema";
 import type { SocialActor } from "@/lib/social/activity";
 
+import { getDb } from "@/lib/db/client";
+
+// FIXME(any): dual drizzle-orm peer-dep variants.
+type Db = any;
+
 const log = pino({
   name: "social-inbox",
   level: process.env.LOG_LEVEL ?? "info",
@@ -51,4 +56,47 @@ export async function fanoutToSubscribers(
   );
 
   return fanout;
+}
+
+// Recipient-owned read mutations (ADR-075 D9): a session user can mark only
+// their own items; a foreign or missing itemId is indistinguishable (404 at
+// the route). The first read_at is preserved on repeat marks.
+export async function markInboxItemRead(
+  input: { itemId: string; userId: string },
+  db?: Db,
+): Promise<boolean> {
+  const _db = (db ?? getDb()) as unknown as { execute: any };
+  const result = await _db.execute(sql`
+    update inbox_items
+    set read_at = coalesce(read_at, now())
+    where id = ${input.itemId}
+      and recipient_type = 'user'
+      and recipient_id = ${input.userId}
+  `);
+
+  const marked = Number(result.rowCount ?? 0) > 0;
+
+  log.debug({ itemId: input.itemId, marked }, "inbox item read");
+
+  return marked;
+}
+
+export async function markAllInboxRead(
+  input: { userId: string },
+  db?: Db,
+): Promise<number> {
+  const _db = (db ?? getDb()) as unknown as { execute: any };
+  const result = await _db.execute(sql`
+    update inbox_items
+    set read_at = now()
+    where recipient_type = 'user'
+      and recipient_id = ${input.userId}
+      and read_at is null
+  `);
+
+  const updated = Number(result.rowCount ?? 0);
+
+  log.info({ userId: input.userId, updated }, "inbox read-all");
+
+  return updated;
 }

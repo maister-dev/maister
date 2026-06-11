@@ -128,6 +128,33 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId", "hitlRequestId"],
     },
   },
+  comment_list: {
+    description:
+      "List comments on a task (markdown bodies with KEY-N mentions already expanded)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        limit: { type: "number" },
+        offset: { type: "number" },
+      },
+      required: ["slug", "taskId"],
+    },
+  },
+  comment_create: {
+    description:
+      "Add a markdown comment to a task; KEY-N mentions are expanded to task links at write time",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        body: { type: "string" },
+      },
+      required: ["slug", "taskId", "body"],
+    },
+  },
 };
 
 type DispatchResult =
@@ -312,6 +339,38 @@ function resolveRouting(
         method: "POST",
         path: `/api/v1/ext/runs/${runId}/hitl/${hitlRequestId}/respond`,
         body,
+      };
+    }
+    case "comment_list": {
+      const { slug, taskId, limit, offset } = args as {
+        slug: string;
+        taskId: string;
+        limit?: number;
+        offset?: number;
+      };
+      const query = new URLSearchParams();
+
+      if (limit !== undefined) query.set("limit", String(limit));
+      if (offset !== undefined) query.set("offset", String(offset));
+
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/comments${suffix}`,
+      };
+    }
+    case "comment_create": {
+      const { slug, taskId, body } = args as {
+        slug: string;
+        taskId: string;
+        body: string;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/comments`,
+        body: { body },
       };
     }
     default:

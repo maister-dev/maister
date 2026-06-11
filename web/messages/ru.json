@@ -1373,6 +1373,8 @@
     "scopeGatesReport": "Отчёты по гейтам",
     "scopeHitlRead": "Чтение HITL",
     "scopeHitlRespond": "Ответы HITL",
+    "scopeCommentsRead": "Чтение комментариев",
+    "scopeCommentsCreate": "Создание комментариев",
     "errorGeneric": "Не удалось выполнить действие. Повторите."
   },
   "gc": {

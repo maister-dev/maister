@@ -105,7 +105,7 @@ export async function POST(
 
     await requireProjectAction(project.id, "createTask");
 
-    const { taskId } = await createTask(
+    const { taskId, number, taskKey } = await createTask(
       {
         title: body.title,
         prompt: body.prompt,
@@ -116,7 +116,7 @@ export async function POST(
 
     log.info({ slug, taskId, flowId: body.flowId }, "task created");
 
-    return NextResponse.json({ taskId }, { status: 201 });
+    return NextResponse.json({ taskId, number, taskKey }, { status: 201 });
   } catch (err) {
     return errorResponse(err, slug);
   }

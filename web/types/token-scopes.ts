@@ -10,6 +10,8 @@ export const TOKEN_SCOPES = [
   "gates:report",
   "hitl:read",
   "hitl:respond",
+  "comments:read",
+  "comments:create",
 ] as const;
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

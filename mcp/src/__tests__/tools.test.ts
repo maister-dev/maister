@@ -51,9 +51,11 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 10 external tools (incl. M17 hitl_list, hitl_respond)", () => {
+  it("registers all 12 external tools (incl. ADR-075 comment_list, comment_create)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
+        "comment_create",
+        "comment_list",
         "gate_report",
         "hitl_list",
         "hitl_respond",
@@ -296,6 +298,62 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       response: { approved: true },
       confidence: 0.8,
     });
+  });
+
+  it("comment_list → GET /api/v1/ext/projects/{slug}/tasks/{taskId}/comments with paging query", async () => {
+    mockOnce({ comments: [] }, 200);
+
+    await dispatchTool({
+      name: "comment_list",
+      args: { slug: "demo", taskId: "task-1", limit: 5, offset: 10 },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/comments?limit=5&offset=10`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+  });
+
+  it("comment_list omits the query string when no paging args are given", async () => {
+    mockOnce({ comments: [] }, 200);
+
+    await dispatchTool({
+      name: "comment_list",
+      args: { slug: "demo", taskId: "task-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url } = lastRequest();
+
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/comments`,
+    );
+  });
+
+  it("comment_create → POST /api/v1/ext/projects/{slug}/tasks/{taskId}/comments", async () => {
+    mockOnce({ comment: { id: "c1" } }, 201);
+
+    await dispatchTool({
+      name: "comment_create",
+      args: { slug: "demo", taskId: "task-1", body: "see MAI-7" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/comments`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({ body: "see MAI-7" });
   });
 });
 

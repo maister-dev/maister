@@ -67,6 +67,8 @@ export interface TokenLabels {
   scopeGatesReport: string;
   scopeHitlRead: string;
   scopeHitlRespond: string;
+  scopeCommentsRead: string;
+  scopeCommentsCreate: string;
   errorGeneric: string;
 }
 
@@ -115,6 +117,10 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeHitlRead;
     case "hitl:respond":
       return labels.scopeHitlRespond;
+    case "comments:read":
+      return labels.scopeCommentsRead;
+    case "comments:create":
+      return labels.scopeCommentsCreate;
     default:
       return scope;
   }
@@ -315,6 +321,8 @@ export async function IntegrationsPanel({
     scopeGatesReport: t("scopeGatesReport"),
     scopeHitlRead: t("scopeHitlRead"),
     scopeHitlRespond: t("scopeHitlRespond"),
+    scopeCommentsRead: t("scopeCommentsRead"),
+    scopeCommentsCreate: t("scopeCommentsCreate"),
     errorGeneric: t("errorGeneric"),
   };
 

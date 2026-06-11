@@ -389,11 +389,11 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
 
 ### Phase 4 — HTTP + ext + MCP
 
-- [ ] **T4.1 Internal routes** (all: auth-first, `requireProjectAction`, zod `.strict()`, runs-family `httpStatusForCode` mapping, identifiers per §1 audit table): comments GET/POST + relations POST/DELETE + subscription POST/DELETE under `web/app/api/projects/[slug]/tasks/[number]/…`; inbox `PATCH /api/inbox/[itemId]/read` + `POST /api/inbox/read-all`. New `PROJECT_ACTION_MIN` entries: `commentTask` → `member`, `manageTaskRelations` → `member`; reads ride existing viewer-level membership checks.
+- [x] **T4.1 Internal routes** (all: auth-first, `requireProjectAction`, zod `.strict()`, runs-family `httpStatusForCode` mapping, identifiers per §1 audit table): comments GET/POST + relations POST/DELETE + subscription POST/DELETE under `web/app/api/projects/[slug]/tasks/[number]/…`; inbox `PATCH /api/inbox/[itemId]/read` + `POST /api/inbox/read-all`. New `PROJECT_ACTION_MIN` entries: `commentTask` → `member`, `manageTaskRelations` → `member`; reads ride existing viewer-level membership checks.
   Tests (integration, testcontainers): **numbering under concurrency** (N parallel `createTask` via route or service ⇒ N distinct sequential numbers, zero 23505), **auto-subscriptions** (create→creator, comment→commenter, mention→D8), **inbox batches** (M subscribers ⇒ M-1 items, actor excluded; read/read-all ownership enforced), relations validation (cross-project ⇒ CONFIG, authz 403 for viewer mutation).
-- [ ] **T4.2 Ext comments routes + scopes** per D12 (`web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/comments/route.ts`, scopes in `web/types/token-scopes.ts`, grep + update every scope-list consumer). Same domain fns; audit in-tx.
+- [x] **T4.2 Ext comments routes + scopes** per D12 (`web/app/api/v1/ext/projects/[slug]/tasks/[taskId]/comments/route.ts`, scopes in `web/types/token-scopes.ts`, grep + update every scope-list consumer). Same domain fns; audit in-tx.
   Tests (integration): scope enforcement (403 w/o `comments:create`), audit row written with the new scope label, actor mapping (ownerUserId vs ownerless ⇒ system).
-- [ ] **T4.3 MCP facade tools** `comment_create` / `comment_list` in `mcp/src/tools.ts` (`TOOL_SPECS` + `resolveRouting`), following the `hitl_*` idiom; mcp package tests per its existing convention (verify runner at impl — mcp has its own package).
+- [x] **T4.3 MCP facade tools** `comment_create` / `comment_list` in `mcp/src/tools.ts` (`TOOL_SPECS` + `resolveRouting`), following the `hitl_*` idiom; mcp package tests per its existing convention (verify runner at impl — mcp has its own package).
   Phase exit: integration suite green; OpenAPI matches implemented routes (spot-check paths/status codes against T1.5).
 
 **Commit C4** — `feat(api): social-board internal routes + ext comment ops + MCP facade tools`

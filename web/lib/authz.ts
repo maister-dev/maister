@@ -52,6 +52,8 @@ export const PROJECT_ACTION_MIN = {
   promoteRun: "member",
   recoverRun: "member",
   createTask: "member",
+  commentTask: "member",
+  manageTaskRelations: "member",
   answerHitl: "member",
   manageSchedules: "member",
   editSettings: "admin",
