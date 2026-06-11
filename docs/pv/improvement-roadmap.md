@@ -80,7 +80,7 @@ pleasant enough to run the M20 dogfood, and every run emits structured signal.**
 | Track | Scope |
 |---|---|
 | **Multi-user / governance** | RBAC with real action-blocking, role-scoped inboxes, team boundaries |
-| **External surface** | Inbound gate-unblock webhooks + the existing `external_check` contract. The generic **outbound** event-delivery primitive is now built (ADR-076); E5's agent-over-MCP, Telegram, and CI/board-sync become CONSUMERS of it. Provider-specific apps stay deferred. |
+| **External surface** | Inbound gate-unblock webhooks + the existing `external_check` contract. The generic **outbound** event-delivery primitive is now built (ADR-077); E5's agent-over-MCP, Telegram, and CI/board-sync become CONSUMERS of it. Provider-specific apps stay deferred. |
 | **Orchestration (standalone)** | Agents-as-actors standalone/continuous stages (see sibling doc); guard wedge dilution |
 | **Narrow tools & hands** | Tool-count budgets, capability labels, sandbox profiles, warn-first policy on risky ops, on top of M14 caps (`PRODUCT_VIEW.md` §Phase 2.3) |
 | **Automation surface** | Reusable hooks/skills/snippets/recurring routines visible in Project Settings; standard automations; specialist checks off the main run context (`PRODUCT_VIEW.md` §Phase 2.4) |
@@ -192,7 +192,7 @@ PRODUCT_VIEW (cross-referenced, per docs R7 — not restated here).
 Scope reconciliations against `PRODUCT_VIEW.md` "Deferred For Now":
 - **Webhooks** — inbound gate-unblock + the existing `external_check` contract,
   plus the generic **outbound** event-delivery primitive now built
-  (ADR-076); E5's agent-over-MCP and notifiers (Telegram, CI, board sync) become
+  (ADR-077); E5's agent-over-MCP and notifiers (Telegram, CI, board sync) become
   CONSUMERS of it, not replacements. **Provider-specific apps stay deferred.**
 - **Benchmarking** — the A/B core is in scope (Wave 3); **benchmark dataset
   management and the judge-calibration lab stay deferred**.

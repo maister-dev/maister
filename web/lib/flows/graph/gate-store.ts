@@ -118,7 +118,7 @@ export async function createGateResult(args: {
   return { id };
 }
 
-// The flip and its gate.decided outbox row commit in ONE transaction (ADR-076)
+// The flip and its gate.decided outbox row commit in ONE transaction (ADR-077)
 // — a crash between them must not flip the gate while losing the event. The
 // `status <>` CAS makes a repeat same-status transition a no-op (0 rows, no
 // emit) while cross-status moves (failed → overridden) still pass. Callers only

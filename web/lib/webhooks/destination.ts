@@ -11,7 +11,7 @@ import { MaisterError } from "@/lib/errors";
 
 type WebhookEnv = Record<string, string | undefined>;
 
-// Egress policy (ADR-076): an outbound webhook destination must not reach
+// Egress policy (ADR-077): an outbound webhook destination must not reach
 // loopback, private, link-local (incl. the cloud metadata endpoint
 // 169.254.169.254), multicast, or unspecified addresses — a member-created
 // subscription or ping must not become a read primitive against IMDS or

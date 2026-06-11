@@ -408,7 +408,7 @@ sync · custom ACP extensions · cost/time/regex guard enforcement · plugin
 sandboxing · HITL as separate swimlane cards · Cursor / opencode / Aider
 executors. (Outbound webhooks are no longer deferred — the generic outbound
 event-delivery primitive is now built; agent-over-MCP and notifiers are
-consumers of it, see ADR-076.)
+consumers of it, see ADR-077.)
 
 ## Conventions
 

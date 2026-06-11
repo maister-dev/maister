@@ -3,7 +3,7 @@ info:
   title: MAIster — outbound webhooks
   version: "0.1.0"
   description: |
-    Outbound HTTP webhook delivery (ADR-076, Implemented). MAIster is the
+    Outbound HTTP webhook delivery (ADR-077, Implemented). MAIster is the
     **server** here: the `webhook_delivery` scheduler job POSTs a signed JSON
     envelope to each subscribed consumer endpoint. The CRUD/admin surface for
     subscriptions, the delivery log, ping, and replay lives in
@@ -96,7 +96,7 @@ info:
     See also:
       - [`../web.openapi.yaml`](../web.openapi.yaml) — subscription CRUD, log, ping, replay (tag `webhooks`).
       - [`../../system-analytics/outbound-webhooks.md`](../../system-analytics/outbound-webhooks.md) — domain process doc.
-      - [`../../decisions.md`](../../decisions.md) — ADR-076.
+      - [`../../decisions.md`](../../decisions.md) — ADR-077.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster

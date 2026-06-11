@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Outbound webhooks (**Implemented**, ADR-076) is MAIster's generic, vendor-neutral
+Outbound webhooks (**Implemented**, ADR-077) is MAIster's generic, vendor-neutral
 **event-delivery primitive**: it turns curated run/HITL/gate lifecycle
 transitions into signed HTTP POSTs to operator-registered endpoints. This domain
 owns the full path from capture to delivery — a transactional outbox written in
@@ -368,7 +368,7 @@ idempotency key absorbs:
 
 - Scheme allow-list: **http / https only**, boundary-validated on the `url`
   field.
-- **Destination egress policy (Implemented, ADR-076 revised)** —
+- **Destination egress policy (Implemented, ADR-077 revised)** —
   `web/lib/webhooks/destination.ts`. Blocked ranges: loopback (`127.0.0.0/8`,
   `::1`), private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local
   incl. the `169.254.169.254` cloud-metadata endpoint (`169.254/16`,
@@ -489,7 +489,7 @@ delivery history exists (retire via `enabled=false`).
 
 ## Linked artifacts
 
-- **Decision:** [ADR-076](../decisions.md#adr-076-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer).
+- **Decision:** [ADR-077](../decisions.md#adr-076-outbound-webhooks-generic-event-delivery-primitive-transactional-outbox--singleton-drainer).
 - **HTTP API:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) — admin +
   project webhooks CRUD, deliveries log, ping, replay, webhook-settings.
 - **Outbound wire contract:** [`api/async/outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml)

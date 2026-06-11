@@ -16,7 +16,7 @@ import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 
 // =============================================================================
-// ADR-076 atomicity + idempotency for `transition()` AND the insert-at-terminal
+// ADR-077 atomicity + idempotency for `transition()` AND the insert-at-terminal
 // path of `createGateResult` in gate-store:
 //
 //   - ATOMICITY: the gate_results write and the gate.decided outbox INSERT

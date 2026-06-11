@@ -1,6 +1,6 @@
 # Webhooks domain ERD
 
-Tables for the outbound webhook delivery primitive introduced by ADR-076.
+Tables for the outbound webhook delivery primitive introduced by ADR-077.
 See [`../system-analytics/outbound-webhooks.md`](../system-analytics/outbound-webhooks.md)
 for behavior, the delivery FSM, and the event taxonomy, and
 [`../database-schema.md`](../database-schema.md) for the column-level narrative.
@@ -148,5 +148,5 @@ any `webhook_deliveries` row are kept indefinitely for replay and audit.
 - Process flows: [`../system-analytics/outbound-webhooks.md`](../system-analytics/outbound-webhooks.md).
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- Decision record: ADR-076 in [`../decisions.md`](../decisions.md).
+- Decision record: ADR-077 in [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0040_outbound_webhooks.sql`).

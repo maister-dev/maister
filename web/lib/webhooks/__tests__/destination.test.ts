@@ -13,7 +13,7 @@ import {
 import { isMaisterError } from "@/lib/errors";
 
 // =============================================================================
-// SSRF egress policy (codex finding #3, ADR-076). Table-driven classification
+// SSRF egress policy (codex finding #3, ADR-077). Table-driven classification
 // of blocked vs public destinations, the write-time URL assertion, the
 // send-time resolver (incl. a hostname resolving to loopback — the
 // rebind-shaped case), and the MAISTER_WEBHOOK_ALLOW_HOSTS operator override.
