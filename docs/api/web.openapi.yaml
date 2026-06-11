@@ -553,30 +553,71 @@ paths:
     get:
       tags: [runs]
       summary: List task-run launch options
-      description: Requires project membership. Returns visible tasks, platform ACP runners, and effective defaults for the task launch form. Secret provider fields are never returned.
+      description: |
+        Requires project membership. Returns the server-derived choices for one
+        task launch dialog: enabled project flows, safe branch list, platform
+        ACP runners, ADR-076 pinned-model display data, the default runner/model
+        for the selected Flow, the project delivery-policy default, and the
+        manual launchability result/reason. Secret provider fields and server
+        filesystem paths are never returned.
       operationId: getRunLaunchOptions
       parameters:
-        - name: projectId
+        - name: taskId
           in: query
-          required: false
+          required: true
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Launch options visible to the caller.
+          description: Launch options visible to the caller for the task.
           content:
             application/json:
-              schema:
-                type: object
-                required: [projects, runners]
-                properties:
-                  projects:
-                    type: array
-                    items: { type: object }
-                  runners:
-                    type: array
-                    items: { type: object }
+              schema: { $ref: "#/components/schemas/TaskRunLaunchOptionsResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Task/project not found for the caller, or the task is relation-blocked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/settings:
+    patch:
+      tags: [projects]
+      summary: Update aggregate project settings
+      description: |
+        Project owner/admin route. Aggregates project settings updates in one
+        transaction. ADR-085 adds `deliveryPolicyDefault` here instead of a
+        one-off policy route; legacy runner/remap routes may remain compatibility
+        wrappers. One invalid sub-section rejects the whole PATCH with no
+        partial application.
+      operationId: patchProjectSettings
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectSettingsPatchBody" }
+      responses:
+        "200":
+          description: Project settings updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectSettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Invalid runner/policy target, stale settings row, or project mismatch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid aggregate settings body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/settings/runner:
     patch:
       tags: [projects]
@@ -1790,12 +1831,24 @@ paths:
   /api/runs:
     post:
       tags: [runs]
-      summary: Launch a new run for a Backlog task
+      summary: Launch a new run or rerun for a task
       description: |
         Requires an active session (`requireActiveSession` — authenticated and
         with no pending forced password change) AND project membership at
         `member` or above (`requireProjectAction("launchRun")`). The
         `projectId` is derived from the task row, never from the body.
+
+        ADR-085 broadens manual launchability: `Done`, `Review`, `Failed`,
+        `Abandoned`, and `Crashed` tasks/runs can launch a new attempt through
+        the same `launchRun` service. Actively executing states and
+        relation-blocked tasks are refused with typed disabled reasons that the
+        UI also receives from `GET /api/runs/launch-options`.
+
+        Body-controlled `flowId`, `runnerId`, branches, and
+        `deliveryPolicy` are validated against server-state for the task's
+        project. A selected Flow must be enabled for the same project; policy
+        defaults are resolved project default -> launch override and snapshotted
+        on the created run.
 
         After auth, project, Flow, and platform runner checks pass, the web tier
         calls the supervisor `GET /health` through
@@ -1840,9 +1893,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
-            Precondition failed. Examples: task not in Backlog, project
-            archived, branch / worktree path already in use, scheduler
-            cap full.
+            Precondition failed. Examples: task is busy or relation-blocked,
+            project archived, flow not enabled for this project, runner not
+            valid for the chosen Flow, branch / worktree path already in use,
+            target/base branch not in the allow-list, scheduler cap full, or
+            delivery policy target invalid.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -1868,13 +1923,10 @@ paths:
         (`PRECONDITION`). Response values are hints for the launcher;
         `POST /api/scratch-runs` revalidates every identifier from server state.
 
-        **(M18, Implemented) Board launch branch source.** The board task-launch
-        UI (the "Advanced" base/target branch selectors on `POST /api/runs`)
-        reuses this **session-authed, project-read-scoped** route as its branch
-        source — never an unauthenticated repo-metadata lookup. The board
-        consumes the `branches` + `defaultBaseBranch` subset, formalized as the
-        `BranchOptions` schema; the full launch-options DTO is a superset of
-        that shape.
+        Task launch uses `GET /api/runs/launch-options` as of ADR-085. Scratch
+        launch-options remain the scratch-workspace source and still expose the
+        reusable `branches` + `defaultBaseBranch` subset formalized as
+        `BranchOptions`.
       operationId: getScratchRunLaunchOptions
       parameters:
         - name: projectId
@@ -2539,18 +2591,19 @@ paths:
       description: |
         Requires project membership at `member` or above. Serves **both flow
         and scratch** runs (M18 — a shared promotion service dispatches on
-        `runKind`; previously scratch-only). Body controls only promotion mode,
-        optional target-branch override, the reviewed target HEAD, and the
-        drift override. Run id, workspace path, source branch, base commit, and
-        the default target branch are derived from server state.
+        `runKind`; previously scratch-only). Body controls only the explicit
+        policy override, optional target-branch override, the reviewed target
+        HEAD, and the drift override. Run id, workspace path, source branch,
+        base commit, resolved policy snapshot, and default target branch are
+        derived from server state.
 
-        Both `local_merge` and `pull_request` modes are implemented (M18).
-        `local_merge` runs `git merge --no-ff`; a textual conflict
-        aborts the merge, opens a manual-resolution assignment, and leaves the
-        run in `Review`. `pull_request` pushes the run branch and creates (or
-        idempotently updates) a provider pull/merge request — `github`→`gh`,
-        `gitlab`→`glab`, `gitea`/`gitverse`→Gitea REST API; a `generic`
-        provider is unsupported and refused `PRECONDITION`.
+        M18 compatibility modes `local_merge` and `pull_request` map to
+        ADR-085 delivery strategies `merge` and `pull_request`. ADR-085 also
+        adds `rebase_merge`, optional `push='on_success'`, and the separable
+        `ai_rebase_merge` sub-track. Merge conflicts surface the same failing
+        command and path data as the current conflict UX; `ai_rebase_merge`
+        streams progress through the standard run event path and uses the
+        standard inbox/HITL surfaces.
 
         Promotion is gated at promote time by the M16 readiness chokepoint
         (`assertEvidenceReady(runId, "review")`) and by a target-drift guard:
@@ -2559,8 +2612,8 @@ paths:
         since review). A body omitting `reviewedTargetCommit` is refused
         `PRECONDITION` — never promoted blind.
 
-        On success both modes terminate the run at `Done` (no new run status);
-        `pull_request` additionally records `pullRequestUrl`/`prNumber`.
+        On success all strategies terminate the run at `Done` (no new run
+        status); `pull_request` additionally records `pullRequestUrl`/`prNumber`.
       operationId: promoteRun
       parameters:
         - name: runId
@@ -2587,12 +2640,13 @@ paths:
             Promotion refused (`PRECONDITION` / `CONFLICT`). `PRECONDITION`:
             run/workspace not found, removed workspace, non-`Review` terminal
             state, readiness not ready/stale, invalid/missing target branch,
-            target advanced since review without `allowTargetDrift`, PR-mode
-            preflight failure (provider CLI missing / `*_TOKEN` unset / remote
-            not configured / `generic` provider). `CONFLICT`: `local_merge`
-            textual conflict (a manual-resolution assignment is created and the
-            run stays `Review`), a concurrent promotion already in progress, or
-            a promotion superseded by a stale-claim reclaim.
+            target advanced since review without `allowTargetDrift`, invalid
+            policy override, push rejected, PR-mode preflight failure (provider
+            CLI missing / `*_TOKEN` unset / remote not configured / `generic`
+            provider), or `ai_rebase_merge` degraded to manual. `CONFLICT`:
+            merge/rebase textual conflict (a manual-resolution assignment is
+            created and the run stays `Review`), a concurrent promotion already
+            in progress, or a promotion superseded by a stale-claim reclaim.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2604,6 +2658,51 @@ paths:
             promotion is idempotent on retry. Reuses the closed `MaisterError`
             union (ADR-008) — `EXECUTOR_UNAVAILABLE` is an existing member, no
             new error code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/delivery-policy:
+    patch:
+      tags: [runs]
+      summary: Switch an auto delivery policy to manual
+      description: |
+        Requires project membership at `member` or above. Used by the run-detail
+        auto-delivery banner. No body-controlled project/workspace ids are
+        accepted; the route CAS-updates only a run in `Review` whose current
+        `deliveryPolicySnapshot.trigger` is `auto_on_ready`, changing the
+        trigger to `manual` and preserving the strategy, push, and target.
+      operationId: patchRunDeliveryPolicy
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchRunDeliveryPolicyBody" }
+      responses:
+        "200":
+          description: Delivery policy trigger switched to manual.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, deliveryPolicy]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Run is not in Review, has no auto trigger, or was updated concurrently.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid action body.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -7461,13 +7560,73 @@ components:
             The role the caller observed in the roster. The update is a CAS:
             it only lands when the row still holds this role, else `409`
             (`CONFLICT`) on a concurrent stale-update race.
+    DeliveryPolicy:
+      type: object
+      required: [strategy, push, trigger, targetBranch]
+      additionalProperties: false
+      properties:
+        strategy:
+          type: string
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+        push:
+          type: string
+          enum: [never, on_success]
+        trigger:
+          type: string
+          enum: [manual, auto_on_ready]
+        targetBranch:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 255
+          description: |
+            Null means the project default branch at resolution time. Non-null
+            values are server-validated against the project branch allow-list.
+    ProjectSettingsPatchBody:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        defaultRunnerId:
+          type: string
+          nullable: true
+          description: Platform runner override; null inherits platform default.
+        deliveryPolicyDefault:
+          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          nullable: true
+          description: |
+            Project default delivery policy. Null clears to the legacy
+            promotion-mode compatibility mapping.
+    ProjectSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [project]
+      properties:
+        project:
+          type: object
+          additionalProperties: false
+          required: [slug, defaultRunnerId, deliveryPolicyDefault]
+          properties:
+            slug: { type: string }
+            defaultRunnerId: { type: string, nullable: true }
+            deliveryPolicyDefault:
+              allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+              nullable: true
     PostRunBody:
       type: object
       required: [taskId]
+      additionalProperties: false
       properties:
         taskId:
           type: string
           minLength: 1
+        flowId:
+          type: string
+          minLength: 1
+          description: |
+            Optional per-launch Flow override. The server derives the project
+            from `taskId` and refuses a Flow that is not enabled for that same
+            project. Omitted means the task's current Flow.
         runnerId:
           type: string
           minLength: 1
@@ -7490,6 +7649,12 @@ components:
             (M18, Implemented) Optional branch the run is promoted into after
             review. Server-validated against the same branch allow-list;
             unknown branch → `PRECONDITION` (409). Defaults to `baseBranch`.
+        deliveryPolicy:
+          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          description: |
+            Optional per-launch policy override. Omitted means the project
+            default. Any field differing from the default is shown as an
+            override in the launch dialog and snapshotted on the run.
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -7923,6 +8088,106 @@ components:
             The project's default branch — the base-branch default when the
             launcher leaves the advanced selector untouched. Null only when no
             project is visible/selected.
+    TaskRunLaunchOptionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          task,
+          launchability,
+          flows,
+          selectedFlowId,
+          runners,
+          selectedRunnerId,
+          branches,
+          defaultBaseBranch,
+          defaultTargetBranch,
+          deliveryPolicyDefault,
+        ]
+      properties:
+        task:
+          type: object
+          additionalProperties: false
+          required: [id, projectId, projectSlug, number, status, flowId]
+          properties:
+            id: { type: string, format: uuid }
+            projectId: { type: string, format: uuid }
+            projectSlug: { type: string }
+            number: { type: integer, minimum: 1 }
+            status:
+              type: string
+              enum: [Backlog, InFlight, Done, Abandoned]
+            flowId: { type: string, format: uuid }
+        launchability:
+          type: object
+          additionalProperties: false
+          required: [launchable, reason]
+          properties:
+            launchable: { type: boolean }
+            reason:
+              type: string
+              enum:
+                [
+                  launchable,
+                  busy,
+                  blocked,
+                  supervisor_unavailable,
+                  runner_unavailable,
+                  project_archived,
+                ]
+            blockers:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [kind, label]
+                properties:
+                  kind: { type: string }
+                  label: { type: string }
+        flows:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, refId, name, enabled, isTaskDefault]
+            properties:
+              id: { type: string, format: uuid }
+              refId: { type: string }
+              name: { type: string }
+              version: { type: string, nullable: true }
+              enabled: { type: boolean }
+              isTaskDefault: { type: boolean }
+        selectedFlowId: { type: string, format: uuid }
+        runners:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, label, model, readinessStatus, pinnedModel]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              model: { type: string }
+              readinessStatus:
+                type: string
+                enum: [Unknown, Ready, NotReady]
+              pinnedModel:
+                type: object
+                nullable: true
+                additionalProperties: false
+                required: [model, source]
+                properties:
+                  model: { type: string }
+                  source:
+                    type: string
+                    enum: [runner, flow, project-default, platform-default]
+        selectedRunnerId: { type: string, nullable: true }
+        branches:
+          type: array
+          items: { type: string }
+        defaultBaseBranch: { type: string, nullable: true }
+        defaultTargetBranch: { type: string, nullable: true }
+        deliveryPolicyDefault: { $ref: "#/components/schemas/DeliveryPolicy" }
     ScratchLaunchOptionsResponse:
       type: object
       required:
@@ -8683,12 +8948,23 @@ components:
         message: { type: string }
     PromoteRunBody:
       type: object
-      required: [mode, reviewedTargetCommit]
+      required: [reviewedTargetCommit]
       additionalProperties: false
       properties:
         mode:
           type: string
           enum: [local_merge, pull_request]
+          deprecated: true
+          description: |
+            M18 compatibility alias. `local_merge` maps to
+            `deliveryPolicyOverride.strategy=merge`; `pull_request` maps to
+            `pull_request`. New clients send `deliveryPolicyOverride`.
+        deliveryPolicyOverride:
+          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          description: |
+            Explicit promote-time override. Omitted means use the run snapshot.
+            The UI preselects the snapshot and marks this field as an override
+            when any value differs.
         targetBranch:
           type: string
           minLength: 1
@@ -8720,7 +8996,10 @@ components:
       required: [ok, mode]
       properties:
         ok: { type: boolean, enum: [true] }
-        mode: { type: string, enum: [local_merge, pull_request] }
+        mode:
+          type: string
+          enum: [local_merge, pull_request, merge, rebase_merge, ai_rebase_merge]
+        deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
         commit: { type: string, nullable: true }
         pullRequestUrl:
           type: string
@@ -8737,6 +9016,14 @@ components:
           description: |
             (M18, Implemented) Provider-assigned PR/MR number. Present only for
             successful `pull_request` promotions.
+    PatchRunDeliveryPolicyBody:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [switch_to_manual]
     HitlResponseBody:
       type: object
       description: |

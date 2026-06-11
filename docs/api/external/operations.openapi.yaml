@@ -356,11 +356,17 @@ paths:
       tags: [runs]
       summary: Launch a run for a task
       description: |
-        Scope `runs:launch`. Launches a run from a `Backlog` task. Mirrors the
-        same launch contract as the session-auth `POST /api/runs` (same
-        precondition checks, executor resolution, worktree creation, and
-        scheduler claim). The `projectId` is derived from the task row;
-        `taskId` ownership is re-validated against the token's project.
+        Scope `runs:launch`. Launches a run for a task owned by the token's
+        project. ADR-085 keeps this route v1-compatible: the body accepts only
+        `taskId`, runner override, `baseBranch`, and `targetBranch`. It does
+        not accept `flowId` or `deliveryPolicy`; those richer overrides are
+        session-auth UI/API-only until a future versioned external contract.
+
+        The route still funnels through the same `launchRun` service and the
+        same server launchability classifier, executor resolution, supervisor
+        readiness gate, worktree creation, and scheduler claim. The `projectId`
+        is derived from the task row; `taskId` ownership is re-validated
+        against the token's project.
 
         Returns 202 (may be `Pending` if the global concurrency cap is full,
         or `Running` if a slot was free). Writes a `token_audit_log` row with
@@ -1070,20 +1076,28 @@ components:
     ExtLaunchRunBody:
       type: object
       required: [taskId]
+      additionalProperties: false
       properties:
         taskId:
           type: string
           format: uuid
           description: |
-            ID of a `Backlog` task owned by the token's project. The
-            `projectId` is derived server-side from the task row; it is
-            re-validated against the token's project.
-        executorOverrideId:
+            ID of a task owned by the token's project. The `projectId` is
+            derived server-side from the task row and re-validated against the
+            token's project before launchability is evaluated.
+        runnerId:
           type: string
           minLength: 1
           description: |
-            Optional per-launch executor override. Highest priority in the
-            five-level resolution chain.
+            Optional per-launch platform ACP runner override. Highest priority
+            in the fail-closed runner resolution chain.
+        executorOverrideId:
+          type: string
+          minLength: 1
+          deprecated: true
+          description: |
+            Legacy alias for `runnerId`. New external clients should send
+            `runnerId`. The route refuses both fields when they conflict.
         baseBranch:
           type: string
           minLength: 1

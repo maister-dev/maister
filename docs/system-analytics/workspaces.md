@@ -27,6 +27,12 @@ reconciliation on host or process restart.
 - **Promotion mode** — `local_merge | pull_request` (`workspaces.promotion_mode`).
   Resolved at launch from the override chain (launch override > project
   `promotion.mode` > default `local_merge`); a per-run snapshot, not live-synced.
+- **Delivery policy** (Designed, ADR-085) — typed run snapshot resolving
+  project default -> launch override -> promote-time override. It supersedes
+  `promotion_mode` for new Flow runs while preserving legacy compatibility:
+  `local_merge` maps to `strategy=merge`, `pull_request` maps to
+  `strategy=pull_request`. Scratch runs keep legacy M18 promotion semantics in
+  this slice.
 - **Durable promotion claim (Implemented, M18)** — the serialization point for
   idempotent promotion, held on the workspace row (1:1 with the run):
   - `promotion_state` — `none | claiming | done | failed`. CAS'd to `claiming`
@@ -230,6 +236,41 @@ sequenceDiagram
 No new `MaisterError` code is added — the closed union
 ([ADR-008](../decisions.md#adr-008-typed-error-taxonomy-maistererror)) already
 covers `PRECONDITION`, `CONFLICT`, and `EXECUTOR_UNAVAILABLE`.
+
+#### Delivery-policy promotion (Designed, ADR-085)
+
+New Flow runs snapshot a `DeliveryPolicy`:
+
+```ts
+type DeliveryPolicy = {
+  strategy: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+  push: "never" | "on_success";
+  trigger: "manual" | "auto_on_ready";
+  targetBranch?: string;
+};
+```
+
+Promotion still uses the M18 durable claim and per-attempt token. Policy changes
+only choose the side-effect path and the default UI selection:
+
+| Strategy | Side effect | Claim/finalize model |
+| --- | --- | --- |
+| `merge` | `git merge --no-ff` from run branch into target branch | Existing `local_merge` claim, readiness re-gate, target-drift token, conflict assignment, finalize CAS. |
+| `pull_request` | Push run branch and create/update provider PR/MR | Existing PR claim and idempotent PR lookup/update. |
+| `rebase_merge` | Rebase run branch onto target, then merge | Same claim and finalize token; on conflict abort/restore and surface command/path/status. |
+| `ai_rebase_merge` | On rebase conflict, start agent-assisted resolution before re-entering readiness | Same run event stream and assignment inbox; conflict HITL uses `merge_conflict` unless a later schema decision adds a narrower kind. |
+
+`push=on_success` means push the successfully delivered target or run branch only
+after the local side-effect succeeds. Push rejection is a degradation/refusal
+state surfaced with the failing command and path context; it never silently
+marks the run `Done` unless the Phase A contract for that exact strategy says
+local success is final.
+
+`trigger=auto_on_ready` fires only from `Review` after the readiness gate is
+ready/overridden. If readiness is stale/not-ready or any command fails, the run
+stays `Review`, the policy degrades to manual for that run, and the UI shows the
+typed reason. The run-detail banner can cancel auto-delivery by CAS-ing the run
+snapshot from `auto_on_ready` to `manual`; project defaults are untouched.
 
 #### Concurrent promote & stale-claim reclaim (Implemented, M18)
 

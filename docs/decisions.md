@@ -112,6 +112,7 @@
 | [ADR-084](#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) | ACP adapter families for Gemini CLI and OpenCode | Accepted | 2026-06-11 |
 | [ADR-085](#adr-085-mimo-code-as-a-distinct-acp-adapter-family) | MiMo Code as a distinct ACP adapter family | Accepted | 2026-06-11 |
 | [ADR-086](#adr-086-domain-event-outbox-as-the-shared-trigger-bus) | Domain-event outbox as the shared trigger bus | Accepted | 2026-06-11 |
+| [ADR-087](#adr-087-multi-run-launch-cost-accounting-and-delivery-policy-surfaces) | Multi-run launch, cost accounting, and delivery-policy surfaces | Accepted | 2026-06-11 |
 
 ---
 
@@ -6264,6 +6265,67 @@ the M24 clock.
   per-delivery jobs (admin catalog flooding, `max_failures` auto-disable
   fighting consumer-level retry); consumer failure accounting lives on the
   cursor row instead.
+
+---
+
+### ADR-087: Multi-run launch, cost accounting, and delivery-policy surfaces
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** The task/run schema is already 1:N, but the UI still behaves like
+launch is mostly a Backlog-only action. Cost records are written to
+`cost.jsonl`, but they are not attributed to node attempts or surfaced as read
+models. Promotion mode is snapshotted as `local_merge | pull_request`, but the
+operator needs a declarative policy that flows from project default to launch
+override to promote-time override.
+
+**Decision:**
+1. Manual task launchability is split from schedule launchability. Manual
+   "Run again" is a positive allow-list over `Done`, `Review`, `Failed`,
+   `Abandoned`, and `Crashed`; busy states and relation blockers remain visible
+   disabled reasons. The scheduler keeps its conservative `target_terminal` and
+   `crashed` skip outcomes unless a later ADR explicitly changes scheduled
+   replay semantics.
+2. Task launches keep `launchRun` as the only run-creation service. Internal
+   `POST /api/runs` accepts selected Flow, runner/model, base/target branch,
+   and delivery-policy overrides after deriving the project from the task. The
+   token-auth external route remains v1-compatible unless a future API version
+   opts into the same override body.
+3. Cost attribution is exact or fail-fast: `cost.jsonl` remains the source of
+   truth, enriched with `runId`, `stepId`, `nodeAttemptId`, `sessionId`, token
+   kind totals, model, and resume marker. The web/supervisor prompt boundary
+   carries active node-attempt attribution for shared `slash-in-existing`
+   sessions; ambiguous concurrent prompt attribution is refused or serialized.
+   DB rollups are derived and reconcilable. Run and node durations derive from
+   existing `started_at`/`ended_at` columns, not redundant duration columns.
+4. Delivery policy resolves in order: project default -> launch override ->
+   promote-time override. The resolved run snapshot is immutable by later
+   project-default edits. Strategies are `merge`, `rebase_merge`,
+   `pull_request`, and separable `ai_rebase_merge`; triggers are `manual` and
+   `auto_on_ready`. `auto_on_ready` only fires after the existing readiness
+   gate and degrades to manual with the failing command/path/status surfaced.
+5. Project delivery-policy editing uses one aggregating project settings PATCH
+   route. Existing one-off settings routes may stay compatibility wrappers, but
+   the new policy editor writes through the aggregate route.
+6. Scratch promotion remains legacy M18 behavior in this slice. The shared
+   `promoteRun` service must preserve scratch semantics unless a later ADR opts
+   scratch into policy snapshots.
+7. `ai_rebase_merge` reuses the standard run event stream and standard
+   assignment/inbox surfaces. Conflict HITL uses the existing `merge_conflict`
+   assignment kind unless implementation proves a distinct user action is
+   required.
+
+**Consequences:**
+- Every acceptance criterion has a UI surface, EN/RU strings,
+  empty/disabled/error states, and Playwright coverage before the feature is
+  done.
+- Public route responses remain explicit DTO projections; server-only handles,
+  worktree paths, and raw cost payloads are not returned.
+- Observatory remains read-only. It may add cost dimensions computed from bulk
+  DB rows and derived cost rollups, but it adds no mutating route, background
+  job, or recommendation write path.
+- The next schema migration after this decision is `0047`; the next ADR number
+  is ADR-087 after ADR-085 and ADR-086 on the rebased `main`.
 
 ---
 

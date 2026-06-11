@@ -24,8 +24,12 @@ outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 `PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-077), and the
 **ADR-083 (Implemented, migration `0043`)** social-board tables `TASK_RELATIONS`,
 `TASK_COMMENTS`, `TASK_ACTIVITY`, `TASK_SUBSCRIBERS`, `INBOX_ITEMS` plus
-`PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`. For partial views by
-domain, see [`projects-domain.md`](projects-domain.md),
+`PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`, and the
+**ADR-085 (Designed, migration `0045`)** delivery-policy and cost-rollup
+projection fields/tables (`PROJECTS.delivery_policy_default`,
+`RUNS.delivery_policy_snapshot`, `RUN_COST_ROLLUPS`,
+`NODE_ATTEMPT_COST_ROLLUPS`). For partial views by domain, see
+[`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
 [`assignments-domain.md`](assignments-domain.md),
@@ -68,9 +72,11 @@ erDiagram
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    NODE_ATTEMPTS ||--o{ NODE_ATTEMPT_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ ARTIFACT_INSTANCES : "evidence index (M12)"
     NODE_ATTEMPTS ||--o{ ARTIFACT_INSTANCES : "attempt evidence (M12, nullable)"
     RUNS ||--o| ARTIFACT_PROJECTION_CURSORS : "projector cursor (M12)"
@@ -192,6 +198,7 @@ erDiagram
         text maister_yaml_path
         text default_runner_id "platform runner override"
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
+        jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
         text task_key UK "ADR-075 Implemented: platform-wide unique, immutable Stage 1"
         integer next_task_number "ADR-075 Implemented: allocation counter, DEFAULT 1"
         timestamp created_at
@@ -555,8 +562,28 @@ erDiagram
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         text resume_target_step_id "node id retained at crash time for Recover (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch (flowRevisionId,capabilities,mcps)"
+        jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         timestamp started_at
         timestamp ended_at
+    }
+
+    RUN_COST_ROLLUPS {
+        text run_id PK
+        text project_id FK
+        text task_id FK
+        text flow_id FK
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        jsonb by_model
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     WORKSPACES {
@@ -603,6 +630,26 @@ erDiagram
         text error_code "MaisterErrorCode literal"
         timestamp started_at
         timestamp ended_at
+    }
+
+    NODE_ATTEMPT_COST_ROLLUPS {
+        text id PK
+        text run_id FK
+        text project_id FK
+        text node_attempt_id FK
+        text node_id
+        text model
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     NODE_ATTEMPTS {

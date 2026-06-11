@@ -65,6 +65,26 @@ order) is the DQ7 matrix:
 | cap full (task launchable) | `skipped_cap` | flag + `catchup_queued` | `launchRun` → run lands `Pending` + queue position (`queued_pending`) |
 | free | launch | launch (+ clear flag) | launch |
 
+### Classifier split for manual relaunch (Designed, ADR-085)
+
+Schedules keep their conservative classifier intent even though manual
+"Run again" allows `Done`, `Review`, and `Crashed` targets. A schedule fire is
+automation, not an explicit human retry click:
+
+- `target_terminal` (`Done` task/latest run or task `Abandoned`) still records
+  `skipped_target_terminal` and clears any queued catch-up.
+- `crashed` still records `skipped_crashed` and keeps an existing
+  `queue_one_pending` flag, because the run owes a recover/discard or an
+  explicit manual relaunch.
+- `Review` remains `busy` for schedule dispatch unless a future ADR opts
+  schedules into review replays. This prevents a schedule from spawning a new
+  attempt while a human is reviewing or promoting the previous one.
+- Relation blockers continue to gate every policy and never create a run.
+
+Implementation may share helper code with manual launchability, but the
+schedule-facing API must expose the schedule intent explicitly so future manual
+states cannot silently change the overlap matrix.
+
 ## Process flows
 
 ### Dispatcher tick (single-claim due-OR-catchup)
@@ -140,6 +160,9 @@ catch-up.
 
 - Every fire MUST create runs only through `launchRun` with its full
   preconditions, gates, HITL, and promotion — no side-channel run creation.
+- Schedule launchability MUST be tested separately from manual launchability;
+  `Done`, `Review`, and `Crashed` manual relaunch support MUST NOT make due
+  schedules start those tasks unless this document is updated first.
 - The M24 tick MUST remain the only clock: exactly one seeded
   `run_schedule.dispatcher` job (60s cadence, budget 1) fires schedules; no
   new timer, no `fs.watch`, no polling of run state.

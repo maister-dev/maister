@@ -67,6 +67,37 @@ aggregation layer over current rows. Active runs are included in metrics but
 MUST carry `volatile=true` because their attempts, waits, and ending timestamp
 can still change.
 
+## Cost dimension (Designed, ADR-085)
+
+The cost dimension is read-only and groups derived token/cost rollups by
+project, Flow, and node. It does not read raw prompts, raw adapter lines, env
+values, or secret-bearing payloads. Its source inputs are:
+
+- `runs.started_at`, `runs.ended_at`, `runs.flow_id`, `runs.flow_revision_id`,
+  `runs.runner_snapshot`, and the run-level cost rollup;
+- `node_attempts.started_at`, `node_attempts.ended_at`, and node-attempt cost
+  rollups;
+- enriched `cost.jsonl` records as the reconciliation source of truth.
+
+Token kinds are `input`, `output`, `cache_read`, and `cache_creation`.
+Resume tax is the subtotal of records marked as resume/checkpoint overhead.
+Active run cost rows render `volatile=true` for the same reason active autonomy
+rows do: open runs can still append cost records or finish node attempts.
+
+The UI adds a cost tab/filter set to the existing Observatory surfaces. It is
+view-only: no write route, no background job, no recommendation mutation, and
+no Flow/package edits. Rollups may be persisted by the runs domain for
+efficient reads, but Observatory only consumes them through bulk read-model
+queries and reconciles labels/denominators with the rest of the page.
+
+UI/test acceptance:
+
+| Surface | Acceptance and states | Test owner |
+| --- | --- | --- |
+| Portfolio Observatory cost tab/filter | Groups by project and Flow, shows token totals by kind, model breakdown, resume-tax subtotal, honest denominators, volatile marker for active runs, and useful empty state for no cost rows. All labels have EN/RU messages. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/observatory-cost*.test.ts` |
+| Project/node drill-down | Filters preserve URL-synchronized Observatory state, show node-attempt token totals/durations, and render "insufficient data" instead of fake zeroes when the denominator is too small. | `web/e2e/multi-run-cost-policy.spec.ts`; pure rollup tests |
+| Read-only failure mode | Missing or stale derived rollups show a bounded warning/empty row; the UI never triggers recomputation through a mutating HTTP route and never polls raw `cost.jsonl`. | `web/e2e/multi-run-cost-policy.spec.ts`; query integration tests |
+
 ## Process flows
 
 ### Aggregate read path
@@ -228,6 +259,10 @@ flowchart TD
 
 - Observatory MUST be read-only: no DB writes, filesystem writes, supervisor
   calls, background jobs, or state-changing routes are part of M23.
+- Cost dimensions added by ADR-085 MUST preserve the read-only boundary:
+  Observatory reads derived cost rollups and bulk run/node rows only; it never
+  triggers recomputation through a mutating route and never reads raw
+  `cost.jsonl` payloads in a request loop.
 - Formula helpers MUST accept an explicit `now` and MUST NOT call `Date.now()`
   internally.
 - `correction_rate` MUST use `node_attempts.status = 'Reworked'` for rework

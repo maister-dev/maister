@@ -26,8 +26,10 @@ erDiagram
     RUNS ||--|| WORKSPACES : "one worktree per run"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    NODE_ATTEMPTS ||--o{ NODE_ATTEMPT_COST_ROLLUPS : "derived token rollups (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
@@ -78,8 +80,28 @@ erDiagram
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
+        jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         timestamp started_at
         timestamp ended_at
+    }
+
+    RUN_COST_ROLLUPS {
+        text run_id PK
+        text project_id FK
+        text task_id FK
+        text flow_id FK
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        jsonb by_model
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     WORKSPACES {
@@ -126,6 +148,26 @@ erDiagram
         text error_code "MaisterErrorCode literal"
         timestamp started_at
         timestamp ended_at
+    }
+
+    NODE_ATTEMPT_COST_ROLLUPS {
+        text id PK
+        text run_id FK
+        text project_id FK
+        text node_attempt_id FK
+        text node_id
+        text model
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     NODE_ATTEMPTS {

@@ -105,40 +105,40 @@ No new env vars, ports, sidecars, or host-mounted files are expected. If Phase A
 
 ### Phase A: Documentation and Spec Freeze
 
-- [ ] Task 1: Audit current contracts, number space, and UI inventory.
+- [x] Task 1: Audit current contracts, number space, and UI inventory.
   Deliverable: freeze current state before writing the feature spec. Verify next-free ADR number after ADR-084 and next-free migration after the live `web/lib/db/migrations` journal (0044 already exists on this base). Inventory current UI files: task card, task page, launch popover, run detail layout, review panel, project settings panel, Observatory. Also inventory shared routes/services that this feature will touch: internal launch route, external token launch route, launch-options route, scheduler dispatch, supervisor cost/session schemas, project settings routes, and scratch/flow promote compatibility.
   Files: `docs/decisions.md`, `web/lib/db/migrations/meta/_journal.json`, `web/components/board/launch-popover.tsx`, `web/app/(app)/projects/[slug]/tasks/[number]/page.tsx`, `web/app/(app)/runs/[runId]/layout.tsx`, `web/components/runs/review-panel.tsx`, `web/components/board/panels/settings-panel.tsx`, `web/app/api/runs/route.ts`, `web/app/api/v1/ext/runs/route.ts`, `web/app/api/runs/launch-options/route.ts`, `web/lib/run-schedules/dispatch.ts`, `supervisor/src/types.ts`, `supervisor/src/cost.ts`, `web/lib/runs/promote.ts`.
   Logging requirements: no production logging; document any discovered stale numbering or surface mismatch in the Phase A docs with concrete file paths.
   Verification: `git --no-pager diff --check`; record the verified ADR and migration next-free values in the docs before implementation starts.
 
-- [ ] Task 2: Specify Feature A analytics, user stories, and launchability v2.
+- [x] Task 2: Specify Feature A analytics, user stories, and launchability v2.
   Deliverable: docs-first contract for re-running tasks. Define manual launchability v2 as a positive allow-list for `Done`, `Review`, `Failed`, `Abandoned`, and `Crashed`; keep actively executing states `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, and relation-blocked states non-launchable with visible disabled reasons. Decide explicitly whether `HumanWorking` remains busy in v1. Define `Done/Abandoned -> InFlight` reopen semantics and preserve previous runs/worktrees/promotability. Freeze schedule launchability separately so scheduler behavior does not accidentally start terminal/review/crashed tasks unless the docs explicitly opt into that.
   UI acceptance: task card/page "Run again", disabled reason tooltip, launch dialog defaults/override badges, task run-history table columns, board runs-count badge, empty/error states, EN/RU strings.
   Files: `docs/system-analytics/tasks.md`, `docs/system-analytics/runs.md`, `docs/system-analytics/run-schedules.md`.
   Logging requirements: specify WARN logs for refused launches with `taskId`, classifier result, blockers, and no server-only path leakage; specify DEBUG logs for accepted launch defaults and override resolution.
   Verification: `pnpm validate:docs`; every user story names UI surface(s) and acceptance includes UI behavior, empty/disabled/error states, and i18n coverage.
 
-- [ ] Task 3: Specify Feature B cost/time analytics and storage decision.
+- [x] Task 3: Specify Feature B cost/time analytics and storage decision.
   Deliverable: docs-first contract for token attribution, rollups, active/wall time, resume-tax, and Observatory cost dimensions. Prefer exact node-attempt stamping for cost records over timestamp-range attribution; for shared `slash-in-existing` sessions, define prompt-time active attribution context instead of only session-start context. If Phase A proves a case impossible, document the exact limitation and refusal behavior before code. Persist token/cost rollups only where needed; derive duration from existing `runs.started_at`/`ended_at` and `node_attempts.started_at`/`ended_at` unless Phase A documents a concrete reason for redundant duration columns.
   UI acceptance: run detail summary card, run timeline token/duration columns, task aggregate totals, Observatory project/flow/node cost dimension, live update via SSE/refresh only.
   Files: `docs/system-analytics/runs.md`, `docs/system-analytics/observatory.md`, `docs/database-schema.md`, `docs/db/runs-domain.md`, `docs/db/erd.md`.
   Logging requirements: specify structured logs for cost-event ingestion and rollup recompute with `runId`, `nodeAttemptId`, `sessionId`, `model`, token-kind totals, and source offset or event id; no raw prompts, env values, or cost payloads in logs.
   Verification: `pnpm validate:docs`; docs state JSONL remains source of truth and DB rollups are derived/reconcilable.
 
-- [ ] Task 4: Specify Feature C delivery policy analytics and state transitions.
+- [x] Task 4: Specify Feature C delivery policy analytics and state transitions.
   Deliverable: docs-first contract for `delivery_policy` resolution: project default -> launch override -> promote override; snapshot on run; compatibility mapping from `local_merge` and `pull_request`; `auto_on_ready` after readiness only; manual degradation on failures. Define `merge`, `rebase_merge`, `pull_request`, and separable `ai_rebase_merge`. Freeze whether scratch runs keep legacy promote behavior or opt into policy snapshots; if they stay legacy, add explicit regression requirements. For `ai_rebase_merge`, decide whether conflict/HITL uses existing `merge_conflict` assignments or a new action kind before schema work starts.
   UI acceptance: project settings default editor, launch dialog policy editor, run detail policy snapshot/banner/cancel, promote panel preselection/override/conflict states, standard inbox/HITL surfacing for `ai_rebase_merge`.
   Files: `docs/system-analytics/runs.md`, `docs/system-analytics/workspaces.md`, `docs/system-analytics/hitl.md`, `docs/system-analytics/readiness.md` if needed.
   Logging requirements: specify INFO logs for resolved policy snapshot and auto-delivery trigger, WARN for degraded-to-manual states with command/path/status, ERROR only for unrecoverable side-effect failures with attempt id.
   Verification: `pnpm validate:docs`; state diagrams include every auto/manual/degraded transition and crash window.
 
-- [ ] Task 5: Freeze API, AsyncAPI, DB docs, and ADR decisions.
+- [x] Task 5: Freeze API, AsyncAPI, DB docs, and ADR decisions.
   Deliverable: update OpenAPI for `POST /api/runs` flow override and delivery policy, `GET /api/runs/launch-options`, one aggregating project settings PATCH, promote route policy override, and any cancel/switch-to-manual route. Freeze and document `POST /api/v1/ext/runs` compatibility or parity with the internal route. Update supervisor OpenAPI if session/create or prompt/send bodies carry attribution context. Update AsyncAPI only if a new explicit browser-facing or supervisor event kind is required; otherwise document the existing `session.update`/run refresh path. Add or amend ADRs after auditing existing ADRs.
   Files: `docs/api/web.openapi.yaml`, `docs/api/external/operations.openapi.yaml`, `docs/api/supervisor.openapi.yaml`, `docs/api/async/web-runs.asyncapi.yaml`, `docs/api/async/supervisor-sse.asyncapi.yaml`, `docs/database-schema.md`, `docs/db/erd.md`, `docs/db/runs-domain.md`, `docs/db/projects-domain.md`, `docs/decisions.md`.
   Logging requirements: API docs must define structured error payload context for `PRECONDITION`, `CONFLICT`, and `EXECUTOR_UNAVAILABLE` without exposing raw filesystem paths except operator-actionable conflict paths already shown by current merge UX.
   Verification: `pnpm validate:docs`; OpenAPI/AsyncAPI lint during implementation with `npx @redocly/cli lint docs/api/web.openapi.yaml` and `npx @asyncapi/cli validate docs/api/async/web-runs.asyncapi.yaml`.
 
-- [ ] Task 6: Freeze Phase B QA matrix and done gates.
+- [x] Task 6: Freeze Phase B QA matrix and done gates.
   Deliverable: write the acceptance-to-test matrix in Phase A docs. Each feature must map to integration tests and Playwright surfaces before implementation begins. Define a dedicated e2e fixture for this feature cluster instead of mutating shared M18/M23 fixtures in-place, unless Phase A proves reuse is safe. Include exact new spec filenames and the exact `AUTHED_SPEC` regex update if those filenames are not already matched.
   Files: `docs/system-analytics/tasks.md`, `docs/system-analytics/runs.md`, `docs/system-analytics/observatory.md`, `web/playwright.config.ts` (planned change only in Phase A).
   Logging requirements: no app logs; QA docs must name observable error text/code states for each failing test.
