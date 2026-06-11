@@ -36,7 +36,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// [FIX] M8 review finding #2: resumeRun previously left the resumed
+// M8 review finding #2: resumeRun previously left the resumed
 // supervisor session unattended — no consumer reading its SSE stream,
 // no prompt sent to wake the adapter, no path to auto-deliver the
 // stored HITL intent. The /respond idle branch returned 202
@@ -230,7 +230,7 @@ async function findOpenStepRunForStep(
   return rows[0] ?? null;
 }
 
-// [FIX] M8 review pass 2 finding #3: complete the resumed step
+// M8 review pass 2 finding #3: complete the resumed step
 // properly and hand off back to runFlow for any remaining steps. The
 // previous driver wrote `runs.status = Review` directly, which
 // skipped step_run persistence and would have left flow continuation
@@ -246,7 +246,7 @@ async function completeResumedStepAndHandoff(
   if (!loaded) {
     log.warn(
       { runId },
-      "[FIX] completeResumedStep: run row vanished — cannot continue flow",
+      "completeResumedStep: run row vanished — cannot continue flow",
     );
 
     return { handedOff: false, lastStep: false };
@@ -270,7 +270,7 @@ async function completeResumedStepAndHandoff(
   } else {
     log.warn(
       { runId, resumedStepId },
-      "[FIX] completeResumedStep: no open step_run for resumed step — proceeding without step_run update",
+      "completeResumedStep: no open step_run for resumed step — proceeding without step_run update",
     );
   }
 
@@ -303,7 +303,7 @@ async function completeResumedStepAndHandoff(
 
     log.info(
       { runId, resumedStepId },
-      "[FIX] completeResumedStep: resumed step was the last step — Review",
+      "completeResumedStep: resumed step was the last step — Review",
     );
 
     // M8 Codex review fix #3: promote next Pending if Review terminal
@@ -328,7 +328,7 @@ async function completeResumedStepAndHandoff(
   if (updated.length === 0) {
     log.warn(
       { runId, resumedStepId, nextStepId: nextStep.id },
-      "[FIX] completeResumedStep: status-guard mismatch — concurrent transition won",
+      "completeResumedStep: status-guard mismatch — concurrent transition won",
     );
 
     return { handedOff: false, lastStep: false };
@@ -336,7 +336,7 @@ async function completeResumedStepAndHandoff(
 
   log.info(
     { runId, resumedStepId, nextStepId: nextStep.id },
-    "[FIX] completeResumedStep: advanced currentStepId — scheduling runFlow continuation",
+    "completeResumedStep: advanced currentStepId — scheduling runFlow continuation",
   );
 
   queueMicrotask(() => {
@@ -351,7 +351,7 @@ async function completeResumedStepAndHandoff(
             runId,
             err: err instanceof Error ? err.message : String(err),
           },
-          "[FIX] completeResumedStep: runFlow continuation failed",
+          "completeResumedStep: runFlow continuation failed",
         );
       }
     })();
@@ -360,7 +360,7 @@ async function completeResumedStepAndHandoff(
   return { handedOff: true, lastStep: false };
 }
 
-// [FIX] M8 Codex review fix #3: every resume-driver terminal transition
+// M8 Codex review fix #3: every resume-driver terminal transition
 // must promoteNextPending — the resumed run was occupying a slot via
 // NeedsInput, and the terminal write (Review/Failed/Crashed) frees it.
 // Without this, Pending runs starve until some unrelated terminal
@@ -386,7 +386,7 @@ async function promoteAfterResumeTerminal(
         terminalKind,
         err: err instanceof Error ? err.message : String(err),
       },
-      "[FIX] promoteNextPending after resume terminal failed (non-fatal)",
+      "promoteNextPending after resume terminal failed (non-fatal)",
     );
   }
 }
@@ -404,7 +404,7 @@ export async function runResumedSession(
 
   log.info(
     { runId, supervisorSessionId, acpSessionId, watchdogMs },
-    "[FIX] runResumedSession started",
+    "runResumedSession started",
   );
 
   let stopReason: string | null = null;
@@ -414,7 +414,7 @@ export async function runResumedSession(
   // a closure assignment — TS otherwise narrows `consumerError` to
   // `null` because it can't see closure mutations.
   const consumerErrorRef: { current: Error | null } = { current: null };
-  // [FIX] M8 review pass 2 finding #3: capture session.update text
+  // M8 review pass 2 finding #3: capture session.update text
   // chunks so completeResumedStepAndHandoff can persist the resumed
   // step's stdout in step_runs — mirroring how runner-agent's normal
   // path stores consumer.snapshot() in markStepSucceeded.
@@ -429,7 +429,7 @@ export async function runResumedSession(
     if (!permissionDelivered) {
       log.warn(
         { runId, supervisorSessionId, watchdogMs },
-        "[FIX] runResumedSession: resume-prompt watchdog expired — aborting",
+        "runResumedSession: resume-prompt watchdog expired — aborting",
       );
       abort.abort();
     }
@@ -451,7 +451,7 @@ export async function runResumedSession(
           err instanceof Error ? err : new Error(String(err));
         log.warn(
           { runId, err: consumerErrorRef.current.message },
-          "[FIX] runResumedSession consumer error",
+          "runResumedSession consumer error",
         );
       }
     }
@@ -504,7 +504,7 @@ export async function runResumedSession(
             supervisorSessionId,
             requestId: ev.requestId,
           },
-          "[FIX] runResumedSession: no stored intent — cancelling to keep agent moving",
+          "runResumedSession: no stored intent — cancelling to keep agent moving",
         );
         try {
           await cancelPermission(
@@ -515,7 +515,7 @@ export async function runResumedSession(
         } catch (err) {
           log.warn(
             { runId, err: (err as Error).message },
-            "[FIX] runResumedSession: cancelPermission also failed",
+            "runResumedSession: cancelPermission also failed",
           );
         }
 
@@ -539,7 +539,7 @@ export async function runResumedSession(
             optionId: intent.optionId,
             latencyMs: Date.now() - startedAt,
           },
-          "[FIX] runResumedSession: stored intent auto-delivered on resumed session",
+          "runResumedSession: stored intent auto-delivered on resumed session",
         );
       } catch (err) {
         permissionFailed = true;
@@ -552,7 +552,7 @@ export async function runResumedSession(
             requestId: ev.requestId,
             err: msg,
           },
-          "[FIX] runResumedSession: deliverPermission failed — aborting",
+          "runResumedSession: deliverPermission failed — aborting",
         );
         abort.abort();
       }
@@ -570,7 +570,7 @@ export async function runResumedSession(
     if (ev.type === "session.crashed") {
       log.warn(
         { runId, supervisorSessionId, monotonicId: ev.monotonicId },
-        "[FIX] runResumedSession: supervisor reported session.crashed",
+        "runResumedSession: supervisor reported session.crashed",
       );
       abort.abort();
 
@@ -597,13 +597,13 @@ export async function runResumedSession(
         stopReason,
         latencyMs: Date.now() - startedAt,
       },
-      "[FIX] runResumedSession: continuation prompt completed",
+      "runResumedSession: continuation prompt completed",
     );
   } catch (err) {
     promptError = err instanceof Error ? err : new Error(String(err));
     log.warn(
       { runId, err: promptError.message },
-      "[FIX] runResumedSession: sendPrompt failed",
+      "runResumedSession: sendPrompt failed",
     );
   } finally {
     clearTimeout(watchdogTimer);
@@ -637,7 +637,7 @@ export async function runResumedSession(
         ? `prompt-failed:${errMsg.slice(0, 96)}`
         : `consumer-failed:${errMsg.slice(0, 96)}`;
 
-      // [FIX] M8 review pass 2 finding #2: classify retryability
+      // M8 review pass 2 finding #2: classify retryability
       // BEFORE writing respondedAt on the stored intent. Previously we
       // unconditionally called markIntentAbandoned() and then
       // distinguished retryable vs terminal — but markIntentAbandoned
@@ -654,7 +654,7 @@ export async function runResumedSession(
       if (isRetryable) {
         log.warn(
           { runId, reason },
-          "[FIX] runResumedSession: retryable prompt failure — preserving stored intent and rolling back to NeedsInputIdle",
+          "runResumedSession: retryable prompt failure — preserving stored intent and rolling back to NeedsInputIdle",
         );
         await rollbackResumedRun(runId, { db });
 
@@ -697,7 +697,7 @@ export async function runResumedSession(
     }
 
     if (stopReason === "end_turn") {
-      // [FIX] M8 review pass 2 finding #3: do NOT directly transition
+      // M8 review pass 2 finding #3: do NOT directly transition
       // to Review — that would skip step_run persistence and any
       // remaining flow steps. Instead, mark the resumed step's
       // step_run Succeeded with the captured stdout and either
@@ -719,7 +719,7 @@ export async function runResumedSession(
           lastStep: handoff.lastStep,
           latencyMs: Date.now() - startedAt,
         },
-        "[FIX] runResumedSession: step completed; flow continuation handed off",
+        "runResumedSession: step completed; flow continuation handed off",
       );
 
       return;
@@ -735,7 +735,7 @@ export async function runResumedSession(
     // path handles subsequent rounds.)
     log.info(
       { runId, supervisorSessionId, stopReason },
-      "[FIX] runResumedSession: ended without end_turn but with permission delivered — leaving NeedsInput",
+      "runResumedSession: ended without end_turn but with permission delivered — leaving NeedsInput",
     );
   } finally {
     // Best-effort: detach from the supervisor session so the process
@@ -767,7 +767,7 @@ export function scheduleResumedSessionDrive(
       supervisorSessionId: opts.supervisorSessionId,
       driveId,
     },
-    "[FIX] scheduling resumed-session driver in background",
+    "scheduling resumed-session driver in background",
   );
   queueMicrotask(() => {
     void runResumedSession(opts).catch(async (err: unknown) => {
@@ -779,7 +779,7 @@ export function scheduleResumedSessionDrive(
           driveId,
           err: msg,
         },
-        "[FIX] runResumedSession threw to top — funneling through crashResumedRun",
+        "runResumedSession threw to top — funneling through crashResumedRun",
       );
       // M8 Codex review fix #2 (belt-and-suspenders): any uncaught
       // throw in the live-process driver MUST land the run in a
@@ -808,7 +808,7 @@ export function scheduleResumedSessionDrive(
                 ? terminalErr.message
                 : String(terminalErr),
           },
-          "[FIX] crashResumedRun also threw — run state is inconsistent, startup recovery will catch",
+          "crashResumedRun also threw — run state is inconsistent, startup recovery will catch",
         );
       }
     });

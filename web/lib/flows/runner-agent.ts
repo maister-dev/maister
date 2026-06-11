@@ -671,7 +671,7 @@ async function runNewSession(
           stopReason: promptResult.stopReason,
           acpSessionId: session.acpSessionId,
         },
-        "[FIX] step paused by supervisor checkpoint — STEP_CHECKPOINTED",
+        "step paused by supervisor checkpoint — STEP_CHECKPOINTED",
       );
 
       return {
@@ -811,7 +811,7 @@ async function runSlashInExisting(
         stopReason: promptResult.stopReason,
         sessionId,
       },
-      "[FIX] slash-in-existing step paused by supervisor checkpoint — STEP_CHECKPOINTED",
+      "slash-in-existing step paused by supervisor checkpoint — STEP_CHECKPOINTED",
     );
 
     return {

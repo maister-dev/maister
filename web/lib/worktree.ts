@@ -297,7 +297,7 @@ export async function removeBranch(args: BranchRefArgs): Promise<void> {
   );
   const branch = validate(branchNameSchema, args.branch, "branch");
 
-  log.info({ projectRepoPath: repo, branch }, "[FIX] removeBranch");
+  log.info({ projectRepoPath: repo, branch }, "removeBranch");
 
   try {
     const { stdout, stderr } = await runGit(repo, [
@@ -389,7 +389,7 @@ export async function diffRunWorkspace(
     ) {
       log.info(
         { projectRepoPath: repo, maxBuffer: EXEC_MAX_BUFFER },
-        "[FIX] diffRunWorkspace truncated — diff exceeded EXEC_MAX_BUFFER",
+        "diffRunWorkspace truncated — diff exceeded EXEC_MAX_BUFFER",
       );
 
       const text = await streamGitDiffTruncated(repo, diffArgs);
@@ -427,7 +427,7 @@ export async function promoteLocalMerge(
 
     log.info(
       { projectRepoPath: repo, sourceBranch, targetBranch },
-      "[FIX] promoteLocalMerge acquired repo promotion lock",
+      "promoteLocalMerge acquired repo promotion lock",
     );
 
     try {
@@ -1036,7 +1036,7 @@ export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
     ) {
       log.info(
         { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER },
-        "[FIX] diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
+        "diffRange truncated — diff exceeded EXEC_MAX_BUFFER",
       );
 
       const text = await streamGitDiffTruncated(wt, diffArgs);

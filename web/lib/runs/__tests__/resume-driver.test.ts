@@ -1,4 +1,4 @@
-// [FIX] M8 review pass 2 finding #2 + #3 regression coverage for the
+// M8 review pass 2 finding #2 + #3 regression coverage for the
 // resume driver:
 //   * #2: retryable EXECUTOR_UNAVAILABLE prompt failure MUST NOT
 //     close the stored intent (no markIntentAbandoned) and MUST roll

@@ -114,7 +114,7 @@ async function deleteSupervisorSessionIfLive(
     ) {
       log.info(
         { runId, sessionId },
-        "[FIX] scratch stop treated missing supervisor session as already stopped",
+        "scratch stop treated missing supervisor session as already stopped",
       );
 
       return false;
@@ -144,7 +144,7 @@ export async function POST(
     if (isTerminalScratchDialogStatus(scratch.dialogStatus)) {
       log.info(
         { runId, dialogStatus: scratch.dialogStatus },
-        "[FIX] scratch stop skipped terminal run",
+        "scratch stop skipped terminal run",
       );
 
       return NextResponse.json({

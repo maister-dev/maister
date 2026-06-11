@@ -159,7 +159,7 @@ const deliverPermissionSpy = vi.fn(
 );
 const runFlowSpy = vi.fn(async (_runId: string): Promise<void> => undefined);
 
-// [FIX] M8 review finding #2 / #3: mocks for the idle-branch
+// M8 review finding #2 / #3: mocks for the idle-branch
 // dependencies. Tests override these per-case.
 const resumeRunSpy = vi.fn();
 const scheduleResumedSessionDriveSpy = vi.fn();
@@ -976,7 +976,7 @@ describe("HITL respond route — error cases", () => {
   });
 });
 
-describe("HITL respond route — [FIX] NeedsInputIdle branch", () => {
+describe("HITL respond route — NeedsInputIdle branch", () => {
   it("schedules the driver and returns 202 on resumeRun success", async () => {
     const { runId, hitlRequestId } = seedPermissionRow({
       runStatus: "NeedsInputIdle",

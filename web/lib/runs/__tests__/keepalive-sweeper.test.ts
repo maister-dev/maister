@@ -1,4 +1,4 @@
-// [FIX] M8 review finding #1 regression coverage. The sweeper's pass 1
+// M8 review finding #1 regression coverage. The sweeper's pass 1
 // must NOT mark any candidate as checkpointed when listSessions()
 // fails — that would produce a split-brain state where the DB says
 // the slot is free while the supervisor might still be holding a
@@ -84,7 +84,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-describe("keepalive-sweeper — [FIX] supervisor-unavailable handling", () => {
+describe("keepalive-sweeper — supervisor-unavailable handling", () => {
   it("aborts pass 1 entirely when listSessions() throws — no markCheckpointed, no release", async () => {
     state.pass1 = [
       { id: "run-a", acpSessionId: "acp-a" },

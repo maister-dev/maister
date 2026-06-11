@@ -517,7 +517,7 @@ export async function sendGateChatTurn(args: {
           await rollbackResumedRun(args.runId, { db: d });
           log.warn(
             { runId: args.runId, hitlRequestId: args.hitlRequestId },
-            "[FIX] [gate-chat] spawn failed — resume claim rolled back to NeedsInputIdle",
+            "[gate-chat] spawn failed — resume claim rolled back to NeedsInputIdle",
           );
         } catch (rollbackErr) {
           log.warn(
@@ -528,7 +528,7 @@ export async function sendGateChatTurn(args: {
                   ? rollbackErr.message
                   : String(rollbackErr),
             },
-            "[FIX] [gate-chat] resume-claim rollback failed",
+            "[gate-chat] resume-claim rollback failed",
           );
         }
       }

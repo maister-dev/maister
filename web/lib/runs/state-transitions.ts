@@ -190,7 +190,7 @@ export type FailReason = string;
 //   - supervisor 201 but empty acpSessionId (CHECKPOINT)
 //   - supervisor 404 unknown checkpoint (CHECKPOINT)
 //
-// [FIX] M8 review finding #3: with the new claim-before-spawn order in
+// M8 review finding #3: with the new claim-before-spawn order in
 // resumeRun the post-claim row is NeedsInput, not NeedsInputIdle. The
 // status guard accepts both so the terminal Failed transition fires
 // regardless of which side of the claim the spawn happened on.
@@ -243,7 +243,7 @@ export async function failResumedRun(
   return { ok: true };
 }
 
-// [FIX] M8 review finding #3: when the atomic claim path
+// M8 review finding #3: when the atomic claim path
 // (markResumed BEFORE createSession) has to undo itself because the
 // supervisor spawn failed with a RETRYABLE error, we transition the
 // run back to NeedsInputIdle so the next operator response (or the
@@ -276,7 +276,7 @@ export async function rollbackResumedRun(
 
   log.info(
     { runId, from: "NeedsInput", to: "NeedsInputIdle (rollback)" },
-    "[FIX] run-state transition — resume claim rolled back after retryable spawn failure",
+    "run-state transition — resume claim rolled back after retryable spawn failure",
   );
 
   return { ok: true };

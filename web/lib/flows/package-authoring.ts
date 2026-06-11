@@ -187,7 +187,7 @@ export function assertPublishableAuthoredFlowPackage(args: {
         path: issue.path,
       })),
     },
-    "[FIX] authored Flow package publish refused",
+    "authored Flow package publish refused",
   );
 
   throw new MaisterError(
@@ -355,7 +355,7 @@ async function readPackageFiles(
             packagePath: relativePath,
             entryKind: describePackageDirectoryEntry(entry),
           },
-          "[FIX] authored Flow package import refused non-regular entry",
+          "authored Flow package import refused non-regular entry",
         );
 
         throw new MaisterError(

@@ -102,7 +102,7 @@ export async function updateAuthoredFlowAction(
       issueCount: packageBody.validation.issueCount,
       fileCount: packageFiles.length,
     },
-    "[FIX] authored Flow package files updated",
+    "authored Flow package files updated",
   );
 
   await updateAuthoredDraft({

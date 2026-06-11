@@ -1,4 +1,4 @@
-// [FIX] M8 review finding #3 regression coverage. resumeRun must
+// M8 review finding #3 regression coverage. resumeRun must
 // claim the NeedsInputIdle → NeedsInput transition BEFORE creating
 // the supervisor session so two same-payload retries cannot both
 // spawn duplicate workers. The loser receives a distinct CLAIM_RACE
@@ -108,7 +108,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-describe("resumeRun — [FIX] claim-before-spawn ordering", () => {
+describe("resumeRun — claim-before-spawn ordering", () => {
   it("claims FIRST then spawns: markResumed runs before createSession", async () => {
     const order: string[] = [];
 

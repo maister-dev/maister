@@ -1042,7 +1042,7 @@ export async function installAuthoredFlowPackageBridge(
           path: issue.path,
         })),
       },
-      "[FIX] authored Flow package bridge install refused",
+      "authored Flow package bridge install refused",
     );
 
     throw new MaisterError(

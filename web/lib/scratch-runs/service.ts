@@ -592,7 +592,7 @@ export async function markScratchPromptRetryable(args: {
 
   log.warn(
     { runId: args.runId, errorCode, errorMessage },
-    "[FIX] scratch prompt failed after message persistence; dialog left retryable",
+    "scratch prompt failed after message persistence; dialog left retryable",
   );
 }
 
@@ -625,7 +625,7 @@ export async function completeScratchPromptTurn(args: {
     if (nextStatus === scratch.dialogStatus) {
       log.info(
         { runId: args.runId, dialogStatus: nextStatus },
-        "[FIX] scratch prompt completion preserved event-derived status",
+        "scratch prompt completion preserved event-derived status",
       );
 
       return nextStatus;
@@ -644,7 +644,7 @@ export async function completeScratchPromptTurn(args: {
 
     log.info(
       { runId: args.runId, previousStatus: scratch.dialogStatus, nextStatus },
-      "[FIX] scratch prompt completion transitioned idle",
+      "scratch prompt completion transitioned idle",
     );
 
     return nextStatus;
@@ -861,7 +861,7 @@ export async function launchScratchRun(args: {
   } catch (err) {
     log.warn(
       { runId, err: err instanceof Error ? err.message : String(err) },
-      "[FIX] scratch launch artifact/DB step failed after addWorktree; removing worktree",
+      "scratch launch artifact/DB step failed after addWorktree; removing worktree",
     );
     if (worktreeCreated) {
       await removeWorktree({
@@ -889,7 +889,7 @@ export async function launchScratchRun(args: {
                 ? branchErr.message
                 : String(branchErr),
           },
-          "[FIX] scratch compensating removeBranch failed",
+          "scratch compensating removeBranch failed",
         ),
       );
     }

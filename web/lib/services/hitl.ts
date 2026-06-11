@@ -464,7 +464,7 @@ async function handlePermissionResponse(
     });
 
     if (r.ok) {
-      // [FIX] M8 review finding #2: schedule the actual driver. Until
+      // M8 review finding #2: schedule the actual driver. Until
       // this lands, returning 202 here was a lie — the supervisor
       // session existed but no one read its stream, sent it a prompt,
       // or auto-delivered the stored intent.
@@ -498,7 +498,7 @@ async function handlePermissionResponse(
       );
     }
 
-    // [FIX] M8 review finding #3: claim race lost is NOT a terminal
+    // M8 review finding #3: claim race lost is NOT a terminal
     // failure — another /respond invocation owns the resume. Return
     // 202 so the operator UI keeps showing "resume in progress" and
     // the next idempotent retry (after auto-deliver completes) hits
@@ -636,7 +636,7 @@ async function handlePermissionResponse(
       // saw is the side-effect of THAT request succeeding, not a real
       // timeout. Returning 200 here is the correct idempotent outcome.
       //
-      // [FIX] M8 review pass 2 finding #1: if this was a
+      // M8 review pass 2 finding #1: if this was a
       // `noop-idempotent` retry (same-payload re-submit) we must NOT
       // mark the run Failed on the supervisor's 404. The 404 may be
       // the stale checkpointed deferred that the sweeper cancelled —
@@ -690,7 +690,7 @@ async function handlePermissionResponse(
             phase: "in-flight-resume-202",
             latencyMs: Date.now() - startedAt,
           },
-          "[FIX] supervisor 404 on idempotent retry — resume likely in flight; returning 202",
+          "supervisor 404 on idempotent retry — resume likely in flight; returning 202",
         );
 
         await recordSuccessAuditInTransaction(args, 202);

@@ -254,7 +254,7 @@ export async function resolveDirtyWorktree(
           choice: args.choice,
           err: err instanceof Error ? err.message : String(err),
         },
-        "[FIX] [dirty] side-effect failed — claim rolled back, gate stays open",
+        "[dirty] side-effect failed — claim rolled back, gate stays open",
       );
     } catch (rollbackErr) {
       log.error(
@@ -267,7 +267,7 @@ export async function resolveDirtyWorktree(
               ? rollbackErr.message
               : String(rollbackErr),
         },
-        "[FIX] [dirty] claim rollback failed — resolution stays recorded without an applied side-effect",
+        "[dirty] claim rollback failed — resolution stays recorded without an applied side-effect",
       );
     }
     throw err;

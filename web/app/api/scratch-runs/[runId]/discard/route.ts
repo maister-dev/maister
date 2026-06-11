@@ -111,7 +111,7 @@ async function deleteSupervisorSessionIfLive(
     ) {
       log.info(
         { runId, sessionId },
-        "[FIX] scratch discard treated missing supervisor session as already stopped",
+        "scratch discard treated missing supervisor session as already stopped",
       );
 
       return false;
@@ -141,7 +141,7 @@ export async function POST(
     if (scratch.dialogStatus === "Done" || run.status === "Done") {
       log.info(
         { runId, dialogStatus: scratch.dialogStatus, runStatus: run.status },
-        "[FIX] scratch discard skipped completed run",
+        "scratch discard skipped completed run",
       );
 
       return NextResponse.json({
@@ -156,7 +156,7 @@ export async function POST(
     if (scratch.dialogStatus === "Abandoned" || run.status === "Abandoned") {
       log.info(
         { runId, dialogStatus: scratch.dialogStatus, runStatus: run.status },
-        "[FIX] scratch discard idempotent abandoned run",
+        "scratch discard idempotent abandoned run",
       );
 
       return NextResponse.json({

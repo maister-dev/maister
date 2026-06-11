@@ -194,10 +194,7 @@ export async function runResumeRecoverySweep(
   const candidates = await fetchCandidates(db);
 
   if (candidates.length === 0) {
-    log.info(
-      {},
-      "[FIX] resume-recovery sweep: no claimed-but-undelivered rows",
-    );
+    log.info({}, "resume-recovery sweep: no claimed-but-undelivered rows");
 
     return {
       candidatesFound: 0,
@@ -209,7 +206,7 @@ export async function runResumeRecoverySweep(
 
   log.info(
     { candidates: candidates.length },
-    "[FIX] resume-recovery sweep: claimed-but-undelivered rows found",
+    "resume-recovery sweep: claimed-but-undelivered rows found",
   );
 
   const sessionLoad = await loadSessions();
@@ -220,7 +217,7 @@ export async function runResumeRecoverySweep(
   if (!sessionLoad.ok) {
     log.warn(
       { candidates: candidates.length, reason: sessionLoad.reason },
-      "[FIX] resume-recovery sweep: supervisor listSessions failed — skipping all candidates this boot",
+      "resume-recovery sweep: supervisor listSessions failed — skipping all candidates this boot",
     );
 
     return {
@@ -257,7 +254,7 @@ export async function runResumeRecoverySweep(
           hitlRequestId: cand.hitlRequestId,
           driveId,
         },
-        "[FIX] resume-recovery: driver re-scheduled against live supervisor session",
+        "resume-recovery: driver re-scheduled against live supervisor session",
       );
 
       return;
@@ -277,7 +274,7 @@ export async function runResumeRecoverySweep(
           acpSessionId: cand.acpSessionId,
           hitlRequestId: cand.hitlRequestId,
         },
-        "[FIX] resume-recovery: supervisor session gone — rolled back to NeedsInputIdle, intent preserved",
+        "resume-recovery: supervisor session gone — rolled back to NeedsInputIdle, intent preserved",
       );
     } else {
       skipped += 1;
@@ -287,7 +284,7 @@ export async function runResumeRecoverySweep(
           acpSessionId: cand.acpSessionId,
           reason: rb.reason,
         },
-        "[FIX] resume-recovery: rollback status-guard mismatch — concurrent transition won, leaving row alone",
+        "resume-recovery: rollback status-guard mismatch — concurrent transition won, leaving row alone",
       );
     }
   });
@@ -299,7 +296,7 @@ export async function runResumeRecoverySweep(
       rolledBack,
       skipped,
     },
-    "[FIX] resume-recovery sweep complete",
+    "resume-recovery sweep complete",
   );
 
   return {

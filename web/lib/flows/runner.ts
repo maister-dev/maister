@@ -437,7 +437,7 @@ export async function runFlow(
         if (reExecuting && reparkResumeStepId === null) {
           log2.info(
             { stepId: step.id, attempt, priorAttempts: attemptsForStep.length },
-            "[FIX] crash-resume re-entering a terminal step — fresh attempt (ADR-056 pre-CAS window)",
+            "crash-resume re-entering a terminal step — fresh attempt (ADR-056 pre-CAS window)",
           );
         }
 
@@ -736,7 +736,7 @@ export async function runFlow(
         checkpointed = true;
         log2.info(
           { stepId: step.id },
-          "[FIX] step paused by supervisor checkpoint — runFlow exiting cleanly, slot freed",
+          "step paused by supervisor checkpoint — runFlow exiting cleanly, slot freed",
         );
         break;
       }
@@ -833,7 +833,7 @@ export async function runFlow(
   if (checkpointed) {
     log2.info(
       {},
-      "[FIX] runFlow paused on STEP_CHECKPOINTED — run is NeedsInputIdle, slot freed",
+      "runFlow paused on STEP_CHECKPOINTED — run is NeedsInputIdle, slot freed",
     );
     await cleanupSlashSession(
       sessionState,
@@ -860,7 +860,7 @@ export async function runFlow(
     } catch (err) {
       log2.error(
         { err: (err as Error).message },
-        "[FIX] promoteNextPending after STEP_CHECKPOINTED failed (non-fatal)",
+        "promoteNextPending after STEP_CHECKPOINTED failed (non-fatal)",
       );
     }
 

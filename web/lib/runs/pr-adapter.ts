@@ -110,7 +110,7 @@ abstract class CliPrAdapter implements PrAdapter {
     args: readonly string[],
     cwd?: string,
   ): Promise<{ stdout: string; stderr: string }> {
-    log.debug({ bin: this.bin, cwd }, "[FIX] pr cli exec");
+    log.debug({ bin: this.bin, cwd }, "pr cli exec");
 
     return execFileAsync(this.bin, args, {
       cwd,

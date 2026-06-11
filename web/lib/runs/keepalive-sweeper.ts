@@ -182,7 +182,7 @@ async function runPass1(db: Db): Promise<number> {
 
   const supervisorMap = await loadSupervisorSessions();
 
-  // [FIX] M8 review finding #1: when listSessions() fails we cannot
+  // M8 review finding #1: when listSessions() fails we cannot
   // distinguish "session is gone" from "supervisor is transiently
   // unreachable". Marking the row NeedsInputIdle in the latter case
   // produces a split-brain state — the agent is still alive holding
@@ -192,7 +192,7 @@ async function runPass1(db: Db): Promise<number> {
   if (supervisorMap === null) {
     log.warn(
       { candidateCount: candidates.length },
-      "[FIX] sweeper pass1 aborted — listSessions failed; leaving candidates in NeedsInput for next tick",
+      "sweeper pass1 aborted — listSessions failed; leaving candidates in NeedsInput for next tick",
     );
 
     return 0;

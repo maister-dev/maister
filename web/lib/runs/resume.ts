@@ -36,7 +36,7 @@ const log = pino({
 
 export type ResumeRunResult =
   | { ok: true; newSupervisorSessionId: string; acpSessionId: string }
-  // [FIX] M8 review finding #3: distinct outcome for the lost-claim
+  // M8 review finding #3: distinct outcome for the lost-claim
   // race so /respond can map it to 202 (concurrent resume in progress)
   // instead of treating it as a terminal 410.
   | { ok: false; code: "CLAIM_RACE"; retryable: false; message: string }
@@ -177,7 +177,7 @@ export async function resumeRun(
     };
   }
 
-  // [FIX] M8 review finding #3: atomic claim BEFORE spawning the
+  // M8 review finding #3: atomic claim BEFORE spawning the
   // supervisor session. Two concurrent /respond retries serialize on
   // the markResumed CAS — exactly one wins. The loser sees the row in
   // NeedsInput and returns CLAIM_RACE so /respond can render 202
@@ -193,7 +193,7 @@ export async function resumeRun(
   if (!claim.ok) {
     log.warn(
       { runId },
-      "[FIX] resumeRun: claim race lost — another /respond invocation owns the resume",
+      "resumeRun: claim race lost — another /respond invocation owns the resume",
     );
 
     return {
@@ -249,14 +249,14 @@ export async function resumeRun(
   } catch (err) {
     if (isMaisterError(err)) {
       if (err.code === "EXECUTOR_UNAVAILABLE") {
-        // [FIX] Retryable spawn failure — roll back the claim so the
+        // Retryable spawn failure — roll back the claim so the
         // next /respond (or the next sweeper tick) sees the row in
         // NeedsInputIdle again. Without the rollback the row would
         // stay in NeedsInput indefinitely with no live worker — a
         // permanent split-brain.
         log.warn(
           { runId, err: err.message },
-          "[FIX] resumeRun: supervisor 5xx — rolling back claim and returning retryable",
+          "resumeRun: supervisor 5xx — rolling back claim and returning retryable",
         );
         await rollbackResumedRun(runId, { db });
 
