@@ -14,6 +14,7 @@ import {
 import { dispatchDueSchedules } from "@/lib/run-schedules/dispatch";
 import { runAgentTickJob } from "@/lib/scheduler/handlers/agent-tick";
 import { runCommandJob } from "@/lib/scheduler/handlers/command";
+import { runDomainEventDispatchJob } from "@/lib/scheduler/handlers/domain-event-dispatch";
 import { runScheduledFlowJob } from "@/lib/scheduler/handlers/flow-run";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { runSystemSweep } from "@/lib/scheduler/system-sweeps";
@@ -136,6 +137,15 @@ async function runClaimedJob(
           attemptId: job.attemptId,
           status: "Succeeded",
           summary: await runWebhookDeliveryJob(),
+        });
+
+        return succeeded(job);
+      case "domain_event_dispatch":
+        await recordJobAttemptResult({
+          jobId: job.id,
+          attemptId: job.attemptId,
+          status: "Succeeded",
+          summary: await runDomainEventDispatchJob(),
         });
 
         return succeeded(job);

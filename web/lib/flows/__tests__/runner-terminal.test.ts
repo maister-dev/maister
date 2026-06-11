@@ -266,7 +266,6 @@ describe("runFlow terminal-status precedence", () => {
       actor_identities: [],
       artifact_instances: [],
       webhook_events: [],
-    domain_events: [],
       domain_events: [],
     };
     const { client, updates } = makeFakeDb(fixture);

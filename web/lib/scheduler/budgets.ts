@@ -6,7 +6,8 @@ export type SchedulerBudgetKey =
   | "agent"
   | "flow"
   | "run_schedule"
-  | "webhook_delivery";
+  | "webhook_delivery"
+  | "domain_event_dispatch";
 
 export type SchedulerBudgetLimits = {
   systemSweep: number;
@@ -15,6 +16,7 @@ export type SchedulerBudgetLimits = {
   flow: number;
   runSchedule: number;
   webhookDelivery: number;
+  domainEventDispatch: number;
 };
 
 const UNBOUNDED_FLOW_DISPATCH_BUDGET = 2_147_483_647;
@@ -27,6 +29,7 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     flow: UNBOUNDED_FLOW_DISPATCH_BUDGET,
     runSchedule: 1,
     webhookDelivery: 1,
+    domainEventDispatch: 1,
   };
 }
 

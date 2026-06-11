@@ -1151,7 +1151,8 @@
       "agent_tick": "agent_tick",
       "flow_run": "flow_run",
       "run_schedule": "run_schedule",
-      "webhook_delivery": "webhook_delivery"
+      "webhook_delivery": "webhook_delivery",
+      "domain_event_dispatch": "domain_event_dispatch"
     },
     "state": {
       "active": "активна",

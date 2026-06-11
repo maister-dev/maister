@@ -49,6 +49,7 @@ describe("schedulerBudgetForKind", () => {
       "flow_run",
       "run_schedule",
       "webhook_delivery",
+      "domain_event_dispatch",
     ] satisfies SchedulerJobKind[];
 
     expect(kinds.map((kind) => [kind, schedulerBudgetForKind(kind)])).toEqual([
@@ -58,6 +59,7 @@ describe("schedulerBudgetForKind", () => {
       ["flow_run", "flow"],
       ["run_schedule", "run_schedule"],
       ["webhook_delivery", "webhook_delivery"],
+      ["domain_event_dispatch", "domain_event_dispatch"],
     ]);
   });
 
@@ -65,11 +67,22 @@ describe("schedulerBudgetForKind", () => {
     expect(schedulerBudgetForKind("webhook_delivery")).toBe("webhook_delivery");
     expect(schedulerBudgetLimits().webhookDelivery).toBe(1);
   });
+
+  it("resolves the domain_event_dispatch singleton dispatcher budget to a fixed 1", () => {
+    expect(schedulerBudgetForKind("domain_event_dispatch")).toBe(
+      "domain_event_dispatch",
+    );
+    expect(schedulerBudgetLimits().domainEventDispatch).toBe(1);
+  });
 });
 
 describe("isSchedulerJobKind", () => {
   it("accepts webhook_delivery as a registered job kind", () => {
     expect(isSchedulerJobKind("webhook_delivery")).toBe(true);
+  });
+
+  it("accepts domain_event_dispatch as a registered job kind", () => {
+    expect(isSchedulerJobKind("domain_event_dispatch")).toBe(true);
   });
 
   it("rejects unknown kinds", () => {

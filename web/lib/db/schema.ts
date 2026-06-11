@@ -583,7 +583,8 @@ export type SchedulerJobKind =
   | "agent_tick"
   | "flow_run"
   | "run_schedule"
-  | "webhook_delivery";
+  | "webhook_delivery"
+  | "domain_event_dispatch";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -606,6 +607,7 @@ export const schedulerJobs = pgTable(
         "flow_run",
         "run_schedule",
         "webhook_delivery",
+        "domain_event_dispatch",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -663,6 +665,7 @@ export const schedulerJobRuns = pgTable(
         "flow_run",
         "run_schedule",
         "webhook_delivery",
+        "domain_event_dispatch",
       ],
     }).notNull(),
     status: text("status", {

@@ -24,6 +24,7 @@ export const SCHEDULER_JOB_KINDS = [
   "flow_run",
   "run_schedule",
   "webhook_delivery",
+  "domain_event_dispatch",
 ] as const satisfies readonly SchedulerJobKind[];
 
 export type ClaimedSchedulerJob = {
@@ -114,6 +115,8 @@ const DEFAULT_RUN_SCHEDULE_DISPATCHER_JOB_ID = "run_schedule.dispatcher";
 const DEFAULT_RUN_SCHEDULE_DISPATCHER_CADENCE_SECONDS = 60;
 const DEFAULT_WEBHOOK_DELIVERY_JOB_ID = "webhook_delivery.default";
 const DEFAULT_WEBHOOK_DELIVERY_CADENCE_SECONDS = 60;
+const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID = "domain_event_dispatch.default";
+const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
 
 export function isSchedulerJobKind(value: string): value is SchedulerJobKind {
   return SCHEDULER_JOB_KINDS.includes(value as SchedulerJobKind);
@@ -135,6 +138,8 @@ export function schedulerBudgetForKind(
       return "run_schedule";
     case "webhook_delivery":
       return "webhook_delivery";
+    case "domain_event_dispatch":
+      return "domain_event_dispatch";
   }
 }
 
@@ -242,6 +247,32 @@ export async function ensureDefaultSchedulerJobs(
     )
     ON CONFLICT (id) DO NOTHING
   `);
+
+  await db.execute(sql`
+    INSERT INTO scheduler_jobs (
+      id,
+      project_id,
+      job_kind,
+      target,
+      cadence_interval_seconds,
+      next_run_at,
+      max_failures,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID},
+      NULL,
+      'domain_event_dispatch',
+      '{}'::jsonb,
+      ${DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS},
+      ${now},
+      3,
+      ${now},
+      ${now}
+    )
+    ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 export async function claimDueJobs(
@@ -273,7 +304,8 @@ export async function claimDueJobs(
         ('agent'::text, ${budgets.agent}::int),
         ('flow'::text, ${budgets.flow}::int),
         ('run_schedule'::text, ${budgets.runSchedule}::int),
-        ('webhook_delivery'::text, ${budgets.webhookDelivery}::int)
+        ('webhook_delivery'::text, ${budgets.webhookDelivery}::int),
+        ('domain_event_dispatch'::text, ${budgets.domainEventDispatch}::int)
     ),
     active_budget AS (
       SELECT
@@ -284,6 +316,7 @@ export async function claimDueJobs(
           WHEN 'flow_run' THEN 'flow'
           WHEN 'run_schedule' THEN 'run_schedule'
           WHEN 'webhook_delivery' THEN 'webhook_delivery'
+          WHEN 'domain_event_dispatch' THEN 'domain_event_dispatch'
         END AS budget_key,
         count(*)::int AS active_count
       FROM scheduler_job_runs r
@@ -301,6 +334,7 @@ export async function claimDueJobs(
           WHEN 'flow_run' THEN 'flow'
           WHEN 'run_schedule' THEN 'run_schedule'
           WHEN 'webhook_delivery' THEN 'webhook_delivery'
+          WHEN 'domain_event_dispatch' THEN 'domain_event_dispatch'
         END AS budget_key,
         bl.max_concurrent,
         coalesce(ab.active_count, 0) AS active_count
@@ -312,6 +346,7 @@ export async function claimDueJobs(
         WHEN 'flow_run' THEN 'flow'
         WHEN 'run_schedule' THEN 'run_schedule'
         WHEN 'webhook_delivery' THEN 'webhook_delivery'
+        WHEN 'domain_event_dispatch' THEN 'domain_event_dispatch'
       END
       LEFT JOIN active_budget ab ON ab.budget_key = bl.budget_key
       WHERE j.disabled_at IS NULL
