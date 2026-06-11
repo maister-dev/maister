@@ -77,7 +77,7 @@ export interface RunPendingHitl {
   options: HitlOption[];
   schema: unknown;
   criticality: "low" | "medium" | "high" | "critical" | null;
-  // M30 (ADR-079): the reviewer's recorded dirty-worktree resolution for this
+  // M30 (ADR-082): the reviewer's recorded dirty-worktree resolution for this
   // visit (null until chosen). Drives the persistent dirty badge after
   // "proceed" and hides the banner actions once a choice is recorded.
   dirtyResolution: "commit" | "discard" | "proceed" | null;
@@ -384,7 +384,7 @@ export interface TimelineEntry {
   decision: string | null;
   reworkFromNode: string | null;
   acpSessionId: string | null;
-  // M30 (ADR-077): true when this attempt was auto-scheduled by retry_policy.
+  // M30 (ADR-080): true when this attempt was auto-scheduled by retry_policy.
   autoRetry: boolean;
   startedAt: string;
   endedAt: string | null;

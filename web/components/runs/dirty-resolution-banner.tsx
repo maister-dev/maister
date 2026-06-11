@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-// M30 (ADR-079): pre-review dirty-state banner at an open review-gate pause.
+// M30 (ADR-082): pre-review dirty-state banner at an open review-gate pause.
 // The gate is never blocked — the three actions are part of the review. A
 // recorded "proceed" keeps a persistent dirty badge instead of the actions.
 

@@ -1,5 +1,5 @@
 // Regression coverage for the dirty-resolution claim-first contract
-// (ADR-079 X-2PC): the write-once CAS on hitl_requests.dirty_resolution
+// (ADR-082 X-2PC): the write-once CAS on hitl_requests.dirty_resolution
 // lands BEFORE any git side-effect, so
 //   - a raced loser gets CONFLICT without mutating the worktree (a raced
 //     `discard` must never destroy work the winner's choice kept),

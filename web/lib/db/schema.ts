@@ -1481,21 +1481,21 @@ export const nodeAttempts = pgTable(
     }),
     reworkFromNode: text("rework_from_node"),
     acpSessionId: text("acp_session_id"),
-    // M30 (ADR-076): namespaced dangling checkpoint ref
+    // M30 (ADR-079): namespaced dangling checkpoint ref
     // (refs/maister/checkpoints/<runId>/<nodeAttemptId>) captured before the
     // attempt; rewind target is `<ref>^`. Nullable for pre-M30 rows and node
     // types without workspace capture.
     checkpointRef: text("checkpoint_ref"),
-    // M30 (ADR-078): effective session policy snapshot for this attempt
+    // M30 (ADR-081): effective session policy snapshot for this attempt
     // (rework-transition > node > flow defaults > engine default `resume`).
     // The DB column is plain text (no CHECK), so this enum is TS-level only.
     sessionPolicy: text("session_policy", {
       enum: ["resume", "new_session"],
     }),
-    // M30 (ADR-078): true when `resume` was requested but the prior session
+    // M30 (ADR-081): true when `resume` was requested but the prior session
     // was gone/unresumable and the engine fell back to a new session.
     sessionFallback: boolean("session_fallback").notNull().default(false),
-    // M30 (ADR-077): true when this attempt was auto-scheduled by
+    // M30 (ADR-080): true when this attempt was auto-scheduled by
     // retry_policy after a retryable failure (vs user/rework initiated).
     autoRetry: boolean("auto_retry").notNull().default(false),
     stdout: text("stdout"),
@@ -1906,11 +1906,11 @@ export const hitlRequests = pgTable(
     decision: text("decision"),
     workspacePolicy: text("workspace_policy"),
     reworkTarget: text("rework_target"),
-    // M30 (ADR-079): run-branch tip SHA stamped when this review-gate visit
+    // M30 (ADR-082): run-branch tip SHA stamped when this review-gate visit
     // opens — the base for the `since-last-review` diff scope. Nullable for
     // non-review HITLs and pre-M30 rows.
     reviewTipSha: text("review_tip_sha"),
-    // M30 (ADR-079): the reviewer's explicit dirty-worktree resolution for
+    // M30 (ADR-082): the reviewer's explicit dirty-worktree resolution for
     // this review visit. TS-level enum (no CHECK), validated by allow-list
     // at the route boundary.
     dirtyResolution: text("dirty_resolution", {
@@ -2008,12 +2008,12 @@ export const reviewComments = pgTable(
   }),
 );
 
-// M30 (ADR-075, migration 0040): answer-only gate-chat transcript at a
+// M30 (ADR-078, migration 0041): answer-only gate-chat transcript at a
 // `human`/`form` HITL pause. Sibling of review_comments by design (DD1):
 // review_comments' anchor CHECK requires file/line and has no agent author
 // role, so chat rows live here. Chat NEVER resolves the HITL and never
 // drives status -> Running; `mutation_reverted` flags turns where the L3
-// neutrality sensor restored the workspace (ADR-075/DD11).
+// neutrality sensor restored the workspace (ADR-078/DD11).
 export const gateChatMessages = pgTable(
   "gate_chat_messages",
   {

@@ -80,7 +80,7 @@ type MinimalSupervisorEvent =
       type: "session.crashed";
       monotonicId: number;
     }
-  // M30 (ADR-075 DD4, X-FANOUT): gate-chat turns never occur on scratch
+  // M30 (ADR-078 DD4, X-FANOUT): gate-chat turns never occur on scratch
   // sessions, but the union mirrors the supervisor event set so the
   // projection stays total.
   | {

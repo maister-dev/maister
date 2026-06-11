@@ -47,7 +47,7 @@ export interface RunDiffReviewContext {
   labels: RunDiffReviewLabels;
 }
 
-// M30 (ADR-079): the 4-mode diff scope switcher. Optional — surfaces that
+// M30 (ADR-082): the 4-mode diff scope switcher. Optional — surfaces that
 // pass labels get the toggle; everything else keeps the default `run` scope
 // and an unchanged request shape.
 export const DIFF_SCOPES = [

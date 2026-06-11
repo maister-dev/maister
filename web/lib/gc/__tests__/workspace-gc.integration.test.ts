@@ -355,7 +355,7 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
   }, 60_000);
 
-  it("M30 (ADR-076): prune also deletes the run's checkpoint refs from the parent repo", async () => {
+  it("M30 (ADR-079): prune also deletes the run's checkpoint refs from the parent repo", async () => {
     const { runId } = await seed({
       scheduledRemovalAt: new Date(Date.now() - 86_400_000),
     });
@@ -375,7 +375,7 @@ describe("runWorkspaceGcSweep (integration)", () => {
     );
   }, 60_000);
 
-  it("M30 (ADR-076): pruned-not-marked recovery still deletes the run's checkpoint refs", async () => {
+  it("M30 (ADR-079): pruned-not-marked recovery still deletes the run's checkpoint refs", async () => {
     const { runId, workspaceId } = await seed({
       scheduledRemovalAt: new Date(Date.now() - 86_400_000),
     });
@@ -393,7 +393,7 @@ describe("runWorkspaceGcSweep (integration)", () => {
     );
   }, 60_000);
 
-  it("M30 (ADR-076): a checkpoint-ref deletion failure is best-effort — the row still prunes", async () => {
+  it("M30 (ADR-079): a checkpoint-ref deletion failure is best-effort — the row still prunes", async () => {
     const { workspaceId } = await seed({
       scheduledRemovalAt: new Date(Date.now() - 86_400_000),
     });

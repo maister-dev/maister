@@ -54,7 +54,7 @@ export interface RunWorkspaceGcSweepOptions {
   // tests using synthetic (non-on-disk) worktree paths can opt into the
   // present-worktree path without provisioning real directories.
   worktreeExists?: (worktreePath: string) => Promise<boolean>;
-  // M30 (ADR-076): checkpoint refs are repo-global — worktree removal never
+  // M30 (ADR-079): checkpoint refs are repo-global — worktree removal never
   // cleans them, so the sweep deletes refs/maister/{checkpoints,
   // chat-checkpoints}/<runId>/* from the PARENT repo. Best-effort.
   deleteRunCheckpointRefs?: (

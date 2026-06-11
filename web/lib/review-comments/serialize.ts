@@ -33,7 +33,7 @@ export interface ComposeThread {
   replies: readonly ComposeReplyComment[];
 }
 
-// M30 (ADR-075): a gate-chat turn folded into the rework payload — the
+// M30 (ADR-078): a gate-chat turn folded into the rework payload — the
 // reviewer's questions and the agent's answers are review context.
 export interface ComposeChatMessage {
   role: "user" | "agent";
@@ -51,7 +51,7 @@ function quoteLineContent(content: string): string {
 export function composeReworkPayload(
   summary: string,
   threads: readonly ComposeThread[],
-  // M30 (ADR-075): gate-chat history of the deciding review visit, in seq
+  // M30 (ADR-078): gate-chat history of the deciding review visit, in seq
   // order. Optional — absent/empty keeps the pre-M30 bytes identical.
   chatMessages: readonly ComposeChatMessage[] = [],
 ): string {
@@ -89,7 +89,7 @@ export function composeReworkPayload(
     }
   }
 
-  // M30 (ADR-075): chat turns append AFTER the review-comment threads, in
+  // M30 (ADR-078): chat turns append AFTER the review-comment threads, in
   // the given (seq) order.
   if (chatMessages.length > 0) {
     blocks.push("## Gate chat");

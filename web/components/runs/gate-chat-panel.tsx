@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// M30 (ADR-075): answer-only gate-chat at a human/form HITL pause. Chat never
+// M30 (ADR-078): answer-only gate-chat at a human/form HITL pause. Chat never
 // resolves the gate; an unavailable state renders an explanatory empty state
 // (DD2); the first idle question surfaces the ~$0.28 respawn cost; a turn the
 // L3 sensor reverted carries a notice.

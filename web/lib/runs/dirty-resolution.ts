@@ -39,7 +39,7 @@ export interface DirtySummary {
 }
 
 // Parse `git status --porcelain=v1 --untracked-files=all` into the review
-// payload (ADR-079). XY columns: X = index (staged), Y = working tree
+// payload (ADR-082). XY columns: X = index (staged), Y = working tree
 // (unstaged); `??` = untracked. A file can be both staged and unstaged.
 export function computeDirtySummary(porcelain: string): DirtySummary {
   const files: Array<{ path: string; states: DirtyFileState[] }> = [];
@@ -84,12 +84,12 @@ export interface ResolveDirtyArgs {
   choice: DirtyChoice;
   db?: Db;
   // Injection point for tests; defaults to the real bundle re-materialization
-  // (ADR-076 §4) after a discard's `git clean -fd`.
+  // (ADR-079 §4) after a discard's `git clean -fd`.
   rematerialize?: () => Promise<unknown>;
 }
 
 // The reviewer's explicit dirty-worktree resolution at an open review-gate
-// pause (ADR-079). The gate is NEVER blocked or resolved by this — the choice
+// pause (ADR-082). The gate is NEVER blocked or resolved by this — the choice
 // is part of review, recorded write-once on the visit's hitl row.
 //
 // Order of operations (X-2PC / X-ATOMIC):

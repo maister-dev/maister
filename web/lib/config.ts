@@ -552,7 +552,7 @@ const ARTIFACT_ENGINE_MIN = "1.2.0";
 // `output.result` must declare engine_min >= this value.
 const OUTPUT_ENGINE_MIN = "1.3.0";
 
-// M30 floor (ADR-077/078): manifests declaring `retry_policy`,
+// M30 floor (ADR-080/081): manifests declaring `retry_policy`,
 // `session_policy` (node or rework) or a `defaults` block must declare
 // engine_min >= this value.
 const POLICY_ENGINE_MIN = "1.4.0";
@@ -674,7 +674,7 @@ export function validateGraphManifest(
     );
   }
 
-  // Engine gate (M30, ADR-077/078): retry_policy / session_policy / defaults
+  // Engine gate (M30, ADR-080/081): retry_policy / session_policy / defaults
   // require engine_min >= 1.4.0. Manifests without them stay valid at any
   // engine_min.
   if (

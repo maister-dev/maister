@@ -312,7 +312,7 @@ export const workspacePolicySchema = z.enum([
   "fresh-attempt",
 ]);
 
-// M30 (ADR-077): error codes retry_policy may auto-retry on. An ALLOW-list —
+// M30 (ADR-080): error codes retry_policy may auto-retry on. An ALLOW-list —
 // infra-flavored, transient-by-nature codes only. PRECONDITION/CONFIG/CRASH
 // and friends stay non-retryable: retrying them repeats a deterministic
 // failure (or worse, replays side effects).
@@ -323,9 +323,9 @@ export const RETRYABLE_ERROR_CODES = [
   "ACP_PROTOCOL",
 ] as const;
 
-// M30 (ADR-077): node-level auto-retry, only on ai_coding/cli nodes.
+// M30 (ADR-080): node-level auto-retry, only on ai_coding/cli nodes.
 // `attempts` is the TOTAL attempt bound (1 = no retry). `workspace` is
-// applied via the ADR-076 checkpoint engine BEFORE each retry; the
+// applied via the ADR-079 checkpoint engine BEFORE each retry; the
 // rewind-to-node-checkpoint default restores the exact pre-attempt state.
 // Declaring this key requires compat.engine_min >= 1.4.0 (validated in
 // validateGraphManifest).
@@ -339,7 +339,7 @@ export const retryPolicySchema = z
 
 export type RetryPolicy = z.infer<typeof retryPolicySchema>;
 
-// M30 (ADR-078): rework session policy — whether a rework re-entry of an
+// M30 (ADR-081): rework session policy — whether a rework re-entry of an
 // agent node RESUMES the prior attempt's ACP session (critique context
 // preserved; ~$0.28 respawn when idle) or starts clean. Resolved
 // highest-wins: rework-transition > node > flow defaults > engine default
@@ -510,7 +510,7 @@ const reworkSchema = z.object({
   workspacePolicies: z.array(workspacePolicySchema).min(1),
   maxLoops: z.number().int().positive(),
   commentsVar: z.string().min(1).optional(),
-  // M30 (ADR-078): transition-level session policy — highest precedence.
+  // M30 (ADR-081): transition-level session policy — highest precedence.
   session_policy: sessionPolicySchema.optional(),
 });
 
@@ -740,9 +740,9 @@ const aiCodingNodeSchema = z.object({
   type: z.literal("ai_coding"),
   action: z.object({ prompt: z.string().min(1) }).passthrough(),
   settings: aiCodingSettingsSchema.optional(),
-  // M30 (ADR-077): auto-retry — agent + cli nodes only.
+  // M30 (ADR-080): auto-retry — agent + cli nodes only.
   retry_policy: retryPolicySchema.optional(),
-  // M30 (ADR-078): node-level rework session policy.
+  // M30 (ADR-081): node-level rework session policy.
   session_policy: sessionPolicySchema.optional(),
 });
 
@@ -758,7 +758,7 @@ const cliNodeSchema = z.object({
   type: z.literal("cli"),
   action: z.object({ command: z.string().min(1) }).passthrough(),
   settings: cliCheckSettingsSchema.optional(),
-  // M30 (ADR-077): auto-retry — agent + cli nodes only.
+  // M30 (ADR-080): auto-retry — agent + cli nodes only.
   retry_policy: retryPolicySchema.optional(),
 });
 
@@ -876,7 +876,7 @@ export const flowYamlV1Schema = z
       .object({ confidence_min: z.number().min(0).max(1).optional() })
       .strict()
       .optional(),
-    // M30 (ADR-078): flow-level defaults — today only the rework session
+    // M30 (ADR-081): flow-level defaults — today only the rework session
     // policy. Lowest declared precedence (above the engine default only).
     defaults: z
       .object({ session_policy: sessionPolicySchema.optional() })
