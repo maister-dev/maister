@@ -311,7 +311,7 @@ flowchart TD
     Q(["reviewer asks a question at a human/form pause"]) --> Avail{"available? status in NeedsInput or NeedsInputIdle AND kind in human or form AND acp_session_id not null"}
     Avail -- no --> Empty["disabled empty-state (permission-kind, HumanWorking, or no session)"]
     Avail -- "yes, NeedsInput (live)" --> Live["prompt the live session; reply streams over SSE; status stays NeedsInput"]
-    Avail -- "yes, NeedsInputIdle" --> Idle["chat-resume: respawn + session/resume + markResumed (Idle to NeedsInput) + bump keepalive + prompt (approx 0.28 USD, surfaced first)"]
+    Avail -- "yes, NeedsInputIdle" --> Idle["chat-resume: markResumed claim (Idle to NeedsInput) THEN respawn + session/resume + bump keepalive + prompt (approx 0.28 USD, surfaced first); lost claim = CONFLICT, failed spawn rolls the claim back"]
     Live --> Persist["persist gate_chat_messages (user then agent); HITL row untouched; never to Running"]
     Idle --> Persist
     Persist --> Reidle["sweeper re-idles; HITL still open"]
@@ -319,9 +319,13 @@ flowchart TD
 
 **Live vs idle (DD3).** `NeedsInput` (turn complete) → prompt the live session; the
 reply streams over the SSE bridge as a `session.chat_turn` event; status stays
-`NeedsInput`. `NeedsInputIdle` → **chat-resume**: respawn + ACP `session/resume` on
-`runs.acp_session_id` + `markResumed` (Idle→NeedsInput) + keepalive bump + prompt,
-then the sweeper re-idles. Chat-resume MUST NOT call the resumed-session driver and
+`NeedsInput`. `NeedsInputIdle` → **chat-resume**: `markResumed` claim
+(Idle→NeedsInput) BEFORE the respawn with ACP `session/resume` on
+`runs.acp_session_id`, then keepalive bump + prompt, then the sweeper re-idles —
+the same claim-before-spawn order as `resumeRun`, so a concurrent `/respond`
+resume or second chat turn loses the CAS with `CONFLICT` and never spawns a
+duplicate session; a failed spawn rolls the claim back to `NeedsInputIdle`.
+Chat-resume MUST NOT call the resumed-session driver and
 MUST NOT touch the `hitl_requests` row. **Allow-list invariant (tested):** chat may
 drive `Idle→NeedsInput`; it NEVER drives `→Running` and NEVER writes
 `hitl_requests.responded_at`. The chat prompt is tagged with the server-derived
@@ -386,9 +390,10 @@ flowchart TD
     Del --> Review
 ```
 
-The reviewer's choice is recorded on `hitl_requests.dirty_resolution` + an audit
-row (X-2PC: the intent row is written before the git side-effect; a git failure
-returns 409 and leaves the gate open, unrecorded). **Discard is hard-guarded**:
+The reviewer's choice is recorded write-once on `hitl_requests.dirty_resolution`
+(X-2PC: the intent is claimed via a guarded CAS before the git side-effect, so a
+concurrent second resolution gets `CONFLICT` without running git; a git failure
+rolls the claim back, returns 409, and leaves the gate open, unrecorded). **Discard is hard-guarded**:
 `git clean -fd` (never `-fdx`), scoped `-C <worktree>`, with a `.maister/`
 containment assertion, and re-runs launch materialization afterward
 ([ADR-076](../decisions.md#adr-076-node-workspacepolicy-execution-and-checkpoint-capture))

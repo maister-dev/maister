@@ -2254,27 +2254,31 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [available, messages]
+                required:
+                  [runId, hitlRequestId, availability, idleResumeCost, messages]
                 properties:
-                  available:
-                    type: boolean
+                  runId: { type: string, format: uuid }
+                  hitlRequestId: { type: string, format: uuid }
+                  availability:
+                    type: object
+                    additionalProperties: false
+                    required: [available]
                     description: DD2 availability for this pause.
+                    properties:
+                      available: { type: boolean }
+                      reason:
+                        type: string
+                        description: Present when `available` is false.
+                  idleResumeCost:
+                    type: boolean
+                    description: |
+                      True when the run is `NeedsInputIdle` — the first chat
+                      turn pays the ~$0.28 respawn (DD3), surfaced before the
+                      question is sent.
                   messages:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: false
-                      properties:
-                        id: { type: string }
-                        hitlRequestId: { type: string, format: uuid }
-                        nodeId: { type: string }
-                        gateAttempt: { type: integer }
-                        role: { type: string, enum: [user, agent] }
-                        authorLabel: { type: string, nullable: true }
-                        body: { type: string }
-                        seq: { type: integer }
-                        mutationReverted: { type: boolean }
-                        createdAt: { type: string, format: date-time }
+                      $ref: "#/components/schemas/GateChatMessage"
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -2284,8 +2288,10 @@ paths:
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("answerHitl")`). Sends an answer-only question to
-        the parked agent at a `human`/`form` pause and streams the reply as a
-        `session.chat_turn` SSE event. The body carries ONLY `{message}`; the
+        the parked agent at a `human`/`form` pause and waits for the reply: the
+        response returns both persisted turns synchronously. The reply is also
+        emitted as a `session.chat_turn` SSE event for streaming chat surfaces
+        (see the supervisor AsyncAPI). The body carries ONLY `{message}`; the
         supervisor session id, run slug, and the server-derived `stepId`
         (`gate-chat-<hitlRequestId>`, dash not colon) are server-state.
 
@@ -2296,10 +2302,11 @@ paths:
 
         **Never resolves the HITL / never `→Running` (DD3):** the turn persists a
         `gate_chat_messages` user row, prompts the session (live), or chat-resumes
-        (`NeedsInputIdle` → respawn + `session/resume` + `markResumed` + keepalive
-        bump — ~$0.28, surfaced in the UI), then persists the agent row with the
-        next `seq`. It NEVER writes `hitl_requests.responded_at` and NEVER drives
-        `→Running`.
+        (`NeedsInputIdle` → `markResumed` claim Idle→NeedsInput BEFORE the respawn
+        with `session/resume`, then keepalive bump — ~$0.28, surfaced in the UI; a
+        lost claim is 409 `CONFLICT`, a failed spawn rolls the claim back to
+        `NeedsInputIdle`), then persists the agent row with the next `seq`. It
+        NEVER writes `hitl_requests.responded_at` and NEVER drives `→Running`.
 
         **Workspace-neutrality (DD11):** L1 read-only preamble (server-side), L2
         best-effort permission auto-deny (`readOnlyTurn`), and the unconditional
@@ -2330,21 +2337,47 @@ paths:
               properties:
                 message: { type: string, minLength: 1 }
       responses:
-        "202":
-          description: Turn accepted; the reply streams as a `session.chat_turn` SSE event.
+        "200":
+          description: |
+            Turn completed — both persisted turns returned synchronously.
+            `resumed` is true when this turn paid the idle chat-resume.
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
+                required:
+                  [runId, hitlRequestId, userMessage, agentMessage, resumed]
                 properties:
-                  ok: { type: boolean }
-                  seq: { type: integer, description: seq of the persisted user turn. }
+                  runId: { type: string, format: uuid }
+                  hitlRequestId: { type: string, format: uuid }
+                  userMessage:
+                    $ref: "#/components/schemas/GateChatMessage"
+                  agentMessage:
+                    $ref: "#/components/schemas/GateChatMessage"
+                  resumed: { type: boolean }
+        "400":
+          description: Malformed body — expected `{message}` (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Gate-chat unavailable for this pause (permission-kind, HumanWorking, or no session), or the idle respawn failed (`PRECONDITION`).
+          description: |
+            Gate-chat unavailable for this pause (permission-kind,
+            HumanWorking, or no session — `PRECONDITION`), or a concurrent
+            resume won the idle `markResumed` claim (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "502":
+          description: |
+            Upstream turn failure: the L3 neutrality baseline cannot be
+            captured / sensed (`CHECKPOINT`), or the supervisor respawn /
+            prompt delivery failed (`ACP_PROTOCOL`). On a failed idle respawn
+            the resume claim is rolled back to `NeedsInputIdle`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2372,12 +2405,16 @@ paths:
           (ADR-076). v1 is all-or-nothing.
         - **proceed**: review the committed state; a persistent dirty badge stays.
 
-        Order of operations (X-2PC): the `dirty_resolution` intent + audit row is
-        written under a row-level lock BEFORE the git side-effect; the git op runs
-        after. A git failure (discard escapes the worktree, snapshot/clean fails)
-        maps to 409 (`CONFLICT`/`PRECONDITION`), leaves the gate open, and records
-        no resolution. Every executed choice also deletes the gate-chat checkpoint
-        ref so the ADR-075 L3 sensor re-anchors (no false un-discard).
+        Order of operations (X-2PC): the `dirty_resolution` intent is claimed
+        via a write-once CAS (guarded on unclaimed visit + unresolved pause +
+        run still parked) BEFORE the git side-effect; a concurrent second
+        resolution loses the claim with 409 `CONFLICT` and never runs git. A
+        git failure (discard escapes the worktree, snapshot/clean fails) rolls
+        the claim back, maps to 409 (`CONFLICT`/`PRECONDITION`), leaves the
+        gate open, and records no resolution. Every executed choice also
+        deletes the gate-chat checkpoint ref so the ADR-075 L3 sensor
+        re-anchors — for `discard` the ref dies the moment the tree is cleaned
+        (no false un-discard even if re-materialization fails).
       operationId: postRunHitlDirtyResolution
       parameters:
         - name: runId
@@ -2409,9 +2446,21 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
+                required: [runId, hitlRequestId, choice, committed]
                 properties:
-                  ok: { type: boolean }
+                  runId: { type: string, format: uuid }
+                  hitlRequestId: { type: string, format: uuid }
                   choice: { type: string, enum: [commit, discard, proceed] }
+                  committed:
+                    type: boolean
+                    description: |
+                      True when a `commit` choice actually created a snapshot
+                      commit (false on a clean tree or for discard/proceed).
+        "400":
+          description: Malformed body — expected `{choice}` from the allow-list (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -2419,7 +2468,12 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Git side-effect failed (discard escaped the worktree, or snapshot/clean failed); the gate stays open and no resolution is recorded (`CONFLICT` / `PRECONDITION`).
+          description: |
+            A concurrent resolution won the write-once claim (`CONFLICT`), or
+            the git side-effect failed (discard escaped the worktree, or
+            snapshot/clean failed) and the claim was rolled back — the gate
+            stays open and no resolution is recorded (`CONFLICT` /
+            `PRECONDITION`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -8501,6 +8555,26 @@ components:
           type: string
           enum: [non_fast_forward]
         canForce: { type: boolean }
+
+    GateChatMessage:
+      type: object
+      description: |
+        (M30, ADR-075) One persisted gate-chat turn. The DTO never includes
+        `acp_session_id` or `author_user_id` (server-only).
+      additionalProperties: false
+      required: [id, role, authorLabel, body, seq, mutationReverted, createdAt]
+      properties:
+        id: { type: string }
+        role: { type: string, enum: [user, agent] }
+        authorLabel: { type: string }
+        body: { type: string }
+        seq: { type: integer }
+        mutationReverted:
+          type: boolean
+          description: |
+            True when the L3 neutrality sensor reverted a workspace mutation
+            during this turn (agent turns only; always false on user turns).
+        createdAt: { type: string, format: date-time }
 
     ArtifactInstance:
       type: object

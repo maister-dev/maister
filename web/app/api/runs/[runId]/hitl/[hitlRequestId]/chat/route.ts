@@ -108,7 +108,9 @@ export async function GET(
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 
-    await requireProjectAction(run.projectId, "readBoard");
+    // ADR-075: chat transcripts are HITL content — member+ (answerHitl), the
+    // same bar as POST; a viewer's panel degrades to its empty initial state.
+    await requireProjectAction(run.projectId, "answerHitl");
 
     const availability = gateChatAvailability({
       runStatus: run.status,

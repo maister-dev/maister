@@ -93,15 +93,21 @@ export interface ResolveDirtyArgs {
 // is part of review, recorded write-once on the visit's hitl row.
 //
 // Order of operations (X-2PC / X-ATOMIC):
-//   1. server-state load + precondition checks (no lock)
-//   2. git side-effect (commit snapshot / discard+rematerialize / none)
-//   3. chat-baseline invalidation (DD11/DD12 — sensor re-anchors next turn)
-//   4. one transaction: write-once CAS on dirty_resolution (idempotency
-//      marker AFTER the side-effect) — a concurrent second resolution loses
-//      the CAS and gets CONFLICT.
-// Crash windows: after (2)/(3) but before (4) → dirty_resolution stays NULL;
-// a retry re-runs (2) idempotently (snapshot on a clean tree is a no-op,
-// discard is idempotent, proceed has no side-effect).
+//   1. server-state load + precondition checks (no lock, friendly errors)
+//   2. write-once CAS claim on dirty_resolution, re-guarded atomically on
+//      respondedAt + run status — a concurrent second resolution loses the
+//      claim and gets CONFLICT BEFORE any git side-effect runs (a raced
+//      `discard` must never destroy work the winner's choice kept)
+//   3. git side-effect (commit snapshot / discard+rematerialize / none);
+//      a failure rolls the claim back to NULL and rethrows — the gate stays
+//      open, no resolution recorded
+//   4. chat-baseline invalidation (DD11/DD12 — sensor re-anchors next turn);
+//      for `discard` it fires the moment the tree is cleaned, so a failed
+//      re-materialization can never leave a baseline that would un-discard
+// Crash windows: death between (2) and (3) — or a failed rollback — leaves
+// dirty_resolution recorded without the side-effect applied. Non-destructive:
+// the gate stays open and the dirty badge keeps reporting live `git status`;
+// review proceeds via rework / manual takeover.
 export async function resolveDirtyWorktree(
   args: ResolveDirtyArgs,
 ): Promise<{ choice: DirtyChoice; committed: boolean }> {
@@ -167,51 +173,104 @@ export async function resolveDirtyWorktree(
     );
   }
 
-  let committed = false;
-
-  if (args.choice === "commit") {
-    committed = await snapshotDirtyWorktree({
-      worktreePath: workspace.worktreePath,
-      commitMessage: `wip after node ${hitl.stepId}`,
-    });
-  } else if (args.choice === "discard") {
-    await discardWorktree(workspace.worktreePath);
-    const rematerialize =
-      args.rematerialize ??
-      (() =>
-        materializeProjectBundlesIntoWorktree({
-          projectId: run.projectId,
-          worktreePath: workspace.worktreePath,
-          baseBranch: workspace.baseBranch ?? "main",
-          db: d,
-        }));
-
-    await rematerialize();
-  }
-
-  // DD11/DD12: every executed choice invalidates the gate-chat L3 baseline so
-  // the sensor re-anchors on the next turn (never un-discards a Discard).
-  // Best-effort by construction (missing ref is fine).
-  await deleteChatCheckpoint(
-    workspace.worktreePath,
-    args.runId,
-    args.hitlRequestId,
-  );
-
-  // Write-once CAS — the idempotency marker lands AFTER the side-effect.
-  const updated = await d
+  // Write-once CAS claim — the loser gets CONFLICT before any git side-effect
+  // runs. The guards are re-checked atomically inside the UPDATE because the
+  // prechecks above are unserialized reads.
+  const claimed = await d
     .update(hitlRequests)
     .set({ dirtyResolution: args.choice })
     .where(
-      sql`${hitlRequests.id} = ${args.hitlRequestId} and ${hitlRequests.dirtyResolution} is null`,
+      sql`${hitlRequests.id} = ${args.hitlRequestId}
+        and ${hitlRequests.dirtyResolution} is null
+        and ${hitlRequests.respondedAt} is null
+        and exists (
+          select 1 from ${runs}
+          where ${runs.id} = ${args.runId}
+            and ${runs.status} in ('NeedsInput', 'NeedsInputIdle')
+        )`,
     )
     .returning({ id: hitlRequests.id });
 
-  if (updated.length === 0) {
+  if (claimed.length === 0) {
     throw new MaisterError(
       "CONFLICT",
       `dirty-resolution raced — another resolution was recorded for ${args.hitlRequestId}`,
     );
+  }
+
+  let committed = false;
+
+  try {
+    if (args.choice === "commit") {
+      committed = await snapshotDirtyWorktree({
+        worktreePath: workspace.worktreePath,
+        commitMessage: `wip after node ${hitl.stepId}`,
+      });
+    } else if (args.choice === "discard") {
+      await discardWorktree(workspace.worktreePath);
+      // DD12 hard guarantee: the baseline dies the moment the tree is
+      // discarded — even if re-materialization fails below, the L3 sensor
+      // must never restore the pre-discard baseline (no un-discard).
+      await deleteChatCheckpoint(
+        workspace.worktreePath,
+        args.runId,
+        args.hitlRequestId,
+      );
+      const rematerialize =
+        args.rematerialize ??
+        (() =>
+          materializeProjectBundlesIntoWorktree({
+            projectId: run.projectId,
+            worktreePath: workspace.worktreePath,
+            baseBranch: workspace.baseBranch ?? "main",
+            db: d,
+          }));
+
+      await rematerialize();
+    }
+
+    if (args.choice !== "discard") {
+      // DD11/DD12: every executed choice invalidates the gate-chat L3
+      // baseline so the sensor re-anchors on the next turn. Best-effort by
+      // construction (missing ref is fine).
+      await deleteChatCheckpoint(
+        workspace.worktreePath,
+        args.runId,
+        args.hitlRequestId,
+      );
+    }
+  } catch (err) {
+    try {
+      await d
+        .update(hitlRequests)
+        .set({ dirtyResolution: null })
+        .where(
+          sql`${hitlRequests.id} = ${args.hitlRequestId} and ${hitlRequests.dirtyResolution} = ${args.choice}`,
+        );
+      log.warn(
+        {
+          runId: args.runId,
+          hitlRequestId: args.hitlRequestId,
+          choice: args.choice,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[FIX] [dirty] side-effect failed — claim rolled back, gate stays open",
+      );
+    } catch (rollbackErr) {
+      log.error(
+        {
+          runId: args.runId,
+          hitlRequestId: args.hitlRequestId,
+          choice: args.choice,
+          err:
+            rollbackErr instanceof Error
+              ? rollbackErr.message
+              : String(rollbackErr),
+        },
+        "[FIX] [dirty] claim rollback failed — resolution stays recorded without an applied side-effect",
+      );
+    }
+    throw err;
   }
 
   log.info(

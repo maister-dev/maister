@@ -18,7 +18,11 @@ import {
   captureCheckpoint,
   checkpointRefName,
 } from "@/lib/flows/graph/workspace-checkpoint";
-import { bumpKeepalive, markResumed } from "@/lib/runs/state-transitions";
+import {
+  bumpKeepalive,
+  markResumed,
+  rollbackResumedRun,
+} from "@/lib/runs/state-transitions";
 import {
   createSession as defaultCreateSession,
   listSessions as defaultListSessions,
@@ -275,8 +279,9 @@ export interface SendGateChatTurnResult {
 //   1. server-state load + DD2 availability guard
 //   2. L3 baseline ensure (fail-closed BEFORE any persist)
 //   3. persist the user row (intent)
-//   4. live → prompt the live session; idle → chat-resume (respawn with
-//      session/resume + markResumed Idle→NeedsInput + keepalive) then prompt
+//   4. live → prompt the live session; idle → chat-resume (markResumed claim
+//      Idle→NeedsInput BEFORE the respawn with session/resume — a lost claim
+//      is CONFLICT, a failed spawn rolls the claim back) then prompt
 //   5. L3 sense + restore
 //   6. persist the agent row (+ mutation_reverted) — the turn marker AFTER
 //      the side-effect
@@ -447,28 +452,68 @@ export async function sendGateChatTurn(args: {
     // DD3: respawn + ACP session/resume on the stored handle. MUST NOT call
     // the resumed-session driver and MUST NOT touch the hitl row — the run
     // re-idles via the sweeper.
-    const created = await api.createSession({
-      runId: args.runId,
-      projectSlug,
-      worktreePath: workspace.worktreePath,
-      stepId,
-      executor: {
-        agent: (run.runnerSnapshot?.capabilityAgent ?? "claude") as
-          | "claude"
-          | "codex",
-        model: run.runnerSnapshot?.model ?? "unknown",
-        router: run.runnerSnapshot?.sidecarId ? "ccr" : undefined,
-      },
-      runner: run.runnerSnapshot
-        ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })
-        : undefined,
-      resumeSessionId: run.acpSessionId as string,
-    });
+    // Claim BEFORE spawn (same order as resumeRun): a concurrent /respond
+    // resume or second chat turn serializes on the markResumed CAS — the
+    // loser must not spawn a duplicate supervisor session or prompt a pause
+    // it no longer owns.
+    const idleClaim = run.status === "NeedsInputIdle";
+
+    if (idleClaim) {
+      const claim = await markResumed(args.runId, { db: d });
+
+      if (!claim.ok) {
+        throw new MaisterError(
+          "CONFLICT",
+          "concurrent resume in progress for this run — retry once it settles",
+        );
+      }
+    }
+
+    let created: { sessionId: string };
+
+    try {
+      created = await api.createSession({
+        runId: args.runId,
+        projectSlug,
+        worktreePath: workspace.worktreePath,
+        stepId,
+        executor: {
+          agent: (run.runnerSnapshot?.capabilityAgent ?? "claude") as
+            | "claude"
+            | "codex",
+          model: run.runnerSnapshot?.model ?? "unknown",
+          router: run.runnerSnapshot?.sidecarId ? "ccr" : undefined,
+        },
+        runner: run.runnerSnapshot
+          ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })
+          : undefined,
+        resumeSessionId: run.acpSessionId as string,
+      });
+    } catch (err) {
+      if (idleClaim) {
+        try {
+          await rollbackResumedRun(args.runId, { db: d });
+          log.warn(
+            { runId: args.runId, hitlRequestId: args.hitlRequestId },
+            "[FIX] [gate-chat] spawn failed — resume claim rolled back to NeedsInputIdle",
+          );
+        } catch (rollbackErr) {
+          log.warn(
+            {
+              runId: args.runId,
+              err:
+                rollbackErr instanceof Error
+                  ? rollbackErr.message
+                  : String(rollbackErr),
+            },
+            "[FIX] [gate-chat] resume-claim rollback failed",
+          );
+        }
+      }
+      throw err;
+    }
 
     resumed = true;
-    if (run.status === "NeedsInputIdle") {
-      await markResumed(args.runId, { db: d });
-    }
     log.info(
       { runId: args.runId, hitlRequestId: args.hitlRequestId },
       "[gate-chat] idle resume (~$0.28 respawn)",

@@ -26,13 +26,22 @@ import {
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { MaisterError } from "@/lib/errors";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
 import {
   GATE_CHAT_READONLY_PREAMBLE,
@@ -48,6 +57,34 @@ let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+// Delegating spies over the resume claim: every test runs the REAL
+// transitions by default; the claim-race test layers a one-shot rival on top.
+const stateSpies = vi.hoisted(() => ({
+  markResumed: vi.fn(),
+  rollbackResumedRun: vi.fn(),
+}));
+
+vi.mock("@/lib/runs/state-transitions", async (importOriginal) => {
+  const real = (await importOriginal()) as Record<string, unknown>;
+
+  return {
+    ...real,
+    markResumed: (...a: unknown[]) => stateSpies.markResumed(...a),
+    rollbackResumedRun: (...a: unknown[]) =>
+      stateSpies.rollbackResumedRun(...a),
+  };
+});
+
+let realTransitions: typeof import("@/lib/runs/state-transitions");
+
+beforeAll(async () => {
+  realTransitions = await vi.importActual("@/lib/runs/state-transitions");
+  stateSpies.markResumed.mockImplementation(realTransitions.markResumed);
+  stateSpies.rollbackResumedRun.mockImplementation(
+    realTransitions.rollbackResumedRun,
+  );
+});
 
 const createdPaths: string[] = [];
 
@@ -579,5 +616,101 @@ describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
     const status = await git(worktree, "status", "--porcelain");
 
     expect(status).not.toContain("wip.txt");
+  }, 60_000);
+});
+
+describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
+  beforeEach(() => {
+    stateSpies.markResumed.mockClear();
+    stateSpies.rollbackResumedRun.mockClear();
+  });
+
+  it("a lost markResumed claim refuses with CONFLICT and never spawns a duplicate session", async () => {
+    const { runId, hitlId } = await seedChatPause({
+      runStatus: "NeedsInputIdle",
+    });
+    const fake = makeFakeApi();
+
+    // A rival /respond resume lands inside the load→claim window: the real
+    // claim runs twice — the rival's first call wins, this turn's own claim
+    // loses the CAS.
+    stateSpies.markResumed.mockImplementationOnce(async (...a: unknown[]) => {
+      const rival = await realTransitions.markResumed(
+        a[0] as string,
+        a[1] as never,
+      );
+
+      expect(rival.ok).toBe(true);
+
+      return realTransitions.markResumed(a[0] as string, a[1] as never);
+    });
+
+    await expect(
+      sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message: "did you cover the retry path?",
+        api: fake as never,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(fake.createSessionCalls).toHaveLength(0);
+    expect(fake.sendPromptCalls).toHaveLength(0);
+    // The rival owns the resume — the run stays where the rival put it.
+    expect((await runRow(runId)).status).toBe("NeedsInput");
+
+    // The question persisted before the refusal (documented crash-window
+    // shape: a visible question without an answer row — re-ask once live).
+    const rows = await chatRows(hitlId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].role).toBe("user");
+  }, 60_000);
+
+  it("a failed respawn rolls the claim back to NeedsInputIdle and prompts nothing", async () => {
+    const { runId, hitlId } = await seedChatPause({
+      runStatus: "NeedsInputIdle",
+    });
+    const fake = makeFakeApi();
+
+    fake.createSession.mockRejectedValueOnce(
+      new MaisterError("ACP_PROTOCOL", "supervisor down"),
+    );
+
+    await expect(
+      sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message: "still there?",
+        api: fake as never,
+      }),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+
+    expect(stateSpies.rollbackResumedRun).toHaveBeenCalledTimes(1);
+    expect((await runRow(runId)).status).toBe("NeedsInputIdle");
+    expect(fake.sendPromptCalls).toHaveLength(0);
+  }, 60_000);
+
+  it("the happy idle path claims BEFORE spawning (order pinned)", async () => {
+    const { runId, hitlId } = await seedChatPause({
+      runStatus: "NeedsInputIdle",
+    });
+    const fake = makeFakeApi();
+
+    const out = await sendGateChatTurn({
+      runId,
+      hitlRequestId: hitlId,
+      message: "why this approach?",
+      api: fake as never,
+    });
+
+    expect(out.resumed).toBe(true);
+
+    const claimOrder = stateSpies.markResumed.mock.invocationCallOrder.at(-1);
+    const spawnOrder = fake.createSession.mock.invocationCallOrder.at(-1);
+
+    expect(claimOrder).toBeDefined();
+    expect(spawnOrder).toBeDefined();
+    expect(claimOrder!).toBeLessThan(spawnOrder!);
   }, 60_000);
 });

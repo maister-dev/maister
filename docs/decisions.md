@@ -5489,10 +5489,13 @@ NEVER flips the run to `Running`.
    (explanatory empty state).
 3. **Live vs idle turn.** `NeedsInput` → prompt the live session; the reply
    streams over the existing SSE bridge; status stays `NeedsInput`.
-   `NeedsInputIdle` → chat-resume = respawn + ACP `session/resume` on
-   `acp_session_id` + `markResumed` (Idle→NeedsInput) + keepalive bump + prompt,
-   then the sweeper re-idles. Chat-resume MUST NOT call the resumed-session
-   driver and MUST NOT touch the `hitl_requests` row. The ~$0.28 respawn cost
+   `NeedsInputIdle` → chat-resume = `markResumed` claim (Idle→NeedsInput)
+   BEFORE the respawn with ACP `session/resume` on `acp_session_id`, then
+   keepalive bump + prompt, then the sweeper re-idles — claim-before-spawn
+   (the `resumeRun` order): a lost CAS is `CONFLICT` (no duplicate spawn), a
+   failed spawn rolls the claim back to `NeedsInputIdle`. Chat-resume MUST
+   NOT call the resumed-session driver and MUST NOT touch the
+   `hitl_requests` row. The ~$0.28 respawn cost
    ([ADR-006](#adr-006-hybrid-hitl-keep-alive--checkpointresume)) is surfaced
    before the first idle question. Allow-list invariant (tested): chat may drive
    `Idle→NeedsInput`, NEVER `→Running`, and never writes
