@@ -813,7 +813,7 @@ hard-blocks any policy run with `MaisterError("PRECONDITION")` when violated —
 a deploy precondition. The checkpoint ref namespaces `refs/maister/checkpoints/*` and
 `refs/maister/chat-checkpoints/*` are git refs, not env. B20 audit verdict: **no
 new env var was introduced** — the candidate `MAISTER_GATE_CHAT_ENABLED` toggle
-was not needed (availability is session-presence-driven, ADR-076 DD2), so M30
+was not needed (availability is session-presence-driven, ADR-078 DD2), so M30
 adds no deployment surface beyond the existing `MAISTER_RUNTIME_ROOT` layout
 precondition.
 

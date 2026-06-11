@@ -14,6 +14,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { MaisterError } from "@/lib/errors";
+import { containmentAssert } from "@/lib/flows/graph/workspace-checkpoint";
 import { redactUrl } from "@/lib/repo-source";
 
 const execFileAsync = promisify(execFile);
@@ -1364,21 +1365,18 @@ export async function snapshotDirtyWorktree(
 // Callers re-run bundle materialization afterwards (ADR-079 §4).
 export async function discardWorktree(worktreePath: string): Promise<void> {
   const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
-  const runtimeRootPath = path.resolve(
-    process.env.MAISTER_RUNTIME_ROOT ?? process.cwd(),
-  );
-  const rel = path.relative(wt, runtimeRootPath);
-  const inside = rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 
-  if (inside) {
+  // Shared DD10 guard (ADR-079 §5): refuse when the runtime artifacts root
+  // resolves inside the worktree, so `git clean -fd` can never reach it.
+  try {
+    containmentAssert(wt);
+  } catch (err) {
     log.error(
-      { worktreePath: wt, runtimeRoot: runtimeRootPath },
+      { worktreePath: wt },
       "[dirty] discard refused — runtime artifacts root resolves inside the worktree",
     );
-    throw new MaisterError(
-      "PRECONDITION",
-      `MAISTER_RUNTIME_ROOT resolves inside the worktree (${runtimeRootPath} within ${wt}) — discard refused`,
-    );
+
+    throw err;
   }
 
   await runGit(wt, ["restore", "--staged", "--worktree", "."]);

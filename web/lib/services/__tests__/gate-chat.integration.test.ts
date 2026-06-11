@@ -714,3 +714,119 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
     expect(claimOrder!).toBeLessThan(spawnOrder!);
   }, 60_000);
 });
+
+describe("sendGateChatTurn — deferred-release + live-path idempotency (ADR-078)", () => {
+  it("releases the stream consumer when the prompt fails and persists no agent row (X-DEFER)", async () => {
+    const { runId, hitlId } = await seedChatPause();
+
+    let consumerReleased = false;
+    const sendPrompt = vi.fn(async () => {
+      throw new MaisterError("ACP_PROTOCOL", "supervisor refused the prompt");
+    });
+    const api = {
+      listSessions: vi.fn(async () => [
+        {
+          sessionId: "sup-live",
+          runId,
+          projectSlug: "x",
+          stepId: "review",
+          status: "live" as const,
+          pid: 1,
+          startedAt: new Date().toISOString(),
+          logPath: "/tmp/x.log",
+          monotonicId: 1,
+          acpSessionId: "acp-1",
+        },
+      ]),
+      sendPrompt,
+      createSession: vi.fn(),
+      // Ends ONLY when the service aborts the deferred. If the prompt-failure
+      // path forgot to release it, `await consumer` would hang and time out.
+      streamSession: async function* (
+        _sid: string,
+        opts?: { signal?: AbortSignal },
+      ) {
+        const signal = opts?.signal;
+
+        try {
+          await new Promise<void>((resolve) => {
+            if (signal?.aborted) {
+              resolve();
+
+              return;
+            }
+
+            signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        } finally {
+          consumerReleased = true;
+        }
+      },
+    };
+
+    await expect(
+      sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message: "why X?",
+        db,
+        api: api as never,
+      }),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(consumerReleased).toBe(true);
+
+    // The user turn persisted before the side-effect; no agent row after.
+    const rows = await chatRows(hitlId);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].role).toBe("user");
+  }, 60_000);
+
+  it("serializes concurrent live turns: no duplicate seq, a lost race is CONFLICT", async () => {
+    const { runId, hitlId } = await seedChatPause();
+    const api = makeFakeApi();
+
+    api.setLiveRunId(runId);
+
+    // Establish the L3 baseline + seqs 1/2 once so the racers below skip
+    // checkpoint capture and contend purely on the UNIQUE(hitl_request_id, seq)
+    // insert.
+    await sendGateChatTurn({
+      runId,
+      hitlRequestId: hitlId,
+      message: "baseline",
+      db,
+      api: api as never,
+    });
+
+    const racers = Array.from({ length: 8 }, (_, i) =>
+      sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message: `concurrent ${i}`,
+        db,
+        api: api as never,
+      }),
+    );
+    const results = await Promise.allSettled(racers);
+
+    // Every lost race is a clean CONFLICT (never a raw 23505 / 500), and at
+    // least one turn wins.
+    for (const r of results) {
+      if (r.status === "rejected") {
+        expect(r.reason).toBeInstanceOf(MaisterError);
+        expect((r.reason as MaisterError).code).toBe("CONFLICT");
+      }
+    }
+
+    expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+
+    // The constraint held: no two persisted rows share a seq.
+    const rows = await chatRows(hitlId);
+    const seqs = rows.map((r) => r.seq);
+
+    expect(new Set(seqs).size).toBe(seqs.length);
+  }, 90_000);
+});

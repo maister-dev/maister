@@ -2037,7 +2037,10 @@ export const gateChatMessages = pgTable(
     authorLabel: text("author_label").notNull(),
     body: text("body").notNull(),
     acpSessionId: text("acp_session_id"),
-    // Monotonic per hitl_request_id — transcript ordering + idempotency.
+    // Monotonic per hitl_request_id — transcript ordering. The
+    // UNIQUE(hitl_request_id, seq) below makes a concurrent live-path
+    // double-submit a catchable 23505 (-> CONFLICT) instead of a
+    // silent duplicate-seq insert + double-prompt.
     seq: integer("seq").notNull(),
     mutationReverted: boolean("mutation_reverted").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -2052,6 +2055,12 @@ export const gateChatMessages = pgTable(
     roleCheck: check(
       "gate_chat_messages_role_check",
       sql`${t.role} in ('user', 'agent')`,
+    ),
+    // Serializes concurrent turns at one HITL pause: the second racing insert
+    // hits this constraint (23505) and is surfaced as CONFLICT, not a dup row.
+    uniqHitlSeq: unique("gate_chat_messages_hitl_seq_unique").on(
+      t.hitlRequestId,
+      t.seq,
     ),
   }),
 );

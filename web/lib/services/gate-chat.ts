@@ -60,6 +60,21 @@ export function gateChatStepId(hitlRequestId: string): string {
   return `gate-chat-${hitlRequestId}`;
 }
 
+// A concurrent turn at the same pause raced this one onto the same
+// UNIQUE(hitl_request_id, seq) slot. Surface it as CONFLICT instead of leaking
+// the raw Postgres 23505 — the loser re-asks once the transcript settles.
+function rethrowSeqConflict(err: unknown): never {
+  if ((err as { code?: unknown } | null)?.code === "23505") {
+    throw new MaisterError(
+      "CONFLICT",
+      "concurrent gate-chat turn in progress for this pause — retry once it settles",
+      { cause: err instanceof Error ? err : undefined },
+    );
+  }
+
+  throw err;
+}
+
 // M30 (ADR-078 DD2): session-presence-driven, answer-only availability.
 export function gateChatAvailability(input: {
   runStatus: string;
@@ -407,24 +422,31 @@ export async function sendGateChatTurn(args: {
     .where(eq(gateChatMessages.hitlRequestId, args.hitlRequestId));
   const baseSeq = Number(seqRows[0]?.max ?? 0);
   const userLabel = args.actorLabel ?? "user";
-  const userInsert = await d
-    .insert(gateChatMessages)
-    .values({
-      runId: args.runId,
-      hitlRequestId: args.hitlRequestId,
-      nodeId: hitl.stepId,
-      gateAttempt,
-      role: "user",
-      authorUserId: args.actorUserId ?? null,
-      authorLabel: userLabel,
-      body: args.message,
-      acpSessionId: run.acpSessionId,
-      seq: baseSeq + 1,
-    })
-    .returning({
-      id: gateChatMessages.id,
-      createdAt: gateChatMessages.createdAt,
-    });
+  let userInsert: Array<{ id: string; createdAt: Date }>;
+
+  try {
+    userInsert = await d
+      .insert(gateChatMessages)
+      .values({
+        runId: args.runId,
+        hitlRequestId: args.hitlRequestId,
+        nodeId: hitl.stepId,
+        gateAttempt,
+        role: "user",
+        authorUserId: args.actorUserId ?? null,
+        authorLabel: userLabel,
+        body: args.message,
+        acpSessionId: run.acpSessionId,
+        seq: baseSeq + 1,
+      })
+      .returning({
+        id: gateChatMessages.id,
+        createdAt: gateChatMessages.createdAt,
+      });
+  } catch (err) {
+    // Lost the seq race before prompting — reject cleanly, never double-prompt.
+    rethrowSeqConflict(err);
+  }
 
   // (4) resolve the session: live (NeedsInput) vs chat-resume (Idle).
   const stepId = gateChatStepId(args.hitlRequestId);
@@ -599,25 +621,32 @@ export async function sendGateChatTurn(args: {
 
   // (6) persist the agent turn — the marker lands AFTER the side-effects.
   const replyBody = replyFromEvent ?? replyChunks;
-  const agentInsert = await d
-    .insert(gateChatMessages)
-    .values({
-      runId: args.runId,
-      hitlRequestId: args.hitlRequestId,
-      nodeId: hitl.stepId,
-      gateAttempt,
-      role: "agent",
-      authorUserId: null,
-      authorLabel: "agent",
-      body: replyBody,
-      acpSessionId: run.acpSessionId,
-      seq: baseSeq + 2,
-      mutationReverted: sensed.reverted,
-    })
-    .returning({
-      id: gateChatMessages.id,
-      createdAt: gateChatMessages.createdAt,
-    });
+  let agentInsert: Array<{ id: string; createdAt: Date }>;
+
+  try {
+    agentInsert = await d
+      .insert(gateChatMessages)
+      .values({
+        runId: args.runId,
+        hitlRequestId: args.hitlRequestId,
+        nodeId: hitl.stepId,
+        gateAttempt,
+        role: "agent",
+        authorUserId: null,
+        authorLabel: "agent",
+        body: replyBody,
+        acpSessionId: run.acpSessionId,
+        seq: baseSeq + 2,
+        mutationReverted: sensed.reverted,
+      })
+      .returning({
+        id: gateChatMessages.id,
+        createdAt: gateChatMessages.createdAt,
+      });
+  } catch (err) {
+    // A racing turn took baseSeq+2 between this turn's user and agent inserts.
+    rethrowSeqConflict(err);
+  }
 
   log.debug(
     {
