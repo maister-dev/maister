@@ -1,6 +1,6 @@
 {
-  "id": "2a60334b-a665-4f03-a459-907d59eb71f9",
-  "prevId": "8a0e255c-149e-4dcf-b47f-49a4a7f2eee5",
+  "id": "9a0cb6d2-dcc5-4e3f-88f4-fb6d02677ae2",
+  "prevId": "2a60334b-a665-4f03-a459-907d59eb71f9",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2303,6 +2303,175 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.gate_chat_messages": {
+      "name": "gate_chat_messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hitl_request_id": {
+          "name": "hitl_request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_id": {
+          "name": "node_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gate_attempt": {
+          "name": "gate_attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_user_id": {
+          "name": "author_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "author_label": {
+          "name": "author_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "acp_session_id": {
+          "name": "acp_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mutation_reverted": {
+          "name": "mutation_reverted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "gate_chat_messages_run_idx": {
+          "name": "gate_chat_messages_run_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "gate_chat_messages_hitl_request_idx": {
+          "name": "gate_chat_messages_hitl_request_idx",
+          "columns": [
+            {
+              "expression": "hitl_request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "gate_chat_messages_run_id_runs_id_fk": {
+          "name": "gate_chat_messages_run_id_runs_id_fk",
+          "tableFrom": "gate_chat_messages",
+          "tableTo": "runs",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "gate_chat_messages_hitl_request_id_hitl_requests_id_fk": {
+          "name": "gate_chat_messages_hitl_request_id_hitl_requests_id_fk",
+          "tableFrom": "gate_chat_messages",
+          "tableTo": "hitl_requests",
+          "columnsFrom": [
+            "hitl_request_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "gate_chat_messages_author_user_id_users_id_fk": {
+          "name": "gate_chat_messages_author_user_id_users_id_fk",
+          "tableFrom": "gate_chat_messages",
+          "tableTo": "users",
+          "columnsFrom": [
+            "author_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "gate_chat_messages_role_check": {
+          "name": "gate_chat_messages_role_check",
+          "value": "\"gate_chat_messages\".\"role\" in ('user', 'agent')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.gate_results": {
       "name": "gate_results",
       "schema": "",
@@ -2525,6 +2694,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "review_tip_sha": {
+          "name": "review_tip_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dirty_resolution": {
+          "name": "dirty_resolution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "criticality": {
           "name": "criticality",
           "type": "text",
@@ -2654,6 +2835,32 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "checkpoint_ref": {
+          "name": "checkpoint_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_policy": {
+          "name": "session_policy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_fallback": {
+          "name": "session_fallback",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "auto_retry": {
+          "name": "auto_retry",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "stdout": {
           "name": "stdout",
@@ -6455,5 +6662,6 @@
     "columns": {},
     "schemas": {},
     "tables": {}
-  }
+  },
+  "prevSnapshot": "0040_outbound_webhooks"
 }

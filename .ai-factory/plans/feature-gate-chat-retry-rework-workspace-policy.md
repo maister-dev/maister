@@ -169,8 +169,8 @@ Parallelism after **B3**: Feature 4b, Feature 2, Feature 1 each consume Feature-
 - [x] A6 — Feature 1 analytics (gate-chat + neutrality)
 - [x] A7 — Cross-cutting analytics
 - [x] A8 — Phase-A consistency gate
-- [ ] B0 — Re-verify numbering + engine bump
-- [ ] B1 — Schema + migration 0040
+- [x] B0 — Re-verify numbering + engine bump
+- [x] B1 — Schema + migration 0040
 - [ ] B2 — QA: checkpoint/rewind/fresh-attempt (red)
 - [ ] B3 — Impl: workspacePolicy engine
 - [ ] B4 — Reconcile + GC tolerance
