@@ -187,6 +187,59 @@ export async function markNodeFailed(
   );
 }
 
+// M30 (ADR-076): record the namespaced dangling checkpoint ref captured
+// before this attempt started. Written right after the capture succeeds;
+// stays NULL when capture was skipped/degraded (policies degrade to keep).
+export async function setCheckpointRef(
+  nodeAttemptId: string,
+  checkpointRef: string,
+  db?: Db,
+): Promise<void> {
+  const d = db ?? getDb();
+
+  await d
+    .update(nodeAttempts)
+    .set({ checkpointRef })
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  log.debug(
+    { nodeAttemptId, checkpointRef },
+    "node-attempt checkpoint ref recorded",
+  );
+}
+
+// M30 (ADR-076): latest attempt row for a (run, node) — the rework path reads
+// its checkpoint_ref to apply the chosen workspacePolicy against the rework
+// target's pre-attempt state.
+export async function latestAttemptForNode(
+  runId: string,
+  nodeId: string,
+  db?: Db,
+): Promise<{
+  id: string;
+  attempt: number;
+  checkpointRef: string | null;
+} | null> {
+  const d = db ?? getDb();
+
+  const rows: Array<{
+    id: string;
+    attempt: number;
+    checkpointRef: string | null;
+  }> = await d
+    .select({
+      id: nodeAttempts.id,
+      attempt: nodeAttempts.attempt,
+      checkpointRef: nodeAttempts.checkpointRef,
+    })
+    .from(nodeAttempts)
+    .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, nodeId)))
+    .orderBy(sql`${nodeAttempts.attempt} desc`)
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 // M11c (ADR-032): persist the resolved per-capability-class enforcement
 // verdicts on the attempt. Written on BOTH the pass and refusal paths for
 // capability-bearing (ai_coding/judge) nodes; never a mutable YAML mirror.

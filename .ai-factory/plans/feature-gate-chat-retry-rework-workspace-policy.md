@@ -171,10 +171,10 @@ Parallelism after **B3**: Feature 4b, Feature 2, Feature 1 each consume Feature-
 - [x] A8 — Phase-A consistency gate
 - [x] B0 — Re-verify numbering + engine bump
 - [x] B1 — Schema + migration 0040
-- [ ] B2 — QA: checkpoint/rewind/fresh-attempt (red)
-- [ ] B3 — Impl: workspacePolicy engine
-- [ ] B4 — Reconcile + GC tolerance
-- [ ] B5 — Reviewer pass Feature 4a
+- [x] B2 — QA: checkpoint/rewind/fresh-attempt (red)
+- [x] B3 — Impl: workspacePolicy engine
+- [x] B4 — Reconcile + GC tolerance
+- [x] B5 — Reviewer pass Feature 4a
 - [ ] B6 — QA: dirty protocol + scope switcher (red)
 - [ ] B7 — Impl: diff scope switcher
 - [ ] B8 — Impl: dirty-state protocol

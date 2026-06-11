@@ -11,6 +11,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { gcAgeDays, gcArchivePush, worktreesRoot } from "@/lib/instance-config";
+import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { removeOwnedWorktree } from "@/lib/worktree";
 
@@ -53,6 +54,13 @@ export interface RunWorkspaceGcSweepOptions {
   // tests using synthetic (non-on-disk) worktree paths can opt into the
   // present-worktree path without provisioning real directories.
   worktreeExists?: (worktreePath: string) => Promise<boolean>;
+  // M30 (ADR-076): checkpoint refs are repo-global — worktree removal never
+  // cleans them, so the sweep deletes refs/maister/{checkpoints,
+  // chat-checkpoints}/<runId>/* from the PARENT repo. Best-effort.
+  deleteRunCheckpointRefs?: (
+    repoPath: string,
+    runId: string,
+  ) => Promise<number>;
 }
 
 type CandidateRow = {
@@ -164,6 +172,25 @@ export async function runWorkspaceGcSweep(
   const remove = opts.removeOwnedWorktree ?? removeOwnedWorktree;
   const resolveBaseRef = opts.resolveBaseRef ?? defaultResolveBaseRef;
   const worktreeExists = opts.worktreeExists ?? defaultWorktreeExists;
+  const deleteCheckpointRefs =
+    opts.deleteRunCheckpointRefs ?? deleteRunCheckpointRefs;
+
+  // Best-effort: a ref-deletion failure must never block the prune — orphaned
+  // refs are harmless (dangling commits) and retried by later manual cleanup.
+  const gcCheckpointRefs = async (cand: CandidateRow): Promise<void> => {
+    try {
+      await deleteCheckpointRefs(cand.parentRepoPath, cand.runId);
+    } catch (err) {
+      log.warn(
+        {
+          runId: cand.runId,
+          parentRepoPath: cand.parentRepoPath,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[checkpoint] ref GC failed — refs remain orphaned (harmless)",
+      );
+    }
+  };
 
   const candidates = await loadCandidates(db, now());
 
@@ -189,6 +216,10 @@ export async function runWorkspaceGcSweep(
           .update(workspaces)
           .set({ removedAt: now() })
           .where(eq(workspaces.id, cand.workspaceId));
+
+        // The worktree is gone but its checkpoint refs persist in the shared
+        // parent repo — clean them here too.
+        await gcCheckpointRefs(cand);
 
         pruned += 1;
         log.info(
@@ -225,6 +256,8 @@ export async function runWorkspaceGcSweep(
         force: true,
         allowedRoot: worktreesRoot(),
       });
+
+      await gcCheckpointRefs(cand);
 
       await db
         .update(workspaces)

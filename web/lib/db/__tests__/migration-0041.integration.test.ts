@@ -53,7 +53,11 @@ async function columnInfo(table: string, column: string) {
   );
 
   return r.rows[0] as
-    | { data_type: string; is_nullable: "YES" | "NO"; column_default: string | null }
+    | {
+        data_type: string;
+        is_nullable: "YES" | "NO";
+        column_default: string | null;
+      }
     | undefined;
 }
 

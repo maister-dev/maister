@@ -32,15 +32,22 @@ import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
   hasPendingTakeoverResume,
+  latestAttemptForNode,
   markDownstreamStale,
   markNodeFailed,
   markNodeNeedsInput,
   markNodeReworked,
   markNodeRunning,
   markNodeSucceeded,
+  setCheckpointRef,
   setEnforcementSnapshot,
   setMaterializationPlan,
 } from "./ledger";
+import {
+  applyWorkspacePolicy,
+  captureCheckpoint,
+  deleteRunCheckpointRefs,
+} from "./workspace-checkpoint";
 import {
   failArtifact,
   getCurrentArtifact,
@@ -58,6 +65,7 @@ import {
 } from "./mutation-check";
 
 import { gateStdioMcpsByExecTrust } from "@/lib/capabilities/agent-map";
+import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
   mergeRunnerAdapterLaunch,
   runnerSupervisorInput,
@@ -1298,6 +1306,35 @@ export async function runGraph(
 
         nodeAttemptId = appended.id;
         nodeAttemptNumber = appended.attempt;
+
+        // M30 (ADR-076): capture the pre-attempt workspace checkpoint for
+        // ai_coding/cli attempts (new attempts only — a NeedsInput resume or
+        // takeover re-entry is mid-attempt). Best-effort at THIS site only
+        // (mirrors the M29 start-HEAD capture below: test fixtures run
+        // non-git worktrees): a failed capture leaves checkpoint_ref NULL and
+        // policies degrade to keep with a WARN at apply time.
+        // applyWorkspacePolicy itself stays hard (CHECKPOINT).
+        if (node.nodeType === "ai_coding" || node.nodeType === "cli") {
+          try {
+            const ck = await captureCheckpoint({
+              worktreePath,
+              namespace: "checkpoints",
+              runId,
+              id: nodeAttemptId,
+            });
+
+            await setCheckpointRef(nodeAttemptId, ck.ref, db);
+            log2.debug(
+              { nodeId: node.id, nodeAttemptId, checkpointRef: ck.ref },
+              "[checkpoint] pre-attempt checkpoint captured",
+            );
+          } catch (err) {
+            log2.warn(
+              { nodeId: node.id, nodeAttemptId, err: asError(err).message },
+              "[checkpoint] capture failed — checkpoint_ref null, policies degrade to keep",
+            );
+          }
+        }
       }
 
       // M29 (ADR-074, D-C3): capture HEAD at this node's FIRST attempt start
@@ -1566,6 +1603,23 @@ export async function runGraph(
         checkpointed = true;
         log2.info({ nodeId: node.id }, "node paused by supervisor checkpoint");
         break;
+      }
+
+      // M30 (ADR-075 DD11): this node was resumed from a pause and is now
+      // past it (success, failure, or rework — all leave the pause), so the
+      // gate-chat L3 baseline refs for the run are stale — GC them. Bounded
+      // at 1 per hitlRequest; best-effort (non-git fixtures / no refs).
+      if (reusesCurrentAttempt) {
+        try {
+          await deleteRunCheckpointRefs(worktreePath, runId, [
+            "chat-checkpoints",
+          ]);
+        } catch {
+          log2.debug(
+            { nodeId: node.id },
+            "[checkpoint] chat baseline GC skipped (no git worktree)",
+          );
+        }
       }
 
       if (!result.ok) {
@@ -2000,7 +2054,8 @@ export async function runGraph(
 
       if (isRework) {
         // Record the operator's chosen workspacePolicy from the artifact (Issue
-        // 3 fix). Only `keep` executes in M11a; others are recorded + warned.
+        // 3 fix). M30 (ADR-076) executes it for real — closing the M11b
+        // deferral — against the rework TARGET's pre-attempt checkpoint.
         const policyParse = workspacePolicySchema.safeParse(
           result.workspacePolicy,
         );
@@ -2009,10 +2064,75 @@ export async function runGraph(
           : "keep";
 
         if (chosenPolicy !== "keep") {
-          log2.warn(
-            { nodeId: node.id, workspacePolicy: chosenPolicy },
-            "workspacePolicy other than 'keep' recorded but execution deferred to M11b — TODO(M11b)",
-          );
+          const targetAttempt = target
+            ? await latestAttemptForNode(runId, target, db)
+            : null;
+          const checkpointRef = targetAttempt?.checkpointRef ?? null;
+
+          if (!checkpointRef) {
+            // Pre-M30 rows / degraded capture: no checkpoint to apply
+            // against — observable degrade, never a guess.
+            log2.warn(
+              {
+                nodeId: node.id,
+                reworkTarget: target,
+                workspacePolicy: chosenPolicy,
+              },
+              "[checkpoint] no checkpoint_ref on rework target's latest attempt — policy degraded to keep",
+            );
+          } else {
+            // X-ATOMIC: the git mutation runs BEFORE the ledger rework
+            // writes. A crash after apply leaves the workspace rewound with
+            // the review attempt still open — re-deciding the review re-runs
+            // an idempotent apply against the same checkpoint.
+            try {
+              await applyWorkspacePolicy({
+                policy: chosenPolicy,
+                worktreePath,
+                checkpointRef,
+                rematerialize:
+                  chosenPolicy === "fresh-attempt"
+                    ? () =>
+                        materializeProjectBundlesIntoWorktree({
+                          projectId: loaded.run.projectId,
+                          worktreePath,
+                          // Pre-M30 workspaces may lack base_branch; the
+                          // override only seeds AIF's base-branch hint.
+                          baseBranch: loaded.workspace.baseBranch ?? "main",
+                          db,
+                        })
+                    : undefined,
+              });
+              log2.info(
+                {
+                  nodeId: node.id,
+                  reworkTarget: target,
+                  workspacePolicy: chosenPolicy,
+                  checkpointRef,
+                },
+                "[checkpoint] apply policy",
+              );
+            } catch (err) {
+              const e = isMaisterError(err)
+                ? err
+                : new MaisterError("CHECKPOINT", asError(err).message, {
+                    cause: asError(err),
+                  });
+
+              log2.error(
+                { nodeId: node.id, code: e.code, err: e.message },
+                "[checkpoint] git failed — workspacePolicy apply aborted, review attempt Failed",
+              );
+              await markNodeFailed(
+                nodeAttemptId,
+                { errorCode: e.code, stdout: e.message },
+                db,
+              );
+              failed = true;
+              runErrorCode = e.code;
+              break;
+            }
+          }
         }
 
         await markNodeReworked(

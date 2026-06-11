@@ -22,11 +22,7 @@ import {
   resolveRunner,
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
-import {
-  copyBundleArtifactsToWorktree,
-  ensureWorktreeGitignore,
-  writeAiFactoryConfigOverride,
-} from "@/lib/capabilities/materialize-bundle";
+import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -62,7 +58,6 @@ import {
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
-  capabilityImports,
   capabilityRecords,
   flowRevisions,
   flowRunnerRemaps,
@@ -719,32 +714,18 @@ export async function launchRun(
     // write the per-run .ai-factory/config.yaml git-ownership override. Gated
     // on >=1 Installed import so non-AIF projects never get a stray config.
     // A failure here lands in the catch below → worktree compensation + abort.
-    const installedImports = await _db
-      .select({ installedPath: capabilityImports.installedPath })
-      .from(capabilityImports)
-      .where(
-        and(
-          eq(capabilityImports.projectId, project.id),
-          eq(capabilityImports.packageStatus, "Installed"),
-        ),
-      );
+    // Extracted to a reusable helper (ADR-076 §4) — fresh-attempt rewinds and
+    // the ADR-079 dirty discard re-run it after `git clean -fd`.
+    const { bundles } = await materializeProjectBundlesIntoWorktree({
+      projectId: project.id,
+      worktreePath,
+      baseBranch: base,
+      db: _db,
+    });
 
-    if (installedImports.length > 0) {
-      for (const imp of installedImports) {
-        await copyBundleArtifactsToWorktree({
-          installedPath: imp.installedPath,
-          worktreePath,
-        });
-      }
-      await writeAiFactoryConfigOverride({ worktreePath, baseBranch: base });
-      await ensureWorktreeGitignore(worktreePath);
+    if (bundles > 0) {
       log.info(
-        {
-          runId,
-          worktreePath,
-          bundles: installedImports.length,
-          baseBranch: base,
-        },
+        { runId, worktreePath, bundles, baseBranch: base },
         "[capabilities] materialized capability bundles + AIF config override into worktree",
       );
     }

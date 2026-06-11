@@ -5,10 +5,12 @@ import { cp, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteText } from "@/lib/atomic";
+import { capabilityImports } from "@/lib/db/schema";
 
 const log = pino({
   name: "capabilities",
@@ -185,4 +187,53 @@ export async function ensureWorktreeGitignore(
     { worktreePath: root, added: missing },
     "[capabilities.bundle] ensured worktree .gitignore for materialized content",
   );
+}
+
+// The full launch-time materialization block, extracted for reuse (ADR-076 §4):
+// bundle artifacts land untracked + un-ignored, so `git clean -fd`
+// (fresh-attempt rewinds, ADR-079 dirty discard) deletes them and index
+// rewrites drop the skip-worktree override state. Idempotent — re-run after
+// every such mutation. No-op for projects without Installed imports (a
+// non-AIF project never gets a stray config override).
+export async function materializeProjectBundlesIntoWorktree(args: {
+  projectId: string;
+  worktreePath: string;
+  baseBranch: string;
+  // FIXME(any): dual drizzle-orm peer-dep variants (store idiom).
+  db: any;
+}): Promise<{ bundles: number }> {
+  const installedImports: Array<{ installedPath: string }> = await args.db
+    .select({ installedPath: capabilityImports.installedPath })
+    .from(capabilityImports)
+    .where(
+      and(
+        eq(capabilityImports.projectId, args.projectId),
+        eq(capabilityImports.packageStatus, "Installed"),
+      ),
+    );
+
+  if (installedImports.length === 0) return { bundles: 0 };
+
+  for (const imp of installedImports) {
+    await copyBundleArtifactsToWorktree({
+      installedPath: imp.installedPath,
+      worktreePath: args.worktreePath,
+    });
+  }
+  await writeAiFactoryConfigOverride({
+    worktreePath: args.worktreePath,
+    baseBranch: args.baseBranch,
+  });
+  await ensureWorktreeGitignore(args.worktreePath);
+
+  log.debug(
+    {
+      projectId: args.projectId,
+      worktreePath: args.worktreePath,
+      bundles: installedImports.length,
+    },
+    "[capabilities.bundle] materialized project bundles into worktree",
+  );
+
+  return { bundles: installedImports.length };
 }

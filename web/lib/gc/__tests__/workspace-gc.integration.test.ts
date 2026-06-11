@@ -211,6 +211,10 @@ function makeOpts(
     // the §3.3 recovery probe to "present" so the preserve→remove flow runs.
     // Pass `false` (or omit to use the real probe) to exercise the recovery.
     worktreeExists?: (worktreePath: string) => Promise<boolean>;
+    deleteRunCheckpointRefs?: (
+      repoPath: string,
+      runId: string,
+    ) => Promise<number>;
   } = {},
 ) {
   const removeOwnedWorktree = vi.fn(
@@ -229,6 +233,9 @@ function makeOpts(
       })),
   );
   const worktreeExists = vi.fn(over.worktreeExists ?? (async () => true));
+  const deleteRunCheckpointRefs = vi.fn(
+    over.deleteRunCheckpointRefs ?? (async () => 0),
+  );
 
   return {
     opts: {
@@ -238,11 +245,13 @@ function makeOpts(
       removeOwnedWorktree,
       resolveBaseRef,
       worktreeExists,
+      deleteRunCheckpointRefs,
     },
     preserveWorktree,
     removeOwnedWorktree,
     resolveBaseRef,
     worktreeExists,
+    deleteRunCheckpointRefs,
   };
 }
 
@@ -344,6 +353,61 @@ describe("runWorkspaceGcSweep (integration)", () => {
     expect(summary.pruned).toBe(0);
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
     expect((await readWorkspace(workspaceId)).removedAt).toBeNull();
+  }, 60_000);
+
+  it("M30 (ADR-076): prune also deletes the run's checkpoint refs from the parent repo", async () => {
+    const { runId } = await seed({
+      scheduledRemovalAt: new Date(Date.now() - 86_400_000),
+    });
+
+    const { opts, removeOwnedWorktree, deleteRunCheckpointRefs } = makeOpts();
+    const summary = await runWorkspaceGcSweep(opts);
+
+    expect(summary.pruned).toBeGreaterThanOrEqual(1);
+    // Refs are repo-global (shared common git dir) — deletion targets the
+    // PARENT repo, after the worktree removal.
+    expect(deleteRunCheckpointRefs).toHaveBeenCalledWith(
+      projectRepoPath,
+      runId,
+    );
+    expect(removeOwnedWorktree.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteRunCheckpointRefs.mock.invocationCallOrder[0],
+    );
+  }, 60_000);
+
+  it("M30 (ADR-076): pruned-not-marked recovery still deletes the run's checkpoint refs", async () => {
+    const { runId, workspaceId } = await seed({
+      scheduledRemovalAt: new Date(Date.now() - 86_400_000),
+    });
+
+    const { opts, deleteRunCheckpointRefs } = makeOpts({
+      worktreeExists: async () => false,
+    });
+    const summary = await runWorkspaceGcSweep(opts);
+
+    expect(summary.pruned).toBeGreaterThanOrEqual(1);
+    expect((await readWorkspace(workspaceId)).removedAt).not.toBeNull();
+    expect(deleteRunCheckpointRefs).toHaveBeenCalledWith(
+      projectRepoPath,
+      runId,
+    );
+  }, 60_000);
+
+  it("M30 (ADR-076): a checkpoint-ref deletion failure is best-effort — the row still prunes", async () => {
+    const { workspaceId } = await seed({
+      scheduledRemovalAt: new Date(Date.now() - 86_400_000),
+    });
+
+    const { opts } = makeOpts({
+      deleteRunCheckpointRefs: async () => {
+        throw new Error("refs locked");
+      },
+    });
+    const summary = await runWorkspaceGcSweep(opts);
+
+    expect(summary.pruned).toBeGreaterThanOrEqual(1);
+    expect(summary.failed).toBe(0);
+    expect((await readWorkspace(workspaceId)).removedAt).not.toBeNull();
   }, 60_000);
 
   it("is idempotent: re-running over an already-removed workspace is a no-op", async () => {

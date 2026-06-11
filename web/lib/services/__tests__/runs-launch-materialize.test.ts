@@ -1,21 +1,14 @@
 import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// T6 "wiring" — RED. Pins the launch-time capability-bundle materialization
-// contract the Implementor must add to `launchRun`, right after `addWorktree`:
-//
-//  - Query `capabilityImports` for rows where projectId === project.id AND
-//    packageStatus === "Installed".
-//  - For EACH such row:
-//      await copyBundleArtifactsToWorktree({ installedPath, worktreePath }).
-//  - Then ONCE:
-//      await writeAiFactoryConfigOverride({ worktreePath, baseBranch: base })
-//    where base = input.baseBranch ?? project.mainBranch (runs.ts:523).
-//  - A row whose packageStatus !== "Installed" (e.g. "Installing") is NEVER
-//    copied.
-//
-// Today NO such wiring exists, so both utils are called ZERO times — every
-// `toHaveBeenCalledWith` below is unmet. That is the intended RED state.
+// T6 "wiring" (migrated for M30/ADR-076 §4): launchRun delegates the
+// launch-time capability-bundle materialization to the extracted
+// `materializeProjectBundlesIntoWorktree` helper, right after `addWorktree`,
+// passing the project id, the new worktree path, and
+// base = input.baseBranch ?? project.mainBranch. The per-bundle copy,
+// Installed-only filter, and the >=1-Installed gate now live INSIDE the
+// helper — covered by
+// lib/capabilities/__tests__/materialize-project-bundles.integration.test.ts.
 
 const mocks = vi.hoisted(() => ({
   addWorktree: vi.fn(),
@@ -27,9 +20,7 @@ const mocks = vi.hoisted(() => ({
   runFlow: vi.fn(),
   worktreesRoot: vi.fn(),
   compileManifest: vi.fn(),
-  copyBundleArtifactsToWorktree: vi.fn(),
-  writeAiFactoryConfigOverride: vi.fn(),
-  ensureWorktreeGitignore: vi.fn(),
+  materializeProjectBundlesIntoWorktree: vi.fn(),
 }));
 
 // `from()` is both awaitable (selects with no `.where()`, e.g.
@@ -74,12 +65,10 @@ const state: {
   selectResults: Record<string, unknown>[][];
   selectCalls: number;
   inserts: InsertCall[];
-  capabilityImports: Record<string, unknown>[];
 } = {
   selectResults: [],
   selectCalls: 0,
   inserts: [],
-  capabilityImports: [],
 };
 
 function nextSelectResult(): Record<string, unknown>[] {
@@ -90,30 +79,9 @@ function nextSelectResult(): Record<string, unknown>[] {
   return result;
 }
 
-// The capabilityImports query resolves by TABLE IDENTITY, not by positional
-// slot — making the test robust against select-index drift (the 11 precondition
-// selects stay positional; the new query is the 12th and runs after addWorktree).
-// The fake mirrors the intended SQL `where(eq(packageStatus,"Installed"))` by
-// filtering the seeded array itself (a real `.where(...)` is ignored otherwise),
-// so the test meaningfully asserts the production code iterates ONLY Installed
-// rows.
-function installedImports(): Record<string, unknown>[] {
-  return state.capabilityImports.filter(
-    (row) => row.packageStatus === "Installed",
-  );
-}
-
 const fakeDb: FakeDb = {
   select: () => ({
     from: (table: unknown): FromResult | LatestRunChain => {
-      if (getTableName(table as never) === "capability_imports") {
-        return {
-          then: (onFulfilled) =>
-            Promise.resolve(installedImports()).then(onFulfilled),
-          where: async () => installedImports(),
-        };
-      }
-
       if (getTableName(table as never) === "runs") {
         return {
           where: () => ({
@@ -159,9 +127,8 @@ vi.mock("@/lib/flows/graph/compile", () => ({
   compileManifest: mocks.compileManifest,
 }));
 vi.mock("@/lib/capabilities/materialize-bundle", () => ({
-  copyBundleArtifactsToWorktree: mocks.copyBundleArtifactsToWorktree,
-  writeAiFactoryConfigOverride: mocks.writeAiFactoryConfigOverride,
-  ensureWorktreeGitignore: mocks.ensureWorktreeGitignore,
+  materializeProjectBundlesIntoWorktree:
+    mocks.materializeProjectBundlesIntoWorktree,
 }));
 
 type LaunchRunFn = typeof import("@/lib/services/runs").launchRun;
@@ -189,8 +156,8 @@ function project(overrides: Record<string, unknown> = {}) {
 //   8 projectFlowRunnerDefaults, 9 flowRunnerRemaps, 10 projectFlowRoles,
 //   11 capabilityRecords. Slots 8-11 are intentionally omitted: the fake DB
 // returns `[]` past the array end (correct empty-result for those four). The
-// 12th select (capabilityImports, after addWorktree) resolves by table
-// identity, NOT positionally — see `state.capabilityImports`.
+// capabilityImports query now lives inside the mocked
+// materializeProjectBundlesIntoWorktree helper — no positional slot here.
 function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
   state.selectResults = [
     [
@@ -251,7 +218,6 @@ beforeEach(async () => {
   state.selectResults = [];
   state.selectCalls = 0;
   state.inserts = [];
-  state.capabilityImports = [];
 
   mocks.worktreesRoot.mockReturnValue("/tmp/maister-worktrees");
   mocks.addWorktree.mockResolvedValue(undefined);
@@ -273,12 +239,9 @@ beforeEach(async () => {
   // A trivial compiled graph with no capability-bearing nodes — sidesteps the
   // M11c/M13/M14 enforcement gates so the test isolates the materialization.
   mocks.compileManifest.mockReturnValue({ nodes: new Map() });
-  mocks.copyBundleArtifactsToWorktree.mockResolvedValue({
-    skills: true,
-    agents: true,
+  mocks.materializeProjectBundlesIntoWorktree.mockResolvedValue({
+    bundles: 1,
   });
-  mocks.writeAiFactoryConfigOverride.mockResolvedValue(undefined);
-  mocks.ensureWorktreeGitignore.mockResolvedValue(undefined);
 
   seedSelects();
 
@@ -301,69 +264,23 @@ function usedWorktreePath(): string {
 }
 
 describe("launchRun — capability-bundle materialization (T6 wiring)", () => {
-  it("copies each Installed bundle into the new worktree", async () => {
-    state.capabilityImports = [
-      {
-        installedPath: "/cache/aif@sha1",
-        packageStatus: "Installed",
-        projectId: PROJECT_ID,
-      },
-      {
-        installedPath: "/cache/other@sha2",
-        packageStatus: "Installed",
-        projectId: PROJECT_ID,
-      },
-    ];
-
+  it("delegates to the helper once with the project, worktree, and default base branch", async () => {
     await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
 
     const worktreePath = usedWorktreePath();
 
-    expect(mocks.copyBundleArtifactsToWorktree).toHaveBeenCalledTimes(2);
-    expect(mocks.copyBundleArtifactsToWorktree).toHaveBeenCalledWith({
-      installedPath: "/cache/aif@sha1",
-      worktreePath,
-    });
-    expect(mocks.copyBundleArtifactsToWorktree).toHaveBeenCalledWith({
-      installedPath: "/cache/other@sha2",
-      worktreePath,
-    });
-  });
-
-  it("writes the AIF config override once with the run base branch (default main)", async () => {
-    state.capabilityImports = [
-      {
-        installedPath: "/cache/aif@sha1",
-        packageStatus: "Installed",
-        projectId: PROJECT_ID,
-      },
-      {
-        installedPath: "/cache/other@sha2",
-        packageStatus: "Installed",
-        projectId: PROJECT_ID,
-      },
-    ];
-
-    await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
-
-    const worktreePath = usedWorktreePath();
-
-    expect(mocks.writeAiFactoryConfigOverride).toHaveBeenCalledTimes(1);
-    expect(mocks.writeAiFactoryConfigOverride).toHaveBeenCalledWith({
+    expect(mocks.materializeProjectBundlesIntoWorktree).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(mocks.materializeProjectBundlesIntoWorktree).toHaveBeenCalledWith({
+      projectId: PROJECT_ID,
       worktreePath,
       baseBranch: "main",
+      db: fakeDb,
     });
   });
 
-  it("writes the AIF config override with an explicit launch base branch", async () => {
-    state.capabilityImports = [
-      {
-        installedPath: "/cache/aif@sha1",
-        packageStatus: "Installed",
-        projectId: PROJECT_ID,
-      },
-    ];
-
+  it("passes an explicit launch base branch to the helper", async () => {
     await launchRun(
       { taskId: TASK_ID, baseBranch: "develop", targetBranch: "release" },
       ctx(),
@@ -372,57 +289,28 @@ describe("launchRun — capability-bundle materialization (T6 wiring)", () => {
 
     const worktreePath = usedWorktreePath();
 
-    expect(mocks.writeAiFactoryConfigOverride).toHaveBeenCalledWith({
+    expect(mocks.materializeProjectBundlesIntoWorktree).toHaveBeenCalledWith({
+      projectId: PROJECT_ID,
       worktreePath,
       baseBranch: "develop",
+      db: fakeDb,
     });
   });
 
-  it("excludes non-Installed imports (e.g. Installing) from the copy", async () => {
-    state.capabilityImports = [
-      {
-        installedPath: "/cache/aif@sha1",
-        packageStatus: "Installed",
-        projectId: PROJECT_ID,
-      },
-      {
-        installedPath: "/cache/half@sha3",
-        packageStatus: "Installing",
-        projectId: PROJECT_ID,
-      },
-    ];
+  it("runs the helper after addWorktree (materialization targets the fresh worktree)", async () => {
+    const order: string[] = [];
+
+    mocks.addWorktree.mockImplementation(async () => {
+      order.push("addWorktree");
+    });
+    mocks.materializeProjectBundlesIntoWorktree.mockImplementation(async () => {
+      order.push("materialize");
+
+      return { bundles: 0 };
+    });
 
     await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
 
-    const worktreePath = usedWorktreePath();
-
-    expect(mocks.copyBundleArtifactsToWorktree).toHaveBeenCalledTimes(1);
-    expect(mocks.copyBundleArtifactsToWorktree).toHaveBeenCalledWith({
-      installedPath: "/cache/aif@sha1",
-      worktreePath,
-    });
-    expect(mocks.copyBundleArtifactsToWorktree).not.toHaveBeenCalledWith({
-      installedPath: "/cache/half@sha3",
-      worktreePath,
-    });
-  });
-
-  // Forward guard: pins that the WHOLE materialization block (bundle copy + AIF
-  // config override) is gated on >=1 Installed import — a non-AIF project must
-  // never get a stray `.ai-factory/config.yaml`. Stays green while the gate
-  // holds; turns red if the config override is ever written UN-gated.
-  it("skips materialization entirely when the project has no Installed imports", async () => {
-    state.capabilityImports = [
-      {
-        installedPath: "/cache/half@sha3",
-        packageStatus: "Installing",
-        projectId: PROJECT_ID,
-      },
-    ];
-
-    await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
-
-    expect(mocks.copyBundleArtifactsToWorktree).not.toHaveBeenCalled();
-    expect(mocks.writeAiFactoryConfigOverride).not.toHaveBeenCalled();
+    expect(order).toEqual(["addWorktree", "materialize"]);
   });
 });
