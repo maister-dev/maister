@@ -100,11 +100,11 @@ export function mapProfileToAgentArtifacts(
   args: MapProfileToAgentArtifactsArgs,
 ): AgentMaterialization {
   const supported: CapabilityProfileEntry[] = args.profile.supported;
-  // M27/T-C4: MCP servers materialize for BOTH agents — codex-acp consumes MCP
-  // via the ACP session/new mcpServers param, same wire as claude. Only the
+  // M27/T-C4: MCP servers materialize for ACP agents through the
+  // session/new mcpServers param. Only the
   // Claude-adapter-specific surfaces are gated to claude: `.claude/settings.
-  // local.json` (permissions) and on-disk skill files. Codex skills are invoked
-  // via `$`-syntax (a separate materialization path, not this MCP scope).
+  // local.json` (permissions) and on-disk skill files. Non-Claude skills are
+  // invoked through adapter-specific native mechanisms, not this MCP scope.
   const isClaude = args.agent === "claude";
 
   const allow = isClaude && args.tools?.length ? [...args.tools] : undefined;
@@ -117,8 +117,8 @@ export function mapProfileToAgentArtifacts(
   // query.setModel() from settings at startup). `availableModels: [model]` is
   // the minimal allowlist that lets the adapter accept a non-Claude env-router
   // model id (e.g. glm-5.1) — and is correct for plain anthropic too, since a
-  // run pins exactly one model. codex applies the model via a separate
-  // supervisor-side channel, so this is claude-only.
+  // run pins exactly one model. Other adapters apply the model via a separate
+  // supervisor-side/advisory channel, so this is claude-only.
   const model = isClaude && args.model ? args.model : undefined;
   const permissions: AgentSettingsLocal["permissions"] = {};
 

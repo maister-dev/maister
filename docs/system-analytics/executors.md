@@ -178,6 +178,7 @@ families in this slice.
 | `codex` | `codex` | `codex-acp` | Codex OpenAI direct; third-party Responses-wire routes only after endpoint smoke |
 | `gemini` | `gemini` | `gemini --acp` | Designed, ADR-084: Google Gemini/Vertex/Gateway only after SDK initialize/newSession/auth smoke |
 | `opencode` | `opencode` | `opencode acp` | Designed, ADR-084: native OpenCode provider config only after binary, writable-state, stdio ACP, permission, MCP, resume, and model-channel smoke |
+| `mimo` | `mimo` | `mimo acp` | Designed, ADR-085: MiMo Code native provider config only after binary, stdio ACP, permissions, MCP, resume, and model-channel smoke |
 
 The adapter registry is the only source for `capability_agent`. Capability
 selection, capability enforcement, native materialization, run detail, resume,
@@ -185,9 +186,9 @@ and recovery read the resolved runner snapshot or registry-derived identity.
 No runtime path should read the retired `executors.agent` value as launch
 truth.
 
-Gemini/OpenCode support extends this registry rather than introducing a generic
-"command runner". Operators may not enter arbitrary argv; MAIster owns the
-allow-listed command shape, default arguments, binary override source,
+Gemini/OpenCode/MiMo support extends this registry rather than introducing a
+generic "command runner". Operators may not enter arbitrary argv; MAIster owns
+the allow-listed command shape, default arguments, binary override source,
 adapter-specific ACP client capabilities, model channel, and resume strategy.
 
 ## Source-verified launch implications

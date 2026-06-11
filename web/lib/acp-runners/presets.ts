@@ -41,6 +41,8 @@ const notReadyGeminiSmokeReason =
   "Gemini ACP initialize/newSession and checkpoint smoke must be confirmed";
 const notReadyOpencodeSmokeReason =
   "OpenCode ACP stdio and writable-state smoke must be confirmed";
+const notReadyMimoSmokeReason =
+  "MiMo Code ACP stdio and writable-state smoke must be confirmed";
 
 export function routerSidecarPresetRows(): RouterSidecarPresetRow[] {
   return [
@@ -187,6 +189,17 @@ export function platformRunnerPresetRows(): PlatformRunnerPresetRow[] {
       permissionPolicy: "default",
       readinessStatus: "NotReady",
       readinessReasons: [notReadyOpencodeSmokeReason],
+      enabled: true,
+    },
+    {
+      id: "mimo-code-native",
+      adapter: "mimo",
+      capabilityAgent: "mimo",
+      model: "mimo-native",
+      provider: { kind: "agent_native" },
+      permissionPolicy: "default",
+      readinessStatus: "NotReady",
+      readinessReasons: [notReadyMimoSmokeReason],
       enabled: true,
     },
   ];

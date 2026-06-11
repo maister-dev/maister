@@ -49,9 +49,10 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
 - **Workspace per run** — `git worktree add` with precondition checks
   (clean parent repo, branch free, worktree path free), isolated under
   `.maister/<project-slug>/runs/<run-id>/`.
-- **Platform ACP runners** — Claude, Codex, Gemini CLI, and OpenCode runner
-  families are configured at the platform layer, with project/Flow inheritance,
-  CCR sidecars for Claude routing, and readiness-gated launch diagnostics.
+- **Platform ACP runners** — Claude, Codex, Gemini CLI, OpenCode, and MiMo Code
+  runner families are configured at the platform layer, with project/Flow
+  inheritance, CCR sidecars for Claude routing, and readiness-gated launch
+  diagnostics.
 - **Hybrid HITL** — ACP permission requests become durable HITL rows;
   structured form and human-review responses use atomic input artifacts and
   runner-owned resume.

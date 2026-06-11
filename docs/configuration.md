@@ -76,6 +76,13 @@ acp_runners:
     provider:
       kind: agent_native
     permission_policy: default
+
+  - id: mimo-code-native
+    adapter: mimo
+    model: mimo-native
+    provider:
+      kind: agent_native
+    permission_policy: default
 ```
 
 Rules:
@@ -89,7 +96,7 @@ Rules:
 - Unsupported provider/policy/sidecar combinations are saved only as
   `NotReady` with reason codes, or are rejected when they would create an
   invalid default.
-- Gemini/OpenCode runner rows are first-class catalog entries, but production
+- Gemini/OpenCode/MiMo runner rows are first-class catalog entries, but production
   readiness is still gated by supervisor diagnostics and adapter smoke evidence;
   they are never silently substituted with Claude/Codex.
 - Admin APIs and UI may show secret ref names and readiness reason codes, but
@@ -978,7 +985,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `ANTHROPIC_AUTH_TOKEN` | no | uses tool/provider default | Optional explicit provider env when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). Platform runners should prefer typed env refs only when overriding CLI-native config. |
 | `OPENAI_API_KEY` | no | — | Model discovery only (ADR-076): the supervisor's `provider_api` source lists models for plain `openai` codex runner drafts; unset → that source reports `skipped`. NOT used to run codex sessions. |
 | `MAISTER_CCR_AUTH_TOKEN` | no | unset | Fallback for `ANTHROPIC_AUTH_TOKEN` when an executor has `router: ccr` and does not pin the token in `executor.env`. Missing token → `EXECUTOR_UNAVAILABLE` (503). |
-| `MAISTER_ADAPTER_SMOKE_CACHE_PATH` | no | `<runtimeRoot>/adapter-smoke-cache.json` | Optional supervisor-side diagnostics cache written by `pnpm -C supervisor smoke:acp --cache <path> gemini opencode`. Gemini/OpenCode readiness requires cached `smoke.status="ok"`. Host/service-env only; never a compose var in the default Postgres-only topology. |
+| `MAISTER_ADAPTER_SMOKE_CACHE_PATH` | no | `<runtimeRoot>/adapter-smoke-cache.json` | Optional supervisor-side diagnostics cache written by `pnpm -C supervisor smoke:acp --cache <path> gemini opencode mimo`. Gemini/OpenCode/MiMo readiness requires cached `smoke.status="ok"`. Host/service-env only; never a compose var in the default Postgres-only topology. |
 | `MAISTER_DIAGNOSTIC_ENV_REFS` | no | unset | Optional comma-separated extra env-ref names exposed by supervisor `/diagnostics` as `{name,present}`. Values are never returned. Use for custom runner provider env refs beyond the built-in safe catalog. |
 | `MAISTER_CCR_CONFIG_PATH` | no | `/app/.ccr/config.json` in Docker, `~/.claude-code-router/config.json` otherwise | Container-side path the supervisor reads for CCR host+port. In compose this aligns with the bind-mount target — leave unset unless changing the layout. |
 | `MAISTER_CCR_CONFIG_HOST_PATH` | no (Docker only) | `${HOME}/.claude-code-router` | Host directory bind-mounted at `/app/.ccr` (read-only) in the supervisor service. Point at a secret-mount directory for hardened deployments. |

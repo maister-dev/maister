@@ -204,7 +204,11 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
       const logger: Logger = ctx.logger;
       const runtime = getAdapterRuntime(draft.adapter);
 
-      if (draft.adapter === "gemini" || draft.adapter === "opencode") {
+      if (
+        draft.adapter === "gemini" ||
+        draft.adapter === "opencode" ||
+        draft.adapter === "mimo"
+      ) {
         return {
           models: [],
           status: {

@@ -139,7 +139,7 @@ afterEach(async () => {
 });
 
 describe("spawnSession — adapter registry", () => {
-  it("spawns Gemini and OpenCode with adapter-specific ACP argv", async () => {
+  it("spawns Gemini, OpenCode, and MiMo with adapter-specific ACP argv", async () => {
     mockSpawn.mockImplementation(() => makeFakeChild());
 
     const { logger } = captureLogger();
@@ -160,11 +160,21 @@ describe("spawnSession — adapter registry", () => {
       runtimeRoot,
       logger,
     });
+    await spawnSession({
+      sessionId: "s-mimo",
+      request: makeRequest({
+        executor: { agent: "mimo", model: "mimo-native" },
+      }),
+      runtimeRoot,
+      logger,
+    });
 
     expect(mockSpawn.mock.calls[0]?.[0]).toBe("gemini");
     expect(mockSpawn.mock.calls[0]?.[1]).toEqual(["--acp"]);
     expect(mockSpawn.mock.calls[1]?.[0]).toBe("opencode");
     expect(mockSpawn.mock.calls[1]?.[1]).toEqual(["acp"]);
+    expect(mockSpawn.mock.calls[2]?.[0]).toBe("mimo");
+    expect(mockSpawn.mock.calls[2]?.[1]).toEqual(["acp"]);
   });
 
   it("uses the selected adapter binary override env var without affecting other adapters", async () => {

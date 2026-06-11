@@ -31,8 +31,8 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   `web/lib/acp-runners/adapter-support.ts`: `claude` → providers `anthropic |
   anthropic_compatible`, policies `default | dangerously_skip_permissions`;
   `codex` → providers `openai | openai_compatible`, policy `default` only;
-  `gemini` → Google provider kinds, policy `default`; `opencode` →
-  `agent_native`, policy `default`. Gemini/OpenCode are code-owned adapter
+  `gemini` → Google provider kinds, policy `default`; `opencode` and `mimo` →
+  `agent_native`, policy `default`. Gemini/OpenCode/MiMo are code-owned adapter
   families, not operator-created arbitrary commands.
 - **Runner presets** — static templates (`platformRunnerPresetRows()`) offered
   as create-form prefills; not catalog rows until instantiated.
@@ -43,15 +43,16 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   remaps, active runs, historical run snapshots, scratch runs). The delete and
   disable guards key on this set.
 
-## Gemini/OpenCode adapter-family contract (Implemented with readiness gates, ADR-084)
+## Gemini/OpenCode/MiMo adapter-family contract (Implemented with readiness gates, ADR-084/ADR-085)
 
-Gemini CLI and OpenCode widen the runner catalog without changing its
-ownership. They are new adapter families, not a new runner kind.
+Gemini CLI, OpenCode, and MiMo Code widen the runner catalog without changing
+its ownership. They are new adapter families, not a new runner kind.
 
 | Adapter | Provider kinds | Permission policies | Binary contract | Initial readiness |
 | --- | --- | --- | --- | --- |
 | `gemini` | `google_gemini`, `google_vertex`, `google_gateway` | `default` | `gemini --acp` | `NotReady` until CLI-native auth and SDK initialize/newSession smoke pass |
 | `opencode` | `agent_native` | `default` | `opencode acp` | Basic SDK initialize/newSession smoke passed locally; broader permissions/MCP/resume/model gates remain readiness constraints |
+| `mimo` | `agent_native` | `default` | `mimo acp` | `NotReady` until binary is installed and SDK initialize/newSession smoke passes |
 
 Readiness reasons must distinguish these states:
 
@@ -67,7 +68,7 @@ Readiness reasons must distinguish these states:
 - model application channel unsupported or advisory-only;
 - strict capability class unsupported by the resolved adapter.
 
-The admin UI may let operators create disabled Gemini/OpenCode runners before
+The admin UI may let operators create disabled Gemini/OpenCode/MiMo runners before
 all smoke gates pass, but it must not allow them as platform default or launch
 targets until readiness is `Ready`.
 
@@ -160,7 +161,7 @@ flowchart TD
 - `provider.kind` and `permission_policy` MUST be members of the runner's
   adapter support set; a mismatch MUST be rejected with
   `MaisterError("CONFIG")` (422). (Implemented)
-- For `gemini` and `opencode`, readiness MUST remain `NotReady` unless
+- For `gemini`, `opencode`, and `mimo`, readiness MUST remain `NotReady` unless
   diagnostics prove the binary can execute in the supervisor environment and
   the adapter-specific ACP smoke evidence required for the workflow has passed.
   The proof is explicit diagnostics data: `adapter.smoke.status` must be `ok`.
@@ -192,8 +193,10 @@ flowchart TD
 - **Unknown runnerId** on PATCH/DELETE → `MaisterError("PRECONDITION")` (409).
 - **Adapter/provider/policy mismatch** → `MaisterError("CONFIG")` (422).
 - **Raw (non-`env:`) secret** in a provider field → `MaisterError("CONFIG")` (422).
-- **Gemini/OpenCode runner created before smoke passes** → row may be saved as
+- **Gemini/OpenCode/MiMo runner created before smoke passes** → row may be saved as
   disabled or `NotReady`, but launch/default selection is refused.
+- **MiMo runner created before binary install or smoke passes** → row may be
+  saved as disabled or `NotReady`, but launch/default selection is refused.
 - **OpenCode binary exists but cannot create its state directory** → `NotReady`
   with an operator-visible writable-state reason; no launch attempt.
 - **Gemini checkpoint requested before `loadSession` is proven compatible** →
@@ -206,7 +209,7 @@ flowchart TD
 - **API contract:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) —
   `getAdminAcpRunners`, `postAdminAcpRunner`, `patchAdminAcpRunner`,
   `deleteAdminAcpRunner`.
-- **Decision:** [ADR-065](../decisions.md#adr-065), [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode).
+- **Decision:** [ADR-065](../decisions.md#adr-065), [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode), [ADR-085](../decisions.md#adr-085-mimo-code-as-a-distinct-acp-adapter-family).
 - **Related domains:** [executors.md](executors.md) (resolution + routing),
   [readiness.md](readiness.md) (readiness evaluation),
   [instance-config.md](instance-config.md) (host roots / host tools on the same

@@ -90,12 +90,12 @@ describe("validateMcpServerDraft (T-C2)", () => {
       expect(r.errors.some((e) => e.field === "supportedAgents")).toBe(true);
   });
 
-  it("accepts Gemini and OpenCode supported agents", () => {
+  it("accepts Gemini, OpenCode, and MiMo supported agents", () => {
     const r = validateMcpServerDraft({
       id: "x",
       transport: "stdio",
       command: "x",
-      supportedAgents: ["gemini", "opencode"],
+      supportedAgents: ["gemini", "opencode", "mimo"],
     });
 
     expect(r.ok).toBe(true);
@@ -151,6 +151,7 @@ describe("buildMcpServerFields (T-C2)", () => {
       "codex",
       "gemini",
       "opencode",
+      "mimo",
     ]);
     expect(b.enabled).toBe(true);
   });

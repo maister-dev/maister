@@ -71,6 +71,14 @@ const ADAPTER_RUNTIMES = [
     modelChannel: "advisory",
     resumeStrategy: "session_resume_pending_smoke",
   },
+  {
+    id: "mimo",
+    defaultBinary: "mimo",
+    defaultArgs: ["acp"],
+    binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_MIMO",
+    modelChannel: "advisory",
+    resumeStrategy: "session_resume_pending_smoke",
+  },
 ] as const satisfies readonly AdapterRuntime[];
 
 export function listAdapterRuntimes(): readonly AdapterRuntime[] {

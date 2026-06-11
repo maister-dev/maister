@@ -129,6 +129,22 @@ describe("provisionRunnerLaunch", () => {
     });
   });
 
+  it("maps MiMo native runners without env or argv mutation", () => {
+    expect(
+      provisionRunnerLaunch({
+        version: 1,
+        runnerId: "mimo-code-native",
+        adapter: "mimo",
+        capabilityAgent: "mimo",
+        model: "mimo-native",
+        provider: { kind: "agent_native" },
+        permissionPolicy: "default",
+      }),
+    ).toEqual({
+      executor: { agent: "mimo", model: "mimo-native" },
+    });
+  });
+
   it("rejects unsupported Codex OpenAI-compatible providers until native materialization exists", () => {
     expect(() =>
       provisionRunnerLaunch({

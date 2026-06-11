@@ -252,8 +252,8 @@ platform_router_sidecars {
 
 platform_acp_runners {
   id,
-  adapter: 'claude' | 'codex' | 'gemini' | 'opencode',
-  capabilityAgent: 'claude' | 'codex' | 'gemini' | 'opencode',
+  adapter: 'claude' | 'codex' | 'gemini' | 'opencode' | 'mimo',
+  capabilityAgent: 'claude' | 'codex' | 'gemini' | 'opencode' | 'mimo',
   model,
   provider,                      // typed jsonb provider shape
   permissionPolicy: 'default' | 'dangerously_skip_permissions',
@@ -279,13 +279,15 @@ sidecar usage-reference service guards disable/delete actions.
 created `platform_acp_runners.adapter`, `platform_acp_runners.capability_agent`,
 and `runs.capability_agent` as plain SQL `text` columns with no CHECK constraint
 or Postgres enum. Drizzle's `{ enum: [...] }` annotations on those columns are
-TypeScript-level only. Adding `gemini` and `opencode` therefore requires a
+TypeScript-level only. Adding `gemini`, `opencode`, and `mimo` therefore requires a
 schema/type update and contract tests, but no SQL DDL migration for these
 columns. The same rule applies to JSONB provider and runner snapshot payloads:
 shape validation is application-owned. Migration
-`0044_mcp_supported_agents_all_adapters.sql` updates only the
-`platform_mcp_servers.supported_agents` default for newly created MCP rows; it
-does not rewrite existing compatibility choices.
+`0044_mcp_supported_agents_all_adapters.sql` and
+`0045_mcp_supported_agents_mimo.sql` update the
+`platform_mcp_servers.supported_agents` default for newly created MCP rows.
+Migration `0045` also backfills rows that exactly matched the old all-adapter
+default; custom compatibility choices are not rewritten.
 
 ## `platform_mcp_servers` (Designed, M27)
 
@@ -304,7 +306,7 @@ never stored and are resolved supervisor-side.
                                  //   values are never stored
   url?,                          // sse | http only
   headerKeys (jsonb, DEFAULT '[]'), // header NAMES only (env:NAME pattern)
-  supportedAgents (jsonb, DEFAULT '["claude","codex","gemini","opencode"]'),
+  supportedAgents (jsonb, DEFAULT '["claude","codex","gemini","opencode","mimo"]'),
   trustStatus: 'untrusted' | 'trusted' | 'trusted_by_policy',
                                  // DEFAULT 'untrusted'; mirrors
                                  //   platform_acp_runners.trustStatus semantics
@@ -319,9 +321,9 @@ A platform MCP DELETE is refused (409) while any `capability_records` row
 references it (mirrors `assertCanDisable`). A duplicate id on POST returns 409
 via `onConflictDoNothing().returning()`, never a raw 500. Stdio `command` spawn
 is gated on `exec_trust = 'trusted'` for the owning `flow_revisions` row (§4.2).
-ADR-084 allows `supportedAgents` to include all four adapter families. New rows
-default to `["claude","codex","gemini","opencode"]` after migration `0044`;
-existing rows are not silently widened.
+ADR-084/ADR-085 allow `supportedAgents` to include all five adapter families.
+New rows default to `["claude","codex","gemini","opencode","mimo"]` after
+migrations `0044` and `0045`; existing custom rows are not silently widened.
 
 ## `project_flow_roles`
 

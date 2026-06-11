@@ -57,6 +57,18 @@ function requireAdapter(
   }
 }
 
+function requireAgentNativeAdapter(
+  actual: RunnerLaunch["adapter"],
+  context: string,
+): void {
+  if (actual === "opencode" || actual === "mimo") return;
+
+  throw new SupervisorError(
+    "EXECUTOR_UNAVAILABLE",
+    `${context} requires opencode or mimo adapter`,
+  );
+}
+
 export function provisionRunnerLaunch(
   runner: RunnerLaunch,
   baseAdapterLaunch?: AdapterLaunch,
@@ -200,9 +212,8 @@ export function provisionRunnerLaunch(
       };
       break;
     case "agent_native":
-      requireAdapter(
+      requireAgentNativeAdapter(
         runner.adapter,
-        "opencode",
         `runner ${runner.runnerId} provider agent_native`,
       );
       break;

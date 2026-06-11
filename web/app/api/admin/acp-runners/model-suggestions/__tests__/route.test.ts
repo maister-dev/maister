@@ -286,6 +286,26 @@ describe("admin ACP runner model-suggestions proxy", () => {
     });
   });
 
+  it("forwards MiMo native drafts without OpenCode aliasing", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      jsonRequest({
+        adapter: "mimo",
+        provider: { kind: "agent_native" },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const [draft] = mocks.resolveModelSuggestions.mock.calls[0] as [
+      SupervisorModelCatalogDraft,
+    ];
+
+    expect(draft).toEqual({
+      adapter: "mimo",
+      provider: { kind: "agent_native" },
+    });
+  });
+
   it("maps a supervisor EXECUTOR_UNAVAILABLE to 503", async () => {
     mocks.resolveModelSuggestions.mockRejectedValue(
       new MaisterError("EXECUTOR_UNAVAILABLE", "resolveModelSuggestions: down"),

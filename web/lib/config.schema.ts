@@ -547,6 +547,7 @@ const agentToolsSchema = z
     codex: z.array(z.string().min(1)).optional(),
     gemini: z.array(z.string().min(1)).optional(),
     opencode: z.array(z.string().min(1)).optional(),
+    mimo: z.array(z.string().min(1)).optional(),
   })
   .strict();
 

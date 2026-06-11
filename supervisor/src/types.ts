@@ -2,7 +2,13 @@ import path from "node:path";
 
 import { z } from "zod";
 
-const EXECUTOR_AGENTS = ["claude", "codex", "gemini", "opencode"] as const;
+const EXECUTOR_AGENTS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "mimo",
+] as const;
 
 export const ExecutorAgentSchema = z.enum(EXECUTOR_AGENTS);
 

@@ -7,7 +7,7 @@ import {
 } from "../adapter-registry";
 
 describe("adapter registry", () => {
-  it("defines ACP launch argv for Gemini and OpenCode", () => {
+  it("defines ACP launch argv for Gemini, OpenCode, and MiMo", () => {
     expect(getAdapterRuntime("gemini")).toMatchObject({
       defaultBinary: "gemini",
       defaultArgs: ["--acp"],
@@ -18,10 +18,21 @@ describe("adapter registry", () => {
       defaultArgs: ["acp"],
       binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_OPENCODE",
     });
+    expect(getAdapterRuntime("mimo")).toMatchObject({
+      defaultBinary: "mimo",
+      defaultArgs: ["acp"],
+      binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_MIMO",
+    });
   });
 
   it("uses explicit no-FS ACP client capabilities for every adapter", () => {
-    for (const adapter of ["claude", "codex", "gemini", "opencode"] as const) {
+    for (const adapter of [
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+      "mimo",
+    ] as const) {
       expect(clientCapabilitiesForAdapter(adapter)).toEqual({
         fs: {
           readTextFile: false,
@@ -51,6 +62,10 @@ describe("adapter registry", () => {
     expect(resolveResumeAction("opencode", {})).toMatchObject({
       kind: "unsupported",
       reason: expect.stringContaining("opencode"),
+    });
+    expect(resolveResumeAction("mimo", {})).toMatchObject({
+      kind: "unsupported",
+      reason: expect.stringContaining("mimo"),
     });
   });
 });

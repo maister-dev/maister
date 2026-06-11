@@ -20,6 +20,7 @@ describe("platform ACP runner presets", () => {
       "codex-qwen",
       "gemini-cli",
       "opencode-native",
+      "mimo-code-native",
     ]);
     expect(defaultPlatformRunnerId).toBe("claude-code");
     expect(runners.find((runner) => runner.id === "claude-code")).toMatchObject(
@@ -72,7 +73,7 @@ describe("platform ACP runner presets", () => {
     }
   });
 
-  it("exposes Gemini and OpenCode presets as NotReady without changing the default", () => {
+  it("exposes Gemini, OpenCode, and MiMo presets as NotReady without changing the default", () => {
     const runners = platformRunnerPresetRows();
 
     expect(defaultPlatformRunnerId).toBe("claude-code");
@@ -105,6 +106,22 @@ describe("platform ACP runner presets", () => {
         ?.readinessReasons,
     ).toContain(
       "OpenCode ACP stdio and writable-state smoke must be confirmed",
+    );
+    expect(
+      runners.find((runner) => runner.id === "mimo-code-native"),
+    ).toMatchObject({
+      adapter: "mimo",
+      capabilityAgent: "mimo",
+      model: "mimo-native",
+      provider: { kind: "agent_native" },
+      permissionPolicy: "default",
+      readinessStatus: "NotReady",
+    });
+    expect(
+      runners.find((runner) => runner.id === "mimo-code-native")
+        ?.readinessReasons,
+    ).toContain(
+      "MiMo Code ACP stdio and writable-state smoke must be confirmed",
     );
   });
 

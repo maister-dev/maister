@@ -305,6 +305,7 @@ describe("supervisor lifecycle integration", () => {
       "claude",
       "codex",
       "gemini",
+      "mimo",
       "opencode",
     ]);
     for (const adapter of body.adapters) {
@@ -326,6 +327,12 @@ describe("supervisor lifecycle integration", () => {
     ).toMatchObject({
       status: "pending",
       reason: "opencode ACP compatibility smoke has not been cached",
+    });
+    expect(
+      body.adapters.find((item) => item.id === "mimo")?.smoke,
+    ).toMatchObject({
+      status: "pending",
+      reason: "mimo ACP compatibility smoke has not been cached",
     });
     expect(body.sidecars).toContainEqual({
       id: "ccr-default",

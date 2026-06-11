@@ -174,7 +174,11 @@ function diagnosticEnvRefs(): SupervisorDiagnosticsResponse["envRefs"] {
 }
 
 function versionProbeArgs(runtime: AdapterRuntime): readonly string[] | null {
-  if (runtime.id === "gemini" || runtime.id === "opencode") {
+  if (
+    runtime.id === "gemini" ||
+    runtime.id === "opencode" ||
+    runtime.id === "mimo"
+  ) {
     return ["--version"];
   }
 

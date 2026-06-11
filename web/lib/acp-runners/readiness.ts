@@ -113,7 +113,9 @@ function pushAdapterSmokeReason(
     | NonNullable<DiagnosticsInput["adapters"]>[number]
     | undefined,
 ): void {
-  if (adapter !== "gemini" && adapter !== "opencode") return;
+  if (adapter !== "gemini" && adapter !== "opencode" && adapter !== "mimo") {
+    return;
+  }
 
   if (!diagnosticAdapter?.smoke) {
     reasons.push(`adapter smoke diagnostics are unavailable: ${adapter}`);

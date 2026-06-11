@@ -1,4 +1,10 @@
-export const ADAPTER_IDS = ["claude", "codex", "gemini", "opencode"] as const;
+export const ADAPTER_IDS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "mimo",
+] as const;
 
 export type AdapterId = (typeof ADAPTER_IDS)[number];
 
@@ -92,6 +98,18 @@ export const ADAPTER_SUPPORT = [
     permissionPolicies: ["default"],
     binaryId: "opencode",
     launchCommandHint: ["opencode", "acp"],
+    modelChannel: "advisory",
+    resumeStrategy: "session_resume_pending_smoke",
+    mcpTransports: ["stdio", "sse", "http"],
+    fsPolicy: "none",
+  },
+  {
+    id: "mimo",
+    capabilityAgent: "mimo",
+    providerKinds: ["agent_native"],
+    permissionPolicies: ["default"],
+    binaryId: "mimo",
+    launchCommandHint: ["mimo", "acp"],
     modelChannel: "advisory",
     resumeStrategy: "session_resume_pending_smoke",
     mcpTransports: ["stdio", "sse", "http"],

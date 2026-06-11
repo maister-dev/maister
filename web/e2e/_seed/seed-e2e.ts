@@ -32,7 +32,7 @@ import { Pool } from "pg";
 
 const execFileAsync = promisify(execFile);
 
-type SeedAdapterId = "claude" | "codex" | "gemini" | "opencode";
+type SeedAdapterId = "claude" | "codex" | "gemini" | "opencode" | "mimo";
 
 const ADMIN_EMAIL = "e2e-admin@maister.local";
 const ADMIN_PASSWORD = "E2eReview!pass1";
@@ -4096,7 +4096,9 @@ function runnerSnapshotJson(
           ? "gpt-5-codex"
           : agent === "gemini"
             ? "gemini-2.5-pro"
-            : "opencode-native",
+            : agent === "opencode"
+              ? "opencode-native"
+              : "mimo-native",
     provider: { kind: providerKind },
     providerKind,
     permissionPolicy: "default",
@@ -4971,10 +4973,9 @@ async function main(): Promise<void> {
     // ADR-083 social-board e2e fixture: a deterministic task key on the board
     // project (random elsewhere) plus a SECOND task to mention as EAB-2 from
     // a comment on EAB-1 (social-board.spec.ts).
-    await pool.query(
-      `UPDATE projects SET task_key = 'EAB' WHERE slug = $1`,
-      [BOARD_SLUG],
-    );
+    await pool.query(`UPDATE projects SET task_key = 'EAB' WHERE slug = $1`, [
+      BOARD_SLUG,
+    ]);
     await pool.query(
       `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
        SELECT $1, p.id, 42,

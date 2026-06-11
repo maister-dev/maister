@@ -85,7 +85,7 @@ function parseArgs(): CliArgs {
 
   if (requested.length === 0) {
     return {
-      adapters: ["gemini", "opencode"],
+      adapters: ["gemini", "opencode", "mimo"],
       cachePath: cachePath ?? process.env.MAISTER_ADAPTER_SMOKE_CACHE_PATH,
     };
   }

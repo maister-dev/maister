@@ -341,7 +341,7 @@ function nativeCatalog() {
     record({
       capabilityRefId: "github",
       kind: "mcp",
-      agents: ["claude", "codex"],
+      agents: ["claude", "codex", "mimo"],
       enforceability: "enforced",
       material: githubMaterial,
     }),
@@ -349,7 +349,7 @@ function nativeCatalog() {
       id: "row-aif-implement",
       capabilityRefId: "aif-implement",
       kind: "skill",
-      agents: ["claude", "codex"],
+      agents: ["claude", "codex", "mimo"],
       enforceability: "instructed",
       material: { dir: "skills/aif-implement", entry: "SKILL.md" },
     }),
@@ -371,6 +371,17 @@ function nativeCodexProfile() {
   return resolveCapabilityProfile({
     projectId: "project-1",
     executorAgent: "codex",
+    planMode: "plan-first",
+    selectedMcpIds: ["github"],
+    selectedSkillIds: ["aif-implement"],
+    catalog: nativeCatalog(),
+  });
+}
+
+function nativeMimoProfile() {
+  return resolveCapabilityProfile({
+    projectId: "project-1",
+    executorAgent: "mimo",
     planMode: "plan-first",
     selectedMcpIds: ["github"],
     selectedSkillIds: ["aif-implement"],
@@ -643,6 +654,43 @@ describe("materializeCapabilityProfile", () => {
     expect(result.settingsLocalPath).toBeNull();
     // codex-acp consumes MCP via ACP — the github server IS materialized now
     // (T-C4), but settings.local.json is still never written for codex.
+    expect(result.mcpServers.map((s) => s.name)).toEqual(["github"]);
+    expect(result.materializedFiles).toEqual([]);
+    expect(result.adapterLaunch.preArgs).toBeUndefined();
+
+    for (const file of files) {
+      const content = await readFile(file, "utf8");
+
+      expect(content).not.toContain(LIVE_SECRET);
+    }
+  });
+
+  it("materializes mcp defs for mimo but writes no Claude files and leaks no secret", async () => {
+    const result = await materializeCapabilityProfile({
+      runId: "run-1",
+      worktreePath: workDir,
+      profile: nativeMimoProfile(),
+      tools: ["Read", "Edit"],
+      permissionMode: "deny",
+      executor: {
+        executorRefId: "mimo-code-native",
+        agent: "mimo",
+        model: "mimo-native",
+        router: null,
+      },
+    });
+
+    const root = path.resolve(workDir);
+    const files = await listFilesRecursive(root);
+    const relativeFiles = files.map((file) => path.relative(root, file));
+
+    expect(relativeFiles).not.toContain(
+      path.join(".claude", "settings.local.json"),
+    );
+    expect(relativeFiles).toContain(
+      path.join(".maister", "capabilities", "run-1", "profile.json"),
+    );
+    expect(result.settingsLocalPath).toBeNull();
     expect(result.mcpServers.map((s) => s.name)).toEqual(["github"]);
     expect(result.materializedFiles).toEqual([]);
     expect(result.adapterLaunch.preArgs).toBeUndefined();

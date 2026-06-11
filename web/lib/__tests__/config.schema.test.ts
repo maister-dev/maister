@@ -146,7 +146,7 @@ describe("maisterYamlV2Schema", () => {
       id: "github",
       kind: "mcp",
       source: "project",
-      agents: ["claude", "codex", "gemini", "opencode"],
+      agents: ["claude", "codex", "gemini", "opencode", "mimo"],
       enforceability: "enforced",
       selected_by_default: true,
     });
@@ -154,7 +154,7 @@ describe("maisterYamlV2Schema", () => {
     expect(parsed.capabilities.settings[0].enforceability).toBe("enforced");
   });
 
-  it("accepts designed Gemini and OpenCode capability agents", () => {
+  it("accepts designed Gemini, OpenCode, and MiMo capability agents", () => {
     const parsed = maisterYamlV2Schema.parse({
       ...goldenMaisterYaml,
       capabilities: {
@@ -162,7 +162,7 @@ describe("maisterYamlV2Schema", () => {
           {
             id: "github",
             command: "github-mcp-server",
-            agents: ["gemini", "opencode"],
+            agents: ["gemini", "opencode", "mimo"],
           },
         ],
         settings: [
@@ -175,7 +175,11 @@ describe("maisterYamlV2Schema", () => {
       },
     });
 
-    expect(parsed.capabilities.mcps[0].agents).toEqual(["gemini", "opencode"]);
+    expect(parsed.capabilities.mcps[0].agents).toEqual([
+      "gemini",
+      "opencode",
+      "mimo",
+    ]);
     expect(parsed.capabilities.settings[0].agent).toBe("gemini");
   });
 
@@ -200,18 +204,20 @@ describe("aiCodingSettingsSchema runner target", () => {
     expect(parsed.runner).toBe("claude-code");
   });
 
-  it("accepts Gemini and OpenCode tool allow-lists", () => {
+  it("accepts Gemini, OpenCode, and MiMo tool allow-lists", () => {
     const parsed = aiCodingSettingsSchema.parse({
       runner_type: "acp",
       runner: "gemini-cli",
       tools: {
         gemini: ["read_file"],
         opencode: ["edit"],
+        mimo: ["search"],
       },
     });
 
     expect(parsed.tools?.gemini).toEqual(["read_file"]);
     expect(parsed.tools?.opencode).toEqual(["edit"]);
+    expect(parsed.tools?.mimo).toEqual(["search"]);
   });
 });
 

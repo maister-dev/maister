@@ -215,7 +215,7 @@ paths:
               additionalProperties: false
               properties:
                 id: { type: string }
-                adapter: { type: string, enum: [claude, codex, gemini, opencode] }
+                adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
                 model: { type: string }
                 provider: { type: object }
                 permissionPolicy:
@@ -5809,7 +5809,7 @@ paths:
                     pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
-                  items: { type: string, enum: [claude, codex, gemini, opencode] }
+                  items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
                 enabled: { type: boolean }
       responses:
         "200":
@@ -5999,7 +5999,7 @@ paths:
                     pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
-                  items: { type: string, enum: [claude, codex, gemini, opencode] }
+                  items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
       responses:
         "200":
           description: Project MCP server updated.
@@ -7861,7 +7861,7 @@ components:
           type: array
           items:
             type: string
-            enum: [claude, codex, gemini, opencode]
+            enum: [claude, codex, gemini, opencode, mimo]
     ScratchProjectOption:
       type: object
       required: [id, slug, name, mainBranch, branchPrefix]
@@ -7959,8 +7959,8 @@ components:
             properties:
               id: { type: string }
               displayLabel: { type: string }
-              adapter: { type: string, enum: [claude, codex, gemini, opencode] }
-              capabilityAgent: { type: string, enum: [claude, codex, gemini, opencode] }
+              adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+              capabilityAgent: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
               model: { type: string }
               providerKind: { type: string }
               permissionPolicy: { type: string }
@@ -8299,7 +8299,7 @@ components:
             capabilityAgent:
               type: string
               nullable: true
-              enum: [claude, codex, gemini, opencode]
+              enum: [claude, codex, gemini, opencode, mimo]
             createdByUserId: { type: string, format: uuid, nullable: true }
             createdByDisplayName: { type: string, nullable: true }
             status:
@@ -9457,7 +9457,7 @@ components:
             from `env:NAME` references.
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex, gemini, opencode] }
+          items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
         trustStatus:
           type: string
           enum: [untrusted, trusted, trusted_by_policy]
@@ -9518,7 +9518,7 @@ components:
             pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex, gemini, opencode] }
+          items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
           default: ["claude", "codex"]
         enabled:
           type: boolean
@@ -9563,7 +9563,7 @@ components:
           items: { type: string }
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex, gemini, opencode] }
+          items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
@@ -9602,7 +9602,7 @@ components:
             pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex, gemini, opencode] }
+          items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
           default: ["claude", "codex"]
 
     ResolvedMcpEntry:
@@ -9639,7 +9639,7 @@ components:
           items: { type: string }
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex, gemini, opencode] }
+          items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
     ModelSuggestionsRequest:
       type: object
       additionalProperties: false
@@ -9650,7 +9650,7 @@ components:
         converts them to bare names before forwarding to the supervisor. Raw
         (non-`env:`) secret values are rejected with `CONFIG` (422).
       properties:
-        adapter: { type: string, enum: [claude, codex, gemini, opencode] }
+        adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
         provider:
           type: object
           description: |

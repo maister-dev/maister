@@ -4,11 +4,12 @@
 
 The supervisor is a second Node process that owns the lifecycle of agent
 processes. Implemented adapters are `claude-agent-acp` and `codex-acp`;
-ADR-084 designs `gemini --acp` and `opencode acp` as additional code-owned ACP
-adapter families. It speaks **HTTP + SSE** to the web tier and **ACP JSON-RPC
-over stdio** to its spawned adapter children. The current contract includes spawn, prompt delivery,
-structured ACP event parsing, permission HITL, checkpoint, resume,
-heartbeat promotion, and cost accounting.
+ADR-084/ADR-085 add `gemini --acp`, `opencode acp`, and `mimo acp` as
+readiness-gated code-owned ACP adapter families. It speaks **HTTP + SSE** to
+the web tier and **ACP JSON-RPC over stdio** to its spawned adapter children.
+The current contract includes spawn, prompt delivery, structured ACP event
+parsing, permission HITL, checkpoint, resume, heartbeat promotion, and cost
+accounting.
 
 ```
                      ┌─────────────────────┐                ┌──────────────────────────┐
@@ -24,7 +25,7 @@ heartbeat promotion, and cost accounting.
                                                                            ▼
                                                 ┌──────────────────────────────────────┐
                                                 │ claude-agent-acp / codex-acp         │
-                                                │ gemini --acp / opencode acp (ADR-078)│
+                                                │ gemini --acp / opencode acp / mimo acp│
                                                 │  cwd = worktreePath                  │
                                                 │  stdio: pipe/pipe/inherit            │
                                                 └──────────────────────────────────────┘
@@ -133,8 +134,9 @@ metadata, and sends only normalized spawn intent. The supervisor remains the
 only layer that resolves env refs into values and maps typed permission
 policies to adapter argv.
 
-ADR-084 adapter launch commands are fixed by the supervisor adapter registry:
-`gemini` maps to `gemini --acp`; `opencode` maps to `opencode acp`. Unsupported
+ADR-084/ADR-085 adapter launch commands are fixed by the supervisor adapter registry:
+`gemini` maps to `gemini --acp`; `opencode` maps to `opencode acp`; `mimo`
+maps to `mimo acp`. Unsupported
 adapter/provider/policy combinations, missing required env refs, binary
 diagnostic failures, and unsupported checkpoint strategies are refused before
 spawn when readiness has enough information. There is no fallback to
@@ -173,7 +175,7 @@ Adapter diagnostic entries are:
 
 ```ts
 {
-  id: "claude" | "codex" | "gemini" | "opencode";
+  id: "claude" | "codex" | "gemini" | "opencode" | "mimo";
   binary: string;
   source: "path" | "override";
   path: string | null;
@@ -196,17 +198,17 @@ override paths, version probe failures, and adapter first-run writable-state
 failures. This matters for OpenCode: a Homebrew binary can exist while the
 process still fails to initialize its user state directory.
 
-Gemini and OpenCode require cached ACP smoke evidence before readiness can
+Gemini, OpenCode, and MiMo require cached ACP smoke evidence before readiness can
 become `Ready`. The supervisor reads the cache from
 `MAISTER_ADAPTER_SMOKE_CACHE_PATH` when set; otherwise it looks for
 `adapter-smoke-cache.json` under its runtime root. Operators update the cache
 with the opt-in smoke script:
 
 ```bash
-pnpm -C supervisor smoke:acp --cache /path/to/adapter-smoke-cache.json gemini opencode
+pnpm -C supervisor smoke:acp --cache /path/to/adapter-smoke-cache.json gemini opencode mimo
 ```
 
-Only `smoke.status="ok"` satisfies the Gemini/OpenCode launch gate. `pending`,
+Only `smoke.status="ok"` satisfies the Gemini/OpenCode/MiMo launch gate. `pending`,
 `skipped`, and `error` remain operator-visible `NotReady` reasons.
 
 `envRefs` contains a fixed safe catalog of known runner env-ref names plus the
@@ -548,6 +550,7 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_ADAPTER_BINARY_CODEX` | unset | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`. |
 | `MAISTER_ADAPTER_BINARY_GEMINI` | unset | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`. |
 | `MAISTER_ADAPTER_BINARY_OPENCODE` | unset | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`. |
+| `MAISTER_ADAPTER_BINARY_MIMO` | unset | Optional supervisor-side executable override for `mimo`. When unset, PATH resolution uses `mimo` plus the registry argv `acp`. |
 | `LOG_LEVEL` | `debug` | pino level: `trace | debug | info | warn | error | fatal | silent`. |
 
 Secrets MUST NEVER appear in:
@@ -629,13 +632,12 @@ pnpm install --frozen-lockfile
 pnpm --filter @maister/supervisor dev          # tsx watch src/main.ts
 pnpm --filter @maister/supervisor start        # tsx src/main.ts (no watch)
 
-# Via compose (dev: with hot reload, ports 3000 + 7777 exposed):
-docker compose up -d
-docker compose logs -f supervisor
+# Database dependency (compose is Postgres-only in the local host-run path):
+docker compose up -d postgres
 
-# Production-style compose (read-only, hardened):
-MAISTER_IMAGE=registry.example.com/maister/app:1.2.3 \
-docker compose -f compose.yml -f compose.production.yml up -d
+# Hardened Postgres compose; use the deployment guide for systemd/nginx
+# process wiring.
+docker compose -f compose.yml -f compose.production.yml up -d postgres
 ```
 
 When running locally without docker, the web tier defaults to
@@ -737,9 +739,10 @@ through a `PassThrough` so both consumers see every chunk.
   grace period are gone. The web tier's eventual log-file tail bridge
   (M7+M9) fills that gap.
 - **No Cursor / Aider executors** — the supervisor supports the code-owned ACP
-  adapter families `claude`, `codex`, `gemini`, and `opencode`. Gemini and
-  OpenCode remain gated by binary diagnostics and smoke-proven readiness before
-  they can be treated as production launch targets.
+  adapter families `claude`, `codex`, `gemini`, `opencode`, and `mimo`.
+  Gemini, OpenCode, and MiMo remain gated by binary diagnostics and
+  smoke-proven readiness before they can be treated as production launch
+  targets.
 - **No plugin sandboxing or trust UI** — POC trusts internal Flow
   sources; sandboxing is Phase 2.
 

@@ -18,12 +18,14 @@ const AVATAR: Record<HitlItem["agent"], string> = {
   codex: "bg-accent-3",
   gemini: "bg-accent-2",
   opencode: "bg-ink-2",
+  mimo: "bg-ink",
 };
 
 function avatarInitials(agent: HitlItem["agent"]): string {
   if (agent === "claude") return "cl";
   if (agent === "codex") return "cx";
   if (agent === "gemini") return "gm";
+  if (agent === "mimo") return "mi";
 
   return "oc";
 }

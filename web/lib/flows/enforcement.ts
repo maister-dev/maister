@@ -58,6 +58,14 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     permissionMode: "instructed",
     workspaceAccess: "instructed",
   },
+  mimo: {
+    mcps: "instructed",
+    tools: "instructed",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
+  },
 };
 
 const ALL_CLASSES: CapabilityClass[] = [

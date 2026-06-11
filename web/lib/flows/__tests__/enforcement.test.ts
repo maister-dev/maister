@@ -108,13 +108,27 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
         permissionMode: "instructed",
         workspaceAccess: "instructed",
       },
+      mimo: {
+        mcps: "instructed",
+        tools: "instructed",
+        skills: "instructed",
+        restrictions: "instructed",
+        permissionMode: "instructed",
+        workspaceAccess: "instructed",
+      },
     };
 
     expect(ENFORCEABILITY_BY_AGENT).toEqual(expected);
   });
 
   it("contains NO `enforced` cell (the M11c silent-escape-hatch invariant)", () => {
-    for (const agent of ["claude", "codex", "gemini", "opencode"] as const) {
+    for (const agent of [
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+      "mimo",
+    ] as const) {
       for (const cls of ALL_CLASSES) {
         expect(ENFORCEABILITY_BY_AGENT[agent][cls]).not.toBe("enforced");
       }
@@ -157,6 +171,14 @@ const injectedTable: Table = {
     workspaceAccess: "instructed",
   },
   opencode: {
+    mcps: "instructed",
+    tools: "instructed",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
+  },
+  mimo: {
     mcps: "instructed",
     tools: "instructed",
     skills: "instructed",

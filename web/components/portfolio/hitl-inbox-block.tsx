@@ -32,6 +32,9 @@ const CRITICALITY_BADGE: Record<string, string> = {
 const AGENT_BADGE: Record<string, string> = {
   claude: "bg-amber text-white",
   codex: "bg-accent-3 text-white",
+  gemini: "bg-accent-2 text-white",
+  opencode: "bg-ink-2 text-white",
+  mimo: "bg-ink text-white",
 };
 
 export function HitlInboxBlock({

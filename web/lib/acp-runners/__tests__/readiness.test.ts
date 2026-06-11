@@ -44,6 +44,16 @@ const diagnostics = {
         protocolVersion: null,
       },
     },
+    {
+      id: "mimo",
+      available: true,
+      smoke: {
+        status: "pending",
+        reason: "mimo ACP compatibility smoke has not been cached",
+        checkedAt: null,
+        protocolVersion: null,
+      },
+    },
   ],
   envRefs: [
     { name: "ANTHROPIC_AUTH_TOKEN", present: true },
@@ -57,7 +67,9 @@ const diagnostics = {
 const smokeReadyDiagnostics = {
   ...diagnostics,
   adapters: diagnostics.adapters.map((adapter) =>
-    adapter.id === "gemini" || adapter.id === "opencode"
+    adapter.id === "gemini" ||
+    adapter.id === "opencode" ||
+    adapter.id === "mimo"
       ? {
           ...adapter,
           smoke: {
@@ -100,7 +112,7 @@ describe("evaluateRunnerReadiness", () => {
     ).toEqual({ status: "Ready", reasons: [] });
   });
 
-  it("keeps supported Gemini and OpenCode runners NotReady until smoke is cached", () => {
+  it("keeps supported Gemini, OpenCode, and MiMo runners NotReady until smoke is cached", () => {
     expect(
       evaluateRunnerReadiness({
         runner: {
@@ -136,9 +148,27 @@ describe("evaluateRunnerReadiness", () => {
         "adapter smoke is not ready: opencode (opencode ACP compatibility smoke has not been cached)",
       ],
     });
+
+    expect(
+      evaluateRunnerReadiness({
+        runner: {
+          adapter: "mimo",
+          capabilityAgent: "mimo",
+          enabled: true,
+          permissionPolicy: "default",
+          provider: { kind: "agent_native" },
+        },
+        diagnostics,
+      }),
+    ).toEqual({
+      status: "NotReady",
+      reasons: [
+        "adapter smoke is not ready: mimo (mimo ACP compatibility smoke has not been cached)",
+      ],
+    });
   });
 
-  it("marks Gemini and OpenCode runners Ready when smoke is cached", () => {
+  it("marks Gemini, OpenCode, and MiMo runners Ready when smoke is cached", () => {
     expect(
       evaluateRunnerReadiness({
         runner: {
@@ -170,6 +200,19 @@ describe("evaluateRunnerReadiness", () => {
         runner: {
           adapter: "opencode",
           capabilityAgent: "opencode",
+          enabled: true,
+          permissionPolicy: "default",
+          provider: { kind: "agent_native" },
+        },
+        diagnostics: smokeReadyDiagnostics,
+      }),
+    ).toEqual({ status: "Ready", reasons: [] });
+
+    expect(
+      evaluateRunnerReadiness({
+        runner: {
+          adapter: "mimo",
+          capabilityAgent: "mimo",
           enabled: true,
           permissionPolicy: "default",
           provider: { kind: "agent_native" },

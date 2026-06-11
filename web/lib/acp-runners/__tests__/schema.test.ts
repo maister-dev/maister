@@ -85,7 +85,7 @@ describe("platform ACP runner config schema", () => {
     ).toThrow(/api_key.*env:/);
   });
 
-  it("parses Gemini and OpenCode runner providers from the shared adapter registry", () => {
+  it("parses Gemini, OpenCode, and MiMo runner providers from the shared adapter registry", () => {
     const config = parsePlatformRuntimeConfig({
       platform: { default_runner: "gemini-cli" },
       acp_runners: [
@@ -103,6 +103,13 @@ describe("platform ACP runner config schema", () => {
           provider: { kind: "agent_native" },
           permission_policy: "default",
         },
+        {
+          id: "mimo-code-native",
+          adapter: "mimo",
+          model: "mimo-native",
+          provider: { kind: "agent_native" },
+          permission_policy: "default",
+        },
       ],
     });
 
@@ -117,6 +124,12 @@ describe("platform ACP runner config schema", () => {
         id: "opencode-native",
         adapter: "opencode",
         capabilityAgent: "opencode",
+        provider: { kind: "agent_native" },
+      }),
+      expect.objectContaining({
+        id: "mimo-code-native",
+        adapter: "mimo",
+        capabilityAgent: "mimo",
         provider: { kind: "agent_native" },
       }),
     ]);
@@ -194,6 +207,11 @@ describe("platform ACP runner config schema", () => {
       expect.objectContaining({
         id: "opencode",
         capabilityAgent: "opencode",
+        providerKinds: expect.arrayContaining(["agent_native"]),
+      }),
+      expect.objectContaining({
+        id: "mimo",
+        capabilityAgent: "mimo",
         providerKinds: expect.arrayContaining(["agent_native"]),
       }),
     ]);

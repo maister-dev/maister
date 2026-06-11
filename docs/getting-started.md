@@ -10,9 +10,10 @@ two long-running Node processes:
   Route Handlers that bridge SSE to the browser.
 - **`supervisor/`** — a separate Node daemon (Fastify + pino) that owns
   ACP sessions and spawns the per-session agent processes
-  (`claude-agent-acp`, `codex-acp`, `gemini --acp`, `opencode acp`). Gemini
-  and OpenCode launchability is readiness-gated by supervisor diagnostics and
-  smoke evidence. See [Supervisor](supervisor.md) for the wire contract.
+  (`claude-agent-acp`, `codex-acp`, `gemini --acp`, `opencode acp`,
+  `mimo acp`). Gemini, OpenCode, and MiMo launchability is readiness-gated by
+  supervisor diagnostics and smoke evidence. See [Supervisor](supervisor.md)
+  for the wire contract.
 
 ## Prerequisites
 

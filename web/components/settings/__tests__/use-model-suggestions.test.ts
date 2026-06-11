@@ -53,4 +53,17 @@ describe("buildModelSuggestionRequestBody", () => {
       force: true,
     });
   });
+
+  it("sends MiMo native provider drafts without OpenCode aliasing", () => {
+    expect(
+      buildModelSuggestionRequestBody(
+        draft({ adapter: "mimo", providerKind: "agent_native" }),
+        true,
+      ),
+    ).toEqual({
+      adapter: "mimo",
+      provider: { kind: "agent_native" },
+      force: true,
+    });
+  });
 });

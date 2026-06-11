@@ -70,7 +70,13 @@ describe("platformMcpRowToCapability (T-C3)", () => {
       }),
     );
 
-    expect(cap.agents).toEqual(["claude", "codex", "gemini", "opencode"]);
+    expect(cap.agents).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+      "mimo",
+    ]);
   });
 
   it("tags a stdio row with transport=stdio", () => {

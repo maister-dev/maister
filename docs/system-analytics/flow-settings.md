@@ -127,17 +127,18 @@ export const ENFORCEABILITY_BY_AGENT: Record<
 };
 ```
 
-## Gemini/OpenCode enforcement extension (Designed, ADR-084)
+## Gemini/OpenCode/MiMo enforcement extension (Designed, ADR-084/ADR-085)
 
-Gemini and OpenCode widen the agent axis only after the schema and enforcement
-table are updated together. The extension is conservative:
+Gemini, OpenCode, and MiMo widen the agent axis only after the schema and
+enforcement table are updated together. The extension is conservative:
 
 | agent → class | `mcps` | `tools` | `skills` | `restrictions` | `permissionMode` | `workspaceAccess` |
 | ------------- | ------ | ------- | -------- | -------------- | ---------------- | ----------------- |
 | `gemini`      | instructed | instructed | instructed | instructed | instructed | instructed |
 | `opencode`   | instructed | instructed | instructed | instructed | instructed | instructed |
+| `mimo`        | instructed | instructed | instructed | instructed | instructed | instructed |
 
-No Gemini/OpenCode cell may ship as `enforced` in this feature. A future live
+No Gemini/OpenCode/MiMo cell may ship as `enforced` in this feature. A future live
 spike may tighten a cell from `instructed` to `enforced`, but it must never
 weaken an existing `enforced` claim. If a class is proven impossible for an
 adapter, the implementation may use `unsupported`; `strict` still refuses.
@@ -276,10 +277,10 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
   on BOTH the pass and refusal paths and is append-only (never a mutable mirror).
 - The M11c `ENFORCEABILITY_BY_AGENT` table MUST contain no `enforced` cell; M14
   only ever flips `instructed → enforced` (the contract tightens, never loosens).
-- Gemini/OpenCode rows, when implemented, MUST start with only `instructed` or
-  `unsupported` cells. `strict` on those cells MUST refuse with `CONFIG` or
+- Gemini/OpenCode/MiMo rows, when implemented, MUST start with only `instructed`
+  or `unsupported` cells. `strict` on those cells MUST refuse with `CONFIG` or
   `EXECUTOR_UNAVAILABLE` using the same truth table as Claude/Codex. (Designed,
-  ADR-078)
+  ADR-078/ADR-085)
 - Node-level validation MUST reject unknown `permissionMode` / `failureClass` /
   `thinkingEffort` / `environmentPolicy` / `enforcement` enum values, malformed
   `tools` map, out-of-range `limits`, legacy `settings.executors[]`, and
@@ -309,7 +310,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
   `human`) → rejected by node-level validation, `MaisterError("CONFIG")`.
 - **Per-node executor override smuggling an unenforceable class** → caught by the
   per-node runtime gate even if the launch precondition passed.
-- **Gemini/OpenCode strict capability before live proof** → refused exactly like
+- **Gemini/OpenCode/MiMo strict capability before live proof** → refused exactly like
   any other non-enforced cell; no adapter-specific fallback, warning-only pass,
   or implicit downgrade is allowed.
 - **Process dies after a refusal snapshot but before the run is marked terminal**

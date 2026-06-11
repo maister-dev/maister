@@ -15,7 +15,7 @@ import { SESSION_EVENT_CHANNEL } from "../registry";
 const silent = pino({ level: "silent" });
 
 function runnerFor(
-  adapter: "claude" | "codex" | "gemini" | "opencode",
+  adapter: "claude" | "codex" | "gemini" | "opencode" | "mimo",
   model: string,
 ): RunnerLaunch {
   const provider =
@@ -23,7 +23,7 @@ function runnerFor(
       ? { kind: "openai" as const }
       : adapter === "gemini"
         ? { kind: "google_gemini" as const, apiKeyEnv: "GEMINI_API_KEY" }
-        : adapter === "opencode"
+        : adapter === "opencode" || adapter === "mimo"
           ? { kind: "agent_native" as const }
           : { kind: "anthropic" as const };
 
@@ -252,7 +252,7 @@ describe("applyAndVerifyModel", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("Gemini and OpenCode mismatches emit advisory without setSessionModel", async () => {
+  it("Gemini, OpenCode, and MiMo mismatches emit advisory without setSessionModel", async () => {
     const setModel = vi.fn();
     const emitter = new EventEmitter();
     const events = capture(emitter);
@@ -275,14 +275,20 @@ describe("applyAndVerifyModel", () => {
       runner: runnerFor("opencode", "opencode-default"),
       models: state("opencode-other"),
     });
+    await applyAndVerifyModel({
+      ...base,
+      runner: runnerFor("mimo", "mimo-native"),
+      models: state("mimo-other"),
+    });
 
     expect(setModel).not.toHaveBeenCalled();
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
     expect(
       events
         .filter((event) => event.type === "session.update")
         .map((event) => event.update),
     ).toEqual([
+      expect.objectContaining({ channel: "advisory" }),
       expect.objectContaining({ channel: "advisory" }),
       expect.objectContaining({ channel: "advisory" }),
     ]);

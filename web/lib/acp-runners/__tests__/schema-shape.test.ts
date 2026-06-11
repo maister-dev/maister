@@ -68,7 +68,7 @@ describe("platform runner persistence schema shape", () => {
     expect(snapshot.capabilityAgent).toBe("claude");
   });
 
-  it("runner inferred types accept designed Gemini and OpenCode adapters without a schema migration", () => {
+  it("runner inferred types accept designed Gemini, OpenCode, and MiMo adapters without a schema migration", () => {
     const geminiRunner: PlatformAcpRunner = {
       id: "gemini-cli",
       adapter: "gemini",
@@ -92,8 +92,18 @@ describe("platform runner persistence schema shape", () => {
       providerKind: "agent_native",
       permissionPolicy: "default",
     };
+    const mimoSnapshot: RunnerSnapshot = {
+      id: "mimo-code-native",
+      adapter: "mimo",
+      capabilityAgent: "mimo",
+      model: "mimo-native",
+      provider: { kind: "agent_native" },
+      providerKind: "agent_native",
+      permissionPolicy: "default",
+    };
 
     expect(geminiRunner.provider.kind).toBe("google_gemini");
     expect(opencodeSnapshot.capabilityAgent).toBe("opencode");
+    expect(mimoSnapshot.capabilityAgent).toBe("mimo");
   });
 });

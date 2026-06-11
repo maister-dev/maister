@@ -35,7 +35,7 @@ function spawnFixture(args: readonly string[] = []): FixtureChild {
   return child;
 }
 
-function recordFor(adapter: "gemini" | "opencode"): SessionRecord {
+function recordFor(adapter: "gemini" | "opencode" | "mimo"): SessionRecord {
   return {
     sessionId: `compat-${adapter}`,
     adapter,
@@ -50,7 +50,7 @@ function recordFor(adapter: "gemini" | "opencode"): SessionRecord {
   };
 }
 
-function runnerFor(adapter: "gemini" | "opencode"): RunnerLaunch {
+function runnerFor(adapter: "gemini" | "opencode" | "mimo"): RunnerLaunch {
   return {
     version: 1,
     runnerId: `${adapter}-compat`,
@@ -95,6 +95,44 @@ function waitForEvent(
   });
 }
 
+async function expectPromptPermission(args: {
+  adapter: "opencode" | "mimo";
+  acpSessionId: string;
+  connection: Awaited<ReturnType<typeof createAcpConnection>>["connection"];
+  emitter: EventEmitter;
+  pendingPermissions: ReturnType<typeof createPendingPermissions>;
+  record: SessionRecord;
+}): Promise<void> {
+  const prompt = sendPromptOnConnection(
+    args.connection,
+    {
+      adapter: args.adapter,
+      acpSessionId: args.acpSessionId,
+      stepId: "step-1",
+      prompt: "request permission",
+    },
+    logger,
+  );
+  const permission = await waitForEvent(
+    args.emitter,
+    (event) => event.type === "session.permission_request",
+  );
+
+  expect(permission.type).toBe("session.permission_request");
+  if (permission.type !== "session.permission_request") {
+    throw new Error("expected permission request");
+  }
+
+  expect(
+    args.pendingPermissions.resolve(
+      args.record.sessionId,
+      permission.requestId,
+      "allow",
+    ),
+  ).toBe(true);
+  await expect(prompt).resolves.toMatchObject({ stopReason: "end_turn" });
+}
+
 afterEach(() => {
   for (const child of children.splice(0)) {
     child.kill("SIGKILL");
@@ -133,34 +171,14 @@ describe("adapter compatibility fixtures", () => {
       }),
     );
 
-    const prompt = sendPromptOnConnection(
-      newConnection.connection,
-      {
-        adapter: "opencode",
-        acpSessionId: newConnection.acpSessionId,
-        stepId: "step-1",
-        prompt: "request permission",
-      },
-      logger,
-    );
-    const permission = await waitForEvent(
-      newEmitter,
-      (event) => event.type === "session.permission_request",
-    );
-
-    expect(permission.type).toBe("session.permission_request");
-    if (permission.type !== "session.permission_request") {
-      throw new Error("expected permission request");
-    }
-
-    expect(
-      pendingPermissions.resolve(
-        newRecord.sessionId,
-        permission.requestId,
-        "allow",
-      ),
-    ).toBe(true);
-    await expect(prompt).resolves.toMatchObject({ stopReason: "end_turn" });
+    await expectPromptPermission({
+      adapter: "opencode",
+      acpSessionId: newConnection.acpSessionId,
+      connection: newConnection.connection,
+      emitter: newEmitter,
+      pendingPermissions,
+      record: newRecord,
+    });
 
     const resumeChild = spawnFixture();
     const resumeEmitter = new EventEmitter();
@@ -180,6 +198,66 @@ describe("adapter compatibility fixtures", () => {
     });
 
     expect(resumed.acpSessionId).toBe("existing-opencode-session");
+  });
+
+  it("drives MiMo-like newSession, prompt permission, and resume through ACP without OpenCode aliasing", async () => {
+    const pendingPermissions = createPendingPermissions({ timeoutMs: 5_000 });
+    const newChild = spawnFixture();
+    const newEmitter = new EventEmitter();
+    const newEvents = eventCollector(newEmitter);
+    const newRecord = recordFor("mimo");
+    const newConnection = await createAcpConnection({
+      stdin: newChild.stdin,
+      stdoutSource: newChild.stdout,
+      sessionId: newRecord.sessionId,
+      worktreePath: process.cwd(),
+      record: newRecord,
+      emitter: newEmitter,
+      logger,
+      adapter: "mimo",
+      pendingPermissions,
+      runner: runnerFor("mimo"),
+    });
+
+    expect(newConnection.acpSessionId).toMatch(/^compat-/);
+    expect(newEvents).toContainEqual(
+      expect.objectContaining({
+        type: "session.update",
+        update: expect.objectContaining({
+          sessionUpdate: "model_advisory",
+          channel: "advisory",
+          configuredModel: "configured-model",
+        }),
+      }),
+    );
+
+    await expectPromptPermission({
+      adapter: "mimo",
+      acpSessionId: newConnection.acpSessionId,
+      connection: newConnection.connection,
+      emitter: newEmitter,
+      pendingPermissions,
+      record: newRecord,
+    });
+
+    const resumeChild = spawnFixture();
+    const resumeEmitter = new EventEmitter();
+    const resumeRecord = recordFor("mimo");
+    const resumed = await createAcpConnection({
+      stdin: resumeChild.stdin,
+      stdoutSource: resumeChild.stdout,
+      sessionId: resumeRecord.sessionId,
+      worktreePath: process.cwd(),
+      record: resumeRecord,
+      emitter: resumeEmitter,
+      logger,
+      adapter: "mimo",
+      pendingPermissions,
+      resumeSessionId: "existing-mimo-session",
+      runner: runnerFor("mimo"),
+    });
+
+    expect(resumed.acpSessionId).toBe("existing-mimo-session");
   });
 
   it("refuses Gemini loadSession-only resume without falling back to newSession", async () => {

@@ -13,6 +13,8 @@ function testRunnerModel(agent: TestRunnerAgent): string {
       return "gemini-3-pro";
     case "opencode":
       return "opencode-default";
+    case "mimo":
+      return "mimo-native";
   }
 }
 
@@ -25,6 +27,7 @@ function testRunnerProvider(agent: TestRunnerAgent): PlatformRunnerProvider {
     case "gemini":
       return { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" };
     case "opencode":
+    case "mimo":
       return { kind: "agent_native" };
   }
 }

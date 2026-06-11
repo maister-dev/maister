@@ -237,7 +237,7 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("accepts designed Gemini and OpenCode runner payloads", () => {
+  it("accepts designed Gemini, OpenCode, and MiMo runner payloads", () => {
     const geminiResult = StartSessionRequestSchema.safeParse({
       ...validRequest,
       executor: { agent: "gemini", model: "gemini-3-pro" },
@@ -264,9 +264,23 @@ describe("StartSessionRequestSchema", () => {
         permissionPolicy: "default",
       },
     });
+    const mimoResult = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      executor: { agent: "mimo", model: "mimo-native" },
+      runner: {
+        version: 1,
+        runnerId: "mimo-code-native",
+        adapter: "mimo",
+        capabilityAgent: "mimo",
+        model: "mimo-native",
+        provider: { kind: "agent_native" },
+        permissionPolicy: "default",
+      },
+    });
 
     expect(geminiResult.success).toBe(true);
     expect(opencodeResult.success).toBe(true);
+    expect(mimoResult.success).toBe(true);
   });
 
   it("rejects env-prefixed Google provider secret names at the supervisor boundary", () => {
@@ -372,6 +386,21 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
           smoke: {
             status: "pending",
             reason: "opencode ACP compatibility smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
+        },
+        {
+          id: "mimo",
+          binary: "mimo",
+          source: "path",
+          path: null,
+          available: false,
+          version: null,
+          error: "adapter binary not found on PATH: mimo",
+          smoke: {
+            status: "pending",
+            reason: "mimo ACP compatibility smoke has not been cached",
             checkedAt: null,
             protocolVersion: null,
           },

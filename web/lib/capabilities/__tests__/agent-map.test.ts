@@ -83,6 +83,26 @@ function codexProfile() {
   });
 }
 
+function mimoProfile() {
+  return resolveCapabilityProfile({
+    projectId: "project-1",
+    executorAgent: "mimo",
+    planMode: "off",
+    selectedMcpIds: ["github"],
+    selectedSkillIds: ["aif-implement"],
+    catalog: [
+      record({
+        ...githubRecord,
+        agents: ["claude", "codex", "mimo"],
+      }),
+      record({
+        ...skillRecord,
+        agents: ["claude", "codex", "mimo"],
+      }),
+    ],
+  });
+}
+
 function skillOnlyClaudeProfile() {
   return resolveCapabilityProfile({
     projectId: "project-1",
@@ -276,6 +296,25 @@ describe("mapProfileToAgentArtifacts", () => {
     // settings.local.json (permissions) is Claude-only; codex skills use `$`.
     expect(result.settingsLocal).toBeNull();
     expect(result.skills).toEqual([]);
+  });
+
+  it("materializes MiMo mcpServers without Claude settings or skill files", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: mimoProfile(),
+      agent: "mimo",
+      tools: ["Read"],
+      permissionMode: "deny",
+      model: "mimo-native",
+    });
+
+    expect(result.mcpServers.map((s) => s.name)).toContain("github");
+    expect(result.settingsLocal).toBeNull();
+    expect(result.skills).toEqual([]);
+
+    const serialized = JSON.stringify(result);
+
+    expect(serialized).not.toContain("mimo-native");
+    expect(serialized).not.toContain("availableModels");
   });
 
   // ADR-076 (decision 5) / T3.1: the configured runner model reaches the claude

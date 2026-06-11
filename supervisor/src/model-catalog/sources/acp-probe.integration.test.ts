@@ -164,7 +164,7 @@ describe("createAcpProbeSource", () => {
     expect(children).toHaveLength(0);
   });
 
-  it("skips Gemini and OpenCode probes until compatibility smoke enables them", async () => {
+  it("skips Gemini, OpenCode, and MiMo probes until compatibility smoke enables them", async () => {
     const { spawnImpl, children } = spyingSpawn();
     const source = createAcpProbeSource({
       spawnImpl,
@@ -186,6 +186,13 @@ describe("createAcpProbeSource", () => {
       },
       ctx,
     );
+    const mimo = await source.resolve(
+      {
+        adapter: "mimo",
+        provider: { kind: "agent_native" },
+      },
+      ctx,
+    );
 
     expect(gemini.models).toEqual([]);
     expect(gemini.status).toMatchObject({
@@ -198,6 +205,12 @@ describe("createAcpProbeSource", () => {
       kind: "acp_probe",
       status: "skipped",
       reason: "opencode ACP model probe is pending compatibility smoke",
+    });
+    expect(mimo.models).toEqual([]);
+    expect(mimo.status).toMatchObject({
+      kind: "acp_probe",
+      status: "skipped",
+      reason: "mimo ACP model probe is pending compatibility smoke",
     });
     expect(children).toHaveLength(0);
   });

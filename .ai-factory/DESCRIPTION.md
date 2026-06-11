@@ -8,7 +8,8 @@ ACP-driven agent execution, structured HITL, diff review, and merge.
 
 Current wedge: a **Web shell + ACP supervisor daemon + Flow plugin engine**
 spanning multi-project portfolio + platform ACP runners
-(`claude`, `codex`, readiness-gated `gemini`, readiness-gated `opencode`) +
+(`claude`, `codex`, readiness-gated `gemini`, readiness-gated `opencode`,
+readiness-gated `mimo`) +
 multi-workspace + manual scratch workspaces + hybrid HITL + per-project task
 board. MAIster orchestrates agents through the Zed-standard Agent Client
 Protocol (ACP); Flow plugins shipped as git-tagged bundles compose CLI tools,
@@ -37,9 +38,9 @@ For the full vision, product model, architecture, and roadmap see
   Each plugin carries a `flow.yaml` manifest with step DSL (`cli | agent |
   guard | human`), optional `setup.sh`, shipped CLIs, skills, and agents.
 - **Multi-executor via ACP**: `claude` and `codex` are the ready default
-  adapters; `gemini` and `opencode` are code-owned adapter families whose
-  launch/default readiness is gated by supervisor diagnostics and cached ACP
-  smoke evidence.
+  adapters; `gemini`, `opencode`, and `mimo` are code-owned adapter families
+  whose launch/default readiness is gated by supervisor diagnostics and cached
+  ACP smoke evidence.
   Executor identity = `{agent, model, env?, router?}` defined per project in
   `executors[]`. CCR (Claude Code Router) bundled for `router: ccr` to route
   z.ai GLM / MiniMax through `claude`. Per-step override resolution: run

@@ -162,7 +162,7 @@ from `maister.yaml`) — keeps RAM/token spend bounded on a single host.
 
 ACP standardizes the agent surface via vendor-neutral
 `@agentclientprotocol/sdk`. `claude` and `codex` are the ready default
-adapter families; `gemini` and `opencode` are code-owned adapter families
+adapter families; `gemini`, `opencode`, and `mimo` are code-owned adapter families
 whose launch/default readiness is gated by supervisor diagnostics and cached
 ACP smoke evidence. The supervisor spawns adapters via per-agent binaries:
 - `claude` → `claude-agent-acp` (from
@@ -172,6 +172,7 @@ ACP smoke evidence. The supervisor spawns adapters via per-agent binaries:
   `@openai/codex`)
 - `gemini` → `gemini --acp`
 - `opencode` → `opencode acp`
+- `mimo` → `mimo acp`
 
 Other ACP-capable agents land after their registry, diagnostics, and smoke
 contracts are proven. Runner identity is platform-scoped in

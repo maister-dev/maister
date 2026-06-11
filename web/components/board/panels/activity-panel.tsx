@@ -13,6 +13,7 @@ const AVA: Record<ActivityEvent["agent"], string> = {
   codex: "bg-accent-3",
   gemini: "bg-accent-2",
   opencode: "bg-ink-2",
+  mimo: "bg-ink",
   dev: "bg-accent-4",
 };
 
@@ -21,6 +22,7 @@ function avaInitials(agent: ActivityEvent["agent"]): string {
   if (agent === "codex") return "cx";
   if (agent === "gemini") return "gm";
   if (agent === "opencode") return "oc";
+  if (agent === "mimo") return "mi";
 
   return "dv";
 }

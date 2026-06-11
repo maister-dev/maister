@@ -75,6 +75,10 @@ describe("providerKindsForAdapter", () => {
   it("returns the agent-native provider kind for opencode", () => {
     expect(providerKindsForAdapter("opencode")).toEqual(["agent_native"]);
   });
+
+  it("returns the agent-native provider kind for mimo", () => {
+    expect(providerKindsForAdapter("mimo")).toEqual(["agent_native"]);
+  });
 });
 
 describe("permissionPoliciesForAdapter", () => {
@@ -89,9 +93,10 @@ describe("permissionPoliciesForAdapter", () => {
     expect(permissionPoliciesForAdapter("codex")).toEqual(["default"]);
   });
 
-  it("allows only the default permission policy for gemini and opencode", () => {
+  it("allows only the default permission policy for gemini, opencode, and mimo", () => {
     expect(permissionPoliciesForAdapter("gemini")).toEqual(["default"]);
     expect(permissionPoliciesForAdapter("opencode")).toEqual(["default"]);
+    expect(permissionPoliciesForAdapter("mimo")).toEqual(["default"]);
   });
 });
 

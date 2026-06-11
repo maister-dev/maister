@@ -5,8 +5,9 @@ info:
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
-    `claude-agent-acp` and `codex-acp`; ADR-084 designs `gemini --acp` and
-    `opencode acp` as additional code-owned adapter families.
+    `claude-agent-acp` and `codex-acp`; ADR-084/ADR-085 add `gemini --acp`,
+    `opencode acp`, and `mimo acp` as readiness-gated code-owned adapter
+    families.
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
     **Implemented contract.** The lifecycle
@@ -588,7 +589,7 @@ components:
                     enum: [not_required, pending, ok, skipped, error]
                     description: |
                       Cached ACP compatibility smoke state. `ok` is required
-                      before Gemini/OpenCode can become launch-ready.
+                      before Gemini/OpenCode/MiMo can become launch-ready.
                   reason:
                     type: string
                     nullable: true
@@ -638,11 +639,12 @@ components:
           minimum: 0
     ExecutorAgent:
       type: string
-      enum: [claude, codex, gemini, opencode]
+      enum: [claude, codex, gemini, opencode, mimo]
       description: |
-        Identity dispatch — picks the code-owned adapter family. `gemini` and
-        `opencode` are implemented adapter ids, but workflow readiness remains
-        launch-gated by diagnostics and adapter-specific smoke evidence.
+        Identity dispatch — picks the code-owned adapter family. `gemini`,
+        `opencode`, and `mimo` are implemented adapter ids, but workflow
+        readiness remains launch-gated by diagnostics and adapter-specific
+        smoke evidence.
     ExecutorRouter:
       type: string
       enum: [ccr]
@@ -736,7 +738,7 @@ components:
         already resolved by the web tier from `env:NAME` references; raw secret
         values are not accepted. `google_gemini`, `google_vertex`,
         `google_gateway`, and `agent_native` are implemented provider intents
-        for the Gemini/OpenCode adapter families and remain adapter-readiness
+        for the Gemini/OpenCode/MiMo adapter families and remain adapter-readiness
         gated until the selected workflow is smoke-proven.
     RunnerSidecar:
       type: object
@@ -1082,7 +1084,7 @@ components:
         Runner draft to resolve. `provider` reuses the `RunnerProvider` union;
         its env-ref fields (`authTokenEnv` / `apiKeyEnv`) are **bare** names
         (`^[A-Za-z_][A-Za-z0-9_]*$`) — an `env:`-prefixed or raw-secret value is
-        rejected with `409 PRECONDITION`. Gemini/OpenCode drafts return typed
+        rejected with `409 PRECONDITION`. Gemini/OpenCode/MiMo drafts return typed
         skipped/error model source statuses until their adapter-specific smoke
         proves a live source.
       properties:

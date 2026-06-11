@@ -9,7 +9,8 @@ with technical-layer organization:
   Drizzle DB access + SSE bridge to supervisor. No agent processes.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process per session via the platform ACP runner registry
-  (`claude`, `codex`, readiness-gated `gemini`, readiness-gated `opencode`),
+  (`claude`, `codex`, readiness-gated `gemini`, readiness-gated `opencode`,
+  readiness-gated `mimo`),
   heartbeat watchdog, graceful checkpoint + respawn via the ACP
   `session/resume` call where the adapter strategy supports it. HTTP+SSE IPC.
 

@@ -109,7 +109,7 @@ describe("runner spawn intent", () => {
     });
   });
 
-  it("maps Gemini and OpenCode providers into supervisor input", () => {
+  it("maps Gemini, OpenCode, and MiMo providers into supervisor input", () => {
     expect(
       runnerSupervisorInput({
         snapshot: {
@@ -142,6 +142,20 @@ describe("runner spawn intent", () => {
           adapter: "opencode",
           capabilityAgent: "opencode",
           model: "opencode-default",
+          provider: { kind: "agent_native" },
+          providerKind: "agent_native",
+          permissionPolicy: "default",
+        },
+      }).provider,
+    ).toEqual({ kind: "agent_native" });
+
+    expect(
+      runnerSupervisorInput({
+        snapshot: {
+          id: "mimo-code-native",
+          adapter: "mimo",
+          capabilityAgent: "mimo",
+          model: "mimo-native",
           provider: { kind: "agent_native" },
           providerKind: "agent_native",
           permissionPolicy: "default",

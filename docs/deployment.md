@@ -85,7 +85,7 @@ Set at least:
 
 Agent CLIs are configured separately on the supervisor host. Use their native
 login/config flows for `claude-agent-acp`, `codex-acp`, `gemini --acp`, and
-`opencode acp`; put provider env vars in `/etc/maister/maister.env` only when
+`opencode acp`, and `mimo acp`; put provider env vars in `/etc/maister/maister.env` only when
 you intentionally want MAIster to supply an explicit compatible-provider,
 gateway, model-discovery, or sidecar override.
 
@@ -162,7 +162,7 @@ auth flow before marking it ready in MAIster. Environment variables in
 `maister.env` are optional overrides: they are inherited by spawned adapters
 and should be used for explicit compatible-provider routing, gateway config,
 model discovery, or sidecars rather than as the default source of truth for
-Claude/Codex/Gemini/OpenCode auth.
+Claude/Codex/Gemini/OpenCode/MiMo auth.
 
 ## 7. systemd services
 

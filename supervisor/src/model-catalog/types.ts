@@ -13,6 +13,7 @@ const PROVIDERS_BY_ADAPTER = {
   codex: ["openai", "openai_compatible"],
   gemini: ["google_gemini", "google_vertex", "google_gateway"],
   opencode: ["agent_native"],
+  mimo: ["agent_native"],
 } as const;
 
 type SourceAdapter = keyof typeof PROVIDERS_BY_ADAPTER;

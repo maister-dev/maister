@@ -24,8 +24,8 @@ cache; `platform_acp_runners.model` stays free text.
   plus a `force?` flag. `provider` reuses the `RunnerProvider` discriminated union
   from `supervisor/src/types.ts`. Implemented provider kinds are `anthropic |
   anthropic_compatible | openai | openai_compatible`; ADR-084 designs
-  `google_gemini | google_vertex | google_gateway | agent_native` for Gemini and
-  OpenCode. Env-ref fields (`authTokenEnv`, `apiKeyEnv`) carry **bare** names
+  `google_gemini | google_vertex | google_gateway | agent_native` for Gemini,
+  OpenCode, and MiMo. Env-ref fields (`authTokenEnv`, `apiKeyEnv`) carry **bare** names
   (`^[A-Za-z_][A-Za-z0-9_]*$`); the supervisor rejects an `env:`-prefixed or
   raw-secret value. The web tier converts its stored `env:NAME` refs to bare
   names via `envRefName()` before forwarding. (Implemented for current
@@ -55,31 +55,32 @@ cache; `platform_acp_runners.model` stays free text.
 - **Application channel** — how the configured model is pinned: **claude** via the
   M14/ADR-043 `settings.local.json { model, availableModels }` materialization;
   **codex** via ACP `unstable_setSessionModel`. ADR-084 extends this to
-  adapter metadata: Gemini/OpenCode may use `unstable_setSessionModel` only after
+  adapter metadata: Gemini/OpenCode/MiMo may use `unstable_setSessionModel` only after
   initialize capability smoke proves support; otherwise they emit advisory-only
   status or a typed skipped reason. (Implemented for Claude/Codex; Designed for
-  Gemini/OpenCode)
+  Gemini/OpenCode/MiMo)
 - **Model advisory** — a supervisor-synthesized `session.update` payload
   (`{ sessionUpdate: "model_advisory", configuredModel, observedModelId, channel }`)
   emitted on a post-application mismatch; informational only. (Implemented)
 
-## Gemini/OpenCode model behavior (Designed, ADR-084)
+## Gemini/OpenCode/MiMo model behavior (Designed, ADR-084/ADR-085)
 
-Gemini and OpenCode must not inherit Claude/Codex model defaults. Every model
-suggestion response for these adapters must be source-labelled as live, curated,
-observed, or skipped.
+Gemini, OpenCode, and MiMo must not inherit Claude/Codex model defaults. Every
+model suggestion response for these adapters must be source-labelled as live,
+curated, observed, or skipped.
 
 | Adapter | Suggested sources | Application channel | Initial status |
 | --- | --- | --- | --- |
 | `gemini` | ACP probe when SDK smoke passes; Google provider API only for provider kinds with documented list APIs; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until auth and protocol smoke prove a source |
 | `opencode` | Native OpenCode ACP probe when binary/writable-state smoke passes; optional curated/native list only if OpenCode exposes stable output; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until stdio ACP smoke and model capability are proven |
+| `mimo` | Native MiMo ACP probe only after binary and stdio smoke pass; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until stdio ACP smoke and model capability are proven |
 
 Source statuses for the new adapters are part of the contract:
 
 - `skipped: "adapter not smoked"` when the adapter exists in schema but no SDK
   initialize/newSession smoke has passed;
 - `skipped: "binary unavailable"` when diagnostics cannot execute the binary;
-- `skipped: "first-run state unavailable"` for OpenCode writable-state failure;
+- `skipped: "first-run state unavailable"` for OpenCode or MiMo writable-state failure;
 - `skipped: "model listing unsupported"` when an adapter can launch but exposes
   no reliable catalog source;
 - `error` only for a source that was expected to run and failed.
@@ -285,10 +286,10 @@ spike baseline.)
 - The catalog MUST live only in supervisor memory — NO Postgres row, NO migration,
   NO new env var; `platform_acp_runners.model` stays free text and an unknown model
   on save MUST be an advisory hint, NOT a validation error.
-- Gemini/OpenCode model suggestions MUST return a typed source status even when
+- Gemini/OpenCode/MiMo model suggestions MUST return a typed source status even when
   no model can be listed; the UI MUST render skipped/error reasons and MUST NOT
   show Claude/Codex fallback models for a different adapter. (Designed, ADR-084)
-- Gemini/OpenCode model application MUST be driven by adapter metadata. A missing
+- Gemini/OpenCode/MiMo model application MUST be driven by adapter metadata. A missing
   or failing `unstable_setSessionModel` path emits `model_advisory` or a typed
   skipped status; it MUST NOT silently mutate `runner.model`, change run status,
   or retry through another adapter's mechanism. (Designed, ADR-084)
@@ -326,10 +327,10 @@ spike baseline.)
   (503); the modal keeps the offline `presets.ts` layer and a retry affordance.
 - **Unknown model saved** on a runner → accepted (`model` stays `min(1)`); the UI
   shows an advisory "not in the discovered list" hint, never a validation error.
-- **Gemini/OpenCode source not yet smoked** → resolve returns HTTP 200 with a
+- **Gemini/OpenCode/MiMo source not yet smoked** → resolve returns HTTP 200 with a
   `skipped` source status and zero models; the absence of suggestions is not a
   save blocker.
-- **Gemini/OpenCode model set unsupported** → the prompt/session continues only
+- **Gemini/OpenCode/MiMo model set unsupported** → the prompt/session continues only
   if launch readiness allows advisory-only application; otherwise readiness
   refuses before spawn. The supervisor never fakes model pinning.
 

@@ -23,6 +23,7 @@ const AdapterSmokeCacheSchema = z
         codex: AdapterSmokeCacheEntrySchema.optional(),
         gemini: AdapterSmokeCacheEntrySchema.optional(),
         opencode: AdapterSmokeCacheEntrySchema.optional(),
+        mimo: AdapterSmokeCacheEntrySchema.optional(),
       })
       .strict(),
   })
@@ -57,6 +58,7 @@ export type AdapterSmokeCacheWriteEntry = {
 const SMOKE_REQUIRED_ADAPTERS: ReadonlySet<ExecutorAgent> = new Set([
   "gemini",
   "opencode",
+  "mimo",
 ]);
 
 function isMissingFile(err: unknown): boolean {

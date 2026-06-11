@@ -110,6 +110,7 @@
 | [ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) | Review-diff completeness with dirty-state protocol and scope switcher | Accepted | 2026-06-11 |
 | [ADR-083](#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor) | Social board substrate — per-project task numbering, typed relations, polymorphic actor | Accepted | 2026-06-11 |
 | [ADR-084](#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) | ACP adapter families for Gemini CLI and OpenCode | Accepted | 2026-06-11 |
+| [ADR-085](#adr-085-mimo-code-as-a-distinct-acp-adapter-family) | MiMo Code as a distinct ACP adapter family | Accepted | 2026-06-11 |
 
 ---
 
@@ -6100,6 +6101,48 @@ branching is allowed.
 - **Fork/patch upstream adapter binaries:** rejected for this feature. MAIster
   should adapt through published ACP and CLI surfaces; forking would add
   dependency ownership and upgrade burden without evidence it is required.
+
+---
+
+### ADR-085: MiMo Code as a distinct ACP adapter family
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** Xiaomi MiMo Code publishes an ACP CLI surface at `mimo acp`.
+The public source identifies the npm package as `@mimo-ai/cli`, binary
+`mimo`, and implements ACP over stdio via `AgentSideConnection` and
+`ndJsonStream`. It is OpenCode-derived, but it has separate binary, config, and
+auth state: docs and source reference `.mimocode/mimocode.json` /
+`~/.config/mimocode/mimocode.json`, while some ACP auth messages still mention
+`opencode auth login`. Its ACP SDK dependency is `@agentclientprotocol/sdk`
+`0.16.1`, older than the supervisor's `0.22.1`. The local implementation host
+does not currently have `mimo` on PATH.
+
+**Decision:** Add `mimo` as its own platform ACP adapter id, not as an
+`opencode` alias.
+
+- Launch contract: default binary `mimo`, default args `acp`, override env
+  `MAISTER_ADAPTER_BINARY_MIMO`.
+- Provider contract: `agent_native` only for V1. MAIster does not synthesize
+  MiMo provider files or accept MiMo-specific raw secrets.
+- Readiness: `mimo` is `NotReady` until diagnostics find an executable binary
+  and cached ACP smoke reports `status="ok"`.
+- Model discovery: the ACP probe returns a typed `skipped` source for MiMo until
+  the smoke proves non-interactive probing is safe.
+- Capabilities: MiMo starts with every enforcement class as `instructed`; no
+  `enforced` cell lands without live proof.
+- MCP: MiMo is included in default supported-agent sets and receives MCP servers
+  through ACP session params, not through OpenCode-specific settings files.
+
+**Consequences:**
+
+- Existing OpenCode readiness, auth, and resume assumptions do not silently
+  apply to MiMo.
+- Operators can create a MiMo runner row before installing the binary, but it
+  cannot become default or launch-ready until diagnostics and smoke pass.
+- Existing `platform_mcp_servers.supported_agents` rows that exactly matched
+  the previous all-adapters default are migrated to include `mimo`; custom
+  subsets remain unchanged.
 
 ---
 
