@@ -6,6 +6,11 @@ A **task** is the operator's unit of intent — one card on a project's
 board with a title, prompt, and Flow assignment. Tasks have a simple
 board state (`Backlog | InFlight | Done | Abandoned`) and a **1:N**
 relationship to runs ([ADR-018](../decisions.md#adr-018-task--run-cardinality-is-1n)).
+With ADR-075 (Designed) every task additionally carries a stable
+human-readable identity `KEY-N` (`projects.task_key` + `tasks.number`) and
+may participate in typed inter-task relations that gate launching; the
+comment/activity/subscription/inbox substrate around tasks is owned by
+[`social-board.md`](social-board.md).
 
 ## Domain entities
 
@@ -27,6 +32,23 @@ relationship to runs ([ADR-018](../decisions.md#adr-018-task--run-cardinality-is
   `runs.attempt_number` with a real UNIQUE `(task_id, attempt_number)`
   so every run row is immutably tagged and duplicates are rejected at
   the DB.
+- **Task key** (Designed, ADR-075) — `projects.task_key`: platform-wide
+  unique, matches `^[A-Z][A-Z0-9]{1,9}$`, set at registration (optional
+  explicit `taskKey` or derived from the project name; collision →
+  `CONFLICT`), immutable in Stage 1 (comment bodies store expanded `KEY-N`
+  links). Migration backfill auto-uniquifies deterministically.
+- **Task number** (Designed, ADR-075) — `tasks.number`: per-project
+  monotonic integer allocated from `projects.next_task_number` inside the
+  `createTask` transaction (`UPDATE … RETURNING`; the projects-row lock
+  serializes concurrent creates), backstopped by
+  `UNIQUE(project_id, number)`. Numbers are never reused — deletion leaves
+  a hole. `KEY-N` = `task_key` + `-` + `number`.
+- **Relation** (Designed, ADR-075) — `task_relations` row: canonical
+  one-direction `(from_task_id, kind, to_task_id)` with
+  `kind ∈ {blocks, depends_on, parent_of}`,
+  `UNIQUE(from_task_id, kind, to_task_id)`, no self-relations,
+  same-project only in Stage 1 (`CONFIG` on violation). Inverse labels
+  ("blocked by", "required by", "child of") are render-time only.
 
 ## State machine — board axis
 
@@ -152,6 +174,39 @@ flowchart LR
     UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
 
+### Relations gate launching (Designed, ADR-075)
+
+`classifyTaskLaunchability` gains optional relation context and a
+`"blocked"` classification with precedence
+`target_terminal > crashed > busy > blocked > launchable` — relations gate
+*launching* only, they never mask an active run's state. Every consumer
+threads the context: `launchRun` (single choke point for internal AND ext
+launches), the run-schedules dispatcher (skip with reason —
+[`run-schedules.md`](run-schedules.md)), and the board/portfolio read
+models (launch disabled + blocker chips on the card).
+
+```mermaid
+flowchart TD
+    T[Task T launch decision] --> Q{open relation blockers?}
+    Q -- none --> Rest[existing classification:
+target_terminal / crashed / busy / launchable]
+    Q -- yes --> Pred{counterpart status in
+Backlog or InFlight?}
+    Pred -- no --> Rest
+    Pred -- yes --> Blocked[blocked — launch refused with
+blocker KEY-N list in the message]
+    Blocked --> UI[card shows reason chip,
+Launch disabled]
+    Blocked --> Sched[dispatcher records skip outcome]
+```
+
+Blocking predicate: task T is blocked iff there exists a relation
+`(X blocks T)` or `(T depends_on Y)` whose counterpart task status is in
+{`Backlog`, `InFlight`} — `Done` AND `Abandoned` both release, so a
+discarded blocker cannot deadlock its dependents. `parent_of` never gates.
+No cycle detection: a mutual block makes both tasks unlaunchable until one
+relation is removed; the UI always renders blockers as removable chips.
+
 ### Assignment-aware board card (Planned)
 
 ```mermaid
@@ -208,6 +263,18 @@ flowchart TD
 - **(M16 — Implemented)** The thin MCP facade can create/list/get/update tasks only
   through the same domain path as the API; it cannot bypass token scopes,
   assignment rules, or run launch preconditions.
+- **(Designed, ADR-075)** `tasks.number` MUST be unique per project
+  (`UNIQUE(project_id, number)`), allocated only inside the `createTask`
+  transaction, and never reused; `projects.task_key` MUST be platform-wide
+  unique and immutable in Stage 1.
+- **(Designed, ADR-075)** A task with an open relation blocker
+  (`X blocks T` or `T depends_on Y`, counterpart ∈ {`Backlog`, `InFlight`})
+  MUST be refused launch as `"blocked"` at EVERY entry point — internal
+  `POST /api/runs`, ext `POST /api/v1/ext/runs`, and the schedules
+  dispatcher — via the shared classifier, never via UI-only logic.
+- **(Designed, ADR-075)** Relations MUST be same-project in Stage 1
+  (`MaisterError("CONFIG")` otherwise) and duplicate relation writes MUST
+  be idempotent no-ops.
 - Launch runs precondition checks (clean repo, branch free, worktree
   path free, executor registered) BEFORE inserting the `runs` row.
 - Global concurrency cap exceeded on Launch → run inserted as
@@ -235,11 +302,24 @@ flowchart TD
 /sessions/<id>`, then mark worktree stale, then `tasks.status =
 Abandoned`. Failure to terminate the session does NOT block the task
 transition (the run reconciles to `Crashed` on next heartbeat tick).
+- **(Designed, ADR-075) Mutual block (`A blocks B` + `B blocks A`)** —
+  both tasks classify `blocked` until one relation is removed; the UI
+  renders blockers as removable chips, so the state is always recoverable.
+  No cycle detection in Stage 1.
+- **(Designed, ADR-075) Cross-project or self relation** →
+  `MaisterError("CONFIG")` (400).
+- **(Designed, ADR-075) Hole-y numbering** — deleting a task leaves a
+  permanent gap in `KEY-N`; `next_task_number` never decrements. Not an
+  error.
 
 ## Linked artifacts
 
-- ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n).
+- ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
+  [ADR-075 Social board substrate](../decisions.md#adr-075-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
-  [`executors.md`](executors.md).
-- Source: `web/lib/db/schema.ts` (tasks + runs tables).
+  [`executors.md`](executors.md), [`social-board.md`](social-board.md)
+  (comments, activity, subscriptions, inbox),
+  [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked).
+- Source: `web/lib/db/schema.ts` (tasks + runs tables),
+  `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Designed).

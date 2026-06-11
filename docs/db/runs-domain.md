@@ -2,8 +2,13 @@
 
 Tables for the execution lifecycle: tasks (board), runs (Flow attempts and
 scratch sessions), workspaces (worktrees), scratch dialog metadata, messages,
-attachments, and capability snapshots. See
+attachments, and capability snapshots, plus the **ADR-075 (Designed,
+migration `0040`)** social-board tables around tasks (`task_relations`,
+`task_comments`, `task_activity`, `task_subscribers`, `inbox_items` — each
+also FK-cascading from `projects`, edges omitted here for readability; the
+full edge set is in [`erd.md`](erd.md)). See
 [`../system-analytics/tasks.md`](../system-analytics/tasks.md),
+[`../system-analytics/social-board.md`](../system-analytics/social-board.md),
 [`../system-analytics/runs.md`](../system-analytics/runs.md),
 [`../system-analytics/workspaces.md`](../system-analytics/workspaces.md), and
 [`../system-analytics/scratch-runs.md`](../system-analytics/scratch-runs.md)
@@ -31,10 +36,17 @@ erDiagram
     SCRATCH_RUNS ||--o{ SCRATCH_ATTACHMENTS : "run attachments"
     SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments"
     SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot"
+    TASKS ||--o{ TASK_RELATIONS : "from-end (ADR-075)"
+    TASKS ||--o{ TASK_RELATIONS : "to-end (ADR-075)"
+    TASKS ||--o{ TASK_COMMENTS : "discussion (ADR-075)"
+    TASKS ||--o{ TASK_ACTIVITY : "event log (ADR-075)"
+    TASKS ||--o{ TASK_SUBSCRIBERS : "subscriber set (ADR-075)"
+    TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-075)"
 
     TASKS {
         text id PK
         text project_id FK
+        integer number "ADR-075 Designed: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
         text flow_id FK
@@ -225,6 +237,59 @@ erDiagram
         jsonb downgrade_notes
         timestamp created_at
     }
+
+    TASK_RELATIONS {
+        text id PK
+        text project_id FK
+        text from_task_id FK
+        text kind "blocks|depends_on|parent_of"
+        text to_task_id FK
+        text actor_type "user|agent|system"
+        text actor_id "NULL iff actor_type=system"
+        timestamp created_at
+    }
+
+    TASK_COMMENTS {
+        text id PK
+        text task_id FK
+        text project_id FK
+        text actor_type "user|agent|system"
+        text actor_id "NULL iff actor_type=system"
+        text body "markdown, mentions stored expanded"
+        timestamp created_at
+    }
+
+    TASK_ACTIVITY {
+        text id PK
+        text task_id FK
+        text project_id FK
+        text actor_type "user|agent|system"
+        text actor_id "NULL iff actor_type=system"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched"
+        jsonb payload "DEFAULT {}"
+        timestamp created_at
+    }
+
+    TASK_SUBSCRIBERS {
+        text id PK
+        text task_id FK
+        text subscriber_type "user|agent"
+        text subscriber_id
+        text reason "creator|commenter|mentioned|manual"
+        timestamp created_at
+    }
+
+    INBOX_ITEMS {
+        text id PK
+        text recipient_type "user|agent"
+        text recipient_id
+        text project_id FK
+        text task_id FK
+        text event_kind "comment_added|task_mentioned in Stage 1"
+        jsonb source_ref "kind, taskId, commentId, activityId"
+        timestamp read_at "NULL = unread"
+        timestamp created_at
+    }
 ```
 
 > **(M11a — Implemented, migration `0010`.)** `NODE_ATTEMPTS` and `GATE_RESULTS`
@@ -244,6 +309,15 @@ erDiagram
 > `diff` artifact instances are **M12**. See
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
+
+> **(ADR-075 — Designed, migration `0040`.)** `TASKS` gains `number`
+> (per-project, backfilled by `(created_at, id)` order); the five social
+> tables carry the polymorphic actor pair (`actor_type CHECK IN
+> ('user','agent','system')`, `(actor_type = 'system') = (actor_id IS NULL)`,
+> no FK to `users`). All five also FK `projects` with cascade (edges in
+> [`erd.md`](erd.md)). `task_activity` is written only by the domain layer.
+> See [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
+> and [ADR-075](../decisions.md#adr-075-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 
 ## Constraints
 
@@ -286,6 +360,23 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - **(M11a)** `gate_results_run_idx` on `(run_id)` and
   `gate_results_node_attempt_idx` on `(node_attempt_id)` — per-run and
   per-node-attempt gate lookups.
+- **(ADR-075, Designed)** `tasks_project_number_uq` on `(project_id,
+  number)` UNIQUE — numbering backstop; allocation itself is serialized by
+  the `projects.next_task_number` row lock.
+- **(ADR-075, Designed)** `task_relations_from_kind_to_uq` on
+  `(from_task_id, kind, to_task_id)` UNIQUE + CHECK `from_task_id <>
+  to_task_id`; `task_relations_to_task_idx` on `(to_task_id)` for inverse
+  lookups.
+- **(ADR-075, Designed)** `task_comments_task_created_idx` on
+  `(task_id, created_at)`; `task_activity_task_created_idx` on
+  `(task_id, created_at)` + `task_activity_project_created_idx` on
+  `(project_id, created_at)`.
+- **(ADR-075, Designed)** `task_subscribers_task_pair_uq` on
+  `(task_id, subscriber_type, subscriber_id)` UNIQUE — first subscription
+  reason wins.
+- **(ADR-075, Designed)** `inbox_items_recipient_idx` on
+  `(recipient_type, recipient_id, read_at, created_at DESC)` — unread badge
+  and inbox panel.
 
 ## Status enum reference
 

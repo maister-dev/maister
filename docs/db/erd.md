@@ -18,10 +18,13 @@ the **M27 Flow Studio (Implemented, migrations `0033+`)** schema deltas:
 the new `PLATFORM_MCP_SERVERS` table, the **M28 (Implemented, migration
 `0038`)** `RUN_SCHEDULES` table for user-facing cron schedules, the
 **ADR-072 (Implemented, migration `0039`)** `REVIEW_COMMENTS`
-review-thread table, and the **(Implemented, migration `0040`)**
+review-thread table, the **(Implemented, migration `0040`)**
 outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 `WEBHOOK_DELIVERIES`, `WEBHOOK_DELIVERY_ATTEMPTS` plus the
-`PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-077). For partial views by
+`PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-077), and the
+**ADR-078 (Implemented, migration `0041`)** social-board tables `TASK_RELATIONS`,
+`TASK_COMMENTS`, `TASK_ACTIVITY`, `TASK_SUBSCRIBERS`, `INBOX_ITEMS` plus
+`PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
@@ -88,6 +91,16 @@ erDiagram
     ACTOR_IDENTITIES ||--o{ ASSIGNMENTS : "assignee/creator/completer"
     ASSIGNMENTS ||--o{ ASSIGNMENT_EVENTS : "lifecycle events"
     ACTOR_IDENTITIES ||--o{ ASSIGNMENT_EVENTS : "event actor"
+    PROJECTS ||--o{ TASK_RELATIONS : "owns (ADR-075)"
+    PROJECTS ||--o{ TASK_COMMENTS : "owns (ADR-075)"
+    PROJECTS ||--o{ TASK_ACTIVITY : "owns (ADR-075)"
+    PROJECTS ||--o{ INBOX_ITEMS : "owns (ADR-075)"
+    TASKS ||--o{ TASK_RELATIONS : "from-end (ADR-075)"
+    TASKS ||--o{ TASK_RELATIONS : "to-end (ADR-075)"
+    TASKS ||--o{ TASK_COMMENTS : "discussion (ADR-075)"
+    TASKS ||--o{ TASK_ACTIVITY : "event log (ADR-075)"
+    TASKS ||--o{ TASK_SUBSCRIBERS : "subscriber set (ADR-075)"
+    TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-075)"
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
     TASKS ||--o{ SCRATCH_RUNS : "optional link"
     USERS ||--o{ SCRATCH_RUNS : "created by"
@@ -179,6 +192,8 @@ erDiagram
         text maister_yaml_path
         text default_runner_id "platform runner override"
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
+        text task_key UK "ADR-075 Designed: platform-wide unique, immutable Stage 1"
+        integer next_task_number "ADR-075 Designed: allocation counter, DEFAULT 1"
         timestamp created_at
         timestamp archived_at
     }
@@ -454,6 +469,7 @@ erDiagram
     TASKS {
         text id PK
         text project_id FK
+        integer number "ADR-075 Designed: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
         text flow_id FK
@@ -462,6 +478,59 @@ erDiagram
         integer attempt_number "monotonic per task"
         timestamp created_at
         timestamp updated_at
+    }
+
+    TASK_RELATIONS {
+        text id PK
+        text project_id FK
+        text from_task_id FK
+        text kind "blocks|depends_on|parent_of"
+        text to_task_id FK
+        text actor_type "user|agent|system"
+        text actor_id "NULL iff actor_type=system"
+        timestamp created_at
+    }
+
+    TASK_COMMENTS {
+        text id PK
+        text task_id FK
+        text project_id FK
+        text actor_type "user|agent|system"
+        text actor_id "NULL iff actor_type=system"
+        text body "markdown, mentions stored expanded"
+        timestamp created_at
+    }
+
+    TASK_ACTIVITY {
+        text id PK
+        text task_id FK
+        text project_id FK
+        text actor_type "user|agent|system"
+        text actor_id "NULL iff actor_type=system"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched"
+        jsonb payload "DEFAULT {}"
+        timestamp created_at
+    }
+
+    TASK_SUBSCRIBERS {
+        text id PK
+        text task_id FK
+        text subscriber_type "user|agent"
+        text subscriber_id
+        text reason "creator|commenter|mentioned|manual"
+        timestamp created_at
+    }
+
+    INBOX_ITEMS {
+        text id PK
+        text recipient_type "user|agent"
+        text recipient_id
+        text project_id FK
+        text task_id FK
+        text event_kind "comment_added|task_mentioned in Stage 1"
+        jsonb source_ref "kind, taskId, commentId, activityId"
+        timestamp read_at "NULL = unread"
+        timestamp created_at
     }
 
     RUNS {

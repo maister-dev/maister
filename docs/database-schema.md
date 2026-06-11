@@ -68,6 +68,11 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `webhook_events`              | **(Implemented, ADR-077, migration `0041`)** Transactional outbox. One row per curated lifecycle event, written in the same transaction as the triggering state transition. `fanout_at IS NULL` is the fanout cursor.                                                                                                                           | `projects.id`, `runs.id`                                                   |
 | `webhook_deliveries`          | **(Implemented, ADR-077, migration `0041`)** Per-subscription delivery state. UNIQUE `(subscription_id, event_id)`. Status `pending` to `delivered` or `dead`. Retry: up to 8 attempts over ~41.5 h.                                                                                                                                          | `webhook_events.id`, `webhook_subscriptions.id`                            |
 | `webhook_delivery_attempts`   | **(Implemented, ADR-077, migration `0041`)** Append-only per-attempt audit. `attempt_no` continues from the running total across replay cycles. UNIQUE `(delivery_id, attempt_no)`.                                                                                                                                                            | `webhook_deliveries.id`                                                    |
+| `task_relations`              | **(ADR-083 — Implemented, migration `0043`)** Canonical one-direction typed task relations (`blocks\|depends_on\|parent_of`). UNIQUE `(from_task_id, kind, to_task_id)`; no self-relations; same-project enforced in the domain layer.                                                                                                  | `projects.id`, `tasks.id` (both ends)                                      |
+| `task_comments`               | **(ADR-083 — Implemented, migration `0043`)** Append-only markdown task comments; mentions stored expanded; polymorphic actor pair.                                                                                                                                                                                                     | `tasks.id`, `projects.id`                                                  |
+| `task_activity`               | **(ADR-083 — Implemented, migration `0043`)** Append-only domain-written task event log (`task_created\|comment_added\|task_mentioned\|relation_added\|relation_removed\|run_launched`) with jsonb payload.                                                                                                                              | `tasks.id`, `projects.id`                                                  |
+| `task_subscribers`            | **(ADR-083 — Implemented, migration `0043`)** Per-task subscriber set (`user\|agent` pair + reason `creator\|commenter\|mentioned\|manual`). UNIQUE `(task_id, subscriber_type, subscriber_id)`.                                                                                                                                        | `tasks.id`                                                                 |
+| `inbox_items`                 | **(ADR-083 — Implemented, migration `0043`)** Per-recipient inbox fanned out from comment/mention events; `read_at` read marker; `source_ref` jsonb.                                                                                                                                                                                    | `projects.id`, `tasks.id`                                                  |
 ## `users`
 
 (Introduced in M9 — migration `0004_petite_gamora.sql`.)
@@ -210,6 +215,10 @@ as implicit `owner` of every project.
   promotionMode?,                // M18 (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
                                  //   source for the launch-time override chain (§3.4)
+  taskKey,                       // ADR-075 (Designed, 0040): platform-wide UNIQUE,
+                                 //   ^[A-Z][A-Z0-9]{1,9}$, immutable in Stage 1
+  nextTaskNumber,                // ADR-075 (Designed, 0040): integer NOT NULL
+                                 //   DEFAULT 1; allocation counter for tasks.number
   createdAt, archivedAt?
 }
 ```
@@ -621,6 +630,8 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
 ```ts
 {
   id, projectId, title, prompt,
+  number,                        // ADR-075 (Designed, 0040): per-project monotonic,
+                                 //   UNIQUE (project_id, number); KEY-N = task_key-number
   flowId,                        // FK -> flows.id
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
   stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
@@ -644,6 +655,115 @@ queries.
 `createdByUserId` is nullable for legacy rows and project-token automation.
 User-owned external tokens set it to the token owner's `users.id` when creating
 tasks through `/api/v1/ext/projects/{slug}/tasks`.
+
+`number` (ADR-075, Designed) is allocated inside the `createTask` transaction
+from `projects.next_task_number` (`UPDATE … RETURNING`; the projects-row lock
+serializes concurrent creates) and never reused — deletion leaves a hole.
+Migration `0040` backfills existing tasks per project ordered by
+`(created_at, id)`.
+
+## Social board tables (Designed — ADR-075, migration `0040`)
+
+Five tables for the Stage-1 social substrate. All four actor-carrying tables
+share the polymorphic actor pair: `actor_type CHECK IN
+('user','agent','system')`, `CHECK ((actor_type = 'system') = (actor_id IS
+NULL))`, **no FK to `users`** (a deleted user renders as "former user").
+Stage 1 writes only `user`/`system`; `agent` is schema-legal for later
+stages. See
+[`system-analytics/social-board.md`](system-analytics/social-board.md) and
+[ADR-075](decisions.md#adr-075-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+
+### `task_relations`
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  projectId,                      // FK -> projects.id (cascade)
+  fromTaskId,                     // FK -> tasks.id (cascade)
+  kind: 'blocks' | 'depends_on' | 'parent_of',
+  toTaskId,                       // FK -> tasks.id (cascade)
+  actorType, actorId?,            // polymorphic actor pair
+  createdAt
+}
+```
+
+UNIQUE `(from_task_id, kind, to_task_id)`; CHECK `from_task_id <>
+to_task_id`; indexed on `to_task_id` (inverse lookups). Canonical
+one-direction rows — inverse labels ("blocked by", "required by",
+"child of") are render-time only. Same-project enforced in the domain layer
+(`MaisterError("CONFIG")`); a cross-table CHECK cannot express it.
+
+### `task_comments`
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  taskId,                         // FK -> tasks.id (cascade)
+  projectId,                      // FK -> projects.id (cascade)
+  actorType, actorId?,            // polymorphic actor pair
+  body,                           // markdown; mentions stored EXPANDED (D6)
+  createdAt
+}
+```
+
+Append-only in Stage 1 — no edit, delete, or threading. Indexed
+`(task_id, created_at)` for timeline listing.
+
+### `task_activity`
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  taskId,                         // FK -> tasks.id (cascade)
+  projectId,                      // FK -> projects.id (cascade)
+  actorType, actorId?,            // polymorphic actor pair
+  eventKind: 'task_created' | 'comment_added' | 'task_mentioned'
+           | 'relation_added' | 'relation_removed' | 'run_launched',
+  payload,                        // jsonb NOT NULL DEFAULT '{}'
+  createdAt
+}
+```
+
+Append-only; written ONLY by the domain layer (`recordTaskActivity` +
+named service write-sites) inside the triggering transaction. Indexed
+`(task_id, created_at)` and `(project_id, created_at)` (project Log page).
+
+### `task_subscribers`
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  taskId,                         // FK -> tasks.id (cascade)
+  subscriberType: 'user' | 'agent',   // 'system' never subscribes
+  subscriberId,                   // NOT NULL
+  reason: 'creator' | 'commenter' | 'mentioned' | 'manual',
+  createdAt
+}
+```
+
+UNIQUE `(task_id, subscriber_type, subscriber_id)` — upserts are
+`ON CONFLICT DO NOTHING`, so the first reason wins.
+
+### `inbox_items`
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  recipientType: 'user' | 'agent',
+  recipientId,                    // NOT NULL
+  projectId,                      // FK -> projects.id (cascade)
+  taskId,                         // FK -> tasks.id (cascade)
+  eventKind,                      // 'comment_added' | 'task_mentioned' in Stage 1
+  sourceRef,                      // jsonb { kind, taskId, commentId, activityId }
+  readAt?,                        // NULL = unread
+  createdAt
+}
+```
+
+Fanned out in batch (`INSERT … SELECT` over `task_subscribers`, excluding
+the acting pair) inside the same transaction as the triggering write.
+Indexed `(recipient_type, recipient_id, read_at, created_at DESC)` for the
+unread badge and inbox panel.
 
 ## `runs`
 
@@ -1730,6 +1850,11 @@ projects
   ├── project_flow_roles (FK projectId, cascade)      ← M13
   ├── actor_identities   (FK projectId, cascade)      ← M13
   ├── tasks              (FK projectId, cascade)
+  │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-075 (Designed)
+  │     ├── task_comments    (FK taskId,   cascade)                ← ADR-075 (Designed)
+  │     ├── task_activity    (FK taskId,   cascade)                ← ADR-075 (Designed)
+  │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-075 (Designed)
+  │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-075 (Designed)
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── step_runs       (FK runId,        cascade)
@@ -1762,8 +1887,13 @@ projects
   ├── webhook_subscriptions (FK project_id, cascade; NULL rows = platform scope)  ← ADR-077
   │     └── webhook_deliveries  (FK subscription_id, cascade)
   │           └── webhook_delivery_attempts  (FK delivery_id, cascade)
-  └── webhook_events     (FK project_id, cascade)  ← ADR-077 (also via runs.id)
-        └── webhook_deliveries  (FK event_id, cascade; the retention pass prunes only zero-delivery events)
+  ├── webhook_events     (FK project_id, cascade)  ← ADR-077 (also via runs.id)
+  │     └── webhook_deliveries  (FK event_id, cascade; the retention pass prunes only zero-delivery events)
+  ├── task_relations      (FK projectId, cascade)  ← also direct, ADR-078
+  ├── task_comments       (FK projectId, cascade)  ← also direct, ADR-078
+  ├── task_activity       (FK projectId, cascade)  ← also direct, ADR-078
+  ├── inbox_items         (FK projectId, cascade)  ← also direct, ADR-078
+  └── task_subscribers    (FK taskId, cascade)  ← ADR-078 (via tasks.id)
 ```
 
 `runs.flowId` also cascades — when a project deletion cascades to drop flows,
@@ -1810,6 +1940,14 @@ Created via Drizzle:
 | `assignments`         | `assignments_hitl_request_idx`          | `(hitlRequestId)`                 | HITL assignment lookup                                             |
 | `assignment_events`   | `assignment_events_assignment_idx`      | `(assignmentId)`                  | Assignment event history                                           |
 | `assignment_events`   | `assignment_events_project_created_idx` | `(projectId, createdAt)`          | Project audit stream                                               |
+| `tasks`               | `tasks_project_number_uq`               | `(projectId, number)` UNIQUE      | **(ADR-075, Designed)** Per-project task numbering backstop        |
+| `task_relations`      | `task_relations_from_kind_to_uq`        | `(fromTaskId, kind, toTaskId)` UNIQUE | **(ADR-075, Designed)** Canonical relation rows, no duplicates |
+| `task_relations`      | `task_relations_to_task_idx`            | `(toTaskId)`                      | **(ADR-075, Designed)** Inverse-direction lookups                  |
+| `task_comments`       | `task_comments_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Designed)** Task timeline listing                      |
+| `task_activity`       | `task_activity_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Designed)** Task timeline interleave                   |
+| `task_activity`       | `task_activity_project_created_idx`     | `(projectId, createdAt)`          | **(ADR-075, Designed)** Project Log page stream                    |
+| `task_subscribers`    | `task_subscribers_task_pair_uq`         | `(taskId, subscriberType, subscriberId)` UNIQUE | **(ADR-075, Designed)** One subscription per pair    |
+| `inbox_items`         | `inbox_items_recipient_idx`             | `(recipientType, recipientId, readAt, createdAt DESC)` | **(ADR-075, Designed)** Unread badge + inbox panel |
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |

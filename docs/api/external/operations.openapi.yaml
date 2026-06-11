@@ -49,6 +49,12 @@ tags:
       Human-in-the-loop list + respond via token auth (M17). The routes enforce
       `hitl:read` / `hitl:respond` or `*` and refuse a token actor answering a
       `human`-kind request (D7).
+  - name: comments
+    description: |
+      (ADR-075, Designed) Task comment list + create via token auth. The
+      routes enforce `comments:read` / `comments:create` or `*` and call the
+      SAME `addTaskComment` / `listTaskComments` domain functions as the
+      session-auth routes — no parallel write path.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -227,6 +233,121 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/comments:
+    get:
+      tags: [comments]
+      summary: (ADR-075, Designed) List comments on a task
+      description: |
+        Scope `comments:read`. Returns comments for the task identified by
+        `taskId` on the project identified by `slug`, ascending by
+        `created_at`. The `projectId` is derived server-side from the URL
+        slug and compared against the token's project — mismatch → 404;
+        `taskId` ownership is re-validated against the same project
+        (existing ext idiom). Bodies are returned as stored: markdown with
+        `KEY-N` mentions already expanded at write time.
+
+        Calls the same `listTaskComments` domain function as the
+        session-auth route. Writes a `token_audit_log` row with scope
+        `comments:read` after success.
+      operationId: extListTaskComments
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Comment list (ascending `created_at`).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [comments]
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/CommentDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      tags: [comments]
+      summary: (ADR-075, Designed) Add a comment to a task
+      description: |
+        Scope `comments:create`. Adds a markdown comment through the SAME
+        `addTaskComment` domain pipeline as the session-auth route (ONE
+        transaction: mention expansion → comment insert → activity →
+        subscription upserts → inbox fanout).
+
+        Actor mapping (ADR-075 D12): a user-owned token acts as
+        `('user', ownerUserId)` via `actorUserIdForToken`; an ownerless
+        project token acts as `('system', NULL)` with
+        `{via: 'ext', tokenId}` recorded in the comment-activity payload.
+
+        Writes a `token_audit_log` row with scope `comments:create` inside
+        the same transaction (success-audit-in-work, ext idiom).
+      operationId: extCreateTaskComment
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtCreateCommentBody" }
+      responses:
+        "201":
+          description: Comment created; stored body has mentions expanded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [comment]
+                properties:
+                  comment: { $ref: "#/components/schemas/CommentDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
@@ -662,6 +783,46 @@ components:
           type: string
           description: Human-readable error message.
 
+    ExtCreateCommentBody:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: |
+            Markdown comment body. `KEY-N` tokens outside code fences,
+            inline code, and existing links are expanded to task links at
+            write time; unresolved tokens stay literal.
+
+    CommentDTO:
+      type: object
+      description: |
+        (ADR-075, Designed) Comment projection. `body` is markdown with
+        mentions already expanded. The actor pair is `('user', id)` for
+        user-owned tokens / session users, `('system', null)` for ownerless
+        project tokens; `label` is resolved at read time.
+      required: [id, taskId, body, actor, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        body:
+          type: string
+        actor:
+          type: object
+          required: [type, id, label]
+          properties:
+            type:
+              type: string
+              enum: [user, agent, system]
+            id:
+              type: string
+              nullable: true
+            label:
+              type: string
+        createdAt: { type: string, format: date-time }
+
     TaskDTO:
       type: object
       description: |
@@ -681,6 +842,19 @@ components:
         id:
           type: string
           format: uuid
+        number:
+          type: integer
+          minimum: 1
+          description: |
+            (ADR-075, Designed) Per-project task number; `KEY-N` =
+            `taskKey` + `-` + `number`. Additive — present once migration
+            `0040` lands (backfill makes it NOT NULL).
+        taskKey:
+          type: string
+          pattern: "^[A-Z][A-Z0-9]{1,9}$"
+          description: |
+            (ADR-075, Designed) The owning project's platform-unique task
+            key. Additive alongside `number`.
         title:
           type: string
         prompt:

@@ -126,6 +126,8 @@ tags:
       event-delivery subscriptions, delivery log, ping, replay, and the global
       kill-switch. The wire contract for the delivered payload is in
       `async/outbound-webhooks.asyncapi.yaml`.
+  - name: social-board
+    description: ADR-078 (Implemented) — task comments, relations, subscriptions, inbox.
 paths:
   /api/admin/acp-runners:
     get:
@@ -818,7 +820,9 @@ paths:
                   flowId: "flow-uuid-here"
       responses:
         "201":
-          description: Task created in `Backlog`.
+          description: |
+            Task created in `Backlog`. (ADR-075, Designed) `number` and
+            `taskKey` are returned additively — the task's `KEY-N` identity.
           content:
             application/json:
               schema:
@@ -828,6 +832,14 @@ paths:
                   taskId:
                     type: string
                     format: uuid
+                  number:
+                    type: integer
+                    minimum: 1
+                    description: (ADR-075, Designed) Per-project task number.
+                  taskKey:
+                    type: string
+                    pattern: "^[A-Z][A-Z0-9]{1,9}$"
+                    description: (ADR-075, Designed) The project's task key.
         "401":
           description: No valid session (`UNAUTHENTICATED`).
           content:
@@ -853,6 +865,356 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tasks/{number}/comments:
+    get:
+      tags: [social-board]
+      summary: (ADR-075, Designed) List comments on a task
+      description: |
+        Requires project membership at `viewer` or above
+        (`requireProjectAction("readBoard")`). The project is resolved from
+        the URL `slug` and the task from `(project_id, number)` — both
+        server-state; no body identifiers. Bodies are returned as stored:
+        markdown with `KEY-N` mentions already expanded at write time
+        (ADR-075 D6). Ordered by `created_at` ascending.
+
+        Source: `web/app/api/projects/[slug]/tasks/[number]/comments/route.ts`.
+      operationId: listTaskComments
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Comment list (ascending `created_at`).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [comments]
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/TaskCommentDTO" }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Add a comment to a task
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("commentTask")`). The project is resolved
+        from the URL `slug`, the task from `(project_id, number)` — both
+        server-state. The actor is the session user (auth-context). The body
+        carries only `{ body }`; `KEY-N` tokens inside it are content,
+        resolved against the DB at write time (unresolved tokens stay
+        literal text).
+
+        Runs the full ADR-075 D7 pipeline in ONE transaction: mention
+        expansion → comment insert → `comment_added` / `task_mentioned`
+        activity → subscription upserts (commenter + mention rule) → inbox
+        fanout excluding the actor.
+
+        Source: `web/app/api/projects/[slug]/tasks/[number]/comments/route.ts`.
+      operationId: postTaskComment
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostTaskCommentBody" }
+            examples:
+              comment-with-mention:
+                summary: Comment mentioning another task
+                value:
+                  body: "Blocked until MAI-12 ships the schema."
+      responses:
+        "201":
+          description: Comment created; stored body has mentions expanded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [comment]
+                properties:
+                  comment: { $ref: "#/components/schemas/TaskCommentDTO" }
+        "400":
+          description: Empty or oversized body, invalid shape (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/projects/{slug}/tasks/{number}/relations:
+    post:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Add a typed relation from this task
+      description: |
+        Requires `requireProjectAction("manageTaskRelations")` (`member`).
+        Creates the canonical one-direction relation
+        `(from = task {number}, kind, to = task {toNumber})`. `kind` is
+        allow-list validated; `toNumber` is body-controlled but resolved
+        STRICTLY within the URL-param project via `(project_id, number)` —
+        cross-project reach is impossible by construction. Duplicate
+        relations are idempotent no-ops (`ON CONFLICT DO NOTHING`).
+        Inverse labels ("blocked by", "required by", "child of") are
+        render-time only — to remove an inverse-rendered relation, address
+        the counterpart task's route (the canonical `from` end).
+
+        Writes `relation_added` activity in the same transaction.
+
+        Source: `web/app/api/projects/[slug]/tasks/[number]/relations/route.ts`.
+      operationId: postTaskRelation
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskRelationBody" }
+            examples:
+              blocks:
+                summary: This task blocks task 5
+                value: { kind: blocks, toNumber: 5 }
+      responses:
+        "200":
+          description: |
+            Relation exists (created now, or already present — idempotent).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "400":
+          description: |
+            Invalid `kind`, self-relation (`toNumber` equals `{number}`),
+            or malformed body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            Project, task, or counterpart task (`toNumber`) not found in
+            this project.
+    delete:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Remove a typed relation from this task
+      description: |
+        Requires `requireProjectAction("manageTaskRelations")` (`member`).
+        Deletes the canonical row `(from = task {number}, kind,
+        to = task {toNumber})`. Removing an absent relation is an idempotent
+        no-op. Writes `relation_removed` activity when a row was deleted.
+
+        Source: `web/app/api/projects/[slug]/tasks/[number]/relations/route.ts`.
+      operationId: deleteTaskRelation
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskRelationBody" }
+      responses:
+        "200":
+          description: Relation absent (deleted now, or never existed).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/projects/{slug}/tasks/{number}/subscription:
+    post:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Follow a task (manual subscription)
+      description: |
+        Requires project membership at `viewer` or above
+        (`requireProjectAction("readBoard")`). Subscribes the SESSION USER
+        (auth-context — never a body-supplied subscriber) to the task with
+        reason `manual`. Idempotent: an existing subscription (any reason)
+        is kept — the first reason wins.
+
+        Source: `web/app/api/projects/[slug]/tasks/[number]/subscription/route.ts`.
+      operationId: followTask
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Session user is subscribed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Unfollow a task
+      description: |
+        Requires project membership at `viewer` or above. Removes the
+        SESSION USER's subscription regardless of reason. Idempotent.
+
+        Source: `web/app/api/projects/[slug]/tasks/[number]/subscription/route.ts`.
+      operationId: unfollowTask
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Session user is not subscribed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/inbox/{itemId}/read:
+    patch:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Mark an inbox item read
+      description: |
+        Session-auth. Sets `read_at` on the addressed `inbox_items` row ONLY
+        when its recipient pair equals `('user', session user id)`
+        (auth-context ownership). Another user's item — or a missing one —
+        answers 404 (existence-hide). Already-read items are idempotent
+        no-ops.
+
+        Source: `web/app/api/inbox/[itemId]/read/route.ts`.
+      operationId: markInboxItemRead
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Item is read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          description: |
+            Item not found, or owned by a different recipient
+            (existence-hide).
+  /api/inbox/read-all:
+    post:
+      tags: [social-board]
+      summary: (ADR-075, Designed) Mark all of the caller's inbox items read
+      description: |
+        Session-auth. Sets `read_at` on every unread `inbox_items` row whose
+        recipient pair equals `('user', session user id)`. Scope is the
+        session user only — no body identifiers.
+
+        Source: `web/app/api/inbox/read-all/route.ts`.
+      operationId: markInboxAllRead
+      responses:
+        "200":
+          description: All of the caller's items are read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, updated]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  updated:
+                    type: integer
+                    minimum: 0
+                    description: Number of rows transitioned to read.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
   /api/projects/{slug}/members:
     get:
       tags: [projects]
@@ -6765,6 +7127,17 @@ components:
             the existing local directory to register (absolute, no `..`
             segment); `git init`-ed when it is not yet a git repo.
           example: /repos/my-app
+        taskKey:
+          type: string
+          pattern: "^[A-Z][A-Z0-9]{1,9}$"
+          description: |
+            (ADR-075, Designed) Optional explicit task key for `KEY-N` task
+            identities. Body-controlled but regex allow-listed and checked
+            against the platform-wide UNIQUE — a collision (with an explicit
+            OR derived key) refuses registration with `CONFLICT` (409).
+            Omitted ⇒ derived from `project.name` (first 3 letters,
+            uppercased). Immutable after registration in Stage 1.
+          example: MAI
     PostProjectResponse:
       type: object
       required: [slug, projectId, gitStatus]
@@ -6801,6 +7174,65 @@ components:
           description: |
             ID of a `flows` row belonging to the project identified by
             the URL `slug`. Any other flow ID returns `422 CONFIG`.
+    TaskCommentDTO:
+      type: object
+      description: |
+        (ADR-075, Designed) Comment projection. `body` is markdown with
+        `KEY-N` mentions already expanded at write time. The actor is the
+        polymorphic pair plus a render label resolved at read time
+        ("former user" fallback for dangling ids; ext-written system
+        comments label via the audit token).
+      required: [id, taskId, body, actor, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        body:
+          type: string
+          description: Markdown; mentions stored expanded.
+        actor: { $ref: "#/components/schemas/SocialActor" }
+        createdAt: { type: string, format: date-time }
+    SocialActor:
+      type: object
+      description: |
+        (ADR-075, Designed) Polymorphic actor pair projection. `id` is null
+        exactly when `type` is `system`. Stage 1 never emits `agent`.
+      required: [type, id, label]
+      properties:
+        type:
+          type: string
+          enum: [user, agent, system]
+        id:
+          type: string
+          nullable: true
+        label:
+          type: string
+          description: Display label resolved at read time.
+    PostTaskCommentBody:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: |
+            Markdown comment body. `KEY-N` tokens outside code fences,
+            inline code, and existing links are expanded to task links at
+            write time; unresolved tokens stay literal.
+    TaskRelationBody:
+      type: object
+      required: [kind, toNumber]
+      properties:
+        kind:
+          type: string
+          enum: [blocks, depends_on, parent_of]
+        toNumber:
+          type: integer
+          minimum: 1
+          description: |
+            Counterpart task number, resolved STRICTLY within the URL-param
+            project. Missing ⇒ 404. Equal to the URL `{number}` ⇒ 400
+            (`CONFIG`, self-relation).
     AssignmentReasonBody:
       type: object
       properties:

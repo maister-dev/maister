@@ -57,7 +57,8 @@ platform-authenticated external surface exists.
   (Implemented)
 - **MCP facade (`@maister/mcp`)** — standalone `mcp/` workspace package; eight
   tools, each a thin REST client of `/api/v1/ext`; zero DB or web coupling.
-  (Implemented)
+  (Implemented) ADR-075 adds `comment_create` / `comment_list` over the ext
+  comment routes, following the `hitl_*` idiom. (Designed)
 
 ## State machine — token lifecycle
 
@@ -241,7 +242,9 @@ bearer extraction occurs.
   return 404 to existence-hide the resource, not 401. (Implemented)
 - Every `/api/v1/ext` route MUST require the matching route scope (`tasks:create`,
   `tasks:read`, `tasks:update`, `runs:launch`, `runs:read`, `readiness:read`,
-  `gates:report`, `hitl:read`, or `hitl:respond`) unless the token holds `*`.
+  `gates:report`, `hitl:read`, or `hitl:respond` — plus `comments:read` /
+  `comments:create` for the ADR-075 comment routes, Designed) unless the
+  token holds `*`.
   Scope failures return 403 `UNAUTHORIZED`, write a failure `token_audit_log`
   row, and MUST NOT reveal the token's held scopes. (Implemented)
 - User-owned tokens MUST store `token_kind='user'` and `owner_user_id`. External
@@ -327,7 +330,9 @@ bearer extraction occurs.
   (Token / external-API auth: 401/403/404/422).
 - Related domains: [`flow-graph.md`](flow-graph.md) (gate_results,
   markDownstreamStale, markGateOverridden), [`artifacts.md`](artifacts.md)
-  (test_report artifact, assertEvidenceReady).
+  (test_report artifact, assertEvidenceReady),
+  [`social-board.md`](social-board.md) (ADR-075 ext comment routes, actor
+  mapping, Designed).
 - Configuration: [`../configuration.md`](../configuration.md)
   (`gates[].external` schema, `MAISTER_API_BASE_URL`, `MAISTER_PROJECT_TOKEN`).
 - Source files (Implemented): `web/lib/db/schema.ts` + migration

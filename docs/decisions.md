@@ -108,6 +108,7 @@
 | [ADR-080](#adr-080-node-level-retry-policy) | Node-level retry policy | Accepted | 2026-06-11 |
 | [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) | Rework session policy with resume-by-default | Accepted | 2026-06-11 |
 | [ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) | Review-diff completeness with dirty-state protocol and scope switcher | Accepted | 2026-06-11 |
+| [ADR-083](#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor) | Social board substrate — per-project task numbering, typed relations, polymorphic actor | Accepted | 2026-06-11 |
 
 ---
 
@@ -5836,6 +5837,148 @@ protocol; the gate is never blocked by dirty state.
 - **Mutate the index for the `uncommitted` diff (`git add -N`):** rejected —
   corrupts the live index; a temp `GIT_INDEX_FILE` keeps the real index
   untouched.
+
+---
+
+### ADR-083: Social board substrate — per-project task numbering, typed relations, polymorphic actor
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** Tasks are addressable only by UUID: there is no human-readable
+identity to reference in a discussion, no way to express "this task waits on
+that one", and no record of what happened to a task beyond its mutable
+status. The validated platform-agents + social-board design needs a substrate
+that later agent actors can write into without another migration: stable task
+identity (`KEY-N`), typed inter-task relations that gate launching,
+domain-written activity, auto-subscriptions, and a per-recipient inbox.
+Stage 1 ships the substrate with `user`/`system` writers only; `agent` is
+schema-legal everywhere but never written (no agent runtime exists yet).
+
+**Decision:** Five new tables (`task_relations`, `task_comments`,
+`task_activity`, `task_subscribers`, `inbox_items`) plus three new columns
+(`projects.task_key`, `projects.next_task_number`, `tasks.number`) in one
+migration, with these locked semantics:
+
+1. **Numbering** — `projects.next_task_number integer NOT NULL DEFAULT 1`,
+   allocated inside the `createTask` transaction via
+   `UPDATE projects SET next_task_number = next_task_number + 1 … RETURNING`;
+   the projects-row lock serializes concurrent creates and
+   `UNIQUE(tasks.project_id, tasks.number)` is the backstop (violation ⇒ bug,
+   not user error). Numbers are never reused; deleting a task leaves a hole.
+2. **Task key** — `projects.task_key` matches `^[A-Z][A-Z0-9]{1,9}$` and is
+   **platform-wide UNIQUE** (mention resolution is global; two projects
+   sharing `MAI` would make `MAI-12` ambiguous). Settable only at
+   registration (optional `taskKey` body field, regex allow-list; collision
+   with an explicit OR derived key → `CONFLICT`), default derived from the
+   project name (first 3 letters, uppercased). Immutable in Stage 1 because
+   comment bodies store expanded `KEY-N` links; rename tooling is Stage 2.
+   Migration backfill auto-uniquifies (widen to 4 letters, then numeric
+   suffix), ordered by `created_at`.
+3. **Polymorphic actor = `(actor_type, actor_id)` pair** on all four social
+   tables: `actor_type CHECK IN ('user','agent','system')` with
+   `CHECK ((actor_type = 'system') = (actor_id IS NULL))`, and **no FK to
+   `users`** (polymorphic target; a deleted user renders under a
+   "former user" fallback label). The existing `actor_identities` registry
+   (`user|api_token|internal_agent|system`) is deliberately NOT reused: its
+   taxonomy mismatches the design's `user|agent|system`, there is no agents
+   table to join yet, and the self-contained pair lets inbox fanout compare
+   subscriber vs actor in plain SQL without joins. Stage-1 write
+   restriction: only `user` and `system` actors are ever written.
+4. **Relations** — canonical one-direction rows
+   (`from_task_id`, `kind ∈ {blocks, depends_on, parent_of}`, `to_task_id`)
+   with `UNIQUE(from_task_id, kind, to_task_id)`,
+   `CHECK (from_task_id <> to_task_id)`, both task FKs `ON DELETE cascade`.
+   Inverse labels ("blocked by", "required by", "child of") are render-time
+   only — never stored. Same-project only in Stage 1, enforced in the domain
+   layer (cross-table CHECK is impossible) → `CONFIG`. No cycle detection:
+   a mutual block makes both tasks unlaunchable until one relation is
+   removed; the UI always renders blockers as removable chips, so the state
+   is recoverable.
+5. **Launchability** — `classifyTaskLaunchability` gains optional relation
+   context and a new `"blocked"` classification with precedence
+   `target_terminal > crashed > busy > blocked > launchable` (relations gate
+   *launching* only; they never mask an active run's state). Task T is
+   blocked iff ∃ relation `(X blocks T)` or `(T depends_on Y)` where the
+   counterpart task's status ∈ {`Backlog`, `InFlight`} — `Done` AND
+   `Abandoned` both release, so a discarded blocker cannot deadlock its
+   dependents. `parent_of` never gates. Every classifier consumer threads
+   the relation context: `launchRun` (the single choke point for internal
+   AND ext launches), the run-schedules dispatcher (skip with reason in the
+   attempt summary), and the board/portfolio read models.
+6. **Mentions expand at write time** — `KEY-N` tokens in comment bodies
+   (outside fenced code, inline code, and existing markdown links) resolve
+   against `(projects.task_key, tasks.number)` and are stored as expanded
+   markdown links; unresolved tokens stay literal text. Single render path,
+   immutable history; stale links after a project slug rename are accepted
+   and documented.
+7. **Comment pipeline is ONE transaction** — insert comment → write
+   `comment_added` activity on the commented task + `task_mentioned` on each
+   mentioned task → upsert subscriptions (`ON CONFLICT DO NOTHING`, first
+   reason wins) → inbox fanout. No external side-effects inside the tx.
+8. **Activity is domain-written only** — `task_activity` rows are written
+   exclusively by `web/lib/social/*` via `recordTaskActivity` plus the named
+   service write-sites (`createTask`, the `launchRun` task-flip tx); route
+   handlers never insert directly. Event kinds (text + CHECK):
+   `task_created | comment_added | task_mentioned | relation_added |
+   relation_removed | run_launched`. `task_status_changed` was cut — the
+   only real task-status writer today is the launch flip, already covered by
+   `run_launched` in the same tx. `run_finished` is deferred until a
+   `setRunStatus` choke point exists (run-terminal writes are scattered
+   across ~10 sites today; wiring activity into all of them is high-risk
+   noise).
+9. **Subscriptions + inbox** — `task_subscribers` reasons
+   `creator | commenter | mentioned | manual` with
+   `UNIQUE(task_id, subscriber_type, subscriber_id)`; `subscriber_type ∈
+   {user, agent}` (`system` never subscribes). Auto-subscribe: task creation
+   → creator; comment → commenter; mention of task B in a comment on task A
+   → B's creator subscribed to A (`mentioned` — brings the owner of the
+   referenced work into the discussion). Inbox fanout is one batch
+   `INSERT … SELECT` over the task's subscribers excluding the acting pair,
+   inside the triggering tx. Stage-1 fanout triggers: `comment_added` and
+   `task_mentioned` only — the Log page covers the rest; the inbox stays
+   high-signal. Read tracking: per-item `read_at` (recipient-owned) +
+   read-all.
+10. **Ext/MCP comment ops reuse the domain path** — ext routes map the
+    token to an actor via the existing `actorUserIdForToken` helper:
+    user-owned token → `('user', userId)`, ownerless project token →
+    `('system', NULL)` with `{via: 'ext', tokenId}` recorded in the activity
+    payload. New token scopes `comments:read` / `comments:create`; audit
+    rows written in-tx exactly like existing ext routes. MCP facade gains
+    `comment_create` / `comment_list` over the same routes.
+
+**Consequences:**
+- Tasks get a stable human identity (`KEY-N`) usable in comments, UI chips,
+  and later agent prompts; numbering survives deletion as documented holes.
+- Relations gate launching at every entry point (internal route, ext API,
+  schedules) through the single classifier — no parallel UI-only logic to
+  drift.
+- The actor pair makes Stage-2 agent actors a data change, not a schema
+  change: `agent` writers slot into existing columns and CHECKs.
+- A deleted user leaves dangling `actor_id`s by design; every renderer
+  carries a "former user" fallback.
+- `actor_identities` and the actor pair coexist as two actor models with
+  different jobs (token/credential identity vs social attribution); this ADR
+  records the divergence as deliberate.
+- Expanded-at-write mentions mean a project slug rename strands old comment
+  links; accepted in exchange for immutable history and a single render
+  path.
+
+**Alternatives Considered:**
+- **`max(number)+1` at insert:** rejected — racy under concurrent creates.
+- **Per-project Postgres sequences:** rejected — DDL at runtime per project.
+- **One global sequence:** rejected — numbers must be per-project
+  dense-ish.
+- **FK to `actor_identities`:** rejected — taxonomy mismatch
+  (`api_token`/`internal_agent` vs `agent`), no agents table to join, and
+  fanout SQL would need joins; revisit if the two models converge.
+- **Bidirectional relation rows (store both `A blocks B` and
+  `B blocked-by A`):** rejected — double writes and dedup burden; inverses
+  are pure rendering.
+- **Mention expansion at render time:** rejected — every renderer
+  re-resolves (N+1 and drift); stored expansion keeps history immutable.
+- **Storing pre-rendered HTML for comments:** rejected — XSS surface in the
+  DB; bodies stay markdown, rendered through the existing remark-only
+  `react-markdown` wrapper.
 
 ---
 

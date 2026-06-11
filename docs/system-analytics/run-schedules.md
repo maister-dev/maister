@@ -27,7 +27,9 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
   through `launchRun` (one `runs` row + workspace + worktree, attempt N+1)
   or a recorded skip/queue outcome. Outcome enum: `launched | queued_pending
   | catchup_queued | skipped_task_busy | skipped_cap |
-  skipped_target_terminal | skipped_crashed | launch_failed | dispatching`.
+  skipped_target_terminal | skipped_crashed | launch_failed | dispatching`,
+  plus `skipped_blocked` (Designed, ADR-075 — task has open relation
+  blockers).
 - **Launchability classifier** (`classifyTaskLaunchability`, Implemented, M28) —
   shared single source of truth for "can this task launch", encoding the
   board retry rule (latest run `Failed | Abandoned` → launchable, attempt
@@ -59,6 +61,7 @@ order) is the DQ7 matrix:
 | `target_terminal` (task or latest run Done, task Abandoned) | `skipped_target_terminal` | `skipped_target_terminal` (no flag) | `skipped_target_terminal` |
 | `crashed` (latest run Crashed — owes recover/discard) | `skipped_crashed` | `skipped_crashed` (no flag) | `skipped_crashed` |
 | `busy` (active run on the task) | `skipped_task_busy` | flag + `catchup_queued` | `skipped_task_busy` — a second concurrent run per task is structurally impossible; `start_anyway` overrides only the CAP dimension |
+| `blocked` (Designed, ADR-075 — open relation blockers) | `skipped_blocked` | `skipped_blocked` (existing flag kept — fires once unblocked) | `skipped_blocked` — relations gate launching under every policy |
 | cap full (task launchable) | `skipped_cap` | flag + `catchup_queued` | `launchRun` → run lands `Pending` + queue position (`queued_pending`) |
 | free | launch | launch (+ clear flag) | launch |
 
@@ -208,6 +211,12 @@ catch-up.
   `skipped_target_terminal` / `skipped_crashed` under EVERY policy and never
   set the `queue_one` flag — the task owes a human action (board retry rules
   in [`tasks.md`](tasks.md)).
+- **`blocked` skip (Designed, ADR-075)**: recorded as `skipped_blocked`
+  under EVERY policy with the blocker `KEY-N` list in the dispatcher attempt
+  summary; never sets the `queue_one` flag but KEEPS an existing one (like
+  `crashed` — the block is recoverable: the blocker finishing or the
+  relation being removed unblocks the catch-up). Relation semantics live in
+  [`tasks.md`](tasks.md).
 - **Archived project**: the claim query JOINs `projects` and excludes
   `archived_at IS NOT NULL` rows — archived projects never fire.
 - **Invalid `cron_expr` / `timezone` / never-matching expression** on
