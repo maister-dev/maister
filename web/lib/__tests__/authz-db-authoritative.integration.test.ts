@@ -72,7 +72,7 @@ async function seedUser(
 }
 
 async function seedProject(id: string): Promise<void> {
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug: id,
     name: id,

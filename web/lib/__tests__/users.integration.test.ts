@@ -228,7 +228,7 @@ describe("admin user management invariants (integration)", () => {
 
     const projectId = "prj_filter_test";
 
-    await db.insert(schema.projects).values({
+    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: projectId,
       slug: "filter-test",
       name: "Filter Test",
@@ -476,7 +476,7 @@ describe("hardDeleteAdminUser (integration)", () => {
   async function seedProject(): Promise<string> {
     const id = randomUUID();
 
-    await db.insert(schema.projects).values({
+    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id,
       slug: `hd-${id.slice(0, 8)}`,
       name: `HardDelete ${id.slice(0, 4)}`,

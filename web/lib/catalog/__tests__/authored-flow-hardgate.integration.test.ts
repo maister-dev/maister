@@ -88,6 +88,7 @@ async function seedFlowCap(
     name: projectSlug,
     repoPath: `/tmp/${projectSlug}`,
     maisterYamlPath: `/tmp/${projectSlug}/maister.yaml`,
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
   });
 
   const { capability } = await createAuthoredCapability({

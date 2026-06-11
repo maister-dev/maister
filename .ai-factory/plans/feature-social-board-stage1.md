@@ -353,12 +353,12 @@ Phase exit criteria (every phase): `pnpm --filter maister-web exec tsc --noEmit`
 
 ### Phase 2 — Schema + single migration
 
-- [ ] **T2.1 Schema changes in `web/lib/db/schema.ts`** (exact shapes from D2/D3/D4/D8/D9): `projects.taskKey` (text NOT NULL + UNIQUE), `projects.nextTaskNumber` (integer NOT NULL default 1), `tasks.number` (integer NOT NULL) + `unique("tasks_project_number_uq").on(projectId, number)` + index; tables `task_relations`, `task_comments` (id, taskId FK cascade, projectId FK cascade, actor pair, body text, createdAt), `task_activity` (id, taskId, projectId, actor pair, eventKind CHECK, payload jsonb NOT NULL default '{}', createdAt; index `(task_id, created_at)`, `(project_id, created_at)`), `task_subscribers`, `inbox_items` — CHECKs and indexes per §1. Follow house idioms (text PK + `$defaultFn(randomUUID)`, withTimezone timestamps).
-- [ ] **T2.2 Generate + hand-finish migration `0040_social_board.sql`.** `pnpm --filter maister-web db:generate -- --name=social_board` (drizzle-kit `^0.28.1` writes `0040_social_board.sql` + journal tag directly; NOT `--custom` — stale-snapshot gotcha). Hand-edit ONLY the new-column ordering for live data: `tasks.number` and `projects.task_key` are added nullable → backfill → `SET NOT NULL` → add UNIQUEs, all inside this one file. Backfill SQL: per project, number tasks by `(created_at, id)` from 1 (window function); `next_task_number = COALESCE(max,0)+1`; `task_key` = derivation per D2 with deterministic uniquify (DO block). Final schema state must equal `schema.ts` exactly (snapshot stays truthful).
+- [x] **T2.1 Schema changes in `web/lib/db/schema.ts`** (exact shapes from D2/D3/D4/D8/D9): `projects.taskKey` (text NOT NULL + UNIQUE), `projects.nextTaskNumber` (integer NOT NULL default 1), `tasks.number` (integer NOT NULL) + `unique("tasks_project_number_uq").on(projectId, number)` + index; tables `task_relations`, `task_comments` (id, taskId FK cascade, projectId FK cascade, actor pair, body text, createdAt), `task_activity` (id, taskId, projectId, actor pair, eventKind CHECK, payload jsonb NOT NULL default '{}', createdAt; index `(task_id, created_at)`, `(project_id, created_at)`), `task_subscribers`, `inbox_items` — CHECKs and indexes per §1. Follow house idioms (text PK + `$defaultFn(randomUUID)`, withTimezone timestamps).
+- [x] **T2.2 Generate + hand-finish migration `0040_social_board.sql`.** `pnpm --filter maister-web db:generate -- --name=social_board` (drizzle-kit `^0.28.1` writes `0040_social_board.sql` + journal tag directly; NOT `--custom` — stale-snapshot gotcha). Hand-edit ONLY the new-column ordering for live data: `tasks.number` and `projects.task_key` are added nullable → backfill → `SET NOT NULL` → add UNIQUEs, all inside this one file. Backfill SQL: per project, number tasks by `(created_at, id)` from 1 (window function); `next_task_number = COALESCE(max,0)+1`; `task_key` = derivation per D2 with deterministic uniquify (DO block). Final schema state must equal `schema.ts` exactly (snapshot stays truthful).
   Logging: none (SQL); migration runner already logs.
-- [ ] **T2.3 Migration integration test** (`web/lib/db/__tests__/social-board-migration.integration.test.ts`, runner: `integration` project, glob `lib/**/*.integration.test.ts` — matches). Fresh testcontainer: all migrations apply green; constraints exist (insert dup `(project_id, number)` ⇒ 23505; dup task_key ⇒ 23505; actor CHECK rejects `('system', 'x')`); seeded-then-migrated path: insert 2 projects + 3 tasks via SQL *before* 0040 within the test harness if the harness applies migrations stepwise — if the harness only supports apply-all (verify at impl), cover backfill by asserting derivation/uniquify logic in a unit test against the extracted TS util instead, and assert post-migration invariants (`next_task_number = max(number)+1`) on rows created pre-backfill via raw SQL replay. State which path was taken in the test header comment.
+- [x] **T2.3 Migration integration test** (`web/lib/db/__tests__/social-board-migration.integration.test.ts`, runner: `integration` project, glob `lib/**/*.integration.test.ts` — matches). Fresh testcontainer: all migrations apply green; constraints exist (insert dup `(project_id, number)` ⇒ 23505; dup task_key ⇒ 23505; actor CHECK rejects `('system', 'x')`); seeded-then-migrated path: insert 2 projects + 3 tasks via SQL *before* 0040 within the test harness if the harness applies migrations stepwise — if the harness only supports apply-all (verify at impl), cover backfill by asserting derivation/uniquify logic in a unit test against the extracted TS util instead, and assert post-migration invariants (`next_task_number = max(number)+1`) on rows created pre-backfill via raw SQL replay. State which path was taken in the test header comment.
   Verify: `pnpm --filter maister-web test:integration` green; `pnpm --filter maister-web db:migrate` green on the dev DB.
-- [ ] **T2.4 Migrate raw-SQL fixtures to the new NOT NULL columns.** `web/e2e/_seed/seed-e2e.ts` seeds via raw `pg` SQL: 8+ `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)` sites (lines ~1165, 1265, 1464, 1641, 1941, 1964, 2113, 2252) and the project insert helpers — every one must provide `number` (+ project `task_key`, consistent `next_task_number`). Add a small seed helper (per-project counter) instead of hand-numbering 8 sites. Also grep ALL test suites for raw `INSERT INTO tasks|projects` fixtures and fix identically (drizzle `.values()` call sites are compile-time-caught; raw SQL is the silent-breakage class).
+- [x] **T2.4 Migrate raw-SQL fixtures to the new NOT NULL columns.** `web/e2e/_seed/seed-e2e.ts` seeds via raw `pg` SQL: 8+ `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)` sites (lines ~1165, 1265, 1464, 1641, 1941, 1964, 2113, 2252) and the project insert helpers — every one must provide `number` (+ project `task_key`, consistent `next_task_number`). Add a small seed helper (per-project counter) instead of hand-numbering 8 sites. Also grep ALL test suites for raw `INSERT INTO tasks|projects` fixtures and fix identically (drizzle `.values()` call sites are compile-time-caught; raw SQL is the silent-breakage class).
   Verify: e2e global-setup (migrate + seed) completes against a fresh `maister_e2e` DB; integration suite green.
 
 **Commit C2** — `feat(db): social-board schema + migration 0040 (numbering, relations, actor tables, inbox)`
@@ -483,6 +483,36 @@ No renumbering performed.
   11. `project-registration.spec.ts:18` register + dup conflict
   12. `project-registration.spec.ts:63` non-admin cannot register
   13. `scratch-launch.spec.ts:8` scratch launch controls (known `getByLabel('Project')` collision)
+
+### Phase 2 notes (as-built deviations, 2026-06-11)
+
+- **Stale-0039-snapshot fact confirmed:** `db:generate` re-emitted
+  `run_schedules` DDL (the 0039 snapshot on main lacks the 0038 tables — the
+  known gate-chat B1 finding). The redundant statements were stripped from
+  `0040_social_board.sql` (the table already exists via 0038 everywhere); the
+  0040 snapshot now correctly includes `run_schedules`, healing the chain for
+  future generates.
+- **Backfill proven on real data** via a CLONE of the dev DB
+  (`CREATE DATABASE … TEMPLATE maister`), NOT the dev DB itself — applying
+  0040 to the shared dev DB while main's code still runs against it would
+  break main-checkout task creation (new NOT NULL columns). Clone results:
+  `maister-dev`→`MAI`, colliding `maister`→`MAIS` (uniquify ladder), all
+  tasks numbered, `next_task_number = max+1`. Clone dropped after.
+- **Fixture sweep was bigger than planned:** 166 brace-form + 10 array-form +
+  7 `as any`-cast drizzle insert sites across ~120 test files, plus 23 raw-SQL
+  task inserts + 18 raw-SQL project inserts across `seed-e2e.ts` and two e2e
+  specs (codemodded; tasks get an SQL-side
+  `(SELECT COALESCE(MAX(number),0)+1 …)` value, projects a random `E…` key).
+- **T3.1/T3.2 production wiring pulled forward into C2** out of necessity:
+  the NOT NULL columns make any tree without `createTask` allocation /
+  registration `task_key` derivation red, so `lib/social/task-key.ts`,
+  the `createTask` allocation transaction, and the registration-route
+  derivation+collision check landed with the schema commit. T3.1/T3.2 retain
+  their test obligations.
+- **Phase-2 exit proof:** tsc 0 errors; unit 270/3082 green (+23 new
+  task-key tests); integration 125 files / 959 tests green (incl. 11 new
+  migration tests); fresh `maister_e2e` reset+migrate+seed green (25/25
+  tasks numbered, 20/20 distinct keys).
 
 ## 6. Unresolved questions
 

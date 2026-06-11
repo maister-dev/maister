@@ -117,6 +117,8 @@ export const projects = pgTable("projects", {
   maisterYamlPath: text("maister_yaml_path").notNull(),
   defaultRunnerId: text("default_runner_id"),
   promotionMode: text("promotion_mode"),
+  taskKey: text("task_key").notNull().unique(),
+  nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),
@@ -829,6 +831,7 @@ export const tasks = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    number: integer("number").notNull(),
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
     flowId: text("flow_id")
@@ -855,6 +858,10 @@ export const tasks = pgTable(
   },
   (t) => ({
     uniqAttempt: unique("tasks_id_attempt_uq").on(t.id, t.attemptNumber),
+    uniqProjectNumber: unique("tasks_project_number_uq").on(
+      t.projectId,
+      t.number,
+    ),
     idxProjectStatus: index("tasks_project_status_idx").on(
       t.projectId,
       t.status,
@@ -2302,6 +2309,7 @@ export type ProjectTokenInsert = typeof projectTokens.$inferInsert;
 export type TokenAuditLogRow = typeof tokenAuditLog.$inferSelect;
 export type TokenAuditLogInsert = typeof tokenAuditLog.$inferInsert;
 
+<<<<<<< HEAD
 // Outbound webhooks (ADR-077). Transactional-outbox capture + singleton-drainer
 // fanout/delivery. Secrets are NEVER stored: signing_secret_ref and header values
 // are `env:NAME` references resolved server-side, never plaintext.
@@ -2477,3 +2485,257 @@ export type WebhookDeliveryAttempt =
   typeof webhookDeliveryAttempts.$inferSelect;
 export type WebhookDeliveryAttemptInsert =
   typeof webhookDeliveryAttempts.$inferInsert;
+
+// --- ADR-078: social board substrate ----------------------------------------
+
+// Polymorphic actor pair on all four social tables: no FK to users (a deleted
+// user renders as a "former user" fallback); Stage 1 writes user/system only.
+
+export const taskRelations = pgTable(
+  "task_relations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    fromTaskId: text("from_task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    kind: text("kind", {
+      enum: ["blocks", "depends_on", "parent_of"],
+    }).notNull(),
+    toTaskId: text("to_task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    actorType: text("actor_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    actorId: text("actor_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRelation: unique("task_relations_from_kind_to_uq").on(
+      t.fromTaskId,
+      t.kind,
+      t.toTaskId,
+    ),
+    idxToTask: index("task_relations_to_task_idx").on(t.toTaskId),
+    kindCheck: check(
+      "task_relations_kind_check",
+      sql`${t.kind} in ('blocks', 'depends_on', 'parent_of')`,
+    ),
+    noSelfCheck: check(
+      "task_relations_no_self_check",
+      sql`${t.fromTaskId} <> ${t.toTaskId}`,
+    ),
+    actorTypeCheck: check(
+      "task_relations_actor_type_check",
+      sql`${t.actorType} in ('user', 'agent', 'system')`,
+    ),
+    actorPairCheck: check(
+      "task_relations_actor_pair_check",
+      sql`(${t.actorType} = 'system') = (${t.actorId} is null)`,
+    ),
+  }),
+);
+
+export const taskComments = pgTable(
+  "task_comments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    actorType: text("actor_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    actorId: text("actor_id"),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxTaskCreated: index("task_comments_task_created_idx").on(
+      t.taskId,
+      t.createdAt,
+    ),
+    actorTypeCheck: check(
+      "task_comments_actor_type_check",
+      sql`${t.actorType} in ('user', 'agent', 'system')`,
+    ),
+    actorPairCheck: check(
+      "task_comments_actor_pair_check",
+      sql`(${t.actorType} = 'system') = (${t.actorId} is null)`,
+    ),
+  }),
+);
+
+export const TASK_ACTIVITY_EVENT_KINDS = [
+  "task_created",
+  "comment_added",
+  "task_mentioned",
+  "relation_added",
+  "relation_removed",
+  "run_launched",
+] as const;
+
+export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
+
+export const taskActivity = pgTable(
+  "task_activity",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    actorType: text("actor_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    actorId: text("actor_id"),
+    eventKind: text("event_kind", {
+      enum: TASK_ACTIVITY_EVENT_KINDS,
+    }).notNull(),
+    payload: jsonb("payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxTaskCreated: index("task_activity_task_created_idx").on(
+      t.taskId,
+      t.createdAt,
+    ),
+    idxProjectCreated: index("task_activity_project_created_idx").on(
+      t.projectId,
+      t.createdAt,
+    ),
+    eventKindCheck: check(
+      "task_activity_event_kind_check",
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched')`,
+    ),
+    actorTypeCheck: check(
+      "task_activity_actor_type_check",
+      sql`${t.actorType} in ('user', 'agent', 'system')`,
+    ),
+    actorPairCheck: check(
+      "task_activity_actor_pair_check",
+      sql`(${t.actorType} = 'system') = (${t.actorId} is null)`,
+    ),
+  }),
+);
+
+export const taskSubscribers = pgTable(
+  "task_subscribers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    subscriberType: text("subscriber_type", {
+      enum: ["user", "agent"],
+    }).notNull(),
+    subscriberId: text("subscriber_id").notNull(),
+    reason: text("reason", {
+      enum: ["creator", "commenter", "mentioned", "manual"],
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqPair: unique("task_subscribers_task_pair_uq").on(
+      t.taskId,
+      t.subscriberType,
+      t.subscriberId,
+    ),
+    subscriberTypeCheck: check(
+      "task_subscribers_type_check",
+      sql`${t.subscriberType} in ('user', 'agent')`,
+    ),
+    reasonCheck: check(
+      "task_subscribers_reason_check",
+      sql`${t.reason} in ('creator', 'commenter', 'mentioned', 'manual')`,
+    ),
+  }),
+);
+
+export type InboxSourceRef = {
+  kind: "comment" | "mention";
+  taskId: string;
+  commentId: string;
+  activityId: string;
+};
+
+export const inboxItems = pgTable(
+  "inbox_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    recipientType: text("recipient_type", {
+      enum: ["user", "agent"],
+    }).notNull(),
+    recipientId: text("recipient_id").notNull(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    eventKind: text("event_kind", {
+      enum: TASK_ACTIVITY_EVENT_KINDS,
+    }).notNull(),
+    sourceRef: jsonb("source_ref").$type<InboxSourceRef>().notNull(),
+    readAt: timestamp("read_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxRecipient: index("inbox_items_recipient_idx").on(
+      t.recipientType,
+      t.recipientId,
+      t.readAt,
+      t.createdAt,
+    ),
+    recipientTypeCheck: check(
+      "inbox_items_recipient_type_check",
+      sql`${t.recipientType} in ('user', 'agent')`,
+    ),
+    eventKindCheck: check(
+      "inbox_items_event_kind_check",
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched')`,
+    ),
+  }),
+);
+
+export type TaskRelationRow = typeof taskRelations.$inferSelect;
+export type TaskRelationInsert = typeof taskRelations.$inferInsert;
+export type TaskCommentRow = typeof taskComments.$inferSelect;
+export type TaskCommentInsert = typeof taskComments.$inferInsert;
+export type TaskActivityRow = typeof taskActivity.$inferSelect;
+export type TaskActivityInsert = typeof taskActivity.$inferInsert;
+export type TaskSubscriberRow = typeof taskSubscribers.$inferSelect;
+export type TaskSubscriberInsert = typeof taskSubscribers.$inferInsert;
+export type InboxItemRow = typeof inboxItems.$inferSelect;
+export type InboxItemInsert = typeof inboxItems.$inferInsert;

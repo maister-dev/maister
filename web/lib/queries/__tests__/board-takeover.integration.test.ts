@@ -65,7 +65,7 @@ async function seedHumanWorkingRun(opts: {
   const ownerId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Board Takeover Test",
@@ -91,7 +91,7 @@ async function seedHumanWorkingRun(opts: {
     manifest: { schemaVersion: 1, name: "aif", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "takeover task",

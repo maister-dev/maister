@@ -88,7 +88,7 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     const id = randomUUID();
     const slug = `proj-${id.slice(0, 8)}`;
 
-    await db.insert(schema.projects).values({
+    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id,
       slug,
       name,
@@ -147,7 +147,7 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
   ): Promise<string> {
     const id = randomUUID();
 
-    await db.insert(schema.tasks).values({
+    await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
       id,
       projectId,
       title,

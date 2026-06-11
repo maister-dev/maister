@@ -205,7 +205,7 @@ async function seedProjectWithManifest(
   manifest: unknown,
   opts: { trustStatus?: string } = {},
 ): Promise<void> {
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
@@ -254,7 +254,7 @@ async function seedProjectWithManifest(
     userId: "u-member",
     role: "member",
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: `task-${id}`,
     projectId: id,
     title: `${slug} task`,

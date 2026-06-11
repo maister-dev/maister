@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -10,7 +10,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
-const { flows, runs, tasks } = schemaModule as unknown as Record<string, any>;
+const { flows, projects, runs, tasks } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -35,8 +38,12 @@ export async function createTask(
   input: CreateTaskInput,
   ctx: CreateTaskContext,
   db?: Db,
-): Promise<{ taskId: string }> {
-  const _db = (db ?? getDb()) as unknown as { select: any; insert: any };
+): Promise<{ taskId: string; number: number; taskKey: string }> {
+  const _db = (db ?? getDb()) as unknown as {
+    select: any;
+    insert: any;
+    transaction: any;
+  };
 
   // Validate flowId belongs to THIS project (body-controlled).
   const flowRows = await _db
@@ -53,23 +60,57 @@ export async function createTask(
 
   const taskId = randomUUID();
 
-  await _db.insert(tasks).values({
-    id: taskId,
-    projectId: ctx.projectId,
-    title: input.title,
-    prompt: input.prompt,
-    flowId: input.flowId,
-    createdByUserId: ctx.actorUserId ?? null,
-    status: "Backlog",
-    stage: "Backlog",
+  // ADR-075 D1: number allocation + task insert in ONE transaction. The
+  // projects-row lock (UPDATE … RETURNING) serializes concurrent creates;
+  // UNIQUE(project_id, number) is the backstop.
+  const { number, taskKey } = await _db.transaction(async (tx: any) => {
+    const allocated = await tx
+      .update(projects)
+      .set({ nextTaskNumber: sql`${projects.nextTaskNumber} + 1` })
+      .where(eq(projects.id, ctx.projectId))
+      .returning({
+        allocated: projects.nextTaskNumber,
+        taskKey: projects.taskKey,
+      });
+
+    if (allocated.length === 0) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `project ${ctx.projectId} not found`,
+      );
+    }
+
+    const allocatedNumber = (allocated[0].allocated as number) - 1;
+
+    log.debug(
+      { projectId: ctx.projectId, allocated: allocatedNumber },
+      "task number allocated",
+    );
+
+    await tx.insert(tasks).values({
+      id: taskId,
+      projectId: ctx.projectId,
+      number: allocatedNumber,
+      title: input.title,
+      prompt: input.prompt,
+      flowId: input.flowId,
+      createdByUserId: ctx.actorUserId ?? null,
+      status: "Backlog",
+      stage: "Backlog",
+    });
+
+    return {
+      number: allocatedNumber,
+      taskKey: allocated[0].taskKey as string,
+    };
   });
 
   log.info(
-    { projectId: ctx.projectId, taskId, flowId: input.flowId },
+    { projectId: ctx.projectId, taskId, flowId: input.flowId, taskKey, number },
     "task created",
   );
 
-  return { taskId };
+  return { taskId, number, taskKey };
 }
 
 export type TaskDTO = {

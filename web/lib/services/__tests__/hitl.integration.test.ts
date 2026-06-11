@@ -80,7 +80,7 @@ afterEach(async () => {
 async function seedProject(slug: string) {
   const projectId = randomUUID();
 
-  await (db as any).insert(schema.projects).values({
+  await (db as any).insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,

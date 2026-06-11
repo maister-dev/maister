@@ -70,7 +70,7 @@ async function seedGraphRun(
   const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
   const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -92,7 +92,7 @@ async function seedGraphRun(
   });
   await db
     .insert(schema.tasks)
-    .values({ id: taskId, projectId, title: "t", prompt: "p", flowId });
+    .values({ number: Math.trunc(Math.random() * 1e9) + 1, id: taskId, projectId, title: "t", prompt: "p", flowId });
   await db.insert(schema.runs).values({
     id: runId,
     taskId,
@@ -502,7 +502,7 @@ async function seedGitGraphRun(
   const runId = randomUUID();
   const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -524,7 +524,7 @@ async function seedGitGraphRun(
   });
   await db
     .insert(schema.tasks)
-    .values({ id: taskId, projectId, title: "t", prompt: "p", flowId });
+    .values({ number: Math.trunc(Math.random() * 1e9) + 1, id: taskId, projectId, title: "t", prompt: "p", flowId });
   await db.insert(schema.runs).values({
     id: runId,
     taskId,

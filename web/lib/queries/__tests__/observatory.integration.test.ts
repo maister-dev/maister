@@ -71,14 +71,14 @@ beforeEach(async () => {
   });
 
   await db.insert(schema.projects).values([
-    {
+    { taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: visibleProjectId,
       slug: "observatory-visible",
       name: "Visible",
       repoPath: `/repos/observatory-visible-${visibleProjectId}`,
       maisterYamlPath: "/repos/visible/maister.yaml",
     },
-    {
+    { taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: hiddenProjectId,
       slug: "observatory-hidden",
       name: "Hidden",
@@ -911,7 +911,7 @@ async function seedRun(input: {
   const runId = `${input.suffix}-run`;
   const implementAttemptId = `${input.suffix}-impl-1`;
 
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId: input.projectId,
     title: input.suffix,

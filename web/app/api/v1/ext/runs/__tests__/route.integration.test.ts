@@ -105,7 +105,7 @@ async function seedProject(slug: string) {
   const executorId = randomUUID();
   const revisionId = randomUUID();
 
-  await (db as any).insert(schema.projects).values({
+  await (db as any).insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -172,7 +172,7 @@ async function seedProject(slug: string) {
 async function seedTask(projectId: string, flowId: string, status = "Backlog") {
   const taskId = randomUUID();
 
-  await (db as any).insert(schema.tasks).values({
+  await (db as any).insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test Task",
@@ -269,7 +269,7 @@ describe("POST /api/v1/ext/runs", () => {
     // Backlog" → 409, revealing the task exists in another project + its state.
     const taskId = randomUUID();
 
-    await (db as any).insert(schema.tasks).values({
+    await (db as any).insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
       id: taskId,
       projectId: proj2,
       title: "Other-project task",

@@ -85,7 +85,7 @@ beforeAll(async () => {
     accountStatus: "active",
   });
 
-  await db.insert(projects).values({
+  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "wsgc-app",
     name: "WS GC App",
@@ -153,7 +153,7 @@ async function seed(opts: SeedOpts = {}): Promise<{
   const workspaceId = randomUUID();
   const worktreePath = opts.worktreePath ?? `/worktrees/wsgc-${runId}`;
 
-  await db.insert(tasks).values({
+  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",

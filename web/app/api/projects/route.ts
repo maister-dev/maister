@@ -21,6 +21,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { projectSlugSchema } from "@/lib/flow-paths";
 import { installFlowPlugin } from "@/lib/flows";
 import { withRegistrationLock } from "@/lib/registration-lock";
+import { deriveTaskKey, TASK_KEY_REGEX } from "@/lib/social/task-key";
 import {
   gitInit,
   resolveProjectSource,
@@ -44,6 +45,12 @@ const postBodySchema = z
   .object({
     repoUrl: z.string().min(1).max(2048).optional(),
     target: z.string().min(1).max(4096).optional(),
+    // ADR-075 D2: body-controlled but regex allow-listed; names no path and
+    // no cross-resource lookup — it becomes an attribute of the new project.
+    taskKey: z
+      .string()
+      .regex(TASK_KEY_REGEX, "task key must match ^[A-Z][A-Z0-9]{1,9}$")
+      .optional(),
   })
   .refine((b) => Boolean(b.repoUrl || b.target), "provide repoUrl or target");
 
@@ -146,7 +153,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const resolved = await resolveProjectSource(body);
 
       try {
-        return await register(resolved, admin.id);
+        return await register(resolved, admin.id, body.taskKey);
       } catch (err) {
         if (resolved.clonedByUs) {
           await rm(resolved.dir, { recursive: true, force: true }).catch(
@@ -168,6 +175,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 async function register(
   resolved: ResolvedSource,
   adminId: string,
+  explicitTaskKey?: string,
 ): Promise<NextResponse> {
   const maisterYamlPath = path.join(resolved.dir, "maister.yaml");
 
@@ -197,20 +205,46 @@ async function register(
   // the legacy .mcp.json registry.
   const platformMcps = await loadPlatformMcpCapabilitiesFromDb(db);
 
-  // Phase (b): slug / repo_path uniqueness. Collision → CONFLICT (409).
+  // ADR-075 D2: explicit key wins, else derive from the project name. A
+  // collision (explicit OR derived) refuses registration — auto-uniquify
+  // exists only in the migration backfill.
+  const taskKey = explicitTaskKey ?? deriveTaskKey(config.project.name, slug);
+
+  log.info(
+    { slug, taskKey, source: explicitTaskKey ? "explicit" : "derived" },
+    "task key assigned",
+  );
+
+  // Phase (b): slug / repo_path / task_key uniqueness. Collision → CONFLICT (409).
   const collisions = await db
-    .select({ slug: projects.slug, repoPath: projects.repoPath })
+    .select({
+      slug: projects.slug,
+      repoPath: projects.repoPath,
+      taskKey: projects.taskKey,
+    })
     .from(projects)
-    .where(or(eq(projects.slug, slug), eq(projects.repoPath, repoPath)));
+    .where(
+      or(
+        eq(projects.slug, slug),
+        eq(projects.repoPath, repoPath),
+        eq(projects.taskKey, taskKey),
+      ),
+    );
 
   if (collisions.length > 0) {
+    const taskKeyTaken = collisions.some(
+      (c: { taskKey: string }) => c.taskKey === taskKey,
+    );
+
     log.warn(
-      { slug, repoPath, collisions: collisions.length },
+      { slug, repoPath, taskKey, taskKeyTaken, collisions: collisions.length },
       "register project collision",
     );
     throw new MaisterError(
       "CONFLICT",
-      `project slug "${slug}" or repo_path "${repoPath}" already registered`,
+      taskKeyTaken
+        ? `task key "${taskKey}" already registered`
+        : `project slug "${slug}" or repo_path "${repoPath}" already registered`,
     );
   }
 
@@ -261,6 +295,7 @@ async function register(
         // in the same write — the launch resolver folds the local_merge default.
         promotionMode: config.project.promotion?.mode ?? null,
         defaultRunnerId,
+        taskKey,
       });
 
       await syncProjectFlowRolesFromConfig({
@@ -283,7 +318,7 @@ async function register(
     if (isUniqueViolation(err)) {
       throw new MaisterError(
         "CONFLICT",
-        `project slug "${slug}" or repo_path "${repoPath}" already registered`,
+        `project slug "${slug}", repo_path "${repoPath}", or task key "${taskKey}" already registered`,
       );
     }
     throw err;

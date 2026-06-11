@@ -151,7 +151,7 @@ async function seedRun(repo: GitRepo): Promise<{
   const nodeAttemptId = randomUUID();
   const workspaceId = randomUUID();
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -171,7 +171,7 @@ async function seedRun(repo: GitRepo): Promise<{
     manifest: { schemaVersion: 1, name: "g", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -362,7 +362,7 @@ describe("F3: runner records commit_set baseRef as the merge-base", () => {
     const runId = randomUUID();
     const runtimeRoot = await mkdtemp(join(tmpdir(), "commitset-rt-"));
 
-    await db.insert(schema.projects).values({
+    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: projectId,
       slug,
       name: "Test",
@@ -382,7 +382,7 @@ describe("F3: runner records commit_set baseRef as the merge-base", () => {
       manifest,
       schemaVersion: 1,
     });
-    await db.insert(schema.tasks).values({
+    await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
       id: taskId,
       projectId,
       title: "t",

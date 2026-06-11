@@ -93,7 +93,7 @@ async function seedRun(execTrust: FlowRevisionExecTrust) {
   const flowRef = `g-${revisionId.slice(0, 8)}`;
   const sha = (revisionId.replace(/-/g, "") + "0".repeat(8)).slice(0, 40);
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -128,7 +128,7 @@ async function seedRun(execTrust: FlowRevisionExecTrust) {
     schemaVersion: 1,
     enabledRevisionId: revisionId,
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",

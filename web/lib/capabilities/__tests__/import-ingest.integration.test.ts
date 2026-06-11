@@ -117,7 +117,7 @@ let projectId: string;
 
 beforeEach(async () => {
   projectId = randomUUID();
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `cap-ingest-${projectId.slice(0, 8)}`,
     name: "Cap Ingest",

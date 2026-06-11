@@ -1311,8 +1311,8 @@ async function seedM11aFixture(
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11A_SLUG]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M11A_SLUG,
@@ -1342,8 +1342,8 @@ async function seedM11aFixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, ids.project, "E2E review→rework", "do the thing", ids.flow],
   );
   await pool.query(
@@ -1411,8 +1411,8 @@ async function seedM12EvidenceFixture(
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M12_SLUG]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M12_SLUG,
@@ -1442,8 +1442,8 @@ async function seedM12EvidenceFixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, ids.project, "E2E evidence graph", "do the thing", ids.flow],
   );
   await pool.query(
@@ -1610,8 +1610,8 @@ async function seedM11bFixture(
   await provisionWorktree(repoPath, worktreePath, M11B_BRANCH);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M11B_SLUG,
@@ -1641,8 +1641,8 @@ async function seedM11bFixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, ids.project, "E2E manual takeover", "do the thing", ids.flow],
   );
   await pool.query(
@@ -1787,8 +1787,8 @@ async function seedReviewCommentsFixture(
   );
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       RC_SLUG,
@@ -1818,8 +1818,8 @@ async function seedReviewCommentsFixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, ids.project, "E2E review comments", "do the thing", ids.flow],
   );
   await pool.query(
@@ -2044,8 +2044,8 @@ async function seedLaunchableProjectFixture(
   await pool.query(
     `INSERT INTO projects
        (id, slug, name, repo_path, main_branch, branch_prefix,
-        maister_yaml_path, default_runner_id)
-     VALUES ($1, $2, $3, $4, 'main', $5, $6, $7)`,
+        maister_yaml_path, default_runner_id, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, $6, $7, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       args.slug,
@@ -2120,8 +2120,8 @@ async function seedLaunchableProjectFixture(
   }
 
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, $6, $7)`,
     [
       ids.task,
       ids.project,
@@ -2143,8 +2143,8 @@ async function seedLaunchableProjectFixture(
   const worktreePath = path.join(args.repoPath, ".worktrees", "needs-input");
 
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       hitlTaskId,
       ids.project,
@@ -2261,8 +2261,8 @@ async function seedM11cVisibleFixture(
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11C_VISIBLE_SLUG]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M11C_VISIBLE_SLUG,
@@ -2292,8 +2292,8 @@ async function seedM11cVisibleFixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, ids.project, "E2E settings visible", "do the thing", ids.flow],
   );
   await pool.query(
@@ -2361,8 +2361,8 @@ async function seedM11cRefuseFixture(
   );
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M11C_REFUSE_SLUG,
@@ -2431,8 +2431,8 @@ async function seedM11cRefuseFixture(
   );
   // A launchable Backlog task → the board shows a Launch button on its card.
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'Backlog', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'Backlog', 'Backlog')`,
     [
       ids.task,
       ids.project,
@@ -2504,8 +2504,8 @@ async function seedM19Fixture(
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M19_SLUG]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M19_SLUG,
@@ -2547,8 +2547,8 @@ async function seedM19Fixture(
   // (1) Recoverable Crashed flow run: acp_session_id present + current node is
   // the ai_coding node → run-detail recoverable:true, board Crashed column.
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       ids.crashedTask,
       ids.project,
@@ -2596,8 +2596,8 @@ async function seedM19Fixture(
   // realistic crash shape: current_step_id nulled, node retained in
   // resume_target_step_id.
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       ids.notRecoverableTask,
       ids.project,
@@ -2638,8 +2638,8 @@ async function seedM19Fixture(
 
   // (2) Abandoned run, workspace removal inside the warning window.
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'Abandoned', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'Abandoned', 'Backlog')`,
     [ids.warningTask, ids.project, "E2E ttl warning", "do the thing", ids.flow],
   );
   await pool.query(
@@ -2670,8 +2670,8 @@ async function seedM19Fixture(
 
   // (3) Abandoned run, workspace removal deadline already past (due).
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'Abandoned', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'Abandoned', 'Backlog')`,
     [ids.dueTask, ids.project, "E2E ttl due", "do the thing", ids.flow],
   );
   await pool.query(
@@ -2746,8 +2746,8 @@ async function seedM15Fixture(
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M15_SLUG]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M15_SLUG,
@@ -2779,8 +2779,8 @@ async function seedM15Fixture(
 
   // Fixture 1: A run in Review with a BLOCKING gate seeded `failed`.
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       ids.failedTask,
       ids.project,
@@ -2834,8 +2834,8 @@ async function seedM15Fixture(
 
   // Fixture 2: A run in Review with the SAME gate OVERRIDDEN.
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       ids.overriddenTask,
       ids.project,
@@ -2963,8 +2963,8 @@ async function seedM16Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, base.projectId, "M16 external review", "do the thing", ids.flow],
   );
   await pool.query(
@@ -3094,8 +3094,8 @@ async function seedM17Fixture(
 
   // --- Project 1: permission + human_review with criticality ---
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project1,
       M17_PROJECT1_SLUG,
@@ -3116,8 +3116,8 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       ids.task1,
       ids.project1,
@@ -3167,8 +3167,8 @@ async function seedM17Fixture(
 
   // --- Project 2: human_review with on_reject send-back schema ---
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project2,
       M17_PROJECT2_SLUG,
@@ -3189,8 +3189,8 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [
       ids.task2,
       ids.project2,
@@ -3509,8 +3509,8 @@ async function seedM18Fixture(
   });
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, provider, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', 'github', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, provider, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', 'github', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M18_SLUG,
@@ -3614,8 +3614,8 @@ async function seedM18Fixture(
 
   for (const s of scenarios) {
     await pool.query(
-      `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-       VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
       [s.taskId, ids.project, s.taskTitle, "do the thing", ids.flow],
     );
     await pool.query(
@@ -3717,8 +3717,8 @@ async function seedM27Fixture(
   });
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M27_SLUG,
@@ -3753,8 +3753,8 @@ async function seedM27Fixture(
     [ids.member, ids.project, userId],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, 'E2E M27 lifecycle', 'exercise lifecycle controls', $3, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), 'E2E M27 lifecycle', 'exercise lifecycle controls', $3, 'InFlight', 'Backlog')`,
     [ids.flowTask, ids.project, ids.flow],
   );
   await pool.query(
@@ -3967,8 +3967,8 @@ async function seedM22Fixture(
   );
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M22_SLUG,
@@ -3998,8 +3998,8 @@ async function seedM22Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-     VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
     [ids.task, ids.project, "E2E workbench", "do the thing", ids.flow],
   );
   await pool.query(
@@ -4176,8 +4176,8 @@ async function seedM23Fixture(
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M23_SLUG]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M23_SLUG,
@@ -4221,10 +4221,10 @@ async function seedM23Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
      VALUES
-       ($1, $2, 'E2E observatory first', 'observe first', $3, 'InFlight', 'InFlight'),
-       ($4, $2, 'E2E observatory second', 'observe second', $3, 'InFlight', 'InFlight')`,
+       ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), 'E2E observatory first', 'observe first', $3, 'InFlight', 'InFlight'),
+       ($4, $2, (SELECT COALESCE(MAX(number), 0) + 2 FROM tasks WHERE project_id = $2), 'E2E observatory second', 'observe second', $3, 'InFlight', 'InFlight')`,
     [ids.firstTask, ids.project, ids.flow, ids.secondTask],
   );
   await pool.query(
@@ -4408,8 +4408,8 @@ async function seedM27FlowEditorFixture(
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M27_EDITOR_SLUG]);
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       M27_EDITOR_SLUG,
@@ -4525,8 +4525,8 @@ async function seedFlowsAuthoringFixture(
   ]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       FLOWS_AUTHORING_SLUG,

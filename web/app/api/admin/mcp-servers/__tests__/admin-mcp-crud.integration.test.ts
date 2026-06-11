@@ -75,7 +75,7 @@ function deleteRequest(): NextRequest {
 async function seedMaterialization(mcpId: string): Promise<string> {
   const projectId = `prj_${randomUUID().slice(0, 8)}`;
 
-  await db.insert(projects).values({
+  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `slug-${randomUUID().slice(0, 8)}`,
     name: "ref project",

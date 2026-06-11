@@ -77,8 +77,8 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
   await withDb(async (pool) => {
     await pool.query(`DELETE FROM projects WHERE slug = $1`, [PROJECT_SLUG]);
     await pool.query(
-      `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+       VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
       [
         ids.project,
         PROJECT_SLUG,
@@ -113,8 +113,8 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
       ],
     );
     await pool.query(
-      `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status, stage)
-       VALUES ($1, $2, $3, $4, $5, 'InFlight', 'Backlog')`,
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
       [
         ids.task,
         ids.project,

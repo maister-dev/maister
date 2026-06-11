@@ -58,7 +58,7 @@ async function seedChain() {
   const workspaceId = newId();
   const hitlId = newId();
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `proj-${projectId.slice(0, 8)}`,
     name: "Test",
@@ -81,7 +81,7 @@ async function seedChain() {
     schemaVersion: 1,
   });
 
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test task",
@@ -133,7 +133,7 @@ async function seedScratchParents() {
     accountStatus: "active",
   });
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `scratch-${projectId.slice(0, 8)}`,
     name: "Scratch Test",
@@ -291,7 +291,7 @@ describe("UNIQUE constraints", () => {
     const id2 = newId();
     const slug = `dup-${id1.slice(0, 8)}`;
 
-    await db.insert(schema.projects).values({
+    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: id1,
       slug,
       name: "p1",
@@ -300,7 +300,7 @@ describe("UNIQUE constraints", () => {
     });
 
     await expect(
-      db.insert(schema.projects).values({
+      db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
         id: id2,
         slug,
         name: "p2",
@@ -324,7 +324,7 @@ describe("UNIQUE constraints", () => {
     const ids = await seedChain();
 
     await expect(
-      db.insert(schema.tasks).values({
+      db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
         id: ids.taskId,
         projectId: ids.projectId,
         title: "x",

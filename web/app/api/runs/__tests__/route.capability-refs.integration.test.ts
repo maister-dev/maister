@@ -143,7 +143,7 @@ async function seedProject(
   manifest: unknown,
   capabilities: CapabilitySeed[] = [],
 ): Promise<void> {
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug: id,
     name: id,
@@ -192,7 +192,7 @@ async function seedProject(
     userId: "u-member",
     role: "member",
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: `task-${id}`,
     projectId: id,
     title: `${id} task`,

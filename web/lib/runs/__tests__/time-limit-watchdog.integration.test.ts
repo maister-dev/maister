@@ -116,7 +116,7 @@ beforeAll(async () => {
   projectId = randomUUID();
   executorId = randomUUID();
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "wd-app",
     name: "Watchdog App",
@@ -176,7 +176,7 @@ async function seedRunningNode(opts: {
     }),
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -249,7 +249,7 @@ async function seedPendingRun(startedAt: Date): Promise<string> {
     manifest: manifestWithLimits({}),
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",

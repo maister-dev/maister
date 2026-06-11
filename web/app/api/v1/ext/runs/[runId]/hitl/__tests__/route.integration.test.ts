@@ -130,7 +130,7 @@ async function seedProject(slug: string) {
   const executorId = randomUUID();
   const revisionId = randomUUID();
 
-  await (db as any).insert(schema.projects).values({
+  await (db as any).insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -209,7 +209,7 @@ async function seedRun(
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(runnerId, "claude"));
 
-  await (db as any).insert(schema.tasks).values({
+  await (db as any).insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test Task",

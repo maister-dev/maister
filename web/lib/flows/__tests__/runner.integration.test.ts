@@ -102,7 +102,7 @@ beforeAll(async () => {
   projectId = randomUUID();
   executorId = randomUUID();
 
-  await db.insert(projects).values({
+  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "demo-app",
     name: "Demo App",
@@ -175,7 +175,7 @@ async function seedRun(args: {
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({
+  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test task",

@@ -23,8 +23,8 @@ test("schedules tab: create via modal, pause/resume, trigger-now outcome", async
 
   await withE2EDb(async (pool) => {
     await pool.query(
-      `INSERT INTO tasks (id, project_id, title, prompt, flow_id, status)
-       VALUES ($1, $2, $3, 'e2e', $4, 'Backlog')`,
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, 'e2e', $4, 'Backlog')`,
       [busyTaskId, fx.projectId, busyTaskTitle, fx.flowId],
     );
     await pool.query(

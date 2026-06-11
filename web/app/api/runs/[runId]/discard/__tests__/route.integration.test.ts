@@ -123,7 +123,7 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({
+  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -210,7 +210,7 @@ beforeAll(async () => {
     accountStatus: "active",
     passwordHash: "x",
   });
-  await db.insert(projects).values({
+  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "discard-app",
     name: "Discard App",

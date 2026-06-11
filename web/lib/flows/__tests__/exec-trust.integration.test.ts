@@ -68,7 +68,7 @@ beforeAll(async () => {
   setupOkRepo = await buildFlowFixture(fixturesDir, "with-setup-ok");
 
   projectId = randomUUID();
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "exec-trust-proj",
     name: "Exec Trust Test",

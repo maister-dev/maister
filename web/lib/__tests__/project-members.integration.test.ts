@@ -61,7 +61,7 @@ beforeEach(async () => {
 async function seedProject(): Promise<string> {
   const id = randomUUID();
 
-  await db.insert(projects).values({
+  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug: `pm-${id.slice(0, 8)}`,
     name: `PM ${id.slice(0, 4)}`,

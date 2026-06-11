@@ -121,7 +121,7 @@ async function seedWait(): Promise<{
     },
   ]);
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `assign-${projectId.slice(0, 8)}`,
     name: "Assignment Test",
@@ -144,7 +144,7 @@ async function seedWait(): Promise<{
     schemaVersion: 1,
   });
 
-  await db.insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Review task",

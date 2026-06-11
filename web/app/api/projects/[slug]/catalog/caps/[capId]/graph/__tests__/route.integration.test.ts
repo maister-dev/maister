@@ -86,14 +86,14 @@ beforeAll(async () => {
 
   // Seed two projects.
   await db.insert(schema.projects).values([
-    {
+    { taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: PROJECT_A_ID,
       slug: PROJECT_A_SLUG,
       name: PROJECT_A_SLUG,
       repoPath: `/tmp/${PROJECT_A_SLUG}`,
       maisterYamlPath: `/tmp/${PROJECT_A_SLUG}/maister.yaml`,
     },
-    {
+    { taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: PROJECT_B_ID,
       slug: PROJECT_B_SLUG,
       name: PROJECT_B_SLUG,

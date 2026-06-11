@@ -87,7 +87,7 @@ beforeAll(async () => {
 
   setupOkRepo = await buildFlowFixture(fixturesDir, "with-setup-ok");
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: PROJECT_ID,
     slug: PROJECT_SLUG,
     name: PROJECT_SLUG,

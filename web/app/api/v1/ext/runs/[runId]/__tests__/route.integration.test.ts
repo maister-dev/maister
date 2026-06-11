@@ -64,7 +64,7 @@ async function seedProject(slug: string) {
   const flowId = randomUUID();
   const executorId = randomUUID();
 
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -126,7 +126,7 @@ async function seedRun(
 async function seedTask(projectId: string, flowId: string) {
   const taskId = randomUUID();
 
-  await db.insert(schema.tasks as any).values({
+  await db.insert(schema.tasks as any).values({ number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test Task",

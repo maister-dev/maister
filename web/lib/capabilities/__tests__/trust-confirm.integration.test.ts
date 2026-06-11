@@ -110,7 +110,7 @@ beforeAll(async () => {
   repoNone = await buildFixture(fixturesDir, "cap-none", "none");
 
   projectId = randomUUID();
-  await db.insert(schema.projects).values({
+  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "cap-trust-proj",
     name: "Cap Trust",
