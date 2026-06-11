@@ -49,6 +49,7 @@ import {
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -358,7 +359,12 @@ export async function runFlow(
         .update(runs)
         .set({ status: "Crashed", endedAt: new Date(), currentStepId: null })
         .where(eq(runs.id, runId))
-        .returning({ projectId: runs.projectId });
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
 
       if (rows.length > 0) {
         await emitWebhookEvent({
@@ -367,6 +373,21 @@ export async function runFlow(
           projectId: rows[0].projectId,
           runId,
           data: { errorCode: "CONFIG" },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.crashed",
+          projectId: rows[0].projectId,
+          runId,
+          taskId: rows[0].taskId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId,
+            taskId: rows[0].taskId,
+            flowId: rows[0].flowId,
+            runKind: rows[0].runKind,
+            reason: "CONFIG",
+          },
         });
       }
     });
@@ -899,7 +920,12 @@ export async function runFlow(
         .update(runs)
         .set({ status: "Crashed", endedAt, currentStepId: null })
         .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-        .returning({ projectId: runs.projectId });
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
 
       if (rows.length > 0) {
         await emitWebhookEvent({
@@ -908,6 +934,21 @@ export async function runFlow(
           projectId: rows[0].projectId,
           runId,
           data: { errorCode: runErrorCode },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.crashed",
+          projectId: rows[0].projectId,
+          runId,
+          taskId: rows[0].taskId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId,
+            taskId: rows[0].taskId,
+            flowId: rows[0].flowId,
+            runKind: rows[0].runKind,
+            reason: runErrorCode ?? null,
+          },
         });
       }
     });
@@ -923,7 +964,12 @@ export async function runFlow(
         .update(runs)
         .set({ status: "Failed", endedAt, currentStepId: null })
         .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-        .returning({ projectId: runs.projectId });
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
 
       if (rows.length > 0) {
         await emitWebhookEvent({
@@ -932,6 +978,21 @@ export async function runFlow(
           projectId: rows[0].projectId,
           runId,
           data: { errorCode: runErrorCode },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.failed",
+          projectId: rows[0].projectId,
+          runId,
+          taskId: rows[0].taskId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId,
+            taskId: rows[0].taskId,
+            flowId: rows[0].flowId,
+            runKind: rows[0].runKind,
+            reason: runErrorCode ?? null,
+          },
         });
       }
     });

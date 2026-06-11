@@ -7,6 +7,7 @@ import { nextKeepaliveAt } from "./keepalive-config";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -211,7 +212,13 @@ export async function failResumedRun(
           inArray(runs.status, ["NeedsInputIdle", "NeedsInput"]),
         ),
       )
-      .returning({ id: runs.id, projectId: runs.projectId });
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+      });
 
     if (rows.length === 0) return false;
 
@@ -221,6 +228,22 @@ export async function failResumedRun(
       projectId: rows[0].projectId,
       runId,
       data: { errorCode: reason ?? null },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.failed",
+      projectId: rows[0].projectId,
+      runId,
+      taskId: rows[0].taskId,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: rows[0].taskId,
+        flowId: rows[0].flowId,
+        runKind: rows[0].runKind,
+        reason,
+      },
     });
 
     return true;
@@ -426,7 +449,13 @@ export async function markAbandoned(
           inArray(runs.status, [...ABANDONABLE_STATUSES]),
         ),
       )
-      .returning({ id: runs.id, projectId: runs.projectId });
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+      });
 
     if (rows.length === 0) return false;
 
@@ -453,6 +482,22 @@ export async function markAbandoned(
       projectId: rows[0].projectId,
       runId,
       data: { source: "user" },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.abandoned",
+      projectId: rows[0].projectId,
+      runId,
+      taskId: rows[0].taskId,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: rows[0].taskId,
+        flowId: rows[0].flowId,
+        runKind: rows[0].runKind,
+        reason: "user",
+      },
     });
 
     return true;
@@ -488,7 +533,13 @@ export async function crashResumedRun(
       .update(runs)
       .set({ status: "Crashed", endedAt: new Date() })
       .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
-      .returning({ id: runs.id, projectId: runs.projectId });
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+      });
 
     if (rows.length === 0) return false;
 
@@ -498,6 +549,22 @@ export async function crashResumedRun(
       projectId: rows[0].projectId,
       runId,
       data: { errorCode: reason ?? null },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.crashed",
+      projectId: rows[0].projectId,
+      runId,
+      taskId: rows[0].taskId,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: rows[0].taskId,
+        flowId: rows[0].flowId,
+        runKind: rows[0].runKind,
+        reason,
+      },
     });
 
     return true;
@@ -562,7 +629,13 @@ export async function crashRunningRun(
         resumeStartedAt: null,
       })
       .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
-      .returning({ id: runs.id, projectId: runs.projectId });
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+      });
 
     if (rows.length === 0) return false;
 
@@ -572,6 +645,22 @@ export async function crashRunningRun(
       projectId: rows[0].projectId,
       runId,
       data: { errorCode: reason ?? null },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.crashed",
+      projectId: rows[0].projectId,
+      runId,
+      taskId: rows[0].taskId,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: rows[0].taskId,
+        flowId: rows[0].flowId,
+        runKind: rows[0].runKind,
+        reason,
+      },
     });
 
     return true;

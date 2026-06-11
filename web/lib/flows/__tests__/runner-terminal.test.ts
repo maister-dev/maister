@@ -15,6 +15,7 @@ import {
   runs as runsTable,
   stepRuns as stepRunsTable,
   tasks as tasksTable,
+  domainEvents as domainEventsTable,
   webhookEvents as webhookEventsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
@@ -56,6 +57,7 @@ type TableRows = {
   actor_identities: Row[];
   artifact_instances: Row[];
   webhook_events: Row[];
+  domain_events: Row[];
 };
 
 function tableNameOf(t: unknown): keyof TableRows {
@@ -71,6 +73,7 @@ function tableNameOf(t: unknown): keyof TableRows {
   if (t === actorIdentitiesTable) return "actor_identities";
   if (t === artifactInstancesTable) return "artifact_instances";
   if (t === webhookEventsTable) return "webhook_events";
+  if (t === domainEventsTable) return "domain_events";
   throw new Error("unknown table");
 }
 
@@ -263,6 +266,8 @@ describe("runFlow terminal-status precedence", () => {
       actor_identities: [],
       artifact_instances: [],
       webhook_events: [],
+    domain_events: [],
+      domain_events: [],
     };
     const { client, updates } = makeFakeDb(fixture);
 

@@ -204,7 +204,7 @@ cheap). (All Implemented.)
 | `run.done` | `→ Done` | `runs/promote.ts` (same three paths), `flows/runner.ts` (scratch Done) |
 | `run.failed` | `→ Failed` | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `runs/keepalive-sweeper.ts` (watchdog), `services/hitl.ts` |
 | `run.crashed` | `→ Crashed` (reconcile / GC / runner crash paths) | `runs/state-transitions.ts`, `flows/runner.ts`, `flows/graph/runner-graph.ts`, `flows/runner-agent.ts`, `scratch-runs/events.ts`, `scratch-runs/service.ts`, `services/hitl.ts` |
-| `run.abandoned` | `→ Abandoned` (user and workbench drop) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`) |
+| `run.abandoned` | `→ Abandoned` (user, workbench drop, and idle-TTL sweep) | `runs/state-transitions.ts` (`markAbandoned`), `workbench-lifecycle/service.ts` (`dropWorkbench`), `runs/keepalive-sweeper.ts` (TTL pass, `source: "ttl"` — ADR-085 gap closure) |
 | `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
 | `ping` | synthetic test ping — NOT persisted, NOT fanned out | `webhooks/ping.ts` |
 
@@ -229,10 +229,10 @@ Each is additive later (one emit site + one row); none is a wire contract today.
   `gate_results` insert.
 - **`node_attempts` lifecycle** — internal ledger granularity below the curated
   taxonomy.
-- **TTL-driven `NeedsInputIdle → Abandoned`** (24h idle sweep,
-  `keepalive-sweeper`) — a system-timer abandon falls outside the
-  `run.abandoned` `source` enum (`user | workbench`); additive later via a
-  `source` enum extension.
+- ~~**TTL-driven `NeedsInputIdle → Abandoned`**~~ — **superseded (ADR-085,
+  Implemented):** the keepalive sweeper's TTL pass now emits `run.abandoned`
+  with `source: "ttl"` inside the same transaction as the flip (the predicted
+  `source` enum extension).
 - **Direct recover `Crashed → Running`** (slot-free recover, `recover.ts`) —
   not a `Pending → Running` start, so no `run.started`. A recover that instead
   re-queues to `Pending` still emits `run.started { trigger: "queue_promote" }`
@@ -278,7 +278,7 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 | `run.done` | `{}` |
 | `run.failed` | `{ errorCode: string \| null }` |
 | `run.crashed` | `{ errorCode: string \| null }` |
-| `run.abandoned` | `{ source: "user" \| "workbench" }` |
+| `run.abandoned` | `{ source: "user" \| "workbench" \| "ttl" }` |
 | `gate.decided` | `{ gateId: string, kind: "command_check" \| "skill_check" \| "ai_judgment" \| "artifact_required" \| "external_check" \| "human_review", mode: "blocking" \| "advisory", status: "passed" \| "failed" \| "overridden", nodeAttemptId: string \| null }` |
 | `ping` | `{ message: string }` |
 

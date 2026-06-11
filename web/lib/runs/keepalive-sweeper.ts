@@ -9,6 +9,7 @@ import { markCheckpointed } from "./state-transitions";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError } from "@/lib/errors";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -257,7 +258,9 @@ async function runPass1(db: Db): Promise<number> {
   return idled;
 }
 
-async function runPass2(db: Db): Promise<number> {
+// Exported for the ADR-085 emit-terminal integration test — the public sweep
+// entry stays runSweepTick.
+export async function runPass2(db: Db): Promise<number> {
   const ttlHours = needsInputIdleTtlHours();
   const candidates = await fetchPass2Candidates(db, ttlHours);
 
@@ -266,13 +269,68 @@ async function runPass2(db: Db): Promise<number> {
   let abandoned = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
-    const updated = await db
-      .update(runs)
-      .set({ status: "Abandoned", endedAt: new Date() })
-      .where(and(eq(runs.id, row.id), eq(runs.status, "NeedsInputIdle")))
-      .returning({ id: runs.id });
+    // ADR-085: the status flip, the hitl close-out, and BOTH outbox emits
+    // (webhook + domain) commit in ONE transaction — previously two bare
+    // updates with no emit (the TTL run.abandoned webhook gap, now closed
+    // with data.source = "ttl").
+    const flipped: boolean = await db.transaction(async (tx: Db) => {
+      const updated = await tx
+        .update(runs)
+        .set({ status: "Abandoned", endedAt: new Date() })
+        .where(and(eq(runs.id, row.id), eq(runs.status, "NeedsInputIdle")))
+        .returning({
+          id: runs.id,
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
 
-    if (updated.length === 0) {
+      if (updated.length === 0) return false;
+
+      // M8 T12: mark any open hitl_requests row for this run with
+      // respondedAt=now() so the operator UI shows the request as closed.
+      // Audit metadata (abandonedReason) lives in the run-level audit
+      // surface (M9+ inbox); a hitl_requests-level audit column would
+      // require a migration and is intentionally deferred.
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: new Date() })
+        .where(
+          and(
+            eq(hitlRequests.runId, row.id),
+            isNull(hitlRequests.respondedAt),
+          ),
+        );
+
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.abandoned",
+        projectId: updated[0].projectId,
+        runId: row.id,
+        data: { source: "ttl" },
+      });
+
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.abandoned",
+        projectId: updated[0].projectId,
+        runId: row.id,
+        taskId: updated[0].taskId,
+        actor: { type: "system", id: null },
+        payload: {
+          runId: row.id,
+          taskId: updated[0].taskId,
+          flowId: updated[0].flowId,
+          runKind: updated[0].runKind,
+          reason: "ttl",
+        },
+      });
+
+      return true;
+    });
+
+    if (!flipped) {
       log.debug(
         { runId: row.id },
         "sweeper pass2 status-guard mismatch — concurrent transition won",
@@ -286,18 +344,6 @@ async function runPass2(db: Db): Promise<number> {
       { runId: row.id, ttlHours },
       "sweeper pass2 NeedsInputIdle → Abandoned (TTL exceeded)",
     );
-
-    // M8 T12: mark any open hitl_requests row for this run with
-    // respondedAt=now() so the operator UI shows the request as closed.
-    // Audit metadata (abandonedReason) lives in the run-level audit
-    // surface (M9+ inbox); a hitl_requests-level audit column would
-    // require a migration and is intentionally deferred.
-    await db
-      .update(hitlRequests)
-      .set({ respondedAt: new Date() })
-      .where(
-        and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
-      );
   });
 
   return abandoned;
@@ -508,7 +554,13 @@ async function runTimeLimitPass(db: Db): Promise<number> {
             eq(runs.currentStepId, row.currentStepId),
           ),
         )
-        .returning({ id: runs.id, projectId: runs.projectId });
+        .returning({
+          id: runs.id,
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
 
       if (upd.length === 0) return false;
 
@@ -525,6 +577,22 @@ async function runTimeLimitPass(db: Db): Promise<number> {
         projectId: upd[0].projectId,
         runId: row.id,
         data: { errorCode: "PRECONDITION" },
+      });
+
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.failed",
+        projectId: upd[0].projectId,
+        runId: row.id,
+        taskId: upd[0].taskId,
+        actor: { type: "system", id: null },
+        payload: {
+          runId: row.id,
+          taskId: upd[0].taskId,
+          flowId: upd[0].flowId,
+          runKind: upd[0].runKind,
+          reason: "PRECONDITION",
+        },
       });
 
       return true;

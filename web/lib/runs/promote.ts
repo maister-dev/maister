@@ -17,6 +17,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
@@ -491,6 +492,20 @@ async function promoteFlowRun(
       runId,
       data: {},
     });
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.done",
+      projectId: claim.run.projectId,
+      runId,
+      taskId: claim.run.taskId ?? null,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: claim.run.taskId ?? null,
+        flowId: claim.run.flowId ?? null,
+        runKind: claim.run.runKind,
+      },
+    });
 
     log.info(
       {
@@ -684,6 +699,20 @@ async function finalizePullRequest(args: {
       projectId: claim.run.projectId,
       runId,
       data: {},
+    });
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.done",
+      projectId: claim.run.projectId,
+      runId,
+      taskId: claim.run.taskId ?? null,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: claim.run.taskId ?? null,
+        flowId: claim.run.flowId ?? null,
+        runKind: claim.run.runKind,
+      },
     });
 
     log.info(
@@ -994,6 +1023,20 @@ async function promoteScratchRun(
       projectId: claim.run.projectId,
       runId,
       data: {},
+    });
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.done",
+      projectId: claim.run.projectId,
+      runId,
+      taskId: claim.run.taskId ?? null,
+      actor: { type: "system", id: null },
+      payload: {
+        runId,
+        taskId: claim.run.taskId ?? null,
+        flowId: claim.run.flowId ?? null,
+        runKind: claim.run.runKind,
+      },
     });
 
     return {

@@ -24,6 +24,7 @@ import {
   listSessions,
   type SupervisorSessionRecord,
 } from "@/lib/supervisor-client";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   branchNameSchema,
@@ -1262,7 +1263,13 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           endedAt: args.removedAt,
         })
         .where(eq(runs.id, args.runId))
-        .returning({ id: runs.id, projectId: runs.projectId });
+        .returning({
+          id: runs.id,
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
 
       if (updatedRunRows.length === 0) {
         throw new MaisterError(
@@ -1297,6 +1304,21 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           projectId: updatedRunRows[0].projectId,
           runId: args.runId,
           data: { source: "workbench" },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.abandoned",
+          projectId: updatedRunRows[0].projectId,
+          runId: args.runId,
+          taskId: updatedRunRows[0].taskId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId: args.runId,
+            taskId: updatedRunRows[0].taskId,
+            flowId: updatedRunRows[0].flowId,
+            runKind: updatedRunRows[0].runKind,
+            reason: "workbench",
+          },
         });
       } else if (args.nextRunStatus === "Review") {
         await emitWebhookEvent({

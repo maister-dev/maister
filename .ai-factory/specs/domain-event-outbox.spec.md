@@ -68,7 +68,7 @@ MUST honor `min(cursor_event_id)` across registered consumers.
 | `run.failed` | state-transitions, runners, watchdog, hitl failure | `{ runId, taskId?, flowId?, runKind, reason? }` |
 | `run.crashed` | state-transitions, runners, scratch, hitl | same as `run.failed` |
 | `run.abandoned` | `markAbandoned`, workbench drop, **`runPass2` TTL (newly wrapped tx)** | same + `reason` carries the source |
-| `gate.failed` | `gate-store` terminal-failed paths ×3 | `{ runId, nodeId?, gateId, gateKind, gateResultId, blocking }` |
+| `gate.failed` | `gate-store` terminal-failed paths ×3 | `{ runId, gateId, gateKind, gateResultId, nodeAttemptId, blocking }` |
 
 Extension rule: one taxonomy entry + emit site(s) in the owning domain
 transaction + one doc row + a CHECK update via migration.

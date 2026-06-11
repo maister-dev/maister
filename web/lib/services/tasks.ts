@@ -7,6 +7,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { subscribe } from "@/lib/social/subscriptions";
@@ -109,6 +110,18 @@ export async function createTask(
       actor,
       eventKind: "task_created",
       payload: {},
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "task.created",
+      projectId: ctx.projectId,
+      taskId,
+      actor,
+      payload: {
+        taskKey: `${allocated[0].taskKey as string}-${allocatedNumber}`,
+        title: input.title,
+      },
     });
 
     if (actor.type === "user") {

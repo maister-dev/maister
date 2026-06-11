@@ -14,6 +14,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -98,6 +99,24 @@ export async function createGateResult(args: {
           nodeAttemptId: args.nodeAttemptId,
         },
       });
+
+      if (status === "failed") {
+        await emitDomainEvent({
+          db: tx,
+          kind: "gate.failed",
+          projectId: await projectIdForRun(tx, args.runId),
+          runId: args.runId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId: args.runId,
+            gateId: args.gateId,
+            gateKind: args.kind,
+            gateResultId: id,
+            nodeAttemptId: args.nodeAttemptId,
+            blocking: args.mode === "blocking",
+          },
+        });
+      }
     });
   } else {
     await db.insert(gateResults).values(row);
@@ -161,6 +180,24 @@ async function transition(
           nodeAttemptId: row.nodeAttemptId,
         },
       });
+
+      if (status === "failed") {
+        await emitDomainEvent({
+          db: tx,
+          kind: "gate.failed",
+          projectId: await projectIdForRun(tx, row.runId),
+          runId: row.runId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId: row.runId,
+            gateId: row.gateId,
+            gateKind: row.kind,
+            gateResultId: id,
+            nodeAttemptId: row.nodeAttemptId,
+            blocking: row.mode === "blocking",
+          },
+        });
+      }
     }
   });
 
@@ -341,37 +378,62 @@ export async function reportExternalGate(
 
     gateResultId = fresh.id;
   } else {
-    const moved = await casLiveTransition(
-      d,
-      live.id,
-      live.status,
-      args.status,
-      {
-        verdict: args.verdict,
-      },
-    );
-
-    if (!moved) {
-      throw new GateNotReportableError(
-        `reportExternalGate: live external_check gate for run ${args.runId} gate ${args.gateId} changed concurrently before report`,
+    // ADR-085: the CAS flip and its outbox emits commit in ONE transaction
+    // (previously the emit rode the bare handle after the CAS — a crash
+    // window). If `d` is already a transaction this nests as a savepoint;
+    // the GateNotReportableError throw inside rolls back nothing but the
+    // savepoint (the CAS matched zero rows anyway).
+    await d.transaction(async (tx: Db) => {
+      const moved = await casLiveTransition(
+        tx,
+        live.id,
+        live.status,
+        args.status,
+        {
+          verdict: args.verdict,
+        },
       );
-    }
 
-    // The in-place flip is terminal (passed|failed) and won the CAS — emit
-    // gate.decided here (the supersede branch above emits via createGateResult,
-    // and its re-stale is non-terminal → no emit, so no double-emit).
-    await emitWebhookEvent({
-      db: d,
-      type: "gate.decided",
-      projectId: await projectIdForRun(d, args.runId),
-      runId: args.runId,
-      data: {
-        gateId: args.gateId,
-        kind: "external_check",
-        mode: live.mode,
-        status: args.status,
-        nodeAttemptId: live.nodeAttemptId,
-      },
+      if (!moved) {
+        throw new GateNotReportableError(
+          `reportExternalGate: live external_check gate for run ${args.runId} gate ${args.gateId} changed concurrently before report`,
+        );
+      }
+
+      // The in-place flip is terminal (passed|failed) and won the CAS — emit
+      // gate.decided here (the supersede branch above emits via createGateResult,
+      // and its re-stale is non-terminal → no emit, so no double-emit).
+      await emitWebhookEvent({
+        db: tx,
+        type: "gate.decided",
+        projectId: await projectIdForRun(tx, args.runId),
+        runId: args.runId,
+        data: {
+          gateId: args.gateId,
+          kind: "external_check",
+          mode: live.mode,
+          status: args.status,
+          nodeAttemptId: live.nodeAttemptId,
+        },
+      });
+
+      if (args.status === "failed") {
+        await emitDomainEvent({
+          db: tx,
+          kind: "gate.failed",
+          projectId: await projectIdForRun(tx, args.runId),
+          runId: args.runId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId: args.runId,
+            gateId: args.gateId,
+            gateKind: "external_check",
+            gateResultId: live.id,
+            nodeAttemptId: live.nodeAttemptId,
+            blocking: live.mode === "blocking",
+          },
+        });
+      }
     });
 
     gateResultId = live.id;

@@ -70,6 +70,7 @@ import {
   runStatusForDialogStatus,
 } from "@/lib/scratch-runs/state";
 import { checkSupervisorHealth, createSession } from "@/lib/supervisor-client";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addWorktree,
@@ -557,6 +558,21 @@ export async function markScratchCrashed(args: {
       projectId: rows[0].projectId,
       runId: args.runId,
       data: { errorCode },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.crashed",
+      projectId: rows[0].projectId,
+      runId: args.runId,
+      actor: { type: "system", id: null },
+      payload: {
+        runId: args.runId,
+        taskId: null,
+        flowId: null,
+        runKind: "scratch",
+        reason: errorCode ?? null,
+      },
     });
   });
 }

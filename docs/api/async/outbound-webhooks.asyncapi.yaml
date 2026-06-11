@@ -535,13 +535,13 @@ components:
 
     DataRunAbandoned:
       type: object
-      description: "`run.abandoned` — run moved to Abandoned."
+      description: "`run.abandoned` — run moved to Abandoned. `ttl` = the keepalive sweeper's NeedsInputIdle TTL pass (ADR-085 gap closure)."
       required: [source]
       additionalProperties: false
       properties:
         source:
           type: string
-          enum: [user, workbench]
+          enum: [user, workbench, ttl]
 
     DataGateDecided:
       type: object

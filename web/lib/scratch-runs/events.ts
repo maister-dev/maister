@@ -26,6 +26,7 @@ import {
   type PromptResult,
   type SupervisorEvent,
 } from "@/lib/supervisor-client";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const { hitlRequests, runs, scratchMessages, scratchRuns } =
@@ -517,6 +518,20 @@ function startScratchEventConsumer(args: {
                     projectId: applied.projectId,
                     runId: args.runId,
                     data: { errorCode: "CRASH" },
+                  });
+                  await emitDomainEvent({
+                    db: tx,
+                    kind: "run.crashed",
+                    projectId: applied.projectId,
+                    runId: args.runId,
+                    actor: { type: "system", id: null },
+                    payload: {
+                      runId: args.runId,
+                      taskId: null,
+                      flowId: null,
+                      runKind: "scratch",
+                      reason: "CRASH",
+                    },
                   });
                 } else if (applied && dialogStatus === "Review") {
                   await emitWebhookEvent({

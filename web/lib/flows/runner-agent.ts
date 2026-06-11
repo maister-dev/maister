@@ -35,6 +35,7 @@ import {
   type SupervisorExecutorInput,
   type SupervisorRunnerInput,
 } from "@/lib/supervisor-client";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -371,7 +372,12 @@ async function handlePermissionRequest(
           .update(runs)
           .set({ status: "Crashed", endedAt: new Date() })
           .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")))
-          .returning({ projectId: runs.projectId });
+          .returning({
+            projectId: runs.projectId,
+            taskId: runs.taskId,
+            flowId: runs.flowId,
+            runKind: runs.runKind,
+          });
 
         if (rows.length > 0) {
           await emitWebhookEvent({
@@ -380,6 +386,21 @@ async function handlePermissionRequest(
             projectId: rows[0].projectId,
             runId: pctx.runId,
             data: { errorCode: "CRASH" },
+          });
+          await emitDomainEvent({
+            db: tx,
+            kind: "run.crashed",
+            projectId: rows[0].projectId,
+            runId: pctx.runId,
+            taskId: rows[0].taskId,
+            actor: { type: "system", id: null },
+            payload: {
+              runId: pctx.runId,
+              taskId: rows[0].taskId,
+              flowId: rows[0].flowId,
+              runKind: rows[0].runKind,
+              reason: "CRASH",
+            },
           });
         }
       });

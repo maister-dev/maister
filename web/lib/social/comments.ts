@@ -7,6 +7,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { recordTaskActivity, type SocialActor } from "@/lib/social/activity";
 import {
@@ -105,6 +106,21 @@ export async function addTaskComment(
       actor: input.actor,
       eventKind: "comment_added",
       payload: { commentId, ...input.activityPayloadExtra },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "task.comment_added",
+      projectId: task.projectId,
+      taskId: task.id,
+      actor: input.actor,
+      payload: {
+        taskKey: `${task.taskKey}-${task.number}`,
+        commentId,
+        ...(mentionedOthers.length > 0
+          ? { mentionedTaskIds: mentionedOthers.map((m) => m.taskId) }
+          : {}),
+      },
     });
 
     if (input.actor.type === "user") {
