@@ -92,7 +92,7 @@ import {
   createHitlAssignmentForRun,
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
-import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
+import { headCommit, resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
   allNodeMcpRefs,
   workspacePolicySchema,
@@ -291,6 +291,13 @@ export async function runReviewHuman(
         ).criticality ?? null)
       : null;
 
+  // M30 (ADR-079): stamp the run-branch tip at THIS review visit — the base
+  // for the `since-last-review` diff scope. Best-effort (non-git fixtures /
+  // detached states leave it NULL and the scope degrades).
+  const reviewTipSha = await headCommit({
+    worktreePath: loaded.workspace.worktreePath,
+  }).catch(() => null);
+
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
     await tx.insert(hitlRequests).values({
       id: hitlRequestId,
@@ -300,6 +307,7 @@ export async function runReviewHuman(
       schema,
       prompt,
       criticality: nodeCriticality,
+      reviewTipSha,
     });
     log.debug(
       { runId: loaded.run.id, nodeId: node.id, criticality: nodeCriticality },

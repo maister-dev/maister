@@ -175,10 +175,10 @@ Parallelism after **B3**: Feature 4b, Feature 2, Feature 1 each consume Feature-
 - [x] B3 — Impl: workspacePolicy engine
 - [x] B4 — Reconcile + GC tolerance
 - [x] B5 — Reviewer pass Feature 4a
-- [ ] B6 — QA: dirty protocol + scope switcher (red)
-- [ ] B7 — Impl: diff scope switcher
-- [ ] B8 — Impl: dirty-state protocol
-- [ ] B9 — Reviewer pass Feature 4b
+- [x] B6 — QA: dirty protocol + scope switcher (red)
+- [x] B7 — Impl: diff scope switcher
+- [x] B8 — Impl: dirty-state protocol
+- [x] B9 — Reviewer pass Feature 4b
 - [ ] B10 — QA: retry_policy (red)
 - [ ] B11 — Impl: retry_policy
 - [ ] B12 — Reviewer pass Feature 2

@@ -1,6 +1,12 @@
 import "server-only";
 
 import { execFile, spawn } from "node:child_process";
+import {
+  copyFile as fsCopyFile,
+  mkdtemp as fsMkdtemp,
+  rm as fsRm,
+} from "node:fs/promises";
+import { tmpdir as osTmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -1052,10 +1058,12 @@ export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
 async function streamGitDiffTruncated(
   repo: string,
   diffArgs: readonly string[],
+  env?: NodeJS.ProcessEnv,
 ): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const child = spawn("git", ["-C", repo, ...diffArgs], {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      env: env ?? process.env,
     });
 
     let bytes = 0;
@@ -1096,6 +1104,121 @@ async function streamGitDiffTruncated(
       );
     });
   });
+}
+
+// M30 (ADR-079, `uncommitted` diff scope): HEAD vs working tree, with
+// untracked files rendered as additions, WITHOUT ever mutating the real
+// index. Mechanism: copy the worktree's real index file to a temp
+// GIT_INDEX_FILE, run `git add -N .` (intent-to-add for untracked; respects
+// .gitignore) against the COPY, then `git diff HEAD` under the copy. A bare
+// `git add -N` against the real index would flip untracked files to
+// intent-to-add and corrupt `git status` for every other consumer.
+export type WorkingTreeDiffResult = DiffResult & {
+  nameStatus: Array<{ path: string; status: string }>;
+};
+
+export async function diffWorkingTree(
+  worktreePath: string,
+): Promise<WorkingTreeDiffResult> {
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  const tmpDir = await fsMkdtemp(path.join(osTmpdir(), "maister-wtdiff-"));
+  const tmpIndex = path.join(tmpDir, "index");
+
+  try {
+    const { stdout: indexPathRaw } = await execFileAsync(
+      "git",
+      ["-C", wt, "rev-parse", "--git-path", "index"],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+    const realIndex = path.isAbsolute(indexPathRaw.trim())
+      ? indexPathRaw.trim()
+      : path.join(wt, indexPathRaw.trim());
+
+    try {
+      await fsCopyFile(realIndex, tmpIndex);
+    } catch {
+      // A repo with no index yet (fresh) — the temp index starts empty.
+    }
+
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+
+    await execFileAsync("git", ["-C", wt, "add", "-N", "."], {
+      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      maxBuffer: EXEC_MAX_BUFFER,
+      env,
+    });
+
+    const diffArgs = ["diff", "--no-color", "--end-of-options", "HEAD"];
+    let text: string;
+    let truncated = false;
+
+    try {
+      const { stdout } = await execFileAsync("git", ["-C", wt, ...diffArgs], {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env,
+      });
+
+      text = stdout;
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+
+      if (
+        e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ||
+        /maxBuffer length exceeded/i.test(e.message ?? "")
+      ) {
+        log.info(
+          { worktreePath: wt, maxBuffer: EXEC_MAX_BUFFER },
+          "diffWorkingTree truncated — diff exceeded EXEC_MAX_BUFFER",
+        );
+        text = await streamGitDiffTruncated(wt, diffArgs, env);
+        truncated = true;
+      } else {
+        throw new MaisterError(
+          "CONFLICT",
+          `git diff HEAD failed: ${asError(err).message}`,
+          { cause: asError(err) },
+        );
+      }
+    }
+
+    const { stdout: nameStatusRaw } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        wt,
+        "diff",
+        "--name-status",
+        "--no-color",
+        "--end-of-options",
+        "HEAD",
+      ],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env,
+      },
+    );
+    const nameStatus = nameStatusRaw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const fields = line.split("\t");
+
+        return {
+          status: (fields[0] ?? "").charAt(0),
+          path: fields[fields.length - 1] ?? "",
+        };
+      });
+
+    return { text, truncated, nameStatus };
+  } finally {
+    await fsRm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 export interface DiffFileEntry {
@@ -1230,6 +1353,38 @@ export async function snapshotDirtyWorktree(
   await runGit(wt, ["commit", "--no-verify", "-m", commitMessage]);
 
   return true;
+}
+
+// M30 (ADR-079, dirty-resolution "Discard"): drop ALL uncommitted work in the
+// worktree — staged + unstaged restored to HEAD, untracked source removed.
+// `git clean -fd`, never `-fdx` (ADR-076 §3: ignored build caches and an
+// ignored .maister/ survive). Hard containment guard: refuses when the
+// runtime artifacts root resolves inside the worktree, since a non-ignored
+// artifacts path could otherwise be reached by the clean. v1 all-or-nothing.
+// Callers re-run bundle materialization afterwards (ADR-076 §4).
+export async function discardWorktree(worktreePath: string): Promise<void> {
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  const runtimeRootPath = path.resolve(
+    process.env.MAISTER_RUNTIME_ROOT ?? process.cwd(),
+  );
+  const rel = path.relative(wt, runtimeRootPath);
+  const inside = rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+
+  if (inside) {
+    log.error(
+      { worktreePath: wt, runtimeRoot: runtimeRootPath },
+      "[dirty] discard refused — runtime artifacts root resolves inside the worktree",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      `MAISTER_RUNTIME_ROOT resolves inside the worktree (${runtimeRootPath} within ${wt}) — discard refused`,
+    );
+  }
+
+  await runGit(wt, ["restore", "--staged", "--worktree", "."]);
+  await runGit(wt, ["clean", "-fd"]);
+
+  log.info({ worktreePath: wt }, "[dirty] worktree discarded to HEAD");
 }
 
 export type ResolveBaseRefArgs = {

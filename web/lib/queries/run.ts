@@ -77,6 +77,10 @@ export interface RunPendingHitl {
   options: HitlOption[];
   schema: unknown;
   criticality: "low" | "medium" | "high" | "critical" | null;
+  // M30 (ADR-079): the reviewer's recorded dirty-worktree resolution for this
+  // visit (null until chosen). Drives the persistent dirty badge after
+  // "proceed" and hides the banner actions once a choice is recorded.
+  dirtyResolution: "commit" | "discard" | "proceed" | null;
 }
 
 export interface RunDetail {
@@ -242,6 +246,7 @@ export const getRunDetail = cache(async function getRunDetail(
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
       criticality: hitlRequests.criticality,
+      dirtyResolution: hitlRequests.dirtyResolution,
     })
     .from(hitlRequests)
     .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
@@ -323,6 +328,7 @@ export const getRunDetail = cache(async function getRunDetail(
           // renders only `options`, so nulling `schema` loses nothing.
           schema: pending.kind === "permission" ? null : pending.rawSchema,
           criticality: pending.criticality ?? null,
+          dirtyResolution: pending.dirtyResolution ?? null,
         }
       : null,
   };

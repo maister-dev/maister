@@ -905,7 +905,15 @@
         "authored": "Authored",
         "git": "Git"
       }
-    }
+    },
+    "dirtyTitle": "Uncommitted changes in the worktree",
+    "dirtySummary": "{staged} staged · {unstaged} unstaged · {untracked} untracked",
+    "dirtyCommit": "Commit as snapshot",
+    "dirtyDiscard": "Discard",
+    "dirtyDiscardConfirm": "Really discard all uncommitted work?",
+    "dirtyProceed": "Proceed as-is",
+    "dirtyProceedBadge": "Reviewing committed state — the worktree still has uncommitted changes",
+    "dirtyError": "Action failed"
   },
   "evidence": {
     "title": "Evidence graph",
@@ -1018,6 +1026,13 @@
         "sideOld": "old",
         "sideNew": "new",
         "error": "Review action failed"
+      },
+      "scope": {
+        "label": "Diff scope",
+        "run": "Run",
+        "sinceLastReview": "Since last review",
+        "lastNode": "Last node",
+        "uncommitted": "Uncommitted"
       }
     },
     "tab": {

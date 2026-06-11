@@ -44,6 +44,7 @@ import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-acti
 import RunDiff, {
   type RunDiffLabels,
   type RunDiffReviewContext,
+  type RunDiffScopeLabels,
 } from "@/components/workbench/run-diff";
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
@@ -70,7 +71,17 @@ import {
   getRunSettings,
   getRunTimeline,
 } from "@/lib/queries/run";
-import { diffRange, resolveBaseCommit, resolveBaseRef } from "@/lib/worktree";
+import {
+  diffRange,
+  resolveBaseCommit,
+  resolveBaseRef,
+  statusPorcelain,
+} from "@/lib/worktree";
+import {
+  computeDirtySummary,
+  type DirtySummary,
+} from "@/lib/runs/dirty-resolution";
+import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner";
 
 type LayoutProps = {
   children: ReactNode;
@@ -420,6 +431,28 @@ export default async function RunDetailLayout({
     flowGraphData !== null && isHumanReviewGate(detail.pendingHitl);
   let reviewGateCounts: ReviewThreadCounts | null = null;
   let gateDiffReview: RunDiffReviewContext | undefined;
+  let gateDiffScopeLabels: RunDiffScopeLabels | undefined;
+
+  // M30 (ADR-079): pre-review dirty detection — no auto-commit, the gate is
+  // never blocked. Best-effort: a gone/non-git worktree simply hides the
+  // banner.
+  let dirtySummary: DirtySummary | null = null;
+
+  if (
+    hasReviewGate &&
+    (detail.status === "NeedsInput" || detail.status === "NeedsInputIdle")
+  ) {
+    try {
+      const porcelain = await statusPorcelain({
+        worktreePath: detail.worktreePath,
+      });
+      const summary = computeDirtySummary(porcelain);
+
+      dirtySummary = summary.total > 0 ? summary : null;
+    } catch {
+      dirtySummary = null;
+    }
+  }
 
   if (hasReviewGate) {
     reviewGateCounts = await getReviewGateThreadCounts(
@@ -428,6 +461,15 @@ export default async function RunDetailLayout({
     );
 
     const tWorkbench = await getTranslations("workbench");
+
+    // M30 (ADR-079): the gate diff gets the 4-mode scope toggle.
+    gateDiffScopeLabels = {
+      label: tWorkbench("diff.scope.label"),
+      run: tWorkbench("diff.scope.run"),
+      sinceLastReview: tWorkbench("diff.scope.sinceLastReview"),
+      lastNode: tWorkbench("diff.scope.lastNode"),
+      uncommitted: tWorkbench("diff.scope.uncommitted"),
+    };
 
     gateDiffReview = {
       currentUserId: user.id,
@@ -673,6 +715,39 @@ export default async function RunDetailLayout({
                   status={detail.pendingHitl.assignmentStatus}
                 />
               </div>
+              {detail.pendingHitl &&
+              hasReviewGate &&
+              (dirtySummary || detail.pendingHitl.dirtyResolution) ? (
+                <DirtyResolutionBanner
+                  canAct={canAct}
+                  dirty={
+                    dirtySummary ?? {
+                      files: [],
+                      staged: 0,
+                      unstaged: 0,
+                      untracked: 0,
+                      total: 0,
+                    }
+                  }
+                  dirtyResolution={detail.pendingHitl.dirtyResolution}
+                  hitlRequestId={detail.pendingHitl.hitlRequestId}
+                  labels={{
+                    title: t("dirtyTitle"),
+                    summary: t("dirtySummary", {
+                      staged: dirtySummary?.staged ?? 0,
+                      unstaged: dirtySummary?.unstaged ?? 0,
+                      untracked: dirtySummary?.untracked ?? 0,
+                    }),
+                    commit: t("dirtyCommit"),
+                    discard: t("dirtyDiscard"),
+                    discardConfirm: t("dirtyDiscardConfirm"),
+                    proceed: t("dirtyProceed"),
+                    recordedBadge: t("dirtyProceedBadge"),
+                    error: t("dirtyError"),
+                  }}
+                  runId={detail.runId}
+                />
+              ) : null}
               {flowGraphData && hasReviewGate ? (
                 <div
                   className="mb-4 max-h-[480px] overflow-auto rounded-[10px] border border-amber-line bg-paper"
@@ -682,6 +757,7 @@ export default async function RunDetailLayout({
                     labels={flowGraphData.diffLabels}
                     review={gateDiffReview}
                     runId={detail.runId}
+                    scopeSwitcher={gateDiffScopeLabels}
                   />
                 </div>
               ) : null}

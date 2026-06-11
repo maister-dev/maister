@@ -47,12 +47,38 @@ export interface RunDiffReviewContext {
   labels: RunDiffReviewLabels;
 }
 
+// M30 (ADR-079): the 4-mode diff scope switcher. Optional — surfaces that
+// pass labels get the toggle; everything else keeps the default `run` scope
+// and an unchanged request shape.
+export const DIFF_SCOPES = [
+  "run",
+  "since-last-review",
+  "last-node",
+  "uncommitted",
+] as const;
+
+export type DiffScope = (typeof DIFF_SCOPES)[number];
+
+export type DiffScopeAvailability = Partial<
+  Record<DiffScope, { available: boolean; reason?: string }>
+>;
+
+export interface RunDiffScopeLabels {
+  label: string;
+  run: string;
+  sinceLastReview: string;
+  lastNode: string;
+  uncommitted: string;
+}
+
 export interface RunDiffProps {
   runId: string;
   labels: RunDiffLabels;
   // Absent → no review mode, no thread fetching — behavior identical to the
   // pre-review component.
   review?: RunDiffReviewContext;
+  // Absent → no scope toggle (default `run` scope only).
+  scopeSwitcher?: RunDiffScopeLabels;
 }
 
 type DiffState =
@@ -285,9 +311,12 @@ export default function RunDiff({
   runId,
   labels,
   review,
+  scopeSwitcher,
 }: RunDiffProps): ReactElement {
   const router = useRouter();
   const [state, setState] = useState<DiffState>({ kind: "loading" });
+  const [scope, setScope] = useState<DiffScope>("run");
+  const [scopes, setScopes] = useState<DiffScopeAvailability | null>(null);
   const [threads, setThreads] = useState<ReviewThread[] | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
@@ -297,8 +326,9 @@ export default function RunDiff({
     let cancelled = false;
 
     async function load(): Promise<void> {
+      setState({ kind: "loading" });
       try {
-        const res = await fetch(`/api/runs/${runId}/diff`);
+        const res = await fetch(`/api/runs/${runId}/diff?scope=${scope}`);
 
         if (!res.ok) {
           if (!cancelled) setState({ kind: "error" });
@@ -309,9 +339,11 @@ export default function RunDiff({
           files?: RunDiffFile[];
           perFile?: PreparedFile[];
           truncated?: boolean;
+          scopes?: DiffScopeAvailability;
         };
 
         if (!cancelled) {
+          setScopes(body.scopes ?? null);
           setState({
             kind: "ready",
             files: body.files ?? [],
@@ -329,7 +361,7 @@ export default function RunDiff({
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, scope]);
 
   // Sibling effect → the threads GET runs in parallel with the diff GET and
   // never blocks the diff render; review mode appears when threads land.
@@ -395,10 +427,52 @@ export default function RunDiff({
     );
   }
 
+  const scopeLabel = (s: DiffScope): string =>
+    s === "run"
+      ? (scopeSwitcher?.run ?? s)
+      : s === "since-last-review"
+        ? (scopeSwitcher?.sinceLastReview ?? s)
+        : s === "last-node"
+          ? (scopeSwitcher?.lastNode ?? s)
+          : (scopeSwitcher?.uncommitted ?? s);
+
   return (
     <div data-testid="run-diff">
       {review ? (
         <ReviewActionAlert label={review.labels.error} message={reviewError} />
+      ) : null}
+      {scopeSwitcher ? (
+        <div
+          aria-label={scopeSwitcher.label}
+          className="mb-2 flex flex-wrap gap-1 px-2 pt-1"
+          data-testid="diff-scope-switcher"
+          role="group"
+        >
+          {DIFF_SCOPES.map((s) => {
+            const availability = scopes?.[s];
+            const disabled =
+              availability !== undefined && availability.available === false;
+
+            return (
+              <button
+                key={s}
+                aria-pressed={scope === s}
+                className={`rounded-md border px-2 py-1 font-mono text-[10px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
+                  scope === s
+                    ? "border-ink bg-ink text-paper"
+                    : "border-line bg-ivory text-ink-2"
+                }`}
+                data-testid={`diff-scope-${s}`}
+                disabled={disabled}
+                title={disabled ? availability?.reason : undefined}
+                type="button"
+                onClick={() => setScope(s)}
+              >
+                {scopeLabel(s)}
+              </button>
+            );
+          })}
+        </div>
       ) : null}
       <p className="mb-2 px-2 py-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
         {labels.changedFiles}
