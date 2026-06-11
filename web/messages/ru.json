@@ -375,7 +375,16 @@
     "inboxEmpty": "Нет ожидающих задач",
     "inboxAriaLabel": "Межпроектный инбокс HITL",
     "inboxCountAriaLabel": "{count} ожидают",
-    "pendingChip": "Ждут вас · {count}"
+    "pendingChip": "Ждут вас · {count}",
+    "notifTitle": "Входящие",
+    "notifAriaLabel": "Непрочитанные уведомления по задачам",
+    "notifReadAll": "Прочитать все",
+    "notifReadAllBusy": "Отмечаем…",
+    "notifEmpty": "Непрочитанных уведомлений нет.",
+    "notifKind": {
+      "commentAdded": "комментарий",
+      "taskMentioned": "упоминание"
+    }
   },
   "observatory": {
     "eyebrow": "Метрики только для чтения",
@@ -602,7 +611,9 @@
     "concurrency": "Лимит параллелизма",
     "concurrencyDesc": "макс. одновременно работающих воркспейсов",
     "branchPrefix": "Префикс ветки",
-    "branchPrefixDesc": "применяется к каждой ветке worktree"
+    "branchPrefixDesc": "применяется к каждой ветке worktree",
+    "launchBlocked": "Заблокирована:",
+    "launchBlockedShort": "заблокирована"
   },
   "hitl": {
     "allowRun": "разрешить на этот запуск",
@@ -636,7 +647,10 @@
     "warnNotGit": "Проект зарегистрирован, но у репозитория нет remote — продвижение через pull request недоступно, пока он не добавлен.",
     "warnInitialized": "Проект зарегистрирован, создан новый git-репозиторий — сделайте первый коммит перед запуском.",
     "goToProject": "Открыть проект →",
-    "registerAnother": "Зарегистрировать ещё"
+    "registerAnother": "Зарегистрировать ещё",
+    "taskKeyLabel": "Ключ задач (необязательно)",
+    "taskKeyPlaceholder": "MAI — выводится из имени проекта, если пусто",
+    "taskKeyFormatHint": "2–10 символов: A–Z и цифры, первая — буква."
   },
   "settings": {
     "title": "Настройки",
@@ -1732,5 +1746,88 @@
     "globalToggleHint": "Главный аварийный выключатель для всей исходящей доставки вебхуков на этом хосте.",
     "globalOn": "Включено",
     "globalOff": "Отключено"
+  },
+  "taskDetail": {
+    "status": {
+      "Backlog": "Бэклог",
+      "InFlight": "В работе",
+      "Done": "Готово",
+      "Abandoned": "Отменена"
+    },
+    "follow": "Подписаться",
+    "unfollow": "Отписаться",
+    "followBusy": "…",
+    "relationsTitle": "Связи",
+    "relationsEmpty": "Связей пока нет.",
+    "relationsAdd": "Добавить",
+    "relationsAdding": "Добавление…",
+    "relationsNumberPlaceholder": "№ задачи",
+    "relationsRemove": "Удалить связь с",
+    "relationKind": {
+      "blocks": "блокирует",
+      "dependsOn": "зависит от",
+      "parentOf": "родитель"
+    },
+    "relationKindInverse": {
+      "blocks": "заблокирована",
+      "dependsOn": "нужна для",
+      "parentOf": "входит в"
+    },
+    "relationsErrorConfig": "Недопустимая связь (связь задачи с самой собой запрещена).",
+    "relationsErrorNotFound": "В проекте нет задачи с таким номером.",
+    "timelineTitle": "Лента",
+    "timelineEmpty": "Комментариев и событий пока нет.",
+    "formerUser": "бывший пользователь",
+    "systemActor": "система",
+    "event": {
+      "taskCreated": "создал(а) задачу",
+      "taskMentioned": "упомянул(а) задачу в комментарии к {ref}",
+      "relationAdded": "добавил(а) связь с {ref}",
+      "relationRemoved": "удалил(а) связь с {ref}",
+      "runLaunched": "запустил(а) попытку {attempt}"
+    },
+    "composerPlaceholder": "Напишите комментарий… ссылки KEY-N станут кликабельными.",
+    "composerSubmit": "Комментировать",
+    "composerSubmitting": "Отправка…",
+    "composerHint": "Поддерживается Markdown. Упоминайте задачи как KEY-N.",
+    "composerErrorConfig": "Комментарий должен быть от 1 до 10000 символов.",
+    "errorForbidden": "Нужны права участника проекта.",
+    "errorGeneric": "Не получилось. Попробуйте ещё раз.",
+    "runsTitle": "История запусков",
+    "runsEmpty": "Запусков пока нет.",
+    "runsAttempt": "Попытка",
+    "runsStatus": "Статус",
+    "runsStarted": "Начат",
+    "runsEnded": "Завершён",
+    "runsLinks": "Запуск",
+    "runsOpen": "Открыть",
+    "latestRunTitle": "Последний запуск"
+  },
+  "projectLog": {
+    "title": "Журнал задач",
+    "empty": "Событий по задачам пока нет.",
+    "colWhen": "Когда",
+    "colTask": "Задача",
+    "colEvent": "Событие",
+    "colActor": "Актор",
+    "colDetails": "Детали",
+    "filterActor": "Актор",
+    "filterEvent": "Событие",
+    "filterTask": "Задача",
+    "filterAny": "любой",
+    "apply": "Применить",
+    "pagePrev": "← назад",
+    "pageNext": "вперёд →",
+    "pageInfo": "стр. {page} / {pages}",
+    "formerUser": "бывший пользователь",
+    "system": "система",
+    "kind": {
+      "taskCreated": "задача создана",
+      "commentAdded": "комментарий",
+      "taskMentioned": "упоминание",
+      "relationAdded": "связь добавлена",
+      "relationRemoved": "связь удалена",
+      "runLaunched": "запуск"
+    }
   }
 }

@@ -12,6 +12,7 @@ import { TaskCard } from "@/components/board/task-card";
 export interface BoardProps {
   data: BoardData;
   projectId: string;
+  slug: string;
   canAct: boolean;
   platformStatus: PlatformStatus;
 }
@@ -63,6 +64,7 @@ const COLUMN_LABEL: Record<BoardColumn, string> = {
 export async function Board({
   data,
   projectId,
+  slug,
   canAct,
   platformStatus,
 }: BoardProps): Promise<ReactElement> {
@@ -154,12 +156,25 @@ export async function Board({
                   className="[[data-layout=swimlanes]_&]:w-[268px] [[data-layout=swimlanes]_&]:flex-none"
                 >
                   <TaskCard
+                    blockedByLabel={t("launchBlocked")}
                     canAct={canAct}
                     card={card}
-                    launchDisabledLabel={t("launchUnavailable")}
-                    launchDisabledReason={launchDisabledReason}
+                    launchDisabledLabel={
+                      card.blockedBy.length > 0 && !launchDisabledReason
+                        ? t("launchBlockedShort")
+                        : t("launchUnavailable")
+                    }
+                    launchDisabledReason={
+                      launchDisabledReason ??
+                      (card.blockedBy.length > 0
+                        ? `${t("launchBlocked")} ${card.blockedBy
+                            .map((b) => `${b.key}-${b.number}`)
+                            .join(", ")}`
+                        : undefined)
+                    }
                     launchLabel={tCommon("launch")}
                     projectId={projectId}
+                    slug={slug}
                   />
                 </div>
               ))}

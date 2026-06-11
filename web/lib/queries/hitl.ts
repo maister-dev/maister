@@ -9,8 +9,16 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
-const { actorIdentities, assignments, flows, hitlRequests, runs, workspaces } =
-  schema;
+const {
+  actorIdentities,
+  assignments,
+  flows,
+  hitlRequests,
+  projects,
+  runs,
+  tasks,
+  workspaces,
+} = schema;
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
@@ -77,6 +85,8 @@ export interface HitlItem {
   agent: HitlAgent;
   branch: string;
   flowRef: string;
+  // ADR-075: KEY-N of the launching task (null for scratch-run HITL).
+  taskRef: string | null;
   prompt: string;
   options: HitlOption[];
   time: string;
@@ -154,6 +164,8 @@ export type HitlRowBase = {
   runnerSnapshot: RunnerSnapshot | null;
   branch: string;
   flowRef: string;
+  taskNumber: number | null;
+  taskKey: string | null;
 };
 
 // Map a batch of HitlRowBase rows + pre-fetched assignment/actor maps to HitlItem[].
@@ -201,6 +213,10 @@ export function mapRowsToHitlItems(
       }),
       branch: row.branch,
       flowRef: row.flowRef,
+      taskRef:
+        row.taskNumber !== null && row.taskKey
+          ? `${row.taskKey}-${row.taskNumber}`
+          : null,
       prompt: row.prompt,
       options: extractOptions(row.kind, row.rawSchema),
       time: relativeTime(row.createdAt, now),
@@ -247,11 +263,15 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       runnerSnapshot: runs.runnerSnapshot,
       branch: workspaces.branch,
       flowRef: flows.flowRefId,
+      taskNumber: tasks.number,
+      taskKey: projects.taskKey,
     })
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .innerJoin(flows, eq(flows.id, runs.flowId))
+    .leftJoin(tasks, eq(tasks.id, runs.taskId))
+    .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(
       and(
         inArray(hitlRequests.runId, runIds),

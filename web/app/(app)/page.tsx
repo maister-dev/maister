@@ -7,10 +7,12 @@ import { LiveTicker } from "@/components/chrome/live-ticker";
 import { DensityToggle } from "@/components/portfolio/density-toggle";
 import { EmptyState } from "@/components/portfolio/empty-state";
 import { HitlInboxBlock } from "@/components/portfolio/hitl-inbox-block";
+import { InboxPanel } from "@/components/portfolio/inbox-panel";
 import { InboxRespond } from "@/components/portfolio/inbox-respond";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
 import { ProjectCard } from "@/components/portfolio/project-card";
 import { requireSession } from "@/lib/authz";
+import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import {
   getCrossProjectHitlInbox,
   getPortfolio,
@@ -20,9 +22,11 @@ export default async function PortfolioPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("portfolio");
 
-  const [portfolio, inbox] = await Promise.all([
+  const [portfolio, inbox, inboxItems, unreadInbox] = await Promise.all([
     getPortfolio(user.id, user.role),
     getCrossProjectHitlInbox(user.id, user.role),
+    getInboxItems(user.id),
+    getUnreadInboxCount(user.id),
   ]);
   const isEmpty = portfolio.projects.length === 0;
 
@@ -99,6 +103,24 @@ export default async function PortfolioPage(): Promise<ReactElement> {
                   schema={item.schema}
                 />
               )}
+            />
+          ) : null}
+
+          {unreadInbox > 0 ? (
+            <InboxPanel
+              count={unreadInbox}
+              items={inboxItems}
+              labels={{
+                title: t("notifTitle"),
+                ariaLabel: t("notifAriaLabel"),
+                readAll: t("notifReadAll"),
+                readAllBusy: t("notifReadAllBusy"),
+                empty: t("notifEmpty"),
+                eventKind: {
+                  comment_added: t("notifKind.commentAdded"),
+                  task_mentioned: t("notifKind.taskMentioned"),
+                },
+              }}
             />
           ) : null}
 

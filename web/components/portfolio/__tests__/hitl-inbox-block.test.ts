@@ -38,6 +38,7 @@ interface CrossProjectHitlItemStub {
   agent: "claude" | "codex";
   branch: string;
   flowRef: string;
+  taskRef: string | null;
   time: string;
   projectId: string;
   projectSlug: string;
@@ -71,6 +72,7 @@ function createItemStub(
     schema: { options: [{ optionId: "yes", label: "Yes" }] },
     agent: "claude",
     branch: "maister/feature-x",
+    taskRef: null,
     flowRef: "bugfix",
     time: "2h",
     projectId: "proj-1",
@@ -197,6 +199,7 @@ describe("HitlInboxBlock — cross-project HITL inbox on portfolio (M17 P5)", ()
     const items = [
       createItemStub({
         branch: "maister/bugfix-123",
+        taskRef: null,
         flowRef: "bugfix-flow",
         agent: "claude",
         prompt: "Review and approve this PR",

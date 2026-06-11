@@ -2,16 +2,19 @@ import type { BacklogCard } from "@/lib/queries/board";
 import type { ReactElement } from "react";
 
 import clsx from "clsx";
+import Link from "next/link";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
 
 export interface TaskCardProps {
   card: BacklogCard;
   projectId: string;
+  slug: string;
   canAct: boolean;
   launchLabel: string;
   launchDisabledLabel: string;
   launchDisabledReason?: string;
+  blockedByLabel: string;
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -33,10 +36,12 @@ const FLOW_CHIP: Record<string, string> = {
 export function TaskCard({
   card,
   projectId,
+  slug,
   canAct,
   launchDisabledLabel,
   launchDisabledReason,
   launchLabel,
+  blockedByLabel,
 }: TaskCardProps): ReactElement {
   const chip = FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line";
 
@@ -50,7 +55,15 @@ export function TaskCard({
       />
       <div className="flex items-start justify-between gap-2.5">
         <div className="flex-1 text-[13.5px] font-semibold leading-[1.35] tracking-[-0.005em] text-ink">
-          {card.title}
+          <span className="mr-1.5 rounded border border-line bg-ivory px-1 py-px align-middle font-mono text-[9.5px] font-bold tracking-[0.05em] text-mute">
+            {card.keyRef}
+          </span>
+          <Link
+            className="align-middle hover:text-amber hover:underline"
+            href={`/projects/${slug}/tasks/${card.number}`}
+          >
+            {card.title}
+          </Link>
         </div>
         <span
           className={clsx(
@@ -64,6 +77,20 @@ export function TaskCard({
       <div className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute">
         {card.prompt}
       </div>
+      {card.blockedBy.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1 font-mono text-[10px] text-danger">
+          <span>{blockedByLabel}</span>
+          {card.blockedBy.map((blocker) => (
+            <Link
+              key={`${blocker.key}-${blocker.number}`}
+              className="rounded border border-line bg-ivory px-1 py-px font-semibold hover:border-amber hover:text-amber"
+              href={`/projects/${slug}/tasks/${blocker.number}`}
+            >
+              {blocker.key}-{blocker.number}
+            </Link>
+          ))}
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
         <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute" />
         {canAct ? (

@@ -103,6 +103,11 @@ export async function HitlInbox({
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2.5 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+                  {item.taskRef ? (
+                    <span className="rounded border border-line bg-paper px-1 py-px text-[10px] font-bold tracking-[0.05em] text-ink-2">
+                      {item.taskRef}
+                    </span>
+                  ) : null}
                   <span className="font-semibold text-ink-2">
                     {item.branch}
                   </span>

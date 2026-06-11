@@ -583,7 +583,15 @@ export default async function RunDetailLayout({
           {t("eyebrow")} · {detail.projectSlug}
         </div>
         <h1 className="mt-1 font-mono text-[20px] font-bold tracking-[-0.01em] text-ink">
-          {detail.branch}
+          {detail.taskRef && detail.taskNumber !== null ? (
+            <Link
+              className="mr-2 align-middle rounded border border-line bg-ivory px-1.5 py-0.5 text-[12px] font-bold tracking-[0.05em] text-mute hover:border-amber hover:text-amber"
+              href={`/projects/${detail.projectSlug}/tasks/${detail.taskNumber}`}
+            >
+              {detail.taskRef}
+            </Link>
+          ) : null}
+          <span className="align-middle">{detail.branch}</span>
         </h1>
         <div className="mt-2 flex flex-wrap gap-3 font-mono text-[11px] text-mute">
           <span className="rounded-full border border-line bg-ivory px-2.5 py-1 text-ink-2">

@@ -86,6 +86,14 @@ export function HitlInboxBlock({
                 {/* Project name, branch, flow ref, agent, criticality */}
                 <div className="mb-0.5 flex flex-wrap items-center gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
                   <b className="font-semibold text-ink">{item.projectName}</b>
+                  {item.taskRef ? (
+                    <>
+                      <span className="text-mute-2">·</span>
+                      <span className="rounded border border-line bg-paper px-1 py-px text-[10px] font-bold tracking-[0.05em] text-ink-2">
+                        {item.taskRef}
+                      </span>
+                    </>
+                  ) : null}
                   <span className="text-mute-2">·</span>
                   <code className="rounded-[3px] border border-line bg-paper px-[5px] py-px text-[10px] text-ink-2">
                     {item.branch}

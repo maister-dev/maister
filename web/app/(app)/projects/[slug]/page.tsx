@@ -28,6 +28,12 @@ import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
 import { getFlowPackages } from "@/lib/queries/flow-packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
+import { getUnreadInboxCount } from "@/lib/queries/inbox";
+import {
+  ACTIVITY_LOG_PAGE_SIZE,
+  getProjectActivityLog,
+} from "@/lib/queries/activity";
+import { TaskActivityLog } from "@/components/board/panels/task-activity-log";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
@@ -61,7 +67,14 @@ function parseTab(raw: string | string[] | undefined): ProjectTab {
 
 interface PageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ tab?: string | string[]; file?: string | string[] }>;
+  searchParams: Promise<{
+    tab?: string | string[];
+    file?: string | string[];
+    actor_type?: string | string[];
+    event_kind?: string | string[];
+    task?: string | string[];
+    page?: string | string[];
+  }>;
 }
 
 function parseFile(raw: string | string[] | undefined): string | null {
@@ -75,8 +88,23 @@ export default async function ProjectBoardPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { slug } = await params;
-  const { tab: rawTab, file: rawFile } = await searchParams;
+  const {
+    tab: rawTab,
+    file: rawFile,
+    actor_type: rawActorType,
+    event_kind: rawEventKind,
+    task: rawTaskFilter,
+    page: rawPage,
+  } = await searchParams;
   const tab = parseTab(rawTab);
+  const one = (v: string | string[] | undefined): string | undefined =>
+    typeof v === "string" && v.length > 0 ? v : undefined;
+  const logFilters = {
+    actorType: one(rawActorType) as "user" | "agent" | "system" | undefined,
+    eventKind: one(rawEventKind),
+    task: one(rawTaskFilter),
+    page: Number.parseInt(one(rawPage) ?? "1", 10) || 1,
+  };
   const file = parseFile(rawFile);
 
   const user = await getSessionUser();
@@ -104,6 +132,7 @@ export default async function ProjectBoardPage({
   const tPortfolio = await getTranslations("portfolio");
   const tScratch = await getTranslations("scratch");
   const tWorkbench = await getTranslations("workbench");
+  const tLog = await getTranslations("projectLog");
 
   const filesLabels = {
     title: tWorkbench("files.title"),
@@ -116,12 +145,18 @@ export default async function ProjectBoardPage({
     treeLabel: tWorkbench("files.treeLabel"),
   };
 
-  const [pageData, board, hitl, platformStatus] = await Promise.all([
-    getProjectPageData(project),
-    getBoardData(project.id),
-    getHitlInbox(project.id),
-    getPlatformStatus(),
-  ]);
+  const [pageData, board, hitl, platformStatus, unreadInbox] =
+    await Promise.all([
+      getProjectPageData(project),
+      getBoardData(project.id),
+      getHitlInbox(project.id),
+      getPlatformStatus(),
+      getUnreadInboxCount(user.id, project.id),
+    ]);
+  const activityLog =
+    tab === "activity"
+      ? await getProjectActivityLog(project.id, logFilters)
+      : null;
 
   return (
     <>
@@ -150,7 +185,11 @@ export default async function ProjectBoardPage({
 
         <div className="flex flex-col items-end gap-3.5">
           <div className="flex items-center overflow-hidden rounded-[10px] border border-line bg-paper">
-            <Count label={t("needYou")} tone="needs" value={hitl.count} />
+            <Count
+              label={t("needYou")}
+              tone="needs"
+              value={hitl.count + unreadInbox}
+            />
             <Count label={t("inProd")} tone="flight" value={board.inProd} />
             <Count label={t("backlogCount")} value={board.backlog} />
             <Count label={t("mergedDays")} value={board.merged7d} />
@@ -248,13 +287,53 @@ export default async function ProjectBoardPage({
               data={board}
               platformStatus={platformStatus}
               projectId={project.id}
+              slug={slug}
             />
           </BoardTools>
         </section>
       ) : null}
 
       {tab === "activity" ? (
-        <ActivityPanel events={await getActivityFeed(project.id)} />
+        <>
+          <ActivityPanel events={await getActivityFeed(project.id)} />
+          {activityLog ? (
+            <TaskActivityLog
+              filters={logFilters}
+              labels={{
+                title: tLog("title"),
+                empty: tLog("empty"),
+                colWhen: tLog("colWhen"),
+                colTask: tLog("colTask"),
+                colEvent: tLog("colEvent"),
+                colActor: tLog("colActor"),
+                colDetails: tLog("colDetails"),
+                filterActor: tLog("filterActor"),
+                filterEvent: tLog("filterEvent"),
+                filterTask: tLog("filterTask"),
+                filterAny: tLog("filterAny"),
+                apply: tLog("apply"),
+                pagePrev: tLog("pagePrev"),
+                pageNext: tLog("pageNext"),
+                pageInfo: tLog("pageInfo"),
+                formerUser: tLog("formerUser"),
+                system: tLog("system"),
+                eventKind: {
+                  task_created: tLog("kind.taskCreated"),
+                  comment_added: tLog("kind.commentAdded"),
+                  task_mentioned: tLog("kind.taskMentioned"),
+                  relation_added: tLog("kind.relationAdded"),
+                  relation_removed: tLog("kind.relationRemoved"),
+                  run_launched: tLog("kind.runLaunched"),
+                },
+              }}
+              page={activityLog.page}
+              pageSize={ACTIVITY_LOG_PAGE_SIZE}
+              rows={activityLog.rows}
+              slug={slug}
+              total={activityLog.total}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {tab === "prs" ? <DeferredPanel kind="prs" /> : null}

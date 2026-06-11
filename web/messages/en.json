@@ -375,7 +375,16 @@
     "inboxEmpty": "No pending items",
     "inboxAriaLabel": "Cross-project HITL inbox",
     "inboxCountAriaLabel": "{count} pending",
-    "pendingChip": "Needs you · {count}"
+    "pendingChip": "Needs you · {count}",
+    "notifTitle": "Inbox",
+    "notifAriaLabel": "Unread task notifications",
+    "notifReadAll": "Mark all read",
+    "notifReadAllBusy": "Marking…",
+    "notifEmpty": "No unread notifications.",
+    "notifKind": {
+      "commentAdded": "comment",
+      "taskMentioned": "mention"
+    }
   },
   "observatory": {
     "eyebrow": "Read-only metrics",
@@ -602,7 +611,9 @@
     "concurrency": "Concurrency limit",
     "concurrencyDesc": "max simultaneous running workspaces",
     "branchPrefix": "Branch prefix",
-    "branchPrefixDesc": "applied to every worktree branch"
+    "branchPrefixDesc": "applied to every worktree branch",
+    "launchBlocked": "Blocked by",
+    "launchBlockedShort": "blocked"
   },
   "hitl": {
     "allowRun": "allow this run",
@@ -636,7 +647,10 @@
     "warnNotGit": "Registered, but the repo has no remote — pull-request promotion won't work until you add one.",
     "warnInitialized": "Registered and a new git repo was initialized — make an initial commit before launching runs.",
     "goToProject": "Open project →",
-    "registerAnother": "Register another"
+    "registerAnother": "Register another",
+    "taskKeyLabel": "Task key (optional)",
+    "taskKeyPlaceholder": "MAI — derived from the project name when empty",
+    "taskKeyFormatHint": "2–10 chars: A–Z and digits, starting with a letter."
   },
   "settings": {
     "title": "Settings",
@@ -1732,5 +1746,88 @@
     "globalToggleHint": "Master kill-switch for all outbound webhook delivery on this host.",
     "globalOn": "Enabled",
     "globalOff": "Disabled"
+  },
+  "taskDetail": {
+    "status": {
+      "Backlog": "Backlog",
+      "InFlight": "In flight",
+      "Done": "Done",
+      "Abandoned": "Abandoned"
+    },
+    "follow": "Follow",
+    "unfollow": "Unfollow",
+    "followBusy": "…",
+    "relationsTitle": "Relations",
+    "relationsEmpty": "No relations yet.",
+    "relationsAdd": "Add",
+    "relationsAdding": "Adding…",
+    "relationsNumberPlaceholder": "task #",
+    "relationsRemove": "Remove relation to",
+    "relationKind": {
+      "blocks": "blocks",
+      "dependsOn": "depends on",
+      "parentOf": "parent of"
+    },
+    "relationKindInverse": {
+      "blocks": "blocked by",
+      "dependsOn": "required by",
+      "parentOf": "child of"
+    },
+    "relationsErrorConfig": "Invalid relation (self-relations are not allowed).",
+    "relationsErrorNotFound": "No task with that number in this project.",
+    "timelineTitle": "Timeline",
+    "timelineEmpty": "No comments or activity yet.",
+    "formerUser": "former user",
+    "systemActor": "system",
+    "event": {
+      "taskCreated": "created this task",
+      "taskMentioned": "mentioned this task in a comment on {ref}",
+      "relationAdded": "added a relation to {ref}",
+      "relationRemoved": "removed a relation to {ref}",
+      "runLaunched": "launched run attempt {attempt}"
+    },
+    "composerPlaceholder": "Write a comment… KEY-N references become links.",
+    "composerSubmit": "Comment",
+    "composerSubmitting": "Posting…",
+    "composerHint": "Markdown supported. Mention tasks as KEY-N.",
+    "composerErrorConfig": "Comment must be 1–10000 characters.",
+    "errorForbidden": "You need member access for that.",
+    "errorGeneric": "Action failed. Try again.",
+    "runsTitle": "Run history",
+    "runsEmpty": "No runs yet.",
+    "runsAttempt": "Attempt",
+    "runsStatus": "Status",
+    "runsStarted": "Started",
+    "runsEnded": "Ended",
+    "runsLinks": "Run",
+    "runsOpen": "Open",
+    "latestRunTitle": "Latest run"
+  },
+  "projectLog": {
+    "title": "Task log",
+    "empty": "No task activity yet.",
+    "colWhen": "When",
+    "colTask": "Task",
+    "colEvent": "Event",
+    "colActor": "Actor",
+    "colDetails": "Details",
+    "filterActor": "Actor",
+    "filterEvent": "Event",
+    "filterTask": "Task",
+    "filterAny": "any",
+    "apply": "Apply",
+    "pagePrev": "← prev",
+    "pageNext": "next →",
+    "pageInfo": "page {page} / {pages}",
+    "formerUser": "former user",
+    "system": "system",
+    "kind": {
+      "taskCreated": "task created",
+      "commentAdded": "comment",
+      "taskMentioned": "mentioned",
+      "relationAdded": "relation added",
+      "relationRemoved": "relation removed",
+      "runLaunched": "run launched"
+    }
   }
 }

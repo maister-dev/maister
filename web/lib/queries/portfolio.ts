@@ -995,9 +995,13 @@ export async function getCrossProjectHitlInbox(
       branch: workspaces.branch,
       flowRef: flows.flowRefId,
       projectId: runs.projectId,
+      taskNumber: tasks.number,
+      taskKey: projects.taskKey,
     })
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
+    .leftJoin(tasks, eq(tasks.id, runs.taskId))
+    .innerJoin(projects, eq(projects.id, runs.projectId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .innerJoin(flows, eq(flows.id, runs.flowId))
     .where(

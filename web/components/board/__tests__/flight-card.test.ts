@@ -41,6 +41,8 @@ const labels: FlightCardLabels = {
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
   return {
     taskId: "task-1",
+    number: 1,
+    keyRef: "TST-1",
     runId: "run-1",
     branch: "maister/fix-thing",
     agent: "claude",

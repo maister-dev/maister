@@ -243,6 +243,9 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
 
       <div className="flex items-center justify-between gap-2.5 border-t border-dashed border-line-soft pt-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          <span className="rounded border border-line bg-ivory px-1 py-px text-[9.5px] font-bold tracking-[0.05em]">
+            {card.keyRef}
+          </span>
           <span className="inline-flex items-center gap-1 font-semibold text-ink-2">
             {card.branch}
           </span>

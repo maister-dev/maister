@@ -49,6 +49,7 @@ const {
   nodeAttempts,
   projects,
   runs,
+  tasks,
   users,
   workspaces,
 } = schema;
@@ -87,6 +88,9 @@ export interface RunDetail {
   runId: string;
   projectId: string;
   projectSlug: string;
+  // ADR-075: KEY-N back-reference to the launching task (null for scratch).
+  taskNumber: number | null;
+  taskRef: string | null;
   status: string;
   currentStepId: string | null;
   branch: string;
@@ -169,6 +173,8 @@ export const getRunDetail = cache(async function getRunDetail(
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       projectSlug: projects.slug,
+      projectTaskKey: projects.taskKey,
+      taskNumber: tasks.number,
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
       workspaceId: workspaces.id,
@@ -191,6 +197,7 @@ export const getRunDetail = cache(async function getRunDetail(
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .where(eq(runs.id, runId));
   const row = rows[0];
 
@@ -275,6 +282,11 @@ export const getRunDetail = cache(async function getRunDetail(
     runId: row.runId,
     projectId: row.projectId,
     projectSlug: row.projectSlug,
+    taskNumber: row.taskNumber,
+    taskRef:
+      row.taskNumber !== null
+        ? `${row.projectTaskKey}-${row.taskNumber}`
+        : null,
     status: row.status,
     runKind: row.runKind,
     currentStepId: row.currentStepId,

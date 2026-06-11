@@ -51,6 +51,7 @@ export function NewProjectForm(): ReactElement {
 
   const [repoUrl, setRepoUrl] = useState("");
   const [target, setTarget] = useState("");
+  const [taskKey, setTaskKey] = useState("");
   const [pending, setPending] = useState(false);
   const [errorCode, setErrorCode] = useState<ErrorCode | undefined>(undefined);
   const [success, setSuccess] = useState<Success | undefined>(undefined);
@@ -67,6 +68,7 @@ export function NewProjectForm(): ReactElement {
         body: JSON.stringify({
           repoUrl: repoUrl.trim() || undefined,
           target: target.trim() || undefined,
+          taskKey: taskKey.trim() || undefined,
         }),
       });
 
@@ -182,6 +184,32 @@ export function NewProjectForm(): ReactElement {
             onChange={(e) => setTarget(e.target.value)}
           />
         </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className={fieldLabel} htmlFor="np-task-key">
+          {t("taskKeyLabel")}
+        </label>
+        <div className={inputWrap}>
+          <input
+            autoComplete="off"
+            className={inputBase}
+            id="np-task-key"
+            name="taskKey"
+            placeholder={t("taskKeyPlaceholder")}
+            spellCheck={false}
+            type="text"
+            value={taskKey}
+            onChange={(e) =>
+              setTaskKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+            }
+          />
+        </div>
+        {taskKey.length > 0 && !/^[A-Z][A-Z0-9]{1,9}$/.test(taskKey) ? (
+          <p className="text-[11.5px] leading-[1.5] text-amber">
+            {t("taskKeyFormatHint")}
+          </p>
+        ) : null}
       </div>
 
       <p className="text-[11.5px] leading-[1.5] text-mute">{t("sourceHint")}</p>

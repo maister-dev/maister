@@ -18,12 +18,14 @@ import {
 } from "@/lib/queries/portfolio";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 const {
   artifactInstances,
   flows,
   hitlRequests,
   nodeAttempts,
+  projects,
   runs,
   stepRuns,
   tasks,
@@ -52,14 +54,21 @@ export interface SpineSegment {
 
 export interface BacklogCard {
   taskId: string;
+  number: number;
+  keyRef: string;
   title: string;
   prompt: string;
   flowRef: string;
   priority: CardPriority;
+  // ADR-075 D5: open relation blockers — non-empty disables Launch and
+  // renders the reason chip with the blocker KEY-Ns.
+  blockedBy: Array<{ key: string; number: number }>;
 }
 
 export interface FlightCard {
   taskId: string;
+  number: number;
+  keyRef: string;
   runId: string;
   branch: string;
   agent: BoardAgent;
@@ -199,6 +208,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   const taskRows = await client
     .select({
       taskId: tasks.id,
+      number: tasks.number,
       title: tasks.title,
       prompt: tasks.prompt,
       status: tasks.status,
@@ -232,6 +242,13 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   }
 
   const taskIds = taskRows.map((t) => t.taskId);
+
+  const [projectKeyRow] = await client
+    .select({ taskKey: projects.taskKey })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  const projectTaskKey = projectKeyRow?.taskKey ?? "";
+  const openBlockers = await getOpenRelationBlockers(taskIds, client);
 
   const runRows = await client
     .select({
@@ -437,10 +454,13 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     if (run === null || column === "Backlog" || column === "Prepare") {
       bucket.backlog.push({
         taskId: task.taskId,
+        number: task.number,
+        keyRef: `${projectTaskKey}-${task.number}`,
         title: task.title,
         prompt: task.prompt,
         flowRef: task.flowRef,
         priority: priorityFor(backlogPos),
+        blockedBy: openBlockers.get(task.taskId) ?? [],
       });
       backlogPos += 1;
       continue;
@@ -458,6 +478,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
 
     bucket.flight.push({
       taskId: task.taskId,
+      number: task.number,
+      keyRef: `${projectTaskKey}-${task.number}`,
       runId: run.runId,
       branch: run.branch,
       agent: takeover

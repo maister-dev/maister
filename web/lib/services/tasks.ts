@@ -135,6 +135,8 @@ export async function createTask(
 
 export type TaskDTO = {
   id: string;
+  number: number;
+  taskKey: string;
   title: string;
   prompt: string;
   status: string;
@@ -147,6 +149,10 @@ export type TaskDTO = {
 };
 
 async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
+  const keyRows = await (db as any)
+    .select({ taskKey: projects.taskKey })
+    .from(projects)
+    .where(eq(projects.id, row.projectId));
   // Derive the latest run for this task (most recent by startedAt).
   const runRows = await (db as any)
     .select({ id: runs.id })
@@ -159,6 +165,8 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
 
   return {
     id: row.id,
+    number: row.number,
+    taskKey: keyRows[0]?.taskKey ?? "",
     title: row.title,
     prompt: row.prompt,
     status: row.status,
