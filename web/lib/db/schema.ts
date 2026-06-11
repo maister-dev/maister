@@ -2487,7 +2487,7 @@ export type WebhookDeliveryAttempt =
 export type WebhookDeliveryAttemptInsert =
   typeof webhookDeliveryAttempts.$inferInsert;
 
-// --- ADR-078: social board substrate ----------------------------------------
+// --- ADR-083: social board substrate ----------------------------------------
 
 // Polymorphic actor pair on all four social tables: no FK to users (a deleted
 // user renders as a "former user" fallback); Stage 1 writes user/system only.

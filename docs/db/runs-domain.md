@@ -317,7 +317,7 @@ erDiagram
 > no FK to `users`). All five also FK `projects` with cascade (edges in
 > [`erd.md`](erd.md)). `task_activity` is written only by the domain layer.
 > See [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
-> and [ADR-078](../decisions.md#adr-078-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+> and [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 
 ## Constraints
 

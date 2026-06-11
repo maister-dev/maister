@@ -22,7 +22,7 @@ review-thread table, the **(Implemented, migration `0040`)**
 outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 `WEBHOOK_DELIVERIES`, `WEBHOOK_DELIVERY_ATTEMPTS` plus the
 `PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-077), and the
-**ADR-078 (Implemented, migration `0041`)** social-board tables `TASK_RELATIONS`,
+**ADR-083 (Implemented, migration `0043`)** social-board tables `TASK_RELATIONS`,
 `TASK_COMMENTS`, `TASK_ACTIVITY`, `TASK_SUBSCRIBERS`, `INBOX_ITEMS` plus
 `PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`. For partial views by
 domain, see [`projects-domain.md`](projects-domain.md),

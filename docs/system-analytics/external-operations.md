@@ -331,7 +331,7 @@ bearer extraction occurs.
 - Related domains: [`flow-graph.md`](flow-graph.md) (gate_results,
   markDownstreamStale, markGateOverridden), [`artifacts.md`](artifacts.md)
   (test_report artifact, assertEvidenceReady),
-  [`social-board.md`](social-board.md) (ADR-078 ext comment routes, actor
+  [`social-board.md`](social-board.md) (ADR-083 ext comment routes, actor
   mapping, Implemented).
 - Configuration: [`../configuration.md`](../configuration.md)
   (`gates[].external` schema, `MAISTER_API_BASE_URL`, `MAISTER_PROJECT_TOKEN`).

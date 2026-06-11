@@ -315,7 +315,7 @@ transition (the run reconciles to `Crashed` on next heartbeat tick).
 ## Linked artifacts
 
 - ADRs: [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
-  [ADR-078 Social board substrate](../decisions.md#adr-078-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+  [ADR-083 Social board substrate](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`executors.md`](executors.md), [`social-board.md`](social-board.md)

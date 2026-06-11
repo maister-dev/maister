@@ -90,7 +90,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/run-schedules.md`](system-analytics/run-schedules.md) | User-facing cron schedules: `run_schedules` table, the seeded `run_schedule.dispatcher` job on the M24 tick, overlap policy × cap matrix, trigger-now, launchability classifier (M28). |
 | [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md) | Model discovery + application: supervisor-side resolver (ACP probe / provider API / curated GLM / CCR sources), in-memory TTL cache, passive harvest, per-adapter model pinning + mismatch advisory (ADR-076). |
 | [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 12-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
-| [`system-analytics/social-board.md`](system-analytics/social-board.md) | Social board substrate (ADR-078, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
+| [`system-analytics/social-board.md`](system-analytics/social-board.md) | Social board substrate (ADR-083, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
 
 ### Cross-cutting reference
 

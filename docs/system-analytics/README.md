@@ -26,7 +26,7 @@ Every file in this folder follows the structure defined in
 | Flow settings | [`flow-settings.md`](flow-settings.md) | Typed node settings, launch refusal boundaries, and capability-materialization handoff. |
 | Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, and runner-owned materialization. |
 | Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
-| Social board | [`social-board.md`](social-board.md) | `KEY-N` comments with mention expansion, domain-written activity, subscriptions, per-recipient inbox, polymorphic actor pair (ADR-078). |
+| Social board | [`social-board.md`](social-board.md) | `KEY-N` comments with mention expansion, domain-written activity, subscriptions, per-recipient inbox, polymorphic actor pair (ADR-083). |
 | Runs | [`runs.md`](runs.md) | Run state machine, ACP keep-alive + checkpoint/resume, crash recovery. |
 | Scratch runs | [`scratch-runs.md`](scratch-runs.md) | Manual coding-agent dialog workspaces outside the task board, visible in active workspaces. |
 | Executors | [`executors.md`](executors.md) | Executor identity, env-router vs CCR, per-step override resolution. |

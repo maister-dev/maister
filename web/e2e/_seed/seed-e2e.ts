@@ -4952,7 +4952,7 @@ async function main(): Promise<void> {
       hitl: true,
     });
 
-    // ADR-078 social-board e2e fixture: a deterministic task key on the board
+    // ADR-083 social-board e2e fixture: a deterministic task key on the board
     // project (random elsewhere) plus a SECOND task to mention as EAB-2 from
     // a comment on EAB-1 (social-board.spec.ts).
     await pool.query(

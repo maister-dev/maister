@@ -1,4 +1,4 @@
-// ADR-078 social-board domain semantics against real Postgres: numbering
+// ADR-083 social-board domain semantics against real Postgres: numbering
 // allocation (incl. concurrency), relations validation/idempotency/blockers,
 // and the single-transaction comment pipeline (activity, subscriptions
 // first-wins, inbox fanout excluding the actor, D8 mention rule).
