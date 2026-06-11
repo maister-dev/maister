@@ -25,8 +25,8 @@ export default async function PortfolioPage(): Promise<ReactElement> {
   const [portfolio, inbox, inboxItems, unreadInbox] = await Promise.all([
     getPortfolio(user.id, user.role),
     getCrossProjectHitlInbox(user.id, user.role),
-    getInboxItems(user.id),
-    getUnreadInboxCount(user.id),
+    getInboxItems(user.id, user.role),
+    getUnreadInboxCount(user.id, user.role),
   ]);
   const isEmpty = portfolio.projects.length === 0;
 

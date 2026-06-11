@@ -233,6 +233,25 @@ export async function launchRun(
   if (!task) {
     throw new MaisterError("PRECONDITION", `task not found: ${input.taskId}`);
   }
+  const projectRows = await _db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, task.projectId));
+  const project = projectRows[0];
+
+  if (!project) {
+    throw new MaisterError("PRECONDITION", "project not found for task");
+  }
+
+  // Authorize before any archived/launchability/blocker evaluation —
+  // classification detail (incl. blocker KEY-N refs) must not leak to
+  // callers without project access. AuthzError propagates untouched.
+  await ctx.authorize(project.id);
+
+  if (project.archivedAt) {
+    throw new MaisterError("PRECONDITION", "project is archived");
+  }
+
   // tasks.status is a one-way latch (nothing writes Backlog back after
   // launch), so the latest flow run — not the task row — decides
   // relaunchability (board retry rule, attempt N+1).
@@ -269,22 +288,6 @@ export async function launchRun(
     { taskId: input.taskId, classification: launchability },
     "launch gate",
   );
-
-  const projectRows = await _db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, task.projectId));
-  const project = projectRows[0];
-
-  if (!project) {
-    throw new MaisterError("PRECONDITION", "project not found for task");
-  }
-  if (project.archivedAt) {
-    throw new MaisterError("PRECONDITION", "project is archived");
-  }
-
-  // AuthzError from ctx.authorize propagates untouched.
-  await ctx.authorize(project.id);
 
   const flowRows = await _db
     .select()

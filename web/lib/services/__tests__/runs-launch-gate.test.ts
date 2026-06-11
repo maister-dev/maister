@@ -373,3 +373,27 @@ describe("launchRun — classifier gate REFUSES non-launchable tasks (M28/T2.1)"
     ).rejects.toBeInstanceOf(MaisterError);
   });
 });
+
+describe("launchRun — authorize precedes launchability evaluation", () => {
+  it("propagates the authz rejection instead of leaking classification/blocker detail", async () => {
+    seedSelects({ task: taskRow({ status: "InFlight" }) });
+    state.latestFlowRuns = [flowRun("Running")];
+
+    const denied = new Error("forbidden");
+
+    await expect(
+      launchRun(
+        { taskId: TASK_ID },
+        {
+          actorUserId: "outsider",
+          authorize: async () => {
+            throw denied;
+          },
+        },
+        fakeDb,
+      ),
+    ).rejects.toBe(denied);
+
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
+  });
+});

@@ -151,7 +151,7 @@ export default async function ProjectBoardPage({
       getBoardData(project.id),
       getHitlInbox(project.id),
       getPlatformStatus(),
-      getUnreadInboxCount(user.id, project.id),
+      getUnreadInboxCount(user.id, user.role, project.id),
     ]);
   const activityLog =
     tab === "activity"
