@@ -659,10 +659,10 @@ tasks through `/api/v1/ext/projects/{slug}/tasks`.
 `number` (ADR-075, Implemented) is allocated inside the `createTask` transaction
 from `projects.next_task_number` (`UPDATE … RETURNING`; the projects-row lock
 serializes concurrent creates) and never reused — deletion leaves a hole.
-Migration `0040` backfills existing tasks per project ordered by
+Migration `0041` backfills existing tasks per project ordered by
 `(created_at, id)`.
 
-## Social board tables (Implemented — ADR-075, migration `0040`)
+## Social board tables (Implemented — ADR-078, migration `0041`)
 
 Five tables for the Stage-1 social substrate. All four actor-carrying tables
 share the polymorphic actor pair: `actor_type CHECK IN

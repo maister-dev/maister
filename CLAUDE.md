@@ -387,7 +387,7 @@ Current Scope, these are **Implemented** today:
 - **External operations API + project tokens + MCP facade** (M16/M17):
   `/api/v1/ext/*`, scoped tokens, HITL-over-MCP (`hitl_list`/`hitl_respond`).
   → `external-operations.md`
-- **Social board substrate** (M31, ADR-075): `KEY-N` task identity
+- **Social board substrate** (M31, ADR-078): `KEY-N` task identity
   (platform-unique `task_key` + counter-allocated `number`), typed relations
   gating launch (`blocked` classification at every entry point), comments
   with write-time mention expansion, domain-only `task_activity`,

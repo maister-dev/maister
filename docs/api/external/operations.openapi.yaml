@@ -848,7 +848,7 @@ components:
           description: |
             (ADR-078, Implemented) Per-project task number; `KEY-N` =
             `taskKey` + `-` + `number`. Additive — present once migration
-            `0040` lands (backfill makes it NOT NULL).
+            `0041` lands (backfill makes it NOT NULL).
         taskKey:
           type: string
           pattern: "^[A-Z][A-Z0-9]{1,9}$"

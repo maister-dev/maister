@@ -2,8 +2,8 @@
 
 Tables for the execution lifecycle: tasks (board), runs (Flow attempts and
 scratch sessions), workspaces (worktrees), scratch dialog metadata, messages,
-attachments, and capability snapshots, plus the **ADR-078 (Designed,
-migration `0040`)** social-board tables around tasks (`task_relations`,
+attachments, and capability snapshots, plus the **ADR-078 (Implemented,
+migration `0041`)** social-board tables around tasks (`task_relations`,
 `task_comments`, `task_activity`, `task_subscribers`, `inbox_items` — each
 also FK-cascading from `projects`, edges omitted here for readability; the
 full edge set is in [`erd.md`](erd.md)). See
@@ -310,7 +310,7 @@ erDiagram
 > [`../system-analytics/manual-takeover.md`](../system-analytics/manual-takeover.md)
 > and [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status).
 
-> **(ADR-078 — Implemented, migration `0040`.)** `TASKS` gains `number`
+> **(ADR-078 — Implemented, migration `0041`.)** `TASKS` gains `number`
 > (per-project, backfilled by `(created_at, id)` order); the five social
 > tables carry the polymorphic actor pair (`actor_type CHECK IN
 > ('user','agent','system')`, `(actor_type = 'system') = (actor_id IS NULL)`,
