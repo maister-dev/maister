@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { AiCodingSettings, JudgeSettings } from "@/lib/config.schema";
+import type {
+  AiCodingSettings,
+  CapabilityAgent,
+  JudgeSettings,
+} from "@/lib/config.schema";
 import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 
 import { evaluateNodeEnforcement } from "@/lib/flows/enforcement";
@@ -36,7 +40,7 @@ export interface SettingsViewNode {
 //  - a capability node with no declared/strict classes → present, classes: [].
 export function buildSettingsView(
   nodes: SettingsViewNode[],
-  agent: "claude" | "codex",
+  agent: CapabilityAgent,
   snapshotByNode?: Record<string, EnforcementSnapshotEntry[]>,
 ): SettingsNodeView[] {
   const view: SettingsNodeView[] = [];

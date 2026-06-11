@@ -2,6 +2,7 @@ import type {
   AiCodingSettings,
   JudgeSettings,
   EnforcementMode,
+  CapabilityAgent,
 } from "@/lib/config.schema";
 
 import { describe, expect, it } from "vitest";
@@ -56,7 +57,7 @@ const ALL_CLASSES: CapabilityClass[] = [
 
 type Capability = "enforced" | "instructed" | "unsupported";
 type Verdict = "enforced" | "instructed" | "refused";
-type Table = Record<"claude" | "codex", Record<CapabilityClass, Capability>>;
+type Table = Record<CapabilityAgent, Record<CapabilityClass, Capability>>;
 
 // The per-class entry `evaluateNodeEnforcement` returns. Declared here so the
 // callbacks below stay strict-typed even while `@/lib/flows/enforcement` is
@@ -72,8 +73,8 @@ type EnforcementEntry = {
 // 1. ENFORCEABILITY_BY_AGENT frozen — every cell instructed, no `enforced`.
 // ---------------------------------------------------------------------------
 
-describe("ENFORCEABILITY_BY_AGENT — FROZEN M11c table (all instructed)", () => {
-  it("is value-for-value `instructed` for both agents × all 6 classes", () => {
+describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
+  it("is value-for-value `instructed` for all adapters × all 6 classes", () => {
     const expected: Table = {
       claude: {
         mcps: "instructed",
@@ -91,13 +92,29 @@ describe("ENFORCEABILITY_BY_AGENT — FROZEN M11c table (all instructed)", () =>
         permissionMode: "instructed",
         workspaceAccess: "instructed",
       },
+      gemini: {
+        mcps: "instructed",
+        tools: "instructed",
+        skills: "instructed",
+        restrictions: "instructed",
+        permissionMode: "instructed",
+        workspaceAccess: "instructed",
+      },
+      opencode: {
+        mcps: "instructed",
+        tools: "instructed",
+        skills: "instructed",
+        restrictions: "instructed",
+        permissionMode: "instructed",
+        workspaceAccess: "instructed",
+      },
     };
 
     expect(ENFORCEABILITY_BY_AGENT).toEqual(expected);
   });
 
   it("contains NO `enforced` cell (the M11c silent-escape-hatch invariant)", () => {
-    for (const agent of ["claude", "codex"] as const) {
+    for (const agent of ["claude", "codex", "gemini", "opencode"] as const) {
       for (const cls of ALL_CLASSES) {
         expect(ENFORCEABILITY_BY_AGENT[agent][cls]).not.toBe("enforced");
       }
@@ -124,6 +141,22 @@ const injectedTable: Table = {
     workspaceAccess: "instructed",
   },
   codex: {
+    mcps: "instructed",
+    tools: "instructed",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
+  },
+  gemini: {
+    mcps: "instructed",
+    tools: "instructed",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
+  },
+  opencode: {
     mcps: "instructed",
     tools: "instructed",
     skills: "instructed",

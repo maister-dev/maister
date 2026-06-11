@@ -120,7 +120,9 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
   optional issue/files, and run-scoped platform/project/Flow-package
   MCP/skill/rule/agent-pack profile tucked into expandable controls; show it in
   project-grouped active workspace lists and open it as a coding-agent dialog.
-- ACP supervisor process with claude/codex adapter binaries.
+- ACP supervisor process with code-owned Claude, Codex, Gemini CLI, and
+  OpenCode adapter families; Gemini/OpenCode stay gated by diagnostics and
+  smoke-proven readiness before production launch.
 - Durable run SSE via `run.events.jsonl`.
 - HITL response route with row-level claim, atomic artifacts, permission
   delivery, and runner-owned resume.
@@ -222,7 +224,8 @@ terminals, leaking secrets, drowning in logs, or paying for tool noise.
      and release-note preparation.
    - Flow designer UI on top of the graph/runtime foundation, without turning
      MAIster into a generic workflow builder.
-   - Additional ACP executors after the claude/codex contract proves stable.
+   - Deeper Gemini/OpenCode ACP proof for permissions, MCP, model switching,
+     and resume semantics beyond the first adapter-family support.
    - CI/log intake, external board sync, and background project agents only
      after draft/publish, dedup, severity, cooldown, and human-feedback controls
      exist.

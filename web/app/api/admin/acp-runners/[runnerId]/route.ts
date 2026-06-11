@@ -8,12 +8,14 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { evaluateRunnerReadiness } from "@/lib/acp-runners/readiness";
 import {
+  PERMISSION_POLICIES,
   getAdapterSupport,
+  type AdapterId,
   type PermissionPolicy,
   type ProviderKind,
-} from "@/lib/acp-runners/schema";
+} from "@/lib/acp-runners/adapter-support";
+import { evaluateRunnerReadiness } from "@/lib/acp-runners/readiness";
 import {
   loadRunnerUsageReferences,
   type RunnerUsageReference,
@@ -58,15 +60,44 @@ const providerSchema = z.discriminatedUnion("kind", [
       wireApi: z.literal("responses").optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("google_gemini"),
+      apiKey: z
+        .string()
+        .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/)
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_vertex"),
+      projectId: z.string().min(1).optional(),
+      location: z.string().min(1).optional(),
+      apiKey: z
+        .string()
+        .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/)
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_gateway"),
+      baseUrl: z.string().url().optional(),
+      apiKey: z
+        .string()
+        .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/)
+        .optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
 const patchBodySchema = z
   .object({
     model: z.string().trim().min(1).optional(),
     provider: providerSchema.optional(),
-    permissionPolicy: z
-      .enum(["default", "dangerously_skip_permissions"])
-      .optional(),
+    permissionPolicy: z.enum(PERMISSION_POLICIES).optional(),
     sidecarId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().optional(),
   })
@@ -77,10 +108,10 @@ const patchBodySchema = z
 
 type RouteParams = { params: Promise<{ runnerId: string }> };
 type LoadedRunner = {
-  readonly adapter: "claude" | "codex";
-  readonly capabilityAgent: "claude" | "codex";
+  readonly adapter: AdapterId;
+  readonly capabilityAgent: AdapterId;
   readonly enabled: boolean;
-  readonly permissionPolicy: "default" | "dangerously_skip_permissions";
+  readonly permissionPolicy: PermissionPolicy;
   readonly provider: PlatformRunnerProvider;
   readonly sidecarId?: string | null;
 };
@@ -158,7 +189,7 @@ async function loadRunner(db: any, runnerId: string): Promise<LoadedRunner> {
 }
 
 function assertProviderSupported(args: {
-  readonly adapter: "claude" | "codex";
+  readonly adapter: AdapterId;
   readonly providerKind: ProviderKind;
   readonly permissionPolicy: PermissionPolicy;
 }): void {

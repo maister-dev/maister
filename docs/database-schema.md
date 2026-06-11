@@ -215,9 +215,9 @@ as implicit `owner` of every project.
   promotionMode?,                // M18 (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
                                  //   source for the launch-time override chain (§3.4)
-  taskKey,                       // ADR-075 (Designed, 0040): platform-wide UNIQUE,
+  taskKey,                       // ADR-083 (Implemented, 0043): platform-wide UNIQUE,
                                  //   ^[A-Z][A-Z0-9]{1,9}$, immutable in Stage 1
-  nextTaskNumber,                // ADR-075 (Designed, 0040): integer NOT NULL
+  nextTaskNumber,                // ADR-083 (Implemented, 0043): integer NOT NULL
                                  //   DEFAULT 1; allocation counter for tasks.number
   createdAt, archivedAt?
 }
@@ -252,8 +252,8 @@ platform_router_sidecars {
 
 platform_acp_runners {
   id,
-  adapter: 'claude' | 'codex',
-  capabilityAgent: 'claude' | 'codex',
+  adapter: 'claude' | 'codex' | 'gemini' | 'opencode',
+  capabilityAgent: 'claude' | 'codex' | 'gemini' | 'opencode',
   model,
   provider,                      // typed jsonb provider shape
   permissionPolicy: 'default' | 'dangerously_skip_permissions',
@@ -275,6 +275,18 @@ platform_runtime_settings {
 launch. `provider` and sidecar fields store secret refs only. A runner or
 sidecar usage-reference service guards disable/delete actions.
 
+**Migration audit for ADR-084:** migration `0022_platform_acp_runners.sql`
+created `platform_acp_runners.adapter`, `platform_acp_runners.capability_agent`,
+and `runs.capability_agent` as plain SQL `text` columns with no CHECK constraint
+or Postgres enum. Drizzle's `{ enum: [...] }` annotations on those columns are
+TypeScript-level only. Adding `gemini` and `opencode` therefore requires a
+schema/type update and contract tests, but no SQL DDL migration for these
+columns. The same rule applies to JSONB provider and runner snapshot payloads:
+shape validation is application-owned. Migration
+`0044_mcp_supported_agents_all_adapters.sql` updates only the
+`platform_mcp_servers.supported_agents` default for newly created MCP rows; it
+does not rewrite existing compatibility choices.
+
 ## `platform_mcp_servers` (Designed, M27)
 
 **(M27 — Designed, migration `0033+`.)** Platform-admin-managed MCP server
@@ -292,7 +304,7 @@ never stored and are resolved supervisor-side.
                                  //   values are never stored
   url?,                          // sse | http only
   headerKeys (jsonb, DEFAULT '[]'), // header NAMES only (env:NAME pattern)
-  supportedAgents (jsonb, DEFAULT '["claude","codex"]'),
+  supportedAgents (jsonb, DEFAULT '["claude","codex","gemini","opencode"]'),
   trustStatus: 'untrusted' | 'trusted' | 'trusted_by_policy',
                                  // DEFAULT 'untrusted'; mirrors
                                  //   platform_acp_runners.trustStatus semantics
@@ -307,6 +319,9 @@ A platform MCP DELETE is refused (409) while any `capability_records` row
 references it (mirrors `assertCanDisable`). A duplicate id on POST returns 409
 via `onConflictDoNothing().returning()`, never a raw 500. Stdio `command` spawn
 is gated on `exec_trust = 'trusted'` for the owning `flow_revisions` row (§4.2).
+ADR-084 allows `supportedAgents` to include all four adapter families. New rows
+default to `["claude","codex","gemini","opencode"]` after migration `0044`;
+existing rows are not silently widened.
 
 ## `project_flow_roles`
 
@@ -630,7 +645,7 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
 ```ts
 {
   id, projectId, title, prompt,
-  number,                        // ADR-075 (Designed, 0040): per-project monotonic,
+  number,                        // ADR-083 (Implemented, 0043): per-project monotonic,
                                  //   UNIQUE (project_id, number); KEY-N = task_key-number
   flowId,                        // FK -> flows.id
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
@@ -656,13 +671,13 @@ queries.
 User-owned external tokens set it to the token owner's `users.id` when creating
 tasks through `/api/v1/ext/projects/{slug}/tasks`.
 
-`number` (ADR-075, Implemented) is allocated inside the `createTask` transaction
+`number` (ADR-083, Implemented) is allocated inside the `createTask` transaction
 from `projects.next_task_number` (`UPDATE … RETURNING`; the projects-row lock
 serializes concurrent creates) and never reused — deletion leaves a hole.
-Migration `0041` backfills existing tasks per project ordered by
+Migration `0043` backfills existing tasks per project ordered by
 `(created_at, id)`.
 
-## Social board tables (Implemented — ADR-078, migration `0041`)
+## Social board tables (Implemented — ADR-083, migration `0043`)
 
 Five tables for the Stage-1 social substrate. All four actor-carrying tables
 share the polymorphic actor pair: `actor_type CHECK IN
@@ -671,7 +686,7 @@ NULL))`, **no FK to `users`** (a deleted user renders as "former user").
 Stage 1 writes only `user`/`system`; `agent` is schema-legal for later
 stages. See
 [`system-analytics/social-board.md`](system-analytics/social-board.md) and
-[ADR-075](decisions.md#adr-075-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
+[ADR-083](decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 
 ### `task_relations`
 
@@ -1850,11 +1865,11 @@ projects
   ├── project_flow_roles (FK projectId, cascade)      ← M13
   ├── actor_identities   (FK projectId, cascade)      ← M13
   ├── tasks              (FK projectId, cascade)
-  │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-075 (Designed)
-  │     ├── task_comments    (FK taskId,   cascade)                ← ADR-075 (Designed)
-  │     ├── task_activity    (FK taskId,   cascade)                ← ADR-075 (Designed)
-  │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-075 (Designed)
-  │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-075 (Designed)
+  │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
+  │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083
+  │     ├── task_activity    (FK taskId,   cascade)                ← ADR-083
+  │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-083
+  │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── step_runs       (FK runId,        cascade)
@@ -1889,11 +1904,11 @@ projects
   │           └── webhook_delivery_attempts  (FK delivery_id, cascade)
   ├── webhook_events     (FK project_id, cascade)  ← ADR-077 (also via runs.id)
   │     └── webhook_deliveries  (FK event_id, cascade; the retention pass prunes only zero-delivery events)
-  ├── task_relations      (FK projectId, cascade)  ← also direct, ADR-078
-  ├── task_comments       (FK projectId, cascade)  ← also direct, ADR-078
-  ├── task_activity       (FK projectId, cascade)  ← also direct, ADR-078
-  ├── inbox_items         (FK projectId, cascade)  ← also direct, ADR-078
-  └── task_subscribers    (FK taskId, cascade)  ← ADR-078 (via tasks.id)
+  ├── task_relations      (FK projectId, cascade)  ← also direct, ADR-083
+  ├── task_comments       (FK projectId, cascade)  ← also direct, ADR-083
+  ├── task_activity       (FK projectId, cascade)  ← also direct, ADR-083
+  ├── inbox_items         (FK projectId, cascade)  ← also direct, ADR-083
+  └── task_subscribers    (FK taskId, cascade)  ← ADR-083 (via tasks.id)
 ```
 
 `runs.flowId` also cascades — when a project deletion cascades to drop flows,
@@ -1940,14 +1955,14 @@ Created via Drizzle:
 | `assignments`         | `assignments_hitl_request_idx`          | `(hitlRequestId)`                 | HITL assignment lookup                                             |
 | `assignment_events`   | `assignment_events_assignment_idx`      | `(assignmentId)`                  | Assignment event history                                           |
 | `assignment_events`   | `assignment_events_project_created_idx` | `(projectId, createdAt)`          | Project audit stream                                               |
-| `tasks`               | `tasks_project_number_uq`               | `(projectId, number)` UNIQUE      | **(ADR-075, Implemented)** Per-project task numbering backstop        |
-| `task_relations`      | `task_relations_from_kind_to_uq`        | `(fromTaskId, kind, toTaskId)` UNIQUE | **(ADR-075, Implemented)** Canonical relation rows, no duplicates |
-| `task_relations`      | `task_relations_to_task_idx`            | `(toTaskId)`                      | **(ADR-075, Implemented)** Inverse-direction lookups                  |
-| `task_comments`       | `task_comments_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Implemented)** Task timeline listing                      |
-| `task_activity`       | `task_activity_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-075, Implemented)** Task timeline interleave                   |
-| `task_activity`       | `task_activity_project_created_idx`     | `(projectId, createdAt)`          | **(ADR-075, Implemented)** Project Log page stream                    |
-| `task_subscribers`    | `task_subscribers_task_pair_uq`         | `(taskId, subscriberType, subscriberId)` UNIQUE | **(ADR-075, Implemented)** One subscription per pair    |
-| `inbox_items`         | `inbox_items_recipient_idx`             | `(recipientType, recipientId, readAt, createdAt DESC)` | **(ADR-075, Implemented)** Unread badge + inbox panel |
+| `tasks`               | `tasks_project_number_uq`               | `(projectId, number)` UNIQUE      | **(ADR-083, Implemented)** Per-project task numbering backstop        |
+| `task_relations`      | `task_relations_from_kind_to_uq`        | `(fromTaskId, kind, toTaskId)` UNIQUE | **(ADR-083, Implemented)** Canonical relation rows, no duplicates |
+| `task_relations`      | `task_relations_to_task_idx`            | `(toTaskId)`                      | **(ADR-083, Implemented)** Inverse-direction lookups                  |
+| `task_comments`       | `task_comments_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-083, Implemented)** Task timeline listing                      |
+| `task_activity`       | `task_activity_task_created_idx`        | `(taskId, createdAt)`             | **(ADR-083, Implemented)** Task timeline interleave                   |
+| `task_activity`       | `task_activity_project_created_idx`     | `(projectId, createdAt)`          | **(ADR-083, Implemented)** Project Log page stream                    |
+| `task_subscribers`    | `task_subscribers_task_pair_uq`         | `(taskId, subscriberType, subscriberId)` UNIQUE | **(ADR-083, Implemented)** One subscription per pair    |
+| `inbox_items`         | `inbox_items_recipient_idx`             | `(recipientType, recipientId, readAt, createdAt DESC)` | **(ADR-083, Implemented)** Unread badge + inbox panel |
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
 | `project_members` | `project_members_user_idx` | `(userId)` | Per-user project listing / authz lookups |

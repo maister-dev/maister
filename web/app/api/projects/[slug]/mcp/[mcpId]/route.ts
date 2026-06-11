@@ -3,6 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
 import {
@@ -32,10 +33,7 @@ const patchBodySchema = z
     envKeys: z.array(envKeyRefSchema).optional(),
     url: z.string().url().nullable().optional(),
     headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: z
-      .array(z.enum(["claude", "codex"]))
-      .min(1)
-      .optional(),
+    supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
     enabled: z.boolean().optional(),
   })
   .strict()

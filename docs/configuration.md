@@ -62,6 +62,20 @@ acp_runners:
     provider:
       kind: openai
     permission_policy: default
+
+  - id: gemini-cli
+    adapter: gemini
+    model: gemini-2.5-pro
+    provider:
+      kind: google_gemini
+    permission_policy: default
+
+  - id: opencode-native
+    adapter: opencode
+    model: opencode-native
+    provider:
+      kind: agent_native
+    permission_policy: default
 ```
 
 Rules:
@@ -75,6 +89,9 @@ Rules:
 - Unsupported provider/policy/sidecar combinations are saved only as
   `NotReady` with reason codes, or are rejected when they would create an
   invalid default.
+- Gemini/OpenCode runner rows are first-class catalog entries, but production
+  readiness is still gated by supervisor diagnostics and adapter smoke evidence;
+  they are never silently substituted with Claude/Codex.
 - Admin APIs and UI may show secret ref names and readiness reason codes, but
   never raw token values or generated config bodies.
 
@@ -136,6 +153,8 @@ capabilities:
       agents:
         claude: Bash
         codex: shell
+        gemini: shell
+        opencode: shell
       enforceability: enforced
   restrictions:
     - id: no-global-installs
@@ -954,11 +973,13 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_KILL_GRACE_MS` | no | `5000` | SIGTERM → SIGKILL grace per session |
 | `MAISTER_SHUTDOWN_GRACE_MS` | no | `15000` | Total budget for graceful supervisor shutdown |
 | `LOG_LEVEL` | no | `debug` (dev) / `info` (prod) | pino level for both web and supervisor |
-| `ANTHROPIC_API_KEY` | yes for default | — | Claude executor (unless overridden by per-executor `env`); also read by the model-discovery `provider_api` source for plain `anthropic` runner drafts (ADR-076) |
+| `ANTHROPIC_API_KEY` | no | — | Optional provider env inherited by spawned children if present; ACP tools are configured in their own CLIs by default. Also read by the model-discovery `provider_api` source for plain `anthropic` runner drafts (ADR-076). |
 | `ANTHROPIC_BASE_URL` | no | api.anthropic.com | Per-executor `env` overrides the global default |
-| `ANTHROPIC_AUTH_TOKEN` | no | uses `ANTHROPIC_API_KEY` | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …) |
+| `ANTHROPIC_AUTH_TOKEN` | no | uses tool/provider default | Optional explicit provider env when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). Platform runners should prefer typed env refs only when overriding CLI-native config. |
 | `OPENAI_API_KEY` | no | — | Model discovery only (ADR-076): the supervisor's `provider_api` source lists models for plain `openai` codex runner drafts; unset → that source reports `skipped`. NOT used to run codex sessions. |
 | `MAISTER_CCR_AUTH_TOKEN` | no | unset | Fallback for `ANTHROPIC_AUTH_TOKEN` when an executor has `router: ccr` and does not pin the token in `executor.env`. Missing token → `EXECUTOR_UNAVAILABLE` (503). |
+| `MAISTER_ADAPTER_SMOKE_CACHE_PATH` | no | `<runtimeRoot>/adapter-smoke-cache.json` | Optional supervisor-side diagnostics cache written by `pnpm -C supervisor smoke:acp --cache <path> gemini opencode`. Gemini/OpenCode readiness requires cached `smoke.status="ok"`. Host/service-env only; never a compose var in the default Postgres-only topology. |
+| `MAISTER_DIAGNOSTIC_ENV_REFS` | no | unset | Optional comma-separated extra env-ref names exposed by supervisor `/diagnostics` as `{name,present}`. Values are never returned. Use for custom runner provider env refs beyond the built-in safe catalog. |
 | `MAISTER_CCR_CONFIG_PATH` | no | `/app/.ccr/config.json` in Docker, `~/.claude-code-router/config.json` otherwise | Container-side path the supervisor reads for CCR host+port. In compose this aligns with the bind-mount target — leave unset unless changing the layout. |
 | `MAISTER_CCR_CONFIG_HOST_PATH` | no (Docker only) | `${HOME}/.claude-code-router` | Host directory bind-mounted at `/app/.ccr` (read-only) in the supervisor service. Point at a secret-mount directory for hardened deployments. |
 | `MAISTER_WEBHOOK_DELIVERY_BATCH` | no | `20` | **(Implemented, ADR-077.)** Max deliveries (and outbox events) claimed per `webhook_delivery` scheduler drain tick. Bounds per-tick memory and HTTP concurrency. Web tier only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is wired into `.env.example` + this doc **only**, never `compose.yml`. |

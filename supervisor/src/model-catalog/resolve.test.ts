@@ -218,6 +218,15 @@ describe("ModelCatalogDraftSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("rejects provider kinds that do not belong to the adapter", () => {
+    const parsed = ModelCatalogDraftSchema.safeParse({
+      adapter: "gemini",
+      provider: { kind: "anthropic" },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("accepts a ccr router draft with a valid sidecarId", () => {
     const parsed = ModelCatalogDraftSchema.safeParse({
       adapter: "claude",

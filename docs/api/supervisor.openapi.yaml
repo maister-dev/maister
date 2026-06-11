@@ -4,7 +4,9 @@ info:
   version: "0.7.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
-    sessions and spawns adapter binaries `claude-agent-acp` / `codex-acp`).
+    sessions and spawns adapter binaries. Implemented adapters are
+    `claude-agent-acp` and `codex-acp`; ADR-084 designs `gemini --acp` and
+    `opencode acp` as additional code-owned adapter families.
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
     **Implemented contract.** The lifecycle
@@ -72,8 +74,11 @@ paths:
       summary: Inspect runtime launch diagnostics
       description: |
         Read-only diagnostics for remote supervisor runtime configuration:
-        adapter binary availability, sidecar readiness state, env-ref presence,
-        and launcher version metadata. Does not return raw secret values.
+        adapter binary availability, binary source/path/version/error,
+        adapter smoke evidence, sidecar readiness state, env-ref presence, and launcher version
+        metadata. Does not return raw secret values. A binary that exists but
+        cannot initialize its first-run writable state is reported as
+        `available: false` with an adapter-specific `error`, not as a raw 500.
       operationId: getSupervisorDiagnostics
       responses:
         "200":
@@ -90,6 +95,10 @@ paths:
         Spawns the adapter binary determined by the versioned `runner.adapter`
         when present, otherwise by legacy `executor.agent` (`claude-agent-acp`
         for `claude`, `codex-acp` for `codex`), with `cwd = worktreePath`.
+        ADR-084 adapters use the same registry: `gemini` launches
+        `gemini --acp`; `opencode` launches `opencode acp`. Unsupported
+        adapter/provider/policy combinations, missing required env refs, and
+        unsupported checkpoint strategies are rejected before spawn.
         Returns after the adapter process starts and the ACP handshake returns
         an `acpSessionId`; everything after that is observable via the SSE
         stream.
@@ -121,7 +130,7 @@ paths:
                 missingField:
                   value: { code: "PRECONDITION", message: "executor: Required" }
         "500":
-          description: Spawn failed (binary missing, EACCES, OOM at fork).
+          description: Spawn failed (binary missing, EACCES, first-run state failure, OOM at fork).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -129,7 +138,7 @@ paths:
                 enoent:
                   value: { code: "SPAWN", message: "spawn claude-agent-acp failed: ENOENT" }
         "503":
-          description: Reserved for executor pool exhaustion (M6).
+          description: Executor unavailable (missing env ref, unsupported adapter readiness, or reserved pool exhaustion).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -433,7 +442,7 @@ paths:
         The only request-level rejection is `409 PRECONDITION` on a malformed
         draft (unknown adapter, an `env:`-prefixed or raw-secret value in an
         env-ref field, a malformed provider union, or `router` without
-        `sidecarId`). See [ADR-076](../decisions.md#adr-075) and
+        `sidecarId`). See [ADR-076](../decisions.md#adr-076-acp-runner-model-discovery-resolver-on-supervisor--configured-model-application) and
         [`../system-analytics/model-catalog.md`](../system-analytics/model-catalog.md).
 
         **Identifiers.** Every body field is draft config (`body-controlled`),
@@ -541,12 +550,55 @@ components:
           type: array
           items:
             type: object
-            required: [id, binary, available]
+            required:
+              [id, binary, source, path, available, version, error, smoke]
             additionalProperties: false
             properties:
               id: { $ref: "#/components/schemas/ExecutorAgent" }
               binary: { type: string, minLength: 1 }
+              source:
+                type: string
+                enum: [path, override]
+                description: |
+                  `path` = resolved from supervisor PATH; `override` = explicit
+                  supervisor-side adapter binary override.
+              path:
+                type: string
+                nullable: true
+                description: Resolved executable path when known. Never a secret.
               available: { type: boolean }
+              version:
+                type: string
+                nullable: true
+                description: Cheap version probe result when available.
+              error:
+                type: string
+                nullable: true
+                description: |
+                  Redacted operator-visible diagnostic such as `ENOENT`,
+                  `EACCES`, version-probe failure, or adapter first-run
+                  writable-state failure. Must not contain env values.
+              smoke:
+                type: object
+                required: [status, reason, checkedAt, protocolVersion]
+                additionalProperties: false
+                properties:
+                  status:
+                    type: string
+                    enum: [not_required, pending, ok, skipped, error]
+                    description: |
+                      Cached ACP compatibility smoke state. `ok` is required
+                      before Gemini/OpenCode can become launch-ready.
+                  reason:
+                    type: string
+                    nullable: true
+                  checkedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  protocolVersion:
+                    type: integer
+                    nullable: true
         sidecars:
           type: array
           items:
@@ -586,8 +638,11 @@ components:
           minimum: 0
     ExecutorAgent:
       type: string
-      enum: [claude, codex]
-      description: Identity dispatch — picks the adapter binary.
+      enum: [claude, codex, gemini, opencode]
+      description: |
+        Identity dispatch — picks the code-owned adapter family. `gemini` and
+        `opencode` are implemented adapter ids, but workflow readiness remains
+        launch-gated by diagnostics and adapter-specific smoke evidence.
     ExecutorRouter:
       type: string
       enum: [ccr]
@@ -644,10 +699,45 @@ components:
               type: string
               pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
             wireApi: { type: string, enum: [responses] }
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [google_gemini] }
+            apiKeyEnv:
+              type: string
+              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [google_vertex] }
+            projectId: { type: string, minLength: 1 }
+            location: { type: string, minLength: 1 }
+            apiKeyEnv:
+              type: string
+              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [google_gateway] }
+            baseUrl: { type: string, format: uri }
+            apiKeyEnv:
+              type: string
+              pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [agent_native] }
       description: |
         Versioned runner provider intent. Secret fields are env variable names
         already resolved by the web tier from `env:NAME` references; raw secret
-        values are not accepted.
+        values are not accepted. `google_gemini`, `google_vertex`,
+        `google_gateway`, and `agent_native` are implemented provider intents
+        for the Gemini/OpenCode adapter families and remain adapter-readiness
+        gated until the selected workflow is smoke-proven.
     RunnerSidecar:
       type: object
       additionalProperties: false
@@ -843,9 +933,12 @@ components:
       type: string
       enum: [end_turn, max_tokens, max_turn_requests, refusal]
       description: |
-        ACP `stopReason` from `session/prompt`. The web tier additionally
-        maps transport-cancelled requests to `cancelled` client-side; the
-        supervisor itself only ever returns one of the four ACP values.
+        ACP `stopReason` from `session/prompt`. Supervisor success responses
+        exclude `cancelled`: if an adapter returns `cancelled` for a direct
+        prompt, the supervisor treats it as `ACP_PROTOCOL`; user-initiated
+        graceful stop/checkpoint uses the DELETE/checkpoint paths instead.
+        The web tier may still expose a client-side `cancelled` state for
+        transport cancellation outside this supervisor response.
     SendPromptResponse:
       type: object
       required: [stopReason]
@@ -989,7 +1082,9 @@ components:
         Runner draft to resolve. `provider` reuses the `RunnerProvider` union;
         its env-ref fields (`authTokenEnv` / `apiKeyEnv`) are **bare** names
         (`^[A-Za-z_][A-Za-z0-9_]*$`) — an `env:`-prefixed or raw-secret value is
-        rejected with `409 PRECONDITION`.
+        rejected with `409 PRECONDITION`. Gemini/OpenCode drafts return typed
+        skipped/error model source statuses until their adapter-specific smoke
+        proves a live source.
       properties:
         adapter: { $ref: "#/components/schemas/ExecutorAgent" }
         provider: { $ref: "#/components/schemas/RunnerProvider" }

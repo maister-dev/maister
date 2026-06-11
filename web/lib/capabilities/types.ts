@@ -50,7 +50,7 @@ export type CapabilityProfileEntry = {
 
 export type ResolvedCapabilityProfile = {
   projectId: string;
-  executorAgent: "claude" | "codex";
+  executorAgent: CapabilityAgent;
   planMode: "off" | "plan-first";
   workMode: "auto" | "plan_first" | "manual_approval";
   reasoningEffort: "low" | "high" | "extra" | "ultra";

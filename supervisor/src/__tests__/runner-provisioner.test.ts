@@ -68,6 +68,67 @@ describe("provisionRunnerLaunch", () => {
     });
   });
 
+  it("maps Gemini API-key provider env refs into Gemini CLI env", () => {
+    vi.stubEnv("GEMINI_UPSTREAM_KEY", "gemini-secret");
+
+    expect(
+      provisionRunnerLaunch({
+        version: 1,
+        runnerId: "gemini-cli",
+        adapter: "gemini",
+        capabilityAgent: "gemini",
+        model: "gemini-3-pro",
+        provider: {
+          kind: "google_gemini",
+          apiKeyEnv: "GEMINI_UPSTREAM_KEY",
+        },
+        permissionPolicy: "default",
+      }),
+    ).toEqual({
+      executor: {
+        agent: "gemini",
+        model: "gemini-3-pro",
+        env: { GEMINI_API_KEY: "gemini-secret" },
+      },
+    });
+
+    vi.unstubAllEnvs();
+  });
+
+  it("allows Gemini CLI-native auth without env mutation", () => {
+    expect(
+      provisionRunnerLaunch({
+        version: 1,
+        runnerId: "gemini-cli",
+        adapter: "gemini",
+        capabilityAgent: "gemini",
+        model: "gemini-3-pro",
+        provider: {
+          kind: "google_gemini",
+        },
+        permissionPolicy: "default",
+      }),
+    ).toEqual({
+      executor: { agent: "gemini", model: "gemini-3-pro" },
+    });
+  });
+
+  it("maps OpenCode native runners without env or argv mutation", () => {
+    expect(
+      provisionRunnerLaunch({
+        version: 1,
+        runnerId: "opencode-native",
+        adapter: "opencode",
+        capabilityAgent: "opencode",
+        model: "opencode-default",
+        provider: { kind: "agent_native" },
+        permissionPolicy: "default",
+      }),
+    ).toEqual({
+      executor: { agent: "opencode", model: "opencode-default" },
+    });
+  });
+
   it("rejects unsupported Codex OpenAI-compatible providers until native materialization exists", () => {
     expect(() =>
       provisionRunnerLaunch({

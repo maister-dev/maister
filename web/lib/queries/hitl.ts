@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -64,7 +65,7 @@ export async function getHitlRequestsForRun(
     .orderBy(asc(hitlRequests.createdAt));
 }
 
-export type HitlAgent = "claude" | "codex";
+export type HitlAgent = AdapterId;
 
 export interface HitlOption {
   optionId: string;
@@ -160,7 +161,7 @@ export type HitlRowBase = {
   rawSchema: unknown;
   criticality: "low" | "medium" | "high" | "critical" | null;
   createdAt: Date;
-  capabilityAgent: "claude" | "codex" | null;
+  capabilityAgent: AdapterId | null;
   runnerSnapshot: RunnerSnapshot | null;
   branch: string;
   flowRef: string;

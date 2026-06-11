@@ -22,14 +22,18 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   model, provider (jsonb), permission_policy, sidecar_id?, readiness_status,
   readiness_reasons, enabled, created_at, updated_at }`. Persisted; see
   [db/projects-domain.md](../db/projects-domain.md).
-- **`provider`** — discriminated union `anthropic | anthropic_compatible |
-  openai | openai_compatible`. Secret material is stored ONLY as `env:NAME`
-  references (`^env:[A-Za-z_][A-Za-z0-9_]*$`). See
-  [configuration.md](../configuration.md).
-- **Adapter support** — static `ADAPTERS` table in
-  `web/lib/acp-runners/schema.ts`: `claude` → providers `anthropic |
+- **`provider`** — discriminated union. Implemented kinds:
+  `anthropic | anthropic_compatible | openai | openai_compatible |
+  google_gemini | google_vertex | google_gateway | agent_native`.
+  Secret material is stored ONLY as `env:NAME` references
+  (`^env:[A-Za-z_][A-Za-z0-9_]*$`). See [configuration.md](../configuration.md).
+- **Adapter support** — static adapter registry in
+  `web/lib/acp-runners/adapter-support.ts`: `claude` → providers `anthropic |
   anthropic_compatible`, policies `default | dangerously_skip_permissions`;
-  `codex` → providers `openai | openai_compatible`, policy `default` only.
+  `codex` → providers `openai | openai_compatible`, policy `default` only;
+  `gemini` → Google provider kinds, policy `default`; `opencode` →
+  `agent_native`, policy `default`. Gemini/OpenCode are code-owned adapter
+  families, not operator-created arbitrary commands.
 - **Runner presets** — static templates (`platformRunnerPresetRows()`) offered
   as create-form prefills; not catalog rows until instantiated.
 - **`platform_runtime_settings.default_runner_id`** — NOT-NULL FK to a runner
@@ -38,6 +42,34 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   historical pointer at a runner (platform/project/flow defaults, flow-step
   remaps, active runs, historical run snapshots, scratch runs). The delete and
   disable guards key on this set.
+
+## Gemini/OpenCode adapter-family contract (Implemented with readiness gates, ADR-084)
+
+Gemini CLI and OpenCode widen the runner catalog without changing its
+ownership. They are new adapter families, not a new runner kind.
+
+| Adapter | Provider kinds | Permission policies | Binary contract | Initial readiness |
+| --- | --- | --- | --- | --- |
+| `gemini` | `google_gemini`, `google_vertex`, `google_gateway` | `default` | `gemini --acp` | `NotReady` until CLI-native auth and SDK initialize/newSession smoke pass |
+| `opencode` | `agent_native` | `default` | `opencode acp` | Basic SDK initialize/newSession smoke passed locally; broader permissions/MCP/resume/model gates remain readiness constraints |
+
+Readiness reasons must distinguish these states:
+
+- adapter id unsupported by this build;
+- binary missing from PATH;
+- explicit binary override path missing or non-executable;
+- binary executable but version probe failed;
+- binary executable but first-run state directory is not writable;
+- provider kind unsupported by adapter;
+- explicitly configured auth env ref missing;
+- protocol initialize/newSession smoke missing or failed;
+- resume/checkpoint strategy unsupported or unproven;
+- model application channel unsupported or advisory-only;
+- strict capability class unsupported by the resolved adapter.
+
+The admin UI may let operators create disabled Gemini/OpenCode runners before
+all smoke gates pass, but it must not allow them as platform default or launch
+targets until readiness is `Ready`.
 
 ## State machine
 
@@ -128,6 +160,17 @@ flowchart TD
 - `provider.kind` and `permission_policy` MUST be members of the runner's
   adapter support set; a mismatch MUST be rejected with
   `MaisterError("CONFIG")` (422). (Implemented)
+- For `gemini` and `opencode`, readiness MUST remain `NotReady` unless
+  diagnostics prove the binary can execute in the supervisor environment and
+  the adapter-specific ACP smoke evidence required for the workflow has passed.
+  The proof is explicit diagnostics data: `adapter.smoke.status` must be `ok`.
+  (Implemented with ADR-078 gates)
+- OpenCode installed-but-not-initializable MUST be distinct from OpenCode
+  missing: a first-run writable-state failure is a readiness reason, not a raw
+  500. (Implemented, ADR-078)
+- Gemini `loadSession` MUST NOT satisfy MAIster checkpoint readiness until an
+  SDK smoke proves it preserves the checkpoint invariant. (Implemented gate,
+  ADR-078)
 - Setting `platform_runtime_settings.default_runner_id` MUST target an
   `enabled`, `Ready` runner; otherwise `MaisterError("PRECONDITION")` (409). (Implemented)
 - The runner catalog MUST be readable and mutable only from the admin-gated
@@ -149,6 +192,12 @@ flowchart TD
 - **Unknown runnerId** on PATCH/DELETE → `MaisterError("PRECONDITION")` (409).
 - **Adapter/provider/policy mismatch** → `MaisterError("CONFIG")` (422).
 - **Raw (non-`env:`) secret** in a provider field → `MaisterError("CONFIG")` (422).
+- **Gemini/OpenCode runner created before smoke passes** → row may be saved as
+  disabled or `NotReady`, but launch/default selection is refused.
+- **OpenCode binary exists but cannot create its state directory** → `NotReady`
+  with an operator-visible writable-state reason; no launch attempt.
+- **Gemini checkpoint requested before `loadSession` is proven compatible** →
+  readiness refusal or `CHECKPOINT`, never a silent `newSession` fallback.
 - **Preset prefill referencing a `sidecar_id` absent from the catalog** → the
   create modal falls back to "none" with no error (UI-side, not a server error).
 
@@ -157,7 +206,7 @@ flowchart TD
 - **API contract:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) —
   `getAdminAcpRunners`, `postAdminAcpRunner`, `patchAdminAcpRunner`,
   `deleteAdminAcpRunner`.
-- **Decision:** [ADR-065](../decisions.md#adr-065).
+- **Decision:** [ADR-065](../decisions.md#adr-065), [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode).
 - **Related domains:** [executors.md](executors.md) (resolution + routing),
   [readiness.md](readiness.md) (readiness evaluation),
   [instance-config.md](instance-config.md) (host roots / host tools on the same

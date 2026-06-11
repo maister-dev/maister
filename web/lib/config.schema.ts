@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ADAPTER_IDS, PROVIDER_KINDS } from "@/lib/acp-runners/adapter-support";
+
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
 // (and its transitive MaisterError dep) into config.schema.ts, which must remain
 // importable in any context (tests, client-adjacent shared modules).
@@ -37,7 +39,7 @@ export const flowRoleSchema = z.object({
   description: z.string().min(1).optional(),
 });
 
-export const capabilityAgentSchema = z.enum(["claude", "codex"]);
+export const capabilityAgentSchema = z.enum(ADAPTER_IDS);
 
 export const capabilitySourceSchema = z.enum([
   "platform",
@@ -71,7 +73,7 @@ const capabilityAgentsSchema = z
     z.array(capabilityAgentSchema).min(1),
     z.record(capabilityAgentSchema, z.string().min(1)),
   ])
-  .default(["claude", "codex"]);
+  .default([...ADAPTER_IDS]);
 
 const capabilityCommonSchema = z.object({
   id: capabilityRefIdSchema,
@@ -543,6 +545,8 @@ const agentToolsSchema = z
   .object({
     claude: z.array(z.string().min(1)).optional(),
     codex: z.array(z.string().min(1)).optional(),
+    gemini: z.array(z.string().min(1)).optional(),
+    opencode: z.array(z.string().min(1)).optional(),
   })
   .strict();
 
@@ -562,13 +566,10 @@ const runnerPermissionPolicySchema = z.enum([
 
 const runnerProviderRequirementSchema = z
   .object({
-    kind: z.enum([
-      "anthropic",
-      "anthropic_compatible",
-      "openai",
-      "openai_compatible",
-    ]),
+    kind: z.enum(PROVIDER_KINDS),
     base_url: z.string().url().optional(),
+    project_id: z.string().min(1).optional(),
+    location: z.string().min(1).optional(),
     wire_api: z.enum(["responses"]).optional(),
     requires_auth_token: z.boolean().optional(),
     requires_api_key: z.boolean().optional(),

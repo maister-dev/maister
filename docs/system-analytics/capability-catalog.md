@@ -21,6 +21,31 @@ install, trust, setup, Flow package enablement, or runtime materialization.
 - **Capability import** (`capability_imports`, Implemented M14) — git-pinned
   import ledger; M25 reads beside it but never mutates it from authored edits.
 
+## Adapter compatibility widening (Designed, ADR-084)
+
+Gemini and OpenCode are new capability-agent ids, not new capability kinds. When
+their adapter families are implemented, every capability surface must widen in
+lockstep:
+
+- `capability_records.agents[]`, authored capability manifests, imported
+  capability manifests, MCP `supportedAgents`, Flow node tool maps, and runner
+  snapshots may include `gemini` and `opencode`.
+- Existing records that currently list `claude`/`codex` MUST NOT be silently
+  rewritten to include new agents. Compatibility stays explicit unless a future
+  migration/spec names a deterministic widening rule.
+- New Gemini/OpenCode capability classes start as `instructed` or `unsupported`;
+  none start as `enforced`.
+- `resolveCapabilityProfile` MUST refuse enforced-unsupported requirements for
+  the selected adapter instead of downgrading them to instructions.
+- MCP resolution keeps the existing explicit compatibility model: a required MCP
+  whose `supportedAgents` excludes `gemini` or `opencode` is a launch refusal
+  for that adapter, not a best-effort omission.
+
+Capability-resolution logs use structured fields: `projectId`, `runnerId`,
+`adapter`, `capabilityRef`, `class`, `declared`, `capability`, and error code.
+They never log capability bodies, env values, headers, or generated native
+settings files.
+
 ## State machine
 
 ```mermaid
@@ -269,6 +294,10 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   remain a draft only.
 - Authored Flow package content MUST be portable across MAIster installations
   through git-ready package directories.
+- Gemini/OpenCode support MUST preserve explicit capability-agent compatibility:
+  authored/imported capability records are accepted only when their `agents[]`
+  values are in the code-owned agent union, and launch resolution must refuse
+  required capabilities unsupported by the selected adapter. (Designed, ADR-084)
 
 ## Authored flow → executable bridge (Designed, M27)
 
@@ -286,6 +315,9 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   preserves historic run snapshots.
 - Authored flow publish returns local catalog data only; attempts to execute it
   through Flow package enablement remain a later milestone.
+- Adding Gemini/OpenCode to the agent union does not backfill old capability
+  rows; operators must edit or republish records to declare compatibility unless
+  a future migration explicitly says otherwise.
 
 ## Linked artifacts
 
@@ -298,6 +330,7 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   [`../db/capabilities-domain.md`](../db/capabilities-domain.md),
   [`../db/erd.md`](../db/erd.md).
 - ADR: [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle),
-  [ADR-066 authored editor](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Implemented).
+  [ADR-066 authored editor](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (Implemented),
+  [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) (Designed).
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.

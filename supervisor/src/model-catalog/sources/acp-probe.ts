@@ -3,11 +3,7 @@ import type {
   ReadableStream as NodeReadableStream,
   WritableStream as NodeWritableStream,
 } from "node:stream/web";
-import type {
-  ExecutorAgent,
-  RunnerLaunch,
-  StartSessionRequest,
-} from "../../types";
+import type { RunnerLaunch, StartSessionRequest } from "../../types";
 
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -22,6 +18,10 @@ import {
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import {
+  clientCapabilitiesForAdapter,
+  getAdapterRuntime,
+} from "../../adapter-registry";
 import { provisionRunnerLaunch } from "../../runner-provisioner";
 import { buildChildEnv } from "../../spawn";
 import {
@@ -31,11 +31,6 @@ import {
   type ModelSource,
   type ResolveContext,
 } from "../types";
-
-const BINARY_BY_AGENT: Record<ExecutorAgent, string> = {
-  claude: "claude-agent-acp",
-  codex: "codex-acp",
-};
 
 // A2 active probe (ADR-076 primary source). Spawns the already-trusted adapter
 // binary in an isolated tmp cwd, drives a promptless ACP handshake
@@ -140,6 +135,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
     args: string[],
     childEnv: NodeJS.ProcessEnv,
     cwd: string,
+    draft: ModelCatalogDraft,
   ): Promise<acp.ModelInfo[]> {
     const child: ChildProcess = spawnImpl(binary, args, {
       cwd,
@@ -178,7 +174,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
       const probe = (async () => {
         await connection.initialize({
           protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: { fs: {} },
+          clientCapabilities: clientCapabilitiesForAdapter(draft.adapter),
         });
         const resp = await connection.newSession({ cwd, mcpServers: [] });
 
@@ -206,6 +202,19 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
     supports: (draft: ModelCatalogDraft) => draft.router !== "ccr",
     resolve: async (draft: ModelCatalogDraft, ctx: ResolveContext) => {
       const logger: Logger = ctx.logger;
+      const runtime = getAdapterRuntime(draft.adapter);
+
+      if (draft.adapter === "gemini" || draft.adapter === "opencode") {
+        return {
+          models: [],
+          status: {
+            kind: "acp_probe" as const,
+            status: "skipped" as const,
+            reason: `${draft.adapter} ACP model probe is pending compatibility smoke`,
+          },
+        };
+      }
+
       const runner: RunnerLaunch = {
         version: 1,
         runnerId: "model-probe",
@@ -235,7 +244,7 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
       }
 
       const cwd = await mkdtemp(join(tmpdir(), "maister-model-probe-"));
-      const binary = opts.binaryOverride ?? BINARY_BY_AGENT[draft.adapter];
+      const binary = opts.binaryOverride ?? runtime.defaultBinary;
       const synthRequest: StartSessionRequest = {
         runId: "model-probe",
         projectSlug: "model-probe",
@@ -244,10 +253,10 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
         executor,
       };
       const childEnv = buildChildEnv(synthRequest, { ccrLayer: {} });
-      const args = [...(opts.preArgs ?? [])];
+      const args = [...runtime.defaultArgs, ...(opts.preArgs ?? [])];
 
       try {
-        const available = await readModels(binary, args, childEnv, cwd);
+        const available = await readModels(binary, args, childEnv, cwd, draft);
         const models: ModelEntry[] = available.map((m) => ({
           id: m.modelId,
           ...(m.name ? { displayName: m.name } : {}),

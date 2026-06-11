@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Logger } from "pino";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
@@ -10,6 +11,17 @@ import { delimiter, join } from "node:path";
 import { z, ZodError } from "zod";
 
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
+import {
+  adapterSmokeCachePath,
+  readAdapterSmokeCache,
+  smokeDiagnosticForAdapter,
+  type AdapterSmokeCacheRead,
+} from "./adapter-smoke-cache";
+import {
+  listAdapterRuntimes,
+  resolveAdapterBinary,
+  type AdapterRuntime,
+} from "./adapter-registry";
 import { type CcrManager } from "./ccr-manager";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
@@ -65,15 +77,24 @@ export type InputBody = z.infer<typeof InputBodySchema>;
 const DEFAULT_KILL_GRACE_MS = 5_000;
 const SUPERVISOR_STARTED_AT_MS = Date.now();
 const SUPERVISOR_VERSION = process.env.npm_package_version ?? "0.0.1";
+const DIAGNOSTIC_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const DIAGNOSTIC_ENV_REFS: readonly string[] = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "DASHSCOPE_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_CLOUD_PROJECT",
+  "MAISTER_CCR_AUTH_TOKEN",
+  "OPENAI_API_KEY",
+  "ZAI_API_KEY",
+];
 const SESSION_STATUSES: readonly SessionStatus[] = [
   "live",
   "exited",
   "crashed",
 ];
-const ADAPTER_BINARIES = {
-  claude: "claude-agent-acp",
-  codex: "codex-acp",
-} as const;
 
 export type SpawnOverrides = {
   binary?: string;
@@ -117,22 +138,186 @@ function countSessionsByStatus(
   return counts;
 }
 
-async function isBinaryAvailable(binary: string): Promise<boolean> {
+async function findExecutablePath(binary: string): Promise<string | null> {
   const pathEntries = (process.env.PATH ?? "")
     .split(delimiter)
     .filter((entry) => entry.length > 0);
 
   for (const entry of pathEntries) {
-    try {
-      await access(join(entry, binary), fsConstants.X_OK);
+    const candidate = join(entry, binary);
 
-      return true;
+    try {
+      await access(candidate, fsConstants.X_OK);
+
+      return candidate;
     } catch {
       /* keep scanning PATH */
     }
   }
 
-  return false;
+  return null;
+}
+
+function diagnosticEnvRefs(): SupervisorDiagnosticsResponse["envRefs"] {
+  const configured = (process.env.MAISTER_DIAGNOSTIC_ENV_REFS ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => DIAGNOSTIC_ENV_NAME_RE.test(name));
+  const names = Array.from(new Set([...DIAGNOSTIC_ENV_REFS, ...configured]));
+
+  return names
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({
+      name,
+      present: Boolean(process.env[name]),
+    }));
+}
+
+function versionProbeArgs(runtime: AdapterRuntime): readonly string[] | null {
+  if (runtime.id === "gemini" || runtime.id === "opencode") {
+    return ["--version"];
+  }
+
+  return null;
+}
+
+async function probeAdapterVersion(
+  runtime: AdapterRuntime,
+  binary: string,
+): Promise<{ version: string | null; error: string | null }> {
+  const args = versionProbeArgs(runtime);
+
+  if (!args) return { version: null, error: null };
+
+  return new Promise((resolveP) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    let timer: ReturnType<typeof setTimeout>;
+    const child = spawn(binary, [...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const settle = (result: {
+      version: string | null;
+      error: string | null;
+    }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveP(result);
+    };
+
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle({ version: null, error: "version probe timed out" });
+    }, 1_000);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (err) => {
+      settle({ version: null, error: err.message });
+    });
+    child.once("close", (code) => {
+      if (code !== 0) {
+        settle({
+          version: null,
+          error: `version probe exited ${code}: ${stderr.trim()}`,
+        });
+
+        return;
+      }
+
+      const version = (stdout || stderr).split("\n")[0]?.trim() || null;
+
+      settle({ version, error: null });
+    });
+  });
+}
+
+async function diagnoseAdapterBinary(
+  runtime: AdapterRuntime,
+  smokeCache: AdapterSmokeCacheRead,
+  logger: Logger,
+): Promise<SupervisorDiagnosticsResponse["adapters"][number]> {
+  const resolution = resolveAdapterBinary({ adapter: runtime.id });
+  const smoke = smokeDiagnosticForAdapter(runtime.id, smokeCache);
+
+  if (resolution.source === "override") {
+    try {
+      await access(resolution.binary, fsConstants.X_OK);
+      const versionProbe = await probeAdapterVersion(
+        runtime,
+        resolution.binary,
+      );
+      const available = !versionProbe.error && smoke.status !== "error";
+      const error =
+        versionProbe.error ?? (smoke.status === "error" ? smoke.reason : null);
+
+      const diagnostic = {
+        id: runtime.id,
+        binary: resolution.binary,
+        source: "override" as const,
+        path: resolution.binary,
+        available,
+        version: versionProbe.version,
+        error,
+        smoke,
+      };
+
+      logger.debug(
+        { adapter: runtime.id, source: "override", available },
+        "[FIX] adapter diagnostics computed",
+      );
+
+      return diagnostic;
+    } catch (err) {
+      return {
+        id: runtime.id,
+        binary: resolution.binary,
+        source: "override",
+        path: resolution.binary,
+        available: false,
+        version: null,
+        error: `adapter override is not executable: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        smoke,
+      };
+    }
+  }
+
+  const executablePath = await findExecutablePath(resolution.binary);
+  const versionProbe = executablePath
+    ? await probeAdapterVersion(runtime, executablePath)
+    : { version: null, error: null };
+  const available =
+    executablePath !== null && !versionProbe.error && smoke.status !== "error";
+  const error =
+    executablePath === null
+      ? `adapter binary not found on PATH: ${resolution.binary}`
+      : (versionProbe.error ??
+        (smoke.status === "error" ? smoke.reason : null));
+  const diagnostic = {
+    id: runtime.id,
+    binary: resolution.binary,
+    source: "path" as const,
+    path: executablePath,
+    available,
+    version: versionProbe.version,
+    error,
+    smoke,
+  };
+
+  logger.debug(
+    { adapter: runtime.id, source: "path", available },
+    "[FIX] adapter diagnostics computed",
+  );
+
+  return diagnostic;
 }
 
 export function registerRoutes(opts: RegisterRoutesOptions): void {
@@ -180,16 +365,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   app.get("/diagnostics", async (_req, reply) => {
     const ccr = opts.spawnOverrides?.ccrManager;
+    const smokeCache = await readAdapterSmokeCache(
+      adapterSmokeCachePath(runtimeRoot),
+    );
     const body: SupervisorDiagnosticsResponse = {
       status: "ready",
       version: SUPERVISOR_VERSION,
       checkedAt: new Date().toISOString(),
       adapters: await Promise.all(
-        Object.entries(ADAPTER_BINARIES).map(async ([id, binary]) => ({
-          id: id as keyof typeof ADAPTER_BINARIES,
-          binary,
-          available: await isBinaryAvailable(binary),
-        })),
+        listAdapterRuntimes().map((runtime) =>
+          diagnoseAdapterBinary(runtime, smokeCache, logger),
+        ),
       ),
       sidecars: [
         {
@@ -198,12 +384,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           state: ccr?.getState() ?? "idle",
         },
       ],
-      envRefs: [
-        {
-          name: "MAISTER_CCR_AUTH_TOKEN",
-          present: Boolean(process.env.MAISTER_CCR_AUTH_TOKEN),
-        },
-      ],
+      envRefs: diagnosticEnvRefs(),
     };
 
     reply.status(200).send(body);
@@ -247,6 +428,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       record,
       emitter,
       logger,
+      adapter: parsed.runner?.adapter ?? parsed.executor.agent,
       mcpServers: parsed.mcpServers,
       resumeSessionId: parsed.resumeSessionId,
       runner: parsed.runner,
@@ -324,12 +506,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     // this prompt only.
     entry.record.readOnlyTurn = body.readOnlyTurn === true;
 
-    let resp;
+    let resp: Awaited<ReturnType<typeof sendPromptOnConnection>>;
 
     try {
       resp = await sendPromptOnConnection(
         entry.connection,
         {
+          adapter: entry.record.adapter,
           acpSessionId: entry.acpSessionId,
           stepId: body.stepId,
           prompt: body.prompt,

@@ -1,10 +1,12 @@
-export type AdapterId = "claude" | "codex";
-export type ProviderKind =
-  | "anthropic"
-  | "anthropic_compatible"
-  | "openai"
-  | "openai_compatible";
-export type PermissionPolicy = "default" | "dangerously_skip_permissions";
+import {
+  permissionPoliciesForAdapter as adapterPermissionPoliciesForAdapter,
+  providerKindsForAdapter as adapterProviderKindsForAdapter,
+  type AdapterId,
+  type PermissionPolicy,
+  type ProviderKind,
+} from "@/lib/acp-runners/adapter-support";
+
+export type { AdapterId, PermissionPolicy, ProviderKind };
 
 export interface RunnerDraft {
   id: string;
@@ -14,6 +16,8 @@ export interface RunnerDraft {
   baseUrl?: string;
   authToken?: string;
   apiKey?: string;
+  projectId?: string;
+  location?: string;
   wireApi?: boolean;
   permissionPolicy: PermissionPolicy;
   sidecarId?: string | null;
@@ -24,17 +28,13 @@ const ID_RE = /^[A-Za-z0-9._-]+$/;
 const ENV_RE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function providerKindsForAdapter(adapter: AdapterId): ProviderKind[] {
-  return adapter === "claude"
-    ? ["anthropic", "anthropic_compatible"]
-    : ["openai", "openai_compatible"];
+  return [...adapterProviderKindsForAdapter(adapter)];
 }
 
 export function permissionPoliciesForAdapter(
   adapter: AdapterId,
 ): PermissionPolicy[] {
-  return adapter === "claude"
-    ? ["default", "dangerously_skip_permissions"]
-    : ["default"];
+  return [...adapterPermissionPoliciesForAdapter(adapter)];
 }
 
 function isValidUrl(value: string): boolean {
@@ -79,6 +79,15 @@ export function validateRunnerDraft(draft: RunnerDraft): {
   ) {
     errors.apiKey = "apiKey";
   }
+  if (
+    (draft.providerKind === "google_gemini" ||
+      draft.providerKind === "google_vertex" ||
+      draft.providerKind === "google_gateway") &&
+    draft.apiKey &&
+    !ENV_RE.test(draft.apiKey)
+  ) {
+    errors.apiKey = "apiKey";
+  }
   if (draft.baseUrl && !isValidUrl(draft.baseUrl)) {
     errors.baseUrl = "baseUrl";
   }
@@ -105,6 +114,26 @@ function providerObject(draft: RunnerDraft): Record<string, unknown> {
         ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
         ...(draft.wireApi ? { wireApi: "responses" } : {}),
       };
+    case "google_gemini":
+      return {
+        kind: "google_gemini",
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      };
+    case "google_vertex":
+      return {
+        kind: "google_vertex",
+        ...(draft.projectId ? { projectId: draft.projectId } : {}),
+        ...(draft.location ? { location: draft.location } : {}),
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      };
+    case "google_gateway":
+      return {
+        kind: "google_gateway",
+        ...(draft.baseUrl ? { baseUrl: draft.baseUrl } : {}),
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      };
+    case "agent_native":
+      return { kind: "agent_native" };
   }
 }
 

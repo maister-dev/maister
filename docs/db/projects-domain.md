@@ -45,8 +45,8 @@ erDiagram
 
     PLATFORM_ACP_RUNNERS {
         text id PK
-        text adapter "claude|codex"
-        text capability_agent "claude|codex"
+        text adapter "claude|codex|gemini|opencode"
+        text capability_agent "claude|codex|gemini|opencode"
         text model
         jsonb provider
         text permission_policy
@@ -63,7 +63,7 @@ erDiagram
         jsonb env_keys "env:NAME refs only; DEFAULT []"
         text url "nullable; sse|http only"
         jsonb header_keys "env:NAME refs only; DEFAULT []"
-        jsonb supported_agents "DEFAULT [claude,codex]"
+        jsonb supported_agents "DEFAULT [claude,codex,gemini,opencode]"
         text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
         text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
         jsonb readiness_reasons "DEFAULT []"
@@ -115,6 +115,12 @@ erDiagram
   run safety comes from `runs.flow_revision`.
 - `flow_revisions.exec_trust` **(Designed, M27)**: second independent trust axis. `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) and MCP stdio command spawn. Default `untrusted`; requires an explicit operator flip. Drawn in the narrative; `FLOW_REVISIONS` is not included in this partial ERD.
 - `platform_mcp_servers` **(Designed, M27)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface.
+- ADR-084 DB audit: runner adapter/capability-agent columns are SQL `text`
+  without CHECK/enum constraints, so adding `gemini` and `opencode` is a
+  TypeScript/schema contract change, not a SQL DDL migration for runner rows.
+  Migration `0044_mcp_supported_agents_all_adapters.sql` changes the MCP
+  `supported_agents` default for new rows to all four adapter families;
+  existing MCP rows keep their explicit compatibility arrays.
 
 ## Linked artifacts
 

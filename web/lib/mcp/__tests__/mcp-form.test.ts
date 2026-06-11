@@ -89,6 +89,17 @@ describe("validateMcpServerDraft (T-C2)", () => {
     if (!r.ok)
       expect(r.errors.some((e) => e.field === "supportedAgents")).toBe(true);
   });
+
+  it("accepts Gemini and OpenCode supported agents", () => {
+    const r = validateMcpServerDraft({
+      id: "x",
+      transport: "stdio",
+      command: "x",
+      supportedAgents: ["gemini", "opencode"],
+    });
+
+    expect(r.ok).toBe(true);
+  });
 });
 
 describe("buildMcpServerFields (T-C2)", () => {
@@ -135,7 +146,12 @@ describe("buildMcpServerFields (T-C2)", () => {
     });
 
     expect(b.id).toBe("github");
-    expect(b.supportedAgents).toEqual(["claude", "codex"]);
+    expect(b.supportedAgents).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+    ]);
     expect(b.enabled).toBe(true);
   });
 });

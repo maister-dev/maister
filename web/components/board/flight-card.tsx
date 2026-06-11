@@ -48,6 +48,10 @@ const AGENT_PILL: Record<FlightCardData["agent"], string> = {
   claude: "text-amber bg-amber-soft border-amber-line",
   codex:
     "text-accent-3 bg-accent-3-soft border-[color-mix(in_oklab,var(--accent-3)_30%,var(--line))]",
+  gemini:
+    "text-accent-2 bg-accent-2-soft border-[color-mix(in_oklab,var(--accent-2)_30%,var(--line))]",
+  opencode:
+    "text-ink-2 bg-ivory border-[color-mix(in_oklab,var(--ink-2)_24%,var(--line))]",
   dev: "text-accent-4 bg-accent-4-soft border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))]",
 };
 

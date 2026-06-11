@@ -237,6 +237,14 @@ export function createProviderApiSource(opts?: {
         case "openai_compatible":
           return resolveOpenaiCompatible(provider, fetchImpl, ctx);
       }
+
+      return {
+        models: [],
+        status: status(
+          "skipped",
+          `provider API listing is not implemented for ${provider.kind}`,
+        ),
+      };
     },
   };
 }

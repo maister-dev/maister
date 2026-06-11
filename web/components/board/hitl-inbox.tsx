@@ -16,10 +16,16 @@ export interface HitlInboxProps {
 const AVATAR: Record<HitlItem["agent"], string> = {
   claude: "bg-amber",
   codex: "bg-accent-3",
+  gemini: "bg-accent-2",
+  opencode: "bg-ink-2",
 };
 
 function avatarInitials(agent: HitlItem["agent"]): string {
-  return agent === "claude" ? "cl" : "cx";
+  if (agent === "claude") return "cl";
+  if (agent === "codex") return "cx";
+  if (agent === "gemini") return "gm";
+
+  return "oc";
 }
 
 function staleSummaryText(

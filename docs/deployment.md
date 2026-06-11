@@ -81,8 +81,13 @@ Set at least:
 
 - `AUTH_SECRET` — generate with `openssl rand -base64 32`.
 - `AUTH_URL` — your public HTTPS URL.
-- `ANTHROPIC_API_KEY` (and/or `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`).
 - `POSTGRES_PASSWORD` / `DB_URL` — keep `@localhost:5432`.
+
+Agent CLIs are configured separately on the supervisor host. Use their native
+login/config flows for `claude-agent-acp`, `codex-acp`, `gemini --acp`, and
+`opencode acp`; put provider env vars in `/etc/maister/maister.env` only when
+you intentionally want MAIster to supply an explicit compatible-provider,
+gateway, model-discovery, or sidecar override.
 
 `MAISTER_RUNTIME_ROOT` MUST equal the checkout dir (`/opt/maister`) for both
 services — supervisor and web resolve `.maister/` from it, so a mismatch breaks
@@ -150,13 +155,14 @@ and MAIster clones it into `MAISTER_REPOS_ROOT` (no secrets stored in MAIster),
 auto-detecting the provider from the URL host. The SSH key / credential helper
 configured above is what authorizes that clone.
 
-## 6. Agent credentials (headless)
+## 6. Agent CLI configuration
 
-The supervisor passes its process environment to spawned agents, so the API
-keys in `maister.env` reach `claude-agent-acp` / `codex-acp` — **no interactive
-agent login is needed** on the VPS (env-router model,
-[ADR-005](decisions.md#adr-005-model-routing-env-router-default-ccr-optional)).
-Per-executor `env` in `maister.yaml` overrides these process-wide defaults.
+Configure each ACP tool on the supervisor host using that tool's own supported
+auth flow before marking it ready in MAIster. Environment variables in
+`maister.env` are optional overrides: they are inherited by spawned adapters
+and should be used for explicit compatible-provider routing, gateway config,
+model discovery, or sidecars rather than as the default source of truth for
+Claude/Codex/Gemini/OpenCode auth.
 
 ## 7. systemd services
 

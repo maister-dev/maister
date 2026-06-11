@@ -14,6 +14,8 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
+
 export const users = pgTable(
   "users",
   {
@@ -134,7 +136,16 @@ export type PlatformRunnerProvider =
       baseUrl?: string;
       apiKey?: string;
       wireApi?: "responses";
-    };
+    }
+  | { kind: "google_gemini"; apiKey?: string }
+  | {
+      kind: "google_vertex";
+      projectId?: string;
+      location?: string;
+      apiKey?: string;
+    }
+  | { kind: "google_gateway"; baseUrl?: string; apiKey?: string }
+  | { kind: "agent_native" };
 
 export type RunnerSnapshot = {
   id: string;
@@ -187,9 +198,9 @@ export const platformAcpRunners = pgTable(
   "platform_acp_runners",
   {
     id: text("id").primaryKey(),
-    adapter: text("adapter", { enum: ["claude", "codex"] }).notNull(),
+    adapter: text("adapter", { enum: ADAPTER_IDS }).notNull(),
     capabilityAgent: text("capability_agent", {
-      enum: ["claude", "codex"],
+      enum: ADAPTER_IDS,
     }).notNull(),
     model: text("model").notNull(),
     provider: jsonb("provider").$type<PlatformRunnerProvider>().notNull(),
@@ -254,9 +265,9 @@ export const platformMcpServers = pgTable(
     url: text("url"),
     headerKeys: jsonb("header_keys").$type<string[]>().notNull().default([]),
     supportedAgents: jsonb("supported_agents")
-      .$type<("claude" | "codex")[]>()
+      .$type<AdapterId[]>()
       .notNull()
-      .default(["claude", "codex"]),
+      .default([...ADAPTER_IDS]),
     trustStatus: text("trust_status", {
       enum: ["untrusted", "trusted", "trusted_by_policy"],
     })
@@ -494,7 +505,7 @@ export type CapabilityEnforceability =
   | "enforced"
   | "instructed"
   | "unsupported";
-export type CapabilityAgent = "claude" | "codex";
+export type CapabilityAgent = AdapterId;
 export type CapabilityAgents =
   | CapabilityAgent[]
   | Partial<Record<CapabilityAgent, string>>;
@@ -984,7 +995,7 @@ export const runs = pgTable(
       ],
     }),
     capabilityAgent: text("capability_agent", {
-      enum: ["claude", "codex"],
+      enum: ADAPTER_IDS,
     }),
     runnerSnapshot: jsonb("runner_snapshot").$type<RunnerSnapshot>(),
     status: text("status", {

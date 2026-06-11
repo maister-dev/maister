@@ -13,6 +13,7 @@ const silentLogger = pino({ level: "silent" });
 function makeRecord(sessionId: string): SessionRecord {
   return {
     sessionId,
+    adapter: "claude",
     runId: "run-x",
     projectSlug: "demo",
     stepId: "step-1",

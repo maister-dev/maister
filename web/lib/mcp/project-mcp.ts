@@ -9,6 +9,7 @@
 
 import type { McpServerDraft } from "@/lib/mcp/mcp-form";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { buildMcpServerFields } from "@/lib/mcp/mcp-form";
 
 export const PROJECT_MCP_ORIGIN = "project-mcp" as const;
@@ -72,6 +73,6 @@ export function materialToDraft(
     envKeys: material.envKeys ?? [],
     url: material.url ?? null,
     headerKeys: material.headerKeys ?? [],
-    supportedAgents: material.supportedAgents ?? ["claude", "codex"],
+    supportedAgents: material.supportedAgents ?? [...ADAPTER_IDS],
   };
 }

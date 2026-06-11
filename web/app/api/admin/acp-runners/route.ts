@@ -8,13 +8,16 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
-import { evaluateRunnerReadiness } from "@/lib/acp-runners/readiness";
 import {
+  ADAPTER_IDS,
+  PERMISSION_POLICIES,
   getAdapterSupport,
+  type AdapterId,
   type PermissionPolicy,
   type ProviderKind,
-} from "@/lib/acp-runners/schema";
+} from "@/lib/acp-runners/adapter-support";
+import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
+import { evaluateRunnerReadiness } from "@/lib/acp-runners/readiness";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -55,6 +58,37 @@ const providerSchema = z.discriminatedUnion("kind", [
       wireApi: z.literal("responses").optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("google_gemini"),
+      apiKey: z
+        .string()
+        .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/)
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_vertex"),
+      projectId: z.string().min(1).optional(),
+      location: z.string().min(1).optional(),
+      apiKey: z
+        .string()
+        .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/)
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_gateway"),
+      baseUrl: z.string().url().optional(),
+      apiKey: z
+        .string()
+        .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/)
+        .optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
 const runnerBodySchema = z
@@ -63,12 +97,10 @@ const runnerBodySchema = z
       .string()
       .min(1)
       .regex(/^[A-Za-z0-9._-]+$/),
-    adapter: z.enum(["claude", "codex"]),
+    adapter: z.enum(ADAPTER_IDS),
     model: z.string().trim().min(1),
     provider: providerSchema,
-    permissionPolicy: z
-      .enum(["default", "dangerously_skip_permissions"])
-      .default("default"),
+    permissionPolicy: z.enum(PERMISSION_POLICIES).default("default"),
     sidecarId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().default(true),
   })
@@ -130,14 +162,12 @@ async function parseJson(req: NextRequest): Promise<unknown> {
   }
 }
 
-function capabilityAgentForAdapter(
-  adapter: "claude" | "codex",
-): "claude" | "codex" {
+function capabilityAgentForAdapter(adapter: AdapterId): AdapterId {
   return adapter;
 }
 
 function assertProviderSupported(args: {
-  adapter: "claude" | "codex";
+  adapter: AdapterId;
   providerKind: ProviderKind;
   permissionPolicy: PermissionPolicy;
 }): void {

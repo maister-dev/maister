@@ -18,6 +18,8 @@ describe("platform ACP runner presets", () => {
       "codex-openai",
       "codex-zai-glm",
       "codex-qwen",
+      "gemini-cli",
+      "opencode-native",
     ]);
     expect(defaultPlatformRunnerId).toBe("claude-code");
     expect(runners.find((runner) => runner.id === "claude-code")).toMatchObject(
@@ -68,6 +70,42 @@ describe("platform ACP runner presets", () => {
         "Codex OpenAI-compatible provider materialization is not verified",
       );
     }
+  });
+
+  it("exposes Gemini and OpenCode presets as NotReady without changing the default", () => {
+    const runners = platformRunnerPresetRows();
+
+    expect(defaultPlatformRunnerId).toBe("claude-code");
+    expect(runners.find((runner) => runner.id === "gemini-cli")).toMatchObject({
+      adapter: "gemini",
+      capabilityAgent: "gemini",
+      provider: { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" },
+      permissionPolicy: "default",
+      readinessStatus: "NotReady",
+    });
+    expect(
+      runners.find((runner) => runner.id === "gemini-cli")?.readinessReasons,
+    ).toEqual(
+      expect.arrayContaining([
+        "GEMINI_API_KEY must be configured in supervisor environment",
+        "Gemini ACP initialize/newSession and checkpoint smoke must be confirmed",
+      ]),
+    );
+    expect(
+      runners.find((runner) => runner.id === "opencode-native"),
+    ).toMatchObject({
+      adapter: "opencode",
+      capabilityAgent: "opencode",
+      provider: { kind: "agent_native" },
+      permissionPolicy: "default",
+      readinessStatus: "NotReady",
+    });
+    expect(
+      runners.find((runner) => runner.id === "opencode-native")
+        ?.readinessReasons,
+    ).toContain(
+      "OpenCode ACP stdio and writable-state smoke must be confirmed",
+    );
   });
 
   it("exposes the managed CCR sidecar preset without raw secrets", () => {

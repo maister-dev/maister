@@ -25,6 +25,7 @@ import { promisify } from "node:util";
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -732,7 +733,7 @@ export async function installAndIngestCapabilityImports(opts: {
       source: "flow-package",
       version: entry.version,
       revision: installed.resolvedRevision,
-      agents: ["claude", "codex"],
+      agents: [...ADAPTER_IDS],
       enforceability: "instructed",
       selected_by_default: true,
     });

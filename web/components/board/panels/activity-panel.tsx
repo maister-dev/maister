@@ -11,12 +11,16 @@ export interface ActivityPanelProps {
 const AVA: Record<ActivityEvent["agent"], string> = {
   claude: "bg-amber",
   codex: "bg-accent-3",
+  gemini: "bg-accent-2",
+  opencode: "bg-ink-2",
   dev: "bg-accent-4",
 };
 
 function avaInitials(agent: ActivityEvent["agent"]): string {
   if (agent === "claude") return "cl";
   if (agent === "codex") return "cx";
+  if (agent === "gemini") return "gm";
+  if (agent === "opencode") return "oc";
 
   return "dv";
 }

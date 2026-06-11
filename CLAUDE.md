@@ -36,7 +36,8 @@ Backend split:
 - `web/` — Next.js (UI + Route Handlers + Drizzle + server actions). NO
   long-running agent processes live here.
 - `supervisor/` — separate Node daemon. Owns ACP sessions, spawns agent
-  processes (`claude`, `codex`), heartbeat, and permission input delivery. Reachable
+  processes through the platform ACP runner registry, heartbeat, and
+  permission input delivery. Reachable
   from Next.js over HTTP+SSE; can run on a different host than the web tier.
 
 ## How to run
@@ -107,7 +108,7 @@ list (`cli | agent | guard | human`); both parse from the `flow.yaml`
 manifest and compile to one `FlowGraph`
 (see `docs/flow-dsl.md` + `docs/system-analytics/flow-graph.md`).
 `ai_coding`/`agent` nodes run as ACP sessions hosted by `supervisor/`,
-which spawns one agent process (`claude`, `codex`) per active session. State transitions are driven by
+which spawns one adapter process per active session. State transitions are driven by
 **ACP notifications** (`session.update`, `session.permission_request`) on
 the live path and by durable input artifacts for form/human responses.
 
@@ -157,19 +158,23 @@ across all projects, not per-project. Runs above the cap go to `Pending` and
 auto-start when a slot frees. UI shows queue position. Hard cap (no override
 from `maister.yaml`) — keeps RAM/token spend bounded on a single host.
 
-### 5. Platform ACP runners (claude + codex)
+### 5. Platform ACP runners
 
 ACP standardizes the agent surface via vendor-neutral
-`@agentclientprotocol/sdk`. Today both `claude` and `codex` are
-required, spawned by `supervisor/` via per-agent adapter binaries:
+`@agentclientprotocol/sdk`. `claude` and `codex` are the ready default
+adapter families; `gemini` and `opencode` are code-owned adapter families
+whose launch/default readiness is gated by supervisor diagnostics and cached
+ACP smoke evidence. The supervisor spawns adapters via per-agent binaries:
 - `claude` → `claude-agent-acp` (from
   `@agentclientprotocol/claude-agent-acp`, wraps
   `@anthropic-ai/claude-agent-sdk`)
 - `codex` → `codex-acp` (from `@agentclientprotocol/codex-acp`, bundles
   `@openai/codex`)
+- `gemini` → `gemini --acp`
+- `opencode` → `opencode acp`
 
-Cursor and other ACP-capable agents land in Phase 2 once the registry
-shape is proven. Runner identity is platform-scoped in
+Other ACP-capable agents land after their registry, diagnostics, and smoke
+contracts are proven. Runner identity is platform-scoped in
 `platform_acp_runners`: `{adapter, capability_agent, model, provider,
 permission_policy, sidecar?}`. Launches snapshot the effective runner into
 `runs.runner_snapshot`; resume/recover reads the snapshot, not a mutable

@@ -5,6 +5,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import type { PlatformMcpCapability } from "@/lib/capabilities/types";
 import type { PlatformMcpServer } from "@/lib/db/schema";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { platformMcpServers } from "@/lib/db/schema";
 
 // M27/T-C3 (ADR-067): project the admin-managed `platform_mcp_servers` catalog
@@ -53,7 +54,7 @@ export function platformMcpRowToCapability(
     label: row.id,
     source: "platform" as const,
     transport: row.transport,
-    agents: row.supportedAgents ?? ["claude", "codex"],
+    agents: row.supportedAgents ?? [...ADAPTER_IDS],
     enforceability: "enforced" as const,
     selected_by_default: true,
   };

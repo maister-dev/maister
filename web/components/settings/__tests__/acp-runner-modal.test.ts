@@ -37,6 +37,24 @@ const claudeRunner: RunnerRow = {
   enabled: true,
 };
 
+const geminiVertexRunner: RunnerRow = {
+  id: "gemini-vertex",
+  adapter: "gemini",
+  capabilityAgent: "gemini",
+  model: "gemini-2.5-pro",
+  provider: {
+    kind: "google_vertex",
+    projectId: "maister-prod",
+    location: "us-central1",
+    apiKey: "env:GOOGLE_API_KEY",
+  },
+  permissionPolicy: "default",
+  sidecarId: null,
+  readinessStatus: "NotReady",
+  readinessReasons: [],
+  enabled: true,
+};
+
 describe("AcpRunnerModal", () => {
   it("renders the create form with id/model fields and a preset picker", () => {
     const markup = renderToStaticMarkup(
@@ -53,6 +71,8 @@ describe("AcpRunnerModal", () => {
     expect(markup).toContain("fieldId");
     expect(markup).toContain("fieldModel");
     expect(markup).toContain("fromPreset");
+    expect(markup).toContain('value="gemini"');
+    expect(markup).toContain('value="opencode"');
     // the model field is the discovery-backed input + suggestion affordances
     expect(markup).toContain('aria-label="fieldModel"');
     expect(markup).toContain("modelSuggestions.refresh");
@@ -74,5 +94,26 @@ describe("AcpRunnerModal", () => {
     expect(markup).toContain("deleteRunner");
     expect(markup).toContain("claude-sonnet-4-6");
     expect(markup).toContain("claude-code");
+  });
+
+  it("renders Gemini provider fields without Claude/Codex-only assumptions", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnerModal, {
+        mode: "edit",
+        runner: geminiVertexRunner,
+        sidecars: [],
+        presets: [],
+        onClose() {},
+        onSaved() {},
+      }),
+    );
+
+    expect(markup).toContain("gemini-vertex");
+    expect(markup).toContain("google_vertex");
+    expect(markup).toContain("fieldProjectId");
+    expect(markup).toContain("fieldLocation");
+    expect(markup).toContain("maister-prod");
+    expect(markup).toContain("us-central1");
+    expect(markup).toContain("env:GOOGLE_API_KEY");
   });
 });

@@ -3,9 +3,10 @@
 # Supervisor Daemon
 
 The supervisor is a second Node process that owns the lifecycle of agent
-processes (`claude-agent-acp`, `codex-acp`). It speaks **HTTP + SSE** to
-the web tier and **ACP JSON-RPC over stdio** to its spawned adapter
-children. The current contract includes spawn, prompt delivery,
+processes. Implemented adapters are `claude-agent-acp` and `codex-acp`;
+ADR-084 designs `gemini --acp` and `opencode acp` as additional code-owned ACP
+adapter families. It speaks **HTTP + SSE** to the web tier and **ACP JSON-RPC
+over stdio** to its spawned adapter children. The current contract includes spawn, prompt delivery,
 structured ACP event parsing, permission HITL, checkpoint, resume,
 heartbeat promotion, and cost accounting.
 
@@ -22,7 +23,8 @@ heartbeat promotion, and cost accounting.
                                                                            │ child_process.spawn
                                                                            ▼
                                                 ┌──────────────────────────────────────┐
-                                                │ claude-agent-acp  /  codex-acp       │
+                                                │ claude-agent-acp / codex-acp         │
+                                                │ gemini --acp / opencode acp (ADR-078)│
                                                 │  cwd = worktreePath                  │
                                                 │  stdio: pipe/pipe/inherit            │
                                                 └──────────────────────────────────────┘
@@ -131,6 +133,13 @@ metadata, and sends only normalized spawn intent. The supervisor remains the
 only layer that resolves env refs into values and maps typed permission
 policies to adapter argv.
 
+ADR-084 adapter launch commands are fixed by the supervisor adapter registry:
+`gemini` maps to `gemini --acp`; `opencode` maps to `opencode acp`. Unsupported
+adapter/provider/policy combinations, missing required env refs, binary
+diagnostic failures, and unsupported checkpoint strategies are refused before
+spawn when readiness has enough information. There is no fallback to
+Claude/Codex and no operator-entered arbitrary command runner.
+
 `capabilityProfilePath` and `adapterLaunch.env` are Implemented for scratch
 runs. The web tier owns capability policy, resolution, trust checks, and the V1
 materialization of `profile.json` plus `instructions.md`; the supervisor only
@@ -156,8 +165,57 @@ and oversized arg/env lists with `409 PRECONDITION`.
 
 Read-only runtime diagnostics for remote supervisor setup. Unlike `/health`,
 this endpoint reports launch-specific readiness inputs: adapter binary
-availability, CCR sidecar state, env-ref presence, and supervisor version. It
-never returns raw secret values.
+availability, binary source/path/version/error, cached adapter smoke evidence,
+CCR sidecar state, env-ref presence, and supervisor version. It never returns
+raw secret values.
+
+Adapter diagnostic entries are:
+
+```ts
+{
+  id: "claude" | "codex" | "gemini" | "opencode";
+  binary: string;
+  source: "path" | "override";
+  path: string | null;
+  available: boolean;
+  version: string | null;
+  error: string | null;
+  smoke: {
+    status: "not_required" | "pending" | "ok" | "skipped" | "error";
+    reason: string | null;
+    checkedAt: string | null;
+    protocolVersion: number | null;
+  };
+}
+```
+
+`source="path"` means the binary was resolved from the supervisor PATH.
+`source="override"` means an explicit `MAISTER_ADAPTER_BINARY_*` env var was
+used. `available=false` distinguishes missing PATH entries, non-executable
+override paths, version probe failures, and adapter first-run writable-state
+failures. This matters for OpenCode: a Homebrew binary can exist while the
+process still fails to initialize its user state directory.
+
+Gemini and OpenCode require cached ACP smoke evidence before readiness can
+become `Ready`. The supervisor reads the cache from
+`MAISTER_ADAPTER_SMOKE_CACHE_PATH` when set; otherwise it looks for
+`adapter-smoke-cache.json` under its runtime root. Operators update the cache
+with the opt-in smoke script:
+
+```bash
+pnpm -C supervisor smoke:acp --cache /path/to/adapter-smoke-cache.json gemini opencode
+```
+
+Only `smoke.status="ok"` satisfies the Gemini/OpenCode launch gate. `pending`,
+`skipped`, and `error` remain operator-visible `NotReady` reasons.
+
+`envRefs` contains a fixed safe catalog of known runner env-ref names plus the
+comma-separated names in `MAISTER_DIAGNOSTIC_ENV_REFS`. It reports presence
+only, never values.
+
+Diagnostics logs include `adapter`, binary source, executable path if known,
+exit code, and a bounded stderr tail only. They must not include env values,
+provider tokens, generated config bodies, or raw ACP frames.
 
 #### Capability adapter support matrix (Implemented snapshot + designed native activation)
 
@@ -176,8 +234,8 @@ Responses:
 | ------ | ---- | ---- |
 | `201` | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>" }` | Spawn succeeded; ACP handshake completed. |
 | `409` | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }` | Body failed Zod validation. |
-| `500` | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }` | Adapter binary not found on PATH. |
-| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | Runner, adapter, env-ref, or sidecar is not launchable: adapter binary missing/unsupported, CCR config missing or malformed, sidecar health/identity failure, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
+| `500` | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }` | Low-level spawn failed despite readiness: ENOENT, EACCES, first-run state failure, or OOM at fork. |
+| `503` | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }` | Runner, adapter, env-ref, checkpoint strategy, or sidecar is not launchable before spawn: adapter unsupported, binary diagnostics unavailable, CCR config missing or malformed, sidecar health/identity failure, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
 
 ### `DELETE /sessions/:id`
 
@@ -486,6 +544,10 @@ docker compose; production overrides go in `.env`.
 | `ANTHROPIC_AUTH_TOKEN` | unset | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). |
 | `MAISTER_CCR_AUTH_TOKEN` | unset | Default env ref for `ccr-default` sidecars. Missing when referenced → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
 | `MAISTER_CCR_CONFIG_PATH` | `/app/.ccr/config.json` (Docker) / `~/.claude-code-router/config.json` (otherwise) | Legacy/default config path for `ccr-default`. Platform sidecar config may override with a typed config path. Missing file or malformed JSON → 503 `EXECUTOR_UNAVAILABLE` at spawn. |
+| `MAISTER_ADAPTER_BINARY_CLAUDE` | unset | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`. |
+| `MAISTER_ADAPTER_BINARY_CODEX` | unset | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`. |
+| `MAISTER_ADAPTER_BINARY_GEMINI` | unset | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`. |
+| `MAISTER_ADAPTER_BINARY_OPENCODE` | unset | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`. |
 | `LOG_LEVEL` | `debug` | pino level: `trace | debug | info | warn | error | fatal | silent`. |
 
 Secrets MUST NEVER appear in:
@@ -521,15 +583,14 @@ This means:
   z.ai GLM, OpenRouter, etc. — even with CCR routing active. Designed
   `adapterLaunch.env` wins only for materializer-produced session-scoped
   values.
-- The supervisor's `ANTHROPIC_API_KEY` is also inherited by the child
-  even when not overridden — the adapter binary picks the right
-  credential based on its own logic (`ANTHROPIC_AUTH_TOKEN` if the
-  third-party base URL is set; `ANTHROPIC_API_KEY` otherwise). If you
-  want to **deny** the supervisor's process env from reaching an
-  executor (e.g., a CCR-routed executor that must NOT see the raw
-  Anthropic key), unset the relevant variable in the supervisor's
-  process env at startup; do not rely on `executor.env` to "shadow"
-  values it doesn't list. Phase 2 may add an explicit allow-list mode.
+- Any provider env already present in the supervisor process is inherited by
+  spawned adapter children unless overridden. The default platform-runner model
+  treats ACP tools as configured in their own CLIs; MAIster only resolves env
+  refs when an operator explicitly configures a compatible-provider, gateway,
+  or sidecar override. If you want to **deny** a supervisor process env value
+  from reaching an executor, unset it in the supervisor's process env at
+  startup; do not rely on `executor.env` to "shadow" values it doesn't list.
+  Phase 2 may add an explicit allow-list mode.
 
 ## CCR lifecycle
 
@@ -643,7 +704,12 @@ Body validated by `SendPromptRequestSchema` (`stepId` must match
 { "stopReason": "end_turn", "meta": null }
 ```
 `stopReason` ∈ `end_turn | max_tokens | max_turn_requests | refusal`.
-`cancelled` is mapped to a 500 `ACP_PROTOCOL` error.
+`cancelled` is not a successful supervisor prompt response. If an adapter
+returns ACP prompt `stopReason: "cancelled"` for a direct prompt, the supervisor
+maps it to `500 ACP_PROTOCOL`. User-initiated stop uses `DELETE /sessions/:id`;
+checkpoint uses `POST /sessions/:id/checkpoint`; permission-deferred cancel uses
+`POST /sessions/:id/input` with `action: "cancel"` and resolves only that
+permission deferred.
 
 **Permission input endpoint:** `POST /sessions/:id/input`
 accepts `{ "action": "select", "requestId": "...", "optionId": "..." }`
@@ -670,8 +736,10 @@ through a `PassThrough` so both consumers see every chunk.
   entries per session). Older terminal events after the 30 s post-exit
   grace period are gone. The web tier's eventual log-file tail bridge
   (M7+M9) fills that gap.
-- **No Cursor / opencode / Aider executors** — POC = `claude` + `codex`
-  only via the `@agentclientprotocol/*` adapter binaries.
+- **No Cursor / Aider executors** — the supervisor supports the code-owned ACP
+  adapter families `claude`, `codex`, `gemini`, and `opencode`. Gemini and
+  OpenCode remain gated by binary diagnostics and smoke-proven readiness before
+  they can be treated as production launch targets.
 - **No plugin sandboxing or trust UI** — POC trusts internal Flow
   sources; sandboxing is Phase 2.
 

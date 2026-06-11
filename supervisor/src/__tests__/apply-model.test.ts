@@ -14,14 +14,26 @@ import { SESSION_EVENT_CHANNEL } from "../registry";
 
 const silent = pino({ level: "silent" });
 
-function runnerFor(adapter: "claude" | "codex", model: string): RunnerLaunch {
+function runnerFor(
+  adapter: "claude" | "codex" | "gemini" | "opencode",
+  model: string,
+): RunnerLaunch {
+  const provider =
+    adapter === "codex"
+      ? { kind: "openai" as const }
+      : adapter === "gemini"
+        ? { kind: "google_gemini" as const, apiKeyEnv: "GEMINI_API_KEY" }
+        : adapter === "opencode"
+          ? { kind: "agent_native" as const }
+          : { kind: "anthropic" as const };
+
   return {
     version: 1,
     runnerId: "r",
     adapter,
     capabilityAgent: adapter,
     model,
-    provider: adapter === "codex" ? { kind: "openai" } : { kind: "anthropic" },
+    provider,
     permissionPolicy: "default",
   };
 }
@@ -29,6 +41,7 @@ function runnerFor(adapter: "claude" | "codex", model: string): RunnerLaunch {
 function makeRecord(): SessionRecord {
   return {
     sessionId: "s",
+    adapter: "claude",
     runId: "run",
     projectSlug: "p",
     stepId: "st",
@@ -237,5 +250,41 @@ describe("applyAndVerifyModel", () => {
 
     expect(setModel).not.toHaveBeenCalled();
     expect(events).toHaveLength(0);
+  });
+
+  it("Gemini and OpenCode mismatches emit advisory without setSessionModel", async () => {
+    const setModel = vi.fn();
+    const emitter = new EventEmitter();
+    const events = capture(emitter);
+    const base = {
+      connection: fakeConnection(setModel),
+      acpSessionId: "a",
+      sessionId: "s",
+      record: makeRecord(),
+      emitter,
+      logger: silent,
+    };
+
+    await applyAndVerifyModel({
+      ...base,
+      runner: runnerFor("gemini", "gemini-3-pro"),
+      models: state("gemini-3-flash"),
+    });
+    await applyAndVerifyModel({
+      ...base,
+      runner: runnerFor("opencode", "opencode-default"),
+      models: state("opencode-other"),
+    });
+
+    expect(setModel).not.toHaveBeenCalled();
+    expect(events).toHaveLength(2);
+    expect(
+      events
+        .filter((event) => event.type === "session.update")
+        .map((event) => event.update),
+    ).toEqual([
+      expect.objectContaining({ channel: "advisory" }),
+      expect.objectContaining({ channel: "advisory" }),
+    ]);
   });
 });

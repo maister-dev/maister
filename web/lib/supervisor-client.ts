@@ -10,6 +10,7 @@ import { cache } from "react";
 import pino from "pino";
 import { z } from "zod";
 
+import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 
 const logger = pino({
@@ -21,7 +22,7 @@ const DEFAULT_BASE_URL = "http://localhost:7777";
 const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
 
 export type SupervisorExecutorInput = {
-  agent: "claude" | "codex";
+  agent: AdapterId;
   model: string;
   env?: Record<string, string>;
   router?: "ccr";
@@ -36,8 +37,8 @@ export type SupervisorAdapterLaunchInput = {
 export type SupervisorRunnerInput = {
   version: 1;
   runnerId: string;
-  adapter: "claude" | "codex";
-  capabilityAgent: "claude" | "codex";
+  adapter: AdapterId;
+  capabilityAgent: AdapterId;
   model: string;
   provider:
     | { kind: "anthropic" }
@@ -52,7 +53,16 @@ export type SupervisorRunnerInput = {
         baseUrl?: string;
         apiKeyEnv?: string;
         wireApi?: "responses";
-      };
+      }
+    | { kind: "google_gemini"; apiKeyEnv?: string }
+    | {
+        kind: "google_vertex";
+        projectId?: string;
+        location?: string;
+        apiKeyEnv?: string;
+      }
+    | { kind: "google_gateway"; baseUrl?: string; apiKeyEnv?: string }
+    | { kind: "agent_native" };
   permissionPolicy: "default" | "dangerously_skip_permissions";
   sidecar?: {
     id: string;
@@ -88,8 +98,7 @@ export type PromptStopReason =
   | "end_turn"
   | "max_tokens"
   | "max_turn_requests"
-  | "refusal"
-  | "cancelled";
+  | "refusal";
 
 export type PromptResult = {
   stopReason: PromptStopReason;
@@ -124,7 +133,7 @@ export type SupervisorSessionRecord = {
 };
 
 export type SupervisorModelCatalogDraft = {
-  adapter: "claude" | "codex";
+  adapter: AdapterId;
   provider: Record<string, unknown>;
   router?: "ccr";
   sidecarId?: string;
@@ -166,9 +175,27 @@ const SupervisorDiagnosticsSchema = z
     adapters: z.array(
       z
         .object({
-          id: z.enum(["claude", "codex"]),
+          id: z.enum(ADAPTER_IDS),
           binary: z.string().min(1),
+          source: z.enum(["path", "override"]),
+          path: z.string().nullable(),
           available: z.boolean(),
+          version: z.string().nullable(),
+          error: z.string().nullable(),
+          smoke: z
+            .object({
+              status: z.enum([
+                "not_required",
+                "pending",
+                "ok",
+                "skipped",
+                "error",
+              ]),
+              reason: z.string().nullable(),
+              checkedAt: z.string().datetime().nullable(),
+              protocolVersion: z.number().int().positive().nullable(),
+            })
+            .strict(),
         })
         .strict(),
     ),

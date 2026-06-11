@@ -8,6 +8,24 @@ import {
   RunnerProviderSchema,
 } from "../types";
 
+const PROVIDERS_BY_ADAPTER = {
+  claude: ["anthropic", "anthropic_compatible"],
+  codex: ["openai", "openai_compatible"],
+  gemini: ["google_gemini", "google_vertex", "google_gateway"],
+  opencode: ["agent_native"],
+} as const;
+
+type SourceAdapter = keyof typeof PROVIDERS_BY_ADAPTER;
+
+function providerBelongsToAdapter(
+  adapter: SourceAdapter,
+  providerKind: string,
+): boolean {
+  return (PROVIDERS_BY_ADAPTER[adapter] as readonly string[]).includes(
+    providerKind,
+  );
+}
+
 export type SourceKind =
   | "acp_probe"
   | "provider_api"
@@ -43,6 +61,14 @@ export const ModelCatalogDraftSchema = z
   })
   .strict()
   .superRefine((draft, ctx) => {
+    if (!providerBelongsToAdapter(draft.adapter, draft.provider.kind)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provider", "kind"],
+        message: `provider ${draft.provider.kind} is not supported by adapter ${draft.adapter}`,
+      });
+    }
+
     // ADR-076 edge case: a router selects a sidecar instance, so `router`
     // without `sidecarId` is a malformed draft → PRECONDITION (409).
     if (draft.router && !draft.sidecarId) {

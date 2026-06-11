@@ -16,6 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { validateGraphManifest } from "@/lib/config";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
@@ -692,7 +693,7 @@ async function upsertAuthoredCapabilityRecord(
   revision: RevisionRow,
 ): Promise<string> {
   const recordId = randomUUID();
-  const agentsJson = JSON.stringify(["claude", "codex"]);
+  const agentsJson = JSON.stringify(ADAPTER_IDS);
   const material = {
     origin: "authored",
     authoredCapabilityId: cap.id,

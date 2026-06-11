@@ -62,6 +62,17 @@ describe("platformMcpRowToCapability (T-C3)", () => {
     expect(cap.agents).toEqual(["claude"]);
   });
 
+  it("defaults missing supportedAgents to all adapter ids", () => {
+    const cap = platformMcpRowToCapability(
+      row({
+        supportedAgents:
+          null as unknown as PlatformMcpServer["supportedAgents"],
+      }),
+    );
+
+    expect(cap.agents).toEqual(["claude", "codex", "gemini", "opencode"]);
+  });
+
   it("tags a stdio row with transport=stdio", () => {
     const cap = platformMcpRowToCapability(row({}));
 

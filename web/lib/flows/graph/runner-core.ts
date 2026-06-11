@@ -9,7 +9,7 @@ import type {
   Task as TaskRow,
   Workspace as WorkspaceRow,
 } from "@/lib/db/schema";
-import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
 import type { AcpSessionState } from "../types";
 import type { SupervisorApi } from "../runner-agent";
 
@@ -77,7 +77,7 @@ export function asError(err: unknown): Error {
 export type RunnerExecutor = {
   id: string;
   executorRefId: string;
-  agent: "claude" | "codex";
+  agent: CapabilityAgent;
   model: string;
   env: Record<string, string> | null;
   router: "ccr" | null;

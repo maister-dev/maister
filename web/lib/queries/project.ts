@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -37,7 +38,7 @@ function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
 }
 
-export type ProjectAgent = "claude" | "codex";
+export type ProjectAgent = AdapterId;
 
 export interface ProjectFlow {
   id: string;

@@ -14,7 +14,9 @@ type SuggestionsResponse = {
   groups: ModelGroup[];
 };
 
-function providerBody(draft: RunnerDraft): Record<string, unknown> {
+export function modelSuggestionProviderBody(
+  draft: RunnerDraft,
+): Record<string, unknown> {
   switch (draft.providerKind) {
     case "anthropic_compatible":
       return {
@@ -31,12 +33,32 @@ function providerBody(draft: RunnerDraft): Record<string, unknown> {
       };
     case "openai":
       return { kind: "openai" };
-    default:
+    case "google_gemini":
+      return {
+        kind: "google_gemini",
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      };
+    case "google_vertex":
+      return {
+        kind: "google_vertex",
+        ...(draft.projectId ? { projectId: draft.projectId } : {}),
+        ...(draft.location ? { location: draft.location } : {}),
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      };
+    case "google_gateway":
+      return {
+        kind: "google_gateway",
+        ...(draft.baseUrl ? { baseUrl: draft.baseUrl } : {}),
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      };
+    case "agent_native":
+      return { kind: "agent_native" };
+    case "anthropic":
       return { kind: "anthropic" };
   }
 }
 
-function requestBody(
+export function buildModelSuggestionRequestBody(
   draft: RunnerDraft,
   force: boolean,
 ): Record<string, unknown> {
@@ -44,7 +66,7 @@ function requestBody(
 
   return {
     adapter: draft.adapter,
-    provider: providerBody(draft),
+    provider: modelSuggestionProviderBody(draft),
     ...(ccr ? { router: "ccr", sidecarId: draft.sidecarId } : {}),
     ...(force ? { force: true } : {}),
   };
@@ -155,7 +177,7 @@ export function useModelSuggestions(
   );
 
   const refresh = useCallback((): void => {
-    void run(requestBody(draft, true));
+    void run(buildModelSuggestionRequestBody(draft, true));
     // env-ref NAMES (authToken/apiKey) are part of the supervisor cache key
     // (ADR-076 §4) — changing them must re-resolve.
   }, [
@@ -165,12 +187,15 @@ export function useModelSuggestions(
     draft.baseUrl,
     draft.authToken,
     draft.apiKey,
+    draft.projectId,
+    draft.location,
+    draft.wireApi,
     draft.sidecarId,
   ]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
-      void run(requestBody(draft, false));
+      void run(buildModelSuggestionRequestBody(draft, false));
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
@@ -183,6 +208,9 @@ export function useModelSuggestions(
     draft.baseUrl,
     draft.authToken,
     draft.apiKey,
+    draft.projectId,
+    draft.location,
+    draft.wireApi,
     draft.sidecarId,
   ]);
 

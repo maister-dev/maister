@@ -695,6 +695,8 @@
     "fieldBaseUrl": "Base URL",
     "fieldAuthToken": "Auth token (env:NAME)",
     "fieldApiKey": "API key (env:NAME)",
+    "fieldProjectId": "Google project ID",
+    "fieldLocation": "Google location",
     "fieldWireApi": "Use responses wire API",
     "fieldPermissionPolicy": "Permission policy",
     "fieldSidecar": "Router sidecar",

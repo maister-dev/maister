@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
+    "smoke:acp": "tsx scripts/smoke-acp-adapter.ts",
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",

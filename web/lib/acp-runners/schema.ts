@@ -2,22 +2,21 @@ import "server-only";
 
 import { z } from "zod";
 
-type AdapterId = "claude" | "codex";
+import {
+  getAdapterSupportById,
+  PERMISSION_POLICIES,
+  type AdapterId,
+  type AdapterSupport,
+  type PermissionPolicy,
+} from "@/lib/acp-runners/adapter-support";
 
-export type AdapterSupport = {
-  readonly id: AdapterId;
-  readonly capabilityAgent: AdapterId;
-  readonly providerKinds: readonly ProviderKind[];
-  readonly permissionPolicies: readonly PermissionPolicy[];
-};
-
-export type ProviderKind =
-  | "anthropic"
-  | "anthropic_compatible"
-  | "openai"
-  | "openai_compatible";
-
-export type PermissionPolicy = "default" | "dangerously_skip_permissions";
+export {
+  getAdapterSupport,
+  type AdapterId,
+  type AdapterSupport,
+  type PermissionPolicy,
+  type ProviderKind,
+} from "@/lib/acp-runners/adapter-support";
 
 export type RouterSidecarConfig = {
   readonly id: string;
@@ -54,7 +53,23 @@ export type ProviderConfig =
       readonly baseUrl?: string;
       readonly apiKey?: string;
       readonly wireApi?: "responses";
-    };
+    }
+  | {
+      readonly kind: "google_gemini";
+      readonly apiKey?: string;
+    }
+  | {
+      readonly kind: "google_vertex";
+      readonly projectId?: string;
+      readonly location?: string;
+      readonly apiKey?: string;
+    }
+  | {
+      readonly kind: "google_gateway";
+      readonly baseUrl?: string;
+      readonly apiKey?: string;
+    }
+  | { readonly kind: "agent_native" };
 
 export type PlatformRuntimeConfig = {
   readonly platform: { readonly defaultRunnerId: string };
@@ -64,21 +79,6 @@ export type PlatformRuntimeConfig = {
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const ENV_REF_PATTERN = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
-
-const ADAPTERS: readonly AdapterSupport[] = [
-  {
-    id: "claude",
-    capabilityAgent: "claude",
-    providerKinds: ["anthropic", "anthropic_compatible"],
-    permissionPolicies: ["default", "dangerously_skip_permissions"],
-  },
-  {
-    id: "codex",
-    capabilityAgent: "codex",
-    providerKinds: ["openai", "openai_compatible"],
-    permissionPolicies: ["default"],
-  },
-];
 
 const safeIdSchema = z
   .string()
@@ -127,6 +127,28 @@ const providerSchema = z.discriminatedUnion("kind", [
       wire_api: z.literal("responses").optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("google_gemini"),
+      api_key: secretRefSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_vertex"),
+      project_id: z.string().min(1).optional(),
+      location: z.string().min(1).optional(),
+      api_key: secretRefSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_gateway"),
+      base_url: z.string().url().optional(),
+      api_key: secretRefSchema.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
 const runnerInputSchema = z
@@ -135,9 +157,7 @@ const runnerInputSchema = z
     adapter: safeIdSchema,
     model: z.string().min(1),
     provider: providerSchema,
-    permission_policy: z
-      .enum(["default", "dangerously_skip_permissions"])
-      .default("default"),
+    permission_policy: z.enum(PERMISSION_POLICIES).default("default"),
     router_instance: safeIdSchema.optional(),
     enabled: z.boolean().default(true),
   })
@@ -160,10 +180,6 @@ function formatIssues(error: z.ZodError): string {
     .join("; ");
 }
 
-function getAdapterById(adapterId: string): AdapterSupport | undefined {
-  return ADAPTERS.find((adapter) => adapter.id === adapterId);
-}
-
 function mapProvider(provider: z.infer<typeof providerSchema>): ProviderConfig {
   if (provider.kind === "anthropic_compatible") {
     return {
@@ -179,6 +195,30 @@ function mapProvider(provider: z.infer<typeof providerSchema>): ProviderConfig {
       apiKey: provider.api_key,
       baseUrl: provider.base_url,
       wireApi: provider.wire_api,
+    };
+  }
+
+  if (provider.kind === "google_gemini") {
+    return {
+      kind: provider.kind,
+      apiKey: provider.api_key,
+    };
+  }
+
+  if (provider.kind === "google_vertex") {
+    return {
+      kind: provider.kind,
+      projectId: provider.project_id,
+      location: provider.location,
+      apiKey: provider.api_key,
+    };
+  }
+
+  if (provider.kind === "google_gateway") {
+    return {
+      kind: provider.kind,
+      apiKey: provider.api_key,
+      baseUrl: provider.base_url,
     };
   }
 
@@ -214,10 +254,6 @@ function mapRunner(
   };
 }
 
-export function getAdapterSupport(): readonly AdapterSupport[] {
-  return ADAPTERS;
-}
-
 export function parsePlatformRuntimeConfig(
   input: unknown,
 ): PlatformRuntimeConfig {
@@ -233,7 +269,7 @@ export function parsePlatformRuntimeConfig(
     parsed.data.router_instances.map((sidecar) => sidecar.id),
   );
   const runners = parsed.data.acp_runners.map((runner) => {
-    const adapter = getAdapterById(runner.adapter);
+    const adapter = getAdapterSupportById(runner.adapter);
 
     if (!adapter) {
       throw new Error(

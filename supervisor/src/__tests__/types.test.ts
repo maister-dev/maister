@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   SendPromptRequestSchema,
   StartSessionRequestSchema,
+  SupervisorDiagnosticsResponseSchema,
   SupervisorError,
   httpStatusForCode,
   isSupervisorError,
@@ -236,6 +237,56 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts designed Gemini and OpenCode runner payloads", () => {
+    const geminiResult = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      executor: { agent: "gemini", model: "gemini-3-pro" },
+      runner: {
+        version: 1,
+        runnerId: "gemini-cli",
+        adapter: "gemini",
+        capabilityAgent: "gemini",
+        model: "gemini-3-pro",
+        provider: { kind: "google_gemini", apiKeyEnv: "GEMINI_API_KEY" },
+        permissionPolicy: "default",
+      },
+    });
+    const opencodeResult = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      executor: { agent: "opencode", model: "opencode-default" },
+      runner: {
+        version: 1,
+        runnerId: "opencode-native",
+        adapter: "opencode",
+        capabilityAgent: "opencode",
+        model: "opencode-default",
+        provider: { kind: "agent_native" },
+        permissionPolicy: "default",
+      },
+    });
+
+    expect(geminiResult.success).toBe(true);
+    expect(opencodeResult.success).toBe(true);
+  });
+
+  it("rejects env-prefixed Google provider secret names at the supervisor boundary", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      executor: { agent: "gemini", model: "gemini-3-pro" },
+      runner: {
+        version: 1,
+        runnerId: "gemini-cli",
+        adapter: "gemini",
+        capabilityAgent: "gemini",
+        model: "gemini-3-pro",
+        provider: { kind: "google_gemini", apiKeyEnv: "env:GEMINI_API_KEY" },
+        permissionPolicy: "default",
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects capabilityProfilePath outside worktreePath", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
@@ -255,6 +306,82 @@ describe("StartSessionRequestSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("SupervisorDiagnosticsResponseSchema", () => {
+  it("accepts diagnostics entries for all adapter ids", () => {
+    const result = SupervisorDiagnosticsResponseSchema.safeParse({
+      status: "ready",
+      version: "0.0.1",
+      checkedAt: "2026-06-11T12:00:00.000Z",
+      adapters: [
+        {
+          id: "claude",
+          binary: "claude-agent-acp",
+          source: "path",
+          path: "/bin/claude-agent-acp",
+          available: true,
+          version: null,
+          error: null,
+          smoke: {
+            status: "not_required",
+            reason: null,
+            checkedAt: null,
+            protocolVersion: null,
+          },
+        },
+        {
+          id: "codex",
+          binary: "codex-acp",
+          source: "path",
+          path: "/bin/codex-acp",
+          available: true,
+          version: null,
+          error: null,
+          smoke: {
+            status: "not_required",
+            reason: null,
+            checkedAt: null,
+            protocolVersion: null,
+          },
+        },
+        {
+          id: "gemini",
+          binary: "gemini",
+          source: "path",
+          path: null,
+          available: false,
+          version: null,
+          error: "adapter binary not found on PATH: gemini",
+          smoke: {
+            status: "pending",
+            reason: "gemini ACP compatibility smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
+        },
+        {
+          id: "opencode",
+          binary: "opencode",
+          source: "path",
+          path: null,
+          available: false,
+          version: null,
+          error: "adapter binary not found on PATH: opencode",
+          smoke: {
+            status: "pending",
+            reason: "opencode ACP compatibility smoke has not been cached",
+            checkedAt: null,
+            protocolVersion: null,
+          },
+        },
+      ],
+      sidecars: [],
+      envRefs: [],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

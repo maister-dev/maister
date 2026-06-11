@@ -382,8 +382,8 @@ components:
             apply failure with no observable model state).
         channel:
           type: string
-          enum: [settings_local, set_session_model]
-          description: Which application channel was used (claude = settings_local, codex = set_session_model).
+          enum: [settings_local, set_session_model, advisory]
+          description: Which application channel was used (claude = settings_local, codex = set_session_model, gemini/opencode = advisory until smoke enables active model application).
     SessionChatTurnEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

@@ -2,7 +2,9 @@ import path from "node:path";
 
 import { z } from "zod";
 
-export const ExecutorAgentSchema = z.enum(["claude", "codex"]);
+const EXECUTOR_AGENTS = ["claude", "codex", "gemini", "opencode"] as const;
+
+export const ExecutorAgentSchema = z.enum(EXECUTOR_AGENTS);
 
 export const ExecutorRouterSchema = z.enum(["ccr"]);
 
@@ -46,6 +48,28 @@ export const RunnerProviderSchema = z.discriminatedUnion("kind", [
       wireApi: z.literal("responses").optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("google_gemini"),
+      apiKeyEnv: envNameSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_vertex"),
+      projectId: z.string().min(1).optional(),
+      location: z.string().min(1).optional(),
+      apiKeyEnv: envNameSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_gateway"),
+      baseUrl: z.string().url().optional(),
+      apiKeyEnv: envNameSchema.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
 export const RunnerSidecarSchema = z
@@ -236,6 +260,15 @@ export type SupervisorHealthResponse = z.infer<
   typeof SupervisorHealthResponseSchema
 >;
 
+const AdapterSmokeDiagnosticSchema = z
+  .object({
+    status: z.enum(["not_required", "pending", "ok", "skipped", "error"]),
+    reason: z.string().min(1).nullable(),
+    checkedAt: z.string().datetime().nullable(),
+    protocolVersion: z.number().int().positive().nullable(),
+  })
+  .strict();
+
 export const SupervisorDiagnosticsResponseSchema = z
   .object({
     status: z.literal("ready"),
@@ -246,7 +279,12 @@ export const SupervisorDiagnosticsResponseSchema = z
         .object({
           id: ExecutorAgentSchema,
           binary: z.string().min(1),
+          source: z.enum(["path", "override"]),
+          path: z.string().min(1).nullable(),
           available: z.boolean(),
+          version: z.string().min(1).nullable(),
+          error: z.string().min(1).nullable(),
+          smoke: AdapterSmokeDiagnosticSchema,
         })
         .strict(),
     ),
@@ -276,6 +314,7 @@ export type SupervisorDiagnosticsResponse = z.infer<
 
 export type SessionRecord = {
   sessionId: string;
+  adapter: ExecutorAgent;
   runId: string;
   projectSlug: string;
   stepId: string;

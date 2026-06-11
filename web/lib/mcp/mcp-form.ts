@@ -4,11 +4,13 @@
 // Secrets are NEVER values: env/header entries are `env:NAME` references (or
 // bare NAMES) resolved supervisor-side.
 
+import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
+
 export const MCP_TRANSPORTS = ["stdio", "sse", "http"] as const;
 export type McpTransport = (typeof MCP_TRANSPORTS)[number];
 
-export const MCP_AGENTS = ["claude", "codex"] as const;
-export type McpAgent = (typeof MCP_AGENTS)[number];
+export const MCP_AGENTS = ADAPTER_IDS;
+export type McpAgent = AdapterId;
 
 export type McpServerDraft = {
   id: string;

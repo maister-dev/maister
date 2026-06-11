@@ -6,6 +6,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -38,10 +39,7 @@ const patchBodySchema = z
     envKeys: z.array(envKeyRefSchema).optional(),
     url: z.string().url().nullable().optional(),
     headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: z
-      .array(z.enum(["claude", "codex"]))
-      .min(1)
-      .optional(),
+    supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
     enabled: z.boolean().optional(),
   })
   .strict()

@@ -243,6 +243,49 @@ describe("admin ACP runner model-suggestions proxy", () => {
     expect(opts.force).toBe(true);
   });
 
+  it("forwards Gemini provider drafts with bare apiKeyEnv names", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      jsonRequest({
+        adapter: "gemini",
+        provider: {
+          kind: "google_gemini",
+          apiKey: "env:GEMINI_API_KEY",
+        },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const [draft] = mocks.resolveModelSuggestions.mock.calls[0] as [
+      SupervisorModelCatalogDraft,
+    ];
+
+    expect(draft).toMatchObject({
+      adapter: "gemini",
+      provider: { kind: "google_gemini", apiKeyEnv: "GEMINI_API_KEY" },
+    });
+  });
+
+  it("forwards OpenCode native drafts without Claude/Codex provider defaults", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      jsonRequest({
+        adapter: "opencode",
+        provider: { kind: "agent_native" },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const [draft] = mocks.resolveModelSuggestions.mock.calls[0] as [
+      SupervisorModelCatalogDraft,
+    ];
+
+    expect(draft).toEqual({
+      adapter: "opencode",
+      provider: { kind: "agent_native" },
+    });
+  });
+
   it("maps a supervisor EXECUTOR_UNAVAILABLE to 503", async () => {
     mocks.resolveModelSuggestions.mockRejectedValue(
       new MaisterError("EXECUTOR_UNAVAILABLE", "resolveModelSuggestions: down"),

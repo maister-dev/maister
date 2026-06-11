@@ -108,4 +108,45 @@ describe("runner spawn intent", () => {
       baseUrl: "https://api.z.ai/api/anthropic",
     });
   });
+
+  it("maps Gemini and OpenCode providers into supervisor input", () => {
+    expect(
+      runnerSupervisorInput({
+        snapshot: {
+          id: "gemini-cli",
+          adapter: "gemini",
+          capabilityAgent: "gemini",
+          model: "gemini-3-pro",
+          provider: {
+            kind: "google_gemini",
+            apiKey: "env:GEMINI_API_KEY",
+          },
+          providerKind: "google_gemini",
+          permissionPolicy: "default",
+        },
+      }),
+    ).toMatchObject({
+      runnerId: "gemini-cli",
+      adapter: "gemini",
+      capabilityAgent: "gemini",
+      provider: {
+        kind: "google_gemini",
+        apiKeyEnv: "GEMINI_API_KEY",
+      },
+    });
+
+    expect(
+      runnerSupervisorInput({
+        snapshot: {
+          id: "opencode-native",
+          adapter: "opencode",
+          capabilityAgent: "opencode",
+          model: "opencode-default",
+          provider: { kind: "agent_native" },
+          providerKind: "agent_native",
+          permissionPolicy: "default",
+        },
+      }).provider,
+    ).toEqual({ kind: "agent_native" });
+  });
 });

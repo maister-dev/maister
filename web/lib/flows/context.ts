@@ -7,6 +7,7 @@ import type {
   StepRun as StepRunRow,
   Task as TaskRow,
 } from "@/lib/db/schema";
+import type { CapabilityAgent } from "@/lib/config.schema";
 import type { FlowContext } from "./types";
 
 import pino from "pino";
@@ -147,7 +148,7 @@ export type BuildContextArgs = {
   run: Pick<RunRow, "id">;
   executor: {
     id: string;
-    agent: "claude" | "codex";
+    agent: CapabilityAgent;
     model: string;
     router?: "ccr" | null;
   };

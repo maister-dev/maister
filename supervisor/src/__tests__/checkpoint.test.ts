@@ -67,6 +67,7 @@ async function registerExitedSession(
   registry.register(
     {
       sessionId,
+      adapter: "claude",
       runId: `run-${sessionId}`,
       projectSlug: "demo",
       stepId: "step-1",

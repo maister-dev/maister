@@ -16,17 +16,12 @@ import { openEventsLog, type EventsLogWriter } from "./events-log";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
   SupervisorError,
-  type ExecutorAgent,
   type SessionEvent,
   type SessionRecord,
   type StartSessionRequest,
 } from "./types";
+import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
-
-const BINARY_BY_AGENT: Record<ExecutorAgent, string> = {
-  claude: "claude-agent-acp",
-  codex: "codex-acp",
-};
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const TAIL_SCAN_BYTES = 64 * 1024;
@@ -129,7 +124,12 @@ export async function spawnSession(
 ): Promise<SpawnSessionResult> {
   const { sessionId, runtimeRoot, logger } = opts;
   const request = effectiveStartSessionRequest(opts.request);
-  const binary = opts.binaryOverride ?? BINARY_BY_AGENT[request.executor.agent];
+  const adapterRuntime = getAdapterRuntime(request.executor.agent);
+  const binaryResolution = resolveAdapterBinary({
+    adapter: request.executor.agent,
+    testOverride: opts.binaryOverride,
+  });
+  const binary = binaryResolution.binary;
 
   const logPath = resolve(
     runtimeRoot,
@@ -161,7 +161,10 @@ export async function spawnSession(
   const seedMonotonicId = await tailMaxMonotonicId(eventsLogPath);
   const eventsLog = await openEventsLog(eventsLogPath, { logger });
 
-  const args: string[] = opts.preArgs ? [...opts.preArgs] : [];
+  const args: string[] = [
+    ...adapterRuntime.defaultArgs,
+    ...(opts.preArgs ?? []),
+  ];
 
   if (request.adapterLaunch?.preArgs) {
     args.push(...request.adapterLaunch.preArgs);
@@ -220,6 +223,10 @@ export async function spawnSession(
     {
       sessionId,
       agent: request.executor.agent,
+      adapter: adapterRuntime.id,
+      binary,
+      binarySource: binaryResolution.source,
+      binaryOverrideEnv: binaryResolution.overrideEnv ?? null,
       model: request.executor.model,
       cwd: request.worktreePath,
       resume: Boolean(request.resumeSessionId),
@@ -285,6 +292,7 @@ export async function spawnSession(
 
   const record: SessionRecord = {
     sessionId,
+    adapter: adapterRuntime.id,
     runId: request.runId,
     projectSlug: request.projectSlug,
     stepId: request.stepId,

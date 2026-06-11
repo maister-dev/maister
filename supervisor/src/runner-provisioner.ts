@@ -44,6 +44,19 @@ function mergeAdapterLaunch(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
+function requireAdapter(
+  actual: RunnerLaunch["adapter"],
+  expected: RunnerLaunch["adapter"],
+  context: string,
+): void {
+  if (actual !== expected) {
+    throw new SupervisorError(
+      "EXECUTOR_UNAVAILABLE",
+      `${context} requires ${expected} adapter`,
+    );
+  }
+}
+
 export function provisionRunnerLaunch(
   runner: RunnerLaunch,
   baseAdapterLaunch?: AdapterLaunch,
@@ -76,20 +89,18 @@ export function provisionRunnerLaunch(
 
   switch (runner.provider.kind) {
     case "anthropic":
-      if (runner.adapter !== "claude") {
-        throw new SupervisorError(
-          "EXECUTOR_UNAVAILABLE",
-          `runner ${runner.runnerId} provider anthropic requires claude adapter`,
-        );
-      }
+      requireAdapter(
+        runner.adapter,
+        "claude",
+        `runner ${runner.runnerId} provider anthropic`,
+      );
       break;
     case "anthropic_compatible":
-      if (runner.adapter !== "claude") {
-        throw new SupervisorError(
-          "EXECUTOR_UNAVAILABLE",
-          `runner ${runner.runnerId} provider anthropic_compatible requires claude adapter`,
-        );
-      }
+      requireAdapter(
+        runner.adapter,
+        "claude",
+        `runner ${runner.runnerId} provider anthropic_compatible`,
+      );
       executor.env = {
         ...(executor.env ?? {}),
         ...(runner.provider.baseUrl
@@ -106,18 +117,95 @@ export function provisionRunnerLaunch(
       };
       break;
     case "openai":
-      if (runner.adapter !== "codex") {
-        throw new SupervisorError(
-          "EXECUTOR_UNAVAILABLE",
-          `runner ${runner.runnerId} provider openai requires codex adapter`,
-        );
-      }
+      requireAdapter(
+        runner.adapter,
+        "codex",
+        `runner ${runner.runnerId} provider openai`,
+      );
       break;
     case "openai_compatible":
       throw new SupervisorError(
         "EXECUTOR_UNAVAILABLE",
         `runner ${runner.runnerId} provider openai_compatible requires Codex profile materialization before spawn`,
       );
+    case "google_gemini":
+      requireAdapter(
+        runner.adapter,
+        "gemini",
+        `runner ${runner.runnerId} provider google_gemini`,
+      );
+      if (runner.provider.apiKeyEnv) {
+        executor.env = {
+          ...(executor.env ?? {}),
+          GEMINI_API_KEY: resolveEnvRef(
+            runner.provider.apiKeyEnv,
+            `runner ${runner.runnerId} Gemini API key`,
+          ),
+        };
+      }
+      break;
+    case "google_vertex":
+      requireAdapter(
+        runner.adapter,
+        "gemini",
+        `runner ${runner.runnerId} provider google_vertex`,
+      );
+      if (
+        !runner.provider.apiKeyEnv &&
+        (!runner.provider.projectId || !runner.provider.location)
+      ) {
+        throw new SupervisorError(
+          "EXECUTOR_UNAVAILABLE",
+          `runner ${runner.runnerId} provider google_vertex requires either apiKeyEnv or projectId and location`,
+        );
+      }
+      executor.env = {
+        ...(executor.env ?? {}),
+        GOOGLE_GENAI_USE_VERTEXAI: "true",
+        ...(runner.provider.projectId
+          ? { GOOGLE_CLOUD_PROJECT: runner.provider.projectId }
+          : {}),
+        ...(runner.provider.location
+          ? { GOOGLE_CLOUD_LOCATION: runner.provider.location }
+          : {}),
+        ...(runner.provider.apiKeyEnv
+          ? {
+              GOOGLE_API_KEY: resolveEnvRef(
+                runner.provider.apiKeyEnv,
+                `runner ${runner.runnerId} Vertex API key`,
+              ),
+            }
+          : {}),
+      };
+      break;
+    case "google_gateway":
+      requireAdapter(
+        runner.adapter,
+        "gemini",
+        `runner ${runner.runnerId} provider google_gateway`,
+      );
+      if (!runner.provider.baseUrl || !runner.provider.apiKeyEnv) {
+        throw new SupervisorError(
+          "EXECUTOR_UNAVAILABLE",
+          `runner ${runner.runnerId} provider google_gateway requires baseUrl and apiKeyEnv`,
+        );
+      }
+      executor.env = {
+        ...(executor.env ?? {}),
+        GOOGLE_GEMINI_BASE_URL: runner.provider.baseUrl,
+        GEMINI_API_KEY: resolveEnvRef(
+          runner.provider.apiKeyEnv,
+          `runner ${runner.runnerId} Gemini gateway API key`,
+        ),
+      };
+      break;
+    case "agent_native":
+      requireAdapter(
+        runner.adapter,
+        "opencode",
+        `runner ${runner.runnerId} provider agent_native`,
+      );
+      break;
   }
 
   if (runner.sidecar) {
@@ -151,7 +239,10 @@ export function effectiveStartSessionRequest(
 ): StartSessionRequest {
   if (!request.runner) return request;
 
-  const provisioned = provisionRunnerLaunch(request.runner, request.adapterLaunch);
+  const provisioned = provisionRunnerLaunch(
+    request.runner,
+    request.adapterLaunch,
+  );
 
   return {
     ...request,

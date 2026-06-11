@@ -244,7 +244,7 @@ erDiagram
         jsonb env_keys "env:NAME refs only; DEFAULT []"
         text url "nullable; sse|http only"
         jsonb header_keys "env:NAME refs only; DEFAULT []"
-        jsonb supported_agents "DEFAULT [claude,codex]"
+        jsonb supported_agents "DEFAULT [claude,codex,gemini,opencode]"
         text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
         text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
         jsonb readiness_reasons "DEFAULT []"

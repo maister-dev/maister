@@ -22,6 +22,7 @@ import {
   sendPrompt,
   streamSession,
   type SupervisorEvent,
+  type SupervisorModelCatalogDraft,
 } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
 
@@ -292,8 +293,66 @@ describe("checkSupervisorDiagnostics", () => {
     version: "0.0.1",
     checkedAt: "2026-06-03T12:00:00.000Z",
     adapters: [
-      { id: "claude", binary: "claude-agent-acp", available: true },
-      { id: "codex", binary: "codex-acp", available: false },
+      {
+        id: "claude",
+        binary: "claude-agent-acp",
+        source: "path",
+        path: "/bin/claude-agent-acp",
+        available: true,
+        version: null,
+        error: null,
+        smoke: {
+          status: "not_required",
+          reason: null,
+          checkedAt: null,
+          protocolVersion: null,
+        },
+      },
+      {
+        id: "codex",
+        binary: "codex-acp",
+        source: "path",
+        path: null,
+        available: false,
+        version: null,
+        error: "adapter binary not found on PATH: codex-acp",
+        smoke: {
+          status: "not_required",
+          reason: null,
+          checkedAt: null,
+          protocolVersion: null,
+        },
+      },
+      {
+        id: "gemini",
+        binary: "gemini",
+        source: "path",
+        path: null,
+        available: false,
+        version: null,
+        error: "adapter binary not found on PATH: gemini",
+        smoke: {
+          status: "pending",
+          reason: "gemini ACP compatibility smoke has not been cached",
+          checkedAt: null,
+          protocolVersion: null,
+        },
+      },
+      {
+        id: "opencode",
+        binary: "opencode",
+        source: "path",
+        path: null,
+        available: false,
+        version: null,
+        error: "adapter binary not found on PATH: opencode",
+        smoke: {
+          status: "pending",
+          reason: "opencode ACP compatibility smoke has not been cached",
+          checkedAt: null,
+          protocolVersion: null,
+        },
+      },
     ],
     sidecars: [{ id: "ccr-default", kind: "ccr", state: "idle" }],
     envRefs: [{ name: "MAISTER_CCR_AUTH_TOKEN", present: true }],
@@ -763,6 +822,22 @@ describe("resolveModelSuggestions (T4.1)", () => {
     resolvedAt: "2026-06-11T12:00:00.000Z",
     ttlSeconds: 300,
   };
+
+  it("accepts a Gemini model-catalog draft shape", async () => {
+    const geminiDraft = {
+      adapter: "gemini",
+      provider: { kind: "google_gemini", apiKeyEnv: "GEMINI_API_KEY" },
+    } satisfies SupervisorModelCatalogDraft;
+
+    mockOnce(new Response(JSON.stringify(catalog), { status: 200 }));
+
+    await resolveModelSuggestions(geminiDraft);
+
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ ...geminiDraft, force: false });
+  });
 
   it("POSTs to /model-catalog/resolve and maps a 200 body to SupervisorModelCatalog", async () => {
     mockOnce(new Response(JSON.stringify(catalog), { status: 200 }));

@@ -163,4 +163,42 @@ describe("createAcpProbeSource", () => {
     // No spawn happened — provisioning failed before the probe could run.
     expect(children).toHaveLength(0);
   });
+
+  it("skips Gemini and OpenCode probes until compatibility smoke enables them", async () => {
+    const { spawnImpl, children } = spyingSpawn();
+    const source = createAcpProbeSource({
+      spawnImpl,
+      binaryOverride: "node",
+      preArgs: [fixture],
+    });
+
+    const gemini = await source.resolve(
+      {
+        adapter: "gemini",
+        provider: { kind: "google_gemini", apiKeyEnv: "GEMINI_API_KEY" },
+      },
+      ctx,
+    );
+    const opencode = await source.resolve(
+      {
+        adapter: "opencode",
+        provider: { kind: "agent_native" },
+      },
+      ctx,
+    );
+
+    expect(gemini.models).toEqual([]);
+    expect(gemini.status).toMatchObject({
+      kind: "acp_probe",
+      status: "skipped",
+      reason: "gemini ACP model probe is pending compatibility smoke",
+    });
+    expect(opencode.models).toEqual([]);
+    expect(opencode.status).toMatchObject({
+      kind: "acp_probe",
+      status: "skipped",
+      reason: "opencode ACP model probe is pending compatibility smoke",
+    });
+    expect(children).toHaveLength(0);
+  });
 });

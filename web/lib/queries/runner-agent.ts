@@ -1,10 +1,12 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/db/schema";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { MaisterError } from "@/lib/errors";
 
-export type QueryRunnerAgent = "claude" | "codex";
+export type QueryRunnerAgent = AdapterId;
 
 export function runnerAgentFromFields(input: {
   readonly capabilityAgent: string | null;
@@ -13,8 +15,8 @@ export function runnerAgentFromFields(input: {
 }): QueryRunnerAgent {
   const agent = input.capabilityAgent ?? input.runnerSnapshot?.capabilityAgent;
 
-  if (agent === "claude" || agent === "codex") {
-    return agent;
+  if (agent && (ADAPTER_IDS as readonly string[]).includes(agent)) {
+    return agent as QueryRunnerAgent;
   }
 
   throw new MaisterError(

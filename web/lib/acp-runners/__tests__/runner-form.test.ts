@@ -63,6 +63,18 @@ describe("providerKindsForAdapter", () => {
       "openai_compatible",
     ]);
   });
+
+  it("returns the Google provider kinds for gemini", () => {
+    expect(providerKindsForAdapter("gemini")).toEqual([
+      "google_gemini",
+      "google_vertex",
+      "google_gateway",
+    ]);
+  });
+
+  it("returns the agent-native provider kind for opencode", () => {
+    expect(providerKindsForAdapter("opencode")).toEqual(["agent_native"]);
+  });
 });
 
 describe("permissionPoliciesForAdapter", () => {
@@ -75,6 +87,11 @@ describe("permissionPoliciesForAdapter", () => {
 
   it("allows only the default permission policy for codex", () => {
     expect(permissionPoliciesForAdapter("codex")).toEqual(["default"]);
+  });
+
+  it("allows only the default permission policy for gemini and opencode", () => {
+    expect(permissionPoliciesForAdapter("gemini")).toEqual(["default"]);
+    expect(permissionPoliciesForAdapter("opencode")).toEqual(["default"]);
   });
 });
 
@@ -165,6 +182,37 @@ describe("validateRunnerDraft", () => {
     expect(result.ok).toBe(false);
     expect(result.errors.providerKind).toBeTruthy();
   });
+
+  it("rejects a raw apiKey for google_gemini", () => {
+    const result = validateRunnerDraft({
+      id: "g",
+      adapter: "gemini",
+      model: "gemini-3-pro",
+      providerKind: "google_gemini",
+      apiKey: "raw",
+      permissionPolicy: "default",
+      sidecarId: null,
+      enabled: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.apiKey).toBeTruthy();
+  });
+
+  it("rejects agent_native for gemini", () => {
+    const result = validateRunnerDraft({
+      id: "g",
+      adapter: "gemini",
+      model: "gemini-3-pro",
+      providerKind: "agent_native",
+      permissionPolicy: "default",
+      sidecarId: null,
+      enabled: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.providerKind).toBeTruthy();
+  });
 });
 
 describe("buildCreateBody", () => {
@@ -219,6 +267,38 @@ describe("buildCreateBody", () => {
     }) as { provider: { wireApi?: string } };
 
     expect(body.provider.wireApi).toBe("responses");
+  });
+
+  it("emits a google_gemini provider body with env-ref apiKey", () => {
+    const body = buildCreateBody({
+      id: "g",
+      adapter: "gemini",
+      model: "gemini-3-pro",
+      providerKind: "google_gemini",
+      apiKey: "env:GEMINI_API_KEY",
+      permissionPolicy: "default",
+      sidecarId: null,
+      enabled: true,
+    }) as { provider: unknown };
+
+    expect(body.provider).toEqual({
+      kind: "google_gemini",
+      apiKey: "env:GEMINI_API_KEY",
+    });
+  });
+
+  it("emits a bare agent_native provider body", () => {
+    const body = buildCreateBody({
+      id: "o",
+      adapter: "opencode",
+      model: "opencode-default",
+      providerKind: "agent_native",
+      permissionPolicy: "default",
+      sidecarId: null,
+      enabled: true,
+    }) as { provider: unknown };
+
+    expect(body.provider).toEqual({ kind: "agent_native" });
   });
 });
 

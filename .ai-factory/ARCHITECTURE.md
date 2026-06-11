@@ -8,8 +8,10 @@ with technical-layer organization:
 - **`web/`** — Next.js 16 monolith: UI + Route Handlers + server actions +
   Drizzle DB access + SSE bridge to supervisor. No agent processes.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
-  agent process (`claude`, `codex`) per session, heartbeat watchdog,
-  graceful checkpoint + respawn via the ACP `session/resume` call. HTTP+SSE IPC.
+  agent process per session via the platform ACP runner registry
+  (`claude`, `codex`, readiness-gated `gemini`, readiness-gated `opencode`),
+  heartbeat watchdog, graceful checkpoint + respawn via the ACP
+  `session/resume` call where the adapter strategy supports it. HTTP+SSE IPC.
 
 Inside `web/`, two organizational axes coexist:
 
@@ -49,8 +51,9 @@ context.
 - **Scale:** current target, single host (multi-host capable),
   `MAISTER_MAX_CONCURRENT_RUNS=3` (global cap).
 - **Key factors:**
-  - ACP is the executor interface — Stage 2 multi-executor pool is
-    inherent, not bolted on later.
+  - ACP is the executor interface — the multi-executor pool is inherent,
+    not bolted on later. The registry owns adapter launch args, provider
+    compatibility, diagnostics, readiness, and resume strategy.
   - Crash isolation: agent processes belong in `supervisor/`, not
     Next.js, so HMR / dev-mode hot-reload doesn't kill live runs.
   - Next.js App Router already enforces feature-folder layout for routes,

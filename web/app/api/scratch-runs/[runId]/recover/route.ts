@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 
 import { eq } from "drizzle-orm";
@@ -60,7 +61,7 @@ type Db = {
 };
 
 type ScratchLaunchExecutor = {
-  agent: "claude" | "codex";
+  agent: AdapterId;
   model: string;
   env?: Record<string, string>;
   router?: "ccr";

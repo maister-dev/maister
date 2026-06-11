@@ -113,12 +113,15 @@ function makeCcr(over: Partial<MockCcr> = {}): MockCcr {
 
 let runtimeRoot: string;
 let originalAuthToken: string | undefined;
+let originalGeminiBinary: string | undefined;
 
 beforeEach(async () => {
   runtimeRoot = await mkdtemp(join(tmpdir(), "spawn-ccr-test-"));
   mockSpawn.mockReset();
   originalAuthToken = process.env.MAISTER_CCR_AUTH_TOKEN;
+  originalGeminiBinary = process.env.MAISTER_ADAPTER_BINARY_GEMINI;
   delete process.env.MAISTER_CCR_AUTH_TOKEN;
+  delete process.env.MAISTER_ADAPTER_BINARY_GEMINI;
 });
 
 afterEach(async () => {
@@ -127,7 +130,69 @@ afterEach(async () => {
   } else {
     delete process.env.MAISTER_CCR_AUTH_TOKEN;
   }
+  if (originalGeminiBinary !== undefined) {
+    process.env.MAISTER_ADAPTER_BINARY_GEMINI = originalGeminiBinary;
+  } else {
+    delete process.env.MAISTER_ADAPTER_BINARY_GEMINI;
+  }
   await rm(runtimeRoot, { recursive: true, force: true });
+});
+
+describe("spawnSession — adapter registry", () => {
+  it("spawns Gemini and OpenCode with adapter-specific ACP argv", async () => {
+    mockSpawn.mockImplementation(() => makeFakeChild());
+
+    const { logger } = captureLogger();
+
+    await spawnSession({
+      sessionId: "s-gemini",
+      request: makeRequest({
+        executor: { agent: "gemini", model: "gemini-3-pro" },
+      }),
+      runtimeRoot,
+      logger,
+    });
+    await spawnSession({
+      sessionId: "s-opencode",
+      request: makeRequest({
+        executor: { agent: "opencode", model: "opencode-default" },
+      }),
+      runtimeRoot,
+      logger,
+    });
+
+    expect(mockSpawn.mock.calls[0]?.[0]).toBe("gemini");
+    expect(mockSpawn.mock.calls[0]?.[1]).toEqual(["--acp"]);
+    expect(mockSpawn.mock.calls[1]?.[0]).toBe("opencode");
+    expect(mockSpawn.mock.calls[1]?.[1]).toEqual(["acp"]);
+  });
+
+  it("uses the selected adapter binary override env var without affecting other adapters", async () => {
+    process.env.MAISTER_ADAPTER_BINARY_GEMINI = "/opt/test/gemini";
+    mockSpawn.mockImplementation(() => makeFakeChild());
+
+    const { logger } = captureLogger();
+
+    await spawnSession({
+      sessionId: "s-gemini",
+      request: makeRequest({
+        executor: { agent: "gemini", model: "gemini-3-pro" },
+      }),
+      runtimeRoot,
+      logger,
+    });
+    await spawnSession({
+      sessionId: "s-opencode",
+      request: makeRequest({
+        executor: { agent: "opencode", model: "opencode-default" },
+      }),
+      runtimeRoot,
+      logger,
+    });
+
+    expect(mockSpawn.mock.calls[0]?.[0]).toBe("/opt/test/gemini");
+    expect(mockSpawn.mock.calls[1]?.[0]).toBe("opencode");
+  });
 });
 
 describe("spawnSession — CCR env injection precedence", () => {

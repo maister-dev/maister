@@ -4,6 +4,7 @@ import {
   aiCodingSettingsSchema,
   cliCheckSettingsSchema,
   flowEntrySchema,
+  flowRunnerProfileSchema,
   flowYamlV1Schema,
   formSchemaSchema,
   humanSettingsSchema,
@@ -145,12 +146,45 @@ describe("maisterYamlV2Schema", () => {
       id: "github",
       kind: "mcp",
       source: "project",
-      agents: ["claude", "codex"],
+      agents: ["claude", "codex", "gemini", "opencode"],
       enforceability: "enforced",
       selected_by_default: true,
     });
     expect(parsed.capabilities.skills[0].enforceability).toBe("instructed");
     expect(parsed.capabilities.settings[0].enforceability).toBe("enforced");
+  });
+
+  it("accepts designed Gemini and OpenCode capability agents", () => {
+    const parsed = maisterYamlV2Schema.parse({
+      ...goldenMaisterYaml,
+      capabilities: {
+        mcps: [
+          {
+            id: "github",
+            command: "github-mcp-server",
+            agents: ["gemini", "opencode"],
+          },
+        ],
+        settings: [
+          {
+            id: "gemini-settings",
+            agent: "gemini",
+            path: ".maister/gemini/settings.json",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.capabilities.mcps[0].agents).toEqual(["gemini", "opencode"]);
+    expect(parsed.capabilities.settings[0].agent).toBe("gemini");
+  });
+
+  it("rejects unknown capability agents", () => {
+    expect(() =>
+      maisterCapabilitiesSchema.parse({
+        mcps: [{ id: "bad", agents: ["cursor"] }],
+      }),
+    ).toThrow();
   });
 });
 
@@ -164,6 +198,42 @@ describe("aiCodingSettingsSchema runner target", () => {
 
     expect(parsed.runner_type).toBe("acp");
     expect(parsed.runner).toBe("claude-code");
+  });
+
+  it("accepts Gemini and OpenCode tool allow-lists", () => {
+    const parsed = aiCodingSettingsSchema.parse({
+      runner_type: "acp",
+      runner: "gemini-cli",
+      tools: {
+        gemini: ["read_file"],
+        opencode: ["edit"],
+      },
+    });
+
+    expect(parsed.tools?.gemini).toEqual(["read_file"]);
+    expect(parsed.tools?.opencode).toEqual(["edit"]);
+  });
+});
+
+describe("flowRunnerProfileSchema adapter support", () => {
+  it("accepts a Gemini runner profile with Google provider requirements", () => {
+    const parsed = flowRunnerProfileSchema.parse({
+      capability_agent: "gemini",
+      adapter: "gemini",
+      model: "gemini-3-pro",
+      provider: {
+        kind: "google_gemini",
+        requires_api_key: true,
+      },
+      capabilities: {
+        tools: {
+          gemini: ["read_file"],
+        },
+      },
+    });
+
+    expect(parsed.capability_agent).toBe("gemini");
+    expect(parsed.provider?.kind).toBe("google_gemini");
   });
 });
 

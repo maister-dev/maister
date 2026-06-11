@@ -6,6 +6,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -46,11 +47,33 @@ const providerSchema = z.discriminatedUnion("kind", [
       wireApi: z.literal("responses").optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("google_gemini"),
+      apiKey: z.string().regex(ENV_REF_PATTERN).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_vertex"),
+      projectId: z.string().min(1).optional(),
+      location: z.string().min(1).optional(),
+      apiKey: z.string().regex(ENV_REF_PATTERN).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("google_gateway"),
+      baseUrl: z.string().url().optional(),
+      apiKey: z.string().regex(ENV_REF_PATTERN).optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
 const requestSchema = z
   .object({
-    adapter: z.enum(["claude", "codex"]),
+    adapter: z.enum(ADAPTER_IDS),
     provider: providerSchema,
     router: z.literal("ccr").optional(),
     sidecarId: z.string().min(1).nullable().optional(),
@@ -146,6 +169,27 @@ function toSupervisorProvider(
       ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
       ...(provider.apiKey ? { apiKeyEnv: envRefName(provider.apiKey) } : {}),
       ...(provider.wireApi ? { wireApi: provider.wireApi } : {}),
+    };
+  }
+  if (provider.kind === "google_gemini") {
+    return {
+      kind: provider.kind,
+      ...(provider.apiKey ? { apiKeyEnv: envRefName(provider.apiKey) } : {}),
+    };
+  }
+  if (provider.kind === "google_vertex") {
+    return {
+      kind: provider.kind,
+      ...(provider.projectId ? { projectId: provider.projectId } : {}),
+      ...(provider.location ? { location: provider.location } : {}),
+      ...(provider.apiKey ? { apiKeyEnv: envRefName(provider.apiKey) } : {}),
+    };
+  }
+  if (provider.kind === "google_gateway") {
+    return {
+      kind: provider.kind,
+      ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      ...(provider.apiKey ? { apiKeyEnv: envRefName(provider.apiKey) } : {}),
     };
   }
 

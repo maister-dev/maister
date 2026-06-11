@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { GuardConfig } from "./guards";
@@ -64,7 +65,7 @@ export type RunAgentStepCtx = {
   worktreePath: string;
   executor: {
     id: string;
-    agent: "claude" | "codex";
+    agent: CapabilityAgent;
     model: string;
     env?: Record<string, string>;
     router?: "ccr";

@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type {
   GlobalRole,
   ProjectRole,
@@ -79,7 +80,7 @@ const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
 export const RAIL_TTL_STATUSES = ["Abandoned", "Done"] as const;
 
 export type PortfolioStatus = "running" | "idle";
-export type AgentRole = "claude" | "codex" | "dev";
+export type AgentRole = AdapterId | "dev";
 export type WorkspaceStatus = "running" | "needs" | "queued" | "done";
 export type ScratchWorkspaceAction = "open" | "recover" | "discard" | "none";
 export type WorkbenchLifecycleAction = WorkbenchLifecycleActionId;

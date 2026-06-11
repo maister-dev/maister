@@ -109,6 +109,7 @@
 | [ADR-081](#adr-081-rework-session-policy-with-resume-by-default) | Rework session policy with resume-by-default | Accepted | 2026-06-11 |
 | [ADR-082](#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher) | Review-diff completeness with dirty-state protocol and scope switcher | Accepted | 2026-06-11 |
 | [ADR-083](#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor) | Social board substrate — per-project task numbering, typed relations, polymorphic actor | Accepted | 2026-06-11 |
+| [ADR-084](#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) | ACP adapter families for Gemini CLI and OpenCode | Accepted | 2026-06-11 |
 
 ---
 
@@ -5979,6 +5980,126 @@ migration, with these locked semantics:
 - **Storing pre-rendered HTML for comments:** rejected — XSS surface in the
   DB; bodies stay markdown, rendered through the existing remark-only
   `react-markdown` wrapper.
+
+---
+
+### ADR-084: ACP adapter families for Gemini CLI and OpenCode
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** ADR-050 established the platform ACP runner catalog and explicitly
+named future adapter families such as Gemini and OpenCode. ADR-076 added
+model discovery and model application for the existing Claude/Codex pair.
+The next runner-catalog widening needs a contract decision before code because
+Gemini CLI and OpenCode are not simple enum additions:
+
+- `supervisor/src/spawn.ts`, `supervisor/src/http-api.ts`,
+  `supervisor/src/types.ts`, `web/lib/supervisor-client.ts`,
+  `web/lib/acp-runners/schema.ts`, readiness, settings, recovery, and
+  capability materialization all encode `claude | codex`.
+- Gemini CLI `0.46.0` exposes `gemini --acp`; its installed docs and upstream
+  docs state JSON-RPC over stdio and list `initialize`, `authenticate`,
+  `newSession`, `loadSession`, `prompt`, `cancel`, `setSessionMode`, and
+  `unstable_setSessionModel`. The observed bundle advertises `loadSession`
+  but not `sessionCapabilities.resume`.
+- OpenCode `1.16.2` is installed at `/opt/homebrew/bin/opencode` and exposes
+  `opencode acp`; upstream docs describe JSON-RPC over stdio, while local help
+  also exposes `--port`, `--hostname`, mDNS, and CORS flags. Its first-run
+  writable state under `~/.local/share/opencode` is an operational readiness
+  concern.
+- MAIster currently advertises `clientCapabilities: { fs: {} }` to every ACP
+  adapter even though it has not implemented a confined ACP filesystem proxy.
+- Capability enforcement is still truth-sensitive: ADR-032/ADR-041/ADR-044
+  require refusal instead of silent downgrades when strict settings cannot be
+  proven for the selected adapter.
+
+**Decision:** Add Gemini CLI and OpenCode as first-class **adapter families**
+behind the same platform runner catalog, but gate runtime readiness on
+adapter-specific evidence. Eight locked sub-decisions:
+
+1. **Single adapter registry per process.** The web tier owns catalog/schema and
+   readiness metadata; the supervisor owns binary/spawn/protocol metadata. The
+   registries must agree on ids (`claude`, `codex`, `gemini`, `opencode`),
+   provider families, permission policies, model channel, resume strategy, MCP
+   transport support, and client-capability policy. Scattered
+   `claude | codex` literals are removed only where this feature touches the
+   runner contract.
+2. **Launch commands.** `gemini` launches as `gemini --acp`. `opencode`
+   launches as `opencode acp`. OpenCode's HTTP-looking help flags are treated as
+   a smoke-test question, not as permission to add an HTTP ACP transport in this
+   feature.
+3. **Operator-controllable binary resolution.** Supervisor diagnostics and spawn
+   use the adapter registry's binary resolver. A default PATH lookup is enough
+   for Claude/Codex compatibility; Gemini/OpenCode must also support an explicit
+   supervisor-side binary override. Diagnostics report binary source, path,
+   version/probe outcome, and execution/writable-state failures without leaking
+   env values.
+4. **Provider/auth shapes are adapter-specific.** Gemini gets Google-oriented
+   provider kinds and env-ref-only secrets. OpenCode starts with an
+   `agent_native` provider that relies on OpenCode's own credential/config
+   store, with optional env refs only when the spec explicitly freezes them.
+   Existing Codex `openai_compatible` refusal stays in place until Codex
+   materialization is proven.
+5. **ACP client capabilities are explicit.** MAIster must stop advertising
+   generic `fs:{}` to every adapter. No adapter receives `fs.readTextFile` or
+   `fs.writeTextFile` capability until MAIster implements and documents the
+   confinement boundary. MCP servers continue to flow through ACP
+   `newSession`/`loadSession`/`resumeSession` params when the adapter supports
+   them.
+6. **Resume is strategy-based.** Claude/Codex keep ACP `session/resume`.
+   Gemini's `loadSession` is not equivalent to MAIster's checkpoint resume until
+   an SDK smoke proves it restores the same conversation without replaying
+   history. OpenCode resume support must also be proven by SDK smoke. If the
+   strategy is unsupported or unproven, launch fails readiness or throws
+   `CHECKPOINT` with an actionable reason; it never falls back to `newSession`.
+7. **Model application follows ADR-076 metadata.** Claude remains
+   `settings.local.json`. Codex, Gemini, and OpenCode use
+   `unstable_setSessionModel` only when the adapter supports it; otherwise the
+   run receives an advisory and continues. Model suggestions for Gemini/OpenCode
+   are explicit sources or typed skips, never Claude/Codex defaults reused under
+   a different adapter.
+8. **No strict-enforcement flip.** Gemini/OpenCode capability classes start as
+   `instructed` or `unsupported`. No cell becomes `enforced` until a
+   per-class/per-adapter live spike proves the adapter honors the materialized
+   configuration. `strict` unsupported classes refuse launch with the existing
+   `CONFIG` or `EXECUTOR_UNAVAILABLE` errors.
+
+Prompt stop-reason policy is part of the contract freeze: supervisor types,
+web client types, OpenAPI, runner-agent handling, and resume-driver handling
+must all agree whether ACP `cancelled` is returned as a typed prompt result or
+converted to a typed `ACP_PROTOCOL`/checkpoint path. No raw 500 or string-match
+branching is allowed.
+
+**Consequences:**
+- Gemini/OpenCode appear as real platform runner families, but readiness stays
+  honest: a missing binary, first-run state failure, missing auth env ref,
+  protocol mismatch, unsupported checkpoint strategy, or unproven MCP/model
+  behavior is user-visible and typed.
+- The supervisor remains the only process that spawns adapters. The web tier
+  continues to reach it exclusively through `web/lib/supervisor-client.ts`.
+- The feature adds no generic "any command" runner and no non-ACP
+  Gemini/OpenCode automation path.
+- The SDK smoke scripts become a release gate, not a nicety: docs-first support
+  is insufficient to mark an adapter Ready.
+- Deployment symmetry applies if new env vars, binary overrides, or writable
+  state paths become runtime knobs: `.env.example`, compose overlays, and docs
+  must be updated in the same implementation slice.
+
+**Alternatives Considered:**
+- **Generic custom command runner:** rejected — it bypasses ACP contracts,
+  makes capability/readiness truth unverifiable, and would create a shell
+  execution surface broader than this feature needs.
+- **Treat Gemini `loadSession` as MAIster checkpoint resume by name:** rejected
+  — the invariant is semantic, not lexical. It must be proven against the SDK
+  and documented before checkpointed workflows become Ready.
+- **Trust OpenCode CLI help and add HTTP transport now:** rejected — upstream ACP
+  docs say stdio and MAIster's supervisor is currently stdio-oriented. HTTP or
+  remote ACP is a separate transport feature.
+- **Flip Gemini/OpenCode capability classes to `enforced` with no live proof:**
+  rejected — it recreates the false-compliance state ADR-032 forbids.
+- **Fork/patch upstream adapter binaries:** rejected for this feature. MAIster
+  should adapt through published ACP and CLI surfaces; forking would add
+  dependency ownership and upgrade burden without evidence it is required.
 
 ---
 

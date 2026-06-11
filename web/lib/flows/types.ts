@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { CapabilityAgent } from "@/lib/config.schema";
 import type { MaisterErrorCode } from "@/lib/errors";
 
 export type TemplateValue =
@@ -25,7 +26,7 @@ export type FlowContext = {
   };
   executor: {
     id: string;
-    agent: "claude" | "codex";
+    agent: CapabilityAgent;
     model: string;
     router?: "ccr";
   };

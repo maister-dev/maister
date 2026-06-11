@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import {
   buildCreateBody,
   buildPatchBody,
@@ -27,6 +28,8 @@ type Provider = {
   baseUrl?: string;
   authToken?: string;
   apiKey?: string;
+  projectId?: string;
+  location?: string;
   wireApi?: "responses";
 };
 
@@ -84,6 +87,8 @@ function draftFromProvider(
     baseUrl: provider.baseUrl,
     authToken: provider.authToken,
     apiKey: provider.apiKey,
+    projectId: provider.projectId,
+    location: provider.location,
     wireApi: provider.wireApi === "responses",
     permissionPolicy,
     sidecarId,
@@ -433,8 +438,11 @@ export function AcpRunnerModal({
                 value={draft.adapter}
                 onChange={(e) => changeAdapter(e.target.value as AdapterId)}
               >
-                <option value="claude">claude</option>
-                <option value="codex">codex</option>
+                {ADAPTER_IDS.map((adapter) => (
+                  <option key={adapter} value={adapter}>
+                    {adapter}
+                  </option>
+                ))}
               </select>
             ) : (
               <code className="font-mono text-[12px] text-ink">
@@ -577,6 +585,85 @@ export function AcpRunnerModal({
                 {t("fieldWireApi")}
               </label>
             </>
+          ) : null}
+
+          {providerKind === "google_gateway" ? (
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("fieldBaseUrl")}</span>
+              <input
+                autoComplete="off"
+                className={inputClass}
+                disabled={busy}
+                spellCheck={false}
+                type="text"
+                value={draft.baseUrl ?? ""}
+                onChange={(e) =>
+                  patchDraft({ baseUrl: e.target.value || undefined })
+                }
+              />
+              {errorFor("baseUrl") ? (
+                <span className="font-mono text-[10.5px] text-[#b5332b]">
+                  {errorFor("baseUrl")}
+                </span>
+              ) : null}
+            </label>
+          ) : null}
+
+          {providerKind === "google_vertex" ? (
+            <>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldLabel}>{t("fieldProjectId")}</span>
+                <input
+                  autoComplete="off"
+                  className={inputClass}
+                  disabled={busy}
+                  spellCheck={false}
+                  type="text"
+                  value={draft.projectId ?? ""}
+                  onChange={(e) =>
+                    patchDraft({ projectId: e.target.value || undefined })
+                  }
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldLabel}>{t("fieldLocation")}</span>
+                <input
+                  autoComplete="off"
+                  className={inputClass}
+                  disabled={busy}
+                  spellCheck={false}
+                  type="text"
+                  value={draft.location ?? ""}
+                  onChange={(e) =>
+                    patchDraft({ location: e.target.value || undefined })
+                  }
+                />
+              </label>
+            </>
+          ) : null}
+
+          {providerKind === "google_gemini" ||
+          providerKind === "google_vertex" ||
+          providerKind === "google_gateway" ? (
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("fieldApiKey")}</span>
+              <input
+                autoComplete="off"
+                className={inputClass}
+                disabled={busy}
+                spellCheck={false}
+                type="text"
+                value={draft.apiKey ?? ""}
+                onChange={(e) =>
+                  patchDraft({ apiKey: e.target.value || undefined })
+                }
+              />
+              {errorFor("apiKey") ? (
+                <span className="font-mono text-[10.5px] text-[#b5332b]">
+                  {errorFor("apiKey")}
+                </span>
+              ) : null}
+            </label>
           ) : null}
 
           <label className="flex flex-col gap-1.5">

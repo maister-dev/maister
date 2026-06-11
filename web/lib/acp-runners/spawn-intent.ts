@@ -33,10 +33,20 @@ function providerFromSnapshot(
       return { kind: "openai" };
     case "openai_compatible":
       return { kind: "openai_compatible" };
+    case "google_gemini":
+      return { kind: "google_gemini" };
+    case "google_vertex":
+      return { kind: "google_vertex" };
+    case "google_gateway":
+      return { kind: "google_gateway" };
+    case "agent_native":
+      return { kind: "agent_native" };
     default:
-      return snapshot.adapter === "claude"
-        ? { kind: "anthropic" }
-        : { kind: "openai" };
+      if (snapshot.adapter === "claude") return { kind: "anthropic" };
+      if (snapshot.adapter === "codex") return { kind: "openai" };
+      if (snapshot.adapter === "gemini") return { kind: "google_gemini" };
+
+      return { kind: "agent_native" };
   }
 }
 
@@ -72,6 +82,48 @@ export function mergeRunnerAdapterLaunch(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
+function toSupervisorProvider(
+  provider: PlatformRunnerProvider,
+): SupervisorRunnerInput["provider"] {
+  switch (provider.kind) {
+    case "anthropic_compatible":
+      return {
+        kind: provider.kind,
+        authTokenEnv: envRefName(provider.authToken),
+        baseUrl: provider.baseUrl,
+      };
+    case "openai_compatible":
+      return {
+        kind: provider.kind,
+        baseUrl: provider.baseUrl,
+        apiKeyEnv: envRefName(provider.apiKey),
+        wireApi: provider.wireApi,
+      };
+    case "google_gemini":
+      return {
+        kind: provider.kind,
+        apiKeyEnv: envRefName(provider.apiKey),
+      };
+    case "google_vertex":
+      return {
+        kind: provider.kind,
+        projectId: provider.projectId,
+        location: provider.location,
+        apiKeyEnv: envRefName(provider.apiKey),
+      };
+    case "google_gateway":
+      return {
+        kind: provider.kind,
+        baseUrl: provider.baseUrl,
+        apiKeyEnv: envRefName(provider.apiKey),
+      };
+    case "anthropic":
+    case "openai":
+    case "agent_native":
+      return { kind: provider.kind };
+  }
+}
+
 export function runnerSupervisorInput(input: {
   snapshot: RunnerSnapshot;
   provider?: PlatformRunnerProvider | null;
@@ -79,21 +131,7 @@ export function runnerSupervisorInput(input: {
 }): SupervisorRunnerInput {
   const provider = input.provider ?? providerFromSnapshot(input.snapshot);
   const sidecar = input.sidecar ?? input.snapshot.sidecar;
-  const runnerProvider: SupervisorRunnerInput["provider"] =
-    provider.kind === "anthropic_compatible"
-      ? {
-          kind: provider.kind,
-          authTokenEnv: envRefName(provider.authToken),
-          baseUrl: provider.baseUrl,
-        }
-      : provider.kind === "openai_compatible"
-        ? {
-            kind: provider.kind,
-            baseUrl: provider.baseUrl,
-            apiKeyEnv: envRefName(provider.apiKey),
-            wireApi: provider.wireApi,
-          }
-        : { kind: provider.kind };
+  const runnerProvider = toSupervisorProvider(provider);
 
   return {
     version: 1,

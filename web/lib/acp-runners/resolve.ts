@@ -31,7 +31,16 @@ export type PlatformRunnerProvider =
       baseUrl?: string;
       apiKey?: string;
       wireApi?: "responses";
-    };
+    }
+  | { kind: "google_gemini"; apiKey?: string }
+  | {
+      kind: "google_vertex";
+      projectId?: string;
+      location?: string;
+      apiKey?: string;
+    }
+  | { kind: "google_gateway"; baseUrl?: string; apiKey?: string }
+  | { kind: "agent_native" };
 
 export type RunnerSidecarSnapshot = {
   readonly id: string;

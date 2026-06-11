@@ -176,12 +176,19 @@ families in this slice.
 | --- | --- | --- | --- |
 | `claude` | `claude` | `claude-agent-acp` | Claude direct, Claude CCR, Claude dangerous policy after adapter flag smoke |
 | `codex` | `codex` | `codex-acp` | Codex OpenAI direct; third-party Responses-wire routes only after endpoint smoke |
+| `gemini` | `gemini` | `gemini --acp` | Designed, ADR-084: Google Gemini/Vertex/Gateway only after SDK initialize/newSession/auth smoke |
+| `opencode` | `opencode` | `opencode acp` | Designed, ADR-084: native OpenCode provider config only after binary, writable-state, stdio ACP, permission, MCP, resume, and model-channel smoke |
 
 The adapter registry is the only source for `capability_agent`. Capability
 selection, capability enforcement, native materialization, run detail, resume,
 and recovery read the resolved runner snapshot or registry-derived identity.
 No runtime path should read the retired `executors.agent` value as launch
 truth.
+
+Gemini/OpenCode support extends this registry rather than introducing a generic
+"command runner". Operators may not enter arbitrary argv; MAIster owns the
+allow-listed command shape, default arguments, binary override source,
+adapter-specific ACP client capabilities, model channel, and resume strategy.
 
 ## Source-verified launch implications
 
@@ -256,6 +263,46 @@ Responses uses
 and `/responses`. Qwen Codex presets may become ready only after the installed
 `codex-acp` launch path runs successfully with the generated isolated
 `CODEX_HOME` profile and the selected model.
+
+### Gemini CLI
+
+Gemini CLI support is designed around the vendor ACP entrypoint
+`gemini --acp`, which speaks ACP over stdio JSON-RPC. Gemini provider shapes are
+separate from Anthropic/OpenAI-compatible shapes: direct Gemini API,
+Vertex-hosted Gemini, and a future gateway route each carry only env-ref auth
+fields. The supervisor converts those references to process env or an ACP
+`authenticate` call only after the adapter-specific smoke proves the required
+path.
+
+Gemini documentation exposes `loadSession`, but MAIster's checkpoint contract is
+currently built on ACP `session/resume`. Therefore Gemini checkpoint readiness is
+`NotReady` until an SDK smoke proves that `loadSession` preserves the same
+workspace/session invariant MAIster needs. There is no fallback from a failed
+Gemini resume to `newSession`.
+
+Gemini's ACP filesystem proxy activates only when the client advertises FS
+capabilities. MAIster must keep client capabilities adapter-specific and must
+not advertise generic read/write support until confined ACP FS methods exist.
+
+### OpenCode
+
+OpenCode support is designed around `opencode acp`. Public docs describe stdio
+JSON-RPC/nd-JSON transport; local `opencode acp --help` also exposes server-like
+flags (`--port`, `--hostname`, `--mdns`, `--cors`), so the implementation must
+prove the effective default transport with the real ACP SDK client before any
+OpenCode runner becomes `Ready`.
+
+OpenCode provider/account configuration remains native to OpenCode in this
+slice. MAIster records `agent_native` provider intent and optional env refs; it
+does not synthesize a Claude/Codex provider file for OpenCode. A binary found in
+PATH is not enough: readiness must also prove first-run state initialization in
+the supervisor environment, because the local sandbox observed OpenCode failing
+while creating its user state directory even though the Homebrew binary was
+installed.
+
+OpenCode docs say ACP mode carries configured MCP servers, agents, permissions,
+formatters, and linters. MAIster still records every capability class as
+`instructed` or `unsupported` until a live spike proves enforcement.
 
 ### CCR
 
@@ -335,7 +382,16 @@ writes.
 Runner readiness combines:
 
 - adapter binary availability;
+- binary source (`PATH` vs explicit supervisor override), executable path, and
+  cheap version probe result when available;
+- first-run writable-state initialization for adapters that create user state at
+  startup;
 - adapter support for provider kind and permission policy;
+- adapter-specific ACP initialize/newSession smoke and advertised protocol
+  capabilities;
+- adapter-specific auth path and required env refs;
+- adapter-specific model application channel;
+- adapter-specific resume/checkpoint strategy;
 - sidecar existence and readiness when referenced;
 - required env refs present in supervisor environment;
 - no disabled/default constraint violations;
@@ -345,6 +401,12 @@ Runner readiness combines:
 Unsupported configurations are shown as `NotReady` with reason codes. Launch
 refuses before `git worktree add`, before run/workspace DB side effects, and
 before supervisor child spawn.
+
+Readiness computation logs at DEBUG with `runnerId`, `adapter`, `providerKind`,
+binary source, and reason codes only. Supervisor diagnostics logs at INFO/WARN
+with `adapter`, binary source, executable path if non-secret, exit code, and a
+bounded stderr tail. No log may contain env values, provider tokens, generated
+config bodies, or raw ACP payloads.
 
 ## Edge cases
 
@@ -359,6 +421,16 @@ before supervisor child spawn.
 - **Raw token in config/API** - request is rejected at validation boundary.
 - **Codex provider is Chat Completions-only** - preset remains `NotReady`
   because Codex requires Responses wire.
+- **Gemini binary present but `loadSession` unproven** - normal prompts may
+  remain disabled or checkpoint-ineligible according to readiness policy;
+  checkpoint resume returns `CHECKPOINT` with an actionable reason, never a
+  silent `newSession` fallback.
+- **OpenCode installed but first-run state is not writable** - diagnostics
+  report binary availability and a distinct writable-state readiness reason;
+  launch remains refused.
+- **New adapter declares a strict capability class** - launch refuses with
+  `CONFIG` when no adapter can enforce the class, or `EXECUTOR_UNAVAILABLE`
+  when another adapter can enforce it but the resolved adapter cannot.
 - **Historical runner edited/deleted** - run detail, board, portfolio, resume,
   and recovery use `runner_snapshot` instead of joining mutable runner rows.
 
@@ -371,3 +443,4 @@ before supervisor child spawn.
 - [Error taxonomy](../error-taxonomy.md)
 - [Model catalog](model-catalog.md) — discovers valid `model` ids for a runner draft and applies the configured model to the agent (ADR-076).
 - [ADR-050](../decisions.md#adr-050-platform-acp-runners-adapter-provisioners-and-router-sidecars)
+- [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode)

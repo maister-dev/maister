@@ -85,6 +85,43 @@ describe("platform ACP runner config schema", () => {
     ).toThrow(/api_key.*env:/);
   });
 
+  it("parses Gemini and OpenCode runner providers from the shared adapter registry", () => {
+    const config = parsePlatformRuntimeConfig({
+      platform: { default_runner: "gemini-cli" },
+      acp_runners: [
+        {
+          id: "gemini-cli",
+          adapter: "gemini",
+          model: "gemini-3-pro",
+          provider: { kind: "google_gemini", api_key: "env:GEMINI_API_KEY" },
+          permission_policy: "default",
+        },
+        {
+          id: "opencode-native",
+          adapter: "opencode",
+          model: "opencode-default",
+          provider: { kind: "agent_native" },
+          permission_policy: "default",
+        },
+      ],
+    });
+
+    expect(config.acpRunners).toEqual([
+      expect.objectContaining({
+        id: "gemini-cli",
+        adapter: "gemini",
+        capabilityAgent: "gemini",
+        provider: { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" },
+      }),
+      expect.objectContaining({
+        id: "opencode-native",
+        adapter: "opencode",
+        capabilityAgent: "opencode",
+        provider: { kind: "agent_native" },
+      }),
+    ]);
+  });
+
   it("rejects unknown adapters, missing sidecars, and invalid defaults", () => {
     expect(() =>
       parsePlatformRuntimeConfig({
@@ -114,7 +151,7 @@ describe("platform ACP runner config schema", () => {
           },
         ],
       }),
-    ).toThrow(/adapter.*gemini/);
+    ).toThrow(/adapter.*gemini.*provider.*openai_compatible/);
 
     expect(() =>
       parsePlatformRuntimeConfig({
@@ -144,6 +181,20 @@ describe("platform ACP runner config schema", () => {
         id: "codex",
         capabilityAgent: "codex",
         providerKinds: expect.arrayContaining(["openai"]),
+      }),
+      expect.objectContaining({
+        id: "gemini",
+        capabilityAgent: "gemini",
+        providerKinds: expect.arrayContaining([
+          "google_gemini",
+          "google_vertex",
+          "google_gateway",
+        ]),
+      }),
+      expect.objectContaining({
+        id: "opencode",
+        capabilityAgent: "opencode",
+        providerKinds: expect.arrayContaining(["agent_native"]),
       }),
     ]);
   });

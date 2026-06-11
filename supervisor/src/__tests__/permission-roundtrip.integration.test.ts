@@ -56,6 +56,7 @@ async function registerFakeSession(
 ): Promise<{ record: SessionRecord; emitter: EventEmitter }> {
   const record: SessionRecord = {
     sessionId,
+    adapter: "claude",
     runId: `run-${sessionId}`,
     projectSlug: "demo",
     stepId: "step-1",

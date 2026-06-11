@@ -32,6 +32,8 @@ import { Pool } from "pg";
 
 const execFileAsync = promisify(execFile);
 
+type SeedAdapterId = "claude" | "codex" | "gemini" | "opencode";
+
 const ADMIN_EMAIL = "e2e-admin@maister.local";
 const ADMIN_PASSWORD = "E2eReview!pass1";
 const MUST_CHANGE_EMAIL = "e2e-must-change@maister.local";
@@ -1999,7 +2001,7 @@ async function seedLaunchableProjectFixture(
     defaultRunnerId?: string | null;
     executor?: {
       refId: string;
-      agent: "claude" | "codex";
+      agent: SeedAdapterId;
       model: string;
       router?: "ccr";
     };
@@ -4072,15 +4074,29 @@ async function seedM22Fixture(
 
 function runnerSnapshotJson(
   runnerId: string,
-  agent: "claude" | "codex" = "claude",
+  agent: SeedAdapterId = "claude",
 ): string {
-  const providerKind = agent === "claude" ? "anthropic" : "openai";
+  const providerKind =
+    agent === "claude"
+      ? "anthropic"
+      : agent === "codex"
+        ? "openai"
+        : agent === "gemini"
+          ? "google_gemini"
+          : "agent_native";
 
   return JSON.stringify({
     id: runnerId,
     adapter: agent,
     capabilityAgent: agent,
-    model: agent === "claude" ? "claude-sonnet-4-6" : "gpt-5-codex",
+    model:
+      agent === "claude"
+        ? "claude-sonnet-4-6"
+        : agent === "codex"
+          ? "gpt-5-codex"
+          : agent === "gemini"
+            ? "gemini-2.5-pro"
+            : "opencode-native",
     provider: { kind: providerKind },
     providerKind,
     permissionPolicy: "default",

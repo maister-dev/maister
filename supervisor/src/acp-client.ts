@@ -14,6 +14,11 @@ import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
 
+import {
+  clientCapabilitiesForAdapter,
+  getAdapterRuntime,
+  resolveResumeAction,
+} from "./adapter-registry";
 import { modelCatalogCache } from "./model-catalog/cache";
 import { harvestSessionModels } from "./model-catalog/harvest";
 import {
@@ -23,7 +28,9 @@ import {
 } from "./pending-permissions";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import {
+  isSupervisorError,
   SupervisorError,
+  type ExecutorAgent,
   type McpServerInput,
   type PermissionOptionDescriptor,
   type RunnerLaunch,
@@ -39,6 +46,7 @@ export type CreateAcpConnectionArgs = {
   record: SessionRecord;
   emitter: EventEmitter;
   logger: Logger;
+  adapter: ExecutorAgent;
   pendingPermissions?: PendingPermissionRegistry;
   mcpServers?: McpServerInput[];
   // When set, resume the prior ACP session via the `session/resume` call
@@ -92,6 +100,90 @@ export function resolveReadOnlyAutoReject(
     options.find((o) => (o.kind ?? "").startsWith("reject")) ??
     null
   );
+}
+
+type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function classifyAcpMethodError(args: {
+  adapter: ExecutorAgent;
+  method: AcpMethod;
+  err: unknown;
+  sessionId?: string;
+}): SupervisorError {
+  if (isSupervisorError(args.err)) return args.err;
+
+  const rawMessage = errorText(args.err);
+  const lower = rawMessage.toLowerCase();
+  const context = `adapter=${args.adapter}, method=${args.method}${
+    args.sessionId ? `, sessionId=${args.sessionId}` : ""
+  }`;
+
+  if (
+    lower.includes("auth") ||
+    lower.includes("credential") ||
+    lower.includes("login") ||
+    lower.includes("api key") ||
+    lower.includes("permission denied")
+  ) {
+    return new SupervisorError(
+      "EXECUTOR_UNAVAILABLE",
+      `ACP ${args.method} failed because adapter authentication is unavailable (${context}): ${rawMessage}`,
+    );
+  }
+
+  if (
+    args.method === "resumeSession" &&
+    (lower.includes("unsupported") ||
+      lower.includes("not implemented") ||
+      lower.includes("method not found") ||
+      lower.includes("not found"))
+  ) {
+    return new SupervisorError(
+      "CHECKPOINT",
+      `ACP resume is unsupported (${context}): ${rawMessage}`,
+    );
+  }
+
+  return new SupervisorError(
+    "ACP_PROTOCOL",
+    `ACP ${args.method} failed (${context}): ${rawMessage}`,
+  );
+}
+
+async function callAcpMethod<T>(args: {
+  adapter: ExecutorAgent;
+  method: AcpMethod;
+  sessionId?: string;
+  logger: Logger;
+  run: () => Promise<T>;
+}): Promise<T> {
+  try {
+    return await args.run();
+  } catch (err) {
+    const classified = classifyAcpMethodError({
+      adapter: args.adapter,
+      method: args.method,
+      err,
+      sessionId: args.sessionId,
+    });
+
+    args.logger.warn(
+      {
+        adapter: args.adapter,
+        method: args.method,
+        sessionId: args.sessionId,
+        code: classified.code,
+        err: classified.message,
+      },
+      "acp method failed",
+    );
+
+    throw classified;
+  }
 }
 
 export async function createAcpConnection(
@@ -221,13 +313,24 @@ export async function createAcpConnection(
 
   logger.info({ sessionId }, "acp connection-init");
 
-  const initResp = await connection.initialize({
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: { fs: {} },
+  const initResp = await callAcpMethod({
+    adapter: args.adapter,
+    method: "initialize",
+    sessionId,
+    logger,
+    run: () =>
+      connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: clientCapabilitiesForAdapter(args.adapter),
+      }),
   });
 
   logger.info(
-    { sessionId, protocolVersion: initResp.protocolVersion },
+    {
+      sessionId,
+      adapter: args.adapter,
+      protocolVersion: initResp.protocolVersion,
+    },
     "acp initialized",
   );
 
@@ -266,22 +369,31 @@ export async function createAcpConnection(
   // real conversation. (Resume is a protocol call, NOT a CLI flag: both
   // adapters ignore `--resume` on argv.)
   if (args.resumeSessionId) {
+    const resumeSessionId = args.resumeSessionId;
     const agentCaps = (initResp.agentCapabilities ?? {}) as {
-      sessionCapabilities?: { resume?: unknown };
+      sessionCapabilities?: { load?: unknown; resume?: unknown };
     };
+    const resumeAction = resolveResumeAction(args.adapter, agentCaps);
 
-    if (agentCaps.sessionCapabilities?.resume) {
-      const resumeResp = await connection.resumeSession({
-        sessionId: args.resumeSessionId,
-        cwd: worktreePath,
-        mcpServers: acpMcpServers as acp.McpServer[],
+    if (resumeAction.kind === "resume_session") {
+      const resumeResp = await callAcpMethod({
+        adapter: args.adapter,
+        method: "resumeSession",
+        sessionId,
+        logger,
+        run: () =>
+          connection.resumeSession({
+            sessionId: resumeSessionId,
+            cwd: worktreePath,
+            mcpServers: acpMcpServers as acp.McpServer[],
+          }),
       });
 
       logger.info(
-        { sessionId, acpSessionId: args.resumeSessionId },
+        { sessionId, acpSessionId: resumeSessionId },
         "acp resume-session",
       );
-      record.acpSessionId = args.resumeSessionId;
+      record.acpSessionId = resumeSessionId;
       harvestSessionModels(
         args.runner,
         resumeResp.models,
@@ -292,14 +404,14 @@ export async function createAcpConnection(
         connection,
         runner: args.runner,
         models: resumeResp.models,
-        acpSessionId: args.resumeSessionId,
+        acpSessionId: resumeSessionId,
         sessionId,
         record,
         emitter,
         logger,
       });
 
-      return { connection, acpSessionId: args.resumeSessionId };
+      return { connection, acpSessionId: resumeSessionId };
     }
     // Unreachable for the bundled claude/codex adapters (both advertise
     // sessionCapabilities.resume). FAIL LOUD rather than silently falling
@@ -307,13 +419,20 @@ export async function createAcpConnection(
     // (the original resume bug). Surfaces as the documented terminal CHECKPOINT.
     throw new SupervisorError(
       "CHECKPOINT",
-      `resume requested but adapter does not advertise sessionCapabilities.resume (acpSessionId=${args.resumeSessionId})`,
+      `${resumeAction.reason} (acpSessionId=${resumeSessionId})`,
     );
   }
 
-  const newSessionResp = await connection.newSession({
-    cwd: worktreePath,
-    mcpServers: acpMcpServers as acp.McpServer[],
+  const newSessionResp = await callAcpMethod({
+    adapter: args.adapter,
+    method: "newSession",
+    sessionId,
+    logger,
+    run: () =>
+      connection.newSession({
+        cwd: worktreePath,
+        mcpServers: acpMcpServers as acp.McpServer[],
+      }),
   });
 
   logger.info(
@@ -378,8 +497,7 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
   if (!runner || !runner.model) return;
 
   const configured = runner.model;
-  const channel: "settings_local" | "set_session_model" =
-    runner.adapter === "codex" ? "set_session_model" : "settings_local";
+  const channel = getAdapterRuntime(runner.adapter).modelChannel;
 
   // Already on the configured model → nothing to apply or verify (only decidable
   // when the adapter actually reported a current model).
@@ -444,7 +562,12 @@ export async function applyAndVerifyModel(args: ApplyModelArgs): Promise<void> {
 
 export async function sendPromptOnConnection(
   conn: acp.ClientSideConnection,
-  args: { acpSessionId: string; stepId: string; prompt: string },
+  args: {
+    adapter: ExecutorAgent;
+    acpSessionId: string;
+    stepId: string;
+    prompt: string;
+  },
   logger: Logger,
 ): Promise<acp.PromptResponse> {
   logger.info(
@@ -456,9 +579,16 @@ export async function sendPromptOnConnection(
     "acp prompt-sent",
   );
 
-  const resp = await conn.prompt({
+  const resp = await callAcpMethod({
+    adapter: args.adapter,
+    method: "prompt",
     sessionId: args.acpSessionId,
-    prompt: [{ type: "text", text: args.prompt }],
+    logger,
+    run: () =>
+      conn.prompt({
+        sessionId: args.acpSessionId,
+        prompt: [{ type: "text", text: args.prompt }],
+      }),
   });
 
   logger.info(

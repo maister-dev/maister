@@ -199,7 +199,11 @@ paths:
     post:
       tags: [admin]
       summary: Create a platform ACP runner
-      description: Admin-only. Creates an ACP runner and optionally updates the platform default. Secret material is accepted only as `env:NAME` references.
+      description: |
+        Admin-only. Creates an ACP runner and optionally updates the platform
+        default. Secret material is accepted only as `env:NAME` references.
+        ADR-084 designs `gemini` and `opencode` runner rows; readiness may keep
+        them `NotReady` until supervisor diagnostics and ACP smoke pass.
       operationId: postAdminAcpRunner
       requestBody:
         required: true
@@ -211,7 +215,7 @@ paths:
               additionalProperties: false
               properties:
                 id: { type: string }
-                adapter: { type: string, enum: [claude, codex] }
+                adapter: { type: string, enum: [claude, codex, gemini, opencode] }
                 model: { type: string }
                 provider: { type: object }
                 permissionPolicy:
@@ -241,7 +245,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
-          description: Invalid runner body or adapter/provider mismatch.
+          description: Invalid runner body, raw secret, or adapter/provider mismatch.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -249,7 +253,10 @@ paths:
     patch:
       tags: [admin]
       summary: Update a platform ACP runner
-      description: Admin-only. Mutates runner provider/model/sidecar/readiness/enabled fields. Disabling is refused while usage references exist.
+      description: |
+        Admin-only. Mutates runner provider/model/sidecar/readiness/enabled
+        fields. Disabling is refused while usage references exist. Adapter and
+        capability-agent identity are immutable after create.
       operationId: patchAdminAcpRunner
       parameters:
         - name: runnerId
@@ -2162,6 +2169,11 @@ paths:
                       ]
                   stopReason:
                     type: string
+                    description: |
+                      Scratch-dialog result. `cancelled` is a web/client-side
+                      dialog state only; supervisor prompt success responses do
+                      not return `cancelled` and map direct adapter cancellations
+                      to `ACP_PROTOCOL`.
                     enum:
                       [
                         end_turn,
@@ -5797,7 +5809,7 @@ paths:
                     pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
-                  items: { type: string, enum: [claude, codex] }
+                  items: { type: string, enum: [claude, codex, gemini, opencode] }
                 enabled: { type: boolean }
       responses:
         "200":
@@ -5987,7 +5999,7 @@ paths:
                     pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
                 supportedAgents:
                   type: array
-                  items: { type: string, enum: [claude, codex] }
+                  items: { type: string, enum: [claude, codex, gemini, opencode] }
       responses:
         "200":
           description: Project MCP server updated.
@@ -7849,7 +7861,7 @@ components:
           type: array
           items:
             type: string
-            enum: [claude, codex]
+            enum: [claude, codex, gemini, opencode]
     ScratchProjectOption:
       type: object
       required: [id, slug, name, mainBranch, branchPrefix]
@@ -7947,8 +7959,8 @@ components:
             properties:
               id: { type: string }
               displayLabel: { type: string }
-              adapter: { type: string, enum: [claude, codex] }
-              capabilityAgent: { type: string, enum: [claude, codex] }
+              adapter: { type: string, enum: [claude, codex, gemini, opencode] }
+              capabilityAgent: { type: string, enum: [claude, codex, gemini, opencode] }
               model: { type: string }
               providerKind: { type: string }
               permissionPolicy: { type: string }
@@ -8287,7 +8299,7 @@ components:
             capabilityAgent:
               type: string
               nullable: true
-              enum: [claude, codex]
+              enum: [claude, codex, gemini, opencode]
             createdByUserId: { type: string, format: uuid, nullable: true }
             createdByDisplayName: { type: string, nullable: true }
             status:
@@ -8423,6 +8435,10 @@ components:
             ]
         stopReason:
           type: string
+          description: |
+            Scratch-dialog result. `cancelled` is a web/client-side dialog state
+            only; supervisor prompt success responses do not return `cancelled`
+            and map direct adapter cancellations to `ACP_PROTOCOL`.
           enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]
     RunDiffResponse:
       type: object
@@ -9441,7 +9457,7 @@ components:
             from `env:NAME` references.
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex] }
+          items: { type: string, enum: [claude, codex, gemini, opencode] }
         trustStatus:
           type: string
           enum: [untrusted, trusted, trusted_by_policy]
@@ -9502,7 +9518,7 @@ components:
             pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex] }
+          items: { type: string, enum: [claude, codex, gemini, opencode] }
           default: ["claude", "codex"]
         enabled:
           type: boolean
@@ -9547,7 +9563,7 @@ components:
           items: { type: string }
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex] }
+          items: { type: string, enum: [claude, codex, gemini, opencode] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
@@ -9586,7 +9602,7 @@ components:
             pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex] }
+          items: { type: string, enum: [claude, codex, gemini, opencode] }
           default: ["claude", "codex"]
 
     ResolvedMcpEntry:
@@ -9623,7 +9639,7 @@ components:
           items: { type: string }
         supportedAgents:
           type: array
-          items: { type: string, enum: [claude, codex] }
+          items: { type: string, enum: [claude, codex, gemini, opencode] }
     ModelSuggestionsRequest:
       type: object
       additionalProperties: false
@@ -9634,10 +9650,14 @@ components:
         converts them to bare names before forwarding to the supervisor. Raw
         (non-`env:`) secret values are rejected with `CONFIG` (422).
       properties:
-        adapter: { type: string, enum: [claude, codex] }
+        adapter: { type: string, enum: [claude, codex, gemini, opencode] }
         provider:
           type: object
-          description: RunnerProvider (web shape) — `anthropic | anthropic_compatible | openai | openai_compatible`, secrets as `env:NAME`.
+          description: |
+            RunnerProvider (web shape) — implemented kinds are `anthropic |
+            anthropic_compatible | openai | openai_compatible`; ADR-084 designs
+            `google_gemini | google_vertex | google_gateway | agent_native`.
+            Secret fields use `env:NAME` refs only.
         router: { type: string, enum: [ccr] }
         sidecarId:
           type: string

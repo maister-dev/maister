@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
+import { getAdapterSupport } from "@/lib/acp-runners/schema";
 
 vi.mock("next-intl/server", () => ({
   getTranslations: async () => (key: string) => key,
@@ -10,20 +11,9 @@ vi.mock("next-intl/server", () => ({
 describe("AdapterSupportPanel", () => {
   it("renders supervisor diagnostics binary readiness and runner usage", async () => {
     const element = await AdapterSupportPanel({
-      adapters: [
-        {
-          id: "claude",
-          capabilityAgent: "claude",
-          providerKinds: ["anthropic"],
-          permissionPolicies: ["default", "dangerously_skip_permissions"],
-        },
-        {
-          id: "codex",
-          capabilityAgent: "codex",
-          providerKinds: ["openai"],
-          permissionPolicies: ["default"],
-        },
-      ],
+      adapters: getAdapterSupport().filter((adapter) =>
+        ["claude", "codex"].includes(adapter.id),
+      ),
       diagnostics: {
         kind: "ready",
         diagnostics: {
@@ -34,9 +24,33 @@ describe("AdapterSupportPanel", () => {
             {
               id: "claude",
               binary: "claude-agent-acp",
+              source: "path",
+              path: "/usr/local/bin/claude-agent-acp",
               available: true,
+              version: null,
+              error: null,
+              smoke: {
+                status: "not_required",
+                reason: null,
+                checkedAt: null,
+                protocolVersion: null,
+              },
             },
-            { id: "codex", binary: "codex-acp", available: false },
+            {
+              id: "codex",
+              binary: "codex-acp",
+              source: "path",
+              path: null,
+              available: false,
+              version: null,
+              error: "not found",
+              smoke: {
+                status: "not_required",
+                reason: null,
+                checkedAt: null,
+                protocolVersion: null,
+              },
+            },
           ],
           sidecars: [],
           envRefs: [],
@@ -56,14 +70,9 @@ describe("AdapterSupportPanel", () => {
 
   it("renders diagnostics unavailable without leaking messages", async () => {
     const element = await AdapterSupportPanel({
-      adapters: [
-        {
-          id: "claude",
-          capabilityAgent: "claude",
-          providerKinds: ["anthropic"],
-          permissionPolicies: ["default"],
-        },
-      ],
+      adapters: getAdapterSupport().filter(
+        (adapter) => adapter.id === "claude",
+      ),
       diagnostics: {
         kind: "unavailable",
         reason: "network",

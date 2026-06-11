@@ -67,4 +67,33 @@ describe("platform runner persistence schema shape", () => {
 
     expect(snapshot.capabilityAgent).toBe("claude");
   });
+
+  it("runner inferred types accept designed Gemini and OpenCode adapters without a schema migration", () => {
+    const geminiRunner: PlatformAcpRunner = {
+      id: "gemini-cli",
+      adapter: "gemini",
+      capabilityAgent: "gemini",
+      model: "gemini-3-pro",
+      provider: { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" },
+      permissionPolicy: "default",
+      sidecarId: null,
+      readinessStatus: "NotReady",
+      readinessReasons: ["adapter smoke has not been verified"],
+      enabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const opencodeSnapshot: RunnerSnapshot = {
+      id: "opencode-native",
+      adapter: "opencode",
+      capabilityAgent: "opencode",
+      model: "opencode-default",
+      provider: { kind: "agent_native" },
+      providerKind: "agent_native",
+      permissionPolicy: "default",
+    };
+
+    expect(geminiRunner.provider.kind).toBe("google_gemini");
+    expect(opencodeSnapshot.capabilityAgent).toBe("opencode");
+  });
 });

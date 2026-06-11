@@ -1,5 +1,6 @@
 "use client";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ReactElement } from "react";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,7 +23,7 @@ type RunnerOption = {
   id: string;
   displayLabel: string;
   adapter: string;
-  capabilityAgent: "claude" | "codex";
+  capabilityAgent: AdapterId;
   model: string | null;
   providerKind: string;
   permissionPolicy: string;

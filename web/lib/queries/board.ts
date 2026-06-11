@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
@@ -21,7 +22,6 @@ import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 const {
-  artifactInstances,
   flows,
   hitlRequests,
   nodeAttempts,
@@ -38,7 +38,7 @@ function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
 }
 
-export type BoardAgent = "claude" | "codex" | "dev";
+export type BoardAgent = AdapterId | "dev";
 export type CardStatus =
   | "running"
   | "needs"

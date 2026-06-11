@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
 import type {
   Assignment,
   AssignmentEvent,
@@ -95,7 +95,7 @@ export interface RunDetail {
   currentStepId: string | null;
   branch: string;
   worktreePath: string;
-  agent: "claude" | "codex";
+  agent: CapabilityAgent;
   // M18: run kind drives the Review surface — only `flow` runs at `Review` get
   // the ReviewPanel; scratch runs keep their own promote affordance.
   runKind: "flow" | "scratch";

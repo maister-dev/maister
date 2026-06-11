@@ -227,6 +227,7 @@ describe("supervisor lifecycle integration", () => {
     registry.register(
       {
         sessionId: "health-live-session",
+        adapter: "claude",
         runId: "run-health",
         projectSlug: "demo",
         stepId: "step-1",
@@ -247,26 +248,54 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("GET /diagnostics reports adapters, sidecars, and env-ref presence without secret values", async () => {
-    const previous = process.env.MAISTER_CCR_AUTH_TOKEN;
+    const previousCcr = process.env.MAISTER_CCR_AUTH_TOKEN;
+    const previousGemini = process.env.GEMINI_API_KEY;
+    const previousEnvRefs = process.env.MAISTER_DIAGNOSTIC_ENV_REFS;
 
     process.env.MAISTER_CCR_AUTH_TOKEN = "diagnostic-secret";
+    process.env.GEMINI_API_KEY = "gemini-secret";
+    process.env.MAISTER_DIAGNOSTIC_ENV_REFS = "CUSTOM_RUNNER_TOKEN";
     const { url } = await bootFor(["--hang"]);
     let res: Response;
 
     try {
       res = await fetch(`${url}/diagnostics`);
     } finally {
-      if (previous === undefined) {
+      if (previousCcr === undefined) {
         delete process.env.MAISTER_CCR_AUTH_TOKEN;
       } else {
-        process.env.MAISTER_CCR_AUTH_TOKEN = previous;
+        process.env.MAISTER_CCR_AUTH_TOKEN = previousCcr;
+      }
+      if (previousGemini === undefined) {
+        delete process.env.GEMINI_API_KEY;
+      } else {
+        process.env.GEMINI_API_KEY = previousGemini;
+      }
+      if (previousEnvRefs === undefined) {
+        delete process.env.MAISTER_DIAGNOSTIC_ENV_REFS;
+      } else {
+        process.env.MAISTER_DIAGNOSTIC_ENV_REFS = previousEnvRefs;
       }
     }
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       status: string;
-      adapters: Array<{ id: string; binary: string; available: boolean }>;
+      adapters: Array<{
+        id: string;
+        binary: string;
+        source: string;
+        path: string | null;
+        available: boolean;
+        version: string | null;
+        error: string | null;
+        smoke: {
+          status: string;
+          reason: string | null;
+          checkedAt: string | null;
+          protocolVersion: number | null;
+        };
+      }>;
       sidecars: Array<{ id: string; kind: string; state: string }>;
       envRefs: Array<{ name: string; present: boolean; value?: string }>;
     };
@@ -275,9 +304,29 @@ describe("supervisor lifecycle integration", () => {
     expect(body.adapters.map((item) => item.id).sort()).toEqual([
       "claude",
       "codex",
+      "gemini",
+      "opencode",
     ]);
-    expect(body.adapters.every((item) => typeof item.available === "boolean"))
-      .toBe(true);
+    for (const adapter of body.adapters) {
+      expect(adapter.source).toMatch(/^(path|override)$/);
+      expect(typeof adapter.available).toBe("boolean");
+      expect(adapter).toHaveProperty("path");
+      expect(adapter).toHaveProperty("version");
+      expect(adapter).toHaveProperty("error");
+      expect(adapter).toHaveProperty("smoke");
+    }
+    expect(
+      body.adapters.find((item) => item.id === "gemini")?.smoke,
+    ).toMatchObject({
+      status: "pending",
+      reason: "gemini ACP compatibility smoke has not been cached",
+    });
+    expect(
+      body.adapters.find((item) => item.id === "opencode")?.smoke,
+    ).toMatchObject({
+      status: "pending",
+      reason: "opencode ACP compatibility smoke has not been cached",
+    });
     expect(body.sidecars).toContainEqual({
       id: "ccr-default",
       kind: "ccr",
@@ -287,7 +336,16 @@ describe("supervisor lifecycle integration", () => {
       name: "MAISTER_CCR_AUTH_TOKEN",
       present: true,
     });
+    expect(body.envRefs).toContainEqual({
+      name: "GEMINI_API_KEY",
+      present: true,
+    });
+    expect(body.envRefs).toContainEqual({
+      name: "CUSTOM_RUNNER_TOKEN",
+      present: false,
+    });
     expect(JSON.stringify(body)).not.toContain("diagnostic-secret");
+    expect(JSON.stringify(body)).not.toContain("gemini-secret");
   });
 
   it("POST /sessions returns 201 with sessionId+pid; GET /sessions lists it", async () => {

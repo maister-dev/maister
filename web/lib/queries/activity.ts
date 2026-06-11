@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { desc, eq, inArray } from "drizzle-orm";
@@ -15,7 +16,7 @@ function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
 }
 
-export type ActivityAgent = "claude" | "codex" | "dev";
+export type ActivityAgent = AdapterId | "dev";
 
 export interface ActivityEvent {
   id: string;

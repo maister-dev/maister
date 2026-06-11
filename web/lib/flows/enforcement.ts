@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   AiCodingSettings,
+  CapabilityAgent,
   EnforcementMode,
   JudgeSettings,
   NodeDef,
@@ -12,7 +13,7 @@ import { MaisterError } from "@/lib/errors";
 
 export type CapabilityClass = EnforcementSnapshotEntry["class"];
 
-type AgentName = "claude" | "codex";
+type AgentName = CapabilityAgent;
 type Capability = EnforcementSnapshotEntry["capability"];
 
 export type EnforceabilityTable = Record<
@@ -40,6 +41,22 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     restrictions: "instructed", // TODO(M14): flip to "enforced" once restrictions is materialized per session
     permissionMode: "instructed", // TODO(M14): flip to "enforced" once permissionMode is materialized per session
     workspaceAccess: "instructed", // TODO(M14): flip to "enforced" once workspaceAccess is materialized per session
+  },
+  gemini: {
+    mcps: "instructed",
+    tools: "instructed",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
+  },
+  opencode: {
+    mcps: "instructed",
+    tools: "instructed",
+    skills: "instructed",
+    restrictions: "instructed",
+    permissionMode: "instructed",
+    workspaceAccess: "instructed",
   },
 };
 

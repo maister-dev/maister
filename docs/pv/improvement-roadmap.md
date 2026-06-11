@@ -84,7 +84,7 @@ pleasant enough to run the M20 dogfood, and every run emits structured signal.**
 | **Orchestration (standalone)** | Agents-as-actors standalone/continuous stages (see sibling doc); guard wedge dilution |
 | **Narrow tools & hands** | Tool-count budgets, capability labels, sandbox profiles, warn-first policy on risky ops, on top of M14 caps (`PRODUCT_VIEW.md` §Phase 2.3) |
 | **Automation surface** | Reusable hooks/skills/snippets/recurring routines visible in Project Settings; standard automations; specialist checks off the main run context (`PRODUCT_VIEW.md` §Phase 2.4) |
-| **Flow & intake expansion** | More Flow templates; additional ACP executors after the claude/codex contract proves stable; CI/log intake + external board sync (gated on draft/publish/dedup/severity/cooldown) (`PRODUCT_VIEW.md` §Phase 2.7) |
+| **Flow & intake expansion** | More Flow templates; deeper Gemini/OpenCode ACP proof for permissions, MCP, model switching, and resume; CI/log intake + external board sync (gated on draft/publish/dedup/severity/cooldown) (`PRODUCT_VIEW.md` §Phase 2.7) |
 
 ---
 

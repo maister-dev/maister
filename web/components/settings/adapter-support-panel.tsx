@@ -1,4 +1,4 @@
-import type { AdapterSupport } from "@/lib/acp-runners/schema";
+import type { AdapterId, AdapterSupport } from "@/lib/acp-runners/schema";
 import type { ReactElement } from "react";
 import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
 
@@ -6,7 +6,7 @@ import { getTranslations } from "next-intl/server";
 
 type Runner = {
   id: string;
-  adapter: "claude" | "codex";
+  adapter: AdapterId;
 };
 
 type Props = {

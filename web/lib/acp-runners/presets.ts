@@ -1,14 +1,18 @@
 import "server-only";
 
+import type {
+  AdapterId,
+  PermissionPolicy,
+} from "@/lib/acp-runners/adapter-support";
 import type { PlatformRunnerProvider } from "@/lib/db/schema";
 
 export type PlatformRunnerPresetRow = {
   readonly id: string;
-  readonly adapter: "claude" | "codex";
-  readonly capabilityAgent: "claude" | "codex";
+  readonly adapter: AdapterId;
+  readonly capabilityAgent: AdapterId;
   readonly model: string;
   readonly provider: PlatformRunnerProvider;
-  readonly permissionPolicy: "default" | "dangerously_skip_permissions";
+  readonly permissionPolicy: PermissionPolicy;
   readonly sidecarId?: string | null;
   readonly readinessStatus: "Ready" | "NotReady";
   readonly readinessReasons: readonly string[];
@@ -33,6 +37,10 @@ export const defaultPlatformRunnerId = "claude-code";
 
 const notReadyCodexCompatibleReason =
   "Codex OpenAI-compatible provider materialization is not verified";
+const notReadyGeminiSmokeReason =
+  "Gemini ACP initialize/newSession and checkpoint smoke must be confirmed";
+const notReadyOpencodeSmokeReason =
+  "OpenCode ACP stdio and writable-state smoke must be confirmed";
 
 export function routerSidecarPresetRows(): RouterSidecarPresetRow[] {
   return [
@@ -151,6 +159,34 @@ export function platformRunnerPresetRows(): PlatformRunnerPresetRow[] {
       permissionPolicy: "default",
       readinessStatus: "NotReady",
       readinessReasons: [notReadyCodexCompatibleReason],
+      enabled: true,
+    },
+    {
+      id: "gemini-cli",
+      adapter: "gemini",
+      capabilityAgent: "gemini",
+      model: "gemini-2.5-pro",
+      provider: {
+        kind: "google_gemini",
+        apiKey: "env:GEMINI_API_KEY",
+      },
+      permissionPolicy: "default",
+      readinessStatus: "NotReady",
+      readinessReasons: [
+        "GEMINI_API_KEY must be configured in supervisor environment",
+        notReadyGeminiSmokeReason,
+      ],
+      enabled: true,
+    },
+    {
+      id: "opencode-native",
+      adapter: "opencode",
+      capabilityAgent: "opencode",
+      model: "opencode-native",
+      provider: { kind: "agent_native" },
+      permissionPolicy: "default",
+      readinessStatus: "NotReady",
+      readinessReasons: [notReadyOpencodeSmokeReason],
       enabled: true,
     },
   ];

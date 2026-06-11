@@ -4,23 +4,30 @@ import type { PlatformRunnerProvider } from "@/lib/db/schema";
 
 import {
   getAdapterSupport,
+  type AdapterId,
   type PermissionPolicy,
   type ProviderKind,
-} from "@/lib/acp-runners/schema";
+} from "@/lib/acp-runners/adapter-support";
 
 type RunnerReadinessInput = {
-  readonly adapter: "claude" | "codex";
-  readonly capabilityAgent: "claude" | "codex";
+  readonly adapter: AdapterId;
+  readonly capabilityAgent: AdapterId;
   readonly enabled: boolean;
-  readonly permissionPolicy: "default" | "dangerously_skip_permissions";
+  readonly permissionPolicy: PermissionPolicy;
   readonly provider: PlatformRunnerProvider;
   readonly sidecarId?: string | null;
 };
 
 type DiagnosticsInput = {
   readonly adapters?: readonly {
-    readonly id: "claude" | "codex";
+    readonly id: AdapterId;
     readonly available: boolean;
+    readonly smoke?: {
+      readonly status: "not_required" | "pending" | "ok" | "skipped" | "error";
+      readonly reason: string | null;
+      readonly checkedAt: string | null;
+      readonly protocolVersion: number | null;
+    };
   }[];
   readonly envRefs?: readonly {
     readonly name: string;
@@ -99,6 +106,28 @@ function pushMissingEnvReason(
   }
 }
 
+function pushAdapterSmokeReason(
+  reasons: string[],
+  adapter: AdapterId,
+  diagnosticAdapter:
+    | NonNullable<DiagnosticsInput["adapters"]>[number]
+    | undefined,
+): void {
+  if (adapter !== "gemini" && adapter !== "opencode") return;
+
+  if (!diagnosticAdapter?.smoke) {
+    reasons.push(`adapter smoke diagnostics are unavailable: ${adapter}`);
+
+    return;
+  }
+
+  if (diagnosticAdapter.smoke.status !== "ok") {
+    reasons.push(
+      `adapter smoke is not ready: ${adapter} (${diagnosticAdapter.smoke.reason ?? diagnosticAdapter.smoke.status})`,
+    );
+  }
+}
+
 export function evaluateRunnerReadiness(args: {
   readonly runner: RunnerReadinessInput;
   readonly diagnostics?: DiagnosticsInput | null;
@@ -150,6 +179,7 @@ export function evaluateRunnerReadiness(args: {
   } else if (!diagnosticAdapter.available) {
     reasons.push(`adapter binary is unavailable: ${args.runner.adapter}`);
   }
+  pushAdapterSmokeReason(reasons, args.runner.adapter, diagnosticAdapter);
 
   if (args.runner.provider.kind === "anthropic_compatible") {
     if (!args.runner.sidecarId && !args.runner.provider.authToken) {
@@ -172,6 +202,42 @@ export function evaluateRunnerReadiness(args: {
       args.diagnostics ?? undefined,
       envRefName(args.runner.provider.apiKey),
     );
+  }
+
+  if (args.runner.provider.kind === "google_gemini") {
+    pushMissingEnvReason(
+      reasons,
+      args.diagnostics ?? undefined,
+      envRefName(args.runner.provider.apiKey),
+    );
+  }
+
+  if (args.runner.provider.kind === "google_vertex") {
+    if (
+      !args.runner.provider.apiKey &&
+      (!args.runner.provider.projectId || !args.runner.provider.location)
+    ) {
+      reasons.push(
+        "google_vertex provider requires either api key env ref or project id and location",
+      );
+    }
+    pushMissingEnvReason(
+      reasons,
+      args.diagnostics ?? undefined,
+      envRefName(args.runner.provider.apiKey),
+    );
+  }
+
+  if (args.runner.provider.kind === "google_gateway") {
+    if (!args.runner.provider.apiKey) {
+      reasons.push("google_gateway provider requires api key env ref");
+    } else {
+      pushMissingEnvReason(
+        reasons,
+        args.diagnostics ?? undefined,
+        envRefName(args.runner.provider.apiKey),
+      );
+    }
   }
 
   if (args.runner.sidecarId) {
