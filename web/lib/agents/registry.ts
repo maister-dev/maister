@@ -1,32 +1,30 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 
-import { eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import {
-  assertAgentId,
   parseAgentDefinition,
-  renderAgentDefinition,
-  type AgentDefinitionInput,
+  qualifyAgentId,
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
-import {
-  agentDirPath,
-  agentFilePath,
-  systemAgentsRoot,
-} from "@/lib/agents/paths";
-import { atomicWriteText } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  validateCronExpression,
+  validateTimezone,
+} from "@/lib/run-schedules/cron";
 
 // FIXME(any): drizzle-orm ships duplicate peer-dep variants in pnpm; typed
 // table imports clash across copies (repo-wide pattern, see schema tests).
-const { agents, agentProjectLinks, projects, runs } =
-  schemaModule as unknown as Record<string, any>;
+const { agents, flowRevisions } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 type Db = any;
 
@@ -35,29 +33,48 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Allow-list of run statuses that hold a usage reference: everything that is
-// not terminal. A new status is excluded (treated as live) only after being
-// explicitly added here.
-const TERMINAL_RUN_STATUSES = ["Done", "Failed", "Abandoned"] as const;
+type RevisionRow = {
+  id: string;
+  flowRefId: string;
+  source: string;
+  versionLabel: string;
+  installedPath: string;
+  packageStatus: string;
+};
 
-async function resolveProjectIdForSlug(
-  _db: Db,
-  agentId: string,
-  slug: string,
-): Promise<string> {
-  const rows = await _db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.slug, slug));
+export type AgentRegistrationSummary = {
+  flowRefId: string;
+  versionLabel: string;
+  registered: string[];
+  invalid: { id: string; error: string }[];
+};
 
-  if (!rows[0]) {
-    throw new MaisterError(
-      "CONFIG",
-      `agent "${agentId}": project slug "${slug}" is not a registered project`,
-    );
+async function listAgentFileStems(installedPath: string): Promise<string[]> {
+  let entries;
+
+  try {
+    entries = await readdir(join(installedPath, "agents"), {
+      withFileTypes: true,
+    });
+  } catch {
+    return []; // no agents/ dir — a perfectly normal package
   }
 
-  return rows[0].id as string;
+  return entries
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => basename(e.name, ".md"));
+}
+
+// `recommended.cron` is shape-validated by the parser (client-safe); the
+// expression/timezone semantics need the server-side cron engine, so they
+// gate registration here — a package recommending a broken schedule is
+// reported invalid instead of poisoning the attach pre-fill.
+function assertRecommendedCron(parsed: ParsedAgentDefinition): void {
+  const cron = parsed.recommended?.cron;
+
+  if (!cron) return;
+  validateTimezone(cron.timezone);
+  validateCronExpression(cron.expr, cron.timezone);
 }
 
 // Upsert the parsed index row with SET/CLEAR symmetry: every parsed column is
@@ -66,20 +83,26 @@ async function resolveProjectIdForSlug(
 async function upsertAgentRow(
   _db: Db,
   parsed: ParsedAgentDefinition,
-  projectId: string | null,
+  revision: RevisionRow,
+  sourcePath: string,
 ): Promise<void> {
   const syncedColumns = {
-    scope: parsed.scope,
-    projectId,
+    flowRefId: revision.flowRefId,
+    versionLabel: revision.versionLabel,
+    // Authored installs bridge through a local filesystem source; git
+    // installs use a remote ref (flowOrigin precedent, lib/services/runs.ts).
+    origin: revision.source.startsWith("/") ? "authored" : "git",
     name: parsed.name,
     description: parsed.description,
     runnerId: parsed.runner,
     workspace: parsed.workspace,
+    workspaceRef: parsed.workspaceRef,
     mode: parsed.mode,
     triggers: parsed.triggers,
     capabilityProfile: parsed.capabilityProfile,
     riskTier: parsed.riskTier,
-    sourcePath: agentFilePath(parsed.id),
+    recommended: parsed.recommended,
+    sourcePath,
     updatedAt: new Date(),
   };
 
@@ -87,43 +110,87 @@ async function upsertAgentRow(
     .insert(agents)
     .values({ id: parsed.id, ...syncedColumns })
     .onConflictDoUpdate({ target: agents.id, set: syncedColumns });
-
-  if (parsed.scope === "project" && projectId) {
-    await _db
-      .insert(agentProjectLinks)
-      .values({ id: randomUUID(), agentId: parsed.id, projectId })
-      .onConflictDoNothing();
-  }
 }
 
-export async function registerAgentFromFile(
-  agentId: string,
+// Register every `agents/<stem>.md` shipped by an installed flow revision
+// under the package-qualified id `<flowRefId>:<stem>`. Invalid definitions
+// are reported, never written — and never fail the surrounding install.
+export async function registerAgentsForRevision(
+  revisionId: string,
   db?: Db,
-): Promise<ParsedAgentDefinition> {
+): Promise<AgentRegistrationSummary> {
   const _db = db ?? getDb();
-  const filePath = agentFilePath(agentId);
 
-  let content: string;
+  const rows = (await _db
+    .select({
+      id: flowRevisions.id,
+      flowRefId: flowRevisions.flowRefId,
+      source: flowRevisions.source,
+      versionLabel: flowRevisions.versionLabel,
+      installedPath: flowRevisions.installedPath,
+      packageStatus: flowRevisions.packageStatus,
+    })
+    .from(flowRevisions)
+    .where(eq(flowRevisions.id, revisionId))) as RevisionRow[];
+  const revision = rows[0];
 
-  try {
-    content = await readFile(filePath, "utf8");
-  } catch {
+  if (!revision) {
     throw new MaisterError(
-      "CONFIG",
-      `agent "${agentId}": ${filePath} is missing or unreadable`,
+      "PRECONDITION",
+      `flow revision ${revisionId} not found`,
     );
   }
 
-  const parsed = parseAgentDefinition(agentId, content);
-  const projectId =
-    parsed.scope === "project" && parsed.projectSlug
-      ? await resolveProjectIdForSlug(_db, agentId, parsed.projectSlug)
-      : null;
+  if (revision.packageStatus !== "Installed") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `flow revision ${revisionId} is ${revision.packageStatus}, not Installed`,
+    );
+  }
 
-  await upsertAgentRow(_db, parsed, projectId);
-  log.info({ agentId, scope: parsed.scope }, "agent registered");
+  const stems = await listAgentFileStems(revision.installedPath);
+  const registered: string[] = [];
+  const invalid: { id: string; error: string }[] = [];
 
-  return parsed;
+  for (const stem of stems) {
+    const sourcePath = join(revision.installedPath, "agents", `${stem}.md`);
+    const id = `${revision.flowRefId}:${stem}`;
+
+    try {
+      const qualifiedId = qualifyAgentId(revision.flowRefId, stem);
+      const { readFile } = await import("node:fs/promises");
+      const content = await readFile(sourcePath, "utf8");
+      const parsed = parseAgentDefinition(qualifiedId, content);
+
+      assertRecommendedCron(parsed);
+      await upsertAgentRow(_db, parsed, revision, sourcePath);
+      registered.push(qualifiedId);
+    } catch (err) {
+      invalid.push({
+        id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (registered.length > 0 || invalid.length > 0) {
+    log.info(
+      {
+        flowRefId: revision.flowRefId,
+        versionLabel: revision.versionLabel,
+        registered: registered.length,
+        invalid: invalid.length,
+      },
+      "agents registered from flow revision",
+    );
+  }
+
+  return {
+    flowRefId: revision.flowRefId,
+    versionLabel: revision.versionLabel,
+    registered,
+    invalid,
+  };
 }
 
 export type AgentResyncSummary = {
@@ -133,120 +200,69 @@ export type AgentResyncSummary = {
   missing: string[];
 };
 
-// Re-scan the host catalog: parseable dirs upsert (SET/CLEAR symmetric),
-// invalid definitions are reported and left untouched in the DB, rows whose
-// directory disappeared are disabled — never silently deleted.
+// Re-project the catalog from installed packages: for every flow_ref the
+// NEWEST Installed revision wins the index rows; rows whose providing
+// package (or file within it) vanished are disabled — never silently
+// deleted (attachments and run history keep their FK anchor).
 export async function resyncAgents(db?: Db): Promise<AgentResyncSummary> {
   const _db = db ?? getDb();
-  const root = systemAgentsRoot();
 
-  await mkdir(root, { recursive: true });
+  const revisionRows = (await _db
+    .select({
+      id: flowRevisions.id,
+      flowRefId: flowRevisions.flowRefId,
+      installedAt: flowRevisions.installedAt,
+    })
+    .from(flowRevisions)
+    .where(eq(flowRevisions.packageStatus, "Installed"))
+    .orderBy(desc(flowRevisions.installedAt))) as Array<{
+    id: string;
+    flowRefId: string;
+    installedAt: Date;
+  }>;
 
-  const entries = await readdir(root, { withFileTypes: true });
-  const onDisk = new Set<string>();
+  const newestByFlowRef = new Map<string, string>();
+
+  for (const row of revisionRows) {
+    if (!newestByFlowRef.has(row.flowRefId)) {
+      newestByFlowRef.set(row.flowRefId, row.id);
+    }
+  }
+
+  const seen = new Set<string>();
   const invalid: { id: string; error: string }[] = [];
   let synced = 0;
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+  for (const revisionId of newestByFlowRef.values()) {
+    const summary = await registerAgentsForRevision(revisionId, _db);
 
-    const id = entry.name;
-
-    try {
-      assertAgentId(id);
-      await stat(agentFilePath(id));
-    } catch {
-      continue;
-    }
-
-    onDisk.add(id);
-
-    try {
-      await registerAgentFromFile(id, _db);
-      synced += 1;
-    } catch (err) {
-      invalid.push({
-        id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    summary.registered.forEach((id) => seen.add(id));
+    invalid.push(...summary.invalid);
+    synced += summary.registered.length;
   }
 
   const rows = await _db.select({ id: agents.id }).from(agents);
   const missing = rows
     .map((r: { id: string }) => r.id)
-    .filter((id: string) => !onDisk.has(id));
+    .filter((id: string) => !seen.has(id));
 
   if (missing.length > 0) {
     await _db
       .update(agents)
       .set({ enabled: false, updatedAt: new Date() })
       .where(inArray(agents.id, missing));
-    log.warn({ missing }, "agents with missing catalog dirs disabled");
+    log.warn(
+      { missing },
+      "agents without an installed providing package disabled",
+    );
   }
 
   log.info(
     { synced, invalid: invalid.length, missing: missing.length },
-    "agent catalog resynced",
+    "agent catalog resynced from installed revisions",
   );
 
   return { ok: true, synced, invalid, missing };
-}
-
-export async function createAgent(
-  input: AgentDefinitionInput,
-  db?: Db,
-): Promise<ParsedAgentDefinition> {
-  const _db = db ?? getDb();
-
-  assertAgentId(input.id);
-
-  const existingRow = await _db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(eq(agents.id, input.id));
-  let dirExists = false;
-
-  try {
-    await stat(agentDirPath(input.id));
-    dirExists = true;
-  } catch {
-    dirExists = false;
-  }
-
-  if (existingRow[0] || dirExists) {
-    throw new MaisterError("CONFLICT", `agent "${input.id}" already exists`);
-  }
-
-  const rendered = renderAgentDefinition(input);
-
-  await mkdir(agentDirPath(input.id), { recursive: true });
-  await atomicWriteText(agentFilePath(input.id), rendered);
-
-  return registerAgentFromFile(input.id, _db);
-}
-
-export async function updateAgentDefinition(
-  input: AgentDefinitionInput,
-  db?: Db,
-): Promise<ParsedAgentDefinition> {
-  const _db = db ?? getDb();
-
-  const existing = await _db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(eq(agents.id, input.id));
-
-  if (!existing[0]) {
-    throw new MaisterError("PRECONDITION", `agent "${input.id}" not found`);
-  }
-
-  const rendered = renderAgentDefinition(input);
-
-  await mkdir(agentDirPath(input.id), { recursive: true });
-  await atomicWriteText(agentFilePath(input.id), rendered);
-
-  return registerAgentFromFile(input.id, _db);
 }
 
 export async function setAgentEnabled(
@@ -284,41 +300,6 @@ export async function unquarantineAgent(
   }
 
   log.info({ agentId }, "agent un-quarantined");
-}
-
-export async function deleteAgent(agentId: string, db?: Db): Promise<void> {
-  const _db = db ?? getDb();
-
-  const existing = await _db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(eq(agents.id, agentId));
-
-  if (!existing[0]) {
-    throw new MaisterError("PRECONDITION", `agent "${agentId}" not found`);
-  }
-
-  const liveRuns = await _db
-    .select({ id: runs.id, status: runs.status })
-    .from(runs)
-    .where(eq(runs.agentId, agentId));
-  const live = liveRuns.filter(
-    (r: { status: string }) =>
-      !TERMINAL_RUN_STATUSES.includes(
-        r.status as (typeof TERMINAL_RUN_STATUSES)[number],
-      ),
-  );
-
-  if (live.length > 0) {
-    throw new MaisterError(
-      "CONFLICT",
-      `agent "${agentId}" has ${live.length} live run(s); stop them before deleting`,
-    );
-  }
-
-  await _db.delete(agents).where(eq(agents.id, agentId));
-  await rm(agentDirPath(agentId), { recursive: true, force: true });
-  log.info({ agentId }, "agent deleted");
 }
 
 export async function listAgents(db?: Db): Promise<Record<string, unknown>[]> {

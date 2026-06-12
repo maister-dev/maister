@@ -68,8 +68,8 @@ beforeEach(async () => {
     ],
   );
   await pool.query(
-    `INSERT INTO "agents" ("id", "scope", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-     VALUES ('budget-agent', 'platform', 'A', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
+    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+     VALUES ('budget-agent', 'test-pkg', 'v1.0.0', 'git', 'A', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
   );
 });
 

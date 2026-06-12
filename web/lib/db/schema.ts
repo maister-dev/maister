@@ -726,7 +726,6 @@ export const schedulerJobRuns = pgTable(
   }),
 );
 
-export type AgentScope = "platform" | "project";
 export type AgentWorkspace = "none" | "repo_read" | "worktree";
 export type AgentMode = "session" | "subagent";
 export type AgentRiskTier = "read_only" | "standard" | "destructive";
@@ -736,16 +735,27 @@ export type AgentTriggerKind =
   | "domain_event"
   | "webhook"
   | "flow";
+export type AgentOrigin = "git" | "authored";
+// Package-recommended bindings (ADR-089 rework): pre-fill the attach panel.
+export type AgentRecommended = {
+  runner?: string;
+  cron?: { expr: string; timezone: string };
+  events?: string[];
+};
 
 export const agents = pgTable(
   "agents",
   {
-    // The catalog dir name under ~/.maister/agents/ (SAFE_PATH_SEGMENT).
+    // Package-qualified id `<flowRefId>:<file-stem>` (ADR-089 rework) — the
+    // definition is `agents/<stem>.md` inside the providing flow package, so
+    // two packages shipping the same stem register as distinct agents.
     id: text("id").primaryKey(),
-    scope: text("scope", { enum: ["platform", "project"] }).notNull(),
-    projectId: text("project_id").references(() => projects.id, {
-      onDelete: "cascade",
-    }),
+    // Provenance: the providing package + the newest registered version. The
+    // catalog row is a projection; the per-project EFFECTIVE definition
+    // resolves through that project's pinned package revision at launch.
+    flowRefId: text("flow_ref_id").notNull(),
+    versionLabel: text("version_label").notNull(),
+    origin: text("origin", { enum: ["git", "authored"] }).notNull(),
     name: text("name").notNull(),
     description: text("description").notNull(),
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
@@ -761,6 +771,10 @@ export const agents = pgTable(
     riskTier: text("risk_tier", {
       enum: ["read_only", "standard", "destructive"],
     }).notNull(),
+    recommended: jsonb("recommended").$type<AgentRecommended>(),
+    // `trigger` or a literal branch name; only valid with workspace=repo_read
+    // (ADR-090 rework — ephemeral read-only checkout at the resolved ref).
+    workspaceRef: text("workspace_ref"),
     sourcePath: text("source_path").notNull(),
     enabled: boolean("enabled").notNull().default(true),
     quarantinedAt: timestamp("quarantined_at", {
@@ -776,11 +790,7 @@ export const agents = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    idxProject: index("agents_project_idx").on(t.projectId),
-    scopeProjectCheck: check(
-      "agents_scope_project_check",
-      sql`(${t.scope} = 'project') = (${t.projectId} IS NOT NULL)`,
-    ),
+    idxFlowRef: index("agents_flow_ref_idx").on(t.flowRefId),
   }),
 );
 

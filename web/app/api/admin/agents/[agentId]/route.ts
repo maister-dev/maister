@@ -7,17 +7,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  agentDefinitionBodySchema,
   agentsErrorResponse,
   projectAgentSummary,
 } from "@/lib/agents/admin-shared";
 import { parseAgentDefinition } from "@/lib/agents/definition";
-import {
-  deleteAgent,
-  setAgentEnabled,
-  unquarantineAgent,
-  updateAgentDefinition,
-} from "@/lib/agents/registry";
+import { setAgentEnabled, unquarantineAgent } from "@/lib/agents/registry";
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -26,20 +20,18 @@ import { MaisterError } from "@/lib/errors";
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents } = schemaModule as unknown as Record<string, any>;
 
+// ADR-089 rework: definitions change only through their providing flow
+// package — this route keeps the platform kill-switches (enabled,
+// un-quarantine) and the read; create/edit/delete endpoints are gone.
 const patchBodySchema = z
   .object({
-    definition: agentDefinitionBodySchema.optional(),
     enabled: z.boolean().optional(),
     unquarantine: z.boolean().optional(),
   })
   .strict()
-  .refine(
-    (v) =>
-      v.definition !== undefined ||
-      v.enabled !== undefined ||
-      v.unquarantine !== undefined,
-    { message: "at least one of definition/enabled/unquarantine is required" },
-  );
+  .refine((v) => v.enabled !== undefined || v.unquarantine !== undefined, {
+    message: "at least one of enabled/unquarantine is required",
+  });
 
 type RouteContext = { params: Promise<{ agentId: string }> };
 
@@ -54,8 +46,8 @@ async function parseJson(req: NextRequest): Promise<unknown> {
   }
 }
 
-// Single-agent read for the edit modal — the DB row plus the .md body
-// (the prompt lives only in the canonical definition file).
+// Single-agent read — the DB row plus the .md body (the prompt lives only in
+// the canonical definition file inside the installed package revision).
 export async function GET(
   _req: NextRequest,
   ctx: RouteContext,
@@ -63,7 +55,9 @@ export async function GET(
   try {
     await requireGlobalRole("admin");
 
-    const { agentId } = await ctx.params;
+    const { agentId: rawAgentId } = await ctx.params;
+    // Qualified ids carry a `:`; route params arrive URL-encoded.
+    const agentId = decodeURIComponent(rawAgentId);
     const db = getDb() as unknown as { select: any };
     const rows = await db.select().from(agents).where(eq(agents.id, agentId));
     const row = rows[0];
@@ -82,7 +76,7 @@ export async function GET(
 
       prompt = parseAgentDefinition(agentId, raw).prompt.trim();
     } catch {
-      // A missing/invalid file still returns the row — the modal shows an
+      // A missing/invalid file still returns the row — the catalog shows an
       // empty prompt and the resync surface reports the drift.
     }
 
@@ -99,7 +93,8 @@ export async function PATCH(
   try {
     await requireGlobalRole("admin");
 
-    const { agentId } = await ctx.params;
+    const { agentId: rawAgentId } = await ctx.params;
+    const agentId = decodeURIComponent(rawAgentId);
     const parsed = patchBodySchema.safeParse(await parseJson(req));
 
     if (!parsed.success) {
@@ -107,32 +102,6 @@ export async function PATCH(
         "CONFIG",
         `invalid PATCH body: ${parsed.error.message}`,
       );
-    }
-
-    if (parsed.data.definition) {
-      // The url-param is the server-trusted identity; a divergent body id is
-      // a cross-resource smell and is refused outright.
-      if (parsed.data.definition.id !== agentId) {
-        throw new MaisterError(
-          "CONFIG",
-          `definition.id "${parsed.data.definition.id}" does not match the addressed agent "${agentId}"`,
-        );
-      }
-
-      await updateAgentDefinition({
-        id: agentId,
-        name: parsed.data.definition.name,
-        description: parsed.data.definition.description,
-        scope: parsed.data.definition.scope,
-        project: parsed.data.definition.project ?? null,
-        runner: parsed.data.definition.runner ?? null,
-        workspace: parsed.data.definition.workspace,
-        mode: parsed.data.definition.mode,
-        triggers: parsed.data.definition.triggers,
-        capabilityProfile: parsed.data.definition.capabilityProfile ?? null,
-        riskTier: parsed.data.definition.riskTier,
-        prompt: parsed.data.definition.prompt,
-      });
     }
 
     if (parsed.data.enabled !== undefined) {
@@ -144,23 +113,6 @@ export async function PATCH(
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    return agentsErrorResponse(err);
-  }
-}
-
-export async function DELETE(
-  _req: NextRequest,
-  ctx: RouteContext,
-): Promise<NextResponse> {
-  try {
-    await requireGlobalRole("admin");
-
-    const { agentId } = await ctx.params;
-
-    await deleteAgent(agentId);
-
-    return new NextResponse(null, { status: 204 });
   } catch (err) {
     return agentsErrorResponse(err);
   }

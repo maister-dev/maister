@@ -54,13 +54,13 @@ async function seedProject(): Promise<string> {
   return projectId;
 }
 
-async function seedAgent(projectId: string | null): Promise<string> {
-  const agentId = `agent-${randomUUID().slice(0, 8)}`;
+async function seedAgent(): Promise<string> {
+  const agentId = `test-pkg:agent-${randomUUID().slice(0, 8)}`;
 
   await pool.query(
-    `INSERT INTO "agents" ("id", "scope", "project_id", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-     VALUES ($1, $2, $3, 'A', 'desc', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
-    [agentId, projectId ? "project" : "platform", projectId],
+    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', 'A', 'desc', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
+    [agentId],
   );
 
   return agentId;
@@ -88,28 +88,35 @@ describe("migration 0049 — platform agents", () => {
     expect(names).not.toContain("desired_state");
   });
 
-  it("agents scope/project pairing CHECK rejects mismatches", async () => {
+  it("0051 reshapes agents to package provenance (scope/project gone, NOT NULLs enforced)", async () => {
+    const cols = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'agents'`,
+    );
+    const names = cols.rows.map((r) => r.column_name);
+
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "flow_ref_id",
+        "version_label",
+        "origin",
+        "recommended",
+        "workspace_ref",
+      ]),
+    );
+    expect(names).not.toContain("scope");
+    expect(names).not.toContain("project_id");
+
     await expect(
       pool.query(
-        `INSERT INTO "agents" ("id", "scope", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-         VALUES ('bad-project-scope', 'project', 'A', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/a.md')`,
+        `INSERT INTO "agents" ("id", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+         VALUES ('no-provenance', 'A', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/a.md')`,
       ),
-    ).rejects.toThrow(/agents_scope_project_check/);
-
-    const projectId = await seedProject();
-
-    await expect(
-      pool.query(
-        `INSERT INTO "agents" ("id", "scope", "project_id", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-         VALUES ('bad-platform-scope', 'platform', $1, 'A', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/a.md')`,
-        [projectId],
-      ),
-    ).rejects.toThrow(/agents_scope_project_check/);
+    ).rejects.toThrow(/flow_ref_id|not-null/);
   });
 
   it("agent_schedules shape CHECKs enforce cron and event row fields", async () => {
     const projectId = await seedProject();
-    const agentId = await seedAgent(null);
+    const agentId = await seedAgent();
 
     await expect(
       pool.query(
@@ -141,7 +148,7 @@ describe("migration 0049 — platform agents", () => {
 
   it("partial unique (agent_id, trigger_event_id) makes redelivery converge to one run", async () => {
     const projectId = await seedProject();
-    const agentId = await seedAgent(null);
+    const agentId = await seedAgent();
 
     const insertRun = (id: string, eventId: number | null) =>
       pool.query(
@@ -167,7 +174,7 @@ describe("migration 0049 — platform agents", () => {
 
   it("project_tokens pairs token_kind=agent with agent_id", async () => {
     const projectId = await seedProject();
-    const agentId = await seedAgent(null);
+    const agentId = await seedAgent();
 
     await expect(
       pool.query(
@@ -214,7 +221,7 @@ describe("migration 0049 — platform agents", () => {
 
   it("deleting an agent cascades links/schedules/tokens and detaches runs", async () => {
     const projectId = await seedProject();
-    const agentId = await seedAgent(projectId);
+    const agentId = await seedAgent();
 
     await pool.query(
       `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,

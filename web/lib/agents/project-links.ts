@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { revokeAgentProjectTokens } from "@/lib/agents/tokens";
@@ -180,15 +180,12 @@ export async function getProjectAgentsView(
 
   const linkedIds = new Set(attached.map((a) => a.agent.id as string));
 
-  // Attachable = platform-scope agents (project-scope agents are auto-linked
-  // at registration to their own project) not already linked here.
-  const platformAgents = (await _db
-    .select()
-    .from(agents)
-    .where(
-      or(eq(agents.scope, "platform"), eq(agents.projectId, projectId)),
-    )) as Array<Record<string, any>>;
-  const available = platformAgents.filter((a) => !linkedIds.has(a.id));
+  // Attachable = catalog agents not already linked here. (R2 narrows this to
+  // agents whose providing package is enabled in THIS project.)
+  const catalogAgents = (await _db.select().from(agents)) as Array<
+    Record<string, any>
+  >;
+  const available = catalogAgents.filter((a) => !linkedIds.has(a.id));
 
   return { attached, available };
 }
@@ -214,15 +211,6 @@ export async function attachAgent(
     throw new MaisterError(
       "PRECONDITION",
       `agent ${input.agentId} is not registered`,
-    );
-  }
-
-  // A project-scope agent belongs to exactly one project (auto-linked at
-  // registration) — never attachable elsewhere.
-  if (agent.scope === "project" && agent.projectId !== input.projectId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent ${input.agentId} is scoped to another project`,
     );
   }
 

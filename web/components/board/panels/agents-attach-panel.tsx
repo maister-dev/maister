@@ -22,7 +22,7 @@ export type AttachedAgentRow = {
   agent: {
     id: string;
     name: string;
-    scope: "platform" | "project";
+    flowRefId: string;
     workspace: string;
     mode: string;
     triggers: string[];
@@ -35,7 +35,7 @@ export type AttachedAgentRow = {
 export type AvailableAgentRow = {
   id: string;
   name: string;
-  scope: "platform" | "project";
+  flowRefId: string;
 };
 
 type Props = {
@@ -126,7 +126,7 @@ export function AgentsAttachPanel({
             >
               {available.map((agent) => (
                 <option key={agent.id} value={agent.id}>
-                  {agent.name} ({agent.scope})
+                  {agent.name} ({agent.flowRefId})
                 </option>
               ))}
             </select>

@@ -132,7 +132,6 @@ export default async function SettingsPage(): Promise<ReactElement> {
               <AgentsPanel
                 agents={runtime.agents}
                 projects={runtime.projects}
-                runners={runtime.runners}
               />
               <RouterSidecarsPanel sidecars={runtime.sidecars} />
               <McpServersPanel servers={runtime.mcpServers} />
@@ -175,7 +174,7 @@ async function loadPlatformRuntimeView() {
     db.select().from(packageInstalls),
     db.select().from(agents),
     db.select().from(projects),
-    ]);
+  ]);
 
   return {
     adapters: getAdapterSupport(),
@@ -187,8 +186,9 @@ async function loadPlatformRuntimeView() {
     // M34: explicit DTO projection — serialized dates, no raw rows.
     agents: agentRows.map((row: any) => ({
       id: row.id,
-      scope: row.scope,
-      projectId: row.projectId ?? null,
+      flowRefId: row.flowRefId,
+      versionLabel: row.versionLabel,
+      origin: row.origin,
       name: row.name,
       description: row.description,
       runnerId: row.runnerId ?? null,

@@ -23,9 +23,10 @@ import {
 
 function agent(over: Partial<AgentSummaryRow> = {}): AgentSummaryRow {
   return {
-    id: "triager",
-    scope: "platform",
-    projectId: null,
+    id: "aif:triager",
+    flowRefId: "aif",
+    versionLabel: "v1.2.0",
+    origin: "git",
     name: "Triager",
     description: "classifies tasks",
     runnerId: null,
@@ -33,7 +34,7 @@ function agent(over: Partial<AgentSummaryRow> = {}): AgentSummaryRow {
     mode: "session",
     triggers: ["manual", "domain_event"],
     riskTier: "read_only",
-    sourcePath: "/agents/triager/agent.md",
+    sourcePath: "/cache/aif@v1.2.0/agents/triager.md",
     enabled: true,
     quarantinedAt: null,
     quarantineReason: null,
@@ -45,23 +46,24 @@ function render(agents: AgentSummaryRow[]): string {
   return renderToStaticMarkup(
     createElement(AgentsPanel, {
       agents,
-      runners: [{ id: "runner-1" }],
       projects: [{ id: "p1", slug: "demo", name: "Demo" }],
     }),
   );
 }
 
 describe("AgentsPanel — catalog table (M34 D11)", () => {
-  it("renders the row fields and the enabled state chip", () => {
+  it("renders the row fields, package provenance, and the enabled chip", () => {
     const html = render([agent()]);
 
-    expect(html).toContain("triager");
-    expect(html).toContain("platform");
+    expect(html).toContain("aif:triager");
+    expect(html).toContain("aif@v1.2.0");
     expect(html).toContain("manual, domain_event");
     expect(html).toContain("read_only");
     expect(html).toContain("agents.enabled");
     expect(html).toContain("agents.resync");
-    expect(html).toContain("agents.addAgent");
+    // ADR-089 rework: no create/edit surface — packages are the only path.
+    expect(html).not.toContain("agents.addAgent");
+    expect(html).not.toContain("agents.edit");
   });
 
   it("renders the quarantine badge + un-quarantine action and withholds Launch", () => {

@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseAgentDefinition,
+  qualifyAgentId,
   renderAgentDefinition,
 } from "@/lib/agents/definition";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError } from "@/lib/errors-core";
 
 const VALID = `---
 name: Triager
 description: Classifies new tasks
-scope: platform
 runner: claude-default
 workspace: repo_read
 mode: session
@@ -37,19 +37,19 @@ function expectConfig(fn: () => unknown, match: RegExp): void {
 }
 
 describe("parseAgentDefinition", () => {
-  it("parses a valid definition into the typed shape", () => {
-    const parsed = parseAgentDefinition("triager", VALID);
+  it("parses a valid definition into the typed shape (qualified id)", () => {
+    const parsed = parseAgentDefinition("aif:triager", VALID);
 
     expect(parsed).toMatchObject({
-      id: "triager",
+      id: "aif:triager",
       name: "Triager",
-      scope: "platform",
-      projectSlug: null,
       runner: "claude-default",
       workspace: "repo_read",
+      workspaceRef: null,
       mode: "session",
       triggers: ["manual", "domain_event"],
       riskTier: "read_only",
+      recommended: null,
     });
     expect(parsed.prompt).toContain("You are the triager.");
   });
@@ -61,14 +61,33 @@ describe("parseAgentDefinition", () => {
     );
 
     expectConfig(
-      () => parseAgentDefinition("triager", content),
+      () => parseAgentDefinition("aif:triager", content),
       /bogus_key|unrecognized/i,
+    );
+  });
+
+  it("refuses the dead pre-rework scope/project keys loudly", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace("runner: claude-default", "scope: platform"),
+        ),
+      /scope|unrecognized/i,
+    );
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace("runner: claude-default", "project: myapp"),
+        ),
+      /project|unrecognized/i,
     );
   });
 
   it("refuses missing required fields", () => {
     expectConfig(
-      () => parseAgentDefinition("triager", "---\nname: X\n---\nbody\n"),
+      () => parseAgentDefinition("aif:triager", "---\nname: X\n---\nbody\n"),
       /description/,
     );
   });
@@ -77,29 +96,10 @@ describe("parseAgentDefinition", () => {
     expectConfig(
       () =>
         parseAgentDefinition(
-          "triager",
+          "aif:triager",
           VALID.replace("workspace: repo_read", "workspace: read_write"),
         ),
       /workspace/,
-    );
-  });
-
-  it("requires `project` exactly for scope=project", () => {
-    expectConfig(
-      () =>
-        parseAgentDefinition(
-          "triager",
-          VALID.replace("scope: platform", "scope: project"),
-        ),
-      /project/,
-    );
-    expectConfig(
-      () =>
-        parseAgentDefinition(
-          "triager",
-          VALID.replace("scope: platform", "scope: platform\nproject: myapp"),
-        ),
-      /project/,
     );
   });
 
@@ -107,7 +107,7 @@ describe("parseAgentDefinition", () => {
     expectConfig(
       () =>
         parseAgentDefinition(
-          "triager",
+          "aif:triager",
           VALID.replace("mode: session", "mode: subagent"),
         ),
       /subagent allows only the `flow` trigger/,
@@ -118,22 +118,81 @@ describe("parseAgentDefinition", () => {
       "triggers:\n  - flow",
     );
 
-    expect(parseAgentDefinition("triager", flowOnly).mode).toBe("subagent");
+    expect(parseAgentDefinition("aif:triager", flowOnly).mode).toBe("subagent");
+  });
+
+  it("accepts workspace_ref only with workspace=repo_read", () => {
+    const withRef = VALID.replace(
+      "workspace: repo_read",
+      "workspace: repo_read\nworkspace_ref: trigger",
+    );
+
+    expect(parseAgentDefinition("aif:triager", withRef).workspaceRef).toBe(
+      "trigger",
+    );
+
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "workspace: repo_read",
+            "workspace: none\nworkspace_ref: trigger",
+          ),
+        ),
+      /workspace_ref is only valid with workspace=repo_read/,
+    );
+  });
+
+  it("parses the recommended block and refuses unknown event kinds", () => {
+    const withRecommended = VALID.replace(
+      "risk_tier: read_only",
+      [
+        "risk_tier: read_only",
+        "recommended:",
+        "  runner: claude-default",
+        "  cron:",
+        '    expr: "*/30 * * * *"',
+        "    timezone: UTC",
+        "  events:",
+        "    - run.failed",
+        "    - gate.failed",
+      ].join("\n"),
+    );
+    const parsed = parseAgentDefinition("aif:triager", withRecommended);
+
+    expect(parsed.recommended).toEqual({
+      runner: "claude-default",
+      cron: { expr: "*/30 * * * *", timezone: "UTC" },
+      events: ["run.failed", "gate.failed"],
+    });
+
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nrecommended:\n  events:\n    - not.a.kind",
+          ),
+        ),
+      /events/,
+    );
   });
 
   it("refuses missing frontmatter, malformed yaml, and an empty body", () => {
     expectConfig(
-      () => parseAgentDefinition("triager", "just a body\n"),
+      () => parseAgentDefinition("aif:triager", "just a body\n"),
       /missing frontmatter/,
     );
     expectConfig(
-      () => parseAgentDefinition("triager", "---\nname: [unterminated\n"),
+      () => parseAgentDefinition("aif:triager", "---\nname: [unterminated\n"),
       /malformed frontmatter/,
     );
     expectConfig(
       () =>
         parseAgentDefinition(
-          "triager",
+          "aif:triager",
           VALID.split("---")[0] +
             "---\n" +
             VALID.split("---")[1] +
@@ -143,48 +202,55 @@ describe("parseAgentDefinition", () => {
     );
   });
 
-  it("refuses an unsafe agent id", () => {
+  it("refuses an unsafe agent id (two colons, dot-dot, bad chars)", () => {
     expectConfig(() => parseAgentDefinition("../evil", VALID), /agent id/);
+    expectConfig(() => parseAgentDefinition("a:b:c", VALID), /agent id/);
+    expectConfig(() => parseAgentDefinition("aif:..", VALID), /agent id/);
+  });
+});
+
+describe("qualifyAgentId", () => {
+  it("composes <flowRefId>:<stem> and refuses unsafe stems", () => {
+    expect(qualifyAgentId("aif", "triager")).toBe("aif:triager");
+    expect(() => qualifyAgentId("aif", "..")).toThrow(/stem/);
+    expect(() => qualifyAgentId("aif", "a:b")).toThrow(/stem/);
   });
 });
 
 describe("renderAgentDefinition", () => {
   it("round-trips: render → parse yields the same shape", () => {
     const rendered = renderAgentDefinition({
-      id: "reviewer",
+      id: "aif:reviewer",
       name: "Reviewer",
       description: "Reviews diffs",
-      scope: "project",
-      project: "myapp",
       runner: null,
       workspace: "worktree",
       mode: "session",
       triggers: ["manual", "flow"],
       capabilityProfile: { skills: ["review"] },
       riskTier: "standard",
+      recommended: { events: ["run.done"] },
       prompt: "Review the diff.",
     });
 
-    const parsed = parseAgentDefinition("reviewer", rendered);
+    const parsed = parseAgentDefinition("aif:reviewer", rendered);
 
     expect(parsed).toMatchObject({
       name: "Reviewer",
-      scope: "project",
-      projectSlug: "myapp",
       runner: null,
       workspace: "worktree",
       triggers: ["manual", "flow"],
       capabilityProfile: { skills: ["review"] },
       riskTier: "standard",
+      recommended: { events: ["run.done"] },
     });
   });
 
   it("omitted optional fields stay absent (CLEAR-able on re-render)", () => {
     const rendered = renderAgentDefinition({
-      id: "minimal",
+      id: "aif:minimal",
       name: "Minimal",
       description: "d",
-      scope: "platform",
       workspace: "none",
       mode: "session",
       triggers: ["manual"],
@@ -194,6 +260,7 @@ describe("renderAgentDefinition", () => {
 
     expect(rendered).not.toContain("runner:");
     expect(rendered).not.toContain("capability_profile:");
-    expect(rendered).not.toContain("project:");
+    expect(rendered).not.toContain("recommended:");
+    expect(rendered).not.toContain("workspace_ref:");
   });
 });

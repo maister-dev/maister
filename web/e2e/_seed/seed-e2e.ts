@@ -446,8 +446,9 @@ const M11C_VISIBLE_NODE = "implement";
 // `settings.agent` (spec b). The stub supervisor records every prompt, so the
 // binding spec asserts the substituted system prompt by its marker line.
 const AGENTS_SLUG = "e2e-agents";
-const E2E_HELPER_AGENT = "e2e-helper";
-const E2E_AUDITOR_AGENT = "e2e-auditor";
+// ADR-089 rework: package-qualified agent ids `<flowRefId>:<stem>`.
+const E2E_HELPER_AGENT = "e2e-agents-pkg:e2e-helper";
+const E2E_AUDITOR_AGENT = "e2e-agents-pkg:e2e-auditor";
 const AGENT_BODY_MARKER = "E2E-HELPER-SYSTEM-PROMPT-MARKER";
 
 const AGENTS_BINDING_MANIFEST = {
@@ -4893,17 +4894,19 @@ function writeAgentDefinition(args: {
   triggers: string[];
   body: string;
 }): string {
-  const dir = path.join(args.agentsRoot, args.id);
+  // ADR-089 rework: ids are package-qualified `<pkg>:<stem>`; the definition
+  // file is `agents/<stem>.md` (the seed mimics an installed package dir).
+  const stem = args.id.split(":").pop() ?? args.id;
+  const dir = path.join(args.agentsRoot, "agents");
 
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, "agent.md");
+  const file = path.join(dir, `${stem}.md`);
 
   writeFileSync(
     file,
     `---
-name: ${args.id}
+name: ${stem}
 description: e2e fixture agent
-scope: platform
 workspace: ${args.workspace}
 mode: session
 triggers:
@@ -4940,7 +4943,8 @@ async function seedPlatformAgentsFixture(
       .rows[0].number,
   );
 
-  // Host agent catalog (MAISTER_AGENTS_ROOT in playwright webServer env).
+  // A package-shaped dir holding the fixture agents/<stem>.md definitions —
+  // `agents.source_path` points straight at these files (ADR-089 rework).
   const agentsRoot = path.join(RUNTIME_ROOT, "agents");
   const helperPath = writeAgentDefinition({
     agentsRoot,
@@ -4962,12 +4966,13 @@ async function seedPlatformAgentsFixture(
   ]);
   await pool.query(
     `INSERT INTO agents
-       (id, scope, name, description, workspace, mode, triggers, risk_tier, source_path)
+       (id, flow_ref_id, version_label, origin, name, description, workspace,
+        mode, triggers, risk_tier, source_path)
      VALUES
-       ($1, 'platform', $1, 'e2e fixture agent', 'none', 'session',
-        '["manual","flow"]'::jsonb, 'read_only', $2),
-       ($3, 'platform', $3, 'e2e fixture agent', 'repo_read', 'session',
-        '["manual"]'::jsonb, 'read_only', $4)`,
+       ($1, 'e2e-agents-pkg', 'v1.0.0', 'git', $1, 'e2e fixture agent', 'none',
+        'session', '["manual","flow"]'::jsonb, 'read_only', $2),
+       ($3, 'e2e-agents-pkg', 'v1.0.0', 'git', $3, 'e2e fixture agent',
+        'repo_read', 'session', '["manual"]'::jsonb, 'read_only', $4)`,
     [E2E_HELPER_AGENT, helperPath, E2E_AUDITOR_AGENT, auditorPath],
   );
   // The quarantine project — the auditor (repo_read) is linked HERE only.

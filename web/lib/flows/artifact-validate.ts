@@ -12,9 +12,10 @@
 
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 
+import { parseAgentDefinition } from "@/lib/agents/definition";
 import { formSchemaSchema } from "@/lib/config.schema";
+import { isMaisterError } from "@/lib/errors-core";
 import {
-  agentFrontmatterSchema,
   ruleGuardrailSchema,
   skillFrontmatterSchema,
   splitFrontmatter,
@@ -60,15 +61,6 @@ const SKILL_KNOWN_KEYS = new Set([
   "model",
 ]);
 
-const AGENT_KNOWN_KEYS = new Set([
-  "name",
-  "description",
-  "tools",
-  "model",
-  "permissionMode",
-  "maxTurns",
-]);
-
 const RULE_KNOWN_KEYS = new Set([
   "allowed_paths",
   "forbidden_paths",
@@ -101,12 +93,7 @@ export function validateArtifactContent(
       kind === "agent_definition" &&
       isAgentDefinitionPath(file.path)
     ) {
-      validateFrontmatterFile(
-        file,
-        agentFrontmatterSchema,
-        AGENT_KNOWN_KEYS,
-        issues,
-      );
+      validateAgentDefinitionFile(file, issues);
     } else if (kind === "rule") {
       validateRuleFile(file, issues);
     } else if (kind === "script" || kind === "setup") {
@@ -126,6 +113,42 @@ function isSkillDefinitionPath(filePath: string): boolean {
 
 function isAgentDefinitionPath(filePath: string): boolean {
   return /^agents\/[^/]+\.md$/.test(filePath);
+}
+
+// ADR-089 rework: `agents/*.md` is a PLATFORM agent definition — validate
+// with the real registration contract (parseAgentDefinition) so a Studio
+// draft fails at save time exactly where the package install would.
+function validateAgentDefinitionFile(
+  file: AuthoredFlowPackageFile,
+  issues: ArtifactContentIssue[],
+): void {
+  const split = splitFrontmatter(file.content);
+
+  if (!split.ok || split.frontmatter === undefined) {
+    issues.push({
+      severity: "block",
+      code: "frontmatter_missing",
+      path: file.path,
+      message: `${file.path} has missing or unparseable frontmatter (a leading \`---\` yaml block with the agent contract is required).`,
+    });
+
+    return;
+  }
+
+  const stem = (file.path.split("/").at(-1) ?? file.path).replace(/\.md$/, "");
+
+  try {
+    parseAgentDefinition(stem, file.content);
+  } catch (err) {
+    issues.push({
+      severity: "block",
+      code: "frontmatter_field_missing",
+      path: file.path,
+      message: `${file.path}: ${
+        isMaisterError(err) || err instanceof Error ? err.message : String(err)
+      }`,
+    });
+  }
 }
 
 // Shell scripts (`scripts/*`, `setup.sh`) get the heuristic shell-lint pass
@@ -191,7 +214,7 @@ function validateSchemaFile(
 
 function validateFrontmatterFile(
   file: AuthoredFlowPackageFile,
-  schema: typeof skillFrontmatterSchema | typeof agentFrontmatterSchema,
+  schema: typeof skillFrontmatterSchema,
   knownKeys: ReadonlySet<string>,
   issues: ArtifactContentIssue[],
 ): void {

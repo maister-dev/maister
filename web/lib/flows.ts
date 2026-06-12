@@ -801,6 +801,28 @@ export async function installRevision(opts: {
       "flow revision install complete (setup deferred until trust+enable)",
     );
 
+    // ADR-089 rework: agents ship inside the package — index `agents/*.md`
+    // under package-qualified ids. Best-effort: a broken agent file is
+    // reported by the registration summary, never fails the install.
+    try {
+      const { registerAgentsForRevision } = await import(
+        "@/lib/agents/registry"
+      );
+      const agentSummary = await registerAgentsForRevision(revisionId, db);
+
+      if (agentSummary.invalid.length > 0) {
+        log.warn(
+          { revisionId, invalid: agentSummary.invalid },
+          "package shipped invalid agent definitions",
+        );
+      }
+    } catch (err) {
+      log.warn(
+        { revisionId, err: err instanceof Error ? err.message : String(err) },
+        "agent registration after install failed",
+      );
+    }
+
     return {
       revisionId,
       resolvedRevision,

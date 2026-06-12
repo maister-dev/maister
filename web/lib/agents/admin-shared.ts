@@ -2,38 +2,13 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import pino from "pino";
-import { z } from "zod";
 
-import { AGENT_TRIGGER_KINDS } from "@/lib/agents/definition";
 import { isMaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "api-admin-agents",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-export const agentDefinitionBodySchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .max(128)
-      .regex(/^[A-Za-z0-9._-]+$/),
-    name: z.string().min(1),
-    description: z.string().min(1),
-    scope: z.enum(["platform", "project"]),
-    project: z.string().min(1).max(64).optional(),
-    runner: z.string().min(1).max(128).nullable().optional(),
-    workspace: z.enum(["none", "repo_read", "worktree"]),
-    mode: z.enum(["session", "subagent"]),
-    triggers: z.array(z.enum(AGENT_TRIGGER_KINDS)).min(1),
-    capabilityProfile: z.record(z.unknown()).nullable().optional(),
-    riskTier: z.enum(["read_only", "standard", "destructive"]),
-    prompt: z.string().min(1),
-  })
-  .strict();
-
-export type AgentDefinitionBody = z.infer<typeof agentDefinitionBodySchema>;
 
 function statusForCode(code: string): number {
   switch (code) {
@@ -80,15 +55,18 @@ export function projectAgentSummary(
 ): Record<string, unknown> {
   return {
     id: row.id,
-    scope: row.scope,
-    projectId: row.projectId ?? null,
+    flowRefId: row.flowRefId,
+    versionLabel: row.versionLabel,
+    origin: row.origin,
     name: row.name,
     description: row.description,
     runnerId: row.runnerId ?? null,
     workspace: row.workspace,
+    workspaceRef: row.workspaceRef ?? null,
     mode: row.mode,
     triggers: row.triggers,
     riskTier: row.riskTier,
+    recommended: row.recommended ?? null,
     sourcePath: row.sourcePath,
     enabled: row.enabled,
     quarantinedAt: row.quarantinedAt ?? null,

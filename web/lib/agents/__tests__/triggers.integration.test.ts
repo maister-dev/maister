@@ -24,8 +24,9 @@ let triggers: typeof import("@/lib/agents/triggers");
 let launchModule: typeof import("@/lib/agents/launch");
 
 beforeAll(async () => {
+  // Definitions live wherever `agents.source_path` points (ADR-089 rework:
+  // an installed package dir in prod; a plain tmp dir here).
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-trig-"));
-  process.env.MAISTER_AGENTS_ROOT = agentsRoot;
 
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("maister_test")
@@ -43,7 +44,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await pool?.end();
   await container?.stop();
-  delete process.env.MAISTER_AGENTS_ROOT;
 });
 
 beforeEach(async () => {
@@ -91,7 +91,6 @@ async function seedAgent(args: {
     `---
 name: ${args.id}
 description: d
-scope: platform
 workspace: none
 mode: session
 triggers:
@@ -104,8 +103,8 @@ Do the thing.
   );
 
   await pool.query(
-    `INSERT INTO "agents" ("id", "scope", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-     VALUES ($1, 'platform', $1, 'd', 'none', 'session', $2::jsonb, 'read_only', $3)`,
+    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $1, 'd', 'none', 'session', $2::jsonb, 'read_only', $3)`,
     [
       args.id,
       JSON.stringify(args.triggers),

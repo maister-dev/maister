@@ -115,7 +115,9 @@ beforeAll(async () => {
   });
   await db.insert(schema.agents).values({
     id: AGENT_ID,
-    scope: "platform",
+    flowRefId: "test-pkg",
+    versionLabel: "v1.0.0",
+    origin: "git",
     name: AGENT_ID,
     description: "d",
     workspace: "none",

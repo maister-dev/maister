@@ -6,16 +6,28 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import {
-  AgentModal,
-  type AgentSummaryRow,
-} from "@/components/settings/agent-modal";
-
-export type { AgentSummaryRow };
+// ADR-089 rework: rows are a projection of installed flow packages — there
+// is no create/edit surface here; definitions change through their package.
+export type AgentSummaryRow = {
+  id: string;
+  flowRefId: string;
+  versionLabel: string;
+  origin: "git" | "authored";
+  name: string;
+  description: string;
+  runnerId: string | null;
+  workspace: string;
+  mode: string;
+  triggers: string[];
+  riskTier: string;
+  sourcePath: string;
+  enabled: boolean;
+  quarantinedAt: string | null;
+  quarantineReason: string | null;
+};
 
 type Props = {
   agents: AgentSummaryRow[];
-  runners: Array<{ id: string }>;
   projects: Array<{ id: string; slug: string; name: string }>;
 };
 
@@ -41,18 +53,12 @@ async function sendJson(
 
 // M34 (ADR-089 D11): the platform agent catalog — view-only table, edits in
 // the modal, quarantine surfaced inline, manual launch per row.
-export function AgentsPanel({
-  agents,
-  runners,
-  projects,
-}: Props): ReactElement {
+export function AgentsPanel({ agents, projects }: Props): ReactElement {
   const t = useTranslations("agents");
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [launchProject, setLaunchProject] = useState(projects[0]?.slug ?? "");
   const [launchNote, setLaunchNote] = useState<string | null>(null);
@@ -126,13 +132,6 @@ export function AgentsPanel({
           >
             {t("resync")}
           </button>
-          <button
-            className="h-10 rounded-[8px] border border-amber bg-amber px-4 text-[13px] font-semibold text-white hover:bg-amber-2"
-            type="button"
-            onClick={() => setCreating(true)}
-          >
-            {t("addAgent")}
-          </button>
         </div>
       </div>
       {error ? (
@@ -157,7 +156,7 @@ export function AgentsPanel({
           <thead className="border-b border-line bg-ivory">
             <tr className="font-mono text-[10px] uppercase tracking-[0.12em] text-mute">
               <th className="px-4 py-3">{t("colId")}</th>
-              <th className="px-4 py-3">{t("colScope")}</th>
+              <th className="px-4 py-3">{t("colPackage")}</th>
               <th className="px-4 py-3">{t("colRunner")}</th>
               <th className="px-4 py-3">{t("colWorkspace")}</th>
               <th className="px-4 py-3">{t("colMode")}</th>
@@ -183,7 +182,12 @@ export function AgentsPanel({
                 <td className="px-4 py-3 font-mono font-semibold text-ink">
                   {agent.id}
                 </td>
-                <td className="px-4 py-3 text-ink-2">{agent.scope}</td>
+                <td className="px-4 py-3 font-mono text-[11px] text-ink-2">
+                  {agent.flowRefId}@{agent.versionLabel}
+                  <span className="ml-1.5 rounded border border-line px-1 py-px text-[10px] text-mute">
+                    {agent.origin}
+                  </span>
+                </td>
                 <td className="px-4 py-3 font-mono text-ink-2">
                   {agent.runnerId ?? "—"}
                 </td>
@@ -290,13 +294,6 @@ export function AgentsPanel({
                     >
                       {agent.enabled ? t("disable") : t("enable")}
                     </button>
-                    <button
-                      className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
-                      type="button"
-                      onClick={() => setEditingId(agent.id)}
-                    >
-                      {t("edit")}
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -304,19 +301,6 @@ export function AgentsPanel({
           </tbody>
         </table>
       </div>
-
-      {creating || editingId ? (
-        <AgentModal
-          editingId={editingId}
-          projects={projects}
-          runners={runners}
-          onClose={() => {
-            setCreating(false);
-            setEditingId(null);
-          }}
-          onSaved={refresh}
-        />
-      ) : null}
     </section>
   );
 }

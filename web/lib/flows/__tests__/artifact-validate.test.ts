@@ -298,7 +298,7 @@ body`,
     });
   });
 
-  it("WARN frontmatter_unknown_key for an unknown agent frontmatter key (Gap 4)", () => {
+  it("BLOCK for an unknown agent frontmatter key (ADR-089 strict platform-agent contract)", () => {
     const issues = validateArtifactContent({
       files: [
         file(
@@ -307,6 +307,11 @@ body`,
 name: reviewer
 description: Reviews code.
 team: backend
+workspace: none
+mode: session
+triggers:
+  - manual
+risk_tier: read_only
 ---
 body`,
         ),
@@ -315,10 +320,13 @@ body`,
     });
 
     expect(codes(issues)).toContainEqual({
-      code: "frontmatter_unknown_key",
-      severity: "warn",
+      code: "frontmatter_field_missing",
+      severity: "block",
       path: "agents/reviewer.md",
     });
+    expect(
+      issues.find((i) => i.path === "agents/reviewer.md")?.message,
+    ).toMatch(/team|unrecognized/i);
   });
 
   it("WARN frontmatter_unknown_key for an unknown rule frontmatter key (Gap 4)", () => {

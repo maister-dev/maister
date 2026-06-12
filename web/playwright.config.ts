@@ -81,11 +81,6 @@ export default defineConfig({
       // button is enabled and POST /api/runs gets PAST the health check to the
       // settings-enforcement gate (which is what refuses with CONFIG 400).
       MAISTER_SUPERVISOR_URL: STUB_SUPERVISOR_URL,
-      // platform-agents-*.spec.ts (M34): the host agent catalog the seed
-      // writes the fixture agent.md definitions into. Absolute on purpose —
-      // the seed's RUNTIME_ROOT (/tmp/maister-e2e) is not the webServer's
-      // MAISTER_RUNTIME_ROOT.
-      MAISTER_AGENTS_ROOT: "/tmp/maister-e2e/agents",
       // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts). Also gates the
       // outbound-webhooks drain trigger (POST /api/cron/tick).
       MAISTER_CRON_TOKEN,

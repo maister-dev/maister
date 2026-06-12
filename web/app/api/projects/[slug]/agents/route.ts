@@ -23,11 +23,12 @@ const { projects } = schemaModule as unknown as Record<string, any>;
 
 const postBodySchema = z
   .object({
+    // Package-qualified id `<flowRefId>:<stem>` (ADR-089 rework).
     agentId: z
       .string()
       .min(1)
-      .max(128)
-      .regex(/^[A-Za-z0-9._-]+$/),
+      .max(192)
+      .regex(/^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$/),
     enabled: z.boolean().optional(),
     runnerOverrideId: z.string().min(1).max(128).nullable().optional(),
   })
