@@ -273,6 +273,26 @@ creates the per-project symlink at
 row into the `flows` table. The Add-Project UI will replace
 this CLI for end users — it is a manual smoke-test surface only.
 
+## Install a multi-flow package (ADR-087)
+
+A package (`maister-package.yaml` + flows + capability bundle) installs as
+ONE import — every member flow and the bundle share the package's resolved
+revision:
+
+```bash
+DB_URL=postgres://maister:maister@localhost:5432/maister \
+  pnpm --filter maister-web install-package \
+    --project maister-dev \
+    --source /abs/path/to/maister-plugins \
+    --version aif/v2.0.0 \
+    --path packages/aif
+```
+
+Declaratively the same import is one `packages[]` entry in `maister.yaml`
+(see `docs/configuration.md`); the platform catalog flow (add source →
+refresh → install → attach) lives on `/settings` and the project packages
+tab.
+
 Full pipeline reference: [Flow Installer](flow-installer.md).
 
 ## Author a portable Flow package
