@@ -102,10 +102,17 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   await page.goto(`/projects/${fx.projectSlug}`);
 
   // Scope to the board section: the HITL inbox also links to this run, so use
-  // the `data-board` wrapper to pick the flight card unambiguously.
-  const card = page.locator(`[data-board] a[href="/runs/${fx.runId}"]`);
+  // the `data-board` wrapper to pick the flight card unambiguously. Since the
+  // ADR-087 launch action the claimed card is a <div> container (interactive
+  // children), so locate it by testid + branch and assert the View run link.
+  const card = page
+    .locator('[data-board] [data-testid="flight-card"]')
+    .filter({ hasText: fx.branch });
 
   await expect(card).toBeVisible();
+  await expect(
+    card.locator(`a[href="/runs/${fx.runId}"]`).first(),
+  ).toBeVisible();
   await expect(card.getByText("claimed by")).toBeVisible(); // owner label
   await expect(card.getByText("E2E Admin")).toBeVisible(); // owner name
   await expect(

@@ -43,11 +43,12 @@ test("task creation works and a backlog card exposes a launch control", async ({
   // answers GET /health as ready (e2e/_seed/stub-supervisor.ts) so the board's
   // readiness gate passes and the button renders ENABLED — the disabled
   // "paused" state only appears when /health is unreachable.
+  // ADR-087: the launch control is the popover trigger labeled "Run again".
   const launchControl = page
     .locator("[data-board]")
     .getByText(title)
     .locator("xpath=ancestor::article")
-    .getByRole("button", { name: "launch", exact: true });
+    .getByRole("button", { name: "Run again", exact: true });
 
   await expect(launchControl).toBeVisible();
   await expect(launchControl).toBeEnabled();

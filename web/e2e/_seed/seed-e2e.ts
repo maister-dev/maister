@@ -2389,6 +2389,11 @@ async function seedM11cRefuseFixture(
   const repoPath = `/tmp/maister-e2e/${ids.project}`;
   const installedPath = `/tmp/maister-e2e/flows/aif-m11c-refuse@v0.0.1`;
 
+  // The ADR-087 launch dialog loads /api/runs/launch-options, which lists the
+  // project repo's branches — the refusal path now needs a REAL git repo even
+  // though the launch itself is refused before any worktree op.
+  await createGitRepo(repoPath);
+
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11C_REFUSE_SLUG]);
   // flow_revisions is project-independent (keyed by flow_ref_id + resolved
   // revision); delete the prior row by that unique key for idempotency.

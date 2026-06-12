@@ -185,7 +185,7 @@ export function FlightCard({
           >
             {card.agent}
           </span>
-          {needsInlineHitl || hasLifecycleActions ? (
+          {needsInlineHitl || hasLifecycleActions || hasLaunchAction ? (
             <Link
               className="rounded-full border border-line bg-paper px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-mute hover:text-ink"
               href={`/runs/${card.runId}`}
@@ -321,11 +321,19 @@ export function FlightCard({
   );
 
   if (needsInlineHitl || hasLifecycleActions || hasLaunchAction) {
-    return <div className={cardClass}>{cardBody}</div>;
+    return (
+      <div className={cardClass} data-testid="flight-card">
+        {cardBody}
+      </div>
+    );
   }
 
   return (
-    <Link className={cardClass} href={`/runs/${card.runId}`}>
+    <Link
+      className={cardClass}
+      data-testid="flight-card"
+      href={`/runs/${card.runId}`}
+    >
       {cardBody}
     </Link>
   );

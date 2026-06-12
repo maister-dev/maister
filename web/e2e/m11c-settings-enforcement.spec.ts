@@ -101,10 +101,24 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
 
   await expect(card).toBeVisible();
 
-  const launch = card.getByRole("button", { name: "launch", exact: true });
+  // ADR-087 launch popover: the card button opens a dialog; the POST fires
+  // from its confirm button.
+  const launch = card.getByRole("button", { name: "Run again", exact: true });
 
   await expect(launch).toBeVisible();
   await expect(launch).toBeEnabled();
+  await launch.click();
+
+  const dialog = page.getByTestId("task-launch-dialog");
+
+  await expect(dialog).toBeVisible();
+
+  const createRun = dialog.getByRole("button", {
+    name: "Create run",
+    exact: true,
+  });
+
+  await expect(createRun).toBeEnabled();
 
   // Intercept the launch POST: it must refuse with CONFIG (400) at the
   // settings-enforcement gate and the message must name the node id + class.
@@ -112,7 +126,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
     (r) => r.url().endsWith("/api/runs") && r.request().method() === "POST",
   );
 
-  await launch.click();
+  await createRun.click();
 
   const res = await launchResponse;
 
@@ -124,10 +138,8 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
   expect(body.message).toContain(fx.nodeId); // "implement"
   expect(body.message).toContain(fx.refusedClass); // "mcps"
 
-  // The UI surfaces the refusal: the LaunchPopover renders the typed code.
-  await expect(
-    card.getByRole("button", { name: "CONFIG", exact: true }),
-  ).toBeVisible();
+  // The UI surfaces the refusal: the dialog renders the typed code inline.
+  await expect(dialog.getByRole("alert")).toContainText("CONFIG");
 
   // No run was created — reload the board and assert the task is still in
   // Backlog (its Launch control re-renders) and no flight card links a run for
@@ -141,7 +153,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
 
   await expect(reloadedCard).toBeVisible();
   await expect(
-    reloadedCard.getByRole("button", { name: "launch", exact: true }),
+    reloadedCard.getByRole("button", { name: "Run again", exact: true }),
   ).toBeVisible();
   await expect(page.locator('[data-board] a[href^="/runs/"]')).toHaveCount(0);
 });

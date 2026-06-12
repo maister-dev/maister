@@ -27,13 +27,28 @@ test("flow-bound agent task launches through the gate and queues on the flow poo
     .locator("article")
     .filter({ hasText: "Bound-agent flow target" });
 
+  // ADR-087 launch popover: the card button opens a dialog that loads
+  // /api/runs/launch-options; the POST fires from its confirm button.
+  await card.getByRole("button", { name: "Run again", exact: true }).click();
+
+  const dialog = page.getByTestId("task-launch-dialog");
+
+  await expect(dialog).toBeVisible();
+
+  const createRun = dialog.getByRole("button", {
+    name: "Create run",
+    exact: true,
+  });
+
+  await expect(createRun).toBeEnabled();
+
   const launchResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/runs") &&
       response.request().method() === "POST",
   );
 
-  await card.getByRole("button", { name: "launch", exact: true }).click();
+  await createRun.click();
 
   const response = await launchResponse;
 
