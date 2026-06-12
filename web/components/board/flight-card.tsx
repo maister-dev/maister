@@ -9,6 +9,7 @@ import Link from "next/link";
 import clsx from "clsx";
 
 import { FlightCardHitl } from "@/components/board/flight-card-hitl";
+import { LaunchPopover } from "@/components/board/launch-popover";
 import { READINESS_BADGE } from "@/components/readiness-badge";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
@@ -26,10 +27,15 @@ export interface FlightCardLabels {
   readiness: Record<ReadinessState, string>;
   // M18 (T4.4): ready-to-promote / PR badge hint.
   readyToPromote: string;
+  runsCount: (count: number) => string;
+  launch: string;
+  launchUnavailable: string;
 }
 
 export interface FlightCardProps {
   card: FlightCardData;
+  canAct: boolean;
+  launchDisabledReason?: string;
   labels: FlightCardLabels;
 }
 
@@ -68,12 +74,18 @@ function segClass(seg: SpineSegment, needs: boolean): string {
   return "bg-line";
 }
 
-export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
+export function FlightCard({
+  card,
+  canAct,
+  launchDisabledReason,
+  labels,
+}: FlightCardProps): ReactElement {
   const isDone = card.status === "done";
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
   const isHumanWorking = card.status === "humanworking";
   const hasLifecycleActions = card.lifecycleActions.length > 0;
+  const hasLaunchAction = canAct;
   // A needs card with a pending HITL request must NOT be wrapped in <a> because
   // it contains interactive form elements (<button>/<textarea>). Use a <div>
   // container and an explicit "View" link instead.
@@ -146,6 +158,14 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
               title={labels.readiness[card.readiness]}
             >
               {labels.readiness[card.readiness]}
+            </span>
+          ) : null}
+          {card.runCount > 0 ? (
+            <span
+              className="rounded-full border border-line bg-ivory px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2"
+              data-testid="board-runs-count"
+            >
+              {labels.runsCount(card.runCount)}
             </span>
           ) : null}
           {card.readyToPromote ? (
@@ -279,6 +299,17 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
         </span>
       </div>
 
+      {hasLaunchAction ? (
+        <div className="flex items-center justify-end border-t border-dashed border-line-soft pt-2">
+          <LaunchPopover
+            disabledLabel={labels.launchUnavailable}
+            disabledReason={launchDisabledReason}
+            label={labels.launch}
+            taskId={card.taskId}
+          />
+        </div>
+      ) : null}
+
       {hasLifecycleActions ? (
         <WorkbenchLifecycleActions
           actions={card.lifecycleActions}
@@ -289,7 +320,7 @@ export function FlightCard({ card, labels }: FlightCardProps): ReactElement {
     </>
   );
 
-  if (needsInlineHitl || hasLifecycleActions) {
+  if (needsInlineHitl || hasLifecycleActions || hasLaunchAction) {
     return <div className={cardClass}>{cardBody}</div>;
   }
 

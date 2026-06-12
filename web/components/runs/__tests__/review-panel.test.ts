@@ -80,6 +80,10 @@ const LABELS = {
   promoteAnyway: "run.promoteAnyway",
   diffTruncated: "run.diffTruncated",
   promoteTruncated: "run.promoteTruncated",
+  promotionMerge: "run.promotionMerge",
+  promotionRebaseMerge: "run.promotionRebaseMerge",
+  promotionPullRequest: "run.promotionPullRequest",
+  promotionAiRebaseMerge: "run.promotionAiRebaseMerge",
 };
 
 type ReviewPanelProps = Parameters<typeof ReviewPanel>[0];
@@ -97,7 +101,13 @@ function render(over: Partial<ReviewPanelProps> = {}): string {
     baseCommit: "abc1234def5678",
     runBranch: "maister/feature-x",
     targetBranch: "release",
-    promotionMode: "local_merge",
+    promotionMode: "merge",
+    deliveryPolicy: {
+      strategy: "merge",
+      push: "never",
+      trigger: "manual",
+      targetBranch: "release",
+    },
     reviewedTargetCommit: "deadbeefcafe0123",
     readiness: READY,
     diff: EMPTY_DIFF_DTO,
@@ -161,12 +171,14 @@ describe("ReviewPanel — base→run→target review surface (M18 T4.2)", () => 
     expect(html).toContain("deadbeefcafe0123");
   });
 
-  it("renders a promotion-mode selector offering local_merge and pull_request", () => {
+  it("renders a promotion-mode selector offering all policy strategies", () => {
     const html = render();
 
     expect(html).toContain("run.promotionMode");
-    expect(html).toContain("local_merge");
-    expect(html).toContain("pull_request");
+    expect(html).toContain("run.promotionMerge");
+    expect(html).toContain('value="rebase_merge"');
+    expect(html).toContain('value="pull_request"');
+    expect(html).toContain('value="ai_rebase_merge"');
   });
 
   it("shows the drift warning + a 'Promote anyway' control in the drift state", () => {

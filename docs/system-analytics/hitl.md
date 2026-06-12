@@ -206,15 +206,15 @@ sequenceDiagram
     Note over R: Reject count incremented per run/step.<br/>Exceeding maxLoops=5 raises MaisterError(CONFIG).
 ```
 
-### `ai_rebase_merge` HITL surfacing (Designed, ADR-085)
+### `ai_rebase_merge` HITL surfacing (Implemented, ADR-085)
 
 Delivery-policy promotion does not create a parallel HITL lane. When
 `strategy="ai_rebase_merge"` hits a rebase conflict, the promote service records the
 failed command, conflicted paths, and promotion attempt id, then opens the same
-`merge_conflict` assignment shape used by the current merge-conflict UX. If the
-agent-backed resolver needs permission or structured input, those asks are persisted as
-standard HITL rows linked to the run and appear in the inbox and board needs-you surfaces
-with the same ownership, expiry, and response contracts documented above.
+`merge_conflict` assignment shape used by the current merge-conflict UX. The
+current implementation reuses the shared rebase-merge side-effect lane and the
+standard assignment/inbox contract; a future autonomous resolver may add normal
+permission/form/human HITL rows if it needs a richer interaction model.
 
 The UI acceptance for this designed slice is:
 
@@ -224,8 +224,9 @@ The UI acceptance for this designed slice is:
   with EN/RU labels for conflict, permission, and form states.
 - Error states: unresolved conflict, permission denial, aborted resolver, and restore
   failure surface as typed promotion statuses, never by message-string matching.
-- E2E owner: `web/e2e/multi-run-cost-policy.spec.ts` covers conflict-to-inbox
-  visibility and standard HITL response routing.
+- E2E owner: `web/e2e/multi-run-cost-policy.spec.ts` covers the delivery-policy
+  surfaces; promote service tests pin `ai_rebase_merge` conflict-to-assignment
+  behavior.
 
 Logging requirements: INFO on resolver start/finish with `runId`, `promotionAttemptId`,
 and assignment id; WARN on unresolved conflict, denied permission, abort, or restore

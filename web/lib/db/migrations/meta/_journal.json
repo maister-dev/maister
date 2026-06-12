@@ -330,6 +330,13 @@
       "when": 1781207814181,
       "tag": "0046_domain_events",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1781212800000,
+      "tag": "0047_multi_run_cost_policy",
+      "breakpoints": true
     }
   ]
 }

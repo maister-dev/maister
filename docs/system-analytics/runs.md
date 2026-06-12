@@ -305,11 +305,11 @@ behavior. `rebase_merge` runs a rebase before the final merge and restores or
 aborts cleanly on conflict. Conflict/degradation UI shows the failing command,
 paths, and status at parity with the current merge-conflict surface.
 
-`ai_rebase_merge` is separable. When a rebase conflict occurs, conflict
-resolution is executed on the existing run substrate and worktree, progress is
-emitted through the standard run event stream, and HITL appears as the existing
+`ai_rebase_merge` is separable but runs on the same durable promotion substrate:
+the policy mode is preserved for audit/API responses, the git side effect uses
+the existing rebase-merge lane, and conflicts appear as the existing
 `merge_conflict` assignment kind in the standard inbox/needs-you surfaces unless
-a future schema decision introduces a narrower action kind.
+a future autonomous resolver introduces additional standard HITL rows.
 
 ### Phase A audit and QA matrix (Designed, ADR-085)
 
@@ -317,7 +317,7 @@ Verified baseline for this slice:
 
 - Current latest ADR before this feature: ADR-084; this feature uses ADR-085.
 - Current latest migration: `0044_mcp_supported_agents_all_adapters`; the next
-  schema migration is `0045`.
+  schema migration is `0047`.
 - Launch choke points: `web/lib/services/runs.ts`, `web/app/api/runs/route.ts`,
   `web/app/api/v1/ext/runs/route.ts`,
   `web/app/api/runs/launch-options/route.ts`, and

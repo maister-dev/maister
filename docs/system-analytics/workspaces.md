@@ -258,7 +258,7 @@ only choose the side-effect path and the default UI selection:
 | `merge` | `git merge --no-ff` from run branch into target branch | Existing `local_merge` claim, readiness re-gate, target-drift token, conflict assignment, finalize CAS. |
 | `pull_request` | Push run branch and create/update provider PR/MR | Existing PR claim and idempotent PR lookup/update. |
 | `rebase_merge` | Rebase run branch onto target, then merge | Same claim and finalize token; on conflict abort/restore and surface command/path/status. |
-| `ai_rebase_merge` | On rebase conflict, start agent-assisted resolution before re-entering readiness | Same run event stream and assignment inbox; conflict HITL uses `merge_conflict` unless a later schema decision adds a narrower kind. |
+| `ai_rebase_merge` | Rebase run branch onto target while preserving the `ai_rebase_merge` policy/audit mode | Same claim/finalize token as `rebase_merge`; conflict HITL uses `merge_conflict` unless a later resolver adds standard HITL rows. |
 
 `push=on_success` means push the successfully delivered target or run branch only
 after the local side-effect succeeds. Push rejection is a degradation/refusal

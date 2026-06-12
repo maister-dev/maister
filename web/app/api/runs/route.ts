@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { launchRun } from "@/lib/services/runs";
 
 const log = pino({
@@ -16,9 +17,11 @@ const log = pino({
 const postBodySchema = z
   .object({
     taskId: z.string().min(1),
+    flowId: z.string().min(1).optional(),
     runnerId: z.string().min(1).optional(),
     baseBranch: z.string().min(1).optional(),
     targetBranch: z.string().min(1).optional(),
+    deliveryPolicy: storedDeliveryPolicySchema.optional(),
   })
   .strict();
 
@@ -84,9 +87,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const result = await launchRun(
       {
         taskId: body.taskId,
+        flowId: body.flowId,
         runnerId: body.runnerId,
         baseBranch: body.baseBranch,
         targetBranch: body.targetBranch,
+        deliveryPolicy: body.deliveryPolicy,
       },
       {
         actorUserId: user.id,

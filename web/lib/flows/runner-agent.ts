@@ -63,6 +63,7 @@ export type RunAgentStepCtx = {
   projectSlug: string;
   runId: string;
   stepId: string;
+  nodeAttemptId?: string;
   worktreePath: string;
   executor: {
     id: string;
@@ -618,6 +619,7 @@ async function runNewSession(
       projectSlug: ctx.projectSlug,
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
+      nodeAttemptId: ctx.nodeAttemptId,
       executor: executorToSupervisorInput(ctx.executor),
       runner: ctx.runner,
       capabilityProfilePath: ctx.capabilityProfilePath,
@@ -664,6 +666,7 @@ async function runNewSession(
     try {
       promptResult = await api.sendPrompt(session.sessionId, {
         stepId: ctx.stepId,
+        nodeAttemptId: ctx.nodeAttemptId,
         prompt: resolvedPrompt,
       });
     } finally {
@@ -813,6 +816,7 @@ async function runSlashInExisting(
   try {
     promptResult = await api.sendPrompt(sessionId, {
       stepId: ctx.stepId,
+      nodeAttemptId: ctx.nodeAttemptId,
       prompt: resolvedPrompt,
     });
   } finally {

@@ -1,3 +1,5 @@
+import type { HitlOption } from "@/lib/queries/hitl";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,8 +44,6 @@ import {
   HitlDecisionControls,
   reviewLoopInfo,
 } from "@/components/board/hitl-decision-controls";
-
-import type { HitlOption } from "@/lib/queries/hitl";
 
 const LABELS = {
   criticalityLabel: "run.criticalityLabel",

@@ -1,3 +1,8 @@
+import type {
+  DeliveryPolicy,
+  StoredDeliveryPolicy,
+} from "@/lib/runs/delivery-policy";
+
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -122,6 +127,9 @@ export const projects = pgTable("projects", {
   maisterYamlPath: text("maister_yaml_path").notNull(),
   defaultRunnerId: text("default_runner_id"),
   promotionMode: text("promotion_mode"),
+  deliveryPolicyDefault: jsonb(
+    "delivery_policy_default",
+  ).$type<StoredDeliveryPolicy | null>(),
   taskKey: text("task_key").notNull().unique(),
   nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -1061,6 +1069,9 @@ export const runs = pgTable(
     resolvedCapabilitySet: jsonb(
       "resolved_capability_set",
     ).$type<ResolvedCapabilitySet>(),
+    deliveryPolicySnapshot: jsonb(
+      "delivery_policy_snapshot",
+    ).$type<DeliveryPolicy | null>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -1075,6 +1086,51 @@ export const runs = pgTable(
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
     idxRunner: index("runs_runner_idx").on(t.runnerId),
+  }),
+);
+
+export const runCostRollups = pgTable(
+  "run_cost_rollups",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "set null",
+    }),
+    flowId: text("flow_id").references(() => flows.id, {
+      onDelete: "set null",
+    }),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+    resumeInputTokens: integer("resume_input_tokens").notNull().default(0),
+    resumeOutputTokens: integer("resume_output_tokens").notNull().default(0),
+    resumeCacheReadTokens: integer("resume_cache_read_tokens")
+      .notNull()
+      .default(0),
+    resumeCacheCreationTokens: integer("resume_cache_creation_tokens")
+      .notNull()
+      .default(0),
+    byModel: jsonb("by_model")
+      .$type<Record<string, Record<string, number>>>()
+      .notNull()
+      .default({}),
+    sourceEventCount: integer("source_event_count").notNull().default(0),
+    sourceCursor: text("source_cursor"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProjectFlow: index("run_cost_rollups_project_flow_idx").on(
+      t.projectId,
+      t.flowId,
+    ),
   }),
 );
 
@@ -1563,6 +1619,53 @@ export const nodeAttempts = pgTable(
       t.attempt,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
+  }),
+);
+
+export const nodeAttemptCostRollups = pgTable(
+  "node_attempt_cost_rollups",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id")
+      .notNull()
+      .references(() => nodeAttempts.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+    resumeInputTokens: integer("resume_input_tokens").notNull().default(0),
+    resumeOutputTokens: integer("resume_output_tokens").notNull().default(0),
+    resumeCacheReadTokens: integer("resume_cache_read_tokens")
+      .notNull()
+      .default(0),
+    resumeCacheCreationTokens: integer("resume_cache_creation_tokens")
+      .notNull()
+      .default(0),
+    sourceEventCount: integer("source_event_count").notNull().default(0),
+    sourceCursor: text("source_cursor"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqAttemptModel: unique("node_attempt_cost_rollups_attempt_model_uq").on(
+      t.nodeAttemptId,
+      t.model,
+    ),
+    idxRunAttempt: index("node_attempt_cost_rollups_run_attempt_idx").on(
+      t.runId,
+      t.nodeAttemptId,
+    ),
   }),
 );
 

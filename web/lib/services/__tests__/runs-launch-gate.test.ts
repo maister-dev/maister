@@ -161,6 +161,7 @@ function taskRow(overrides: Record<string, unknown> = {}) {
 // flow-run `runs` select resolves by table identity, NOT positionally, so the
 // slots below are unchanged). Slots 8-11 omitted → `[]` past the array end.
 function seedSelects(opts: { task?: Record<string, unknown> } = {}): void {
+  state.latestFlowRuns = [];
   state.selectResults = [
     [opts.task ?? taskRow()],
     [
@@ -179,6 +180,7 @@ function seedSelects(opts: { task?: Record<string, unknown> } = {}): void {
     [
       {
         id: FLOW_ID,
+        projectId: PROJECT_ID,
         flowRefId: "bugfix",
         enabledRevisionId: REVISION_ID,
         enablementState: "Enabled",
@@ -293,6 +295,35 @@ describe("launchRun — classifier gate ACCEPTS retry-eligible tasks (M28/T2.1)"
     expect(result.runId).toBeDefined();
     expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
   });
+
+  it("accepts a task whose latest flow run is Crashed for explicit run-again relaunch", async () => {
+    seedSelects({ task: taskRow({ status: "InFlight" }) });
+    state.latestFlowRuns = [flowRun("Crashed")];
+
+    const result = await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
+
+    expect(result.runId).toBeDefined();
+    expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a Done task for explicit run-again relaunch", async () => {
+    seedSelects({ task: taskRow({ status: "Done" }) });
+
+    const result = await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
+
+    expect(result.runId).toBeDefined();
+    expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts an Abandoned task with a retryable latest run for explicit run-again relaunch", async () => {
+    seedSelects({ task: taskRow({ status: "Abandoned" }) });
+    state.latestFlowRuns = [flowRun("Failed")];
+
+    const result = await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
+
+    expect(result.runId).toBeDefined();
+    expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("launchRun — classifier gate REFUSES non-launchable tasks (M28/T2.1)", () => {
@@ -305,47 +336,6 @@ describe("launchRun — classifier gate REFUSES non-launchable tasks (M28/T2.1)"
     ).rejects.toMatchObject({
       code: "PRECONDITION",
       message: expect.stringContaining("classification: busy"),
-    });
-
-    expect(mocks.addWorktree).not.toHaveBeenCalled();
-  });
-
-  it("refuses a task whose latest run is Crashed (owes recover/discard)", async () => {
-    seedSelects({ task: taskRow({ status: "InFlight" }) });
-    state.latestFlowRuns = [flowRun("Crashed")];
-
-    await expect(
-      launchRun({ taskId: TASK_ID }, ctx(), fakeDb),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION",
-      message: expect.stringContaining("classification: crashed"),
-    });
-
-    expect(mocks.addWorktree).not.toHaveBeenCalled();
-  });
-
-  it("refuses a Done task (target_terminal)", async () => {
-    seedSelects({ task: taskRow({ status: "Done" }) });
-
-    await expect(
-      launchRun({ taskId: TASK_ID }, ctx(), fakeDb),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION",
-      message: expect.stringContaining("classification: target_terminal"),
-    });
-
-    expect(mocks.addWorktree).not.toHaveBeenCalled();
-  });
-
-  it("refuses an Abandoned task even with a retryable latest run (terminal precedence)", async () => {
-    seedSelects({ task: taskRow({ status: "Abandoned" }) });
-    state.latestFlowRuns = [flowRun("Failed")];
-
-    await expect(
-      launchRun({ taskId: TASK_ID }, ctx(), fakeDb),
-    ).rejects.toMatchObject({
-      code: "PRECONDITION",
-      message: expect.stringContaining("classification: target_terminal"),
     });
 
     expect(mocks.addWorktree).not.toHaveBeenCalled();
@@ -366,7 +356,7 @@ describe("launchRun — classifier gate REFUSES non-launchable tasks (M28/T2.1)"
   });
 
   it("throws a MaisterError (not a plain Error) on refusal", async () => {
-    seedSelects({ task: taskRow({ status: "Done" }) });
+    seedSelects({ task: taskRow({ status: "InFlight" }) });
 
     await expect(
       launchRun({ taskId: TASK_ID }, ctx(), fakeDb),

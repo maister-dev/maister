@@ -6324,8 +6324,8 @@ override to promote-time override.
 - Observatory remains read-only. It may add cost dimensions computed from bulk
   DB rows and derived cost rollups, but it adds no mutating route, background
   job, or recommendation write path.
-- The next schema migration after this decision is `0047`; the next ADR number
-  is ADR-087 after ADR-085 and ADR-086 on the rebased `main`.
+- The schema migration for this decision is `0047`; the ADR number is ADR-087
+  after ADR-085 and ADR-086 on the rebased `main`.
 
 ---
 

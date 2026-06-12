@@ -18,11 +18,24 @@ import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  deliveryPolicyFromLegacyPromotionMode,
+  effectivePromotionModeFromPolicy,
+  legacyPromotionModeFromStrategy,
+  resolveDeliveryPolicy,
+  strategyFromLegacyPromotionMode,
+  type DeliveryPolicy,
+  type DeliveryPolicyOverride,
+  type EffectivePromotionMode,
+  type LegacyPromotionMode,
+  type StoredDeliveryPolicy,
+} from "@/lib/runs/delivery-policy";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
   branchExists,
   promoteLocalMerge,
+  promoteRebaseMerge,
   pushBranch,
   resolveBaseCommit,
 } from "@/lib/worktree";
@@ -42,10 +55,12 @@ const log = pino({
 });
 
 export type PromoteRunInput = {
-  mode: "local_merge" | "pull_request";
+  mode?: LegacyPromotionMode;
+  deliveryPolicyOverride?: DeliveryPolicyOverride;
   targetBranch?: string;
   reviewedTargetCommit?: string;
   allowTargetDrift?: boolean;
+  autoOnReady?: boolean;
 };
 
 export type PromoteRunContext = {
@@ -55,7 +70,8 @@ export type PromoteRunContext = {
 
 export type PromoteRunResult = {
   ok: true;
-  mode: "local_merge" | "pull_request";
+  mode: LegacyPromotionMode | EffectivePromotionMode;
+  deliveryPolicy?: DeliveryPolicy;
   commit?: string;
   pullRequestUrl: string | null;
   prNumber?: number | null;
@@ -225,6 +241,119 @@ async function recordPromotionArtifact(args: {
   }
 }
 
+async function promoteMergeSideEffect(args: {
+  mode: "local_merge" | "rebase_merge";
+  projectRepoPath: string;
+  sourceBranch: string;
+  targetBranch: string;
+}): Promise<string> {
+  if (args.mode === "rebase_merge") {
+    return promoteRebaseMerge({
+      projectRepoPath: args.projectRepoPath,
+      sourceBranch: args.sourceBranch,
+      targetBranch: args.targetBranch,
+    });
+  }
+
+  return promoteLocalMerge({
+    projectRepoPath: args.projectRepoPath,
+    sourceBranch: args.sourceBranch,
+    targetBranch: args.targetBranch,
+  });
+}
+
+function resolvePromotionPolicy(args: {
+  input: PromoteRunInput;
+  run: any;
+  workspace: any;
+  project: any | null;
+}): DeliveryPolicy {
+  const projectMainBranch =
+    args.project?.mainBranch ??
+    args.input.targetBranch ??
+    args.workspace.targetBranch ??
+    "main";
+  const snapshot = args.run.deliveryPolicySnapshot as DeliveryPolicy | null;
+  const legacyPolicy = deliveryPolicyFromLegacyPromotionMode({
+    projectPromotionMode:
+      args.workspace.promotionMode ?? args.project?.promotionMode ?? null,
+    projectMainBranch,
+  });
+  const projectPolicy =
+    (args.project?.deliveryPolicyDefault as StoredDeliveryPolicy | null) ??
+    null;
+  const basePolicy = snapshot ?? projectPolicy ?? legacyPolicy;
+  const modeOverride = args.input.mode
+    ? { strategy: strategyFromLegacyPromotionMode(args.input.mode) }
+    : {};
+
+  return resolveDeliveryPolicy({
+    projectDefault: basePolicy,
+    projectPromotionMode: args.workspace.promotionMode,
+    projectMainBranch,
+    launchOverride: {
+      ...modeOverride,
+      ...args.input.deliveryPolicyOverride,
+      ...(args.input.targetBranch
+        ? { targetBranch: args.input.targetBranch }
+        : {}),
+    },
+  });
+}
+
+function promotionModeForEffectiveMode(
+  mode: EffectivePromotionMode,
+): LegacyPromotionMode {
+  if (mode === "ai_rebase_merge") return "rebase_merge";
+
+  return legacyPromotionModeFromStrategy(mode);
+}
+
+async function maybePushTargetBranch(args: {
+  db: Db;
+  claim: FlowClaim;
+  commit: string;
+}): Promise<void> {
+  if (args.claim.policy.push !== "on_success") return;
+
+  try {
+    await pushBranch({
+      projectRepoPath: args.claim.workspace.parentRepoPath,
+      remote: "origin",
+      branch: args.claim.resolvedTarget,
+    });
+    log.info(
+      {
+        runId: args.claim.run.id,
+        projectId: args.claim.run.projectId,
+        mode: args.claim.resolvedMode,
+        targetBranch: args.claim.resolvedTarget,
+        commit: args.commit,
+      },
+      "flow run target branch pushed after promotion",
+    );
+  } catch (err) {
+    await markPromotionFailed(
+      args.db,
+      args.claim.workspace.id,
+      args.claim.attemptId,
+    );
+    log.warn(
+      {
+        runId: args.claim.run.id,
+        projectId: args.claim.run.projectId,
+        mode: args.claim.resolvedMode,
+        targetBranch: args.claim.resolvedTarget,
+        command: `git push origin ${args.claim.resolvedTarget}`,
+        parentRepoPath: args.claim.workspace.parentRepoPath,
+        err: (err as Error).message,
+      },
+      "flow run promotion degraded to manual after push failure",
+    );
+    throw err;
+  }
+}
+
 // ---- flow promotion -------------------------------------------------------
 
 async function promoteFlowRun(
@@ -250,23 +379,19 @@ async function promoteFlowRun(
     await ctx.authorize(run.projectId);
 
     // Legacy-row fallback (§3.6): derive a missing target branch from the
-    // project's main branch, never a silent null into git. The project row is
-    // loaded ONLY when both the request and the workspace snapshot lack a target
-    // (pre-M18 row) — the live path never touches it. The promotion MODE is
-    // always supplied by the request (required enum), so no project fallback is
-    // needed for it.
+    // project's main branch, never a silent null into git. Policy-era rows use
+    // the run snapshot; pre-policy rows keep the old workspace/request mode.
     let project: any = null;
-    const needsTargetFallback = !input.targetBranch && !workspace.targetBranch;
+    const needsProjectFallback =
+      (!run.deliveryPolicySnapshot && !workspace.promotionMode) ||
+      (!input.targetBranch && !workspace.targetBranch);
 
-    if (needsTargetFallback) {
+    if (needsProjectFallback) {
       project = await loadProject(tx, run.projectId);
     }
 
-    const resolvedTarget =
-      input.targetBranch ??
-      workspace.targetBranch ??
-      project?.mainBranch ??
-      null;
+    const policy = resolvePromotionPolicy({ input, run, workspace, project });
+    const resolvedTarget = policy.targetBranch ?? null;
 
     if (!resolvedTarget) {
       throw new MaisterError(
@@ -275,7 +400,8 @@ async function promoteFlowRun(
       );
     }
 
-    const resolvedMode = input.mode;
+    const resolvedMode = effectivePromotionModeFromPolicy(policy);
+    const promotionMode = promotionModeForEffectiveMode(resolvedMode);
 
     // Readiness re-gate (T2.3) — NO claim, NO git on a not-ready verdict.
     const readiness = await assertEvidenceReady(runId, "review", tx);
@@ -301,7 +427,7 @@ async function promoteFlowRun(
     // resolved — proving it exists before a claim or any side-effect.
     // allowTargetDrift waives ONLY the SHA-equality comparison; it never skips
     // the reviewed-SHA input or the target-existence check.
-    if (!input.reviewedTargetCommit) {
+    if (!input.autoOnReady && !input.reviewedTargetCommit) {
       throw new MaisterError(
         "PRECONDITION",
         "reviewedTargetCommit is required",
@@ -313,7 +439,11 @@ async function promoteFlowRun(
       baseRef: resolvedTarget,
     });
 
-    if (!input.allowTargetDrift && liveTip !== input.reviewedTargetCommit) {
+    if (
+      !input.autoOnReady &&
+      !input.allowTargetDrift &&
+      liveTip !== input.reviewedTargetCommit
+    ) {
       log.debug(
         {
           runId,
@@ -346,13 +476,13 @@ async function promoteFlowRun(
         promotionAttemptId: attemptId,
         promotionClaimedAt: claimedAt,
         promotionOwnerUserId: ctx.sessionUser.id,
-        promotionMode: resolvedMode,
+        promotionMode,
         targetBranch: resolvedTarget,
       })
       .where(eq(workspaces.id, workspace.id));
 
     log.debug(
-      { runId, attemptId, resolvedMode, resolvedTarget },
+      { runId, attemptId, resolvedMode, resolvedTarget, policy },
       "promote claim minted",
     );
 
@@ -361,10 +491,25 @@ async function promoteFlowRun(
       run,
       workspace,
       resolvedMode,
+      responseMode: input.mode ?? resolvedMode,
+      promotionMode,
       resolvedTarget,
+      policy,
       baseCommit: workspace.baseCommit ?? null,
     };
   });
+
+  if (claim.resolvedMode === "ai_rebase_merge") {
+    log.info(
+      {
+        runId,
+        projectId: claim.run.projectId,
+        attemptId: claim.attemptId,
+        targetBranch: claim.resolvedTarget,
+      },
+      "ai_rebase_merge promotion attempt started",
+    );
+  }
 
   // ---- Side-effects: NO lock held (§3.2 step 2).
   if (claim.resolvedMode === "pull_request") {
@@ -379,13 +524,33 @@ async function promoteFlowRun(
   let commit: string;
 
   try {
-    commit = await promoteLocalMerge({
+    const mergeMode =
+      claim.promotionMode === "rebase_merge" ? "rebase_merge" : "local_merge";
+
+    commit = await promoteMergeSideEffect({
+      mode: mergeMode,
       projectRepoPath: claim.workspace.parentRepoPath,
       sourceBranch: claim.workspace.branch,
       targetBranch: claim.resolvedTarget,
     });
+    await maybePushTargetBranch({ db, claim, commit });
   } catch (err) {
     if (isMaisterError(err) && err.code === "CONFLICT") {
+      if (claim.resolvedMode === "ai_rebase_merge") {
+        log.warn(
+          {
+            runId,
+            projectId: claim.run.projectId,
+            attemptId: claim.attemptId,
+            targetBranch: claim.resolvedTarget,
+            sourceBranch: claim.workspace.branch,
+            parentRepoPath: claim.workspace.parentRepoPath,
+            command: `git rebase ${claim.resolvedTarget}`,
+          },
+          "ai_rebase_merge promotion conflict surfaced to assignment",
+        );
+      }
+
       await db.transaction(async (tx: Db) => {
         const ws = await loadWorkspaceForUpdate(tx, runId);
 
@@ -480,8 +645,9 @@ async function promoteFlowRun(
       projectId: claim.run.projectId,
       runId,
       data: {
-        mode: "local_merge",
+        mode: claim.responseMode,
         target: claim.resolvedTarget,
+        deliveryPolicy: claim.policy,
         pullRequestUrl: null,
       },
     });
@@ -510,16 +676,18 @@ async function promoteFlowRun(
     log.info(
       {
         runId,
-        mode: "local_merge",
+        mode: claim.responseMode,
         commit,
         targetBranch: claim.resolvedTarget,
+        deliveryPolicy: claim.policy,
       },
       "flow run promoted to Done",
     );
 
     return {
       ok: true as const,
-      mode: "local_merge" as const,
+      mode: claim.responseMode,
+      deliveryPolicy: claim.policy,
       commit,
       pullRequestUrl: null,
       prNumber: null,
@@ -545,8 +713,11 @@ type FlowClaim = {
   attemptId: string;
   run: any;
   workspace: any;
-  resolvedMode: "local_merge" | "pull_request";
+  resolvedMode: EffectivePromotionMode;
+  responseMode: LegacyPromotionMode | EffectivePromotionMode;
+  promotionMode: LegacyPromotionMode;
   resolvedTarget: string;
+  policy: DeliveryPolicy;
   baseCommit: string | null;
 };
 
@@ -688,8 +859,9 @@ async function finalizePullRequest(args: {
       projectId: claim.run.projectId,
       runId,
       data: {
-        mode: "pull_request",
+        mode: claim.responseMode,
         target: claim.resolvedTarget,
+        deliveryPolicy: claim.policy,
         pullRequestUrl: pr.url,
       },
     });
@@ -718,7 +890,7 @@ async function finalizePullRequest(args: {
     log.info(
       {
         runId,
-        mode: "pull_request",
+        mode: claim.responseMode,
         prUrl: pr.url,
         prNumber: pr.number,
         targetBranch: claim.resolvedTarget,
@@ -728,7 +900,8 @@ async function finalizePullRequest(args: {
 
     return {
       ok: true as const,
-      mode: "pull_request" as const,
+      mode: claim.responseMode,
+      deliveryPolicy: claim.policy,
       pullRequestUrl: pr.url,
       prNumber: pr.number,
     };
@@ -819,10 +992,10 @@ async function promoteScratchRun(
 ): Promise<PromoteRunResult> {
   // Scratch runs are ephemeral and target-locked to their base branch; PR mode
   // is a flow-run promotion only (§3.2). Refuse before minting a claim.
-  if (input.mode === "pull_request") {
+  if (input.mode !== "local_merge") {
     throw new MaisterError(
       "PRECONDITION",
-      "pull_request promotion is not supported for scratch runs",
+      `${input.mode} promotion is not supported for scratch runs`,
     );
   }
 

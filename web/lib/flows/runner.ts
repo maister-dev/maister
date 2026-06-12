@@ -42,6 +42,7 @@ import {
 import { atomicWriteJson } from "@/lib/atomic";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { promoteNextPending } from "@/lib/scheduler";
+import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import {
   isMaisterError,
   MaisterError,
@@ -1021,6 +1022,7 @@ export async function runFlow(
       }
     });
     log2.info({}, "runFlow ended Review");
+    await deliverRunIfAutoReady(runId, db);
   }
 
   await cleanupSlashSession(

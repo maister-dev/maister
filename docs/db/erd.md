@@ -25,7 +25,7 @@ outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 **ADR-083 (Implemented, migration `0043`)** social-board tables `TASK_RELATIONS`,
 `TASK_COMMENTS`, `TASK_ACTIVITY`, `TASK_SUBSCRIBERS`, `INBOX_ITEMS` plus
 `PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`, and the
-**ADR-085 (Designed, migration `0045`)** delivery-policy and cost-rollup
+**ADR-085 (Designed, migration `0047`)** delivery-policy and cost-rollup
 projection fields/tables (`PROJECTS.delivery_policy_default`,
 `RUNS.delivery_policy_snapshot`, `RUN_COST_ROLLUPS`,
 `NODE_ATTEMPT_COST_ROLLUPS`). For partial views by domain, see

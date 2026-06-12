@@ -85,3 +85,33 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
     expect(mocks.launchRun).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/runs — ADR-085 flow and delivery-policy overrides", () => {
+  it("accepts flowId and deliveryPolicy and forwards them to launchRun", async () => {
+    const deliveryPolicy = {
+      strategy: "ai_rebase_merge",
+      push: "on_success",
+      trigger: "auto_on_ready",
+      targetBranch: "release",
+    };
+
+    const res = await POST(
+      request({
+        taskId: "task-1",
+        flowId: "flow-2",
+        deliveryPolicy,
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+
+    const input = mocks.launchRun.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(input).toMatchObject({
+      taskId: "task-1",
+      flowId: "flow-2",
+      deliveryPolicy,
+    });
+  });
+});

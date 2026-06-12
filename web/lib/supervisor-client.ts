@@ -80,6 +80,7 @@ export type CreateSessionInput = {
   projectSlug: string;
   worktreePath: string;
   stepId: string;
+  nodeAttemptId?: string;
   executor: SupervisorExecutorInput;
   runner?: SupervisorRunnerInput;
   resumeSessionId?: string;
@@ -107,6 +108,7 @@ export type PromptResult = {
 
 export type SendPromptInput = {
   stepId: string;
+  nodeAttemptId?: string;
   prompt: string;
   // M30 (ADR-078 L2): answer-only gate-chat turn — the supervisor
   // auto-rejects unambiguous mutating toolCall kinds while it is in flight.
@@ -118,6 +120,7 @@ export type SupervisorSessionRecord = {
   runId: string;
   projectSlug: string;
   stepId: string;
+  nodeAttemptId?: string;
   status: "live" | "exited" | "crashed";
   pid: number;
   startedAt: string;

@@ -44,9 +44,14 @@ import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
 import {
-  classifyTaskLaunchability,
+  classifyManualTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
+import {
+  legacyPromotionModeFromStrategy,
+  resolveDeliveryPolicy,
+  type StoredDeliveryPolicy,
+} from "@/lib/runs/delivery-policy";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
@@ -133,12 +138,14 @@ const LAUNCHABLE_ENABLEMENT_STATES = new Set<string>([
 
 export type LaunchRunInput = {
   taskId: string;
+  flowId?: string;
   runnerId?: string;
   baseBranch?: string;
   targetBranch?: string;
+  deliveryPolicy?: StoredDeliveryPolicy;
 };
 
-export type PromotionMode = "local_merge" | "pull_request";
+export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
 
 // M18 §3.4: resolve the per-run promotion mode from the override chain. The
 // `local_merge` default is folded HERE (not as a per-key zod default), so a
@@ -151,7 +158,11 @@ export function resolvePromotionMode(args: {
 }): PromotionMode {
   const candidate = args.launchOverride ?? args.projectPromotionMode;
 
-  if (candidate === "local_merge" || candidate === "pull_request") {
+  if (
+    candidate === "local_merge" ||
+    candidate === "rebase_merge" ||
+    candidate === "pull_request"
+  ) {
     return candidate;
   }
 
@@ -259,7 +270,7 @@ export async function launchRun(
   const openBlockers =
     (await getOpenRelationBlockers([input.taskId], _db)).get(input.taskId) ??
     [];
-  const launchability = classifyTaskLaunchability(task, latestFlowRun, {
+  const launchability = classifyManualTaskLaunchability(task, latestFlowRun, {
     openBlockers,
   });
 
@@ -292,11 +303,17 @@ export async function launchRun(
   const flowRows = await _db
     .select()
     .from(flows)
-    .where(eq(flows.id, task.flowId));
+    .where(eq(flows.id, input.flowId ?? task.flowId));
   const flow = flowRows[0];
 
   if (!flow) {
     throw new MaisterError("PRECONDITION", "flow not found for task");
+  }
+  if (flow.projectId !== project.id) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `flow "${flow.id}" is not enabled for project ${project.slug}`,
+    );
   }
 
   // Resolve the project-enabled package revision (M10, ADR-021) and refuse
@@ -641,7 +658,18 @@ export async function launchRun(
   // allow-list) BEFORE any git side-effect — an unknown branch is a
   // PRECONDITION refusal and no worktree is created.
   const base = input.baseBranch ?? project.mainBranch;
-  const target = input.targetBranch ?? base;
+  const deliveryPolicy = resolveDeliveryPolicy({
+    projectDefault:
+      project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
+    projectPromotionMode: project.promotionMode,
+    projectMainBranch: project.mainBranch,
+    launchOverride: {
+      ...input.deliveryPolicy,
+      targetBranch:
+        input.deliveryPolicy?.targetBranch ?? input.targetBranch ?? undefined,
+    },
+  });
+  const target = input.targetBranch ?? deliveryPolicy.targetBranch ?? base;
   const knownBranches = new Set(await listBranches(project.repoPath));
 
   if (!knownBranches.has(base)) {
@@ -661,9 +689,10 @@ export async function launchRun(
     projectRepoPath: project.repoPath,
     baseRef: base,
   });
-  const promotionMode = resolvePromotionMode({
-    projectPromotionMode: project.promotionMode,
-  });
+  const promotionMode: PromotionMode =
+    deliveryPolicy.strategy === "ai_rebase_merge"
+      ? "rebase_merge"
+      : legacyPromotionModeFromStrategy(deliveryPolicy.strategy);
 
   log.info(
     {
@@ -679,7 +708,7 @@ export async function launchRun(
     "POST /api/runs preconditions ok",
   );
   log.debug(
-    { runId, base, target, baseCommit, promotionMode },
+    { runId, base, target, baseCommit, promotionMode, deliveryPolicy },
     "POST /api/runs branch targeting resolved",
   );
 
@@ -768,6 +797,7 @@ export async function launchRun(
         capabilityAgent,
         runnerSnapshot: runnerResolution.runnerSnapshot,
         resolvedCapabilitySet,
+        deliveryPolicySnapshot: deliveryPolicy,
         createdByUserId: ctx.actorUserId,
         status: "Pending",
         // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is

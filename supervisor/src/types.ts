@@ -166,6 +166,12 @@ export const StartSessionRequestSchema = z
       .min(1)
       .max(128)
       .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+    nodeAttemptId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+      .optional(),
     executor: ExecutorSchema,
     runner: RunnerLaunchSchema.optional(),
     resumeSessionId: z
@@ -205,6 +211,12 @@ export const SendPromptRequestSchema = z.object({
     .min(1)
     .max(128)
     .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+  nodeAttemptId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+    .optional(),
   prompt: z.string().max(1_000_000),
   // M30 (ADR-078 L2): the prompt is an answer-only gate-chat turn — while it
   // is in flight, requestPermission auto-rejects unambiguous mutating
@@ -324,6 +336,7 @@ export type SessionRecord = {
   runId: string;
   projectSlug: string;
   stepId: string;
+  nodeAttemptId?: string;
   status: SessionStatus;
   pid: number;
   startedAt: string;

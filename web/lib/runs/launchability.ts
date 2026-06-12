@@ -43,6 +43,19 @@ const RUN_STATUS_LAUNCHABILITY = {
   Failed: "launchable",
 } as const satisfies Record<RunStatus, TaskLaunchability>;
 
+const MANUAL_RUN_STATUS_LAUNCHABILITY = {
+  Pending: "busy",
+  Running: "busy",
+  NeedsInput: "busy",
+  NeedsInputIdle: "busy",
+  HumanWorking: "busy",
+  Review: "launchable",
+  Crashed: "launchable",
+  Done: "launchable",
+  Abandoned: "launchable",
+  Failed: "launchable",
+} as const satisfies Record<RunStatus, TaskLaunchability>;
+
 export function classifyTaskLaunchability(
   task: { status: TaskStatus },
   latestRun: { status: RunStatus } | null,
@@ -61,6 +74,25 @@ export function classifyTaskLaunchability(
 
   // Precedence: target_terminal > crashed > busy > blocked > launchable —
   // relations gate LAUNCHING only; they never mask an active run's state.
+  if (base === "launchable" && (relationGate?.openBlockers.length ?? 0) > 0) {
+    return "blocked";
+  }
+
+  return base;
+}
+
+export function classifyManualTaskLaunchability(
+  task: { status: TaskStatus },
+  latestRun: { status: RunStatus } | null,
+  relationGate?: RelationGate,
+): TaskLaunchability {
+  const base =
+    latestRun === null
+      ? task.status === "InFlight"
+        ? "busy"
+        : "launchable"
+      : MANUAL_RUN_STATUS_LAUNCHABILITY[latestRun.status];
+
   if (base === "launchable" && (relationGate?.openBlockers.length ?? 0) > 0) {
     return "blocked";
   }

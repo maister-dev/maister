@@ -192,6 +192,7 @@ function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
     [
       {
         id: FLOW_ID,
+        projectId: PROJECT_ID,
         flowRefId: "bugfix",
         enabledRevisionId: REVISION_ID,
         enablementState: "Enabled",
@@ -364,6 +365,12 @@ describe("resolvePromotionMode — SET / CLEAR / re-set (M18 §3.4)", () => {
   it("uses the project promotion_mode when set and no launch override", () => {
     expect(resolvePromotionMode({ projectPromotionMode: "pull_request" })).toBe(
       "pull_request",
+    );
+  });
+
+  it("accepts rebase_merge project promotion mode", () => {
+    expect(resolvePromotionMode({ projectPromotionMode: "rebase_merge" })).toBe(
+      "rebase_merge",
     );
   });
 

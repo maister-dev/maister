@@ -42,6 +42,7 @@ import {
   rankSignals,
   type SignalCluster,
 } from "@/lib/queries/observatory-signals";
+import { reconcileProjectScopeCostRollups } from "@/lib/runs/cost-rollups";
 
 const {
   artifactInstances,
@@ -49,9 +50,11 @@ const {
   flows,
   gateResults,
   hitlRequests,
+  nodeAttemptCostRollups,
   nodeAttempts,
   projectMembers,
   projects,
+  runCostRollups,
   runs,
 } = schema;
 
@@ -105,6 +108,18 @@ export interface ObservatoryArtifactSummary {
   runCount: number;
 }
 
+export interface ObservatoryCostSummary {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  resumeTokens: number;
+  totalTokens: number;
+  projectCount: number;
+  flowCount: number;
+  nodeCount: number;
+}
+
 export interface ObservatoryTotals {
   correction: CorrectionMetric;
   autonomy: AutonomyMetric;
@@ -116,6 +131,7 @@ export interface ObservatoryPortfolio {
   flows: ObservatoryFlowSummary[];
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
+  cost: ObservatoryCostSummary;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
 }
@@ -126,6 +142,7 @@ export interface ObservatoryProject {
   flows: ObservatoryFlowSummary[];
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
+  cost: ObservatoryCostSummary;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
 }
@@ -208,6 +225,113 @@ type RevisionRow = {
   manifest: unknown;
 };
 
+function emptyCostSummary(): ObservatoryCostSummary {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    resumeTokens: 0,
+    totalTokens: 0,
+    projectCount: 0,
+    flowCount: 0,
+    nodeCount: 0,
+  };
+}
+
+async function getCostSummary(
+  client: NodePgDatabase<typeof schema>,
+  projectScope: readonly ProjectScopeRow[],
+  filters: ObservatoryFilters,
+): Promise<ObservatoryCostSummary> {
+  if (projectScope.length === 0) return emptyCostSummary();
+
+  const projectIds = projectScope.map((project) => project.id);
+
+  await reconcileProjectScopeCostRollups(projectIds, { client });
+
+  const runCostConditions: SQL[] = [
+    inArray(runCostRollups.projectId, projectIds),
+  ];
+  const nodeCostConditions: SQL[] = [
+    inArray(nodeAttemptCostRollups.projectId, projectIds),
+  ];
+
+  if (filters.flowId) {
+    runCostConditions.push(eq(runCostRollups.flowId, filters.flowId));
+  }
+  if (filters.nodeId) {
+    nodeCostConditions.push(eq(nodeAttemptCostRollups.nodeId, filters.nodeId));
+  }
+
+  const [runRows, nodeRows] = await Promise.all([
+    client
+      .select({
+        projectId: runCostRollups.projectId,
+        flowId: runCostRollups.flowId,
+        inputTokens: runCostRollups.inputTokens,
+        outputTokens: runCostRollups.outputTokens,
+        cacheReadTokens: runCostRollups.cacheReadTokens,
+        cacheCreationTokens: runCostRollups.cacheCreationTokens,
+        resumeInputTokens: runCostRollups.resumeInputTokens,
+        resumeOutputTokens: runCostRollups.resumeOutputTokens,
+        resumeCacheReadTokens: runCostRollups.resumeCacheReadTokens,
+        resumeCacheCreationTokens: runCostRollups.resumeCacheCreationTokens,
+      })
+      .from(runCostRollups)
+      .where(and(...runCostConditions)),
+    client
+      .select({ nodeId: nodeAttemptCostRollups.nodeId })
+      .from(nodeAttemptCostRollups)
+      .where(and(...nodeCostConditions)),
+  ]);
+
+  const projectsWithCost = new Set<string>();
+  const flowsWithCost = new Set<string>();
+  const nodesWithCost = new Set<string>();
+
+  const totals = runRows.reduce(
+    (acc, row) => {
+      projectsWithCost.add(row.projectId);
+      if (row.flowId) flowsWithCost.add(row.flowId);
+
+      return {
+        inputTokens: acc.inputTokens + row.inputTokens,
+        outputTokens: acc.outputTokens + row.outputTokens,
+        cacheReadTokens: acc.cacheReadTokens + row.cacheReadTokens,
+        cacheCreationTokens: acc.cacheCreationTokens + row.cacheCreationTokens,
+        resumeTokens:
+          acc.resumeTokens +
+          row.resumeInputTokens +
+          row.resumeOutputTokens +
+          row.resumeCacheReadTokens +
+          row.resumeCacheCreationTokens,
+      };
+    },
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      resumeTokens: 0,
+    },
+  );
+
+  for (const row of nodeRows) nodesWithCost.add(row.nodeId);
+
+  return {
+    ...totals,
+    totalTokens:
+      totals.inputTokens +
+      totals.outputTokens +
+      totals.cacheReadTokens +
+      totals.cacheCreationTokens,
+    projectCount: projectsWithCost.size,
+    flowCount: flowsWithCost.size,
+    nodeCount: nodesWithCost.size,
+  };
+}
+
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
@@ -242,6 +366,7 @@ export async function getPortfolioObservatory(
     now,
     harnessNeverFiredMin(),
   );
+  const cost = await getCostSummary(client, visibleProjects, filters);
 
   log.info(
     {
@@ -252,7 +377,7 @@ export async function getPortfolioObservatory(
     "getPortfolioObservatory aggregated",
   );
 
-  return portfolio;
+  return { ...portfolio, cost };
 }
 
 export async function getProjectObservatory(
@@ -282,6 +407,7 @@ export async function getProjectObservatory(
     now,
     harnessNeverFiredMin(),
   );
+  const cost = await getCostSummary(client, [project], filters);
 
   log.info(
     {
@@ -298,6 +424,7 @@ export async function getProjectObservatory(
     flows: portfolio.flows,
     nodes: portfolio.nodes,
     artifacts: portfolio.artifacts,
+    cost,
     topSignals: portfolio.topSignals,
     harness: portfolio.harness,
   };
@@ -698,7 +825,7 @@ function buildPortfolio(
   projectScope: readonly ProjectScopeRow[],
   now: Date,
   minExecutions: number,
-): ObservatoryPortfolio {
+): Omit<ObservatoryPortfolio, "cost"> {
   const projectsById = new Map(
     projectScope.map((project) => [project.id, project]),
   );
@@ -1144,6 +1271,7 @@ function emptyProject(projectId: string, now: Date): ObservatoryProject {
     flows: [],
     nodes: [],
     artifacts: [],
+    cost: emptyCostSummary(),
     topSignals: [],
     harness: emptyHarness(),
   };

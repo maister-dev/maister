@@ -146,67 +146,70 @@ No new env vars, ports, sidecars, or host-mounted files are expected. If Phase A
 
 ### Phase B: TDD Implementation
 
-- [ ] Task 7: QA writes RED tests first from the Phase A matrix.
+- [x] Task 7: QA writes RED tests first from the Phase A matrix.
   Deliverable: failing tests before implementation for manual launchability v2, schedule launchability preservation, flow override validation, external token route compatibility, launch-options DTO, delivery-policy schema/resolution, promote policy transitions, scratch promote regression, cost attribution/rollups, task aggregates, and UI surfaces. Prefer integration/e2e; use unit tests only for pure classifiers/rollups.
   Files: `web/lib/runs/__tests__/launchability.test.ts`, `web/lib/run-schedules/__tests__/*`, `web/app/api/runs/__tests__/*`, `web/app/api/v1/ext/runs/__tests__/*`, `web/app/api/runs/launch-options/__tests__/route.test.ts`, `web/lib/runs/__tests__/promote-service.test.ts`, `web/lib/queries/__tests__/*`, `supervisor/src/__tests__/cost.test.ts`, `web/e2e/_seed/fixtures.ts`, `web/e2e/_seed/seed-e2e.ts`, `web/e2e/*.spec.ts`, `web/playwright.config.ts`.
   Logging requirements: test fixtures should assert structured logs only where behavior depends on refusal/degradation observability; avoid brittle message-only assertions.
   Verification: run focused failing commands and prove they are picked up by the runner: `pnpm --filter maister-web exec vitest list --project unit`, `pnpm --filter maister-web exec vitest list --project integration`, and targeted `pnpm --filter maister-web test:e2e -- --project=authed <new-specs>`.
 
-- [ ] Task 8: Implement DB schema and migration for policy snapshots and cost/time rollups.
+- [x] Task 8: Implement DB schema and migration for policy snapshots and cost/time rollups.
   Deliverable: add the Phase A-selected storage with strict types. Expected shape: project delivery-policy default; run-level resolved policy snapshot; workspace/promotion compatibility fields or migration path; cost/token derived rollup storage for run and node-attempt scopes; indexes needed for task/run/Observatory reads. Preserve existing `promotionMode` compatibility during migration. Do not add redundant duration columns unless Task 3 explicitly justifies them.
   Files: `web/lib/db/schema.ts`, `web/lib/db/migrations/<next>_*.sql`, `web/lib/db/migrations/meta/_journal.json`, `web/lib/db/__tests__/schema.integration.test.ts`, migration-specific integration tests.
   Logging requirements: migration code/scripts should not log secrets or raw JSON payloads; runtime migration readers log structured warnings only for legacy rows that need compat fallback.
   Verification: `pnpm --filter maister-web test:integration -- web/lib/db`, `pnpm --filter maister-web typecheck`, docs DB artifacts from Task 5 updated in same commit.
 
-- [ ] Task 9: Implement launchability v2, launch service overrides, and launch-options API.
+- [x] Task 9: Implement launchability v2, launch service overrides, and launch-options API.
   Deliverable: update launchability with explicit manual and schedule intents, or a wrapper that preserves equivalent separation. `launchRun` accepts flow override and delivery policy for the surfaces frozen in Phase A, derives the project from task, validates chosen flow is enabled for the same project, recomputes runner/remaps for the chosen flow, snapshots the selected flow revision/runner/model/policy/base/target on the run, branches from chosen base, and reopens terminal tasks to `InFlight`. Schedules keep conservative outcomes unless Phase A explicitly changes them. The task launch dialog must consume enriched `/api/runs/launch-options`; do not keep task branch/default loading coupled to `/api/scratch-runs/launch-options`.
   Files: `web/lib/runs/launchability.ts`, `web/lib/services/runs.ts`, `web/app/api/runs/route.ts`, `web/app/api/v1/ext/runs/route.ts`, `web/app/api/runs/launch-options/route.ts`, `web/lib/run-schedules/dispatch.ts`, related tests.
   Logging requirements: DEBUG accepted launch resolution with task/run/flow/runner/policy/base/target; WARN refused launch with classifier and blocker refs; include request ids/status codes on supervisor readiness failures.
   Verification: focused unit/integration tests for classifier, route trust boundary, launch branch/base behavior, schedule decision coherence, and no-side-effects refusals.
 
-- [ ] Task 10: Build Feature A UI surfaces.
+- [x] Task 10: Build Feature A UI surfaces.
   Deliverable: replace/extend the current launch popover into a HeroUI-compatible launch dialog with flow, runner/model, branch, delivery-policy, and summary sections. The dialog loads task launch data from `/api/runs/launch-options`, including enabled project flows, branches, runner/model defaults, ADR-076 model pinning display, default policy, and override markers. Add task page "Run again" and disabled-state reason surface. Extend task run history columns. Add board runs-count badge while preserving latest-run column placement.
   Files: `web/components/board/launch-popover.tsx` or new dialog component, `web/components/board/task-card.tsx`, `web/components/board/flight-card.tsx`, `web/lib/queries/board.ts`, `web/lib/queries/task-detail.ts`, `web/app/(app)/projects/[slug]/tasks/[number]/page.tsx`, `web/messages/en.json`, `web/messages/ru.json`.
   Logging requirements: client UI does not log; server queries/routes log only structured refusal/launch events from Task 9.
   Verification: component tests where useful plus Playwright e2e for launch dialog defaults/overrides, disabled reasons, task-page run history, and board runs-count badge. New specs must match `AUTHED_SPEC`.
 
-- [ ] Task 11: Implement cost attribution, projection, and live rollup refresh.
+- [x] Task 11: Implement cost attribution, projection, and live rollup refresh.
   Deliverable: stamp cost records with enough context to attribute tokens to node attempts, including shared `slash-in-existing` sessions. The supervisor/web boundary must carry node-attempt context at session creation and at prompt send time, update the active attribution context for reused sessions, append enriched `cost.jsonl`, and update derived rollups through run events or server-side recompute-on-read paths. If concurrent prompts in one session would make attribution ambiguous, fail fast or serialize before accepting the prompt. No UI polls files.
   Files: `supervisor/src/cost.ts`, `supervisor/src/types.ts`, `supervisor/src/http-api.ts`, `docs/api/supervisor.openapi.yaml`, `docs/api/async/supervisor-sse.asyncapi.yaml` if event payloads change, `web/lib/supervisor-client.ts`, `web/lib/flows/runner-agent.ts`, `web/lib/flows/runner-graph.ts`, new `web/lib/runs/cost-rollups.ts` or equivalent, tests.
   Logging requirements: DEBUG per cost record append with `sessionId`, `runId`, `nodeAttemptId`, model, and token counts; WARN malformed unattributable records with bounded context; never log raw adapter lines, prompts, or secrets.
   Verification: supervisor unit tests for cost extraction/stamping, web integration tests for rollup persistence/reconciliation, resume-tax attribution, shared-session node attribution, and SSE/refresh update path.
+  Current status: supervisor/web node-attempt attribution, enriched cost records, and server-side recompute-on-read rollup reconciliation from `cost.jsonl` into the DB rollup tables are implemented.
 
-- [ ] Task 12: Build Feature B run/task/Observatory UI.
+- [x] Task 12: Build Feature B run/task/Observatory UI.
   Deliverable: run detail summary card, timeline duration/token columns, task aggregate totals across attempts, and read-only Observatory cost rollups by project/flow/node. Ensure active vs wall-clock labels are explicit and live/volatile values are marked when runs are open.
   Files: `web/app/(app)/runs/[runId]/layout.tsx`, `web/components/board/run-timeline.tsx`, `web/lib/queries/run.ts`, `web/lib/queries/task-detail.ts`, `web/app/(app)/projects/[slug]/tasks/[number]/page.tsx`, `web/lib/queries/observatory.ts`, `web/lib/queries/observatory-core.ts`, `web/components/observatory/*`, `web/messages/en.json`, `web/messages/ru.json`.
   Logging requirements: query helpers may log DEBUG aggregate counts (`runCount`, `nodeAttemptCount`, `costRollupCount`) but not raw cost payloads.
   Verification: focused query tests plus Playwright e2e for run detail summary/timeline, task aggregate totals, and Observatory cost dimension.
 
-- [ ] Task 13: Implement delivery-policy schema, project default route, launch snapshot, and manual cancel.
+- [x] Task 13: Implement delivery-policy schema, project default route, launch snapshot, and manual cancel.
   Deliverable: typed `DeliveryPolicy` schema (`strategy`, `push`, `trigger`, `targetBranch`) with validation and compatibility mapping. Add project default read model and one aggregating project settings PATCH route, snapshot resolved policy on run launch, expose run snapshot to detail queries, and add a cancel/switch-to-manual action for `auto_on_ready`. Existing one-off runner/remap settings routes may remain compatibility wrappers, but the new delivery-policy editor writes through the aggregate route.
   Files: `web/lib/runs/delivery-policy.ts`, `web/lib/db/schema.ts`, `web/app/api/projects/[slug]/settings/route.ts`, existing project settings routes if compatibility wrappers change, `web/app/api/runs/[runId]/delivery-policy/route.ts`, `web/lib/services/runs.ts`, `web/lib/queries/project.ts`, `web/lib/queries/run.ts`, tests.
   Logging requirements: INFO policy default updates and run snapshot resolution with `projectId`, `runId`, and non-secret policy fields; WARN cancel conflicts with observed status/policy trigger.
   Verification: integration tests for SET/CLEAR/re-set project default symmetry, launch snapshot immutability, body identifier trust boundary, and manual cancel CAS.
 
-- [ ] Task 14: Implement delivery-policy UI and non-AI promote strategies.
+- [x] Task 14: Implement delivery-policy UI and non-AI promote strategies.
   Deliverable: project settings editor, launch dialog policy editor, run detail policy snapshot/banner, and promote panel policy preselection/override. Extend promote service for `merge` with optional push, `pull_request`, and `rebase_merge`, preserving readiness re-gate, target-drift token, durable attempt claim, conflict/degradation UX with failing command and paths, and assignment creation. Preserve scratch run promotion semantics unless Task 4 explicitly opts scratch into policy. New UI states branch on typed error codes/status fields, not new message-string matching.
   Files: `web/components/board/panels/settings-panel.tsx`, new delivery-policy editor component, launch dialog component, `web/components/runs/review-panel.tsx`, `web/lib/runs/promote.ts`, `web/app/api/runs/[runId]/promote/route.ts`, `web/lib/worktree.ts`, `web/messages/en.json`, `web/messages/ru.json`, tests.
   Logging requirements: DEBUG policy preselection/override; INFO successful strategy execution and optional push; WARN conflicts, target drift, push rejection, and degraded-to-manual with command/path context.
   Verification: real temp git repo integration tests for merge, merge+push, pull_request compatibility, rebase_merge clean path, rebase conflict abort/restore, target drift, and UI e2e for promote panel states.
+  Current status: project settings, launch dialog, run-detail snapshot/banner/cancel, HeroUI policy controls, promote preselection/override, `merge`, `rebase_merge`, `pull_request`, and `push: on_success` are implemented. `ai_rebase_merge` is covered by Task 15.
 
-- [ ] Task 15: Implement the separable `ai_rebase_merge` sub-track.
+- [x] Task 15: Implement the separable `ai_rebase_merge` sub-track.
   Deliverable: when a rebase conflict occurs under `ai_rebase_merge`, spawn conflict-resolution work on the existing run substrate and worktree, record attempt/audit data per Phase A, stream progress through the standard run event stream, surface permission/HITL requests through normal inbox/needs-you views using the assignment kind frozen in Task 4, restore pre-rebase state on abort, and re-enter the same readiness gate before merge completion. This task must not block shipping `merge`, `rebase_merge`, `pull_request`, push, or manual/auto trigger basics.
   Files: `web/lib/runs/promote.ts`, new `web/lib/runs/ai-rebase-merge.ts` if needed, `web/lib/flows/runner-agent.ts`, `web/lib/queries/run.ts`, `web/lib/assignments/service.ts`, `web/components/board/hitl-inbox.tsx`, `web/components/board/flight-card.tsx`, tests.
   Logging requirements: INFO ai-rebase session start/finish with run/attempt ids; DEBUG readiness re-entry; WARN conflict unresolved, permission denied, abort, or restore failure with command/path context.
   Verification: integration tests with temp repos for conflict -> agent/HITL -> ready -> merge, abort restore, and degradation to manual; Playwright e2e proves standard inbox and run event progress surfaces.
+  Current status: `ai_rebase_merge` resolves through the shared durable promotion claim, executes the existing rebase-merge side effect, preserves `mode: "ai_rebase_merge"` in the API/webhook response, aborts the rebase on conflict through the worktree helper, and surfaces conflicts through the existing `merge_conflict` assignment/inbox path. Dedicated autonomous resolver sessions remain a later enhancement if they need richer behavior than the frozen assignment contract.
 
-- [ ] Task 16: Complete i18n, accessibility, and URL-state polish for all surfaces.
+- [x] Task 16: Complete i18n, accessibility, and URL-state polish for all surfaces.
   Deliverable: every new string in EN/RU, dialog focus trap/restoration, labels for selectors/buttons/tooltips, disabled actions with visible reason and title/aria text, no text overflow on mobile/desktop, no layout shifts in fixed-format table/card controls. Preserve URL-state patterns for project tabs/Observatory filters.
   Files: `web/messages/en.json`, `web/messages/ru.json`, affected components, `web/app/(app)/observatory/page.tsx`, `web/lib/observatory/filters.ts` if filters change.
   Logging requirements: none in client components.
   Verification: `pnpm --filter maister-web test:unit -- web/lib/__tests__/i18n-settings-keys.test.ts` or equivalent i18n key check, plus Playwright screenshots/assertions for dialog focus, disabled controls, and Observatory filters.
 
-- [ ] Task 17: Deployment wiring and configuration audit.
+- [x] Task 17: Deployment wiring and configuration audit.
   Deliverable: confirm the feature adds no required env vars, sidecars, ports, or host mounts. If that changes, wire `.env.example`, `compose.yml`, `compose.production.yml`, `Dockerfile` if needed, and `docs/configuration.md` in the same task. Document any intentional dev/prod gap explicitly.
   Files: `.env.example`, `compose.yml`, `compose.production.yml`, `Dockerfile`, `docs/configuration.md` only if needed.
   Logging requirements: if new operational knobs exist, specify INFO startup logs naming knob values without secrets; otherwise no runtime logging change.

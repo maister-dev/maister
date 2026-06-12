@@ -1,18 +1,30 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
-
 import type { ActorDTO } from "@/lib/social/actors";
+
+import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { reconcileManyRunCostRollups } from "@/lib/runs/cost-rollups";
 import { actorDTO, resolveActorLabels } from "@/lib/social/actors";
-import { getTaskRelations, type TaskRelationView } from "@/lib/social/relations";
+import {
+  getOpenRelationBlockers,
+  getTaskRelations,
+  type TaskRelationView,
+} from "@/lib/social/relations";
 import { resolveProjectTaskByNumber } from "@/lib/social/task-lookup";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
-const { runs, taskActivity, taskComments, taskSubscribers } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  flows,
+  runCostRollups,
+  runs,
+  taskActivity,
+  taskComments,
+  taskSubscribers,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
 
 export type TimelineItem =
   | {
@@ -35,7 +47,12 @@ export type TimelineItem =
 // activity rows are SKIPPED — the comment itself renders in their place; the
 // duplicate row exists for the Log page and analytics, not the timeline.
 export function interleaveTimeline(
-  comments: Array<{ id: string; body: string; actor: ActorDTO; createdAt: Date }>,
+  comments: Array<{
+    id: string;
+    body: string;
+    actor: ActorDTO;
+    createdAt: Date;
+  }>,
   activity: Array<{
     id: string;
     eventKind: string;
@@ -61,9 +78,23 @@ export function interleaveTimeline(
 export type TaskRunRow = {
   id: string;
   status: string;
+  flowRef: string | null;
   flowVersion: string | null;
+  runnerModel: string | null;
+  deliveryStatus: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
+  durationMs: number | null;
+  tokenTotal: number;
+};
+
+export type TaskRunTotals = {
+  runCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  tokenTotal: number;
 };
 
 export type TaskDetailData = {
@@ -77,11 +108,83 @@ export type TaskDetailData = {
   };
   keyRef: string;
   relations: TaskRelationView[];
+  openBlockers: Array<{ key: string; number: number }>;
   timeline: TimelineItem[];
   isFollowing: boolean;
   runs: TaskRunRow[];
-  latestFlowRun: { id: string; status: string; currentStepId: string | null } | null;
+  totals: TaskRunTotals;
+  latestFlowRun: {
+    id: string;
+    status: string;
+    currentStepId: string | null;
+  } | null;
 };
+
+function tokenTotal(row: {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+}): number {
+  return (
+    (row.inputTokens ?? 0) +
+    (row.outputTokens ?? 0) +
+    (row.cacheReadTokens ?? 0) +
+    (row.cacheCreationTokens ?? 0)
+  );
+}
+
+function durationMs(row: {
+  startedAt: Date | null;
+  endedAt: Date | null;
+}): number | null {
+  if (!row.startedAt || !row.endedAt) return null;
+
+  return Math.max(0, row.endedAt.getTime() - row.startedAt.getTime());
+}
+
+function runnerModelLabel(row: {
+  runnerId: string | null;
+  capabilityAgent: string | null;
+  runnerSnapshot: unknown | null;
+}): string | null {
+  const snapshot =
+    row.runnerSnapshot !== null &&
+    typeof row.runnerSnapshot === "object" &&
+    !Array.isArray(row.runnerSnapshot)
+      ? (row.runnerSnapshot as Record<string, unknown>)
+      : {};
+  const model = typeof snapshot.model === "string" ? snapshot.model : null;
+  const runner = row.runnerId ?? row.capabilityAgent;
+
+  if (runner && model) return `${runner} · ${model}`;
+  if (runner) return runner;
+
+  return model;
+}
+
+function deliveryStatusLabel(row: {
+  promotionMode: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
+  deliveryPolicySnapshot: unknown | null;
+}): string | null {
+  const snapshot =
+    row.deliveryPolicySnapshot !== null &&
+    typeof row.deliveryPolicySnapshot === "object" &&
+    !Array.isArray(row.deliveryPolicySnapshot)
+      ? (row.deliveryPolicySnapshot as Record<string, unknown>)
+      : null;
+  const strategy =
+    typeof snapshot?.strategy === "string"
+      ? snapshot.strategy
+      : row.promotionMode;
+
+  if (row.prNumber !== null) return `PR #${row.prNumber}`;
+  if (row.prUrl) return "pull_request";
+
+  return strategy;
+}
 
 export async function getTaskDetail(
   slug: string,
@@ -145,6 +248,8 @@ export async function getTaskDetail(
   );
 
   const relations = await getTaskRelations(taskId);
+  const openBlockers =
+    (await getOpenRelationBlockers([taskId], db)).get(taskId) ?? [];
 
   const following = (await db
     .select({ id: taskSubscribers.id })
@@ -157,27 +262,93 @@ export async function getTaskDetail(
       ),
     )) as Array<{ id: string }>;
 
+  const taskRunIdRows = (await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")))) as Array<{
+    id: string;
+  }>;
+
+  await reconcileManyRunCostRollups(taskRunIdRows.map((run) => run.id));
+
   const runRows = (await db
     .select({
       id: runs.id,
       status: runs.status,
+      flowRef: flows.flowRefId,
       flowVersion: runs.flowVersion,
+      runnerId: runs.runnerId,
+      capabilityAgent: runs.capabilityAgent,
+      runnerSnapshot: runs.runnerSnapshot,
+      promotionMode: workspaces.promotionMode,
+      prUrl: workspaces.prUrl,
+      prNumber: workspaces.prNumber,
+      deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       currentStepId: runs.currentStepId,
+      inputTokens: runCostRollups.inputTokens,
+      outputTokens: runCostRollups.outputTokens,
+      cacheReadTokens: runCostRollups.cacheReadTokens,
+      cacheCreationTokens: runCostRollups.cacheCreationTokens,
     })
     .from(runs)
+    .leftJoin(flows, eq(flows.id, runs.flowId))
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(runCostRollups, eq(runCostRollups.runId, runs.id))
     .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")))
     .orderBy(desc(runs.startedAt))) as Array<{
     id: string;
     status: string;
+    flowRef: string | null;
     flowVersion: string | null;
+    runnerId: string | null;
+    capabilityAgent: string | null;
+    runnerSnapshot: unknown | null;
+    promotionMode: string | null;
+    prUrl: string | null;
+    prNumber: number | null;
+    deliveryPolicySnapshot: unknown | null;
     startedAt: Date | null;
     endedAt: Date | null;
     currentStepId: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheCreationTokens: number | null;
   }>;
 
   const latest = runRows[0] ?? null;
+  const totals = runRows.reduce<TaskRunTotals>(
+    (acc, row) => {
+      const inputTokens = row.inputTokens ?? 0;
+      const outputTokens = row.outputTokens ?? 0;
+      const cacheReadTokens = row.cacheReadTokens ?? 0;
+      const cacheCreationTokens = row.cacheCreationTokens ?? 0;
+
+      return {
+        runCount: acc.runCount + 1,
+        inputTokens: acc.inputTokens + inputTokens,
+        outputTokens: acc.outputTokens + outputTokens,
+        cacheReadTokens: acc.cacheReadTokens + cacheReadTokens,
+        cacheCreationTokens: acc.cacheCreationTokens + cacheCreationTokens,
+        tokenTotal:
+          acc.tokenTotal +
+          inputTokens +
+          outputTokens +
+          cacheReadTokens +
+          cacheCreationTokens,
+      };
+    },
+    {
+      runCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      tokenTotal: 0,
+    },
+  );
 
   return {
     project: {
@@ -195,11 +366,28 @@ export async function getTaskDetail(
     },
     keyRef: `${resolved.project.taskKey}-${resolved.task.number}`,
     relations,
+    openBlockers,
     timeline,
     isFollowing: following.length > 0,
-    runs: runRows.map(({ currentStepId: _omit, ...row }) => row),
+    totals,
+    runs: runRows.map(({ currentStepId: _omit, ...row }) => ({
+      id: row.id,
+      status: row.status,
+      flowRef: row.flowRef,
+      flowVersion: row.flowVersion,
+      runnerModel: runnerModelLabel(row),
+      deliveryStatus: deliveryStatusLabel(row),
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      durationMs: durationMs(row),
+      tokenTotal: tokenTotal(row),
+    })),
     latestFlowRun: latest
-      ? { id: latest.id, status: latest.status, currentStepId: latest.currentStepId }
+      ? {
+          id: latest.id,
+          status: latest.status,
+          currentStepId: latest.currentStepId,
+        }
       : null,
   };
 }

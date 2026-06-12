@@ -21,8 +21,18 @@ const labels: TimelineLabels = {
   assignmentLedger: "Assignment ledger",
   assignmentActor: "unknown actor",
   assignmentSystemActor: "system",
+  duration: "Duration",
+  tokenTotal: "Token total",
   empty: "No attempts yet.",
   decisionLabel: (d) => (d === "approve" ? "Approve" : d),
+};
+
+const zeroTokens = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheCreation: 0,
+  total: 0,
 };
 
 function staleEntry(): TimelineEntry {
@@ -37,6 +47,8 @@ function staleEntry(): TimelineEntry {
     acpSessionId: null,
     startedAt: "2026-05-31T10:06:00.000Z",
     endedAt: "2026-05-31T10:07:00.000Z",
+    durationMs: 60_000,
+    tokens: zeroTokens,
     gates: [
       {
         gateId: "lint",
@@ -64,6 +76,8 @@ function freshEntry(): TimelineEntry {
     acpSessionId: null,
     startedAt: "2026-05-31T10:10:00.000Z",
     endedAt: "2026-05-31T10:11:00.000Z",
+    durationMs: 60_000,
+    tokens: zeroTokens,
     gates: [
       {
         gateId: "lint",
@@ -91,6 +105,8 @@ function handoffEntry(): TimelineEntry {
     acpSessionId: null,
     startedAt: "2026-05-31T10:08:00.000Z",
     endedAt: null,
+    durationMs: null,
+    tokens: zeroTokens,
     gates: [],
     handoff: {
       ownerUserId: "user-1",

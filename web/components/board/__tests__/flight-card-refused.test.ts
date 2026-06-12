@@ -33,6 +33,18 @@ const labels: FlightCardLabels = {
   elapsed: "elapsed",
   // M11c Phase 4.3 — new label, RED until the implementor adds it.
   settingsRefused: "Settings refused at launch",
+  readiness: {
+    ready: "Ready",
+    blocked: "Blocked",
+    stale: "Stale",
+    failed: "Failed",
+    waiting: "Waiting",
+    overridden: "Overridden",
+  },
+  readyToPromote: "Ready to promote",
+  runsCount: (count: number) => `${count} runs`,
+  launch: "Run again",
+  launchUnavailable: "Unavailable",
 } as FlightCardLabels;
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -40,6 +52,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     taskId: "task-1",
     number: 1,
     keyRef: "TST-1",
+    runCount: 1,
+    runStatus: "Running",
     runId: "run-1",
     branch: "maister/fix-thing",
     agent: "claude",
@@ -59,12 +73,23 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readiness: "ready",
     // M27 (main, merged): workbench lifecycle actions — none for this suite.
     lifecycleActions: [],
+    readyToPromote: false,
+    prNumber: null,
+    crashAction: null,
+    hitlRequestId: null,
+    hitlKind: null,
+    hitlOptions: [],
+    hitlSchema: null,
+    criticality: null,
+    blockedBy: [],
     ...over,
   } as FlightCardData;
 }
 
 function render(card: FlightCardData): string {
-  return renderToStaticMarkup(createElement(FlightCard, { card, labels }));
+  return renderToStaticMarkup(
+    createElement(FlightCard, { canAct: false, card, labels }),
+  );
 }
 
 describe("FlightCard — M11c refused-settings indicator (Phase 4.3)", () => {

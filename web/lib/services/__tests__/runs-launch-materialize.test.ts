@@ -186,6 +186,7 @@ function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
     [
       {
         id: FLOW_ID,
+        projectId: PROJECT_ID,
         flowRefId: "bugfix",
         enabledRevisionId: REVISION_ID,
         enablementState: "Enabled",

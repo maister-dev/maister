@@ -415,6 +415,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       runtimeRoot,
       projectSlug: parsed.projectSlug,
       runId: parsed.runId,
+      stepId: parsed.stepId,
+      nodeAttemptId: parsed.nodeAttemptId,
+      getContext: () => {
+        const latest = registry.get(sessionId)?.record;
+
+        return {
+          stepId: latest?.stepId,
+          nodeAttemptId: latest?.nodeAttemptId,
+        };
+      },
       emitter,
       logger,
       resumed: Boolean(parsed.resumeSessionId),
@@ -480,6 +490,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     const body = SendPromptRequestSchema.parse(req.body);
+
+    entry.record.stepId = body.stepId;
+    if (body.nodeAttemptId) {
+      entry.record.nodeAttemptId = body.nodeAttemptId;
+    } else {
+      delete entry.record.nodeAttemptId;
+    }
 
     // M30 (ADR-078 DD4): a gate-chat prompt accumulates the agent's reply
     // text from this turn's session.update chunks and emits ONE

@@ -105,7 +105,8 @@ async function seedProject(slug: string) {
   const executorId = randomUUID();
   const revisionId = randomUUID();
 
-  await (db as any).insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await (db as any).insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -172,7 +173,8 @@ async function seedProject(slug: string) {
 async function seedTask(projectId: string, flowId: string, status = "Backlog") {
   const taskId = randomUUID();
 
-  await (db as any).insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await (db as any).insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test Task",
@@ -269,7 +271,8 @@ describe("POST /api/v1/ext/runs", () => {
     // Backlog" → 409, revealing the task exists in another project + its state.
     const taskId = randomUUID();
 
-    await (db as any).insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+    await (db as any).insert(schema.tasks).values({
+      number: Math.trunc(Math.random() * 1e9) + 1,
       id: taskId,
       projectId: proj2,
       title: "Other-project task",
@@ -335,6 +338,65 @@ describe("POST /api/v1/ext/runs", () => {
       scope_used: "runs:launch",
       endpoint: "POST /api/v1/ext/runs",
     });
+  });
+
+  it("accepts deprecated executorOverrideId as a runnerId alias", async () => {
+    const { projectId, flowId, executorId } = await seedProject(
+      `ext-runs-legacy-runner-${randomUUID().slice(0, 8)}`,
+    );
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+    const token = await issueToken({ projectId, name: "Test Token" }, db);
+
+    const req = makeRequest({ taskId, executorOverrideId: executorId });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {});
+
+    expect(res.status).toBe(202);
+
+    const body = await res.json();
+    const runRows = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, body.runId))
+      .execute();
+
+    expect(runRows[0].runnerId).toBe(executorId);
+  });
+
+  it("rejects session-only flow and delivery-policy overrides", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-runs-v1-subset-${randomUUID().slice(0, 8)}`,
+    );
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+    const token = await issueToken({ projectId, name: "Test Token" }, db);
+
+    const req = makeRequest({
+      taskId,
+      flowId,
+      deliveryPolicy: {
+        strategy: "merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {});
+
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("CONFIG");
+
+    const runRows = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, taskId))
+      .execute();
+
+    expect(runRows).toHaveLength(0);
   });
 
   it("forced success-audit failure rolls back the run launch rows", async () => {

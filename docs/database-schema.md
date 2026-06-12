@@ -28,7 +28,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `sessions`                    | Auth.js session tokens.                                                                                                                                                                                                                                                                                                    | `users.id`                                                                 |
 | `verification_tokens`         | Auth.js email-verification tokens. PK `(identifier, token)`.                                                                                                                                                                                                                                                               | (root)                                                                     |
 | `project_members`             | Per-project role assignments. UNIQUE `(project_id, user_id)`.                                                                                                                                                                                                                                                              | `projects.id`, `users.id`                                                  |
-| `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE. Can reference a platform default runner override. **(ADR-085 — Designed, migration `0045`)** stores the delivery-policy default used by run launches.                                                                                                                    | (root)                                                                     |
+| `projects`                    | Registered repos. `slug` + `repo_path` both UNIQUE. Can reference a platform default runner override. **(ADR-085 — Designed, migration `0047`)** stores the delivery-policy default used by run launches.                                                                                                                    | (root)                                                                     |
 | `platform_router_sidecars`    | Platform-managed router sidecars such as CCR. Stores typed config refs, lifecycle, readiness, and no raw secrets.                                                                                                                                                                                                           | (root)                                                                     |
 | `platform_acp_runners`        | Platform ACP runner catalog. Stores adapter id, derived capability agent, model, provider shape, permission policy, readiness, sidecar ref, and enablement.                                                                                                                                                                  | optional `platform_router_sidecars.id`                                      |
 | `platform_mcp_servers`        | **(M27 — Designed)** Platform-admin-managed MCP server catalog. Stores transport shape, env-var name refs only (no secret values), supported-agent list, trust status, and readiness. Mirrors `platform_acp_runners` in admin CRUD surface.                                                                                  | (root — no FK)                                                              |
@@ -40,7 +40,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
-| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. New launches store `runner_id`, `runner_resolution_tier`, `capability_agent`, and `runner_snapshot` for historical display/resume. **(ADR-085 — Designed, migration `0045`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
+| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. New launches store `runner_id`, `runner_resolution_tier`, `capability_agent`, and `runner_snapshot` for historical display/resume. **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
 | `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session.                                                                                                                                                                                                                 | `runs.id`, `projects.id`, `users.id`, optional `tasks.id`                  |
 | `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
@@ -48,8 +48,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
 | `step_runs`                   | Per-step execution records for the linear flow runner (legacy-read after M11a).                                                                                                                                                                                                                                            | `runs.id`                                                                  |
 | `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. | `runs.id`, `users.id` (takeover owner, M11b)                               |
-| `run_cost_rollups`            | **(ADR-085 — Designed, migration `0045`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, model breakdown, and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
-| `node_attempt_cost_rollups`   | **(ADR-085 — Designed, migration `0045`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                | `runs.id`, `projects.id`, `node_attempts.id`                               |
+| `run_cost_rollups`            | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, model breakdown, and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
+| `node_attempt_cost_rollups`   | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                | `runs.id`, `projects.id`, `node_attempts.id`                               |
 | `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
 | `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview; + `mutation_report`, M29 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
@@ -217,7 +217,7 @@ as implicit `owner` of every project.
   promotionMode?,                // M18 (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
                                  //   source for the launch-time override chain (§3.4)
-  deliveryPolicyDefault?,        // ADR-085 (jsonb, migration 0045) project-default
+  deliveryPolicyDefault?,        // ADR-085 (jsonb, migration 0047) project-default
                                  //   DeliveryPolicy; null maps from promotionMode
   taskKey,                       // ADR-083 (Implemented, 0043): platform-wide UNIQUE,
                                  //   ^[A-Z][A-Z0-9]{1,9}$, immutable in Stage 1
@@ -236,7 +236,7 @@ at register time (clone source / existing `origin`, and auto-detected host tag)
 per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots);
 `repoPath` is the resolved on-disk dir, not read from `maister.yaml`.
 
-**(ADR-085 — Designed, migration `0045`.)** `deliveryPolicyDefault`
+**(ADR-085 — Designed, migration `0047`.)** `deliveryPolicyDefault`
 (`jsonb`, nullable) stores the project default for run delivery. Shape:
 `{ strategy: 'merge' | 'rebase_merge' | 'pull_request' | 'ai_rebase_merge',
 push: 'never' | 'on_success', trigger: 'manual' | 'auto_on_ready',
@@ -844,7 +844,7 @@ unread badge and inbox panel.
                                  //     flowOrigin: "authored"|"git",
                                  //     capabilities: {refId,kind,sha}[],
                                  //     mcps: {refId,sha,scope}[] }.
-  deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0045)
+  deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0047)
                                  //   immutable resolved DeliveryPolicy at launch;
                                  //   cancel may change trigger auto_on_ready -> manual
   startedAt, endedAt?
@@ -900,7 +900,7 @@ workspace queries, `(runKind, taskId)` for board/latest-attempt lookups that
 must exclude scratch runs, and the existing `(taskId)` lookup for compatibility
 until all callers move to the typed index.
 
-**(ADR-085 — Designed, migration `0045`.)** `deliveryPolicySnapshot`
+**(ADR-085 — Designed, migration `0047`.)** `deliveryPolicySnapshot`
 records the resolved policy used by this run: project default, launch override,
 and any promote-time override. The field is immutable after launch except for
 the explicit cancel action, which performs a CAS update from
@@ -909,7 +909,7 @@ the explicit cancel action, which performs a CAS update from
 mapping as `projects.deliveryPolicyDefault`; scratch runs keep the M18
 `workspaces.promotionMode` behavior in this slice.
 
-## Cost rollup tables (Designed — ADR-085, migration `0045`)
+## Cost rollup tables (Designed — ADR-085, migration `0047`)
 
 `.maister/<project>/runs/<runId>/cost.jsonl` remains the source of truth. The
 tables below are derived projections for UI and Observatory reads, so they are

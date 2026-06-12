@@ -106,7 +106,7 @@ erDiagram
   `repo_path` is the resolved on-disk dir, not read from `maister.yaml`.
 - `projects.default_runner_id` references a platform runner override; null means
   inherit the platform default.
-- `projects.delivery_policy_default` **(Designed, ADR-085, migration `0045`)**
+- `projects.delivery_policy_default` **(Designed, ADR-085, migration `0047`)**
   stores the project default `DeliveryPolicy`. Null rows map from the legacy
   `promotion_mode` value, and project settings writes use one aggregate PATCH so
   partial settings updates cannot apply after another sub-section fails.

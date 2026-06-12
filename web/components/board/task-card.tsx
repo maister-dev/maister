@@ -8,13 +8,13 @@ import { LaunchPopover } from "@/components/board/launch-popover";
 
 export interface TaskCardProps {
   card: BacklogCard;
-  projectId: string;
   slug: string;
   canAct: boolean;
   launchLabel: string;
   launchDisabledLabel: string;
   launchDisabledReason?: string;
   blockedByLabel: string;
+  runsCountLabel: (count: number) => string;
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -35,13 +35,13 @@ const FLOW_CHIP: Record<string, string> = {
 
 export function TaskCard({
   card,
-  projectId,
   slug,
   canAct,
   launchDisabledLabel,
   launchDisabledReason,
   launchLabel,
   blockedByLabel,
+  runsCountLabel,
 }: TaskCardProps): ReactElement {
   const chip = FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line";
 
@@ -74,6 +74,14 @@ export function TaskCard({
           {card.flowRef}
         </span>
       </div>
+      {card.runCount > 0 ? (
+        <span
+          className="w-fit rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2"
+          data-testid="board-runs-count"
+        >
+          {runsCountLabel(card.runCount)}
+        </span>
+      ) : null}
       <div className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute">
         {card.prompt}
       </div>
@@ -98,7 +106,6 @@ export function TaskCard({
             disabledLabel={launchDisabledLabel}
             disabledReason={launchDisabledReason}
             label={launchLabel}
-            projectId={projectId}
             taskId={card.taskId}
           />
         ) : null}

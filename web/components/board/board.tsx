@@ -11,7 +11,6 @@ import { TaskCard } from "@/components/board/task-card";
 
 export interface BoardProps {
   data: BoardData;
-  projectId: string;
   slug: string;
   canAct: boolean;
   platformStatus: PlatformStatus;
@@ -63,7 +62,6 @@ const COLUMN_LABEL: Record<BoardColumn, string> = {
 
 export async function Board({
   data,
-  projectId,
   slug,
   canAct,
   platformStatus,
@@ -90,11 +88,36 @@ export async function Board({
     },
     // M18 (T4.4): ready-to-promote / PR badge label.
     readyToPromote: t("readyToPromote"),
+    runsCount: (count: number) => t("runsCount", { count }),
+    launch: t("runAgain"),
+    launchUnavailable: t("launchUnavailable"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"
       ? undefined
       : t("launchSupervisorUnavailable");
+  const launchableLatestRunStatuses = new Set([
+    "Done",
+    "Review",
+    "Failed",
+    "Abandoned",
+    "Crashed",
+  ]);
+  const flightLaunchDisabledReason = (
+    card: BoardData["columns"][BoardColumn]["flight"][number],
+  ): string | undefined => {
+    if (launchDisabledReason) return launchDisabledReason;
+    if (!launchableLatestRunStatuses.has(card.runStatus)) {
+      return t("launchBusy");
+    }
+    if (card.blockedBy.length > 0) {
+      return `${t("launchBlocked")} ${card.blockedBy
+        .map((b) => `${b.key}-${b.number}`)
+        .join(", ")}`;
+    }
+
+    return undefined;
+  };
 
   return (
     <section
@@ -172,8 +195,8 @@ export async function Board({
                             .join(", ")}`
                         : undefined)
                     }
-                    launchLabel={tCommon("launch")}
-                    projectId={projectId}
+                    launchLabel={t("runAgain")}
+                    runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}
                   />
                 </div>
@@ -183,7 +206,12 @@ export async function Board({
                   key={card.runId}
                   className="[[data-layout=swimlanes]_&]:w-[268px] [[data-layout=swimlanes]_&]:flex-none"
                 >
-                  <FlightCard card={card} labels={flightLabels} />
+                  <FlightCard
+                    canAct={canAct}
+                    card={card}
+                    labels={flightLabels}
+                    launchDisabledReason={flightLaunchDisabledReason(card)}
+                  />
                 </div>
               ))}
               {column.total === 0 ? (

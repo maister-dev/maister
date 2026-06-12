@@ -4661,8 +4661,8 @@ async function seedFlowStudioArtifactsFixture(
   ]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'FSA')`,
     [
       ids.project,
       FLOW_STUDIO_ARTIFACTS_SLUG,
@@ -4759,8 +4759,8 @@ async function seedInstalledPackageFixture(
   );
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'FVW')`,
     [
       ids.project,
       FLOW_VIEWER_SLUG,

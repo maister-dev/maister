@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireActiveSession: vi.fn(),
   requireProjectAction: vi.fn(),
+  getLatestFlowRun: vi.fn(),
+  getOpenRelationBlockers: vi.fn(),
+  listBranches: vi.fn(),
 }));
 
 type TableName =
@@ -74,6 +77,19 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
+vi.mock("@/lib/runs/launchability", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/runs/launchability")>();
+
+  return {
+    ...actual,
+    getLatestFlowRun: mocks.getLatestFlowRun,
+  };
+});
+vi.mock("@/lib/social/relations", () => ({
+  getOpenRelationBlockers: mocks.getOpenRelationBlockers,
+}));
+vi.mock("@/lib/worktree", () => ({ listBranches: mocks.listBranches }));
 
 function manifest(runner: string): Row {
   return {
@@ -115,7 +131,15 @@ describe("GET /api/runs/launch-options runner remaps", () => {
       {
         id: "project-1",
         slug: "demo",
+        mainBranch: "main",
+        branchPrefix: "maister/",
         defaultRunnerId: null,
+        deliveryPolicyDefault: {
+          strategy: "merge",
+          push: "never",
+          trigger: "manual",
+          targetBranch: null,
+        },
         archivedAt: null,
       },
     ];
@@ -172,6 +196,9 @@ describe("GET /api/runs/launch-options runner remaps", () => {
     state.flow_runner_remaps = [];
     mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
     mocks.requireProjectAction.mockResolvedValue({ role: "member" });
+    mocks.getLatestFlowRun.mockResolvedValue(null);
+    mocks.getOpenRelationBlockers.mockResolvedValue(new Map());
+    mocks.listBranches.mockResolvedValue(["main", "release"]);
   });
 
   it("returns mapped Flow step target as the default runner", async () => {
@@ -214,5 +241,70 @@ describe("GET /api/runs/launch-options runner remaps", () => {
     expect(res.status).toBe(422);
     expect(body.code).toBe("CONFIG");
     expect(body.message).toContain("requires ACP runner remapping");
+  });
+
+  it("returns the ADR-085 launch dialog DTO without provider secrets", async () => {
+    state.flow_runner_remaps = [
+      {
+        stepId: "implement",
+        sourceRunnerId: "flow-claude",
+        mappedRunnerId: "claude-platform",
+        status: "Mapped",
+      },
+    ];
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      task?: { id?: string; projectSlug?: string; flowId?: string };
+      launchability?: { launchable?: boolean; reason?: string };
+      flows?: Array<{ id: string; isTaskDefault: boolean }>;
+      selectedFlowId?: string;
+      runners?: Array<{ id: string; model: string; pinnedModel?: object }>;
+      branches?: string[];
+      defaultBaseBranch?: string | null;
+      defaultTargetBranch?: string | null;
+      deliveryPolicyDefault?: {
+        strategy?: string;
+        push?: string;
+        trigger?: string;
+        targetBranch?: string | null;
+      };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.task).toMatchObject({
+      id: "task-1",
+      projectSlug: "demo",
+      flowId: "flow-1",
+    });
+    expect(body.launchability).toEqual({
+      launchable: true,
+      reason: "launchable",
+      blockers: [],
+    });
+    expect(body.flows).toEqual([
+      expect.objectContaining({ id: "flow-1", isTaskDefault: true }),
+    ]);
+    expect(body.selectedFlowId).toBe("flow-1");
+    expect(body.runners).toEqual([
+      expect.objectContaining({
+        id: "claude-platform",
+        model: "claude-sonnet-4-6",
+        pinnedModel: expect.objectContaining({ model: "claude-sonnet-4-6" }),
+      }),
+      expect.objectContaining({ id: "codex-ready", model: "gpt-5" }),
+    ]);
+    expect(body.branches).toContain("main");
+    expect(body.defaultBaseBranch).toBe("main");
+    expect(body.defaultTargetBranch).toBe("main");
+    expect(body.deliveryPolicyDefault).toEqual({
+      strategy: "merge",
+      push: "never",
+      trigger: "manual",
+      targetBranch: "main",
+    });
+    expect(JSON.stringify(body)).not.toMatch(
+      /authToken|apiKey|SECRET_TOKEN|OPENAI_SECRET/,
+    );
   });
 });

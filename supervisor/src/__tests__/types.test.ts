@@ -121,6 +121,27 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts a safe nodeAttemptId attribution field", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      nodeAttemptId: "node.attempt_1",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects nodeAttemptId with path traversal", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      nodeAttemptId: "../node-attempt",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(["nodeAttemptId"]);
+    }
+  });
+
   it("rejects relative worktreePath", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
@@ -450,6 +471,29 @@ describe("SendPromptRequestSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a safe nodeAttemptId attribution field", () => {
+    const result = SendPromptRequestSchema.safeParse({
+      stepId: "plan",
+      nodeAttemptId: "node-attempt.1",
+      prompt: "ok",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects nodeAttemptId with path traversal", () => {
+    const result = SendPromptRequestSchema.safeParse({
+      stepId: "plan",
+      nodeAttemptId: "../node-attempt",
+      prompt: "ok",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(["nodeAttemptId"]);
+    }
   });
 });
 

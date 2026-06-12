@@ -47,6 +47,14 @@ export interface TimelineEntry {
   acpSessionId: string | null;
   startedAt: string;
   endedAt: string | null;
+  durationMs: number | null;
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheCreation: number;
+    total: number;
+  };
   gates: TimelineGateView[];
   handoff: TimelineHandoffView | null;
 }
@@ -64,6 +72,8 @@ export interface TimelineLabels {
   assignmentLedger: string;
   assignmentActor: string;
   assignmentSystemActor: string;
+  duration: string;
+  tokenTotal: string;
   empty: string;
   decisionLabel: (decision: string) => string;
 }
@@ -76,6 +86,22 @@ export interface RunTimelineProps {
 
 function ownerLabel(h: TimelineHandoffView): string {
   return h.ownerName ?? h.ownerEmail ?? h.ownerUserId;
+}
+
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return "-";
+  const seconds = Math.round(durationMs / 1000);
+
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+
+  if (minutes < 60) return `${minutes}m`;
+
+  return `${Math.round(minutes / 60)}h`;
+}
+
+function formatTokens(tokens: number): string {
+  return new Intl.NumberFormat("en-US").format(tokens);
 }
 
 function GateRow({
@@ -206,6 +232,12 @@ function EntryCard({
           </span>
         </div>
         <div className="flex flex-none items-center gap-1.5 font-mono text-[10px]">
+          <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-semibold tracking-[0.04em] text-mute">
+            {labels.duration}: {formatDuration(entry.durationMs)}
+          </span>
+          <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-semibold tracking-[0.04em] text-mute">
+            {labels.tokenTotal}: {formatTokens(entry.tokens.total)}
+          </span>
           {entry.decision ? (
             <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-bold uppercase tracking-[0.06em] text-amber">
               {labels.decisionLabel(entry.decision)}

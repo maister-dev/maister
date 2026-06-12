@@ -166,7 +166,7 @@ export const maisterCapabilitiesSchema = z
 // now but consumed only in Phase 3 (PR mode).
 export const projectPromotionSchema = z
   .object({
-    mode: z.enum(["local_merge", "pull_request"]).optional(),
+    mode: z.enum(["local_merge", "rebase_merge", "pull_request"]).optional(),
     remote: z.string().min(1).optional(),
   })
   .strict();

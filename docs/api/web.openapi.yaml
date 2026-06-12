@@ -2597,13 +2597,15 @@ paths:
         base commit, resolved policy snapshot, and default target branch are
         derived from server state.
 
-        M18 compatibility modes `local_merge` and `pull_request` map to
-        ADR-085 delivery strategies `merge` and `pull_request`. ADR-085 also
-        adds `rebase_merge`, optional `push='on_success'`, and the separable
-        `ai_rebase_merge` sub-track. Merge conflicts surface the same failing
-        command and path data as the current conflict UX; `ai_rebase_merge`
-        streams progress through the standard run event path and uses the
-        standard inbox/HITL surfaces.
+        M18 compatibility modes `local_merge`, `rebase_merge`, and
+        `pull_request` map to ADR-085 delivery strategies `merge`,
+        `rebase_merge`, and `pull_request`. ADR-085 also adds optional
+        `push='on_success'`. Merge conflicts surface the same failing command
+        and path data as the current conflict UX. The separable
+        `ai_rebase_merge` strategy executes through the rebase-merge side
+        effect, preserves the resolved policy mode for audit/API responses, and
+        surfaces conflicts through the standard `merge_conflict`
+        assignment/inbox path.
 
         Promotion is gated at promote time by the M16 readiness chokepoint
         (`assertEvidenceReady(runId, "review")`) and by a target-drift guard:
@@ -2641,9 +2643,9 @@ paths:
             run/workspace not found, removed workspace, non-`Review` terminal
             state, readiness not ready/stale, invalid/missing target branch,
             target advanced since review without `allowTargetDrift`, invalid
-            policy override, push rejected, PR-mode preflight failure (provider
-            CLI missing / `*_TOKEN` unset / remote not configured / `generic`
-            provider), or `ai_rebase_merge` degraded to manual. `CONFLICT`:
+            policy override, push rejected, or PR-mode preflight failure
+            (provider CLI missing / `*_TOKEN` unset / remote not configured /
+            `generic` provider). `CONFLICT`:
             merge/rebase textual conflict (a manual-resolution assignment is
             created and the run stays `Review`), a concurrent promotion already
             in progress, or a promotion superseded by a stale-claim reclaim.
@@ -2690,9 +2692,10 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [ok, deliveryPolicy]
+                required: [ok, runId, deliveryPolicy]
                 properties:
                   ok: { type: boolean, enum: [true] }
+                  runId: { type: string, format: uuid }
                   deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -7582,6 +7585,24 @@ components:
           description: |
             Null means the project default branch at resolution time. Non-null
             values are server-validated against the project branch allow-list.
+    DeliveryPolicyOverride:
+      type: object
+      additionalProperties: false
+      properties:
+        strategy:
+          type: string
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+        push:
+          type: string
+          enum: [never, on_success]
+        trigger:
+          type: string
+          enum: [manual, auto_on_ready]
+        targetBranch:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 255
     ProjectSettingsPatchBody:
       type: object
       additionalProperties: false
@@ -7592,6 +7613,7 @@ components:
           nullable: true
           description: Platform runner override; null inherits platform default.
         deliveryPolicyDefault:
+          type: object
           allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
           nullable: true
           description: |
@@ -7610,6 +7632,7 @@ components:
             slug: { type: string }
             defaultRunnerId: { type: string, nullable: true }
             deliveryPolicyDefault:
+              type: object
               allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
               nullable: true
     PostRunBody:
@@ -8948,19 +8971,19 @@ components:
         message: { type: string }
     PromoteRunBody:
       type: object
-      required: [reviewedTargetCommit]
       additionalProperties: false
       properties:
         mode:
           type: string
-          enum: [local_merge, pull_request]
+          enum: [local_merge, rebase_merge, pull_request]
           deprecated: true
           description: |
             M18 compatibility alias. `local_merge` maps to
-            `deliveryPolicyOverride.strategy=merge`; `pull_request` maps to
-            `pull_request`. New clients send `deliveryPolicyOverride`.
+            `deliveryPolicyOverride.strategy=merge`; `rebase_merge` and
+            `pull_request` map to the same-named strategies. New clients send
+            `deliveryPolicyOverride`.
         deliveryPolicyOverride:
-          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          $ref: "#/components/schemas/DeliveryPolicyOverride"
           description: |
             Explicit promote-time override. Omitted means use the run snapshot.
             The UI preselects the snapshot and marks this field as an override
@@ -8979,10 +9002,12 @@ components:
           description: |
             (M18, Implemented) The target-branch HEAD commit the ReviewPanel
             rendered the promote surface against (commit-sha shape).
-            **Required** — compared to the live target HEAD at claim time
+            Required by the flow promote service for manual ReviewPanel
+            promotions — compared to the live target HEAD at claim time
             (optimistic concurrency). A mismatch is refused `PRECONDITION`
             ("target advanced since review") unless `allowTargetDrift` is set;
-            a body omitting it is refused `PRECONDITION`, never promoted blind.
+            a manual flow body omitting it is refused `PRECONDITION`, never
+            promoted blind.
         allowTargetDrift:
           type: boolean
           default: false

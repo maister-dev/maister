@@ -296,6 +296,7 @@ export async function spawnSession(
     runId: request.runId,
     projectSlug: request.projectSlug,
     stepId: request.stepId,
+    nodeAttemptId: request.nodeAttemptId,
     status: "live",
     pid,
     startedAt: new Date().toISOString(),

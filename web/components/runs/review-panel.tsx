@@ -1,10 +1,11 @@
 "use client";
 
 import type { ReadinessDTO } from "@/lib/queries/readiness";
-import type { ReactElement } from "react";
+import type { Key, ReactElement } from "react";
 
+import { Button, Input, ListBox, Select } from "@heroui/react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -26,7 +27,18 @@ export type ReviewPanelDiff = {
   truncated: boolean;
 };
 
-type PromotionMode = "local_merge" | "pull_request";
+type PromotionMode =
+  | "merge"
+  | "rebase_merge"
+  | "pull_request"
+  | "ai_rebase_merge";
+
+type ReviewPanelDeliveryPolicy = {
+  strategy: PromotionMode;
+  push: "never" | "on_success";
+  trigger: "manual" | "auto_on_ready";
+  targetBranch: string;
+};
 
 export type ReviewPanelConflict = {
   parentRepoPath: string;
@@ -45,6 +57,10 @@ export type ReviewPanelLabels = {
   promoteAnyway: string;
   diffTruncated: string;
   promoteTruncated: string;
+  promotionMerge: string;
+  promotionRebaseMerge: string;
+  promotionPullRequest: string;
+  promotionAiRebaseMerge: string;
 };
 
 export interface ReviewPanelProps {
@@ -54,6 +70,7 @@ export interface ReviewPanelProps {
   runBranch: string;
   targetBranch: string | null;
   promotionMode: PromotionMode;
+  deliveryPolicy: ReviewPanelDeliveryPolicy;
   reviewedTargetCommit: string | null;
   readiness: ReadinessDTO | null;
   diff: ReviewPanelDiff;
@@ -81,6 +98,12 @@ export interface ReviewPanelProps {
 const shell =
   "rounded-[14px] border border-line bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
 
+function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
+  if (key === null) return fallback;
+
+  return String(key) as PromotionMode;
+}
+
 export function ReviewPanel({
   runId,
   baseBranch,
@@ -88,6 +111,7 @@ export function ReviewPanel({
   runBranch,
   targetBranch,
   promotionMode,
+  deliveryPolicy,
   reviewedTargetCommit,
   readiness,
   diff,
@@ -110,6 +134,7 @@ export function ReviewPanel({
   const [truncationAck, setTruncationAck] = useState(false);
   const [conflictState, setConflictState] =
     useState<ReviewPanelConflict | null>(conflict ?? null);
+  const modeLabelId = useId();
 
   async function promote(allowTargetDrift: boolean): Promise<void> {
     if (!targetBranch) return;
@@ -122,8 +147,13 @@ export function ReviewPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          mode,
           targetBranch,
+          deliveryPolicyOverride: {
+            ...deliveryPolicy,
+            strategy: mode,
+            trigger: "manual",
+            targetBranch,
+          },
           // Omit when null (the render-time resolveBaseCommit threw): the route
           // rejects a null with CONFIG 400, but a MISSING field hits the
           // server's `!reviewedTargetCommit → PRECONDITION` path cleanly.
@@ -319,14 +349,16 @@ export function ReviewPanel({
           <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
             {labels.diffTruncated}
           </p>
-          <button
-            className="inline-flex items-center justify-center rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white transition-all hover:bg-amber-2"
+          <Button
+            className="border-amber bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
             data-testid="review-promote-truncated"
+            size="sm"
             type="button"
+            variant="outline"
             onClick={() => setTruncationAck(true)}
           >
             {labels.promoteTruncated}
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
@@ -334,15 +366,46 @@ export function ReviewPanel({
             <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
               {labels.promotionMode}
             </span>
-            <select
-              aria-label={labels.promotionMode}
-              className="w-full max-w-[260px] rounded-md border border-line bg-paper px-2 py-1.5 font-mono text-[11px] text-ink outline-none focus:border-amber"
-              value={mode}
-              onChange={(event) => setMode(event.target.value as PromotionMode)}
+            <span className="sr-only" id={modeLabelId}>
+              {labels.promotionMode}
+            </span>
+            <Select
+              aria-labelledby={modeLabelId}
+              className="w-full max-w-[260px]"
+              selectedKey={mode}
+              variant="secondary"
+              onSelectionChange={(key) => setMode(selectionKey(key, mode))}
             >
-              <option value="local_merge">local_merge</option>
-              <option value="pull_request">pull_request</option>
-            </select>
+              <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
+                <ListBox aria-label={labels.promotionMode}>
+                  <ListBox.Item id="merge" textValue={labels.promotionMerge}>
+                    {labels.promotionMerge}
+                  </ListBox.Item>
+                  <ListBox.Item
+                    id="rebase_merge"
+                    textValue={labels.promotionRebaseMerge}
+                  >
+                    {labels.promotionRebaseMerge}
+                  </ListBox.Item>
+                  <ListBox.Item
+                    id="pull_request"
+                    textValue={labels.promotionPullRequest}
+                  >
+                    {labels.promotionPullRequest}
+                  </ListBox.Item>
+                  <ListBox.Item
+                    id="ai_rebase_merge"
+                    textValue={labels.promotionAiRebaseMerge}
+                  >
+                    {labels.promotionAiRebaseMerge}
+                  </ListBox.Item>
+                </ListBox>
+              </Select.Popover>
+            </Select>
           </label>
 
           {drift ? (
@@ -354,35 +417,39 @@ export function ReviewPanel({
               <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
                 {labels.targetDrift}
               </p>
-              <button
+              <Button
                 className={clsx(
-                  "inline-flex items-center justify-center rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white transition-all hover:bg-amber-2",
-                  busy && "cursor-not-allowed opacity-60",
+                  "border-amber bg-amber font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
+                  busy && "opacity-60",
                 )}
-                disabled={busy}
+                isDisabled={busy}
+                size="sm"
                 type="button"
+                variant="outline"
                 onClick={() => void promote(true)}
               >
                 {labels.promoteAnyway}
-              </button>
+              </Button>
             </div>
           ) : (
-            <button
+            <Button
               className={clsx(
-                "inline-flex w-max items-center justify-center rounded-md bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white transition-all hover:bg-amber-2",
-                busy && "cursor-not-allowed opacity-60",
+                "w-max bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
+                busy && "opacity-60",
               )}
-              disabled={busy || !targetBranch}
+              isDisabled={busy || !targetBranch}
+              size="sm"
               type="button"
+              variant="primary"
               onClick={() => void promote(false)}
             >
               {labels.promoteTo} {targetBranch}
-            </button>
+            </Button>
           )}
 
           {/* The live target HEAD this panel rendered against — carried into the
               promote payload as the optimistic-concurrency drift token. */}
-          <input
+          <Input
             data-testid="reviewed-target-commit"
             name="reviewedTargetCommit"
             type="hidden"
