@@ -85,6 +85,7 @@ export async function loadProjectConfig(
     {
       path: maisterYamlPath,
       flows: cfg.flows.length,
+      packages: cfg.packages.length,
       defaultRunner: cfg.project.default_runner ?? null,
     },
     "maister.yaml loaded",
@@ -112,6 +113,24 @@ export async function loadProjectConfig(
       );
     }
     importIds.add(imp.id);
+  }
+
+  const packageIds = new Set<string>();
+
+  for (const pkg of cfg.packages) {
+    if (packageIds.has(pkg.id)) {
+      throw new MaisterError(
+        "CONFIG",
+        `Duplicate packages id "${pkg.id}" in ${maisterYamlPath}`,
+      );
+    }
+    if (flowIds.has(pkg.id) || importIds.has(pkg.id)) {
+      throw new MaisterError(
+        "CONFIG",
+        `packages id "${pkg.id}" collides with a flows[]/capability_imports[] id in ${maisterYamlPath}`,
+      );
+    }
+    packageIds.add(pkg.id);
   }
 
   validateCapabilityIds(cfg, maisterYamlPath);

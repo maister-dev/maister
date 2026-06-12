@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readlink, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -118,6 +118,56 @@ describe("installFlowPlugin (integration)", () => {
     expect(row.revision).toBe(result.revision);
     expect(row.installedPath).toBe(result.installedPath);
     expect(row.manifest.runner_profiles).toHaveProperty("claude-default");
+  });
+
+  it("ADR-087: local-source install honors resolvedRevisionOverride (cache key + row revision)", async () => {
+    const localDir = join(fixturesDir, "local-override-pkg");
+
+    await mkdir(localDir, { recursive: true });
+    await writeFile(
+      join(localDir, "flow.yaml"),
+      "schemaVersion: 1\nname: Local Override Flow\nsteps:\n  - id: step1\n    type: cli\n    command: echo hi\n",
+      "utf8",
+    );
+
+    const override = "abcdef0123456789abcdef0123456789abcdef01";
+    const result = await installFlowPlugin({
+      source: localDir,
+      version: "local-dev",
+      projectId,
+      projectSlug: "demo-app",
+      flowId: "override-flow",
+      workspaceRoot,
+      db,
+      resolvedRevisionOverride: override,
+    });
+
+    expect(result.revision).toBe(override);
+    expect(result.installedPath).toBe(
+      `${homeDir}/.maister/flows/override-flow@abcdef012345`,
+    );
+
+    const [revRow] = await db
+      .select()
+      .from(schema.flowRevisions)
+      .where(eq(schema.flowRevisions.resolvedRevision, override));
+
+    expect(revRow.flowRefId).toBe("override-flow");
+
+    // No-override regression: a second local install WITHOUT the override
+    // falls back to the content digest (different revision, same content).
+    const plain = await installFlowPlugin({
+      source: localDir,
+      version: "local-dev2",
+      projectId,
+      projectSlug: "demo-app",
+      flowId: "override-flow-plain",
+      workspaceRoot,
+      db,
+    });
+
+    expect(plain.revision).toMatch(/^[0-9a-f]{40}$/);
+    expect(plain.revision).not.toBe(override);
   });
 
   it("idempotent reinstall: same flowId@version skips clone, row id stable", async () => {

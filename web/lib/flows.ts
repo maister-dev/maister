@@ -38,6 +38,7 @@ import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring"
 import { resolveTrust } from "@/lib/flows/trust";
 import {
   flowIdSchema,
+  flowRevisionSchema,
   projectFlowSymlinkPath,
   projectSlugSchema,
   sourceUrlSchema,
@@ -63,6 +64,31 @@ const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 // source bytes while satisfying the 40-hex revision schema (flow-paths).
 const LOCAL_REVISION_LEN = 40;
 
+// ADR-087: validate a package-supplied revision override at this sink's
+// invariant (40-hex SHA / digest) before it can reach systemCachePath.
+function parseRevisionOverride(
+  override: string | undefined,
+  flowId: string,
+): string | undefined {
+  if (override === undefined) return undefined;
+
+  const parsed = flowRevisionSchema.safeParse(override);
+
+  if (!parsed.success || parsed.data === "unknown") {
+    throw new MaisterError(
+      "FLOW_INSTALL",
+      `Invalid resolvedRevisionOverride for flow "${flowId}": must be a 40-char hex revision`,
+    );
+  }
+
+  log.debug(
+    { flowId, override: parsed.data.slice(0, 12) },
+    "revision override applied (package sub-install)",
+  );
+
+  return parsed.data;
+}
+
 const inFlightInstalls = new Map<string, Promise<InstallResult>>();
 
 export type InstallFlowPluginArgs = {
@@ -83,6 +109,11 @@ export type InstallFlowPluginArgs = {
   // untrusted → 'untrusted'. Authored-bridge callers set this to 'untrusted'
   // to suppress setup.sh execution regardless of logic-trust (§4.2, §6.4).
   execTrustOverride?: FlowRevisionExecTrust;
+  // ADR-087: package sub-installs inherit the PACKAGE's resolved revision
+  // (tag SHA or package content digest) so all members share one immutable
+  // cache key and `runs.flow_revision` pinning stays content-addressed.
+  // Validated against flowRevisionSchema shape before use.
+  resolvedRevisionOverride?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants. Caller may pass
   // either a node-postgres or better-sqlite3 drizzle client.
   db?: any;
@@ -154,6 +185,11 @@ function validateBoundary(args: InstallFlowPluginArgs): void {
       throw new MaisterError("FLOW_INSTALL", `Invalid ${name}: ${msg}`);
     }
   }
+
+  // ADR-087: validate the package-supplied revision override before any
+  // I/O or DB access (parseRevisionOverride re-asserts inside installRevision
+  // for direct callers).
+  parseRevisionOverride(args.resolvedRevisionOverride, args.flowId);
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -178,7 +214,7 @@ function buildExecSignal(
   return AbortSignal.any([userSignal, timeoutSignal]);
 }
 
-async function gitClone(opts: {
+export async function gitClone(opts: {
   source: string;
   version: string;
   target: string;
@@ -331,7 +367,7 @@ async function runSetupSh(opts: {
 }
 
 // Capture the upstream git commit SHA inside an already-cloned directory.
-async function gitRevParseHead(opts: {
+export async function gitRevParseHead(opts: {
   dir: string;
   source: string;
   version: string;
@@ -597,11 +633,16 @@ export async function installRevision(opts: {
   flowId: string;
   roleRefs?: readonly string[];
   capabilityRefIds?: CapabilityRefIdsInput;
+  resolvedRevisionOverride?: string;
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstalledRevision> {
   const { source, version, flowId, roleRefs, signal, capabilityRefIds } = opts;
   const db = opts.db ?? getDb();
+  const revisionOverride = parseRevisionOverride(
+    opts.resolvedRevisionOverride,
+    flowId,
+  );
 
   const sourceKind = await isLocalDirectorySource(source);
 
@@ -617,9 +658,12 @@ export async function installRevision(opts: {
       version,
       { roleRefs, capabilityRefIds },
     );
-    resolvedRevision = (
-      await localDirectoryContentDigest(sourceKind.absPath)
-    ).slice(0, LOCAL_REVISION_LEN);
+    resolvedRevision =
+      revisionOverride ??
+      (await localDirectoryContentDigest(sourceKind.absPath)).slice(
+        0,
+        LOCAL_REVISION_LEN,
+      );
     target = systemCachePath(flowId, resolvedRevision);
   } else {
     tmpDir = await mkdtemp(
@@ -628,12 +672,14 @@ export async function installRevision(opts: {
 
     try {
       await gitClone({ source, version, target: tmpDir, signal });
-      resolvedRevision = await gitRevParseHead({
-        dir: tmpDir,
-        source,
-        version,
-        signal,
-      });
+      resolvedRevision =
+        revisionOverride ??
+        (await gitRevParseHead({
+          dir: tmpDir,
+          source,
+          version,
+          signal,
+        }));
       target = systemCachePath(flowId, resolvedRevision);
       manifestForIntent = await loadManifestOrThrow(
         join(tmpDir, "flow.yaml"),
@@ -899,6 +945,7 @@ async function installFlowPluginImpl(
     db,
     signal,
     capabilityRefIds: args.capabilityRefIds,
+    resolvedRevisionOverride: args.resolvedRevisionOverride,
   });
 
   const trustStatus = trustStatusOverride ?? resolveTrust(source);
@@ -998,6 +1045,10 @@ async function installFlowPluginImpl(
 
 export async function installFlowPlugin(
   args: InstallFlowPluginArgs,
+  // ADR-087: package installs derive trust from the ORIGINAL package source
+  // (file:// sub-sources are always policy-trusted and would loosen the gate
+  // for git packages). Mirrors the authored-bridge override seam.
+  trustStatusOverride?: TrustStatus,
 ): Promise<InstallResult> {
   validateBoundary(args);
 
@@ -1012,9 +1063,11 @@ export async function installFlowPlugin(
     return existing;
   }
 
-  const promise = installFlowPluginImpl(args).finally(() => {
-    inFlightInstalls.delete(dedupKey);
-  });
+  const promise = installFlowPluginImpl(args, trustStatusOverride).finally(
+    () => {
+      inFlightInstalls.delete(dedupKey);
+    },
+  );
 
   inFlightInstalls.set(dedupKey, promise);
 

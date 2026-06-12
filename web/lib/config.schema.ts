@@ -198,6 +198,57 @@ export const capabilityImportEntrySchema = z.object({
   trust: z.enum(["explicit"]).optional(),
 });
 
+// --- packages[] (ADR-087): multi-flow package import entries ---------------
+
+const isSafeRelativeSubpath = (p: string): boolean =>
+  p.length > 0 &&
+  !p.startsWith("/") &&
+  !p.includes("\\") &&
+  p
+    .split("/")
+    .every(
+      (seg) =>
+        seg.length > 0 &&
+        seg !== "." &&
+        seg !== ".." &&
+        SAFE_PATH_SEGMENT.test(seg),
+    );
+
+export const packageRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine(
+    isSafeRelativeSubpath,
+    "path must be a safe relative subpath (no '..', no absolute, safe segments)",
+  );
+
+// Per-package tag (e.g. "aif/v2.0.0") — "/" is ALLOWED here, unlike
+// versionTagSchema. Member sub-installs receive the path-safe label
+// (slashes replaced); the raw tag is used only for `git clone --branch`
+// and the package row.
+export const packageVersionSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(
+    /^[A-Za-z0-9._+/-]+$/,
+    "package version must match /^[A-Za-z0-9._+/-]+$/",
+  )
+  .refine(
+    (v) => !v.includes("..") && !v.startsWith("/") && !v.startsWith("-"),
+    "package version must not contain '..' or start with '/' or '-'",
+  );
+
+export const packageEntrySchema = z
+  .object({
+    id: capabilityRefIdSchema,
+    source: z.string().min(1),
+    version: packageVersionSchema,
+    path: packageRelativePathSchema.optional(),
+  })
+  .strict();
+
 export const maisterYamlV2Schema = z.object({
   schemaVersion: z.literal(2),
   project: projectBlockSchema,
@@ -206,6 +257,7 @@ export const maisterYamlV2Schema = z.object({
   capabilities: maisterCapabilitiesSchema,
   flow_roles: z.array(flowRoleSchema).default([]),
   capability_imports: z.array(capabilityImportEntrySchema).default([]),
+  packages: z.array(packageEntrySchema).default([]),
   flows: z.array(flowEntrySchema),
 });
 
@@ -973,3 +1025,129 @@ export type FormSettings = z.infer<typeof formSettingsSchema>;
 export type CliCheckSettings = z.infer<typeof cliCheckSettingsSchema>;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 export type NodeOutput = z.infer<typeof nodeOutputSchema>;
+
+// --- maister-package.yaml v1 (ADR-087) -------------------------------------
+// Multi-flow package manifest at the package root. Importable anywhere (no
+// server-only) — the fs-reading loader lives in web/lib/packages/manifest.ts.
+
+export const packageManifestEntrySchema = z
+  .object({
+    id: capabilityRefIdSchema,
+    path: packageRelativePathSchema,
+  })
+  .strict();
+
+// Secret values are NEVER stored — only env-var references, mirroring the
+// platform_mcp_servers env_keys convention.
+const PACKAGE_ENV_REF = /^env:[A-Z0-9_]+$/;
+
+export const packageManifestMcpSchema = z
+  .object({
+    id: capabilityRefIdSchema,
+    transport: z.enum(["stdio", "http"]),
+    command: z.string().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    url: z.string().min(1).optional(),
+    env: z
+      .array(
+        z
+          .string()
+          .regex(PACKAGE_ENV_REF, "env entries must be env:NAME references"),
+      )
+      .optional(),
+    description: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((mcp, ctx) => {
+    if (mcp.transport === "stdio") {
+      if (!mcp.command) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["command"],
+          message: "stdio mcp template requires `command`",
+        });
+      }
+      if (mcp.url !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["url"],
+          message: "`url` is only valid on transport: http",
+        });
+      }
+    } else {
+      if (!mcp.url) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["url"],
+          message: "http mcp template requires `url`",
+        });
+      }
+      if (mcp.command !== undefined || mcp.args !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["command"],
+          message: "`command`/`args` are only valid on transport: stdio",
+        });
+      }
+    }
+  });
+
+export const packageManifestRestrictionSchema = z
+  .object({
+    id: capabilityRefIdSchema,
+    paths: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
+function addDuplicateIdIssues(
+  ctx: z.RefinementCtx,
+  section: string,
+  entries: ReadonlyArray<{ id: string }>,
+): void {
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    if (seen.has(entry.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [section],
+        message: `duplicate ${section} id "${entry.id}"`,
+      });
+    }
+    seen.add(entry.id);
+  }
+}
+
+export const maisterPackageManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    name: capabilityRefIdSchema,
+    metadata: flowMetadataSchema.optional(),
+    flows: z.array(packageManifestEntrySchema).min(1),
+    capabilities: z.array(packageManifestEntrySchema).default([]),
+    mcps: z.array(packageManifestMcpSchema).default([]),
+    restrictions: z.array(packageManifestRestrictionSchema).default([]),
+  })
+  .strict()
+  .superRefine((manifest, ctx) => {
+    addDuplicateIdIssues(ctx, "flows", manifest.flows);
+    addDuplicateIdIssues(ctx, "capabilities", manifest.capabilities);
+    addDuplicateIdIssues(ctx, "mcps", manifest.mcps);
+    addDuplicateIdIssues(ctx, "restrictions", manifest.restrictions);
+
+    const flowIds = new Set(manifest.flows.map((f) => f.id));
+
+    for (const cap of manifest.capabilities) {
+      if (flowIds.has(cap.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["capabilities"],
+          message: `capability id "${cap.id}" collides with a flow id`,
+        });
+      }
+    }
+  });
+
+export type MaisterPackageManifest = z.infer<
+  typeof maisterPackageManifestSchema
+>;
