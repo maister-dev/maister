@@ -5234,9 +5234,9 @@ paths:
   /api/admin/package-sources:
     get:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) List platform package sources
+      summary: (ADR-087 — Implemented) List platform package sources
       description: |
-        (ADR-087 — Designed.) Admin-only (`requireGlobalRole("admin")`).
+        (ADR-087 — Implemented.) Admin-only (`requireGlobalRole("admin")`).
         Returns the platform package-source catalog with the cached
         `discovered` snapshot (packages × per-package tags from the last
         refresh) and `lastCheckedAt`. Never blocks on git — a stale snapshot
@@ -5258,9 +5258,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) Add a platform package source
+      summary: (ADR-087 — Implemented) Add a platform package source
       description: |
-        (ADR-087 — Designed.) Admin-only. Creates a `package_sources` row.
+        (ADR-087 — Implemented.) Admin-only. Creates a `package_sources` row.
         `url` is the git monorepo URL (`packages/<name>/maister-package.yaml`
         layout). A duplicate `url` returns 409 (`CONFLICT`), never a raw 500.
         No discovery happens inline — call `/refresh` after creation.
@@ -5289,9 +5289,9 @@ paths:
   /api/admin/package-sources/{id}:
     patch:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) Update a platform package source
+      summary: (ADR-087 — Implemented) Update a platform package source
       description: |
-        (ADR-087 — Designed.) Admin-only. Mutable fields: `enabled`, `note`.
+        (ADR-087 — Implemented.) Admin-only. Mutable fields: `enabled`, `note`.
         The `url` is immutable (delete + re-add to change identity). `id` is
         a url-param resolved to the server row (404 on miss).
       operationId: patchAdminPackageSource
@@ -5319,9 +5319,9 @@ paths:
         "422": { $ref: "#/components/responses/Config" }
     delete:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) Delete a platform package source
+      summary: (ADR-087 — Implemented) Delete a platform package source
       description: |
-        (ADR-087 — Designed.) Admin-only. Usage-guarded hard delete: refused
+        (ADR-087 — Implemented.) Admin-only. Usage-guarded hard delete: refused
         with 409 (`CONFLICT`) while any `package_installs` row from this
         source is attached to a project. Installed-but-unattached revisions
         survive (GC owns them).
@@ -5343,9 +5343,9 @@ paths:
   /api/admin/package-sources/{id}/refresh:
     post:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) Refresh package discovery for a source
+      summary: (ADR-087 — Implemented) Refresh package discovery for a source
       description: |
-        (ADR-087 — Designed.) Admin-only. Runs `git ls-remote --tags` plus a
+        (ADR-087 — Implemented.) Admin-only. Runs `git ls-remote --tags` plus a
         shallow default-branch scan of `packages/*/maister-package.yaml`,
         rewrites the source's `discovered` snapshot + `lastCheckedAt`. A git
         or scan failure degrades: the stale snapshot is kept and the response
@@ -5383,9 +5383,9 @@ paths:
   /api/admin/package-installs:
     get:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) List installed package revisions
+      summary: (ADR-087 — Implemented) List installed package revisions
       description: |
-        (ADR-087 — Designed.) Admin-only. Platform catalog of immutable
+        (ADR-087 — Implemented.) Admin-only. Platform catalog of immutable
         installed package revisions. `installed_path` is NEVER projected.
       operationId: getAdminPackageInstalls
       responses:
@@ -5404,9 +5404,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [flow-packages, admin]
-      summary: (ADR-087 — Designed) Install a package revision platform-wide
+      summary: (ADR-087 — Implemented) Install a package revision platform-wide
       description: |
-        (ADR-087 — Designed.) Admin-only. Two forms: `{sourceId, name,
+        (ADR-087 — Implemented.) Admin-only. Two forms: `{sourceId, name,
         version}` installs `name@version` from a configured source (one
         `git clone --branch <tag> --depth 1`); `{localPath, path?}` installs a
         **local version** from an absolute host directory (admin-only body
@@ -5457,9 +5457,9 @@ paths:
   /api/projects/{slug}/packages:
     get:
       tags: [flow-packages, projects]
-      summary: (ADR-087 — Designed) List package attachments of a project
+      summary: (ADR-087 — Implemented) List package attachments of a project
       description: |
-        (ADR-087 — Designed.) Member-visible. Attachments with member flow
+        (ADR-087 — Implemented.) Member-visible. Attachments with member flow
         ids and the `updateAvailable` derivation (a newer matching tag exists
         in the source's discovered snapshot).
       operationId: getProjectPackages
@@ -5486,9 +5486,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [flow-packages, projects]
-      summary: (ADR-087 — Designed) Attach a package install to a project
+      summary: (ADR-087 — Implemented) Attach a package install to a project
       description: |
-        (ADR-087 — Designed.) Admin-only (`managePackages`). One transaction
+        (ADR-087 — Implemented.) Admin-only (`managePackages`). One transaction
         writes member `flows` rows + `capability_imports` + MCP/restriction
         ingestion + the attachment + group FK links. Identifiers: `slug` =
         url-param → project row; `packageInstallId` = body id resolved to a
@@ -5535,9 +5535,9 @@ paths:
   /api/projects/{slug}/packages/{attachmentId}:
     delete:
       tags: [flow-packages, projects]
-      summary: (ADR-087 — Designed) Detach a package from a project
+      summary: (ADR-087 — Implemented) Detach a package from a project
       description: |
-        (ADR-087 — Designed.) Admin-only (`managePackages`). Refused with 409
+        (ADR-087 — Implemented.) Admin-only (`managePackages`). Refused with 409
         (`PRECONDITION`) while any member revision is pinned by a non-terminal
         run. One transaction removes the attachment, member `flows` rows, and
         ingested MCP/restriction records; member revisions stay for in-flight
@@ -5575,9 +5575,9 @@ paths:
   /api/projects/{slug}/packages/{attachmentId}/upgrade:
     post:
       tags: [flow-packages, projects]
-      summary: (ADR-087 — Designed) Upgrade an attachment to another install
+      summary: (ADR-087 — Implemented) Upgrade an attachment to another install
       description: |
-        (ADR-087 — Designed.) Admin-only (`managePackages`). The target
+        (ADR-087 — Implemented.) Admin-only (`managePackages`). The target
         `packageInstallId` MUST be an installed revision of the SAME package
         name (mismatch → 409 `PRECONDITION`). One transaction flips the group
         pointers; in-flight runs keep their pinned revisions. Write-back
@@ -5625,9 +5625,9 @@ paths:
   /api/projects/{slug}/packages/{attachmentId}/trust:
     post:
       tags: [flow-packages, projects]
-      summary: (ADR-087 — Designed) Trust a package revision (fan-out)
+      summary: (ADR-087 — Implemented) Trust a package revision (fan-out)
       description: |
-        (ADR-087 — Designed.) Admin-only (`managePackages`). One operator
+        (ADR-087 — Implemented.) Admin-only (`managePackages`). One operator
         decision per package revision: the same transaction fans
         `trust_status`/`exec_trust='trusted'` onto every member
         `flow_revisions` + `capability_imports` row, THEN the existing
@@ -10174,7 +10174,7 @@ components:
     PackageSource:
       type: object
       description: |
-        (ADR-087 — Designed) A `package_sources` row with the cached
+        (ADR-087 — Implemented) A `package_sources` row with the cached
         discovery snapshot. Discovery failures keep the stale snapshot.
       required: [id, url, enabled, discovered, lastCheckedAt, createdAt, updatedAt]
       properties:
@@ -10191,7 +10191,7 @@ components:
 
     DiscoveredPackage:
       type: object
-      description: (ADR-087 — Designed) One package found in a source's default branch.
+      description: (ADR-087 — Implemented) One package found in a source's default branch.
       required: [name, tags]
       properties:
         name: { type: string }
@@ -10211,7 +10211,7 @@ components:
     PackageInstallSummary:
       type: object
       description: |
-        (ADR-087 — Designed) An immutable installed package revision.
+        (ADR-087 — Implemented) An immutable installed package revision.
         `installed_path` is NEVER projected to clients.
       required: [id, sourceUrl, name, versionLabel, resolvedRevision, packageStatus, trustStatus, flows]
       properties:
@@ -10235,7 +10235,7 @@ components:
 
     ProjectPackageAttachment:
       type: object
-      description: (ADR-087 — Designed) A project's enablement of one package install.
+      description: (ADR-087 — Implemented) A project's enablement of one package install.
       required: [id, packageInstallId, packageName, versionLabel, attachedAt, updateAvailable, flows]
       properties:
         id: { type: string }

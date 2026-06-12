@@ -1,11 +1,12 @@
 import "server-only";
 
+import type { DiscoveredPackageEntry } from "@/lib/db/schema";
+import type { PackageInstallManifest } from "@/lib/packages/attach";
+
 import { eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import type { DiscoveredPackageEntry } from "@/lib/db/schema";
-import type { PackageInstallManifest } from "@/lib/packages/attach";
 import { deriveUpdateAvailable } from "@/lib/packages/catalog";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.

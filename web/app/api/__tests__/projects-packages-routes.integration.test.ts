@@ -158,7 +158,10 @@ describe("project packages routes (integration)", () => {
     expect(body.writeBack).toBe("ok");
     attachmentId = body.attachmentId;
 
-    const yamlText = await readFile(join(workspaceRoot, "maister.yaml"), "utf8");
+    const yamlText = await readFile(
+      join(workspaceRoot, "maister.yaml"),
+      "utf8",
+    );
 
     expect(yamlText).toContain("# keep this comment");
     const parsed = parseYaml(yamlText);

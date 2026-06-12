@@ -10,8 +10,8 @@ server templates, restriction path-sets) under a single
 domain covers platform package sources, version discovery, package
 installation, per-project attachment/detach/upgrade, package-level trust, local
 versions, and the `maister.yaml packages[]` bootstrap + write-back contract
-(ADR-087). Everything below is **(Designed)** — implementation lands with the
-`feature/package-management` plan; per-revision install/trust mechanics stay in
+(ADR-087). Everything below is **(Implemented)** — shipped by the
+`feature/package-management` plan (M33); per-revision install/trust mechanics stay in
 [`flow-packages.md`](flow-packages.md) and are referenced, not restated.
 
 ## Domain entities

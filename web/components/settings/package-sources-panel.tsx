@@ -34,7 +34,10 @@ const MAX_TAG_BUTTONS = 4;
 // (ADR-087) Platform package catalog: sources CRUD + per-source discovery
 // refresh + tag installs. View-only tables; edits live in the modal.
 // installed_path is never part of the DTO.
-export function PackageSourcesPanel({ sources, installs }: Props): ReactElement {
+export function PackageSourcesPanel({
+  sources,
+  installs,
+}: Props): ReactElement {
   const t = useTranslations("settings");
   const router = useRouter();
   const [, startTransition] = useTransition();

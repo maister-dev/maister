@@ -411,7 +411,10 @@ export async function refreshStaleSources(opts?: {
     }
   }
 
-  log.info({ stale: staleIds.length, refreshed, degraded }, "package discovery sweep");
+  log.info(
+    { stale: staleIds.length, refreshed, degraded },
+    "package discovery sweep",
+  );
 
   return { refreshed, degraded };
 }

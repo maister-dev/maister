@@ -67,9 +67,14 @@ export function ProjectPackagesSection({
     (i) => !attachedNames.has(i.name),
   );
 
-  function surface(result: { ok: boolean; message?: string; writeBack?: string }): void {
+  function surface(result: {
+    ok: boolean;
+    message?: string;
+    writeBack?: string;
+  }): void {
     if (!result.ok) setNotice(result.message ?? t("errorGeneric"));
-    else if (result.writeBack === "failed") setNotice(t("attachWriteBackFailed"));
+    else if (result.writeBack === "failed")
+      setNotice(t("attachWriteBackFailed"));
     else setNotice(null);
     refresh();
   }
@@ -88,14 +93,15 @@ export function ProjectPackagesSection({
 
   async function detach(attachmentId: string): Promise<void> {
     setBusy(`detach:${attachmentId}`);
-    surface(await call(`/api/projects/${slug}/packages/${attachmentId}`, "DELETE"));
+    surface(
+      await call(`/api/projects/${slug}/packages/${attachmentId}`, "DELETE"),
+    );
     setBusy(null);
   }
 
   async function upgrade(att: ProjectPackageAttachmentView): Promise<void> {
     const target = availableInstalls.find(
-      (i) =>
-        i.name === att.packageName && i.id !== att.packageInstallId,
+      (i) => i.name === att.packageName && i.id !== att.packageInstallId,
     );
 
     if (!target) return;
@@ -110,7 +116,9 @@ export function ProjectPackagesSection({
 
   async function trust(att: ProjectPackageAttachmentView): Promise<void> {
     setBusy(`trust:${att.id}`);
-    surface(await call(`/api/projects/${slug}/packages/${att.id}/trust`, "POST"));
+    surface(
+      await call(`/api/projects/${slug}/packages/${att.id}/trust`, "POST"),
+    );
     setBusy(null);
   }
 
@@ -179,8 +187,7 @@ export function ProjectPackagesSection({
               {attachments.map((att) => {
                 const upgradeTarget = availableInstalls.find(
                   (i) =>
-                    i.name === att.packageName &&
-                    i.id !== att.packageInstallId,
+                    i.name === att.packageName && i.id !== att.packageInstallId,
                 );
 
                 return (

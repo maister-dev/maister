@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import type { PackageInstallManifest } from "@/lib/packages/attach";
 
 import { and, eq } from "drizzle-orm";
 import Link from "next/link";
@@ -8,7 +9,6 @@ import { getTranslations } from "next-intl/server";
 import { requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import type { PackageInstallManifest } from "@/lib/packages/attach";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, projectPackageAttachments, projects } =

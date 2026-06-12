@@ -1,8 +1,11 @@
 # Package management — package repos, platform catalog, local versions
 
-> **Status:** Validated design (owner-approved brainstorm, 2026-06-12). The
-> first implementation plan covers **P0–P2** below; P3–P6 ship as the
-> follow-up planning briefs in §8. This document supersedes the deferred
+> **Status:** P0–P2 SHIPPED (M33, `feature/package-management`, 2026-06-12 —
+> ADR-087, migration `0047`); P3–P6 remain follow-up planning briefs in §8.
+> As-built deltas: file-edit gates use vacuous-presence `artifact_required`
+> on commit nodes (§6 note); the discovery staleness knob is
+> `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` (env, default 24); compose stays
+> untouched per ADR-023 (host-run web). This document supersedes the deferred
 > single-import plan in `.ai-factory/PLAN.md` (its locked decisions are
 > carried forward and amended here) and re-resolves design finding **F3**
 > ("one `flow.yaml` per source") of
