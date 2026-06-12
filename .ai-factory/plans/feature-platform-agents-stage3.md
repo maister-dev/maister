@@ -382,7 +382,7 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
 ## Rework progress
 
 - [x] R0 — merge main `0282235f` + renumber (ADR-089/090, migrations 0049/0050, snapshot transplant) — commits `361c71d4` + `bed59165`
-- [ ] R1 — schema + package registration core (migration 0051)
+- [x] R1 — schema + package registration core (migration 0051) — commit `66c8d651`
 - [ ] R2 — per-project resolution + trust/launch gates + attach gate
 - [ ] R3 — workspace ref (ephemeral read-only worktree at trigger ref)
 - [ ] R4 — recommended bindings + UI demotion + Studio frontmatter fields

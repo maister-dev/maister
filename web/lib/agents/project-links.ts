@@ -3,6 +3,10 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  assertAgentPackageAttachable,
+  listEnabledPackageRefs,
+} from "@/lib/agents/effective";
 import { revokeAgentProjectTokens } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -180,12 +184,15 @@ export async function getProjectAgentsView(
 
   const linkedIds = new Set(attached.map((a) => a.agent.id as string));
 
-  // Attachable = catalog agents not already linked here. (R2 narrows this to
-  // agents whose providing package is enabled in THIS project.)
+  // Attachable = catalog agents whose providing package has a live enabled
+  // pin in THIS project (RD4) and that are not already linked here.
+  const enabledRefs = await listEnabledPackageRefs(projectId, _db);
   const catalogAgents = (await _db.select().from(agents)) as Array<
     Record<string, any>
   >;
-  const available = catalogAgents.filter((a) => !linkedIds.has(a.id));
+  const available = catalogAgents.filter(
+    (a) => !linkedIds.has(a.id) && enabledRefs.has(a.flowRefId as string),
+  );
 
   return { attached, available };
 }
@@ -213,6 +220,14 @@ export async function attachAgent(
       `agent ${input.agentId} is not registered`,
     );
   }
+
+  // RD4 attach gate: the providing package must be configured + enabled in
+  // the target project, so the attachment can always name its effective
+  // definition source.
+  await assertAgentPackageAttachable(
+    { agentId: input.agentId, projectId: input.projectId },
+    _db,
+  );
 
   if (input.runnerOverrideId != null) {
     await validateRunnerOverride(_db, input.runnerOverrideId);

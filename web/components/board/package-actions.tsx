@@ -24,10 +24,46 @@ export interface PackageLabels {
   installTitle: string;
   upgradeTitle: string;
   previewTitle: string;
+  previewSteps: string;
+  previewGates: string;
+  previewArtifacts: string;
+  previewCapabilities: string;
+  previewExternalOps: string;
+  previewSchemaChanged: string;
+  previewSetupChanged: string;
+  previewAgents: string;
+  previewAgentWillStop: string;
+  previewAgentChanged: string;
+  previewDroppedTriggers: string;
   added: string;
   removed: string;
   errorGeneric: string;
 }
+
+// Shape of GET /flow-packages/[flowRefId]/upgrade-preview (lifecycle.ts
+// UpgradePreview, plain-DTO over the wire).
+type PreviewDiff = { added: string[]; removed: string[] };
+type PreviewAgentImpact = {
+  added: string[];
+  removed: Array<{ id: string; attachedHere: boolean; scheduleCount: number }>;
+  changed: Array<{
+    id: string;
+    changes: string[];
+    droppedTriggers: string[];
+    attachedHere: boolean;
+    scheduleCount: number;
+  }>;
+};
+type UpgradePreviewDto = {
+  schemaVersionChanged: boolean;
+  setupChanged: boolean;
+  steps: PreviewDiff;
+  gates: PreviewDiff;
+  artifacts: PreviewDiff;
+  capabilities: PreviewDiff;
+  externalOps: PreviewDiff;
+  agents: PreviewAgentImpact;
+};
 
 export interface RevisionOption {
   id: string;
@@ -270,6 +306,94 @@ export function InstallPackageModal({
   );
 }
 
+function PreviewDiffRow({
+  name,
+  diff,
+  labels,
+}: {
+  name: string;
+  diff: PreviewDiff;
+  labels: PackageLabels;
+}): ReactElement | null {
+  if (diff.added.length === 0 && diff.removed.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
+        {name}
+      </span>
+      {diff.added.length > 0 ? (
+        <span className="font-mono text-[11px]">
+          {labels.added}: {diff.added.join(", ")}
+        </span>
+      ) : null}
+      {diff.removed.length > 0 ? (
+        <span className="font-mono text-[11px] text-amber">
+          {labels.removed}: {diff.removed.join(", ")}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// RD4 break-impact: a removed/changed agent with live attachments or trigger
+// bindings in THIS project renders an explicit "will stop working" warning.
+function PreviewAgentsRow({
+  agents,
+  labels,
+}: {
+  agents: PreviewAgentImpact;
+  labels: PackageLabels;
+}): ReactElement | null {
+  if (
+    agents.added.length === 0 &&
+    agents.removed.length === 0 &&
+    agents.changed.length === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
+        {labels.previewAgents}
+      </span>
+      {agents.added.length > 0 ? (
+        <span className="font-mono text-[11px]">
+          {labels.added}: {agents.added.join(", ")}
+        </span>
+      ) : null}
+      {agents.removed.map((a) => (
+        <span key={a.id} className="font-mono text-[11px] text-amber">
+          {labels.removed}: {a.id}
+          {a.attachedHere || a.scheduleCount > 0
+            ? ` — ${labels.previewAgentWillStop}`
+            : ""}
+        </span>
+      ))}
+      {agents.changed.map((a) => (
+        <span
+          key={a.id}
+          className={clsx(
+            "font-mono text-[11px]",
+            a.attachedHere || a.scheduleCount > 0 ? "text-amber" : "text-mute",
+          )}
+        >
+          {labels.previewAgentChanged}: {a.id}
+          {a.changes.length > 0 ? ` (${a.changes.join("; ")})` : ""}
+          {a.droppedTriggers.length > 0
+            ? ` — ${labels.previewDroppedTriggers}: ${a.droppedTriggers.join(", ")}`
+            : ""}
+          {(a.attachedHere || a.scheduleCount > 0) &&
+          a.droppedTriggers.length > 0
+            ? ` — ${labels.previewAgentWillStop}`
+            : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function PackageActions({
   slug,
   flowRef,
@@ -289,6 +413,37 @@ export function PackageActions({
   const [rollbackTarget, setRollbackTarget] = useState(
     rollbackTargets[0]?.id ?? "",
   );
+  // RD4: enabling an available update goes through the contract preview —
+  // agent break-impact ("will stop working here") renders before confirm.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [preview, setPreview] = useState<UpgradePreviewDto | null>(null);
+
+  async function openEnablePreview(): Promise<void> {
+    if (!availableUpdateRevisionId) return;
+    setPreview(null);
+    setPreviewOpen(true);
+
+    try {
+      const res = await fetch(
+        `${base}/upgrade-preview?revisionId=${encodeURIComponent(availableUpdateRevisionId)}`,
+      );
+
+      if (res.ok) {
+        setPreview((await res.json()) as UpgradePreviewDto);
+      }
+    } catch {
+      // The modal shows the confirm regardless — preview is advisory.
+    }
+  }
+
+  async function confirmEnable(): Promise<void> {
+    const ok = await run(`${base}/enable`, {
+      method: "POST",
+      body: JSON.stringify({ revisionId: availableUpdateRevisionId }),
+    });
+
+    if (ok) setPreviewOpen(false);
+  }
 
   async function upgrade(): Promise<void> {
     const ok = await run(`${base}/upgrade`, {
@@ -331,12 +486,7 @@ export function PackageActions({
           className={BTN_PRIMARY}
           disabled={busy}
           type="button"
-          onClick={() =>
-            void run(`${base}/enable`, {
-              method: "POST",
-              body: JSON.stringify({ revisionId: availableUpdateRevisionId }),
-            })
-          }
+          onClick={() => void openEnablePreview()}
         >
           {labels.enable}
         </button>
@@ -377,6 +527,79 @@ export function PackageActions({
         <span className="font-mono text-[10px] font-bold uppercase text-amber">
           {error}
         </span>
+      ) : null}
+
+      {previewOpen ? (
+        <ModalShell
+          cancel={labels.cancel}
+          footer={
+            <>
+              <button
+                className={BTN_NEUTRAL}
+                type="button"
+                onClick={() => setPreviewOpen(false)}
+              >
+                {labels.cancel}
+              </button>
+              <button
+                className={BTN_PRIMARY}
+                disabled={busy}
+                type="button"
+                onClick={() => void confirmEnable()}
+              >
+                {labels.confirm}
+              </button>
+            </>
+          }
+          title={`${labels.previewTitle} — ${flowRef}`}
+          onClose={() => setPreviewOpen(false)}
+        >
+          <>
+            {preview ? (
+              <div className="flex flex-col gap-3 text-[12px] leading-[1.5] text-ink-2">
+                {preview.schemaVersionChanged ? (
+                  <p className="m-0 font-mono text-[11px] font-bold text-amber">
+                    {labels.previewSchemaChanged}
+                  </p>
+                ) : null}
+                {preview.setupChanged ? (
+                  <p className="m-0 font-mono text-[11px] font-bold text-amber">
+                    {labels.previewSetupChanged}
+                  </p>
+                ) : null}
+                <PreviewDiffRow
+                  diff={preview.steps}
+                  labels={labels}
+                  name={labels.previewSteps}
+                />
+                <PreviewDiffRow
+                  diff={preview.gates}
+                  labels={labels}
+                  name={labels.previewGates}
+                />
+                <PreviewDiffRow
+                  diff={preview.artifacts}
+                  labels={labels}
+                  name={labels.previewArtifacts}
+                />
+                <PreviewDiffRow
+                  diff={preview.capabilities}
+                  labels={labels}
+                  name={labels.previewCapabilities}
+                />
+                <PreviewDiffRow
+                  diff={preview.externalOps}
+                  labels={labels}
+                  name={labels.previewExternalOps}
+                />
+                <PreviewAgentsRow agents={preview.agents} labels={labels} />
+              </div>
+            ) : (
+              <p className="m-0 font-mono text-[11px] text-mute">…</p>
+            )}
+            <ErrorRow error={error} />
+          </>
+        </ModalShell>
       ) : null}
 
       {upgradeOpen ? (

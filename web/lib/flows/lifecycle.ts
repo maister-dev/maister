@@ -2,11 +2,16 @@ import "server-only";
 
 import type { FlowYamlV1 } from "@/lib/config.schema";
 
-import { rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  parseAgentDefinition,
+  type ParsedAgentDefinition,
+} from "@/lib/agents/definition";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -18,8 +23,14 @@ import { ensureSymlink, installRevision, runRevisionSetup } from "@/lib/flows";
 import { projectFlowSymlinkPath } from "@/lib/flow-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
-const { flows, flowRevisions, projects, runs } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  agentProjectLinks,
+  agentSchedules,
+  flows,
+  flowRevisions,
+  projects,
+  runs,
+} = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "flow-lifecycle",
@@ -516,6 +527,22 @@ export async function removeRevision(args: {
 
 export type ContractDiff = { added: string[]; removed: string[] };
 
+// ADR-089 rework (RD4, owner decision 7): agent break-impact for the upgrade
+// preview — removed/changed agents joined against the requesting project's
+// LIVE attachments and trigger bindings, so "what stops working" is explicit
+// before enable.
+export type AgentUpgradeImpact = {
+  added: string[];
+  removed: Array<{ id: string; attachedHere: boolean; scheduleCount: number }>;
+  changed: Array<{
+    id: string;
+    changes: string[];
+    droppedTriggers: string[];
+    attachedHere: boolean;
+    scheduleCount: number;
+  }>;
+};
+
 export type UpgradePreview = {
   fromRevisionId: string | null;
   toRevisionId: string;
@@ -526,6 +553,7 @@ export type UpgradePreview = {
   artifacts: ContractDiff;
   capabilities: ContractDiff;
   externalOps: ContractDiff;
+  agents: AgentUpgradeImpact;
 };
 
 function diff(
@@ -545,6 +573,167 @@ function stepIds(m: FlowYamlV1 | undefined): string[] {
   return (m?.steps ?? []).map((s) => s.id);
 }
 
+type RevisionAgentScan = Map<
+  string,
+  { parsed: ParsedAgentDefinition } | { invalid: string }
+>;
+
+async function scanRevisionAgents(
+  flowRefId: string,
+  installedPath: string | undefined,
+): Promise<RevisionAgentScan> {
+  const out: RevisionAgentScan = new Map();
+
+  if (!installedPath) return out;
+
+  let entries;
+
+  try {
+    entries = await readdir(join(installedPath, "agents"), {
+      withFileTypes: true,
+    });
+  } catch {
+    return out; // no agents/ dir
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const stem = entry.name.slice(0, -3);
+
+    try {
+      const content = await readFile(
+        join(installedPath, "agents", entry.name),
+        "utf8",
+      );
+
+      out.set(stem, {
+        parsed: parseAgentDefinition(`${flowRefId}:${stem}`, content),
+      });
+    } catch (err) {
+      out.set(stem, {
+        invalid: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return out;
+}
+
+function agentFieldChanges(
+  from: ParsedAgentDefinition,
+  to: ParsedAgentDefinition,
+): { changes: string[]; droppedTriggers: string[] } {
+  const changes: string[] = [];
+  const fields: Array<[string, unknown, unknown]> = [
+    ["workspace", from.workspace, to.workspace],
+    ["workspace_ref", from.workspaceRef, to.workspaceRef],
+    ["mode", from.mode, to.mode],
+    ["risk_tier", from.riskTier, to.riskTier],
+    ["runner", from.runner, to.runner],
+  ];
+
+  for (const [name, a, b] of fields) {
+    if (a !== b) changes.push(`${name}: ${a ?? "—"} → ${b ?? "—"}`);
+  }
+
+  const droppedTriggers = from.triggers.filter(
+    (t: string) => !to.triggers.includes(t as (typeof to.triggers)[number]),
+  );
+
+  return { changes, droppedTriggers };
+}
+
+// Break-impact joins (RD4): a removed/changed agent only "stops working" in
+// THIS project if it has a live attachment or trigger bindings here.
+async function agentProjectImpact(
+  db: Db,
+  agentId: string,
+  projectId: string | undefined,
+): Promise<{ attachedHere: boolean; scheduleCount: number }> {
+  if (!projectId) return { attachedHere: false, scheduleCount: 0 };
+
+  const linkRows = await db
+    .select({ id: agentProjectLinks.id })
+    .from(agentProjectLinks)
+    .where(
+      and(
+        eq(agentProjectLinks.agentId, agentId),
+        eq(agentProjectLinks.projectId, projectId),
+      ),
+    );
+  const scheduleRows = await db
+    .select({ id: agentSchedules.id })
+    .from(agentSchedules)
+    .where(
+      and(
+        eq(agentSchedules.agentId, agentId),
+        eq(agentSchedules.projectId, projectId),
+      ),
+    );
+
+  return {
+    attachedHere: linkRows.length > 0,
+    scheduleCount: scheduleRows.length,
+  };
+}
+
+async function agentUpgradeImpact(
+  db: Db,
+  args: {
+    flowRefId: string;
+    fromInstalledPath: string | undefined;
+    toInstalledPath: string;
+    projectId: string | undefined;
+  },
+): Promise<AgentUpgradeImpact> {
+  const from = await scanRevisionAgents(args.flowRefId, args.fromInstalledPath);
+  const to = await scanRevisionAgents(args.flowRefId, args.toInstalledPath);
+
+  const added = [...to.keys()]
+    .filter((stem) => !from.has(stem))
+    .map((stem) => `${args.flowRefId}:${stem}`);
+  const removed: AgentUpgradeImpact["removed"] = [];
+  const changed: AgentUpgradeImpact["changed"] = [];
+
+  for (const [stem, fromEntry] of from) {
+    const id = `${args.flowRefId}:${stem}`;
+    const toEntry = to.get(stem);
+
+    if (!toEntry) {
+      removed.push({
+        id,
+        ...(await agentProjectImpact(db, id, args.projectId)),
+      });
+      continue;
+    }
+
+    if ("invalid" in toEntry) {
+      changed.push({
+        id,
+        changes: [`definition invalid in candidate: ${toEntry.invalid}`],
+        droppedTriggers: "parsed" in fromEntry ? fromEntry.parsed.triggers : [],
+        ...(await agentProjectImpact(db, id, args.projectId)),
+      });
+      continue;
+    }
+
+    if ("invalid" in fromEntry) continue; // was broken, now parseable — not a break
+
+    const delta = agentFieldChanges(fromEntry.parsed, toEntry.parsed);
+
+    if (delta.changes.length > 0 || delta.droppedTriggers.length > 0) {
+      changed.push({
+        id,
+        changes: delta.changes,
+        droppedTriggers: delta.droppedTriggers,
+        ...(await agentProjectImpact(db, id, args.projectId)),
+      });
+    }
+  }
+
+  return { added, removed, changed };
+}
+
 // Structured contract diff of the enabled revision vs a candidate revision.
 export async function upgradePreview(args: {
   flowRefId: string;
@@ -552,6 +741,9 @@ export async function upgradePreview(args: {
   candidateRevisionId: string;
   // The requesting project's declared source for the flow (source-scope bound).
   expectedSource: string;
+  // When present, the agents section joins removed/changed agents against
+  // this project's live attachments/bindings (break-impact, RD4).
+  projectId?: string;
   db?: Db;
 }): Promise<UpgradePreview> {
   const db = args.db ?? getDb();
@@ -565,6 +757,7 @@ export async function upgradePreview(args: {
   let fromManifest: FlowYamlV1 | undefined;
   let fromSchema: number | undefined;
   let fromSetup = false;
+  let fromInstalledPath: string | undefined;
 
   if (args.enabledRevisionId) {
     const fromRows = await db
@@ -576,6 +769,7 @@ export async function upgradePreview(args: {
     fromManifest = from?.manifest;
     fromSchema = from?.schemaVersion;
     fromSetup = from?.manifest?.setup !== undefined;
+    fromInstalledPath = from?.installedPath;
   }
 
   const toManifest = cand.manifest;
@@ -591,5 +785,11 @@ export async function upgradePreview(args: {
     artifacts: diff(fromManifest?.artifacts, toManifest.artifacts),
     capabilities: diff(fromManifest?.capabilities, toManifest.capabilities),
     externalOps: diff(fromManifest?.external_ops, toManifest.external_ops),
+    agents: await agentUpgradeImpact(db, {
+      flowRefId: args.flowRefId,
+      fromInstalledPath,
+      toInstalledPath: cand.installedPath,
+      projectId: args.projectId,
+    }),
   };
 }

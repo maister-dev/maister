@@ -6,14 +6,13 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
-import { parseAgentDefinition } from "@/lib/agents/definition";
 import { atomicWriteText } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { agents } = schemaModule as unknown as Record<string, any>;
+const { agents, runs } = schemaModule as unknown as Record<string, any>;
 
 type Db = any;
 
@@ -33,6 +32,7 @@ export type FlowBoundAgentResolution =
 // executor — refused with EXECUTOR_UNAVAILABLE otherwise, BEFORE any spawn.
 export async function resolveFlowBoundAgent(args: {
   agentId: string;
+  runId: string;
   executorAgent: string;
   worktreePath: string;
   db?: Db;
@@ -51,15 +51,6 @@ export async function resolveFlowBoundAgent(args: {
     );
   }
 
-  const triggers = (agent.triggers ?? []) as string[];
-
-  if (!triggers.includes("flow")) {
-    throw new MaisterError(
-      "CONFIG",
-      `agent "${args.agentId}" does not declare the "flow" trigger — flow binding refused`,
-    );
-  }
-
   if (!agent.enabled) {
     throw new MaisterError(
       "PRECONDITION",
@@ -74,18 +65,39 @@ export async function resolveFlowBoundAgent(args: {
     );
   }
 
-  let source: string;
+  // ADR-089 rework (RD4): the binding substitutes the definition from the
+  // HOST RUN project's pinned revision of the providing package, behind the
+  // same enablement/trust gates as a standalone launch.
+  const runRows = await _db
+    .select({ projectId: runs.projectId })
+    .from(runs)
+    .where(eq(runs.id, args.runId));
+  const projectId = runRows[0]?.projectId as string | undefined;
 
-  try {
-    source = await readFile(agent.sourcePath as string, "utf8");
-  } catch {
+  if (!projectId) {
     throw new MaisterError(
-      "CONFIG",
-      `agent "${args.agentId}": definition file ${agent.sourcePath} is missing`,
+      "PRECONDITION",
+      `run ${args.runId} not found for agent binding resolution`,
     );
   }
 
-  const parsed = parseAgentDefinition(args.agentId, source);
+  const { resolveEffectiveAgentDefinition } = await import(
+    "@/lib/agents/effective"
+  );
+  const effective = await resolveEffectiveAgentDefinition(
+    { agentId: args.agentId, projectId },
+    _db,
+  );
+  const parsed = effective.parsed;
+
+  if (!parsed.triggers.includes("flow")) {
+    throw new MaisterError(
+      "CONFIG",
+      `agent "${args.agentId}" does not declare the "flow" trigger — flow binding refused`,
+    );
+  }
+
+  const source = await readFile(effective.sourcePath, "utf8");
 
   if (parsed.mode === "subagent") {
     if (args.executorAgent !== "claude") {
@@ -96,7 +108,10 @@ export async function resolveFlowBoundAgent(args: {
     }
 
     const targetDir = path.join(args.worktreePath, ".claude", "agents");
-    const targetPath = path.join(targetDir, `${args.agentId}.md`);
+    // Materialize under the file STEM — a `:` in the filename is hostile to
+    // the .claude/agents convention; the subagent NAME comes from frontmatter.
+    const stem = args.agentId.split(":").pop() ?? args.agentId;
+    const targetPath = path.join(targetDir, `${stem}.md`);
 
     await mkdir(targetDir, { recursive: true });
     await atomicWriteText(targetPath, source);

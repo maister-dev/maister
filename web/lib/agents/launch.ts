@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { AgentTriggerKind } from "@/lib/db/schema";
-
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -20,12 +18,17 @@ import {
   type RunnerResolution,
   type RunnerSidecarSnapshot,
 } from "@/lib/acp-runners/resolve";
+import { type ParsedAgentDefinition } from "@/lib/agents/definition";
 import {
   checkRepoReadDirt,
   loadAgentWorkspaceContext,
   materializeAgentReadOnlySettings,
   quarantineAgentInTx,
 } from "@/lib/agents/dirty-watchdog";
+import {
+  resolveEffectiveAgentDefinition,
+  type EffectiveAgentDefinition,
+} from "@/lib/agents/effective";
 import {
   issueAgentRunToken,
   revokeAgentRunTokensForRun,
@@ -100,6 +103,9 @@ export type LaunchAgentRunResult =
 
 type LoadedAgentContext = {
   agent: Record<string, any>;
+  // ADR-089 rework (RD4): the definition the launch actually runs — resolved
+  // through THIS project's pinned package revision, behind enablement+trust.
+  effective: EffectiveAgentDefinition;
   link: Record<string, any>;
   project: Record<string, any>;
 };
@@ -166,23 +172,31 @@ async function loadAgentContext(
     );
   }
 
-  if (agent.riskTier === "destructive") {
+  // ADR-089 rework (RD4): everything below the platform kill-switches guards
+  // against the EFFECTIVE definition — the agents/<stem>.md inside THIS
+  // project's pinned package revision (enablement+trust gated). A pinned
+  // version that lacks the trigger (pin divergence) refuses here even though
+  // the index row advertised it to the dispatcher.
+  const effective = await resolveEffectiveAgentDefinition(
+    { agentId: input.agentId, projectId: input.projectId },
+    _db,
+  );
+
+  if (effective.parsed.riskTier === "destructive") {
     throw new MaisterError(
       "PRECONDITION",
       `agent "${input.agentId}" is risk_tier=destructive — gated until capability enforcement lands (ADR-041)`,
     );
   }
 
-  if (agent.mode !== "session") {
+  if (effective.parsed.mode !== "session") {
     throw new MaisterError(
       "PRECONDITION",
       `agent "${input.agentId}" is mode=subagent — flow-bound only, not launchable standalone`,
     );
   }
 
-  const triggers = (agent.triggers ?? []) as AgentTriggerKind[];
-
-  if (!triggers.includes(input.trigger.source)) {
+  if (!effective.parsed.triggers.includes(input.trigger.source)) {
     throw new MaisterError(
       "PRECONDITION",
       `agent "${input.agentId}" does not declare the "${input.trigger.source}" trigger`,
@@ -236,7 +250,7 @@ async function loadAgentContext(
     }
   }
 
-  return { agent, link, project };
+  return { agent, effective, link, project };
 }
 
 async function resolveRunnerForAgent(
@@ -267,9 +281,9 @@ async function resolveRunnerForAgent(
     launchOverrideRunnerId,
     link: { runnerOverrideId: ctx.link.runnerOverrideId },
     agent: {
-      runnerId: ctx.agent.runnerId,
-      mode: ctx.agent.mode,
-      workspace: ctx.agent.workspace,
+      runnerId: ctx.effective.parsed.runner,
+      mode: ctx.effective.parsed.mode,
+      workspace: ctx.effective.parsed.workspace,
     },
     project: { defaultRunnerId: ctx.project.defaultRunnerId },
     platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
@@ -295,7 +309,7 @@ export async function launchAgentRun(
   );
 
   const runId = randomUUID();
-  const workspace = ctx.agent.workspace as "none" | "repo_read" | "worktree";
+  const workspace = ctx.effective.parsed.workspace;
 
   // Fast dedup pre-check before any side effect; the partial unique index
   // on (agent_id, trigger_event_id) stays the authoritative backstop.
@@ -530,26 +544,14 @@ async function taskContextBlock(
   ].join("\n");
 }
 
+// The prompt body comes from the EFFECTIVE definition (the project-pinned
+// package revision, resolved by the caller at spawn time) — never from the
+// catalog index row.
 export async function buildAgentPrompt(
   _db: Db,
-  agent: Record<string, any>,
+  parsed: ParsedAgentDefinition,
   run: Record<string, any>,
 ): Promise<string> {
-  const { readFile } = await import("node:fs/promises");
-
-  let body: string;
-
-  try {
-    body = await readFile(agent.sourcePath as string, "utf8");
-  } catch {
-    throw new MaisterError(
-      "CONFIG",
-      `agent "${agent.id}": definition file ${agent.sourcePath} is missing`,
-    );
-  }
-
-  const { parseAgentDefinition } = await import("@/lib/agents/definition");
-  const parsed = parseAgentDefinition(agent.id as string, body);
   const sections = [parsed.prompt.trim()];
   const taskBlock = await taskContextBlock(_db, run);
 
@@ -796,7 +798,25 @@ export async function startAgentSession(
     return;
   }
 
-  const workspace = agent.workspace as "none" | "repo_read" | "worktree";
+  // RD4: the effective definition resolves AGAIN at spawn — the project's
+  // pin is the source of truth for the prompt body and the workspace axis.
+  let effective: EffectiveAgentDefinition;
+
+  try {
+    effective = await resolveEffectiveAgentDefinition(
+      { agentId: run.agentId as string, projectId: run.projectId as string },
+      _db,
+    );
+  } catch (err) {
+    await finalizeAgentRun(runId, "Failed", {
+      db: _db,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+
+    return;
+  }
+
+  const workspace = effective.parsed.workspace;
   let cwd: string;
 
   if (workspace === "repo_read") {
@@ -836,7 +856,7 @@ export async function startAgentSession(
       });
     }
 
-    const prompt = await buildAgentPrompt(_db, agent, run);
+    const prompt = await buildAgentPrompt(_db, effective.parsed, run);
 
     const issuedToken = await issueAgentRunToken({
       agentId: agent.id,

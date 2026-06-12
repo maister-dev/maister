@@ -4975,6 +4975,37 @@ async function seedPlatformAgentsFixture(
         'repo_read', 'session', '["manual"]'::jsonb, 'read_only', $4)`,
     [E2E_HELPER_AGENT, helperPath, E2E_AUDITOR_AGENT, auditorPath],
   );
+  // RD4: launches resolve the EFFECTIVE definition through the project's
+  // pinned revision of the providing package — register the e2e-agents-pkg
+  // revision (installedPath = the dir writeAgentDefinition fills) and pin it
+  // Enabled+trusted in the consuming projects.
+  const agentsPkgRevisionId = randomUUID();
+
+  await pool.query(
+    `DELETE FROM flow_revisions WHERE flow_ref_id = 'e2e-agents-pkg'`,
+  );
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision,
+        manifest_digest, manifest, schema_version, installed_path, package_status)
+     VALUES ($1, 'e2e-agents-pkg', 'github.com/maister/e2e-agents-pkg', 'v1.0.0',
+             'rev-e2e-agents', 'digest', '{}'::jsonb, 1, $2, 'Installed')`,
+    [agentsPkgRevisionId, agentsRoot],
+  );
+
+  const pinAgentsPkg = async (projectId: string): Promise<void> => {
+    await pool.query(
+      `INSERT INTO flows
+         (id, project_id, flow_ref_id, source, version, installed_path,
+          manifest, schema_version, enabled_revision_id, enablement_state,
+          trust_status, version_binding)
+       VALUES ($1, $2, 'e2e-agents-pkg', 'github.com/maister/e2e-agents-pkg',
+               'v1.0.0', $3, '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
+      [randomUUID(), projectId, agentsRoot, agentsPkgRevisionId],
+    );
+  };
+
+  await pinAgentsPkg(base.projectId);
   // The quarantine project — the auditor (repo_read) is linked HERE only.
   const quarantineBase = await seedLaunchableProjectFixture(pool, {
     slug: `${AGENTS_SLUG}-quarantine`,
@@ -4995,6 +5026,8 @@ async function seedPlatformAgentsFixture(
       ])
     ).rows[0].number,
   );
+
+  await pinAgentsPkg(quarantineBase.projectId);
 
   await pool.query(
     `INSERT INTO agent_project_links (id, agent_id, project_id)

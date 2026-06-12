@@ -589,6 +589,7 @@ export async function runAgentStep(
     const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
     const bound = await resolveFlowBoundAgent({
       agentId: ctx.agentBinding.id,
+      runId: ctx.runId,
       executorAgent: ctx.executor.agent,
       worktreePath: ctx.worktreePath,
       db: ctx.db,

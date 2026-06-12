@@ -51,6 +51,7 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "agent_schedules"`);
   await pool.query(`DELETE FROM "agents"`);
   await pool.query(`DELETE FROM "projects"`);
+  await pool.query(`DELETE FROM "flow_revisions"`);
 
   projectId = randomUUID();
   await pool.query(
@@ -67,6 +68,29 @@ beforeEach(async () => {
     ],
   );
 
+  // RD4: the REAL launch path resolves the effective definition through the
+  // project's pinned package — provision the test-pkg chain (revision row
+  // pointing at agentsRoot + an Enabled/trusted flows pin).
+  const revisionId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "flow_revisions"
+       ("id", "flow_ref_id", "source", "version_label", "resolved_revision",
+        "manifest_digest", "manifest", "schema_version", "installed_path", "package_status")
+     VALUES ($1, 'test-pkg', 'github.com/acme/test-pkg', 'v1.0.0', 'rev-1',
+             'digest', '{}'::jsonb, 1, $2, 'Installed')`,
+    [revisionId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO "flows"
+       ("id", "project_id", "flow_ref_id", "source", "version", "installed_path",
+        "manifest", "schema_version", "enabled_revision_id", "enablement_state",
+        "trust_status", "version_binding")
+     VALUES ($1, $2, 'test-pkg', 'github.com/acme/test-pkg', 'v1.0.0', $3,
+             '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
+    [randomUUID(), projectId, agentsRoot, revisionId],
+  );
+
   // The consumer tests exercise the REAL launch path (the partial-unique
   // claim), so the runner chain must resolve: seed a ready default runner.
   await pool.query(
@@ -81,13 +105,17 @@ beforeEach(async () => {
   );
 });
 
+// Seeds the definition file inside the fixture package dir + the catalog
+// index row + the project link; returns the package-qualified id.
 async function seedAgent(args: {
   id: string;
   triggers: string[];
-}): Promise<void> {
-  await mkdir(path.join(agentsRoot, args.id), { recursive: true });
+}): Promise<string> {
+  const qualifiedId = `test-pkg:${args.id}`;
+
+  await mkdir(path.join(agentsRoot, "agents"), { recursive: true });
   await writeFile(
-    path.join(agentsRoot, args.id, "agent.md"),
+    path.join(agentsRoot, "agents", `${args.id}.md`),
     `---
 name: ${args.id}
 description: d
@@ -104,17 +132,20 @@ Do the thing.
 
   await pool.query(
     `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $1, 'd', 'none', 'session', $2::jsonb, 'read_only', $3)`,
+     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', $3::jsonb, 'read_only', $4)`,
     [
+      qualifiedId,
       args.id,
       JSON.stringify(args.triggers),
-      path.join(agentsRoot, args.id, "agent.md"),
+      path.join(agentsRoot, "agents", `${args.id}.md`),
     ],
   );
   await pool.query(
     `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,
-    [randomUUID(), args.id, projectId],
+    [randomUUID(), qualifiedId, projectId],
   );
+
+  return qualifiedId;
 }
 
 function fakeEvent(overrides: Partial<DomainEventRow>): DomainEventRow {
@@ -136,14 +167,14 @@ function fakeEvent(overrides: Partial<DomainEventRow>): DomainEventRow {
 
 describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
   it("claims a due row exactly once across concurrent ticks and never backfills", async () => {
-    await seedAgent({ id: "cron-agent", triggers: ["cron"] });
+    const cronAgent = await seedAgent({ id: "cron-agent", triggers: ["cron"] });
 
     const past = new Date(Date.now() - 10 * 60_000);
 
     await pool.query(
       `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "cron_expr", "timezone", "next_fire_at")
-       VALUES ($1, 'cron-agent', $2, 'cron', '*/5 * * * *', 'UTC', $3)`,
-      [randomUUID(), projectId, past],
+       VALUES ($1, $2, $3, 'cron', '*/5 * * * *', 'UTC', $4)`,
+      [randomUUID(), cronAgent, projectId, past],
     );
 
     const launches: string[] = [];
@@ -162,7 +193,7 @@ describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
 
     // Exactly one tick wins the claim; the missed window fires once.
     expect(a.claimed + b.claimed).toBe(1);
-    expect(launches).toEqual(["cron-agent"]);
+    expect(launches).toEqual(["test-pkg:cron-agent"]);
 
     const row = await pool.query(
       `SELECT "next_fire_at", "last_fired_at" FROM "agent_schedules"`,
@@ -183,11 +214,15 @@ describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
 
 describe("agent_triggers outbox consumer (ADR-086/087)", () => {
   it("at-least-once redelivery of the same event converges to exactly one run", async () => {
-    await seedAgent({ id: "event-agent", triggers: ["domain_event"] });
+    const eventAgent = await seedAgent({
+      id: "event-agent",
+      triggers: ["domain_event"],
+    });
+
     await pool.query(
       `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
-       VALUES ($1, 'event-agent', $2, 'event', '{"kinds":["task.created"]}'::jsonb)`,
-      [randomUUID(), projectId],
+       VALUES ($1, $2, $3, 'event', '{"kinds":["task.created"]}'::jsonb)`,
+      [randomUUID(), eventAgent, projectId],
     );
 
     const consumer = triggers.buildAgentTriggersConsumer({ db });
@@ -198,7 +233,8 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     await consumer.handle([event]);
 
     const runs = await pool.query(
-      `SELECT "trigger_event_id", "status" FROM "runs" WHERE "agent_id" = 'event-agent'`,
+      `SELECT "trigger_event_id", "status" FROM "runs" WHERE "agent_id" = $1`,
+      [eventAgent],
     );
 
     expect(runs.rows).toHaveLength(1);
@@ -206,11 +242,15 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
   });
 
   it("self-actored events never re-trigger the agent; foreign actors do", async () => {
-    await seedAgent({ id: "triager", triggers: ["domain_event"] });
+    const triager = await seedAgent({
+      id: "triager",
+      triggers: ["domain_event"],
+    });
+
     await pool.query(
       `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
-       VALUES ($1, 'triager', $2, 'event', '{"kinds":["task.comment_added"]}'::jsonb)`,
-      [randomUUID(), projectId],
+       VALUES ($1, $2, $3, 'event', '{"kinds":["task.comment_added"]}'::jsonb)`,
+      [randomUUID(), triager, projectId],
     );
 
     const consumer = triggers.buildAgentTriggersConsumer({ db });
@@ -221,12 +261,13 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
         id: 1001 as unknown as DomainEventRow["id"],
         kind: "task.comment_added",
         actorType: "agent",
-        actorId: "triager",
+        actorId: triager,
       }),
     ]);
 
     let runs = await pool.query(
-      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = 'triager'`,
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [triager],
     );
 
     expect(runs.rows[0].n).toBe(0);
@@ -242,18 +283,23 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     ]);
 
     runs = await pool.query(
-      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = 'triager'`,
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [triager],
     );
 
     expect(runs.rows[0].n).toBe(1);
   });
 
   it("kind/project mismatches and refusals never throw (idempotent contract)", async () => {
-    await seedAgent({ id: "narrow-agent", triggers: ["domain_event"] });
+    const narrowAgent = await seedAgent({
+      id: "narrow-agent",
+      triggers: ["domain_event"],
+    });
+
     await pool.query(
       `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
-       VALUES ($1, 'narrow-agent', $2, 'event', '{"kinds":["run.failed"]}'::jsonb)`,
-      [randomUUID(), projectId],
+       VALUES ($1, $2, $3, 'event', '{"kinds":["run.failed"]}'::jsonb)`,
+      [randomUUID(), narrowAgent, projectId],
     );
 
     const consumer = triggers.buildAgentTriggersConsumer({ db });
@@ -269,7 +315,40 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     ]);
 
     const runs = await pool.query(
-      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = 'narrow-agent'`,
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [narrowAgent],
+    );
+
+    expect(runs.rows[0].n).toBe(0);
+  });
+
+  it("pin divergence: the pinned version lacking the trigger refuses without throwing (RD4)", async () => {
+    // Index row advertises domain_event, but the PINNED definition file only
+    // declares manual — the effective-definition guard refuses the launch.
+    const divergent = await seedAgent({
+      id: "divergent-agent",
+      triggers: ["manual"],
+    });
+
+    await pool.query(
+      `UPDATE "agents" SET "triggers" = '["manual","domain_event"]'::jsonb WHERE "id" = $1`,
+      [divergent],
+    );
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, $2, $3, 'event', '{"kinds":["task.created"]}'::jsonb)`,
+      [randomUUID(), divergent, projectId],
+    );
+
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    await consumer.handle([
+      fakeEvent({ id: 3001 as unknown as DomainEventRow["id"] }),
+    ]);
+
+    const runs = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [divergent],
     );
 
     expect(runs.rows[0].n).toBe(0);

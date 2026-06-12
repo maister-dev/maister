@@ -53,6 +53,9 @@ export async function GET(
       enabledRevisionId: flow.enabledRevisionId,
       candidateRevisionId: revisionId,
       expectedSource: flow.source,
+      // RD4: agent break-impact joins against THIS project's live
+      // attachments/bindings.
+      projectId: project.id,
       db,
     });
 

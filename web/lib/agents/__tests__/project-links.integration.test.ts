@@ -31,7 +31,7 @@ let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
-const fx = { projectId: "", agentId: "platform-helper" };
+const fx = { projectId: "", agentId: "test-pkg:platform-helper" };
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -66,8 +66,29 @@ beforeAll(async () => {
     mode: "session",
     triggers: ["manual", "cron", "domain_event"],
     riskTier: "read_only",
-    sourcePath: `/tmp/agents/${fx.agentId}/agent.md`,
+    sourcePath: `/tmp/agents/platform-helper.md`,
   });
+
+  // RD4 attach gate: the providing package must be enabled in the project.
+  const revisionId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "flow_revisions"
+       ("id", "flow_ref_id", "source", "version_label", "resolved_revision",
+        "manifest_digest", "manifest", "schema_version", "installed_path", "package_status")
+     VALUES ($1, 'test-pkg', 'github.com/acme/test-pkg', 'v1.0.0', 'rev-1',
+             'digest', '{}'::jsonb, 1, '/tmp/test-pkg', 'Installed')`,
+    [revisionId],
+  );
+  await pool.query(
+    `INSERT INTO "flows"
+       ("id", "project_id", "flow_ref_id", "source", "version", "installed_path",
+        "manifest", "schema_version", "enabled_revision_id", "enablement_state",
+        "trust_status", "version_binding")
+     VALUES ($1, $2, 'test-pkg', 'github.com/acme/test-pkg', 'v1.0.0', '/tmp/test-pkg',
+             '{}'::jsonb, 1, $3, 'Enabled', 'trusted', 'pinned')`,
+    [randomUUID(), fx.projectId, revisionId],
+  );
 }, 180_000);
 
 afterAll(async () => {
@@ -87,6 +108,36 @@ describe("project agent links (attach panel service)", () => {
     await expect(
       attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("refuses attach when the providing package is not enabled in the project (RD4)", async () => {
+    // A catalog agent from a package that has NO pin in fx.projectId.
+    await db.insert(schema.agents).values({
+      id: "orphan-pkg:helper",
+      flowRefId: "orphan-pkg",
+      versionLabel: "v1.0.0",
+      origin: "git",
+      name: "helper",
+      description: "d",
+      workspace: "none",
+      mode: "session",
+      triggers: ["manual"],
+      riskTier: "read_only",
+      sourcePath: "/tmp/orphan/helper.md",
+    });
+
+    await expect(
+      attachAgent(
+        { projectId: fx.projectId, agentId: "orphan-pkg:helper" },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    // The available-list filter hides it for the same reason.
+    const view = await getProjectAgentsView(fx.projectId, db);
+    const availableIds = view.available.map((a) => a.id);
+
+    expect(availableIds).not.toContain("orphan-pkg:helper");
   });
 
   it("PATCH replaces the trigger bindings wholesale and validates cron + event kinds", async () => {
