@@ -381,7 +381,7 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
 
 ## Rework progress
 
-- [ ] R0 — merge main `0282235f` + renumber (ADR-089/090, migrations 0049/0050, snapshot transplant)
+- [x] R0 — merge main `0282235f` + renumber (ADR-089/090, migrations 0049/0050, snapshot transplant) — commits `361c71d4` + `bed59165`
 - [ ] R1 — schema + package registration core (migration 0051)
 - [ ] R2 — per-project resolution + trust/launch gates + attach gate
 - [ ] R3 — workspace ref (ephemeral read-only worktree at trigger ref)
@@ -532,6 +532,34 @@ contract).
 | R0.3 | Full gate re-run on the rebased branch (web unit+integration, supervisor, mcp, e2e, tsc, validators) before any rework code | gates |
 
 **Commit R-0**: `chore(agents): merge main (multi-run + packages), renumber ADR-089/090 + migrations 0049/0050, M33→M34`
+
+**R0 close-out (2026-06-13, commits `361c71d4` + `bed59165`):**
+
+- One real landmine beyond the planned renumber: `0049_platform_agents`'s
+  journal `when` predated main's `0048_packages` — drizzle's migrator
+  (reads `lastDbMigration` once, applies `when > created_at`) would
+  silently SKIP 0049 on any dev DB upgraded from main, then apply 0050.
+  `when` bumped to 1781225000000 (between 0048 and 0050). Fresh DBs were
+  never affected (empty table → all entries apply in array order).
+- decisions.md index rows for ADR-089/090 were missing since Phase 0
+  (sections existed, table never updated; the anchors validator checks
+  link resolution, not index completeness) — added.
+- Gates: tsc ×3 = 0; unit web 3757 / sup 206 / mcp 41; integration web
+  1333/1334 + sup 76; validators + redocly green. The 1 integration red is
+  MAIN's debt (observatory constant-query-count: ADR-087
+  `reconcileProjectScopeCostRollups` is +1 query per rollup-less run —
+  fails identically on pristine `0282235f`).
+- E2E: main's popover rewrite had broken its OWN specs
+  (m11b/m11c/task-launch-gating, baseline-proven on `0282235f`) — absorbed
+  the fixes in-branch (`bed59165`): specs drive the real dialog
+  (`Run again` → options → `Create run`), flight-card regained a run link
+  for launch-action cards (`data-testid="flight-card"`), m11c fixture repo
+  is now a real git repo (launch-options lists branches on the refusal
+  path too). Final: 89 passed; remaining reds = platform-acp-runners
+  (main debt, fix on unmerged model-discovery branch) +
+  review-diff-scopes load-flake (passes isolated).
+- Baseline worktree for proving: `/repos/maister-e2e-baseline`
+  @ `0282235f` (deps installed; reusable for R6).
 
 ### R1 — Schema + registration core
 
