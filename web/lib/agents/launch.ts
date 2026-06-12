@@ -21,6 +21,12 @@ import {
   type RunnerSidecarSnapshot,
 } from "@/lib/acp-runners/resolve";
 import {
+  checkRepoReadDirt,
+  loadAgentWorkspaceContext,
+  materializeAgentReadOnlySettings,
+  quarantineAgentInTx,
+} from "@/lib/agents/dirty-watchdog";
+import {
   issueAgentRunToken,
   revokeAgentRunTokensForRun,
 } from "@/lib/agents/tokens";
@@ -599,6 +605,34 @@ export async function finalizeAgentRun(
 
     if (!row) return false;
 
+    // ADR-088 L3 (terminal choke point): the dirty-watchdog runs WITHIN the
+    // status-flip transaction — a repo_read run that left the parent
+    // checkout dirty quarantines its agent atomically with the terminal
+    // write. The porcelain read is read-only git; a failure here rolls the
+    // flip back and the reconcile sweep re-finalizes later.
+    if (row.agentId) {
+      const wsCtx = await loadAgentWorkspaceContext(
+        tx,
+        row.agentId,
+        row.projectId,
+      );
+
+      if (wsCtx?.workspace === "repo_read") {
+        const verdict = await checkRepoReadDirt(wsCtx.repoPath);
+
+        if (verdict.dirty) {
+          await quarantineAgentInTx({
+            tx,
+            agentId: row.agentId,
+            runId,
+            projectId: row.projectId,
+            taskId: row.taskId,
+            reason: `repo_read run left ${wsCtx.repoPath} dirty: ${verdict.porcelain.slice(0, 512)}`,
+          });
+        }
+      }
+    }
+
     await revokeAgentRunTokensForRun(runId, tx);
 
     await emitWebhookEvent({
@@ -762,6 +796,17 @@ export async function startAgentSession(
   }
 
   try {
+    // ADR-088 L2 (materialize-only): instructed deny rules in the session
+    // cwd; manifest-tracked and restored at the terminal choke point.
+    if (workspace !== "worktree") {
+      await materializeAgentReadOnlySettings(cwd).catch((err: unknown) => {
+        log.warn(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "L2 materialization failed — L1/L3 carry the contract",
+        );
+      });
+    }
+
     const prompt = await buildAgentPrompt(_db, agent, run);
 
     await issueAgentRunToken({

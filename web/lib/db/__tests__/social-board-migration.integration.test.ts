@@ -377,10 +377,12 @@ describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
     replayPool = new Pool({ connectionString: replayUri });
 
     const tags = journalTags();
-    const pre0043 = tags.filter((t) => !t.startsWith("0043"));
+    // Numeric partition: migrations AFTER 0043 may depend on the social
+    // tables 0043 creates (e.g. 0048 alters the inbox_items CHECK), so the
+    // pre-seed replay applies strictly-older tags only.
+    const pre0043 = tags.filter((t) => Number.parseInt(t, 10) < 43);
     const socialBoardTag = tags.find((t) => t.startsWith("0043"));
 
-    expect(tags.length - pre0043.length).toBe(1);
     if (!socialBoardTag) throw new Error("0043 migration tag missing");
     for (const tag of pre0043) {
       await applyMigrationFile(replayPool, tag);

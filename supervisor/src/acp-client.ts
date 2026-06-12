@@ -102,6 +102,57 @@ export function resolveReadOnlyAutoReject(
   );
 }
 
+// M33 (ADR-088 L1): read-safe ACP toolCall kinds auto-approved on a
+// read-only SESSION. Everything outside this allow-list — including
+// `execute` (bash can mutate) and unknown kinds — is denied: the session is
+// headless, so every request MUST be decided inline (there is no HITL inbox
+// to fall through to).
+const READ_ONLY_SESSION_ALLOWED_KINDS = new Set([
+  "read",
+  "search",
+  "fetch",
+  "think",
+]);
+
+export type ReadOnlySessionDecision =
+  | { decision: "allow"; option: PermissionOptionDescriptor }
+  | { decision: "deny"; option: PermissionOptionDescriptor | null }
+  | null;
+
+// Total arbitration for read-only sessions: allow read-safe kinds, deny the
+// rest. A null return means the session is not read-only (normal HITL flow).
+// A deny with a null option is answered with the `cancelled` outcome.
+// Exported for the supervisor test suite.
+export function resolveReadOnlySessionDecision(
+  readOnlySession: boolean | undefined,
+  toolCall: ToolCallLike,
+  options: ReadonlyArray<PermissionOptionDescriptor>,
+): ReadOnlySessionDecision {
+  if (readOnlySession !== true) return null;
+
+  const allow =
+    toolCall.kind !== undefined &&
+    READ_ONLY_SESSION_ALLOWED_KINDS.has(toolCall.kind);
+
+  if (allow) {
+    const option =
+      options.find((o) => o.kind === "allow_once") ??
+      options.find((o) => (o.kind ?? "").startsWith("allow")) ??
+      null;
+
+    // No allow-shaped option → fail closed.
+    if (option) return { decision: "allow", option };
+  }
+
+  return {
+    decision: "deny",
+    option:
+      options.find((o) => o.kind === "reject_once") ??
+      options.find((o) => (o.kind ?? "").startsWith("reject")) ??
+      null,
+  };
+}
+
 type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
 
 function errorText(err: unknown): string {
@@ -244,6 +295,39 @@ export async function createAcpConnection(
           kind: o.kind,
           name: o.name,
         }));
+
+      // M33 (ADR-088 L1): a read-only SESSION arbitrates every request
+      // inline — read-safe kinds approved, everything else denied (the
+      // session is headless; no HITL inbox exists for it). Decided BEFORE
+      // the SSE emit and the pending-permission registration.
+      const sessionDecision = resolveReadOnlySessionDecision(
+        record.readOnlySession,
+        tc,
+        options,
+      );
+
+      if (sessionDecision) {
+        logger.info(
+          {
+            sessionId,
+            toolKind: tc.kind,
+            decision: sessionDecision.decision,
+            optionId: sessionDecision.option?.optionId ?? null,
+          },
+          "[read-only-session] permission arbitrated inline (L1)",
+        );
+
+        if (sessionDecision.option) {
+          return {
+            outcome: {
+              outcome: "selected",
+              optionId: sessionDecision.option.optionId,
+            },
+          };
+        }
+
+        return { outcome: { outcome: "cancelled" } };
+      }
 
       // M30 (ADR-078 L2): a mutating tool on a read-only gate-chat turn is
       // auto-rejected BEFORE the SSE emit and the pending-permission

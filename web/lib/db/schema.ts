@@ -2764,6 +2764,10 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "relation_added",
   "relation_removed",
   "run_launched",
+  // M33 (ADR-087/088): triage verdict / re-queue / dirty-watchdog quarantine.
+  "triage_set",
+  "triage_requeued",
+  "agent_quarantined",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -2806,7 +2810,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined')`,
     ),
     actorTypeCheck: check(
       "task_activity_actor_type_check",
@@ -2901,7 +2905,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined')`,
     ),
   }),
 );

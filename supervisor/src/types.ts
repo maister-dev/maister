@@ -180,6 +180,11 @@ export const StartSessionRequestSchema = z
     capabilityProfilePath: worktreePathSchema.optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),
+    // M33 (ADR-088 L1): session-scoped read-only — the requestPermission
+    // handler auto-denies write-class tool kinds and auto-approves the
+    // read-safe allow-list for the WHOLE session. Used for none/repo_read
+    // platform-agent runs (headless: no HITL inbox exists for them).
+    readOnlySession: z.boolean().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -336,6 +341,10 @@ export type SessionRecord = {
   // M30 (ADR-078 L2): true while a read-only gate-chat prompt is in flight on
   // this session — drives the requestPermission auto-reject.
   readOnlyTurn?: boolean;
+  // M33 (ADR-088 L1): the whole session is read-only — every permission
+  // request is decided inline (write-class denied, read-safe approved); no
+  // pending-permission deferred is ever created.
+  readOnlySession?: boolean;
 };
 
 export type PermissionOptionDescriptor = {
